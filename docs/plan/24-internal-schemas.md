@@ -1967,7 +1967,7 @@ class OmsErrorCode(StrEnum):
 | Bybit retCode      | Meaning                                                                   | Internal                                                                                        | Retryable         | OMS behaviour                                                                                                                                                                                                                                                                |
 | ------------------ | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`                | OK                                                                        | —                                                                                               | —                 | Proceed                                                                                                                                                                                                                                                                      |
-| `10001`            | Parameter error                                                           | `INSTRUMENT_FILTER` (or `DUPLICATE_CLIENT_ID` when the message names a duplicate `orderLinkId`) | no                | Reject; the duplicate variant triggers success-after-lookup (§8.3 rule 3)                                                                                                                                                                                                    |
+| `10001`            | Parameter error                                                           | `INSTRUMENT_FILTER` (`DUPLICATE_CLIENT_ID` only on an order create whose text says "duplicate") | no                | Reject; the duplicate variant, an order create's only (#2877 R9), triggers success-after-lookup (§8.3 rule 3)                                                                                                                                                                |
 | `10002`            | Request timestamp outside `recv_window`                                   | `CLOCK_DRIFT`                                                                                   | no                | **Block all order entry system-wide**, raise distinct alert, force a clock resync before resuming                                                                                                                                                                            |
 | `10003`            | Invalid API key                                                           | `AUTH_ERROR`                                                                                    | no                | Mark key `invalid`, disable the account, alert owner                                                                                                                                                                                                                         |
 | `10004`            | Sign error                                                                | `AUTH_ERROR`                                                                                    | no                | Same                                                                                                                                                                                                                                                                         |
@@ -1980,7 +1980,7 @@ class OmsErrorCode(StrEnum):
 | `10403`            | WS-trade IP rate >3000 req/s                                              | `RATE_LIMITED`                                                                                  | yes               | Drop to REST transport, alert                                                                                                                                                                                                                                                |
 | `10404`            | Unknown op/category (WS trade)                                            | `INSTRUMENT_FILTER`                                                                             | no                | Bug — reject and alert at `error`                                                                                                                                                                                                                                            |
 | `10429`            | System frequency protection                                               | `RATE_LIMITED`                                                                                  | yes               | Backoff                                                                                                                                                                                                                                                                      |
-| `20006`            | Duplicate reqId (WS trade)                                                | `DUPLICATE_CLIENT_ID`                                                                           | no                | Success-after-lookup (§8.3 rule 3: the full match first)                                                                                                                                                                                                                     |
+| `20006`            | Duplicate reqId (WS trade)                                                | `DUPLICATE_CLIENT_ID` on an order create; on any other call unmapped                            | no                | Success-after-lookup (§8.3 rule 3: the full match first)                                                                                                                                                                                                                     |
 | `110001`           | Order does not exist                                                      | `ORDER_NOT_FOUND`                                                                               | no                | On cancel: treat as already-terminal, reconcile; on amend: reject                                                                                                                                                                                                            |
 | `110003`           | Order price exceeds limits                                                | `PRICE_OUT_OF_BOUNDS`                                                                           | no                | Reject with the filter name                                                                                                                                                                                                                                                  |
 | `110004`           | Insufficient wallet balance                                               | `INSUFFICIENT_MARGIN`                                                                           | no                | Reject; leg-failure policy applies (§9.5)                                                                                                                                                                                                                                    |
@@ -2000,7 +2000,7 @@ class OmsErrorCode(StrEnum):
 | `110044`           | "Available margin is insufficient."                                       | `INSUFFICIENT_MARGIN`                                                                           | no                | Reject; leg-failure policy applies (§9.5), as `110007`                                                                                                                                                                                                                       |
 | `110045`           | No official text in #3005 or S15; #3005 classes it with `110007`/`110012` | `INSUFFICIENT_MARGIN`                                                                           | no                | Same as `110044`                                                                                                                                                                                                                                                             |
 | `110047`/`110048`  | #3005, one text for both: risk limit cannot be adjusted                   | `RISK_LIMIT_EXCEEDED` (filter `risk_limit_tier`)                                                | no                | Same as `110013`                                                                                                                                                                                                                                                             |
-| `110072`           | `orderLinkId` duplicate                                                   | `DUPLICATE_CLIENT_ID`                                                                           | no                | Success-after-lookup (§8.3 rule 3: the full match first)                                                                                                                                                                                                                     |
+| `110072`           | `orderLinkId` duplicate                                                   | `DUPLICATE_CLIENT_ID` on an order create; on any other call unmapped                            | no                | Success-after-lookup (§8.3 rule 3: the full match first)                                                                                                                                                                                                                     |
 | `110073`           | "Set margin mode failed"                                                  | `INSTRUMENT_FILTER` (filter `margin_mode_switch_failed`; no margin-mode code exists)            | no                | Reject; surface the exchange's reason and keep the current margin mode. **Never auto-switch mode**                                                                                                                                                                           |
 | `110079`           | Order processing / not yet final                                          | `UNKNOWN_STATE`                                                                                 | yes               | Poll then reconcile. An order create is never resent (order creates, below)                                                                                                                                                                                                  |
 | `110086`           | #3005: order leverage exceeds the tier                                    | `RISK_LIMIT_EXCEEDED` (filter `risk_limit_tier`)                                                | no                | Same as `110013`                                                                                                                                                                                                                                                             |
@@ -2012,6 +2012,8 @@ class OmsErrorCode(StrEnum):
 Transport-level: HTTP 403 → `IP_NOT_ALLOWED` (or geo-block); HTTP 429 → `RATE_LIMITED`; HTTP 5xx → `SERVICE_UNAVAILABLE`; `asyncio.TimeoutError`/connection reset after send → `TRANSPORT_ERROR` → order to `Unknown`.
 
 **Order creates (SR-E29-15, #3866).** Once an order create (`POST /v5/order/create` or `/v5/order/create-batch`, under any endpoint class) has left the process, a timeout, a transport error, an HTTP 5xx, an answer the client cannot read (over the body cap, undecodable, not JSON or nested too deep to parse, or with no usable `retCode`: an integer, non-zero on an HTTP error), `10016` or `10019` leaves its outcome unknown. The REST client raises `AmbiguousResultError`, a `TRANSPORT_ERROR` with `retryable` false that carries the `order_link_id`, and never resends the create, so the order reaches `unknown` through the `onError` of B1's `place` invoke (the runtime's `error.platform.place`; [`28-statechart-catalogue.md` §B1.4](28-statechart-catalogue.md#b14-invoked-services)). `110079`, or a code the mapping does not list, is never `retryable` for a create either. A success reply that carries no `orderId` is ambiguous too, never a success (§8.3 rule 7; G-8, #2877, enforces it in the adapter): the order reaches `unknown`, never `submitted`. Only a connect error, a connect timeout or a pool timeout proves that nothing left; such a create is retried under the same `order_link_id` (C-2.10). Amend, cancel and `trading-stop` keep the retries above: a resend sets the same values or meets an order that is already gone, and the stop and cancel paths must stay reliable (C-12.7). `unknown` never re-sends (S1). Any later re-send of an ambiguous create, such as a restart re-driving its row, first looks the id up in realtime, then in history, and adopts what it finds only after the full match, holding the order on a mismatch (§8.3 rule 3); it re-sends once, under the same id, only when neither shows it and history still covers the id (§8.3 rule 6), and never after a failed lookup (`adopt_or_resend` in `oms/order_link_resolution.py`).
+
+**Duplicates (#2877 ruling R9).** Only an order create can meet a duplicate `orderLinkId`, so the adapter maps `110072`, `20006`, and a `10001` whose text says "duplicate", to `DUPLICATE_CLIENT_ID` on a create alone; on a cancel or an amend `10001` stays the parameter error and the other two are unmapped, and the call's answer is a rejection (§14.2 rule 2). The exact text of a duplicate `10001` is assumed until E29-K01 records one.
 
 **Code-only rule (SR-E29-09; #913 ruling R8):** a business rejection reaches the caller as CandleViewer's own code and text with the exchange's `retCode` (`OrderExchangeProblem`, whose `exchange` holds `ret_code` only); the exchange's `retMsg` never reaches an order route's answer. It is kept only in the call's stored record (`order_events`, redacted before insert, `21-database-schema.md` §3.3.5) and served only by the audited diagnostics read (`getOrderDiagnostics`).
 
@@ -2042,6 +2044,8 @@ class RateBudget(BaseModel):
 | `background` | history backfill, reconciliation sweeps, OI/funding polls                                           | Yields to everything; paused entirely while any unwind plan is `running`                                               |
 
 Queued items age with a **2 s priority boost** so no request starves behind a busier class; within a class, ties break by descending order notional.
+
+**Lanes (G-8, #2877 rulings R3 and T04's rate step).** A request names its lane, the per-account bucket of `20-architecture.md` §4.3, which is this table's class: `critical` is `critical`, `entry` is `normal` and `poll` is `background` (`RateLane`, §14.4). The adapter's governor takes the lane on every acquisition and, until E34-T02 builds the reserve behind it, serves every lane alike. The adapter takes each request's token once (the OMS takes none, C-2.2) and bounds the wait: `entry` waits up to a bound its factory sets, `critical` up to the 5 s below and `poll` up to 5 s, and a wait past its bound (an IP hold included) fails with `RATE_BUDGET_EXCEEDED`, nothing sent. Until E34-T02's `reserve()`, B1's `rate` verdict reads a headroom figure that takes no token.
 
 - Defaults: `order.create` 10/s, `order.amend` 10/s, `order.cancel` 10/s, `order.cancel_all` 1/s (linear), reads 50/s, global IP 600 req/5 s.
 - The bucket is **corrected from response headers** `X-Bapi-Limit`, `X-Bapi-Limit-Status`, `X-Bapi-Limit-Reset-Timestamp` on every call — self-throttling proactively rather than discovering 10006.
@@ -3848,9 +3852,10 @@ class TradingPort(Protocol):
     async def cancel_all(self, account: AccountRef, symbol: Symbol | None) -> Sequence[OrderAck]: ...
     async def set_trading_stop(self, req: TradingStopRequest) -> OrderAck: ...
     async def set_leverage(self, account: AccountRef, symbol: Symbol, leverage: Decimal) -> None: ...
-    async def open_orders(self, account: AccountRef, symbol: Symbol | None = None
-                          ) -> Sequence[Order]: ...
+    async def open_orders(self, account: AccountRef, symbol: Symbol | None = None, *,
+                          order_link_id: OrderLinkId | None = None) -> Sequence[Order]: ...
     async def order_history(self, account: AccountRef, *, order_link_id: OrderLinkId | None = None,
+                            exchange_order_id: str | None = None,
                             start: TsUs | None = None, end: TsUs | None = None
                             ) -> Sequence[Order]: ...
     async def positions(self, account: AccountRef) -> Sequence[Position]: ...
@@ -3865,7 +3870,8 @@ class TradingPort(Protocol):
 class ExchangeCapabilities(BaseModel):
     exchange: Exchange
     environment: Environment
-    supports_ws_order_entry: bool          # Bybit: True live/testnet, False demo
+    supports_ws_order_entry: bool          # Bybit: True live/testnet, False demo; the venue's,
+                                           # v1 builds no trade socket (SR-040a)
     supports_native_oco: bool              # Bybit: False
     supports_native_iceberg: bool          # Bybit: False (no displayQty on public API)
     supports_native_twap: bool             # Bybit: False
@@ -3893,12 +3899,14 @@ class ExchangeCapabilities(BaseModel):
     has_public_ws: bool                    # demo: uses mainnet public
 ```
 
+The id filters are keyword-only (#846 ruling Q5, §8.5): an implementation sends them, filters the rows again itself, and refuses an `ext-` key as a filter. The exchange's implementation is `exchange/bybit/trading.py` (G-8, #2877), with capability records for live and demo and none for testnet; `FakeTradingPort` (`exchange/base/fakes.py`) is the in-memory one, and one conformance suite runs against both. `subscribe_private` raises until G-8b (#3963).
+
 ### 14.2 Adapter rules (binding)
 
 > **Statechart contract:** [`28-statechart-catalogue.md` §B13](28-statechart-catalogue.md#b13--exchangeconnection-ws-reconnect--resync) — the WS connection lifecycle (connect → authenticate → subscribe → live → backoff), including `budget_blocked` for the connection-rate limit; and [§B14](28-statechart-catalogue.md#b14--book-health-fsm-data-path-excluded) the book **health** FSM. **The per-delta data path is never a statechart** (MUSTNOT-01): health publishes a plain bool/enum that hot paths read. The contract is normative for the _behaviour_; this section remains the owner of the adapter protocol and the Bybit specifics (`CONSTITUTION.md` §16.5). Governed by [`27-adrs/ADR-0016-statechart-runtime.md`](27-adrs/ADR-0016-statechart-runtime.md).
 
 1. All exchange error codes map to the internal taxonomy (§8.6). No `retCode` integer escapes the adapter package.
-2. `place_order` **must** be idempotent on `order_link_id`: the adapter re-sends the same id on retry and answers a duplicate rejection as `DUPLICATE_CLIENT_ID`, never as a success. The OMS then looks the id up and adopts what it finds only after the full match of §8.3 rule 3 with the persisted row (success-after-lookup), since an adapter never sees a row (rule 7 below). It never re-sends a create that has left the process: that result is ambiguous (§8.6, order creates), and so is a success reply that carries no `orderId`, which the adapter never reports as a success (G-8, #2877), so a success ack always binds its row (§8.3 rule 7).
+2. `place_order` **must** be idempotent on `order_link_id`: the adapter re-sends the same id on retry and surfaces a duplicate rejection as `DuplicateClientIdError` (`DUPLICATE_CLIENT_ID`), which only a create can meet, never as a success (#2877 ruling R9). The OMS, which holds the row, then looks the id up and adopts what it finds only after the full match of §8.3 rule 3 with the persisted row (success-after-lookup, `place_or_adopt`), since an adapter never sees a row (rule 7 below). It never re-sends a create that has left the process: that result is ambiguous (§8.6, order creates), and so is a success reply that carries no `orderId`, which the adapter never reports as a success (G-8, #2877), so a success ack always binds its row (§8.3 rule 7).
 3. **Capabilities drive behaviour, not conditionals.** No `if exchange == "bybit"` and no `if env == "demo"` outside the adapter package — lint-enforced (§17.4).
 4. Adapters publish **normalized events only**. Raw payloads go to the recorder's raw log for forensics, with secrets redacted.
 5. Every adapter ships a contract-test suite run against recorded fixtures, plus an opt-in live smoke test (`pytest -m exchange_smoke`).
@@ -3955,6 +3963,18 @@ class ExchangeCapabilities(BaseModel):
     through the bound id (§8.3 rule 7), and one under an `OUR_ID` whose row it does not match is
     recorded under `ext_key(orderId)` (§8.3, Adopted rows). So every `Order` and `Execution` the
     adapter returns or publishes carries Bybit's `orderId` as `exchange_order_id`.
+
+12. **Endpoint classes and lanes (G-8, OM-D09, AC-31).** Create, batch, amend, cancel and
+    `cancel-all` go on the order class, `trading-stop` and leverage on the position class, and
+    every read on the account-reads class in the `poll` lane, never the order or position
+    classes. Cancel, `cancel-all` and `trading-stop` are always `critical`; a create or an amend
+    takes its request's `lane` (§14.4), which the OMS sets by effect (SR-E29-01); leverage is
+    `entry`. The REST client refuses a create, or a batch item, without an `orderLinkId`, and no
+    other call for its lack, so an exit by `orderId` reaches the order class. `cancel-all` always
+    sends `orderFilter=Order`, assumed pending E29-K01 to leave a position's TP/SL orders alone
+    (SR-E29-06); the OMS cancels conditional entries one by one. Every row a read returns that
+    carries one of our ids (`OUR_ID`) of another environment or account (`acct4`) is dropped and
+    counted, never raised (SR-E29-02).
 
 ### 14.3 Bybit implementation notes
 
@@ -4042,7 +4062,10 @@ class AccountRef(BaseModel):
     account_id: AccountId
     uid: str                       # Bybit UID — the rate-limit key
     environment: Environment
-    key_ref: str                   # opaque handle into the key vault; NEVER the key itself
+    key_ref: str                   # str(api_keys.id) of the active key (SR-E27-21); a UUID,
+                                   # anything else refused; NEVER the key itself
+
+RateLane = Literal["critical","entry","poll"]   # 20-architecture.md §4.3; §8.7 classes
 
 class PlaceOrderRequest(BaseModel):
     account: AccountRef
@@ -4064,17 +4087,96 @@ class PlaceOrderRequest(BaseModel):
     tp_trigger_by: Literal["last","mark","index"] = "last"
     sl_trigger_by: Literal["last","mark","index"] = "mark"
     tpsl_mode: Literal["full","partial"] = "full"
+    lane: Literal["critical","entry"] = "entry"    # set by the order's effect (SR-E29-01)
+
+class AmendOrderRequest(BaseModel):        # an ext- order by exchange_order_id alone (§14.2 rule 11)
+    account: AccountRef
+    symbol: Symbol
+    order_link_id: OrderLinkId
+    exchange_order_id: str | None = None
+    qty: Qty | None = None
+    price: Px | None = None
+    trigger_price: Px | None = None
+    take_profit: Px | None = None
+    stop_loss: Px | None = None
+    lane: Literal["critical","entry"] = "entry"
 
 class OrderAck(BaseModel):
     ok: bool
-    order_link_id: OrderLinkId
-    exchange_order_id: str | None  # Bybit's orderId; always set on an ok create (§14.2 rule 2)
+    order_link_id: OrderLinkId | None      # None only when no order is named: a trading-stop
+                                           # write, or a refused cancel_all
+    exchange_order_id: str | None          # Bybit's orderId; always set on an ok create (§14.2 rule 2)
     error_code: OmsErrorCode | None
     exchange_ret_code: int | None
     exchange_ret_msg: str | None
     retryable: bool = False
     latency_ms: int
     transport: Literal["rest","ws"]
+    record: ExchangeRecord | None = None   # SR-E29-08, below
+
+class Order(BaseModel):                    # a read's row (§8.5); the OMS aggregate is §8.1's
+    order_id: OrderId | None = None        # the OMS's local id: an adapter cannot know it
+    order_link_id: OrderLinkId             # normalised, §14.2 rule 11
+    exchange_order_id: str | None
+    account_id: AccountId                  # the call's account, never the payload's
+    symbol: Symbol
+    side: Side
+    order_type: Literal["market","limit"]
+    qty: Qty
+    price: Px | None                       # None for a market order
+    state: str                             # the exchange status, snake_case
+    filled_qty: Qty
+    leaves_qty: Qty
+    avg_fill_price: Px | None
+    created_at: TsUs
+    terminal_at: TsUs | None
+    reduce_only: bool = False              # with trigger_price and stop_loss: B1's full match
+    trigger_price: Px | None = None
+    stop_loss: Px | None = None
+    take_profit: Px | None = None
+    tpsl_mode: Literal["full","partial"] | None = None
+    order_kind: Literal["order","conditional","take_profit","stop_loss","partial_take_profit",
+                        "partial_stop_loss","trailing_stop","mm_rate_close"] = "order"
+    position_idx: Literal[0,1,2] = 0
+    time_in_force: Literal["gtc","ioc","fok","post_only","rpi"] = "gtc"
+
+class Execution(BaseModel):
+    exec_id: str
+    order_id: OrderId | None = None        # as on Order; ClosedPnl.order_id likewise
+    order_link_id: OrderLinkId             # normalised, §14.2 rule 11
+    account_id: AccountId
+    symbol: Symbol
+    side: Side
+    price: Px
+    qty: Qty
+    fee: Notional
+    fee_currency: str
+    is_maker: bool
+    closed_pnl: Notional | None
+    ts_exec: TsUs
+    ts_ingest: TsUs
+    seq: int
+
+class AccountInfo(BaseModel):
+    account_id: AccountId
+    uid: str
+    margin_mode: Literal["regular","portfolio","isolated"]
+    position_mode: Literal["one_way","hedge"] | None   # None: the venue reports it per position
+    unified_margin: bool
+
+class ExchangeRecord(BaseModel):           # 22's ExchangeCallRecord without event_id and at
+    transport: Literal["rest","ws_trade","ws_private"]
+    method: Literal["GET","POST"] | None = None
+    endpoint: str | None = None            # a path, never with a query string
+    op: str | None = None
+    req_id: str | None = None
+    topic: str | None = None
+    http_status: int | None = None
+    ret_code: int | None = None
+    ret_msg: str | None = None
+    latency_ms: int | None = None
+    request_redacted: ExchangeRecordFields | None = None   # 22's ExchangeRecordFields,
+    response_redacted: ExchangeRecordFields | None = None  # field for field
 
 class PrivateEvent(BaseModel):
     kind: Literal["order","execution","position","wallet"]
@@ -4089,7 +4191,7 @@ class Wallet(BaseModel):
     coin: str = "USDT"
     equity: Notional
     wallet_balance: Notional
-    available_to_withdraw: Notional
+    available_to_withdraw: Notional | None    # None when unreported (deprecated for UTA)
     available_margin: Notional
     used_margin: Notional
     unrealised_pnl: Notional
@@ -4112,6 +4214,8 @@ class RiskLimitTier(BaseModel):
     initial_margin_rate: Decimal
     max_leverage: Decimal
 ```
+
+`RateBudgetExceededError` (`RATE_BUDGET_EXCEEDED`, §8.6) is the adapter's local refusal when no token comes within the lane's wait (§8.7): nothing was sent, so the order never becomes `unknown` for it. Error surface (#2877 ruling 11): a venue answer with a return code is `OrderAck(ok=False)`, which B1 records as a rejection, except a create's duplicate (`DuplicateClientIdError`, rule 2) and a create's open outcome (an unmapped code or `110079`), which raise; a transport fault and a local refusal raise; a read raises on every failure; and no exception leaves the adapter with its cause or context, which can hold the signed request.
 
 ---
 
@@ -5225,6 +5329,12 @@ These are contract-test obligations created by this pass; they belong in the CI 
   - `LegError.code` says an `x-error-codes` slug, while the column holds the taxonomy code; `exchange_ret_code` and `retryable` have no column.
   - `ResolvedLegParams` says its derivation is captured in `profile_snapshot`, which holds only the `AccountProfile` projection.
   - ADR-0008's model predates the eight statuses and puts the snapshot on the child order; its dated As-built note records both.
+
+### 19.21 2026-10-21 — §8.6, §8.7, §14 the exchange `TradingPort` (G-8, #2877)
+
+- §14.1: `open_orders` takes a keyword-only `order_link_id` and `order_history` a keyword-only `exchange_order_id` (#846 ruling Q5, §8.5); `supports_ws_order_entry` describes the venue, and v1 builds no trade socket (SR-040a). §14.2 rule 2 now says the adapter surfaces a create's duplicate and the OMS adopts it (#2877 ruling R9), and rule 12 fixes endpoint classes and lanes, the `cancel-all` filter and the per-row account check.
+- §14.4: `RateLane` and `lane` on the place and amend requests (ruling R3); `key_ref` is the active key's `api_keys.id` (ruling R13); the read models `Order` and `Execution` are listed, with `order_id` optional on them and on `ClosedPnl` and the fields B1's full match reads (ruling R8); `OrderAck.order_link_id` is optional and the ack carries the allow-listed `ExchangeRecord` (SR-E29-08); `AccountInfo` gains `isolated` and an optional `position_mode`, and `Wallet.available_to_withdraw` is optional, because the venue's account and wallet reads do not report them; `RateBudgetExceededError` and the error surface (ruling 11).
+- §8.6: a duplicate is a create's only, and the exact text of a duplicate `10001` is assumed until E29-K01. §8.7: the lanes are the priority classes, and the adapter bounds each token wait.
 
 ### 19.22 2026-10-21 — §8.1, §8.3, §8.5, §8.8, §8.10: G-6 refinements (#4010)
 
