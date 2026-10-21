@@ -506,7 +506,10 @@ owner and the trigger that brings it back.
 - **F2** (#3910), promtool constants not yet pinned (AuditLaneSeqRegressed's `[1d]`, the young `< 900` windows,
   AuditLaneBootOvershoot's `[1h]` and AuditLaneTornTail's young-arm `reason` selector), in
   `infra/alertmanager/gen_promtool_tests.py` and the regenerated `infra/prometheus/tests/system_alerts.test.yml`.
-  It is S4b-2a's, with the drill, and joins this ledger only if S4b-2a drops it.
+  S4b-2a's drill reads the lane's series those rules select from the real exposition, and keeps promtool
+  synthetic; `process_start_time_seconds`, which the young arms read, comes from the default registry and is not
+  drilled. The pins were not built there because the drill already takes the PR past C-4.8's preferred 400 lines, so
+  they stay a carry. Owner: E09 security. Trigger: the next change to those rules or to `gen_promtool_tests.py`.
 - **The boot-side recovery of a volume an earlier build wedged** (`24-internal-schemas.md` §15.6, Failures while
   running; from #4005): frames in a segment named below one the drain had passed are not recovered; a boot that
   scans such a segment first, as row 2 does, would recover them. No live volume holds such frames; a staging

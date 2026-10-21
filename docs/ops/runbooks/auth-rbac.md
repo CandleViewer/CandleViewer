@@ -1347,6 +1347,10 @@ writes a critical `marker_lost` row.
    note an earlier release left), or it applied and a second hold follows: repeat from step 2 with
    the logged position; the new note replaces the old. The `released` row is the release's record.
 
+A second release of the same hold, under the same lane key, makes a `released` row with the first one's keyed
+`record_id`: the chain keeps only the first, so the second one's words never reach `audit_log`; keep that
+command's output with its ticket (SEC-REM-02).
+
 ## 13. The journal-first audit lane: its alerts, key rotation and previous-key retirement (ADR-0037, #3009)
 
 Written 2026-10-19 for #3009 S4a. The alert runbooks are the anchors `alert-auditsinkrefusing`,
@@ -1370,7 +1374,11 @@ compose runs the fake backend (no lane, §12) and gives the `api` service one la
 - **Severity.** Every lane alert is a `ticket` for now. ADR-0037 makes seven of them pages, never
   muted by quiet hours, but a new page needs the Owner (#2701): until it is granted, quiet hours
   (22:00-07:00 UTC) mute them, and the event alerts hold 9 h 30 m so that one firing at night is
-  still sent in the morning. "Never muted" applies once they are promoted.
+  still sent in the morning. "Never muted" applies once they are promoted. A promotion needs more than the
+  grant: `absent()` guards on `cv_audit_lane_state`, `cv_audit_lane_anomalies_total` and
+  `process_start_time_seconds` (SEC-REM-01). A lane read that fails at a scrape drops every lane family (the
+  exporter logs `metrics.scrape_read_failed` and serves the rest), and without the start time the rules that
+  read a boot's counts cannot fire, so today neither case alerts.
 - **Expected once.** AuditLaneCreated fires at the first boot that creates the lane; acknowledge it.
   At any later boot it means the lane was lost or wiped (AuditLaneSeqRegressed fires with it when
   the old lane had grown).
@@ -1421,3 +1429,8 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 
 Not executed on staging by a non-author: no staging host exists (#1778 item A); the run is tracked
 in #2298. Security review of §3/§5 exists as an agent review on #2115; Ops review is recorded on #2343.
+
+The audit lane's drill (§12, §13; ADR-0037 S4b-2a, #3009) is an in-process test, not a non-author's walk of those
+sections on a staging host: `services/api/tests/unit/audit/test_lane_drill.py` runs the real `AuditService` over an
+in-memory chain on a virtual clock. Its Postgres halves run in CI; the lane's rows in
+`qa/plans/e04-alert-drill-matrix.md` stay pending.
