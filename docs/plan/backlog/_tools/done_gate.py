@@ -5,7 +5,8 @@ Exit 0 = every required evidence kind present (or specifically waived), 1 = gaps
 
 Evidence rules (C-11.2, docs/design/README.md, C-10.4):
   qa        every ticket: a `QA verification ... VERDICT: PASS` comment (latest verdict wins)
-  design    label type/design: owner `approved` comment or merged PR, Penpot link, PNG exports
+  design    label type/design: owner `approved` comment or merged PR, Penpot page reference
+            (workspace link, or page name + page id since 2026-10-21), PNG exports
   perf      label perf / DoD lines naming a measurement: a number+unit near the metric in PR/issue text
   security  security label: `Security review ... VERDICT: APPROVE` on the PR
   a11y      UI tickets: axe report / Storybook link
@@ -35,6 +36,15 @@ GhFn = Callable[[list[str]], Any]
 
 PENPOT_RE = re.compile(
     r"https://design\.penpot\.app/#/workspace\?[^\s)]*file-id=[^\s)]+", re.IGNORECASE
+)
+# Self-hosted Penpot (2026-10-21): design PRs name their page by name + page id, with
+# no workspace URL. Accepts `page id` / `page-id` / `pageId` followed within 24 chars
+# by a UUID, e.g. page **`E42-D02`**, page id `0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d`;
+# a page name alone does not count.
+PENPOT_PAGE_ID_RE = re.compile(
+    r"page[\s_-]?id\b.{0,24}?\b"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
 )
 PNG_RE = re.compile(r"\.png\b", re.IGNORECASE)
 QA_RE = re.compile(
@@ -396,8 +406,9 @@ def evaluate(
         )
         need(
             "design",
-            bool(PENPOT_RE.search(text)),
-            "no Penpot page link (docs/design/README.md)",
+            bool(PENPOT_RE.search(text) or PENPOT_PAGE_ID_RE.search(text)),
+            "no Penpot page reference (workspace link or page name + page id"
+            " — docs/design/README.md)",
         )
         pngs = bool(PNG_RE.search(text)) or any(
             PNG_RE.search(f.get("path", "")) for p in prs for f in p.get("files", [])
