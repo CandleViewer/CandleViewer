@@ -89,7 +89,8 @@ def test_downgrade_locks_refuses_while_any_row_exists_then_drops_table_and_funct
 
 
 def test_auth_keys_is_on_the_ci_mig_006_list() -> None:
-    """Informational: CI-MIG-006 only warns, and only on a quoted name (`op.add_column("auth_keys",
-    ...)`), not in raw SQL. Every revision is reviewed by the CODEOWNERS rule on `migrations/`."""
+    """Informational: CI-MIG-006 only warns, on a listed table named in raw SQL or as an Alembic
+    argument, quoted or not (#3935). Every revision is reviewed by the CODEOWNERS rule on
+    `migrations/`."""
     listed = (_ROOT.parents[1] / "tools" / "ci" / "security-sensitive-tables.txt").read_text()
     assert "auth_keys" in listed.split()

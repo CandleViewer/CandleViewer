@@ -367,6 +367,7 @@ def test_main_exits_two_when_versions_dir_missing(tmp_path: Path) -> None:
         _RAW_SQL_GRANT_DELETE_AUDIT_LOG,
         _RENAME_AUDIT_LOG,
         _ALTER_COLUMN_AUDIT_LOG,
+        "\ufeff" + _RAW_SQL_DELETE_AUDIT_LOG,  # a byte-order mark: Python loads it
     ],
 )
 def test_audit_table_mutation_is_always_flagged(tmp_path: Path, fixture: str) -> None:
@@ -578,3 +579,324 @@ def test_create_extension_if_not_exists_is_exempt(tmp_path: Path) -> None:
     findings = check_if_not_exists([path])
     assert len(findings) == 1
     assert "line 6" in findings[0].message
+
+
+# --- CI-MIG-006 (#3935): a table named as an identifier, quoted or not ------------
+
+_VERSIONS_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "services"
+    / "api"
+    / "candleviewer"
+    / "migrations"
+    / "versions"
+)
+
+
+def _raw_sql_revision(sql: str) -> str:
+    """A revision whose `upgrade()` runs `sql` through `op.execute`."""
+    return (
+        f"from alembic import op\n\n\ndef upgrade() -> None:\n    op.execute({sql!r})\n"
+    )
+
+
+def _flagged(tmp_path: Path, source: str, *sensitive: str) -> list[str]:
+    """The tables CI-MIG-006 flags in the revision `source`, in report order."""
+    path = _write(tmp_path, "0050_touch.py", source)
+    findings = check_security_sensitive([path], sensitive_tables=frozenset(sensitive))
+    assert {finding.code for finding in findings} <= {"CI-MIG-006"}
+    return [finding.message.split("'")[1] for finding in findings]
+
+
+# Each statement names `account_profiles` as an identifier and must be flagged exactly
+# as the quoted `"account_profiles"` always was.
+_TOUCHES_ACCOUNT_PROFILES = [
+    pytest.param("CREATE TABLE account_profiles (id uuid PRIMARY KEY)", id="create"),
+    pytest.param("ALTER TABLE account_profiles ADD COLUMN note text", id="alter"),
+    pytest.param("ALTER TABLE ACCOUNT_PROFILES ADD COLUMN note text", id="upper-case"),
+    pytest.param('ALTER TABLE "account_profiles" ADD COLUMN note text', id="quoted"),
+    pytest.param("ALTER TABLE public.account_profiles ADD COLUMN n text", id="schema"),
+    pytest.param(
+        'ALTER TABLE "public"."account_profiles" ADD COLUMN n text', id="quoted-schema"
+    ),
+    pytest.param(
+        'ALTER TABLE public."account_profiles" ADD COLUMN n text', id="half-quoted"
+    ),
+    pytest.param("COMMENT ON COLUMN account_profiles.name IS 'label'", id="column-ref"),
+    pytest.param("LOCK TABLE users, account_profiles IN SHARE MODE", id="list-member"),
+    pytest.param("CREATE TABLE t (p uuid REFERENCES account_profiles (id))", id="fk"),
+    pytest.param(
+        "ALTER TABLE\n    account_profiles\n    ADD COLUMN note text", id="multi-line"
+    ),
+    pytest.param("SELECT 'account_profiles'::regclass", id="regclass-literal"),
+    pytest.param(
+        "DO $BODY$ BEGIN EXECUTE 'REVOKE DELETE ON account_profiles FROM cv_app'; "
+        "END $BODY$;",
+        id="execute-dynamic-sql",
+    ),
+    pytest.param(
+        "CREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+        "UPDATE account_profiles SET note = NULL; RETURN NEW; END $$",
+        id="dollar-quoted-body",
+    ),
+    pytest.param("-- don't stop here\nDROP TABLE account_profiles", id="after-comment"),
+    pytest.param("SELECT '--' FROM account_profiles", id="after-comment-marker"),
+    pytest.param("SELECT 'C:\\' FROM account_profiles", id="after-backslash-literal"),
+    pytest.param(
+        "COMMENT ON COLUMN users.n IS $$the user's note$$; "
+        "ALTER TABLE account_profiles ADD COLUMN n text; -- it's",
+        id="after-dollar-quoted-apostrophe",
+    ),
+]
+
+# Each statement mentions `account_profiles` without reading it as an identifier.
+_MENTIONS_ACCOUNT_PROFILES = [
+    pytest.param("ALTER TABLE account_profiles_history ADD COLUMN n text", id="suffix"),
+    pytest.param("ALTER TABLE old_account_profiles ADD COLUMN n text", id="prefix"),
+    pytest.param('ALTER TABLE "ACCOUNT_PROFILES" ADD COLUMN n text', id="quoted-case"),
+    pytest.param(
+        "ALTER TABLE users ADD COLUMN n text -- see account_profiles", id="line-comment"
+    ),
+    pytest.param(
+        "/* account_profiles,\n  two lines */ ALTER TABLE users ADD n text",
+        id="block-comment",
+    ),
+    pytest.param(
+        "COMMENT ON COLUMN users.n IS 'copied from account_profiles'", id="comment-text"
+    ),
+    pytest.param(
+        "DO $$ BEGIN RAISE EXCEPTION 'refused: account_profiles holds rows'; END $$",
+        id="raise-message",
+    ),
+    pytest.param(
+        "INSERT INTO permissions (code) VALUES ('account_profiles:read')",
+        id="seed-code",
+    ),
+    pytest.param("SELECT E'it\\'s about account_profiles'", id="escape-string"),
+]
+
+
+@pytest.mark.parametrize("sql", _TOUCHES_ACCOUNT_PROFILES)
+def test_security_sensitive_table_named_as_identifier_is_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    flagged = _flagged(tmp_path, _raw_sql_revision(sql), "account_profiles")
+    assert flagged == ["account_profiles"]
+
+
+@pytest.mark.parametrize("sql", _MENTIONS_ACCOUNT_PROFILES)
+def test_security_sensitive_table_not_read_as_identifier_is_not_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    assert _flagged(tmp_path, _raw_sql_revision(sql), "account_profiles") == []
+
+
+def test_security_sensitive_unquoted_finding_equals_the_quoted_one(
+    tmp_path: Path,
+) -> None:
+    def findings(name: str, sql: str) -> list[tuple[str, str]]:
+        path = _write(tmp_path, name, _raw_sql_revision(sql))
+        found = check_security_sensitive(
+            [path], sensitive_tables=frozenset({"account_profiles"})
+        )
+        return [(finding.code, finding.message) for finding in found]
+
+    unquoted = findings("0050_a.py", "CREATE TABLE account_profiles (id uuid)")
+    quoted = findings("0051_b.py", 'CREATE TABLE "account_profiles" (id uuid)')
+    assert len(unquoted) == 1
+    assert unquoted == quoted
+
+
+_PYTHON_NAME_ARGUMENTS = """
+from alembic import op
+import sqlalchemy as sa
+
+
+def upgrade() -> None:
+    op.add_column("account_profiles", sa.Column("note", sa.Text()))
+    op.create_foreign_key("fk_x", "x", "risk_lockouts", ["a"], ["id"])
+    sa.Column("owner", sa.ForeignKey("exchange_accounts.id"))
+"""
+
+_NAMES_ONLY_IN_PROSE = '''
+"""Reads "account_profiles" and `risk_lockouts`; never alters orders or positions."""
+from alembic import op
+
+# Touches 'account_profiles' and "orders" in a comment.
+
+
+def upgrade() -> None:
+    """Prose again: "account_profiles"."""
+    op.execute("SELECT 1")
+'''
+
+_UNRESOLVED_FSTRING_TABLE = """
+from alembic import op
+
+
+def get_name():
+    return "x"
+
+
+def upgrade() -> None:
+    t = get_name()
+    op.execute(f"ALTER TABLE {t} ADD COLUMN note text")
+"""
+
+
+def test_security_sensitive_table_passed_as_a_python_name_is_flagged(
+    tmp_path: Path,
+) -> None:
+    flagged = _flagged(
+        tmp_path,
+        _PYTHON_NAME_ARGUMENTS,
+        "account_profiles",
+        "risk_lockouts",
+        "exchange_accounts",
+    )
+    assert flagged == ["account_profiles", "exchange_accounts", "risk_lockouts"]
+
+
+_EXECUTE_COMMAND = """from alembic import op
+
+
+def upgrade() -> None:
+    op.execute(\"\"\"EXECUTE '%s "orders"'\"\"\")
+"""
+
+_ADDS_TO_ORDERS = """from alembic import op
+
+
+def upgrade() -> None:
+    op.add_column("orders", 1)
+"""
+
+
+# Each command word a single-quoted literal may open with and still be read as SQL.
+# Listed here, not imported: a word dropped from the tool's list fails its case.
+_COMMAND_WORDS = (
+    "ALTER", "ANALYZE", "BEGIN", "CALL", "CLUSTER", "COMMENT", "COPY", "CREATE",
+    "DECLARE", "DELETE", "DO", "DROP", "EXECUTE", "GRANT", "INSERT", "LOCK", "MERGE",
+    "REFRESH", "REINDEX", "REVOKE", "SELECT", "SET", "TABLE", "TRUNCATE", "UPDATE",
+    "VACUUM", "WITH",
+)  # fmt: skip
+
+
+@pytest.mark.parametrize("command", _COMMAND_WORDS)
+def test_security_sensitive_literal_opening_with_a_command_is_read_as_sql(
+    tmp_path: Path, command: str
+) -> None:
+    assert _flagged(tmp_path, _EXECUTE_COMMAND % command, "orders") == ["orders"]
+
+
+@pytest.mark.parametrize(
+    ("text", "flagged"), [("Update orders", ["orders"]), ("See orders", [])]
+)
+def test_security_sensitive_comment_text_is_read_as_sql_only_after_a_command(
+    tmp_path: Path, text: str, flagged: list[str]
+) -> None:
+    """Prose opening with a command word reads as SQL: an extra flag, never a miss."""
+    comment = f"op.execute(\"COMMENT ON TABLE users IS '{text}'\")"
+    source = _ADDS_TO_ORDERS.replace('op.add_column("orders", 1)', comment)
+    assert _flagged(tmp_path, source, "orders") == flagged
+
+
+def test_security_sensitive_revision_with_a_byte_order_mark_is_read_as_python(
+    tmp_path: Path,
+) -> None:
+    """Read as Python reads it: its docstring is prose, its argument a touch."""
+    prose = '"""Mentions orders in prose only."""\n'
+    assert _flagged(tmp_path, "\ufeff" + prose, "orders") == []
+    assert _flagged(tmp_path, "\ufeff" + _ADDS_TO_ORDERS, "orders") == ["orders"]
+
+
+@pytest.mark.parametrize(
+    "body", ["    ALTER TABLE orders\n", '    op.execute("ALTER TABLE orders ADD x")\n']
+)
+def test_security_sensitive_revision_that_does_not_parse_has_every_word_read(
+    tmp_path: Path, body: str
+) -> None:
+    """Fail-closed: with no Python to skip prose by, a listed name anywhere counts."""
+    assert _flagged(tmp_path, "def upgrade(:\n" + body, "orders") == ["orders"]
+
+
+def test_security_sensitive_table_named_only_in_docstring_or_comment_is_not_flagged(
+    tmp_path: Path,
+) -> None:
+    flagged = _flagged(
+        tmp_path,
+        _NAMES_ONLY_IN_PROSE,
+        "account_profiles",
+        "risk_lockouts",
+        "orders",
+        "positions",
+    )
+    assert flagged == []
+
+
+def test_security_sensitive_unresolved_fstring_placeholder_is_not_a_table(
+    tmp_path: Path,
+) -> None:
+    assert _flagged(tmp_path, _UNRESOLVED_FSTRING_TABLE, "account_profiles") == []
+
+
+def test_security_sensitive_table_touched_repeatedly_is_flagged_once(
+    tmp_path: Path,
+) -> None:
+    source = _raw_sql_revision(
+        "CREATE TABLE account_profiles (id uuid);\n"
+        'ALTER TABLE "account_profiles" ADD COLUMN note text;\n'
+        "DROP TABLE public.account_profiles;"
+    )
+    assert _flagged(tmp_path, source, "account_profiles") == ["account_profiles"]
+
+
+def test_security_sensitive_findings_are_ordered_by_table_name(tmp_path: Path) -> None:
+    source = _raw_sql_revision("DROP TABLE risk_policy, account_profiles, orders")
+    flagged = _flagged(tmp_path, source, "risk_policy", "orders", "account_profiles")
+    assert flagged == ["account_profiles", "orders", "risk_policy"]
+
+
+@pytest.mark.parametrize(
+    ("revision", "touched", "named_only_in_prose"),
+    [
+        (
+            "0037_account_profiles.py",
+            {"account_profile_revisions", "account_profiles", "exchange_accounts"},
+            "api_keys",
+        ),
+        (
+            "0038_risk_state.py",
+            {"exchange_accounts", "kill_switch_state", "risk_lockouts", "risk_policy"},
+            "positions",
+        ),
+    ],
+)
+def test_security_sensitive_merged_raw_sql_revision_is_flagged(
+    revision: str, touched: set[str], named_only_in_prose: str
+) -> None:
+    """The two merged revisions that wrote every table unquoted (immutable, C-5.4, so
+    stable fixtures). `named_only_in_prose` is in their docstring or a COMMENT text."""
+    findings = check_security_sensitive(
+        [_VERSIONS_DIR / revision],
+        sensitive_tables=frozenset(touched | {named_only_in_prose}),
+    )
+    assert sorted(f.message.split("'")[1] for f in findings) == sorted(touched)
+
+
+def test_main_warns_for_unquoted_sensitive_table_without_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tables = _write(tmp_path, "tables.txt", "# sensitive\naccount_profiles\n")
+    monkeypatch.setattr(
+        "tools.ci.migration_lint._DEFAULT_SECURITY_SENSITIVE_TABLES_PATH", tables
+    )
+    versions = tmp_path / "versions"
+    versions.mkdir()
+    _write(
+        versions,
+        "0001_profiles.py",
+        _raw_sql_revision("CREATE TABLE account_profiles (id uuid)"),
+    )
+    assert main(["--versions-dir", str(versions)]) == 0
+    assert "WARN CI-MIG-006" in capsys.readouterr().err

@@ -716,10 +716,14 @@ index alone, removing nothing.
   uses `IF NOT EXISTS`/`IF EXISTS` guards, which mask a wrong `down_revision`
   or a genuinely missing prior migration instead of failing loudly. Remove
   the guard and fix the actual ordering problem.
-- **CI-MIG-006** (informational, non-blocking): a migration touches a table
-  named in the audit-table list (C-5.7). This never fails the gate by
-  itself — it is a flag for the reviewer to confirm no `UPDATE`/`DELETE`
-  grant was added to an audit table.
+- **CI-MIG-006** (informational, non-blocking): a migration names a table
+  listed in `tools/ci/security-sensitive-tables.txt`, in SQL or as an
+  Alembic argument, quoted or not (docstrings, comments and prose literals
+  do not count, unless a literal opens with an SQL command word, which can
+  add a flag, never hide one; a revision that does not parse has every word
+  read). It prints a
+  `WARN` and never fails the gate by itself: it asks the reviewer to confirm
+  the Security review (C-10.2).
 
 ### CI-IMG-* — container image supply chain (merge-to-main, `main.yml`)
 
