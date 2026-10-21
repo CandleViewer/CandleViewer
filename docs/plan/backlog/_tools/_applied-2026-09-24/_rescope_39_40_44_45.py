@@ -1,7 +1,9 @@
-import json, re
+import json, os, re
 
 DATE = "2026-09-24"
-ROOT = "C:/Users/basil/Desktop/Projects/FullStackProjects/CandleViewer/docs/plan/backlog/"
+HERE = os.path.dirname(os.path.abspath(__file__))
+# docs/plan/backlog/ (two levels up); the trailing separator stays: callers use ROOT + name
+ROOT = os.path.normpath(os.path.join(HERE, "..", "..")) + os.sep
 
 BANNER_TMPL = (
     "> **Re-scoped {date} for full xstate-statemachine adoption (ADR-0016 Accepted):** "

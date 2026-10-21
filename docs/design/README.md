@@ -6,12 +6,12 @@ MPL-2.0) instead of Figma. Agents drive it through the **official Penpot MCP ser
 
 ## Topology
 
-| Piece           | Where                                                                                                                                        | Notes                                                                                                                                                                                                                                                                                                    |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Penpot instance | https://design.penpot.app — team **CandleViewer** (`team-id b564c72c-f31f-81ec-8008-b109a9175d0b`)                                           | Cloud-hosted for now. Self-hosting in WSL2 is a later option; nothing on the agent side changes.                                                                                                                                                                                                         |
-| MCP server      | **Hosted:** `https://design.penpot.app/mcp/stream?userToken=<MCP key>` (Streamable HTTP)                                                     | Registered user-scope in `~/.claude.json` as `penpot`. The key is per-user (Your account → Integrations → MCP Server) and lives only in `~/.claude.json` — never in the repo or a ticket. Tools: `high_level_overview`, `penpot_api_info`, `execute_code`, `export_shape` (no `import_image` on hosted). |
-| Plugin          | Penpot's built-in **MCP plugin** (Plugins menu in any open file)                                                                             | The plugin _is_ the bridge: without an open, connected plugin every tool call fails with "No plugin instance connected".                                                                                                                                                                                 |
-| Local fallback  | `C:\Users\basil\Desktop\Projects\PublicProjects\penpot\mcp` → `start-penpot-mcp.cmd` (`:4401/mcp`, plugin `:4400/manifest.json`, WS `:4402`) | Built 2026-09-25 from Penpot `develop`. Use if the hosted endpoint is down or when self-hosting.                                                                                                                                                                                                         |
+| Piece           | Where                                                                                                                                                                 | Notes                                                                                                                                                                                                                                                                                  |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Penpot instance | **Self-hosted Penpot 2.18** since 2026-10-21 (URL, team/file ids and credentials: owner's private notes)                                                              | **Never write the instance URL, team/file ids or credentials in this repository or in PR text** (public repo). Page ids were preserved by the import, so existing page-id references stay valid. The SaaS file is a read-only backup.                                                  |
+| MCP server      | **Hosted:** `<instance>/mcp/stream?userToken=<MCP key>` (Streamable HTTP)                                                                                             | Registered at **local scope** as `penpot`, **one key per lane**, created under _Your account → Integrations → MCP Server_. Keys never go in the repo, messages or logs. Tools: `high_level_overview`, `penpot_api_info`, `execute_code`, `export_shape` (no `import_image` on hosted). |
+| Plugin          | Penpot's built-in **MCP plugin** (Plugins menu in any open file)                                                                                                      | The plugin _is_ the bridge: without an open, connected plugin every tool call fails with "No plugin instance connected".                                                                                                                                                               |
+| Local fallback  | a local checkout of Penpot's `mcp` package (path in the contributor's private notes) → `start-penpot-mcp.cmd` (`:4401/mcp`, plugin `:4400/manifest.json`, WS `:4402`) | Built 2026-09-25 from Penpot `develop`. Use if the hosted endpoint is down.                                                                                                                                                                                                            |
 
 ## Session ritual (human, once per session)
 
@@ -24,8 +24,10 @@ MPL-2.0) instead of Figma. Agents drive it through the **official Penpot MCP ser
 Team fonts uploaded 2026-09-25: **Inter** v4.1 and **JetBrains Mono** v2.304, each as 8 static TTFs
 (Regular/Medium/SemiBold/Bold + italics = weight tokens 400/500/600/700). JetBrains Mono needed its Macintosh
 `name` records stripped (fontTools): opentype.js 2.x `getEnglishName()` reads only the first platform table
-present, so Penpot silently skipped the files (upstream bug, to be filed). Fixed set:
-`C:\Users\basil\Downloads\CandleViewer-fonts\upload-static\JetBrainsMono-fixed\`.
+present, so Penpot silently skipped the files (upstream bug, to be filed). Fixed set: the contributor's local fonts
+folder (the JetBrains Mono fixed build). The file uses the Google fonts `gfont-inter` / `gfont-jetbrains-mono`; valid
+`fontVariantId` values are `regular`, `500`, `600`, `700` (+ italic forms); look fonts up exactly
+(`penpot.fonts.all.find(f => f.fontId === 'gfont-inter')`) because name lookups prefix-match Inter Tight.
 
 ## Approval rule (owner decision 2026-09-25) — **every UI/UX design ticket requires human approval**
 
@@ -39,10 +41,10 @@ ticket only moves to **Done** when the owner has approved it. Concretely:
 **Mandatory evidence on EVERY design ticket — no exceptions for "research" or "wireframe" tickets (owner decision
 2026-09-25).** A design PR without both of the following is incomplete and must be sent back:
 
-- **Penpot reference** to the ticket's page, in the PR body _and_ the issue comment: the workspace link OR the page
-  name + page id (the self-hosted rule since 2026-10-21), e.g. `` Page `E42-D02` · id `<page-id>` ``. Link form:
-  `https://design.penpot.app/#/workspace?team-id=<team>&file-id=<file>&page-id=<page-id>` — read `page.id` from the
-  plugin API (`penpotUtils.getPageByName(...).id`); team/file ids are in §Topology.
+- **Penpot reference** to the ticket's page, in the PR body _and_ the issue comment: the page **name + page id**, e.g.
+  `` Page `E42-D02` · id `<page-id>` `` — read `page.id` from the plugin API (`penpotUtils.getPageByName(...).id`).
+  Never paste the instance hostname or a team/file/workspace URL into public text (PR bodies, specs, comments); old
+  SaaS links in merged documents are historical.
 - **Screenshots**: one PNG per frame/state exported with `docs/design/_tools/penpot_export.py`, committed under
   `docs/design/<epic>/img/`, and **embedded** in the PR body (`![SCR-nnn/state](../docs/design/<epic>/img/<name>.png)`
   or the raw GitHub URL) so the owner can review without opening Penpot.
@@ -91,5 +93,8 @@ the same rule applies to them. Skills: the official `penpot-*` skill set (penpot
   `page.root.appendChild(shape)`.
 - Export from code: `await shape.export({type:"png", scale:1})` returns a `Uint8Array`.
 - **Browser tab suspension** kills the bridge within ~30–45 s of the tab losing focus. Before an agent session:
-  pin the Penpot tab, Chrome → Settings → Performance → _Always keep these sites active_ → `design.penpot.app`,
-  and disable Memory Saver for it. Without this, every design ticket stalls.
+  pin the Penpot tab, Chrome → Settings → Performance → _Always keep these sites active_ → the Penpot instance's
+  origin, and disable Memory Saver for it. Without this, every design ticket stalls.
+- **A page reload closes the MCP plugin panel** (the toolbar **MCP** toggle reads Off afterwards) — re-enable it after
+  any reload. Chrome throttles non-foreground windows, so keep the building window in front or start Chrome with
+  `--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows`.
