@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .errors import OmsError
+from .errors import TradingDisabled
 
 
 class ReadOnlyCheck(Protocol):
@@ -35,15 +35,19 @@ class ReadOnlyCheck(Protocol):
     def reason_text(self) -> str | None: ...
 
 
-class OrderPlacementRefused(OmsError):
+class OrderPlacementRefused(TradingDisabled):
     """Raised when an order-opening command is rejected because the process
-    is in read-only degraded mode (a public/off-mesh binding was detected).
+    is in read-only degraded mode (a public/off-mesh binding was detected):
+    `403 trading_disabled` with no reason (`errors.PROBLEMS`). `reason_code` and
+    `reason_text` are the gate's own, for the log; the answer's detail is fixed.
     """
+
+    default_detail = "Order entry is paused: the terminal is read-only."
 
     def __init__(self, *, reason_code: str | None, reason_text: str | None) -> None:
         self.reason_code = reason_code or "net.read_only"
         self.reason_text = reason_text or "The trading terminal is in read-only mode."
-        super().__init__(self.reason_text)
+        super().__init__()
 
 
 class Validator:
