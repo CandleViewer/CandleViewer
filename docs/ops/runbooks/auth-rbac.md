@@ -50,8 +50,8 @@ for the client (#1640).
 presented one's strike count and read-only window (`step_up_failures`, `readonly_until`), so a
 refresh never lifts the downgrade. Step-up grants are never carried. The refresh's
 `auth.session_refreshed` record names the penalty in `after_state` as the presented row held it when
-the refresh was accepted (counts only); a strike landing after that is carried and recorded on its
-own.
+the refresh was accepted (counts only); a strike that lands before the claim is carried and recorded
+on its own, and one after it is refused, since the presented session is revoked by then.
 
 ## 1. Unlock a locked account (SR-016)
 

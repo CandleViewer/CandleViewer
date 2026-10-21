@@ -17,7 +17,8 @@ carries the row's view-as context (#3085, `0042_sessions_view_as`). The insert w
 the context a record carries (a refresh carries it to the successor row), and the
 `ViewAsSessionStore` writes (`auth/view_as.py`) are one conditional statement each. The
 insert also writes the step-up strikes and read-only window a refresh carries from the
-claim's row (#4051): a new row, from a revoked source row no writer can change.
+claim's row (#4051): a new row, from a revoked source row whose step-up columns no writer
+can change (`_STEP_UP_SQL` needs `revoked_at IS NULL`).
 """
 
 from __future__ import annotations
