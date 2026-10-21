@@ -5,7 +5,8 @@
  * - One token per origin. The server keeps one live access token per session: a refresh or a step-up
  *   revokes the one before as `rotated`. So a bundle a tab receives is posted to its same-origin siblings
  *   over the `cv.auth.token` BroadcastChannel (memory to memory, never storage), and each holds it in
- *   place of the token that rotation revoked. A tab that forgets the token tells them to forget it too.
+ *   place of the older token that rotation revoked. A tab that forgets the token tells them too: each
+ *   forgets it, and one that held it routes to sign-in.
  * - `send` gives it as `Authorization: Bearer` to same-origin `/api/v1/` URLs and to nothing else.
  * - It is refreshed at `expires_at - 60 s` through `POST /auth/refresh` (the `cv_refresh` cookie and the
  *   CSRF header): one refresh at a time in the tab, and across tabs under the `cv.auth.refresh` Web Lock,
@@ -45,13 +46,22 @@ export const REFRESH_WAIT_MS = 10_000;
 export const SIBLING_WAIT_MS = 1_000;
 /**
  * Set while a refresh is on the wire, to the time it was sent (never the token: ADR-0020 decision 1 keeps
- * the credential out of storage), and removed once an answer lands. A tab that closes or reloads leaves
- * it, so the next lock holder does not present a cookie that refresh may have spent.
+ * the credential out of storage), and removed once an answer shows what became of the cookie. A tab that
+ * closes or reloads leaves it, as do a lost answer and a `5xx` (which may follow the rotation), so the next
+ * lock holder does not present a cookie that refresh may have spent, however long ago it was sent.
  */
 export const REFRESH_SENT_KEY = "cv.auth.refresh_sent_at";
-/** How long that holder waits for the cookie such a refresh stores, before it asks the server. */
+/**
+ * How long that holder waits for the cookie a refresh sent less than `REFRESH_WAIT_MS` ago may still
+ * store, before it asks the server (about an older one it asks at once).
+ */
 export const ORPHAN_WAIT_MS = 2_000;
 const ORPHAN_POLL_MS = 100;
+/**
+ * The refresh refusals that come before any rotation, so the cookie in the jar is still the one presented
+ * (a `2xx` stores its successor). Any other answer may follow a rotation whose cookie never landed.
+ */
+const UNROTATED: ReadonlySet<number> = new Set([401, 403, 429]);
 /** How long an idle lock a refresh found is answered without the cookie being presented again. */
 const LOCKED_MEMO_MS = 5_000;
 const SESSION_PATH = "/api/v1/auth/session";
@@ -100,8 +110,8 @@ export interface AccessTokenHolder extends TokenSource {
    */
   set(bundle: TokenBundle): void;
   /**
-   * Forgets the token, here and in the sibling tabs: `getToken` answers `unavailable` until the next
-   * bundle; a refresh on the wire is dropped.
+   * Forgets the token, here and in the sibling tabs (one that held it routes to sign-in): `getToken`
+   * answers `unavailable` until the next bundle; a refresh on the wire is dropped.
    */
   clear(): void;
   /** Logout or a lost session: forgets the token and routes to sign-in. */
@@ -228,13 +238,13 @@ function markSent(sent: boolean): void {
   }
 }
 
-/** Whether a refresh that no tab saw answered was sent less than `REFRESH_WAIT_MS` ago. */
-function sentUnanswered(): boolean {
+/** How long ago a refresh no tab saw answered was sent, or `null`: none, or no storage (no guard then). */
+function sentAgo(): number | null {
   try {
-    const age = Date.now() - Number(localStorage.getItem(REFRESH_SENT_KEY));
-    return age >= 0 && age < REFRESH_WAIT_MS;
+    const mark = localStorage.getItem(REFRESH_SENT_KEY);
+    return mark === null ? null : Date.now() - Number(mark);
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -274,17 +284,26 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
     channel?.postMessage({ accessToken: bundle.access_token, expiresAtMs });
   }
 
-  /** A sibling's bundle (its rotation revoked the token held here, so it takes that one's place), or its sign-out. */
+  /**
+   * A sibling's bundle, newer than the token held here (its rotation revoked that one, so it takes its
+   * place), or its sign-out: the session ended in every tab, so one that held the token routes to sign-in
+   * as `lose` does (through `forget`: `clear` or `endSession` would post it back). A tab that held none (the
+   * sign-in page, or a page load the route guard sees to) only forgets.
+   */
   function receive(data: unknown): void {
     if (!isRecord(data)) return;
     if (data["cleared"] === true) {
-      forget(); // the sibling's session ended, so this one did: the route guard sends the user to sign-in
+      const held = token !== null;
+      forget();
+      if (held) toSignIn();
       return;
     }
     const { accessToken: value, expiresAtMs } = data;
     if (typeof value !== "string" || !B64TOKEN.test(value) || value === token?.value) return;
     if (typeof expiresAtMs !== "number" || !Number.isFinite(expiresAtMs)) return;
     if (expiresAtMs <= Date.now()) return;
+    // every bundle lives as long, so one due no later than the token held was minted before it
+    if (token !== null && expiresAtMs <= token.expiresAtMs) return;
     hold(value, expiresAtMs);
     for (const done of waiting) done();
   }
@@ -304,7 +323,10 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
     });
   }
 
-  /** Forgets the token in this tab; `clear` also tells the sibling tabs, which share the session cookie. */
+  /**
+   * Forgets the token in this tab. `clear` also tells the sibling tabs, which share the session cookie:
+   * each forgets it, and one that held it routes to sign-in.
+   */
   function forget(): void {
     token = null;
     stale = false;
@@ -324,7 +346,10 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
     toSignIn();
   }
 
-  /** The refresh found no session: a page load leaves the route guard to send the user to sign-in. */
+  /**
+   * The refresh found no session, so no tab has one: the token is forgotten here and in the sibling tabs,
+   * and each tab that held it routes to sign-in. A page load, holding none, leaves that to the route guard.
+   */
   function lose(): RefreshOutcome {
     if (token === null) clear();
     else endSession();
@@ -333,7 +358,8 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
 
   /**
    * `POST /auth/refresh`, never aborted. `keepalive` stores the rotated cookie after a tab closes or
-   * reloads, but the lock goes first, so `REFRESH_SENT_KEY` stays until an answer lands here.
+   * reloads, but the lock goes first, so `REFRESH_SENT_KEY` stays until an answer here shows what became of
+   * the cookie: a `2xx` or an `UNROTATED` refusal. A lost answer or any other status keeps it.
    */
   async function present(): Promise<Response> {
     const csrf = readCsrfCookie();
@@ -344,17 +370,23 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
       keepalive: true,
       headers: csrf === null ? {} : { [CSRF_HEADER]: csrf },
     });
-    markSent(false); // answered: what it rotated is in the jar (a lost answer keeps the mark)
+    if (res.ok || UNROTATED.has(res.status)) markSent(false); // what became of the cookie is known
     return res;
   }
 
   /**
-   * A refresh no tab saw answered may have spent the cookie in the jar: its own cookie is waited for
-   * (`null`: present it). If none lands, `GET /auth/session` with the cookie alone tells a live one
+   * A refresh no tab saw answered may have spent the cookie in the jar. One sent less than
+   * `REFRESH_WAIT_MS` ago (`landing`) may still store its own: that is waited for (`null`: present it). If
+   * none lands, or at once for an older one, `GET /auth/session` with the cookie alone tells a live one
    * (`null`) from a spent one (`lost`: that `401` revokes nothing, where a refresh would revoke the family).
    */
-  async function orphaned(before: string | null): Promise<"lost" | "failed" | null> {
-    for (let waited = 0; waited < ORPHAN_WAIT_MS; waited += ORPHAN_POLL_MS) {
+  async function orphaned(
+    before: string | null,
+    landing: boolean,
+  ): Promise<"lost" | "failed" | null> {
+    // a deadline, not a count of polls: the lock is held meanwhile, and a hidden tab's timers run late
+    const deadline = Date.now() + (landing ? ORPHAN_WAIT_MS : 0);
+    while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, ORPHAN_POLL_MS));
       if (readCsrfCookie() !== before) return null; // it landed: the cookie in the jar is the live one
     }
@@ -377,9 +409,11 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
     // and the bundle it posts is held instead of rotating (and revoking) once more
     if (channel !== null && readCsrfCookie() !== askedWith && (await siblingBundle())) return "ok";
     // unchanged, but a refresh no tab saw answered (its tab closed or reloaded, letting go of the lock but
-    // not of the request, or its answer was lost) may have spent the cookie in the jar
-    if (readCsrfCookie() === askedWith && sentUnanswered()) {
-      const orphan = await orphaned(askedWith);
+    // not of the request, or its answer was lost or a 5xx) may have spent the cookie in the jar, however
+    // long ago it was sent
+    const age = readCsrfCookie() === askedWith ? sentAgo() : null;
+    if (age !== null) {
+      const orphan = await orphaned(askedWith, age >= 0 && age < REFRESH_WAIT_MS);
       if (orphan === "lost") return lose();
       if (orphan === "failed") return orphan;
     }
@@ -488,7 +522,12 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
         if (next !== null) res = await attempt(next);
       }
       if (path === LOGOUT_PATH && res.ok) clear(); // the session ended: the caller routes
-      if (path === UNLOCK_PATH && res.ok) lockedUntil = 0; // the lock is lifted: the next ask refreshes
+      if (path === UNLOCK_PATH && res.ok) {
+        // a live session, unlocked: the next ask refreshes, even in a tab signed out because a locked
+        // session's refresh was answered as a lost one (README, known gaps)
+        lockedUntil = 0;
+        signedOut = false;
+      }
       return res;
     },
   };

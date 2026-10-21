@@ -114,7 +114,8 @@ const later = <T>(ms: number, value: () => T | PromiseLike<T>): Promise<T> =>
 let fetchMock: ReturnType<typeof vi.fn>;
 let toSignIn: Mock<() => void>;
 let holder: AccessTokenHolder;
-let transport: Mock<(init: RequestInit) => Promise<Response>>;
+type Transport = (init: RequestInit) => Promise<Response>;
+let transport: Mock<Transport>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -444,6 +445,15 @@ describe("a lost session goes back to sign-in", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // no session: a refused call asks nothing again
   });
 
+  it("an unlock's 2xx after a refresh that called a locked session lost lets the next ask refresh", async () => {
+    fetchMock.mockResolvedValueOnce(refused("refresh_token_invalid")); // the server's idle-lock gap
+    await expect(holder.refresh()).resolves.toBe("lost");
+    transport.mockResolvedValueOnce(json(200, {})); // SCR-005 unlocks with the cookie
+    await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    fetchMock.mockResolvedValueOnce(refreshed(2)); // and the same cookie refreshes
+    await expect(holder.getToken()).resolves.toMatchObject({ kind: "ok", accessToken: tokenOf(2) });
+  });
+
   it("the tab's holder goes to SCR-001 with where the user was, as the route guard does", async () => {
     const assign = vi.fn();
     const { origin } = window.location;
@@ -537,6 +547,16 @@ describe("a 401 on an API call", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("renews a call refused 401 with a body that is no JSON (a proxy's page), and repeats it once", async () => {
+    holder.set(bundle(1));
+    fetchMock.mockResolvedValueOnce(refreshed(2));
+    transport.mockImplementation(async (init: RequestInit) =>
+      authOf(init) === bearer(2) ? noContent() : new Response("<html>401</html>", { status: 401 }),
+    );
+    expect((await holder.send("/api/v1/x", {}, transport)).status).toBe(204);
+    expect(transport.mock.calls.map(([init]) => authOf(init))).toEqual([bearer(1), bearer(2)]);
+  });
+
   it("refreshes once for a call made before any token (the page-load refresh failed), and repeats it", async () => {
     fetchMock.mockResolvedValueOnce(refreshed(1));
     transport.mockImplementation(async (init: RequestInit) =>
@@ -616,14 +636,18 @@ describe("one token per origin: a bundle one tab receives, its sibling tabs hold
     vi.stubGlobal("navigator", { locks: serialLocks() });
     vi.stubGlobal("BroadcastChannel", Channel);
     const session = rotatingSession();
-    const tabs = [tab(), tab()] as const;
+    const signIns = [vi.fn(), vi.fn()] as const; // how each tab goes to sign-in
+    const tabs = [
+      createAccessTokenHolder(signIns[0]),
+      createAccessTokenHolder(signIns[1]),
+    ] as const;
     const loaded = tabs[0].refresh();
     await vi.advanceTimersByTimeAsync(60); // the answer at 50 ms, the post to the sibling a moment later
     await expect(loaded).resolves.toBe("ok");
     await expect(tabs[1].getToken()).resolves.toMatchObject({ accessToken: tokenOf(1) });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(Channel.opened).toEqual([TOKEN_CHANNEL, TOKEN_CHANNEL]);
-    return { ...session, tabs };
+    return { ...session, tabs, signIns };
   }
 
   it("after one tab refreshes, the other tab's reads and writes carry the new token", async () => {
@@ -665,15 +689,35 @@ describe("one token per origin: a bundle one tab receives, its sibling tabs hold
     expect(fetchMock).toHaveBeenCalledTimes(2); // the page load's, and one renewal
   });
 
-  it("a logout in one tab is forgotten in the other: no revoked bearer goes out, and nothing is refreshed", async () => {
-    const { api, tabs } = await twoTabs();
-    await tabs[0].send("/api/v1/auth/logout", { method: "POST" }, api);
-    await flush(); // the post reaches the sibling
-    await expect(tabs[1].getToken()).resolves.toEqual({ kind: "unavailable" });
-    await tabs[1].send("/api/v1/x", {}, api);
-    expect(authOf(api.mock.calls.at(-1)?.[0])).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1); // the page load's only
-  });
+  it.each<[string, (tab: AccessTokenHolder, api: Transport) => Promise<unknown>, number, number]>([
+    ["logs out", (tab, api) => tab.send("/api/v1/auth/logout", { method: "POST" }, api), 0, 1],
+    [
+      "finds the session lost",
+      (tab) => {
+        fetchMock.mockImplementationOnce(async () => refused("refresh_token_invalid"));
+        tab.invalidate(); // its WS client was refused
+        return tab.getToken();
+      },
+      1,
+      2,
+    ],
+  ])(
+    "a tab that %s sends each sibling that held the token to sign-in, which sends no bearer and refreshes nothing",
+    async (_name, act, own, refreshes) => {
+      const { api, tabs, signIns } = await twoTabs();
+      const tokenless = vi.fn();
+      createAccessTokenHolder(tokenless); // a tab that holds none (the sign-in page) stays where it is
+      await act(tabs[0], api);
+      await flush(); // the post reaches the siblings
+      // a logout's own tab is routed by the sign-out UI, a lost session's by its holder
+      expect(signIns.map((signIn) => signIn.mock.calls.length)).toEqual([own, 1]);
+      expect(tokenless).not.toHaveBeenCalled();
+      await expect(tabs[1].getToken()).resolves.toEqual({ kind: "unavailable" });
+      await tabs[1].send("/api/v1/x", {}, api);
+      expect(authOf(api.mock.calls.at(-1)?.[0])).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(refreshes); // the page load's, and the lost one's
+    },
+  );
 
   it.each<[string, (now: number) => unknown]>([
     ["no object", () => null],
@@ -681,8 +725,12 @@ describe("one token per origin: a bundle one tab receives, its sibling tabs hold
     ["an expiry that is no number", () => ({ accessToken: tokenOf(9), expiresAtMs: Number.NaN })],
     ["an expiry already past", (now) => ({ accessToken: tokenOf(9), expiresAtMs: now })],
     ["the held token, due sooner", (now) => ({ accessToken: tokenOf(1), expiresAtMs: now + 61e3 })],
+    [
+      "an older bundle, due before the held one",
+      (now) => ({ accessToken: tokenOf(9), expiresAtMs: now + 599e3 }),
+    ],
   ])(
-    "holds nothing another same-origin context posts that is not a bundle: %s",
+    "holds nothing another same-origin context posts that is not a newer bundle: %s",
     async (_name, message) => {
       const Channel = siblingChannels();
       vi.stubGlobal("BroadcastChannel", Channel);
@@ -691,6 +739,7 @@ describe("one token per origin: a bundle one tab receives, its sibling tabs hold
       new Channel(TOKEN_CHANNEL).postMessage(message(Date.now()));
       await flush();
       await expect(own.getToken()).resolves.toMatchObject({ kind: "ok", accessToken: tokenOf(1) });
+      await vi.advanceTimersByTimeAsync(539_999); // its timer stands: nothing before its T - 60 s
       expect(fetchMock).not.toHaveBeenCalled();
     },
   );
@@ -726,6 +775,11 @@ describe("a refresh no tab saw answered: its keepalive request outlives the lock
     (fetchMock.mock.calls as [string, RequestInit][])
       .filter(([url]) => url === REFRESH_PATH)
       .map(([, init]) => new Headers(init.headers).get("X-CSRF-Token"));
+  /** Every other call: the cookie-only `GET /auth/session` probes, and the `Authorization` each carried. */
+  const probes = (): [string, string | null][] =>
+    (fetchMock.mock.calls as [string, RequestInit][])
+      .filter(([url]) => url !== REFRESH_PATH)
+      .map(([url, init]) => [url, authOf(init)]);
   /** A tab sends a refresh and goes: it never sees the answer, whose rotated cookie lands `landsInMs` later. */
   async function sentThenGone(landsInMs?: number): Promise<void> {
     fetchMock.mockImplementationOnce(() => new Promise<Response>(() => undefined));
@@ -770,12 +824,7 @@ describe("a refresh no tab saw answered: its keepalive request outlives the lock
       await vi.advanceTimersByTimeAsync(ORPHAN_WAIT_MS);
       await expect(reloaded).resolves.toBe(outcome);
       expect(presented()).toEqual(sent);
-      const probes = (fetchMock.mock.calls as [string, RequestInit][]).filter(
-        ([url]) => url !== REFRESH_PATH,
-      );
-      expect(probes.map(([url, init]) => [url, authOf(init)])).toEqual([
-        ["/api/v1/auth/session", null],
-      ]);
+      expect(probes()).toEqual([["/api/v1/auth/session", null]]);
     },
   );
 
@@ -788,6 +837,84 @@ describe("a refresh no tab saw answered: its keepalive request outlives the lock
     const again = holder.refresh();
     await vi.advanceTimersByTimeAsync(ORPHAN_WAIT_MS);
     await expect(again).resolves.toBe("lost");
+    expect(presented()).toEqual(["csrf-0"]);
+  });
+
+  it.each([
+    ["live, it is presented", 200, "ok", ["csrf-0", "csrf-0"]],
+    ["spent, it is not", 401, "lost", ["csrf-0"]],
+  ])(
+    "this tab's own refresh that the browser fails 30 s after it went is checked too, at once: %s",
+    async (_name, status, outcome, sent) => {
+      let drop: (reason: unknown) => void = () => undefined;
+      fetchMock.mockImplementationOnce(
+        () => new Promise<Response>((_resolve, reject) => (drop = reject)),
+      );
+      const first = holder.refresh();
+      await vi.advanceTimersByTimeAsync(30_000); // the caller stops waiting at 10 s, the browser later
+      await expect(first).resolves.toBe("failed");
+      drop(new TypeError("the answer was lost"));
+      await flush();
+      fetchMock.mockImplementation(async (url: string) =>
+        url === REFRESH_PATH ? refreshed(2) : json(status, {}),
+      );
+      const again = holder.refresh();
+      await flush(); // no wait for the cookie of a refresh sent that long ago
+      expect(probes()).toEqual([["/api/v1/auth/session", null]]);
+      await expect(again).resolves.toBe(outcome);
+      expect(presented()).toEqual(sent);
+    },
+  );
+
+  it("a refresh answered 500, which may come after the rotation, is checked the same way before the cookie goes again", async () => {
+    fetchMock.mockResolvedValueOnce(json(500, {}));
+    await expect(holder.refresh()).resolves.toBe("failed");
+    fetchMock.mockImplementation(async (url: string) =>
+      url === REFRESH_PATH ? refreshed(2) : json(401, {}),
+    );
+    const again = holder.refresh();
+    await vi.advanceTimersByTimeAsync(ORPHAN_WAIT_MS);
+    await expect(again).resolves.toBe("lost");
+    expect(presented()).toEqual(["csrf-0"]);
+  });
+
+  it.each([
+    [200, false],
+    [401, false],
+    [403, false],
+    [429, false],
+    [500, true],
+    [503, true],
+  ])(
+    "a refresh answered %i keeps the mark: %s (a 2xx, or a refusal before any rotation, settles the cookie)",
+    async (status, kept) => {
+      fetchMock.mockResolvedValueOnce(status === 200 ? refreshed(2) : json(status, {}));
+      await holder.refresh();
+      expect(localStorage.getItem(REFRESH_SENT_KEY) !== null).toBe(kept);
+    },
+  );
+
+  it("waits for that cookie by the clock, not by a count of looks: a hidden tab's late timers keep the lock no longer", async () => {
+    await sentThenGone();
+    fetchMock.mockImplementation(async (url: string) =>
+      url === REFRESH_PATH ? refreshed(2) : json(200, {}),
+    );
+    const reloaded = holder.refresh();
+    await vi.advanceTimersByTimeAsync(100); // one look at the cookie
+    vi.setSystemTime(Date.now() + ORPHAN_WAIT_MS); // hidden, the tab's 100 ms timers run seconds late
+    await vi.advanceTimersByTimeAsync(100); // so the next look is past the wait
+    expect(probes()).toEqual([["/api/v1/auth/session", null]]);
+    await expect(reloaded).resolves.toBe("ok");
+  });
+
+  it("a document without storage refreshes all the same: the cookie goes once, and nothing escapes", async () => {
+    const blocked = (): never => {
+      throw new DOMException("storage is blocked", "SecurityError");
+    };
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(blocked);
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(blocked);
+    fetchMock.mockResolvedValueOnce(refreshed(1));
+    await expect(holder.refresh()).resolves.toBe("ok");
     expect(presented()).toEqual(["csrf-0"]);
   });
 });
