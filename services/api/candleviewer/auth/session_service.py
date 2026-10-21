@@ -78,6 +78,7 @@ from candleviewer.auth.models import (
     UserStatus,
 )
 from candleviewer.auth.session_repository import SessionRepository
+from candleviewer.auth.view_as import ViewAsState
 
 #: Ticket "Scope / Deliverables": "12 h absolute lifetime".
 ABSOLUTE_LIFETIME = timedelta(hours=12)
@@ -363,6 +364,7 @@ class SessionService:
         mfa_satisfied: bool = True,
         expires_at: datetime | None = None,
         session_id: uuid.UUID | None = None,
+        view_as: ViewAsState | None = None,
     ) -> MintedSession:
         """Issue a brand-new session — session fixation is prevented by
         always minting a fresh `session_id`/refresh token here, never
@@ -374,6 +376,10 @@ class SessionService:
         high: rotation must not reset the 12 h absolute lifetime). First-
         login callers never pass it, so a brand-new session still gets
         `now + ABSOLUTE_LIFETIME`.
+
+        *view_as* is the view-as context `refresh()` carries to the successor
+        as the claim returned it (#3085, SR-013), inserted with the row and
+        unchanged: nothing extends its expiry. A sign-in never passes it.
 
         Raises `UserDisabled` when the user is `disabled` or gone (#2911):
         the repository reads `users.status` under the user-row lock in the
@@ -404,6 +410,7 @@ class SessionService:
             is_electron=is_electron,
             mfa_satisfied_at=now if mfa_satisfied else None,
             idle_timeout_s=clamp_idle_timeout_s(idle_timeout_s),
+            view_as=view_as,
         )
         created = await self._repository.create_session(session)
         if created is None:
@@ -544,6 +551,22 @@ class SessionService:
             # never be able to extend a session past its original 12 h
             # absolute lifetime (ticket "Scope / Deliverables").
             expires_at=presented.expires_at,
+            # #3085 SR-013: the view-as context as the claim's RETURNING row holds it, never as
+            # `presented` was read before the claim (an end, clear or start may land in between),
+            # live, held or cleared alike. The rotated row keeps its copy: it is revoked, and the
+            # sweeper skips a copy another row carries (`ViewAsSessionStore.list_view_as_due`).
+            # The claim and this insert are two transactions (`SessionRepository` has one per
+            # call, and #2911's disable window sits between them), so until the insert commits
+            # only the rotated row holds the context. The sweeper's grace runs from the claim's
+            # `revoked_at`, the `now` read above, so the gap it must exceed includes the claim's
+            # own waits. Each unit of work can wait for a pool connection (30 s) and open one
+            # (asyncpg, 60 s), and each statement runs under the unit's `statement_timeout` (30 s):
+            # one for the claim, two for the insert (the user-row lock wait, the insert), 270 s in
+            # all. A pre-ping, a stalled connection, a commit and the event loop are outside that.
+            # A request cancelled in the gap leaves an orphan the sweeper ends `session_ended`
+            # after the grace, rightly: no live session holds the context. A shorter grace could
+            # end, as `session_ended`, a context a slow successor then carries.
+            view_as=claimed.view_as,
         )
         await self._repository.link_rotation(
             prev_session_id=str(presented.id), next_session_id=str(minted.session_id)

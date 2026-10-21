@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from candleviewer.auth.break_glass_notice import BreakGlassEvents, BreakGlassNotice
 from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
@@ -26,6 +26,7 @@ from candleviewer.auth.invite_service import InviteService
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import SessionRecord, UserRecord
+from candleviewer.auth.session_repository import SessionRepository
 from candleviewer.auth.session_service import (
     BackstopAuditSink,
     BackstopRevocation,
@@ -36,6 +37,7 @@ from candleviewer.auth.session_service import (
 )
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.totp_skew import TotpSkewReporter
+from candleviewer.auth.view_as import ViewAsSessionStore
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.observability.health_probes import SystemEventWriter
 from candleviewer.settings import Environment
@@ -45,13 +47,18 @@ if TYPE_CHECKING:
     from candleviewer.auth.invite_repository import InviteRepository
     from candleviewer.auth.mfa_repository import MfaRepository
     from candleviewer.auth.repository import UserRepository
-    from candleviewer.auth.session_repository import SessionRepository
 
 
 class BackstopAuditNotAttached(RuntimeError):
     """`require_active` or a refused `refresh()` (#3331) revoked a disabled user's session but no
     audit port is attached: a wiring fault. It is raised (and logged by the session service)
     rather than skipped in silence."""
+
+
+class AuthSessionStore(SessionRepository, ViewAsSessionStore, Protocol):
+    """The session repository `AuthService` is built with (#3085): what its services use
+    (`SessionRepository`) and the view-as columns it exposes (`ViewAsSessionStore`, as
+    `view_as_store`). One object, so the refresh's carry and the view-as writes share a store."""
 
 
 class AuthService:
@@ -69,7 +76,7 @@ class AuthService:
         mfa_repository: MfaRepository | None = None,
         totp_encryption_key: bytes | None = None,
         recovery_code_hmac_key: bytes | None = None,
-        session_repository: SessionRepository | None = None,
+        session_repository: AuthSessionStore | None = None,
         clock: Callable[[], datetime] | None = None,
         invite_repository: InviteRepository | None = None,
         system_events: SystemEventWriter | None = None,
@@ -152,6 +159,19 @@ class AuthService:
         if self._sessions is None:
             raise RuntimeError("AuthService.start() has not wired a SessionRepository")
         return self._sessions
+
+    @property
+    def view_as_store_is_active(self) -> bool:
+        return self._session_repository is not None
+
+    @property
+    def view_as_store(self) -> ViewAsSessionStore:
+        """#3085: the view-as columns of `sessions`, for the view-as service and its sweeper,
+        through the repository `sessions` writes. Available from construction, unlike `sessions`,
+        which needs `start()`."""
+        if self._session_repository is None:
+            raise RuntimeError("AuthService was built without a session repository")
+        return self._session_repository
 
     @property
     def break_glass_notice(self) -> BreakGlassNotice:

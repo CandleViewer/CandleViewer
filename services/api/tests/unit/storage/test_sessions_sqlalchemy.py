@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from typing import Any
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import asyncpg
 
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
@@ -351,3 +353,242 @@ def test_every_statement_on_sessions_selects_the_columns_or_builds_no_record() -
     assert all(column in _COLUMNS for column in _VIEW_AS_COLUMNS)
     for column in ("view_as_context_id", "view_as_target_user_id"):
         assert f"{column}::text AS {column}" in _COLUMNS
+
+
+# -- #3085 S2b: the `ViewAsSessionStore` statements, offline (rendered for asyncpg, never run here;
+# `tests/integration/storage/test_sessions_view_as_store_pg.py` runs them on Postgres).
+
+_CID, _ASKED, _GRACE = _LIVE.context_id, ViewAsEndReason.ENDED, timedelta(minutes=2)
+_TARGET = _LIVE.target_user_id
+_IN_ROW = {"id": "sid", "context_id": str(_CID)}
+Call = Callable[[SqlAlchemySessionRepository], Awaitable[Any]]
+#: method -> (a call, its statement, the parameters it must bind)
+_VIEW_AS_CALLS: dict[str, tuple[Call, str, dict[str, Any]]] = {
+    "start_view_as": (
+        lambda r: r.start_view_as("sid", _LIVE, now=_T0),
+        "_VIEW_AS_START_SQL",
+        {"id": "sid", "now": _T0, "context_id": str(_CID), "target_user_id": str(_TARGET)}
+        | {"started_at": _LIVE.started_at, "view_as_expires_at": _LIVE.expires_at},
+    ),
+    "end_view_as": (
+        lambda r: r.end_view_as("sid", _CID, ended_at=_END, reason=_ASKED),
+        "_VIEW_AS_END_SQL",
+        _IN_ROW | {"ended_at": _END, "reason": "ended"},
+    ),
+    "leave_view_as": (
+        lambda r: r.leave_view_as("sid", _CID, ended_at=_END, reason=_ASKED, now=_CLEAR),
+        "_VIEW_AS_LEAVE_SQL",
+        _IN_ROW | {"ended_at": _END, "reason": "ended", "now": _CLEAR},
+    ),
+    "clear_view_as": (
+        lambda r: r.clear_view_as("sid", _CID, now=_CLEAR),
+        "_VIEW_AS_CLEAR_SQL",
+        _IN_ROW | {"now": _CLEAR},
+    ),
+    "mark_view_as_recorded": (
+        lambda r: r.mark_view_as_recorded("sid", _CID, now=_CLEAR),
+        "_VIEW_AS_RECORDED_SQL",
+        _IN_ROW | {"now": _CLEAR},
+    ),
+    "list_view_as_due": (
+        lambda r: r.list_view_as_due(now=_T0, rotated_grace=_GRACE, limit=7),
+        "_VIEW_AS_DUE_SQL",
+        {"now": _T0, "cutoff": _T0 - _GRACE, "limit": 7},
+    ),
+    "list_live_view_as": (
+        lambda r: r.list_live_view_as(limit=7),
+        "_VIEW_AS_LIVE_SQL",
+        {"limit": 7},
+    ),
+    "list_live_view_as_by_target": (
+        lambda r: r.list_live_view_as_by_target(_TARGET),
+        "_VIEW_AS_LIVE_BY_TARGET_SQL",
+        {"target": str(_TARGET)},
+    ),
+}
+_WRITES = [method for method in _VIEW_AS_CALLS if not method.startswith("list_")]
+
+
+def _binds(stmt: sa.TextClause) -> set[str]:
+    """The placeholders `stmt` has once rendered for asyncpg (`$n`): a name the call does not bind
+    would fail only when Postgres runs it."""
+    return set(stmt.compile(dialect=asyncpg.dialect()).binds)
+
+
+@pytest.mark.parametrize("method", _VIEW_AS_CALLS)
+async def test_each_view_as_call_is_one_statement_binding_exactly_its_parameters(
+    method: str,
+) -> None:
+    call, name, params = _VIEW_AS_CALLS[method]
+    stmt = getattr(sessions_sqlalchemy, name)
+    repo, rel = _repo([_row(**_view_as_columns(_LIVE), ended_now=True)])
+
+    got = await call(repo)
+
+    assert rel.session.calls == [(str(stmt), params)] and (rel.units, rel.commits) == (1, 1)
+    assert _binds(stmt) == set(params)
+    assert got is not None and (_COLUMNS in str(stmt))  # every row read builds a record
+
+
+@pytest.mark.parametrize("method", _WRITES)
+async def test_a_view_as_write_whose_condition_fails_returns_none(method: str) -> None:
+    repo, rel = _repo([])
+    assert await _VIEW_AS_CALLS[method][0](repo) is None and rel.commits == 1
+
+
+@pytest.mark.parametrize("ended_now", [True, False])
+async def test_leave_returns_the_row_and_whether_this_call_ended_it(ended_now: bool) -> None:
+    repo, _ = _repo([_row(**_view_as_columns(_LIVE), ended_now=ended_now)])
+    left = await repo.leave_view_as("sid", _CID, ended_at=_END, reason=_ASKED, now=_CLEAR)
+    assert left is not None
+    assert left[1] is ended_now and SessionRecord.model_validate(left[0]).view_as == _LIVE
+
+
+async def test_start_refuses_an_ended_state_before_any_statement() -> None:
+    repo, rel = _repo([_row()])
+    with pytest.raises(ValueError, match="fresh"):
+        await repo.start_view_as("sid", _STATES["held"], now=_T0)
+    assert rel.session.calls == []
+
+
+class _DriverError(Exception):
+    """asyncpg's own error: the constraint it names, and the failing row as its DETAIL."""
+
+    def __init__(self, constraint_name: str) -> None:
+        super().__init__("DETAIL: Failing row contains (a refresh token hash)")
+        self.constraint_name = constraint_name
+
+
+class _AdapterError(Exception):
+    """SQLAlchemy's asyncpg adapter error: the SQLSTATE, and the driver error it chains."""
+
+    def __init__(self, sqlstate: str, driver: _DriverError) -> None:
+        super().__init__(str(driver))
+        self.sqlstate = sqlstate
+        self.__cause__ = driver
+
+
+def _violation(constraint: str, sqlstate: str) -> sa.exc.IntegrityError:
+    adapter = _AdapterError(sqlstate, _DriverError(constraint))
+    return sa.exc.IntegrityError("UPDATE sessions", None, adapter)
+
+
+class _Refusing(_Session):
+    """A session whose statement fails: Postgres refused it."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__([])
+        self._error = error
+
+    async def execute(self, stmt: Any, params: dict[str, Any]) -> _Result:
+        await super().execute(stmt, params)
+        raise self._error
+
+
+async def test_start_of_a_state_naming_the_rows_own_user_is_a_value_error_naming_nothing() -> None:
+    """Only the row knows its user, so the CHECK refuses the state (where the write would apply)
+    and the store turns that into the caller error the fake raises: a fixed message, no id and no
+    chained DETAIL (the failing row), and nothing committed."""
+    repo, rel = _repo([])
+    rel.session = _Refusing(_violation("sessions_view_as_shape", "23514"))
+    sid = str(uuid.uuid4())
+
+    with pytest.raises(ValueError, match="own user") as refused:
+        await repo.start_view_as(sid, _LIVE, now=_T0)
+
+    assert not any(value in str(refused.value) for value in (sid, str(_CID), str(_TARGET)))
+    assert refused.value.__cause__ is None and refused.value.__suppress_context__
+    assert len(rel.session.calls) == 1 and rel.commits == 0
+
+
+@pytest.mark.parametrize(
+    ("constraint", "sqlstate"),
+    [("sessions_view_as_target_user_id_fkey", "23503"), ("sessions_view_as_end_reason", "23514")],
+    ids=["no-such-target", "unknown-reason"],
+)
+async def test_start_lets_any_other_refusal_by_the_database_through(
+    constraint: str, sqlstate: str
+) -> None:
+    """Only the self-target is the caller's error: a missing target or a bad stored value is a
+    store failure and must not read as one."""
+    repo, rel = _repo([])
+    error = _violation(constraint, sqlstate)
+    rel.session = _Refusing(error)
+    with pytest.raises(sa.exc.IntegrityError) as refused:
+        await repo.start_view_as("sid", _LIVE, now=_T0)
+    assert refused.value is error
+
+
+@pytest.mark.parametrize("state", list(_STATES.values()), ids=list(_STATES))
+async def test_create_session_inserts_the_context_the_record_carries(
+    state: ViewAsState | None,
+) -> None:
+    """S3's carry: the insert writes a record's context as `_COLUMNS` reads it back, eight NULLs
+    when it holds none, and binds exactly what its statement names."""
+    repo, rel = _repo([SimpleNamespace(_mapping={"status": "active"})])
+    await repo.create_session(SimpleNamespace(**{**row_to_fields(_row()), "view_as": state}))
+    _, (_, params) = rel.session.calls
+    written = {k: v for k, v in params.items() if k.startswith("view_as_")}
+    assert written == (_view_as_columns(state) or dict.fromkeys(_VIEW_AS_COLUMNS))
+    assert _binds(sessions_sqlalchemy._INSERT_SQL) == set(params)
+
+
+def _assigned(stmt: sa.TextClause) -> set[str]:
+    """The `sessions` columns an UPDATE assigns or an INSERT names."""
+    sql = str(stmt)
+    if update := re.search(r"\bUPDATE sessions SET (.*?) (?:WHERE|FROM)\b", sql, re.S):
+        return set(re.findall(r"(\w+) = ", update.group(1)))
+    if insert := re.search(r"\bINSERT INTO sessions \((.*?)\)", sql, re.S):
+        return {column.strip() for column in insert.group(1).split(",")}
+    return set()
+
+
+def test_only_the_insert_and_the_view_as_writes_write_a_view_as_column() -> None:
+    """Refresh, activity, unlock, step-up and revocation never write the context (22: nothing
+    extends it), and each view-as write writes only its own columns."""
+    writes = {
+        name: {column for column in _assigned(value) if column.startswith("view_as_")}
+        for name, value in vars(sessions_sqlalchemy).items()
+        if isinstance(value, sa.TextClause)
+    }
+    assert {name: columns for name, columns in writes.items() if columns} == {
+        "_INSERT_SQL": set(_VIEW_AS_COLUMNS),
+        "_VIEW_AS_START_SQL": set(_VIEW_AS_COLUMNS),
+        "_VIEW_AS_END_SQL": {"view_as_ended_at", "view_as_end_reason"},
+        "_VIEW_AS_LEAVE_SQL": {"view_as_ended_at", "view_as_end_reason", "view_as_cleared_at"},
+        "_VIEW_AS_CLEAR_SQL": {"view_as_cleared_at"},
+        "_VIEW_AS_RECORDED_SQL": {"view_as_end_recorded_at"},
+    }
+
+
+def test_the_due_read_states_its_index_predicate_so_the_partial_index_serves_it() -> None:
+    sql = str(sessions_sqlalchemy._VIEW_AS_DUE_SQL)
+    assert "s.view_as_context_id IS NOT NULL AND s.view_as_end_recorded_at IS NULL" in sql
+    assert "o.view_as_context_id = s.view_as_context_id" in sql  # `ix_sessions_view_as_context`
+    assert sql.endswith("ORDER BY s.view_as_expires_at LIMIT :limit")
+
+
+#: statement -> the clauses that make a write safe or a read complete. The scenario table proves
+#: each on Postgres only (CI), so a clause dropped from the text passes every offline test above.
+_CLAUSES = {
+    "_VIEW_AS_LEAVE_SQL": (
+        "view_as_cleared_at IS NULL AND revoked_at IS NULL",  # a revoked row is not left
+        "COALESCE(view_as_ended_at, :ended_at)",  # the end it finds stays, its reason too
+        "COALESCE(view_as_end_reason, :reason)",
+    ),
+    "_VIEW_AS_END_SQL": (
+        "(revoked_at IS NULL OR NOT EXISTS (SELECT 1 FROM sessions o ",  # a carried copy is not
+        "o.id <> sessions.id AND o.revoked_at IS NULL)",  # ended: only a live other row carries
+    ),
+    "_VIEW_AS_DUE_SQL": (
+        "s.view_as_expires_at <= :now",  # due at the expiry itself, as is the absolute one
+        "s.expires_at <= :now",
+        "OR o.revoked_at IS NULL OR o.revoked_at > :cutoff",  # a rotated row with no time carries
+    ),
+}
+
+
+@pytest.mark.parametrize("name", _CLAUSES)
+def test_a_statement_states_the_clauses_only_the_postgres_table_proves(name: str) -> None:
+    sql = str(getattr(sessions_sqlalchemy, name))
+    assert [clause for clause in _CLAUSES[name] if clause not in sql] == []
