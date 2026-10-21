@@ -205,7 +205,59 @@ def funding_history(symbol: str, step_h: int) -> dict[str, Any]:
 _SRC = "documented-shape (exception #1778 A)"
 _RECORDED = {"capture_date": "2026-10-19",
              "source": "capture_fixture.py, fixture-drift run 39210373369 (redacted)"}  # fmt: skip
+#: #2877 ruling R2 (the #1778 group A pattern): order-path shapes no recording holds yet. Each
+#: file is its documentation page's Response Example, keys and values unchanged (for an error,
+#: its error-table row). E29-K01's recordings replace them;
+#: `tests/contract/bybit/test_contract_trading_drift.py` fails the moment one disagrees.
+_DOCS_URL = "https://bybit-exchange.github.io/docs/v5/"
+_DOCS_REF = "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921"
+_TRANSCRIBED = {"capture_date": "2026-10-21", "source": "docs-transcribed",
+                "retrieved": "2026-10-21"}  # fmt: skip
+#: name -> (stream, documentation page, symbol, what it shows)
+_DOCS_SHAPES: dict[str, tuple[str, str, str, str]] = {
+    "trading-account-info": ("GET /v5/account/info", "account/account-info", "*",
+                             "account info: regular margin, unified status 4"),
+    "trading-amend-reply": ("POST /v5/order/amend", "order/amend-order", "*",
+                            "amend accepted: orderId and a foreign orderLinkId"),
+    "trading-cancel-all-reply": ("POST /v5/order/cancel-all", "order/cancel-all", "*",
+                                 "cancel-all: two cancelled orders, success 1"),
+    "trading-cancel-reply": ("POST /v5/order/cancel", "order/cancel-order", "*",
+                             "cancel accepted: orderId and a foreign orderLinkId"),
+    "trading-closed-pnl": ("GET /v5/position/closed-pnl", "position/close-pnl", "ETHPERP",
+                           "one closed-PnL row, a next-page cursor"),
+    "trading-create-batch-reply": ("POST /v5/order/create-batch", "order/batch-place", "*",
+                                   "batch: two spot items, every item code 0"),
+    "trading-create-reply": ("POST /v5/order/create", "order/create-order", "*",
+                             "create accepted: orderId and the caller's orderLinkId"),
+    "trading-error-110001": ("POST /v5/order/cancel", "error", "*",
+                             "error-table row 110001 (UTA): code and text only"),
+    "trading-error-110072": ("POST /v5/order/create", "error", "*",
+                             "error-table row 110072 (UTA): code and text only"),
+    "trading-execution-list": ("GET /v5/execution/list", "order/execution", "ETHPERP",
+                               "one Trade fill, an empty orderLinkId, a next-page cursor"),
+    "trading-fee-rate": ("GET /v5/account/fee-rate", "account/fee-rate", "BTCUSDT",
+                         "a spot fee-rate row (category spot)"),
+    "trading-order-history": ("GET /v5/order/history", "order/order-list", "BTCUSDT",
+                              "one cancelled PostOnly order, a next-page cursor"),
+    "trading-order-realtime": ("GET /v5/order/realtime", "order/open-order", "ETHUSDT",
+                               "one open limit order with TP/SL, a next-page cursor"),
+    "trading-position-list": ("GET /v5/position/list", "position/position", "BTCUSD",
+                              "an inverse position (category inverse)"),
+    "trading-set-leverage-reply": ("POST /v5/position/set-leverage", "position/leverage", "*",
+                                   "set-leverage accepted: empty result"),
+    "trading-trading-stop-reply": ("POST /v5/position/trading-stop", "position/trading-stop",
+                                   "*", "trading-stop accepted: empty result"),
+    "trading-wallet-balance": ("GET /v5/account/wallet-balance", "account/wallet-balance", "*",
+                               "a unified wallet with one BTC coin row"),
+}  # fmt: skip
 _MAX = 1_500_000  # bytes; the E08-S05 3 h depth-200 book is the only file near it
+
+
+def _docs_url(page: str) -> str:
+    """The page's address: a page named as its folder is served as the folder (Docusaurus'
+    category index, so `position/position` is `/docs/v5/position`)."""
+    folder, _, name = page.rpartition("/")
+    return _DOCS_URL + (folder if folder.rpartition("/")[2] == name else page)
 
 
 def _entry(path: str, symbol: str, stream: str, event: str, host: str = WS_HOST,
@@ -279,6 +331,12 @@ def build() -> list[dict[str, Any]]:
                "recorded: snapshot + 19 deltas, incl. tickDirection, prevPrice1h/24h, "
                "fundingCap, singleOpenInterest", cap=8_000) | _RECORDED
         | {"window_ms": [1_792_391_746_229, 1_792_391_748_529]},
+    ]  # fmt: skip
+    m += [
+        _entry(f"rest/{name}.json", symbol, stream, event, host="bybit-exchange.github.io",
+               cap=4_000) | _TRANSCRIBED
+        | {"source_url": _docs_url(page), "source_ref": f"{_DOCS_REF}:docs/v5/{page}.mdx"}
+        for name, (stream, page, symbol, event) in _DOCS_SHAPES.items()
     ]  # fmt: skip
     return sorted(m, key=lambda e: str(e["path"]))
 

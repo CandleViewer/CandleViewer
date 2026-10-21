@@ -1,0 +1,460 @@
+"""Invariants 2 to 5, 8 and 9 of the trading port (G-8, #2877), with rulings R1, R5 and R13.
+
+2. every call draws the process governor in its class and lane, with a bounded wait (OM-D08);
+3. one governor per process, shared by public, trading and key-verification clients (R5);
+4. demo is REST-only and the account's environment is refused before anything is sent (C-2.11);
+5. `category=linear` on every call that takes it, refused unsigned otherwise (SR-054);
+8. the id filters are keyword-only, sent and re-applied (E29-T02 ruling Q5);
+9. `cancel-all` always sends `orderFilter=Order` (ruling R10).
+Replies are the transcribed shapes of `rest/trading-*.json` (ruling R2).
+"""
+
+from __future__ import annotations
+
+import ast
+import inspect
+from collections.abc import Awaitable, Callable
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import candleviewer.exchange.bybit as adapter_package
+from candleviewer.domain.order_link import ext_key
+from candleviewer.exchange.base.errors import ExchangeError, RateBudgetExceededError
+from candleviewer.exchange.base.models import (
+    AmendOrderRequest,
+    CancelOrderRequest,
+    TradingStopRequest,
+)
+from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
+from candleviewer.exchange.bybit.rest import BybitRestClient
+from candleviewer.exchange.bybit.service import ExchangeBybitService
+from candleviewer.exchange.bybit.signer import BybitSigner
+from candleviewer.exchange.bybit.trading import BybitTradingPort
+from tests._corpus import rest
+from tests._signing import CREDENTIAL_ID, Call, fake_capability
+from tests.unit.exchange.bybit._trading import (
+    ACCOUNT_B,
+    NOW_US,
+    SIGNER_ID,
+    RecordingGovernor,
+    Venue,
+    account,
+    link,
+    make_port,
+    place,
+    with_result,
+)
+
+ORDER, POSITION, READS = EndpointClass.ORDER, EndpointClass.POSITION, EndpointClass.ACCOUNT
+CANCEL = rest("rest/trading-cancel-reply.json")
+ORDER_ID = CANCEL["result"]["orderId"]
+
+Call_ = Callable[[BybitTradingPort], Awaitable[object]]
+
+
+def _calls() -> dict[str, tuple[Call_, str, EndpointClass, str, Any]]:
+    """Each port method: how to call it, its path, class, lane and a transcribed answer."""
+    ref = account()
+    created = with_result(rest("rest/trading-create-reply.json"), orderLinkId=link())
+    return {
+        "place_order": (
+            lambda p: p.place_order(place()), "/v5/order/create", ORDER, "entry", created,
+        ),
+        "place_order_critical": (
+            lambda p: p.place_order(place(lane="critical")), "/v5/order/create", ORDER, "critical",
+            created,
+        ),
+        "place_batch": (
+            lambda p: p.place_batch([place()]), "/v5/order/create-batch", ORDER, "entry",
+            rest("rest/trading-create-batch-reply.json"),
+        ),
+        "amend_order": (
+            lambda p: p.amend_order(
+                AmendOrderRequest(account=ref, symbol="BTCUSDT", order_link_id=ext_key(ORDER_ID),
+                                  exchange_order_id=ORDER_ID, qty=Decimal("0.02"))
+            ), "/v5/order/amend", ORDER, "entry", rest("rest/trading-amend-reply.json"),
+        ),
+        "cancel_order": (
+            lambda p: p.cancel_order(
+                CancelOrderRequest(account=ref, symbol="BTCUSDT", exchange_order_id=ORDER_ID)
+            ), "/v5/order/cancel", ORDER, "critical", CANCEL,
+        ),
+        "cancel_all": (
+            lambda p: p.cancel_all(ref, None), "/v5/order/cancel-all", ORDER, "critical",
+            rest("rest/trading-cancel-all-reply.json"),
+        ),
+        "set_trading_stop": (
+            lambda p: p.set_trading_stop(
+                TradingStopRequest(account=ref, symbol="BTCUSDT", stop_loss=Decimal("58000"))
+            ), "/v5/position/trading-stop", POSITION, "critical",
+            rest("rest/trading-trading-stop-reply.json"),
+        ),
+        "set_leverage": (
+            lambda p: p.set_leverage(ref, "BTCUSDT", Decimal("5")), "/v5/position/set-leverage",
+            POSITION, "entry", rest("rest/trading-set-leverage-reply.json"),
+        ),
+        "open_orders": (
+            lambda p: p.open_orders(ref), "/v5/order/realtime", READS, "poll",
+            with_result(rest("rest/trading-order-realtime.json"), nextPageCursor=""),
+        ),
+        "order_history": (
+            lambda p: p.order_history(ref), "/v5/order/history", READS, "poll",
+            with_result(rest("rest/trading-order-history.json"), nextPageCursor=""),
+        ),
+        "positions": (
+            lambda p: p.positions(ref), "/v5/position/list", READS, "poll",
+            rest("rest/trading-position-list.json"),
+        ),
+        "executions": (
+            lambda p: p.executions(ref, NOW_US - 1_000_000, NOW_US), "/v5/execution/list", READS,
+            "poll", with_result(rest("rest/trading-execution-list.json"), nextPageCursor=""),
+        ),
+        "closed_pnl": (
+            lambda p: p.closed_pnl(ref, NOW_US - 1_000_000, NOW_US), "/v5/position/closed-pnl",
+            READS, "poll", with_result(rest("rest/trading-closed-pnl.json"), nextPageCursor=""),
+        ),
+        "wallet": (
+            lambda p: p.wallet(ref), "/v5/account/wallet-balance", READS, "poll",
+            rest("rest/trading-wallet-balance.json"),
+        ),
+        "fee_rate": (
+            lambda p: p.fee_rate(ref, "BTCUSDT"), "/v5/account/fee-rate", READS, "poll",
+            rest("rest/trading-fee-rate.json"),
+        ),
+        "account_info": (
+            lambda p: p.account_info(ref), "/v5/account/info", READS, "poll",
+            rest("rest/trading-account-info.json"),
+        ),
+    }  # fmt: skip
+
+
+CALLS = _calls()
+WAITS = {"entry": 0.75, "critical": 5.0, "poll": 5.0}
+
+
+async def _run(name: str, port: BybitTradingPort) -> None:
+    """Call `name`; a transcribed answer the linear parser refuses is fine here."""
+    try:
+        await CALLS[name][0](port)
+    except ExchangeError:
+        pass
+
+
+@pytest.mark.parametrize("name", sorted(CALLS))
+async def test_every_call_draws_its_class_and_lane_once_with_its_wait(name: str) -> None:
+    _, path, cls, lane, answer = CALLS[name]
+    venue, governor = Venue().on(path, answer), RecordingGovernor()
+
+    await _run(name, make_port(venue, governor=governor))
+
+    assert governor.acquired == [("100001", cls, lane, WAITS[lane])]
+    assert venue.paths() == [path]
+
+
+@pytest.mark.parametrize("name", sorted(n for n, c in CALLS.items() if c[2] is READS))
+async def test_reads_never_draw_the_order_or_position_classes(name: str) -> None:
+    """OM-D02: a poll storm cannot drain the buckets exits draw from."""
+    _, path, _, _, answer = CALLS[name]
+    governor = RecordingGovernor()
+    await _run(name, make_port(Venue().on(path, answer), governor=governor))
+    assert {(cls, lane) for _, cls, lane, _ in governor.acquired} == {(READS, "poll")}
+
+
+async def test_an_entry_past_its_wait_is_refused_with_nothing_sent() -> None:
+    governor = RecordingGovernor(default_capacity=1.0, default_refill_per_s=0.1, clock=lambda: 0.0)
+    governor.drain("100001", ORDER, 1.0)  # the bucket needs 10 s; entry waits 0.75 s
+    venue, calls = Venue(), list[Call]()
+    port = make_port(venue, governor=governor, calls=calls)
+
+    with pytest.raises(RateBudgetExceededError) as refused:
+        await port.place_order(place())
+
+    assert (venue.sent, calls) == ([], [])
+    assert refused.value.retryable and refused.value.retry_after_s == pytest.approx(10.0)
+    assert refused.value.__cause__ is None and refused.value.__context__ is None
+
+
+async def test_a_critical_exit_under_a_long_ip_hold_is_refused_with_nothing_sent() -> None:
+    governor = RecordingGovernor(clock=lambda: 0.0)
+    governor.hold_ip(600.0)
+    venue = Venue()
+    port = make_port(venue, governor=governor)
+    request = CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id=ORDER_ID)
+
+    with pytest.raises(RateBudgetExceededError) as refused:
+        await port.cancel_order(request)
+
+    assert venue.sent == [] and refused.value.retry_after_s == pytest.approx(600.0)
+
+
+# -- 3. one governor per process (OM-D08, R5) ---------------------------------------------------
+
+
+def test_the_service_builds_one_governor_for_every_client() -> None:
+    svc = ExchangeBybitService(credentials=fake_capability(), environment="demo")
+    port = svc.trading_port("demo")
+    assert port._governor is svc._governor
+    assert svc.public_rest_client("demo")._governor is svc._governor
+    verifying = svc.key_verification_calls("demo", CREDENTIAL_ID, uid="7", recv_window_ms=5000)
+    assert verifying._governor is svc._verify_governor
+    assert svc._verify_governor._ip is svc._governor._ip  # the IP bucket and the hold
+    assert svc._verify_governor._buckets is svc._governor._buckets
+
+
+async def test_a_10018_on_one_account_holds_every_other_account_and_the_public_client() -> None:
+    svc = ExchangeBybitService(credentials=fake_capability(), environment="demo")
+    venue = Venue().on("/v5/order/cancel", rest("rest/error_10018.json"))
+    port = make_port(venue, governor=svc._governor)
+    first = CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id=ORDER_ID)
+
+    refused = await port.cancel_order(first)
+    with pytest.raises(RateBudgetExceededError):
+        await port.cancel_order(first.model_copy(update={"account": account(ACCOUNT_B)}))
+
+    assert (refused.ok, refused.error_code, refused.exchange_ret_code) == (
+        False,
+        "RATE_LIMITED",
+        10018,
+    )
+    assert len(venue.sent) == 1  # B's cancel was never sent
+    assert svc.public_rest_client("live")._governor.ip_hold_remaining_s() > 590.0  # >= 600 s
+
+
+# -- 4. REST only, one environment (C-2.11, SR-040a) -------------------------------------------
+
+
+def test_the_adapter_package_holds_no_trade_socket() -> None:
+    """No trade-socket route (`/v5/trade`, the WS order-entry path) anywhere in the adapter."""
+    root = Path(adapter_package.__file__).resolve().parent
+    found = [
+        (path.name, node.value)
+        for path in sorted(root.glob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and "/v5/trade" in node.value
+    ]
+    assert found == []
+
+
+@pytest.mark.parametrize("name", sorted(CALLS))
+async def test_an_account_of_another_environment_is_refused_before_anything(name: str) -> None:
+    """Nothing signed, no token taken, no client built: the demo port meets a live account."""
+    venue, governor, calls = Venue(), RecordingGovernor(), list[Call]()
+    port = make_port(venue, governor=governor, calls=calls)
+    live = account(environment="live")
+    swap: dict[str, Any] = {"account": live}
+
+    with pytest.raises(ValueError, match="another environment"):
+        if name.startswith("place_order"):
+            await port.place_order(place(live))
+        elif name == "place_batch":
+            await port.place_batch([place(live)])
+        elif name in {"amend_order", "cancel_order", "set_trading_stop"}:
+            await _swapped(port, name, swap)
+        else:
+            await getattr(port, name)(live, *_args(name))
+
+    assert (venue.sent, governor.acquired, calls, port._clients) == ([], [], [], {})
+
+
+def _args(name: str) -> tuple[object, ...]:
+    return {
+        "cancel_all": (None,),
+        "set_leverage": ("BTCUSDT", Decimal("5")),
+        "executions": (NOW_US - 1, NOW_US),
+        "closed_pnl": (NOW_US - 1, NOW_US),
+        "fee_rate": ("BTCUSDT",),
+    }.get(name, ())
+
+
+async def _swapped(port: BybitTradingPort, name: str, swap: dict[str, Any]) -> None:
+    ref = account()
+    requests: dict[str, Any] = {
+        "amend_order": AmendOrderRequest(
+            account=ref, symbol="BTCUSDT", order_link_id=link(), qty=Decimal("1")
+        ),
+        "cancel_order": CancelOrderRequest(account=ref, symbol="BTCUSDT", order_link_id=link()),
+        "set_trading_stop": TradingStopRequest(account=ref, symbol="BTCUSDT"),
+    }
+    await getattr(port, name)(requests[name].model_copy(update=swap))
+
+
+async def test_every_ack_says_rest() -> None:
+    missing = rest("rest/trading-error-110001.json")
+    venue = Venue().on("/v5/order/cancel", CANCEL, missing)
+    port = make_port(venue)
+    request = CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id=ORDER_ID)
+    acks = [await port.cancel_order(request), await port.cancel_order(request)]
+    assert [(a.ok, a.transport) for a in acks] == [(True, "rest"), (False, "rest")]
+
+
+def test_the_factory_pins_the_process_environment() -> None:
+    svc = ExchangeBybitService(credentials=fake_capability(), environment="demo")
+    assert svc.trading_port("demo").environment == "demo"
+    assert svc.trading_port("demo").capabilities.supports_ws_order_entry is False
+    with pytest.raises(ValueError, match="process's environment"):
+        svc.trading_port("live")
+    testnet = ExchangeBybitService(credentials=fake_capability(), environment="testnet")
+    with pytest.raises(ValueError, match="no trading capability record"):
+        testnet.trading_port("testnet")
+    with pytest.raises(RuntimeError, match="no signing capability"):
+        ExchangeBybitService(environment="demo").trading_port("demo")
+
+
+def test_the_factory_and_port_signatures_hold_no_trade_transport() -> None:
+    names = set(inspect.signature(BybitTradingPort).parameters)
+    assert not {"ws", "socket", "trade_socket", "ws_connect"} & names
+
+
+# -- 5. category=linear (SR-054) ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", sorted(CALLS))
+async def test_every_call_that_takes_a_category_states_linear(name: str) -> None:
+    _, path, _, _, answer = CALLS[name]
+    venue = Venue().on(path, answer)
+    await _run(name, make_port(venue))
+    get = venue.sent[0].method == "GET"
+    sent: dict[str, Any] = venue.queries()[0] if get else venue.bodies()[0]
+    if path in {"/v5/account/wallet-balance", "/v5/account/info"}:
+        assert "category" not in sent  # account endpoints take none
+    else:
+        assert sent["category"] == "linear"
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "params", "body"),
+    [
+        ("GET", "/v5/order/realtime", {"symbol": "BTCUSDT"}, None),
+        ("GET", "/v5/execution/list", {"category": "spot"}, None),
+        ("POST", "/v5/order/cancel", None, {"symbol": "BTCUSDT", "orderId": "x-1"}),
+        ("POST", "/v5/position/trading-stop", None, {"category": "inverse"}),
+        ("GET", "/v5/account/fee-rate", {"symbol": "BTCUSDT"}, None),
+    ],
+)
+async def test_the_client_refuses_a_missing_or_other_category_unsigned(
+    method: str, path: str, params: dict[str, str] | None, body: dict[str, str] | None
+) -> None:
+    venue, governor, calls = Venue(), RecordingGovernor(), list[Call]()
+    client = BybitRestClient(
+        RestClientConfig(base_url="https://api-demo.bybit.com"),
+        uid="100001",
+        signer=BybitSigner(fake_capability(SIGNER_ID, calls), CREDENTIAL_ID),
+        governor=governor,
+    )
+    async with client:
+        with pytest.raises(ValueError, match="SR-054"):
+            await client.signed_request(method, path, params=params, body=body, lane="poll")
+    assert (venue.sent, governor.acquired, calls) == ([], [], [])
+
+
+# -- 8. the id filters (Q5) ---------------------------------------------------------------------
+
+
+async def test_the_id_filters_are_keyword_only() -> None:
+    port: Any = make_port(Venue())  # untyped on purpose: the calls below break the signature
+    ref = account()
+    with pytest.raises(TypeError):
+        await port.open_orders(ref, "BTCUSDT", link())
+    with pytest.raises(TypeError):
+        await port.order_history(ref, link())
+
+
+async def test_an_open_orders_filter_goes_on_the_wire_and_is_applied_again() -> None:
+    """The transcribed row carries a foreign id, so it is not ours: filtered out."""
+    page = with_result(rest("rest/trading-order-realtime.json"), nextPageCursor="")
+    venue = Venue().on("/v5/order/realtime", page)
+    found = await make_port(venue).open_orders(account(), order_link_id=link())
+    assert found == []
+    assert venue.queries() == [
+        {"category": "linear", "limit": "50", "settleCoin": "USDT", "orderLinkId": link()}
+    ]
+
+
+async def test_a_history_filter_by_order_id_goes_on_the_wire_and_is_applied_again() -> None:
+    page = with_result(rest("rest/trading-order-history.json"), nextPageCursor="")
+    row_id = page["result"]["list"][0]["orderId"]
+    venue = Venue().on("/v5/order/history", page, page)
+    port = make_port(venue)
+
+    found = await port.order_history(account(), exchange_order_id=row_id)
+    other = await port.order_history(account(), exchange_order_id="another-order")
+
+    assert [o.exchange_order_id for o in found] == [row_id] and other == []
+    assert venue.queries()[0]["orderId"] == row_id and "orderLinkId" not in venue.queries()[0]
+
+
+@pytest.mark.parametrize("key", [ext_key("x-1"), "linear-004", "cv-1"])
+async def test_a_filter_that_is_not_a_generated_id_is_refused_unsent(key: str) -> None:
+    venue = Venue()
+    port = make_port(venue)
+    with pytest.raises(ValueError, match="generated id"):
+        await port.open_orders(account(), order_link_id=key)
+    with pytest.raises(ValueError, match="generated id"):
+        await port.order_history(account(), order_link_id=key)
+    assert venue.sent == []
+
+
+# -- 9. the cancel-all filter (R10) -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("symbol", "scope"), [("BTCUSDT", "symbol"), (None, "settleCoin")])
+async def test_every_cancel_all_sends_the_order_filter(symbol: str | None, scope: str) -> None:
+    venue = Venue().on("/v5/order/cancel-all", rest("rest/trading-cancel-all-reply.json"))
+    await make_port(venue).cancel_all(account(), symbol)
+    [body] = venue.bodies()
+    assert body["orderFilter"] == "Order" and body[scope] == (symbol or "USDT")
+    assert set(body) == {"category", "orderFilter", scope}
+
+
+# -- R1, R13 and the client cache ---------------------------------------------------------------
+
+
+async def test_subscribe_private_waits_for_g8b() -> None:
+    with pytest.raises(NotImplementedError, match="G-8b"):
+        await make_port(Venue()).subscribe_private(account())
+
+
+@pytest.mark.parametrize(
+    "key_ref",
+    [
+        "kref-1",
+        str(CREDENTIAL_ID).upper(),
+        "{" + str(CREDENTIAL_ID) + "}",
+        "urn:uuid:" + str(CREDENTIAL_ID),
+        str(CREDENTIAL_ID).replace("-", ""),
+    ],
+)
+async def test_a_key_ref_that_is_not_an_api_keys_id_is_refused_unsent(key_ref: str) -> None:
+    venue, calls = Venue(), list[Call]()
+    port = make_port(venue, calls=calls)
+    with pytest.raises(ValueError, match="api_keys id"):
+        await port.wallet(account(key_ref=key_ref))
+    assert (venue.sent, calls) == ([], [])
+
+
+async def test_a_new_key_retires_the_old_keys_client() -> None:
+    venue = Venue().on("/v5/account/info", rest("rest/trading-account-info.json"))
+    calls: list[Call] = []
+    port = make_port(venue, calls=calls)
+    other_key = "00000000-0000-4000-8000-0000000000c2"
+
+    await port.account_info(account())
+    first = port._clients[account().account_id][1]
+    await port.account_info(account())
+    assert port._clients[account().account_id][1] is first  # same key: same client
+    await port.account_info(account(key_ref=other_key))
+    second = port._clients[account().account_id][1]
+
+    assert second is not first and first._client.is_closed
+    assert [str(credential) for credential, _, _ in calls] == [
+        str(CREDENTIAL_ID),
+        str(CREDENTIAL_ID),
+        other_key,
+    ]
+    await port.aclose()
+    assert port._clients == {} and second._client.is_closed

@@ -7,13 +7,24 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
+import zlib
 from pathlib import Path
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from candleviewer.domain.order_link import EXT_ID, OUR_ID, ext_key
+from candleviewer.domain.order_link import (
+    BASE62,
+    ENV_LETTER,
+    EXT_ID,
+    OUR_ID,
+    account_tag,
+    base62,
+    ext_key,
+    link_owner,
+)
+from candleviewer.domain.primitives import AccountId
 
 _SCHEMA_DOC = Path(__file__).resolve().parents[5] / "docs" / "plan" / "21-database-schema.md"
 _CHECK_ARMS = re.compile(
@@ -185,3 +196,33 @@ def test_the_module_text_names_no_exchange_because_the_adapter_isolation_rule_bl
     flagged = _adapter_isolation_pattern().findall(_MODULE_SOURCE.read_text(encoding="utf-8"))
 
     assert flagged == []
+
+
+# -- the owner of an id (G-8, #2877, ruling R12): environment letters and `acct4` ---------------
+
+
+def test_the_environment_letters_are_one_per_exchange_environment() -> None:
+    assert dict(ENV_LETTER) == {"live": "l", "demo": "d", "testnet": "t"}
+    assert "p" not in ENV_LETTER.values()  # paper never reaches an exchange
+
+
+def test_link_owner_reads_the_environment_letter_and_account_tag() -> None:
+    assert link_owner(EXAMPLE) == ("l", "d0hb")
+    assert link_owner(ext_key("x-1")) is None
+    assert link_owner("linear-004") is None
+
+
+@given(st.uuids())
+def test_account_tag_is_four_base62_digits_of_the_lowercased_id(account: uuid.UUID) -> None:
+    tag = account_tag(AccountId(account))
+    assert len(tag) == 4 and all(c in BASE62 for c in tag)
+    assert tag == base62(zlib.crc32(str(account).lower().encode("ascii")) % 62**4, 4)
+
+
+def test_base62_pads_to_its_width() -> None:
+    assert (base62(0, 2), base62(61, 2), base62(62, 2), base62(3843, 2)) == (
+        "00",
+        "0z",
+        "10",
+        "zz",
+    )

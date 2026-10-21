@@ -37,7 +37,14 @@ from tests._signing import CREDENTIAL_ID, fake_capability
 PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 #: Every module on the public market-data ingestion path (ticket repo paths).
 INGESTION_PATH = ("ingestion", "book", "bars", "orderflow", "recorder", "replay")
-TRADING_NAMES = {"TradingPort", "signed_request", "BybitSigner", "place_order", "cancel_all"}
+TRADING_NAMES = {
+    "TradingPort",
+    "signed_request",
+    "BybitSigner",
+    "place_order",
+    "cancel_all",
+    "trading_port",  # G-8 (#2877): the adapter's factory of the trading port
+}
 TRADING_PATHS = ("/v5/order/", "/v5/position/", "/v5/asset/")
 
 

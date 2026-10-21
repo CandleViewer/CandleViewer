@@ -30,6 +30,7 @@ own `capture_date` (the `recorded_*` files below).
 | Errors 10018 / 10002 / 5xx                            | `rest/error_10018.json`, `rest/error_10002.json`, `rest/error_503.json`      |
 | Delisted symbol + changed tick size                   | `rest/instruments_before.json` -> `rest/instruments_after.json`              |
 | Live feed fields (#3447): `RPI`, `seq`, newer tickers | `ws/recorded_publicTrade_BTCUSDT.jsonl`, `ws/recorded_tickers_BTCUSDT.jsonl` |
+| Order path (#2877): trade replies, reads, two errors  | `rest/trading-*.json` (docs-transcribed, below)                              |
 
 ## Provenance and size
 
@@ -54,6 +55,42 @@ from a contract test.
 
 The total cap is 2.5 MB. Per-file caps are in the manifest. Captures larger than 1.5 MB must
 go through Git LFS.
+
+### Docs-transcribed order-path shapes (#2877, ruling R2)
+
+No recording holds an order-path reply yet (E29-K01, #843, records them). Under the #1778 group A
+pattern each `rest/trading-*.json` file is one shape transcribed from the Bybit v5 documentation:
+the page's Response Example with its keys and values unchanged (whitespace compacted), or, for an
+error, the code and text of its row in the error table, which shows nothing else. The manifest
+gives each file's `source_url`, `retrieved` date and `source_ref` (the page's source file at
+`bybit-exchange/docs` commit `19518b90fb36`). They are evidence of the documented shapes only,
+never of live values. `tests/contract/bybit/test_contract_trading_drift.py` compares each one
+with every recording of the same stream and fails the moment one disagrees; the recording then
+replaces the transcription. Not documented, so not transcribed: a `10001` duplicate's text (E29
+model O-1), a Partial-mode TP/SL order row, a REST `create-batch` reply with a refused item, and a
+linear position, wallet (USDT) or fee-rate row; strict-model unit tests alone cover those parsers.
+
+Each line: file; source; date; symbol; env; redaction. Every env is none (a documentation
+example, from no account), and no redaction is needed: no file holds a key, a signature or an
+account id.
+
+- `trading-create-reply.json`: source: docs-transcribed, `order/create-order`; 2026-10-21; symbol none; env none; redaction none.
+- `trading-amend-reply.json`: source: docs-transcribed, `order/amend-order`; 2026-10-21; symbol none; env none; redaction none.
+- `trading-cancel-reply.json`: source: docs-transcribed, `order/cancel-order`; 2026-10-21; symbol none; env none; redaction none.
+- `trading-cancel-all-reply.json`: source: docs-transcribed, `order/cancel-all`; 2026-10-21; symbol none; env none; redaction none.
+- `trading-create-batch-reply.json`: source: docs-transcribed, `order/batch-place`; 2026-10-21; symbol BTCUSDT and ATOMUSDT (spot); env none; redaction none.
+- `trading-order-realtime.json`: source: docs-transcribed, `order/open-order`; 2026-10-21; symbol ETHUSDT; env none; redaction none.
+- `trading-order-history.json`: source: docs-transcribed, `order/order-list`; 2026-10-21; symbol BTCUSDT; env none; redaction none.
+- `trading-execution-list.json`: source: docs-transcribed, `order/execution`; 2026-10-21; symbol ETHPERP; env none; redaction none.
+- `trading-position-list.json`: source: docs-transcribed, `position`; 2026-10-21; symbol BTCUSD (inverse); env none; redaction none.
+- `trading-closed-pnl.json`: source: docs-transcribed, `position/close-pnl`; 2026-10-21; symbol ETHPERP; env none; redaction none.
+- `trading-trading-stop-reply.json`: source: docs-transcribed, `position/trading-stop`; 2026-10-21; symbol none; env none; redaction none.
+- `trading-set-leverage-reply.json`: source: docs-transcribed, `position/leverage`; 2026-10-21; symbol none; env none; redaction none.
+- `trading-wallet-balance.json`: source: docs-transcribed, `account/wallet-balance`; 2026-10-21; symbol none (one BTC coin row); env none; redaction none.
+- `trading-fee-rate.json`: source: docs-transcribed, `account/fee-rate`; 2026-10-21; symbol BTCUSDT (spot); env none; redaction none.
+- `trading-account-info.json`: source: docs-transcribed, `account/account-info`; 2026-10-21; symbol none; env none; redaction none.
+- `trading-error-110072.json`: source: docs-transcribed, `error (UTA table, 110072)`; 2026-10-21; symbol none; env none; redaction none.
+- `trading-error-110001.json`: source: docs-transcribed, `error (UTA table, 110001)`; 2026-10-21; symbol none; env none; redaction none.
 
 ## Gates
 
