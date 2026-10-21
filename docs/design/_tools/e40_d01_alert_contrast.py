@@ -8,8 +8,10 @@ the formula of ``contrast_check.py`` (imported, not copied) to every pair the al
 non-text UI, and 7:1 for text in the high-contrast theme (05 §5.6). A token missing in a theme is
 reported as MISSING (a design-system change request), never guessed.
 
-Usage: python3 -I docs/design/_tools/e40_d01_alert_contrast.py [--md] [--hex]
-  --md   print the Markdown table used in the review; --hex also prints the resolved values.
+Usage: python3 -I docs/design/_tools/e40_d01_alert_contrast.py [--md] [--hex] [--candidates]
+  --md   print the Markdown table used in the review; --hex also prints the resolved values;
+  --candidates prints every blue primitive and ``palette.white`` against the high-contrast
+  overlay / raised surfaces (DS-CR-1: which step, if any, reaches 7:1).
 Exit 0 always: the review records the failing pairs as design-system change requests.
 """
 
@@ -24,127 +26,52 @@ ROOT = Path(__file__).resolve().parents[3]
 TOKENS = ROOT / "packages/ui/tokens"
 HC_TEXT_BAR = 7.0
 
-# (label, foreground token, background token, bar, kind)
+_T, _S, _ST = "color.text.", "color.surface.", "color.status."
+OVER, RAISED, CANVAS = _S + "overlay", _S + "raised", _S + "canvas"
+FOCUS, ACTION = "color.focus.ring", "color.action.primary.default"
+# (label, foreground token, background token, bar, kind) — one line per pair, in review order
 PAIRS: list[tuple[str, str, str, float, str]] = [
-    ("toast title", "color.text.primary", "color.surface.overlay", 4.5, "text"),
-    ("toast body", "color.text.secondary", "color.surface.overlay", 4.5, "text"),
-    ("toast timestamp", "color.text.tertiary", "color.surface.overlay", 4.5, "text"),
-    ("toast action link", "color.text.link", "color.surface.overlay", 4.5, "text"),
-    ("info glyph on toast", "color.status.info.strong", "color.surface.overlay", 3.0, "non-text"),
-    (
-        "warning glyph on toast",
-        "color.status.warning.strong",
-        "color.surface.overlay",
-        3.0,
-        "non-text",
-    ),
-    (
-        "danger glyph on toast",
-        "color.status.danger.strong",
-        "color.surface.overlay",
-        3.0,
-        "non-text",
-    ),
-    (
-        "success glyph on toast",
-        "color.status.success.strong",
-        "color.surface.overlay",
-        3.0,
-        "non-text",
-    ),
-    (
-        "danger edge on toast",
-        "color.status.danger.default",
-        "color.surface.overlay",
-        3.0,
-        "non-text",
-    ),
-    (
-        "warning edge on toast",
-        "color.status.warning.default",
-        "color.surface.overlay",
-        3.0,
-        "non-text",
-    ),
-    ("info edge on toast", "color.status.info.default", "color.surface.overlay", 3.0, "non-text"),
-    (
-        "success edge on toast",
-        "color.status.success.default",
-        "color.surface.overlay",
-        3.0,
-        "non-text",
-    ),
-    ("centre row title", "color.text.primary", "color.surface.raised", 4.5, "text"),
-    ("centre row body", "color.text.secondary", "color.surface.raised", 4.5, "text"),
-    ("centre row timestamp", "color.text.tertiary", "color.surface.raised", 4.5, "text"),
-    ("centre row link", "color.text.link", "color.surface.raised", 4.5, "text"),
-    ("disabled row text", "color.text.disabled", "color.surface.raised", 4.5, "text"),
-    ("failed glyph on row", "color.status.danger.strong", "color.surface.raised", 3.0, "non-text"),
-    ("failed chip border", "color.status.danger.default", "color.surface.raised", 3.0, "non-text"),
-    (
-        "snoozed glyph on row",
-        "color.status.warning.strong",
-        "color.surface.raised",
-        3.0,
-        "non-text",
-    ),
-    ("selected row title", "color.text.primary", "color.surface.selected", 4.5, "text"),
-    ("hovered row title", "color.text.primary", "color.surface.hover", 4.5, "text"),
-    ("critical banner title", "color.text.primary", "color.status.danger.subtle", 4.5, "text"),
-    ("critical banner body", "color.text.secondary", "color.status.danger.subtle", 4.5, "text"),
-    (
-        "critical banner glyph",
-        "color.status.danger.strong",
-        "color.status.danger.subtle",
-        3.0,
-        "non-text",
-    ),
-    ("warning banner title", "color.text.primary", "color.status.warning.subtle", 4.5, "text"),
-    ("warning banner body", "color.text.secondary", "color.status.warning.subtle", 4.5, "text"),
-    ("storm summary title", "color.text.primary", "color.status.info.subtle", 4.5, "text"),
-    ("matrix header", "color.text.primary", "color.surface.canvas", 4.5, "text"),
-    ("matrix cell label", "color.text.secondary", "color.surface.canvas", 4.5, "text"),
-    ("button label", "color.text.on-action", "color.action.primary.default", 4.5, "text"),
-    ("focus ring on overlay", "color.focus.ring", "color.surface.overlay", 3.0, "non-text"),
-    ("focus ring on raised", "color.focus.ring", "color.surface.raised", 3.0, "non-text"),
-    ("focus ring on canvas", "color.focus.ring", "color.surface.canvas", 3.0, "non-text"),
-    ("focus ring on app", "color.focus.ring", "color.surface.app", 3.0, "non-text"),
-    ("focus ring on selected", "color.focus.ring", "color.surface.selected", 3.0, "non-text"),
-    (
-        "focus ring on danger subtle",
-        "color.focus.ring",
-        "color.status.danger.subtle",
-        3.0,
-        "non-text",
-    ),
-    (
-        "focus ring on primary button",
-        "color.focus.ring",
-        "color.action.primary.default",
-        3.0,
-        "non-text",
-    ),
-    (
-        "checkbox boundary (border.strong)",
-        "color.border.strong",
-        "color.surface.canvas",
-        3.0,
-        "non-text",
-    ),
-    (
-        "checkbox boundary (text.tertiary)",
-        "color.text.tertiary",
-        "color.surface.canvas",
-        3.0,
-        "non-text",
-    ),
-    (
-        "row separator (border.default)",
-        "color.border.default",
-        "color.surface.raised",
-        3.0,
-        "non-text",
-    ),
+    ("toast title", _T + "primary", OVER, 4.5, "text"),
+    ("toast body", _T + "secondary", OVER, 4.5, "text"),
+    ("toast timestamp", _T + "tertiary", OVER, 4.5, "text"),
+    ("toast action link", _T + "link", OVER, 4.5, "text"),
+    ("info glyph on toast", _ST + "info.strong", OVER, 3.0, "non-text"),
+    ("warning glyph on toast", _ST + "warning.strong", OVER, 3.0, "non-text"),
+    ("danger glyph on toast", _ST + "danger.strong", OVER, 3.0, "non-text"),
+    ("success glyph on toast", _ST + "success.strong", OVER, 3.0, "non-text"),
+    ("danger edge on toast", _ST + "danger.default", OVER, 3.0, "non-text"),
+    ("warning edge on toast", _ST + "warning.default", OVER, 3.0, "non-text"),
+    ("info edge on toast", _ST + "info.default", OVER, 3.0, "non-text"),
+    ("success edge on toast", _ST + "success.default", OVER, 3.0, "non-text"),
+    ("centre row title", _T + "primary", RAISED, 4.5, "text"),
+    ("centre row body", _T + "secondary", RAISED, 4.5, "text"),
+    ("centre row timestamp", _T + "tertiary", RAISED, 4.5, "text"),
+    ("centre row link", _T + "link", RAISED, 4.5, "text"),
+    ("disabled row text", _T + "disabled", RAISED, 4.5, "text"),
+    ("failed glyph on row", _ST + "danger.strong", RAISED, 3.0, "non-text"),
+    ("failed chip border", _ST + "danger.default", RAISED, 3.0, "non-text"),
+    ("snoozed glyph on row", _ST + "warning.strong", RAISED, 3.0, "non-text"),
+    ("selected row title", _T + "primary", _S + "selected", 4.5, "text"),
+    ("hovered row title", _T + "primary", _S + "hover", 4.5, "text"),
+    ("critical banner title", _T + "primary", _ST + "danger.subtle", 4.5, "text"),
+    ("critical banner body", _T + "secondary", _ST + "danger.subtle", 4.5, "text"),
+    ("critical banner glyph", _ST + "danger.strong", _ST + "danger.subtle", 3.0, "non-text"),
+    ("warning banner title", _T + "primary", _ST + "warning.subtle", 4.5, "text"),
+    ("warning banner body", _T + "secondary", _ST + "warning.subtle", 4.5, "text"),
+    ("storm summary title", _T + "primary", _ST + "info.subtle", 4.5, "text"),
+    ("matrix header", _T + "primary", CANVAS, 4.5, "text"),
+    ("matrix cell label", _T + "secondary", CANVAS, 4.5, "text"),
+    ("button label", _T + "on-action", ACTION, 4.5, "text"),
+    ("focus ring on overlay", FOCUS, OVER, 3.0, "non-text"),
+    ("focus ring on raised", FOCUS, RAISED, 3.0, "non-text"),
+    ("focus ring on canvas", FOCUS, CANVAS, 3.0, "non-text"),
+    ("focus ring on app", FOCUS, _S + "app", 3.0, "non-text"),
+    ("focus ring on selected", FOCUS, _S + "selected", 3.0, "non-text"),
+    ("focus ring on danger subtle", FOCUS, _ST + "danger.subtle", 3.0, "non-text"),
+    ("focus ring on primary button", FOCUS, ACTION, 3.0, "non-text"),
+    ("checkbox boundary (border.strong)", "color.border.strong", CANVAS, 3.0, "non-text"),
+    ("checkbox boundary (text.tertiary)", _T + "tertiary", CANVAS, 3.0, "non-text"),
+    ("row separator (border.default)", "color.border.default", RAISED, 3.0, "non-text"),
 ]
 
 
@@ -181,6 +108,23 @@ def resolve_theme(theme: str) -> dict[str, str | None]:
 def hex_rgb(value: str) -> tuple[int, int, int]:
     h = value.lstrip("#")
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def candidates(tool: object, hc: dict[str, str | None]) -> None:
+    """DS-CR-1: every blue primitive and `palette.white` on the hc overlay / raised surfaces."""
+    prim = json.loads((TOKENS / "primitives.tokens.json").read_text(encoding="utf-8"))
+    names = sorted(k for k in prim if k.startswith("palette.blue.") or k == "palette.white")
+    over, raised = hc.get(OVER), hc.get(RAISED)
+    print("\n| Primitive | hex | on `surface.overlay` | on `surface.raised` | 7:1 |")
+    print("| --- | --- | --- | --- | --- |")
+    for name in names:
+        value = prim[name].get("$value")
+        if not isinstance(value, str) or not over or not raised:
+            continue
+        ratio = tool.contrast_ratio  # type: ignore[attr-defined]
+        ratios = [ratio(hex_rgb(value), hex_rgb(bg)) for bg in (over, raised)]
+        verdict = "pass" if min(ratios) >= HC_TEXT_BAR else "FAIL"
+        print(f"| `{name}` | `{value}` | {ratios[0]:.2f} | {ratios[1]:.2f} | {verdict} |")
 
 
 def main(argv: list[str]) -> int:
@@ -222,6 +166,8 @@ def main(argv: list[str]) -> int:
     if not md:
         print("resolved tokens: " + ", ".join(f"{t}={len(v)}" for t, v in themes.items()))
         print(f"cells below their bar or missing: {failures}")
+    if "--candidates" in argv:
+        candidates(tool, themes["high-contrast"])
     return 0
 
 
