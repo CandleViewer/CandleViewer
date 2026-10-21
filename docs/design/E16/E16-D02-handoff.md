@@ -30,7 +30,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
       button and the switch at table size), 24 × 24 px compact; density table below
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — Tier-2/Tier-3 only, as listed in `E16-D02.md` §11.1; none invented; Penpot token sets =
-      `packages/ui/tokens` at the PR base, plus PR #3925's retune for the light danger tone (E16-D02 §10.4 finding 2)
+      `packages/ui/tokens` at the PR base, which includes #3925's retune of the light danger tone (E16-D02 §10.4
+      finding 2)
 - [ ] **Data contract confirmed** — REST `GET /recording/symbols`, `RecordingStatus`, `StorageUsage`; WS `recorder`
       §15.8; the recording-status amendment (`lingering`, `linger_until`, `refusal`, `level`, `write_gate`,
       `cap_bytes`, `accelerate_retention`, `role_restricted`, `policy`, the `backpressure_drop` gap reason and the
