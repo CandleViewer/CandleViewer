@@ -398,6 +398,10 @@ def numbers() -> dict[str, object]:
             "first_frame_fraction": {
                 str(fps): round(first_frame_fraction(name, DUR["normal"], fps), 3) for fps in FPS
             },
+            # T7 also tests the M3 curve at `slow` (400 ms); the first-frame fractions there.
+            "first_frame_fraction_slow": {
+                str(fps): round(first_frame_fraction(name, DUR["slow"], fps), 3) for fps in FPS
+            },
             "peak_px_per_frame_60_1w_normal": round(
                 peak_px_per_frame(name, DUR["normal"], PLOT_W, 60), 0
             ),
@@ -518,6 +522,14 @@ def main(argv: list[str] | None = None) -> int:
             f"{k['peak_px_per_frame_60_3w_slow']:.0f} px | "
             f"{k['peak_px_per_frame_60_3w_normal']:.0f} px |"
         )
+    slow_parts = []
+    for name, k in kin.items():
+        fs = k["first_frame_fraction_slow"]
+        slow_parts.append(f"{name} {fs['30']} / {fs['60']} / {fs['144']}")
+    print(
+        f"\nAt `slow` ({DUR['slow']} ms; T7 tests the M3 curve there too) the first-frame "
+        f"fractions at 30 / 60 / 144 fps are: {'; '.join(slow_parts)}."
+    )
     print(
         f"\nFor scale: the hardest momentum fling ({V0_SET['hard']} px/ms) moves "
         f"{n['hard_fling_first_frame_px_60']:.0f} px in its first 60 fps frame with the exact "
