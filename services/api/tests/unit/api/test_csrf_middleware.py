@@ -232,16 +232,22 @@ def test_refresh_is_delegated_whole_to_the_route() -> None:
     assert _code(r) == "csrf_token_invalid"  # SR-042 still applies first
 
 
-# -- logout: the route binds only a cookie-identified one (contract "Idle lock", #2300) ---------
+# -- logout and unlock: the route binds only a cookie-identified one (contract "Idle lock") -----
+
+_DEFERRED = ["/auth/logout", "/auth/unlock"]
 
 
 def _with_logout(client: TestClient) -> TestClient:
     async def logout() -> dict[str, str]:
-        return {"route": "logout"}  # the real route binds a cookie-identified logout itself
+        return {"route": "logout"}  # the real routes bind a cookie-identified call themselves
+
+    async def unlock() -> dict[str, str]:
+        return {"route": "unlock"}
 
     app = client.app
     assert isinstance(app, FastAPI)  # TestClient.app is typed as bare ASGI
     app.add_api_route("/auth/logout", logout, methods=["POST"])
+    app.add_api_route("/auth/unlock", unlock, methods=["POST"])
     return client
 
 
@@ -249,7 +255,10 @@ def _refresh_cookie(pair: dict[str, str]) -> dict[str, str]:
     return {**pair, "Cookie": f"{pair['Cookie']}; cv_refresh=opaque"}
 
 
-def test_a_logout_identified_by_its_refresh_cookie_is_bound_by_the_route() -> None:
+@pytest.mark.parametrize("path", _DEFERRED)
+def test_a_logout_or_unlock_identified_by_its_refresh_cookie_is_bound_by_the_route(
+    path: str,
+) -> None:
     """No access token inside its lifetime (none, or past `ACCESS_TOKEN_TTL`) and the
     `cv_refresh` cookie present: the route binds the token to the cookie's session. The
     session-independent checks (presence, equality, shape) still run here."""
@@ -258,29 +267,33 @@ def test_a_logout_identified_by_its_refresh_cookie_is_bound_by_the_route() -> No
     other = _refresh_cookie(_pair(uuid.uuid4()))
     for bearer in (None, "Bearer ttl_expired"):
         headers = other if bearer is None else {**other, "Authorization": bearer}
-        assert client.post("/auth/logout", headers=headers).json() == {"route": "logout"}
+        assert client.post(path, headers=headers).json() == {"route": path.rsplit("/", 1)[1]}
     assert not audit.calls
-    r = client.post("/auth/logout", headers={"Cookie": "cv_refresh=opaque"})
+    r = client.post(path, headers={"Cookie": "cv_refresh=opaque"})
     assert _code(r) == "csrf_token_invalid" and audit.calls[-1]["reason"] == "missing"
 
 
+@pytest.mark.parametrize("path", _DEFERRED)
 @pytest.mark.parametrize("bearer", ["Bearer good", "Bearer bad"])
-def test_a_logout_with_a_live_or_unknown_access_token_is_bound_here(bearer: str) -> None:
-    """A live access token identifies the logout, so another session's cookie cannot move
+def test_a_logout_or_unlock_with_a_live_or_unknown_access_token_is_bound_here(
+    bearer: str, path: str
+) -> None:
+    """A live access token identifies the call, so another session's cookie cannot move
     the binding; a never-issued one resolves no session and is refused as before."""
     client, audit = _app(_Sessions())
     _with_logout(client)
     other = _refresh_cookie(_pair(uuid.uuid4()))
-    r = client.post("/auth/logout", headers={**other, "Authorization": bearer})
+    r = client.post(path, headers={**other, "Authorization": bearer})
     assert r.status_code == 403 and _code(r) == "csrf_token_invalid"
     assert audit.calls[-1]["reason"] == "wrong_session"
 
 
-def test_a_bearer_logout_bound_to_its_own_session_passes_with_the_cookie_present() -> None:
+@pytest.mark.parametrize("path", _DEFERRED)
+def test_a_bearer_call_bound_to_its_own_session_passes_with_the_cookie_present(path: str) -> None:
     client, audit = _app(_Sessions())
     _with_logout(client)
     headers = {**_refresh_cookie(_pair()), "Authorization": "Bearer good"}
-    assert client.post("/auth/logout", headers=headers).json() == {"route": "logout"}
+    assert client.post(path, headers=headers).json() == {"route": path.rsplit("/", 1)[1]}
     assert not audit.calls
 
 
@@ -292,13 +305,16 @@ def test_a_bearer_logout_bound_to_its_own_session_passes_with_the_cookie_present
         ("POST", "/auth/logout/all"),
         ("POST", "/api/v2/auth/logout"),
         ("PUT", "/auth/logout"),
+        ("POST", "/auth/unlock/"),
+        ("POST", "/auth/unlockx"),
+        ("PUT", "/auth/unlock"),
     ],
 )
-def test_only_a_post_to_the_exact_logout_path_is_deferred_to_the_route(
+def test_only_a_post_to_the_exact_logout_or_unlock_path_is_deferred_to_the_route(
     method: str, path: str
 ) -> None:
-    """The cookie deferral is `POST /auth/logout` exactly: a cookie-only request to a
-    neighbouring path, or with another method, is bound here like any other write."""
+    """The cookie deferral is `POST /auth/logout` or `POST /auth/unlock` exactly: a cookie-only
+    request to a neighbouring path, or with another method, is bound here like any write."""
     client, audit = _app(_Sessions())
     _with_logout(client)
     r = client.request(method, path, headers=_refresh_cookie(_pair(uuid.uuid4())))

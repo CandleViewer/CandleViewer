@@ -34,13 +34,14 @@ Then, except for the five pre-session operations (contract "Exempt"):
 is the one bound to the presented refresh token, which the route itself loads.
 After its throttles and reuse detection (a rotated-out token only revokes, never
 mints), the route runs the full check with `verify_refresh_csrf()` before it
-audits or rotates. `POST /auth/logout` (exact path) is a partial exception, only
-when the `cv_refresh` cookie identifies it (contract "Idle lock", #2300): the
-cookie is present and no access token inside its lifetime is (no bearer, or one
-past `ACCESS_TOKEN_TTL`). Steps 2-4 still run here; step 5, the binding, is the
-route's, against the cookie's session. A logout identified by its access token
-is bound here, like every other bearer request. The middleware never reads a
-request body, so a body it cannot read can never weaken the check.
+audits or rotates. `POST /auth/logout` and `POST /auth/unlock` (exact paths) are
+partial exceptions, only when the `cv_refresh` cookie identifies them (contract
+"Idle lock", #2300): the cookie is present and no access token inside its
+lifetime is (no bearer, or one past `ACCESS_TOKEN_TTL`). Steps 2-4 still run
+here; step 5, the binding, is the route's, against the cookie's session. One
+identified by its access token is bound here, like every other bearer request.
+The middleware never reads a request body, so a body it cannot read can never
+weaken the check.
 
 A refusal is always `403 csrf_token_invalid` (`detail` never echoes a value),
 `auth_csrf_refused_total{reason}`, and an `auth.csrf_refused` audit record
@@ -100,6 +101,9 @@ _EXEMPT_PATH = re.compile(
 )
 REFRESH_PATH = "/auth/refresh"
 LOGOUT_PATH = "/auth/logout"
+UNLOCK_PATH = "/auth/unlock"
+#: The POSTs a `cv_refresh` cookie may identify (contract "Idle lock"): their routes bind it.
+_COOKIE_IDENTIFIED_PATHS = frozenset({LOGOUT_PATH, UNLOCK_PATH})
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _UNMATCHED = "(unmatched)"
 #: Refusals not bound to a live session, per source IP per window, that are
@@ -494,11 +498,11 @@ class CsrfMiddleware:
             await self._refuse(scope, receive, send, CsrfRefusal.BAD_MAC, None)
             return
         record = await self._resolve(headers)
-        if self._cookie_identified_logout(scope, headers, record):
+        if self._cookie_identified(scope, headers, record):
             # Contract "Idle lock": no access token inside its lifetime identifies this
-            # logout, so its `cv_refresh` cookie does. The route checks SR-042 Origin and
-            # binds the token to that cookie's session (`verify_refresh_csrf`) before it
-            # audits or revokes anything.
+            # logout or unlock, so its `cv_refresh` cookie does. The route checks SR-042
+            # Origin and binds the token to that cookie's session (`verify_refresh_csrf`)
+            # before it audits, checks a password or changes anything.
             await self._app(scope, receive, send)
             return
         if record is None:
@@ -516,14 +520,15 @@ class CsrfMiddleware:
             return None
         return await sessions.peek_access_token(token)
 
-    def _cookie_identified_logout(
+    def _cookie_identified(
         self, scope: Scope, headers: Headers, record: SessionRecord | None
     ) -> bool:
-        """`POST /auth/logout` that the route identifies by `cv_refresh`: the cookie is
-        present and no access token inside its lifetime identifies a session (none, or
-        *record*, its session, is past `ACCESS_TOKEN_TTL`). A bearer this server never
-        issued is not: the route refuses it without reading the cookie, so it stays here."""
-        if scope["method"] != "POST" or route_path(scope["path"]) != LOGOUT_PATH:
+        """`POST /auth/logout` or `POST /auth/unlock` that the route identifies by
+        `cv_refresh`: the cookie is present and no access token inside its lifetime
+        identifies a session (none, or *record*, its session, is past `ACCESS_TOKEN_TTL`).
+        A bearer this server never issued is not: the route refuses it without reading the
+        cookie, so it stays here."""
+        if scope["method"] != "POST" or route_path(scope["path"]) not in _COOKIE_IDENTIFIED_PATHS:
             return False
         if REFRESH_COOKIE not in _cookies(headers):
             return False

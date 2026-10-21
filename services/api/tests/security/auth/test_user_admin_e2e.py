@@ -189,9 +189,8 @@ _ADMIN_FIELDS: dict[str, Any] = {"status": "active", "roles": ["owner"], "mfa_re
 #: answer to `_ADMIN_FIELDS` on M's own full session. A declared model refuses them before its
 #: handler runs (FastAPI's 422 `validation_failed`, each `extra_forbidden`); refresh and logout
 #: refuse keys outside their closed sets (422); a step-up body otherwise whole is 400
-#: `validation_failed` for them alone, before any factor is checked. Unlock is unwired in this
-#: world (no unlock authority): 503 before any body is read; the one it reads, `UnlockBody`, is
-#: closed (below).
+#: `validation_failed` for them alone, before any factor is checked. Unlock answers M's unlocked
+#: session `409` before any body is read; the one it reads, `UnlockBody`, is closed (below).
 _SELF_SERVICE_WRITES: dict[tuple[str, str], int] = {
     ("POST", "/auth/login"): 422,
     ("POST", "/auth/logout"): 422,
@@ -201,7 +200,7 @@ _SELF_SERVICE_WRITES: dict[tuple[str, str], int] = {
     ("POST", "/auth/mfa/verify"): 422,
     ("POST", "/auth/refresh"): 422,
     ("POST", "/auth/step-up"): 400,
-    ("POST", "/auth/unlock"): 503,
+    ("POST", "/auth/unlock"): 409,
 }
 #: The writes whose 422 is FastAPI's, naming each refused field.
 _DECLARED: tuple[str, ...] = ("/auth/login", "/auth/mfa/enroll", "/auth/mfa/enroll/confirm")

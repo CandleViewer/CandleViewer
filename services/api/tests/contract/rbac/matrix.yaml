@@ -417,9 +417,7 @@ operations:
     permissions: []
     scope: self
     public: false
-    state: not_executable
-    reason: 'mounted dark by #2300 slice 2e: create_app() wires no step-up authority yet, so
-      every actor gets 503; slice 2f wires it'
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /chart-templates:
     permissions: ['workspaces:read']
