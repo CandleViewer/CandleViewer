@@ -27,6 +27,13 @@ token once per call, and B1's `rate` verdict read a non-consuming headroom figur
 `reserve()`; the second slice of #913 declares that port with its first consumer. Nothing here
 imports the exchange adapter (C-2.2).
 
+The second slice adds two ports with no interim, both bound by slice 3's wiring. `ClockHealth` is
+the exchange-clock verdict order entry halts on (24 Sec.8.6 `10002`, `clock_halt.ClockHalt`), in
+the shape of `ingestion.clock.ClockGuard`, so the guard is wired as it stands while `oms` never
+imports `ingestion` (C-3.4). `TradingAccounts` resolves the account the OMS has scope-checked to
+the trading port's `AccountRef`, whose `key_ref` only that account's active key fills
+(SR-E27-21).
+
 The vocabulary the ports speak lives here too: `OrderEffect` (SR-E29-01), `StopOffset` (22
 `Offset`), `SizingRequest` (22 `Sizing`), `ArmToken`, the session's arm token held masked (C-12.6)
 and compared in constant time (SR-043), and `SizedOrder`, the order the validator, the risk gate
@@ -51,6 +58,7 @@ import structlog
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Px, Qty, Side, Symbol
+from candleviewer.exchange.base.models import AccountRef
 from candleviewer.exchange.policy import InstrumentPolicy
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
@@ -220,6 +228,40 @@ class ArmRecords(Protocol):
     def check(
         self, *, session_id: UUID, environment: Environment, token: ArmToken | None
     ) -> Verdict: ...
+
+
+class ClockHealth(Protocol):
+    """The exchange-clock verdict order entry halts on (24 Sec.8.6 `10002`): `ClockGuard`'s own
+    members (`ingestion/clock.py`), so slice 3 wires the guard with no adapter. It records the
+    verdict; `clock_halt.ClockHalt` enforces it."""
+
+    def assert_healthy(self) -> None:
+        """`ClockDriftError` when no measurement has succeeded yet, or the measured offset is past
+        the hard threshold."""
+        ...
+
+    def offset_age_s(self) -> float:
+        """Seconds since the last successful measurement, on a monotonic clock; `inf` before the
+        first."""
+        ...
+
+    async def resync_after_signature_failure(self, *, reason: str) -> int:
+        """Measure at once, as a request refused for its timestamp asks (`10002`), and return the
+        offset measured, in microseconds, which the OMS does not read. Raises when no sample
+        answered: the last measurement stands."""
+        ...
+
+
+class TradingAccounts(Protocol):
+    """The account an order is signed for (SR-E27-21, KV-E14): the exchange account the OMS has
+    already scope-checked, as the trading port's `AccountRef`, whose `key_ref` is that account's
+    active key. It takes the account id alone, so no request field can select a key."""
+
+    async def trading_account(self, account_id: AccountId) -> AccountRef:
+        """The account's UID, environment and active key (`key_ref`, never the key itself). An
+        `OrderRefused`, with nothing recorded or sent, for an account the OMS does not trade or
+        one with no active key."""
+        ...
 
 
 class Interim:

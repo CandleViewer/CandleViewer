@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, replace
@@ -15,6 +16,7 @@ from uuid import UUID
 
 from candleviewer.domain.order_link import EXT_ID, OUR_ID
 from candleviewer.domain.primitives import OrderLinkId
+from candleviewer.exchange.base.errors import ClockDriftError
 from candleviewer.storage.errors import (
     StorageQueryFailed,
     StorageTierUnavailable,
@@ -72,8 +74,9 @@ from candleviewer.storage.repositories.trade_groups import (
 )
 
 __all__ = [
-    "InMemoryExecutionStore", "InMemoryIdempotencyAnchorStore", "InMemoryOrderLinkLookup",
-    "InMemoryOrderStore", "InMemoryRecordedStopStore", "InMemorySubmissionStore",
+    "FakeClockHealth", "InMemoryExecutionStore", "InMemoryIdempotencyAnchorStore",
+    "InMemoryOrderLinkLookup", "InMemoryOrderStore", "InMemoryRecordedStopStore",
+    "InMemorySubmissionStore",
 ]  # fmt: skip
 
 #: Wide enough that a sum or difference of numeric(38,18) values is exact, as in Postgres.
@@ -922,3 +925,46 @@ class InMemoryRecordedStopStore:
         hook = write_ahead(tuple(swept)) if swept else None
         await self._db._audited_commit(hook, self._audit_timeout_s, *voided)
         return tuple(swept)
+
+
+class FakeClockHealth:
+    """A `ClockHealth` (`ports.py`) on the caller's monotonic clock, answering as
+    `ingestion.clock.ClockGuard` does: before the first measurement `assert_healthy` raises
+    `ClockDriftError` and the age is `inf`; `measure(offset_ms)` takes one at the clock's now,
+    healthy while its offset is within `hard_threshold_ms`. `resync_after_signature_failure`
+    records its reason in `resyncs`, then measures `resync_offset_ms`, or raises `resync_error`
+    when one is set (a burst no sample answered), leaving the last measurement standing."""
+
+    def __init__(
+        self, monotonic: Callable[[], float], *, hard_threshold_ms: float = 2_000.0
+    ) -> None:
+        self._monotonic = monotonic
+        self._hard_threshold_ms = hard_threshold_ms
+        self._measured_at: float | None = None
+        self._offset_ms = 0.0
+        self.resync_offset_ms = 0.0
+        self.resync_error: Exception | None = None
+        self.resyncs: list[str] = []
+
+    def measure(self, offset_ms: float = 0.0) -> None:
+        """A successful measurement now: the server's clock minus ours, `offset_ms`."""
+        self._measured_at, self._offset_ms = self._monotonic(), offset_ms
+
+    def assert_healthy(self) -> None:
+        if self._measured_at is None:
+            raise ClockDriftError("clock offset has never been measured")
+        if abs(self._offset_ms) > self._hard_threshold_ms:
+            raise ClockDriftError("clock offset exceeds the hard threshold")
+
+    def offset_age_s(self) -> float:
+        if self._measured_at is None:
+            return math.inf
+        return max(0.0, self._monotonic() - self._measured_at)
+
+    async def resync_after_signature_failure(self, *, reason: str) -> int:
+        self.resyncs.append(reason)
+        await asyncio.sleep(0)
+        if self.resync_error is not None:
+            raise self.resync_error
+        self.measure(self.resync_offset_ms)
+        return round(self.resync_offset_ms * 1_000)

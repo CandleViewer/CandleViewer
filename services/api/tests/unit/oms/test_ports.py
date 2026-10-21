@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import dataclasses
 import hmac
+import inspect
 import json
+import time
 from datetime import UTC, datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, Final, get_args, get_type_hints
 from uuid import UUID
 
 import pytest
@@ -30,6 +32,8 @@ from structlog.testing import capture_logs
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Side
+from candleviewer.exchange.base.models import AccountRef
+from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.observability.secret_type import Secret
@@ -39,12 +43,14 @@ from candleviewer.oms.errors import (
     OrderInvalid,
     StopUnitUnsupported,
 )
+from candleviewer.oms.fakes import FakeClockHealth
 from candleviewer.oms.ports import (
     FAILED,
     INTERIM_PORTS_METRIC,
     PASSED,
     PORT_NAMES,
     ArmToken,
+    ClockHealth,
     FixedQtySizer,
     Interim,
     InterimRiskGate,
@@ -55,6 +61,7 @@ from candleviewer.oms.ports import (
     SizingRequest,
     StopOffset,
     SubmissionPorts,
+    TradingAccounts,
     Verdict,
     announce_interim_ports,
 )
@@ -544,3 +551,39 @@ def test_announce_registers_the_gauge_from_its_catalogue_entry() -> None:
     assert gauge.series_count == len(PORT_NAMES) and not gauge.breached
     [family] = [f for f in metrics.registry.collect() if f.name == INTERIM_PORTS_METRIC]
     assert family.documentation == spec.help
+
+
+# -- slice 2b: the clock and account ports --------------------------------------------------------
+
+_CLOCK_MEMBERS: Final = ("assert_healthy", "offset_age_s", "resync_after_signature_failure")
+
+
+async def _server_time() -> tuple[int, float, float]:
+    return 0, 0.0, 0.0
+
+
+def test_the_clock_guard_as_it_stands_and_the_fake_are_clock_healths() -> None:
+    """Slice 3 wires `ingestion.clock.ClockGuard` with no adapter, as mypy reads the list below,
+    and the fake answers alike: each member as the port declares it, sync or async, its
+    parameters of the same kinds, any other with a default. `oms` itself never imports
+    `ingestion` (C-3.4, `.importlinter`'s forbidden-M14)."""
+    clocks: list[ClockHealth] = [ClockGuard(_server_time), FakeClockHealth(time.monotonic)]
+    for clock in clocks:
+        for name in _CLOCK_MEMBERS:
+            port, member = getattr(ClockHealth, name), getattr(type(clock), name)
+            assert inspect.iscoroutinefunction(member) == inspect.iscoroutinefunction(port)
+            wanted = inspect.signature(port).parameters
+            offered = inspect.signature(member).parameters
+            assert set(wanted) <= set(offered)
+            assert all(offered[n].kind == p.kind for n, p in wanted.items())
+            assert all(p.default is not p.empty for n, p in offered.items() if n not in wanted)
+
+
+def test_trading_accounts_takes_the_account_id_alone() -> None:
+    """SR-E27-21: the key comes only from the account the OMS scope-checked, so the port takes
+    nothing a request could use to select one, and answers the trading port's `AccountRef`."""
+    member = TradingAccounts.trading_account
+    assert inspect.iscoroutinefunction(member)
+    assert list(inspect.signature(member).parameters) == ["self", "account_id"]
+    hints = get_type_hints(member)
+    assert (hints["account_id"], hints["return"]) == (AccountId, AccountRef)
