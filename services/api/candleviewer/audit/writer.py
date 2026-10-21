@@ -62,6 +62,15 @@ JSON form, keeping both, and returns a commit token: the record's ordinal in thi
 WAL append order. `committed_through()` is the highest token whose record the flusher has
 inserted into Postgres; it inserts in WAL order, so every token at or below it is there.
 Tokens are process-local and never persisted; a compaction or a flusher restart keeps them.
+
+Keyed records (#3085 Q3): `emit_keyed(action, name, ...)` stores a record that must exist once
+however often it is written (one `admin.view_as_ended` per view-as context, written again until it
+is known to be stored) under the id `uuid5(KEYED_ACTIONS[action], name)` in place of a new one. A
+repeat, in this run or after a restart, is a no-op insert (`ON CONFLICT (record_id) DO NOTHING`,
+step 3): the first one written stays. Each keyed action has its own namespace and an action not
+listed is refused, so two actions never share an id, and a version 5 id never equals a random one
+(version 4) or a lane anomaly id (version 8): a repeat only ever meets its own record. `emit()` and
+`build()` are unchanged, so the lane façade still mirrors `emit()`.
 """
 
 from __future__ import annotations
@@ -75,7 +84,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Concatenate
+from typing import Any, Concatenate, Final
 
 import structlog
 
@@ -96,6 +105,12 @@ def logger() -> Any:
 AlarmCallback = Callable[[str], Awaitable[None]] | None
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], Awaitable[None]]
+
+#: The actions `emit_keyed()` writes, each with the namespace of its record ids, one per action and
+#: fixed for good: a new value would give a name written on both sides of the change two rows.
+KEYED_ACTIONS: Final[Mapping[str, uuid.UUID]] = MappingProxyType(
+    {"admin.view_as_ended": uuid.UUID("f30c6b64-1ea6-416d-aebb-8aaa0760f421")}  # name: context id
+)
 
 
 def _utc_now() -> datetime:
@@ -433,6 +448,17 @@ class AuditWriter:
             env=env,
         )
         await self.ingest_counted(emission)
+
+    async def emit_keyed(self, action: str, name: str, **fields: Any) -> None:
+        """`emit()` of a keyed `action` under the id `uuid5(KEYED_ACTIONS[action], name)` ("Keyed
+        records" above): `build()` with the keywords of `emit()`, then `ingest()`, so a refusal is
+        counted and raised as `emit()`'s, only after `build()` checked the record. `ValueError`
+        for an action `KEYED_ACTIONS` does not list."""
+        namespace = KEYED_ACTIONS.get(action)
+        if namespace is None:
+            raise ValueError(f"{action!r} is not a keyed audit action")
+        keyed = {"record_id": uuid.uuid5(namespace, name)}
+        await self.ingest_counted(self.build(action, **fields).model_copy(update=keyed))
 
     async def ingest_counted(self, record: AuditEmission) -> int:
         """`ingest()` for a caller that waits on the record: a refusal is counted, then raised."""

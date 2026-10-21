@@ -218,6 +218,10 @@ def test_every_public_method_of_an_admin_class_is_declared() -> None:
         ("backups.verify", "BackupVerifications.start", {"backup.verified"}),
         ("ops.incidents", "AdminIncidentsService.acknowledge", {"incident.acknowledged"}),
         ("breakglass", "BreakGlassFlow.run", {"auth.break_glass_reset"}),
+        ("view_as", "ViewAsService.end", {"admin.view_as_ended"}),
+        ("view_as", "ViewAsService.evaluate", {"admin.view_as_ended"}),
+        ("view_as", "ViewAsService.leave", {"admin.view_as_ended"}),
+        ("view_as", "ViewAsService.write_end_record", {"admin.view_as_ended"}),
         (
             "service",
             "AdminService.rewrap_kek",
