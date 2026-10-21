@@ -49,18 +49,63 @@ limiter; the flag-off stack keeps the loop clock, as production does.
 parser) as §14.2 batches, replayed in rounds with unique ids. Client opt-ins, set before `start()`:
 the §9.1 client `ping` (`heartbeat_s`), no permessage-deflate (`deflate`), and `on_data`, which
 takes the data frames of a stream too large to keep. The flag-off scenarios use none of these.
+`_book.Replica` (and `replay`) rebuilds a structured book channel from the frames a `Client` kept: a
+`snap` replaces it, a `d` patches it, a gap discards until the next `snap` (§7.1). `_book.BookTap` is
+a `Client.on_data` for a channel too long to keep (a `Replica` and the disclosure of each `d`), and
+`_book.Loop` a book publisher for a stream of any length (Scenario 3).
 
 ## Catalogue
 
 | #   | Scenario (#410 AC)                                                  | This slice                                                    | Blocker for the end-to-end run                                                                                                                                                                                                                           |
 | --- | ------------------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Upstream kill (G3)                                                  | not run                                                       | Nothing feeds the hub: `SequencingHub.publish` / `upstream_desync` / `upstream_reconnect` (`ws/sequencing.py:621,672,675`) have no production caller; book publisher E21-T01 #604, ingestion feed                                                        |
+| 1   | Upstream kill (G3)                                                  | **runs** (gateway half): `test_s1_upstream_kill.py`           | Producer half: nothing calls `SequencingHub.upstream_desync` or `upstream_reconnect` nor publishes a book `d`: the book publisher E21-T01 #604. End to end then runs over the E08 Rig's recorded upstream (recorded here, not filed)                     |
 | 2   | Slow consumer, 60 s (G4, P6; AC-12)                                 | **runs**: `test_s2_slow_consumer.py`                          | — (flag on: `_server.flag_on`. The sleeper holds `book.BTCUSDT.50` and the tape; no bar builder is wired into this harness for `bars` or `footprint`. Step 3's redrop needs a snapshot near the budget, and none is: `test_pipeline_ladder.py` pins it.) |
-| 3   | Burst 5 000 msg/s (§8)                                              | not run                                                       | #571's `cv_ws_conflated_total`; the flag-on stack it needs exists (`_server.flag_on`)                                                                                                                                                                    |
+| 3   | Burst 5 000 msg/s (§8)                                              | **runs** (the burst): `test_s3_burst.py`                      | — (flag on: `_server.flag_on`. The gateway has no book publisher, #604: `_book.Loop` plays it. Not run yet: the other symbols during the burst, and budget #6)                                                                                           |
 | 4   | Restart, `shutdown_notice` (§9.4)                                   | **runs**: `test_s4_restart_shutdown_notice.py`                | —                                                                                                                                                                                                                                                        |
 | 5   | Token expiry during an outage (§4.3, §9.2)                          | **runs**: `test_s5_token_expiry_outage.py`                    | —                                                                                                                                                                                                                                                        |
 | 6   | Grant revoked mid-reconnect (E17-X02)                               | **runs**: `test_s6_revocation_reconnect_race.py`              | — (SR-189 half: #2318 merged)                                                                                                                                                                                                                            |
 | 7   | Kill switch reaches every socket <= 1 s under chaos (WS-E04, AC-26) | **runs** (gateway half): `test_s7_kill_switch_propagation.py` | Producer half: nothing calls `WsEvents.kill_switch_changed` (`app.py:1050` only builds it): #956 E39-S03                                                                                                                                                 |
+
+**Scenario 1 (gateway half)** (C-13.6 #1, a public WS disconnect, "mid-snapshot" here a subscription
+attached during the outage, not a kill during an in-flight snapshot; and the gateway's reaction to
+#3's desync. The ingestion halves, which leave client-WS fan-out to E17:
+`tests/chaos/ingestion/test_s01_ws_hard_disconnect.py` and `test_s03_book_sequence_gap.py`). Nothing
+feeds the hub yet, so the test plays the publisher, with production APIs only and nothing patched,
+as the §7.4 table reads: the upstream dying is `Source.unavailable` (what the production book source
+answers while rebuilding or desynced) and `SequencingHub.upstream_desync`; the upstream coming back
+is `upstream_reconnect`. Flag off and on. Three sockets: a full workspace (`book` structured,
+`trades`, account A's `orders` for the symbol), a chart and a chart of ETHUSDT (a mirror book). Time
+moves 0.5 s once every update is delivered, a tick longer than any window a class can give (asserted
+at import). Three ticks warm, a 10 s outage (20 ticks), five after. Through the outage each recorded
+delta is a stray: `book_step` hands it to the hub and must find no subscription to take it (a
+pending one takes no `d`), asserted at the publish, which a late frame cannot slip past. The tape is
+silent; ETHUSDT's book and an update of account A's orders flow. The kill leaves both BTCUSDT book
+subscriptions pending and sends nothing: no snapshot and no `cv_ws_resync_total` for the 10 s. The
+recovery re-snapshots three: the two books, `upstream_desync` (an incident reason, §7.4; a pending
+reason is kept, so a book's two triggers make one snap), and the tape, `upstream_reconnect` (not an
+incident); `cv_ws_resync_total` moves by exactly `{upstream_desync: 2, upstream_reconnect: 1}`. A
+channel reads `snap`, 3 `d`, `snap`, 5 `d`, `s` 1 to 10: the re-snapshot is the frame right after
+the last `d` before the kill, its `previous_seq` that `d`'s `s`, its own `s` the next; each snapshot
+is schema-valid and `Client.gaps` is empty. A `Replica` equals the server's book after the recovery
+and after the five deltas, and one that lost a delta flags the gap and diverges. ETHUSDT and the
+orders keep their `initial` snapshot alone. The outage is 10.000 s of virtual time (asserted) and
+the recovery takes none; the snapshots land some ms after it (loop time: a few ms, flag on at times
+the ~40 ms Nagle and delayed-ACK stall of the harness's accepted sockets), printed, not asserted.
+`s1b`: the upstream is down and a client attaches: `sub_ok` says `snapshot_pending`, as every attach
+does (conformance, not the outage's doing); the outage shows in each refused stray and no `snap`
+before the restore, which sends its one, `initial` (an attach is no resync: no `previous_seq`, not
+counted), equal to the book as it stands. Not covered: repeated kill and restore cycles (the "storm"
+of C-13.6 #1); a flag-on kill that lands on an open throttle window (the tick outlasts any window).
+Unit tests cover a pended subscription with a window open:
+`test_outbound.py::test_backpressure_sheds_the_window_of_a_topic_another_sender_pended` and
+`test_pacing.py::test_pacer_forced_coalescing_past_the_key_bound[re-pended]`. What none covers is a
+window that `tick` flushes while its subscription is pending, which the emitter refuses until the
+pending snapshot carries the state. Also not covered: the binary book path (both
+scenarios subscribe structured); and the end to end run, the E08 Rig's recorded upstream through
+#604 into the hub, which waits for #604 (recorded here, not filed). The
+stand-in encodes the §7.4 table as the publisher's contract; if #604 does otherwise (say
+`flush_pending` before `upstream_reconnect`, which gives a book two snaps) this stays "gateway
+half", no proof of G3 end to end.
 
 **Scenario 2** (C-13.6 #11, backpressure: a slow WS client). Flag on. The sleeper holds the
 reference workspace's feedable topics, `book.BTCUSDT.50` and `trades.BTCUSDT` (no bar builder is
@@ -97,6 +142,44 @@ tape, the orders and the book, kept to the close, where the orders alone are lef
 The lane heals in the close's own synchronous turn (the feed's `until` hook, no await between),
 inside the close's 2 s flush; the client backs off (§9.2 attempt 1) and re-snapshots every topic,
 `orders` first (§9.3), no gap.
+
+**Scenario 3** (no C-13.6 row: 23 §16.4's chaos row, "5 000 msg/s burst on one symbol; assert
+coalescing and no sequence break"; the nearest is #11, backpressure). Flag on: coalescing is flag-on
+only. The gateway has no book publisher (#604), and `Stack.book_step` sorts the book's levels four
+times an update (about 0.5 ms) and ends with the recording after 5 399, so `_book.Loop` plays the
+publisher: the 1 000 recorded updates that move the depth-50 window (the recording's first 1 252
+deltas), built once as `window_delta` bodies (about 0.5 s), then a bridge body back to the opening
+window. `publish` also applies each update's raw levels to the server's book, and the bridge takes
+it back to its opening, so the stream replays for ever and every body is a true transition. One
+client holds `book.BTCUSDT.50` structured (a book defaults to binary, which the `Replica` does not
+read), and the hub gets 5 000 updates a second of virtual time, in lumps: each tick of 250 ms
+publishes its 1 250 at one virtual instant, moves the clock and waits until the client holds them
+all, so a window closes before the next tick's first update arrives. So a lapsed window flushed
+inline by `Pacer.offer`, and a steady interleaving of updates with window closes, are not exercised
+here. The frames are then fixed: `s` 2, the first update of a cold lane, leaves alone (the
+leading edge, §8.6, D12; no
+`coalesced_count`); `s` 3 is the other 1 249 of its tick as one window (`coalesced` true,
+`coalesced_count` 1 249); then one window of 1 250 a tick, `s` contiguous, no snapshot after the
+first, the socket never closed. The tick outlasts the slowest window the book can get, 200 ms (the
+50 ms throttle x4, `saturated`): a class follows RTT samples read on the virtual clock, a `pong`
+that crosses ticks can raise it (scenario 1 met that at 125 ms), and a window longer than its tick
+waits for a clock the waiting tick never moves. The run is 50 000 updates in 41 frames (x1 220) in
+the PR lane; 300 000 in 241 (x1 245), marked `harness`, is meant for the nightly job (wired in the
+next #410 PR), so the PR lane's `-m` leaves it out and `-m chaos` (above) includes it (`-m "chaos
+and not harness"` does not). After every tick the `Replica` equals the server's `Book.top(50)` (23
+§16.4, unit: the coalescer equals applying every source update), and the pacer's series agree with
+the frames: `cv_ws_conflated_total{topic="book"}` moves by the updates less the frames,
+`cv_ws_coalesced_updates` by one count a frame but the first and the updates less one in its sum,
+and nothing moves in `cv_ws_overflow_total`, `cv_ws_closes_total` or `cv_ws_resync_total`: absorbed,
+not lost. A window holds at most 181 distinct levels here, against a bound of 4 096 merge keys. Wall
+time is printed, not asserted: the 10 s run takes 3 to 4.5 s (14.7 s under the `py` lane's `--cov`),
+the 60 s run 20 to 26 s (85 s under `--cov`, which is why it is `harness`). `loop_feed`: no server;
+two laps of a `Loop`, from the
+opening of the recording and from one lap in (where a clone symbol would start), through a flag-off
+emitter. At every update the replica equals the server's book, so a snapshot built then would equal
+what a client following the deltas holds, and at the end of each lap window and book are back where
+they began (the bridge has something to take back). Not run yet: the other symbols during the burst
+(their frames unchanged, their fan-out inside budget #6), the second half of #410's scenario 3.
 
 **Scenario 4.** Three workspaces are connected and `server.should_exit` is set (what SIGTERM sets):
 `PlannedShutdownServer` runs `WsRuntime.stop()` before uvicorn's own shutdown. Each client gets the
@@ -163,6 +246,27 @@ broadcast skips the parked socket, whose `auth_ok.kill_switch` (§4.3; `welcome`
   drain gate (the woken sleeper's queue holds only control frames;
   `test_backpressure_drain_waits_until_the_queue_is_below_half`) and the redrop close
   (`test_three_redrops_close_with_close_redrop`).
+- **Scenario 1 mutation** (in memory, no file written): `s1`, flag off and on, fails on each of 13
+  mutants of `ws/sequencing.py` and `ws/pacing.py`: a `d` taken by a subscription that waits for its
+  `snap` (`TopicEmitter.delta` ignoring `snapshot_pending`, which only flag off reaches, since the
+  pacer's `_held` refuses first; `_held` ignoring it, flag on only; both fail every test),
+  `resnapshot` not marking the subscription pending, `_live_symbol` matching every symbol, the
+  private topics (the blotter filtered to the symbol) or, with `book_only` flipped, the wrong
+  families, `upstream_desync` not book-only, `upstream_reconnect` book-only, `previous_seq` dropped,
+  `s` skipping one (`s1b` too), the resync counter removed, a pending reason replaced by the mundane
+  one (`s1b` too: an attach would be counted), a snapshot that claims success without building. One
+  survives: `resnapshot` not invalidating the snapshot cache, which this harness cannot show, since
+  the source's generation moves with every update.
+- **Scenario 3 mutation** (in memory, no file written): the burst fails on each of 10 mutants of
+  `ws/pacing.py`, `ws/coalescing.py` and `ws/sequencing.py`: the conflation counter removed, or
+  `cv_ws_coalesced_updates` not observed (the series no longer agree with the frames); the book merge
+  keeping the first write of a level, dropping the deletes, or forgetting an update (the replica
+  leaves the book at the first tick, or the counts never add up: the 5 s wait); the throttle
+  bypassed, or a window flushed early (a frame an update, nothing coalesced); a window's count one
+  off either way; `s` taken twice (a gap; the loop's own test fails on it too). Four mutants of the
+  loop itself (the server's book not taking the raw levels, a bridge that leaves the book or the
+  window where it is, the raw levels of a skipped delta dropped) fail the burst and both runs of the
+  loop's test.
 - **SR-189 flip:** #2318 merged (`549d9032`), and `s6b` reported `XPASS(strict)` on the rebased
   branch, as planned, so its `xfail` marker is removed and it runs as a plain test.
 - **Flake budget:** 3 consecutive gate runs plus 20 more after the flip, all green (`7 passed`).
