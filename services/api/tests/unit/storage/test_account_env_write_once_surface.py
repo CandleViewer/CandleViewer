@@ -1,6 +1,6 @@
 """`exchange_accounts.env` is write-once in the application as well (#2333, C-2.11).
 
-`trg_ea_env_write_once` (revision `0040_account_env_write_once`) refuses any change of `env` in the
+`trg_ea_env_write_once` (revision `0041_account_env_write_once`) refuses any change of `env` in the
 database. These tests hold the same premise in code, as `tests/unit/credentials_m2/
 test_write_once_surface.py` does for `api_keys`: no SQL string under `candleviewer/` assigns `env`
 in an UPDATE or upsert of `exchange_accounts`, and none MERGEs into it; the `exchange_accounts`

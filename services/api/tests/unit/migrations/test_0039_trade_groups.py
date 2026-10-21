@@ -552,7 +552,7 @@ def test_no_function_declares_a_variable_of_the_environment_type() -> None:
 def test_the_environment_of_an_account_in_a_definition_or_a_leg_is_fixed() -> None:
     """SR-E28-16: this guard is the part E28-T01 owns, and it looks at both places an account can
     be in use. Blanket immutability of `exchange_accounts.env` came later, with #2333
-    (`trg_ea_env_write_once`, 0040), which sorts after it and refuses every account."""
+    (`trg_ea_env_write_once`, 0041), which sorts after it and refuses every account."""
     assert (
         "CREATE TRIGGER trg_ea_env_in_use BEFORE UPDATE OF env ON exchange_accounts "
         "FOR EACH ROW EXECUTE FUNCTION ea_env_in_use_check();"

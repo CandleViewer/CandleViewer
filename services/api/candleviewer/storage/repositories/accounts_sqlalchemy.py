@@ -410,7 +410,7 @@ _CONFLICT_CONSTRAINTS = frozenset(
     {"exchange_accounts_pkey", "ux_ea_uid", "ux_ea_label", "ux_api_keys_active",
      "api_key_rotations_pkey"}
 )  # fmt: skip
-#: The CHECKs, and the two `exchange_accounts.env` guards (0039 `trg_ea_env_in_use`, 0040
+#: The CHECKs, and the two `exchange_accounts.env` guards (0039 `trg_ea_env_in_use`, 0041
 #: `trg_ea_env_write_once`, #2333), which refuse naming themselves as the constraint. No statement
 #: here assigns `env`; one that did would meet them as a typed rule error, not a raw IntegrityError.
 _RULE_CONSTRAINTS = frozenset(

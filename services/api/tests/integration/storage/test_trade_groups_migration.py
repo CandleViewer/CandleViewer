@@ -830,7 +830,7 @@ def _env_of(c: Conn, account: str) -> str:
 
 
 def _without_the_write_once_guard(dsn: str) -> None:
-    """In this test's own database only, as the superuser: switch off 0040's blanket
+    """In this test's own database only, as the superuser: switch off 0041's blanket
     `trg_ea_env_write_once` (#2333), which refuses every change of `env`, so the scenario meets
     0039's narrower guards alone."""
     with _conn(dsn) as c:
@@ -918,11 +918,11 @@ def test_an_account_in_use_keeps_its_environment(pg_dsn: str, use: str) -> None:
 
 def test_the_in_use_guard_lets_an_account_in_no_group_or_definition_move(pg_dsn: str) -> None:
     """`trg_ea_env_in_use` is the part E28-T01 owns, and it is narrow: it refuses only an account
-    that is a member or has a leg. Since #2333 `trg_ea_env_write_once` (0040) refuses every
+    that is a member or has a leg. Since #2333 `trg_ea_env_write_once` (0041) refuses every
     account (`test_account_env_write_once_migration.py`); with it switched off, an account in no
     group and no definition passes this guard and moves."""
     dsn = _fresh(pg_dsn)
-    _without_the_write_once_guard(dsn)  # isolates 0039's guard from 0040's blanket one
+    _without_the_write_once_guard(dsn)  # isolates 0039's guard from 0041's blanket one
     with _conn(dsn) as c:
         account = _account(c)
         _leg(c, _group(c, _user(c)), _account(c))  # another account is in use
@@ -954,10 +954,10 @@ def test_a_leg_insert_and_an_env_change_serialise(pg_dsn: str) -> None:
 def test_an_env_change_and_a_leg_insert_serialise(pg_dsn: str) -> None:
     """The other order, for `trg_tgl_env`: the leg insert waits on the open environment change,
     then reads the committed environment and refuses the leg. Since #2333
-    `trg_ea_env_write_once` (0040) refuses the change itself, so it is switched off here: the
+    `trg_ea_env_write_once` (0041) refuses the change itself, so it is switched off here: the
     lock and the re-read are 0039's own defence and stay tested."""
     dsn = _fresh(pg_dsn)
-    _without_the_write_once_guard(dsn)  # isolates 0039's guards from 0040's blanket one
+    _without_the_write_once_guard(dsn)  # isolates 0039's guards from 0041's blanket one
     with _conn(dsn) as c:
         account = _account(c)
         group = _group(c, _user(c))

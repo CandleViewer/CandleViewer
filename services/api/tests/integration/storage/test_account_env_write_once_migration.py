@@ -1,10 +1,10 @@
-"""Integration: `0040_account_env_write_once` (#2333) on real Postgres 16.
+"""Integration: `0041_account_env_write_once` (#2333) on real Postgres 16.
 
 An account's `env` never changes once the row exists, whatever the role, the replication mode, the
 account's kind or the column an UPDATE names; an insert takes any environment; the guard is the last
 BEFORE UPDATE row trigger on `exchange_accounts`; the downgrade lifts the rule and keeps 0039's
 `trg_ea_env_in_use`, and the upgrade restores it, with no row changed either way. `testcontainers`
-in CI; the offline render is `tests/unit/migrations/test_0040_account_env_write_once.py`.
+in CI; the offline render is `tests/unit/migrations/test_0041_account_env_write_once.py`.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from testcontainers.postgres import PostgresContainer
 pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
-_REV, _PREV = "0040_account_env_write_once", "0039_trade_groups"
+_REV, _PREV = "0041_account_env_write_once", "0040_indicator_presets"
 _TEMPLATE = "env_write_once_template"
 
 Conn = psycopg.Connection[tuple[Any, ...]]

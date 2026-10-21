@@ -1,7 +1,7 @@
 """exchange_accounts.env is write-once (#2333)
 
-Revision ID: 0040_account_env_write_once
-Revises: 0039_trade_groups
+Revision ID: 0041_account_env_write_once
+Revises: 0040_indicator_presets
 Create Date: 2026-10-20
 
 `docs/plan/21-database-schema.md` Sec.3.2.1, third block, verbatim. #2153's review item 2 (an
@@ -47,8 +47,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0040_account_env_write_once"
-down_revision: str | None = "0039_trade_groups"
+revision: str = "0041_account_env_write_once"
+down_revision: str | None = "0040_indicator_presets"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

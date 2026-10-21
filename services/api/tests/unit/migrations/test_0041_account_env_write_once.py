@@ -1,4 +1,4 @@
-"""`0040_account_env_write_once` (#2333): offline render, two-way plan-doc parity, the trigger's
+"""`0041_account_env_write_once` (#2333): offline render, two-way plan-doc parity, the trigger's
 shape, and the downgrade. The application side (no SQL assigns `env`, no patch or PATCH body
 carries it, the store's typed error): `tests/unit/storage/test_account_env_write_once_surface.py`
 and `tests/unit/storage/test_accounts_store_sqlalchemy.py`.
@@ -15,17 +15,17 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
-_REV, _PREV = "0040_account_env_write_once", "0039_trade_groups"
+_REV, _PREV = "0041_account_env_write_once", "0040_indicator_presets"
 _UP, _DOWN = f"{_PREV}:{_REV}", f"{_REV}:{_PREV}"
 _LOCK, _RESET = "SET LOCAL lock_timeout = '5s';", "SET LOCAL lock_timeout = DEFAULT;"
 #: Alembic's version stamp, each way.
 _STAMP_UP = (
-    "UPDATE alembic_version SET version_num='0040_account_env_write_once' "
-    "WHERE alembic_version.version_num = '0039_trade_groups'"
+    "UPDATE alembic_version SET version_num='0041_account_env_write_once' "
+    "WHERE alembic_version.version_num = '0040_indicator_presets'"
 )
 _STAMP_DOWN = (
-    "UPDATE alembic_version SET version_num='0039_trade_groups' "
-    "WHERE alembic_version.version_num = '0040_account_env_write_once'"
+    "UPDATE alembic_version SET version_num='0040_indicator_presets' "
+    "WHERE alembic_version.version_num = '0041_account_env_write_once'"
 )
 
 
@@ -65,7 +65,7 @@ def _doc_block() -> str:
     return section.split("```sql")[3].split("```", 1)[0]
 
 
-def test_revision_chains_onto_0039() -> None:
+def test_revision_chains_onto_0040() -> None:
     assert f"{_PREV} -> {_REV}" in _alembic("history", "-r", _UP)
 
 
