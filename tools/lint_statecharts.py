@@ -58,6 +58,7 @@ ALLOWED_REMINT_MODULES = {"gateway.py"}
 # on the per-event path (E26-T03) are listed one by one, as in the
 # import-linter contract (module-contracts.toml hotpath_statechart): the replay
 # session service beside them drives B12 and imports the statechart package.
+# `ws.` (E17-T08, ws_statechart): the trailing dot keeps the composition root `ws_wiring.py` out.
 HOTPATH_MODULE_PREFIXES = (
     "candleviewer.book",
     "candleviewer.bars",
@@ -69,6 +70,7 @@ HOTPATH_MODULE_PREFIXES = (
     "candleviewer.replay.pacing",
     "candleviewer.replay.regroup",
     "candleviewer.replay.runner",
+    "candleviewer.ws.",
 )
 
 SEVERITY_ERROR = "error"

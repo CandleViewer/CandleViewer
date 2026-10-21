@@ -151,3 +151,14 @@ class Registry:
 
     def export_stately(self, key: str) -> dict[str, Any]:
         return export_stately(self.get(key))
+
+
+_default: Registry | None = None
+
+
+def default_registry() -> Registry:
+    """The process's one `Registry` over the committed charts, loaded on first use (`build()`'s)."""
+    global _default
+    if _default is None:
+        _default = Registry()
+    return _default

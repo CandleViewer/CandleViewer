@@ -1,6 +1,6 @@
 """E17-T08 contract slice: `machines.{entity}.state` (23-ws-protocol.md §6.4, §12.8, §15.10).
 
-The publisher has not landed yet. These tests pin the contract by binding its sources together:
+These tests pin the contract by binding its sources together:
 the §6.4 kind and RBAC tables, the §15.10 schema (bundled in docs/plan/ws-schema.json), the §16.6
 open items, the role grants in auth/rbac_seed.json and the chart contracts in
 candleviewer/statechart/machines (C-2.19). File reads only.

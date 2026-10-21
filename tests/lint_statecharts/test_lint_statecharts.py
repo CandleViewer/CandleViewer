@@ -96,6 +96,18 @@ def test_hotpath_leaves_the_replay_session_service_free_to_drive_its_chart(
     assert lint.lint_python_file(path) == []
 
 
+@pytest.mark.parametrize(
+    ("module", "rules"),
+    [("ws/machines", ["CV-LINT-HOTPATH"]), ("ws_wiring", []), ("machine_state_wiring", [])],
+)
+def test_hotpath_covers_the_ws_gateway_but_not_the_composition_roots_beside_it(
+    tmp_path: Path, module: str, rules: list[str]
+) -> None:
+    """E17-T08 (C-2.20): the roots that join `ws` to the statechart sit beside it, not in it."""
+    path = _statechart_importer(tmp_path, f"candleviewer/{module}.py")
+    assert [f.rule for f in lint.lint_python_file(path)] == rules
+
+
 def test_invoke_cycle_warning_does_not_fail() -> None:
     """CV-LINT-INVOKE-CYCLE (W): fires as a warning only, never an error."""
     path = JSON_FIXTURES / "CV-LINT-INVOKE-CYCLE_warn.machine.json"

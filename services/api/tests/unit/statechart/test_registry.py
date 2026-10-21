@@ -23,6 +23,7 @@ from candleviewer.statechart import (
     machine_hash,
     validate,
 )
+from candleviewer.statechart.registry import default_registry
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -102,6 +103,11 @@ def test_export_stately_round_trips_states_recursively() -> None:
     inline = stately["states"]["working"]["invoke"]["src"]
     assert "strict" not in inline
     assert set(inline["states"]) == {"a", "b"}
+
+
+def test_default_registry_is_one_registry_over_the_committed_charts() -> None:
+    assert default_registry() is default_registry()
+    assert default_registry().keys() == Registry().keys()
 
 
 class TestRegistryLoader:

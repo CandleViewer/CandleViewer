@@ -1220,12 +1220,11 @@ forbidden_modules =
     xstate_statemachine
 
 [importlinter:contract:forbidden-ws-statechart]
-name = C-2.20 — ws never imports the statechart factory, persistence or runtime
+name = C-2.20 — ws never imports the statechart package or runtime
 type = forbidden
 source_modules =
     candleviewer.ws
 forbidden_modules =
-    candleviewer.statechart.factory
-    candleviewer.statechart.persistence
+    candleviewer.statechart
     xstate_statemachine
 

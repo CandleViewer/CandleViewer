@@ -197,7 +197,7 @@ def render(manifest: dict) -> str:
     ws = cc["ws_statechart"]
     lines.append("[importlinter:contract:forbidden-ws-statechart]")
     lines.append(
-        f"name = {ws['rule']} — ws never imports the statechart factory, persistence or runtime"
+        f"name = {ws['rule']} — ws never imports the statechart package or runtime"
     )
     lines.append("type = forbidden")
     lines.append("source_modules =\n    " + "\n    ".join(ws["source_modules"]))

@@ -2,7 +2,8 @@
 
 Every `build()` (and, once E50-T49 lands, every restore via
 `from_snapshot(plugins=...)`) attaches `[CvErrorHooks(), CvMetricsPlugin(),
-CvAuditPlugin()]` (28-statechart-catalogue.md §1.3c).
+CvAuditPlugin()]` (28-statechart-catalogue.md §1.3c). `CvStateFeedPlugin` (E17-T08) is not one of
+the three: the module that feeds `machines.{entity}.state` attaches it beside them (`feed_plugins`).
 
 The plugins are *duck-typed*: CV-LINT-IMPORT allows only `factory.py` and
 `persistence.py` to import the runtime, and the library's `_SafePlugin`
@@ -23,6 +24,13 @@ from candleviewer.statechart.plugins.audit import (
 )
 from candleviewer.statechart.plugins.errors import CvErrorHooks
 from candleviewer.statechart.plugins.metrics import CvMetricsPlugin
+from candleviewer.statechart.plugins.state_feed import (
+    CvStateFeedPlugin,
+    FeedBinding,
+    MachineStateHandle,
+    MachineStatePort,
+    feed_plugins,
+)
 
 if TYPE_CHECKING:
     from candleviewer.observability.metrics import Metrics
@@ -60,10 +68,15 @@ __all__ = [
     "CvAuditPlugin",
     "CvErrorHooks",
     "CvMetricsPlugin",
+    "CvStateFeedPlugin",
+    "FeedBinding",
     "InMemoryMachineEventSink",
     "LogPager",
     "MachineEventRow",
     "MachineEventSink",
+    "MachineStateHandle",
+    "MachineStatePort",
     "Pager",
     "cv_plugins",
+    "feed_plugins",
 ]

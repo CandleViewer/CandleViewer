@@ -116,10 +116,10 @@ def test_asyncpg_import_outside_storage_caught_by_adr_0003() -> None:
 
 
 def test_statechart_import_from_ws_caught_by_c_2_20() -> None:
-    """#414 AC 2: `candleviewer.ws` never imports the statechart factory (no `Interpreter`)."""
+    """#414 AC 2: `candleviewer.ws` never imports the statechart package (no `Interpreter`)."""
     target = REPO_ROOT / "services" / "api" / "candleviewer" / "ws" / "machines.py"
     with _PatchedFile(target) as f:
-        f.write(f.backup + "\nimport candleviewer.statechart.factory\n")
+        f.write(f.backup + "\nimport candleviewer.statechart.plugins.state_feed\n")
         result = _run(["uv", "run", "lint-imports"], cwd=REPO_ROOT / "services" / "api")
     assert result.returncode != 0
     line = next(ln for ln in result.stdout.splitlines() if "ws never imports the statechart" in ln)

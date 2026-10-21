@@ -16,6 +16,7 @@ CvAuditPlugin) are E50-T60.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +41,7 @@ from candleviewer.statechart.config import (
     CV_START_TIMEOUT,
     Lane,
 )
-from candleviewer.statechart.registry import Registry
+from candleviewer.statechart.registry import Registry, default_registry
 
 if TYPE_CHECKING:
     from candleviewer.statechart.persistence import (
@@ -50,25 +51,12 @@ if TYPE_CHECKING:
         SealedSnapshot,
     )
 
-#: Lazily constructed default registry (`machines/*.machine.json` under the
-#: package). Tests inject their own via `build(..., registry=...)` so the
-#: default one is never eagerly loaded (and never touched) unless a caller
-#: actually asks for it.
-_default_registry: Registry | None = None
-
 #: Re-exported for `gateway.py` (E50-T15), which may not import the runtime
 #: itself (CV-LINT-IMPORT) but must map an inbox refusal to 503 + page.
 InboxFullError = QueueOverflowError
 
 #: `re_mint` is re-exported for `gateway.cv_re_mint` only (CV-C68, CV-LINT-REMINT):
 #: nothing else may call it.
-
-
-def _get_default_registry() -> Registry:
-    global _default_registry
-    if _default_registry is None:
-        _default_registry = Registry()
-    return _default_registry
 
 
 class SyncInterpreterRefusedError(AssertionError):
@@ -93,19 +81,21 @@ def default_clock() -> Clock:
 
 
 def _cv_bring_up(interp: Interpreter[Any]) -> None:
-    """CV-C66': per-process bring-up work that must NOT hang off
-    `on_interpreter_start`, because that hook never fires on a
-    snapshot-restored interpreter (R13-02). Telemetry-only hooks may still
-    use `on_interpreter_start`; anything that must run unconditionally
-    (fresh build *and* restore) belongs here instead, called by both
-    `build()` and `restore()` before `start()`.
-
-    Currently a no-op placeholder: no bring-up work is registered yet
-    (plugins land in E50-T60). It
-    exists now so both call sites route through one place and never grow
-    a second one later.
-    """
+    """CV-C66': per-process bring-up work, called by `build()` and `restore()` before `start()`.
+    `on_interpreter_start` fires on all paths, restores too (library #240), so it stays telemetry
+    only: it may branch on `restored_from_snapshot`. Currently a no-op; what a restored machine
+    needs once it has started is `cv_bring_up_restored`."""
     return None
+
+
+def cv_bring_up_restored(interp: Interpreter[Any]) -> None:
+    """CV-C66': a restored `start()` enters no state, so no plugin hears an `on_transition` for the
+    state the machine comes back in. Each plugin with a `cv_bring_up(interpreter)`, which must not
+    raise, is told here once (the feed publishes, 23 §6.4): after `start()`, before the replay."""
+    for plugin in interp.plugins:
+        bring_up = getattr(plugin, "cv_bring_up", None)
+        if bring_up is not None:
+            bring_up(interp)
 
 
 def _assert_async_engine_only(*, sync: bool) -> None:
@@ -185,7 +175,7 @@ async def build(
     """
     _assert_async_engine_only(sync=sync)
 
-    reg = registry or _get_default_registry()
+    reg = registry or default_registry()
     chart = reg.get(machine_key)
     chart_hash = reg.hash(machine_key)
 
@@ -221,11 +211,17 @@ async def build(
     return BuildResult(interpreter=interp, machine_hash=chart_hash)
 
 
-async def restore(restorer: Restorer, key: MachineKey, envelope: SealedSnapshot) -> RestoreResult:
+async def restore(
+    restorer: Restorer,
+    key: MachineKey,
+    envelope: SealedSnapshot,
+    *,
+    extra_plugins: Sequence[Any] = (),
+) -> RestoreResult:
     """Restore a machine from a sealed snapshot (29 §1.3, E50-T49).
 
     Thin delegation point: `from_snapshot` may only be called from
     `statechart/persistence.py` (CV-LINT-RESTORE), so the work lives in
-    `persistence.Restorer.restore`.
+    `persistence.Restorer.restore`. `extra_plugins` follow the restorer's own (E17-T08).
     """
-    return await restorer.restore(key, envelope)
+    return await restorer.restore(key, envelope, extra_plugins=extra_plugins)
