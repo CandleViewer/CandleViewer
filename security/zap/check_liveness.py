@@ -3,7 +3,11 @@
 
 Evidence checked (all must hold):
   * both `/v1/auth/me` requestor jobs (before + after the scan) ran and finished;
-  * no requestor error/warning (ZAP logs a response-code mismatch, e.g. 401 vs 200);
+  * no requestor error/warning: a wrong status is logged as `Job requestor warning` and
+    `response code N does not match` (older ZAP), or as `Difference in response code values for
+    message ... Expected : N Received : M` (ZAP 2.17, which repeats it under `Automation plan
+    warnings:`, so it is reported once). ZAP's own exit code also turns on a plan warning; this
+    names the loss of the session;
   * ZAP did not report automation-plan failures;
   * the JSON report exists, parses and is a ZAP report (has `site`).
 
@@ -20,7 +24,11 @@ from pathlib import Path
 REQUESTORS = 2
 _STARTED = re.compile(r"Job requestor started", re.I)
 _FINISHED = re.compile(r"Job requestor finished", re.I)
-_REQ_FAIL = re.compile(r"(Job requestor (error|warning)|response code \d+ (does not|didn.t) match)", re.I)
+_REQ_FAIL = re.compile(
+    r"Job requestor (?:error|warning)|response code \d+ (?:does not|didn.t) match"
+    r"|Difference in response code values[^\n]*",
+    re.I,
+)
 _PLAN_FAIL = re.compile(r"Automation plan (failures|failed)", re.I)
 
 
@@ -32,7 +40,8 @@ def check(log_text: str, report_text: str | None) -> list[str]:
         errors.append(
             f"/v1/auth/me liveness requestors ran {started}/{REQUESTORS}, finished {finished}"
         )
-    errors += [f"requestor failure: {m.group(0)}" for m in _REQ_FAIL.finditer(log_text)]
+    failures = dict.fromkeys(match.group(0).strip() for match in _REQ_FAIL.finditer(log_text))
+    errors += [f"requestor failure: {failure}" for failure in failures]  # once per message
     if _PLAN_FAIL.search(log_text):
         errors.append("ZAP reported automation plan failures")
     if report_text is None:

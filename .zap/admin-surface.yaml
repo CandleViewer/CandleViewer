@@ -4,13 +4,18 @@
 # call), never a live exchange. Never run as it is: security/zap/admin_requests.py writes each
 # role's plans from it, a denial plan (phase A: one request per operation matrix.yaml refuses
 # the role) and this scan plan (phase B). The role's bearer and SR-041 CSRF pair come from
-# ZAP_AUTH_TOKEN and ZAP_CSRF_TOKEN at run time (security/zap/mint_sessions.py); no credential is
-# committed. They go only on requests to the admin surface and to /me, the liveness check: an
+# ZAP_AUTH_TOKEN and ZAP_CSRF_TOKEN at run time (security/zap/mint_sessions.py). ZAP expands no
+# variable inside a replacer rule, so security/zap/role_session.js reads them from the
+# environment once, when ZAP loads it, and adds them to each request; no credential is committed
+# or written. They go only on requests to the admin surface and to /me, the liveness check: an
 # operation the OpenAPI import sends anywhere else, such as a logout, carries no session to end.
 env:
   contexts:
     - name: cv-admin
-      urls: ["${ZAP_TARGET}"]
+      # The scope is the admin surface, not the whole host: ZAP includes everything under each
+      # of `urls`, and the import is cut to the same paths. The /me requestors need no context.
+      # The paths name the surface by segment and leave out what would end the scanner's session.
+      urls: ["${ZAP_TARGET}/admin", "${ZAP_TARGET}/users"]
       includePaths:
         - "${ZAP_TARGET}/admin(/.*)?"
         - "${ZAP_TARGET}/users(/.*)?"
@@ -24,26 +29,23 @@ env:
     failOnWarning: false
     progressToStdout: true
 jobs:
-  - type: replacer
+  - type: script # the role's session, from the environment (security/zap/role_session.js)
+    parameters:
+      action: add
+      type: httpsender
+      engine: "ECMAScript : Graal.js"
+      name: cv-role-session
+      source: /zap/wrk/security/zap/role_session.js # the checkout, mounted at /zap/wrk
+  # Before any request, so the Low thresholds apply to every response the scan sees, the import's
+  # included (a job applies from where it runs). 10049 (storable and cacheable content) is not in
+  # the pinned 2.17.0 image: listing it only made ZAP exit non-zero on the plan warning.
+  - type: passiveScan-config
+    parameters: { maxAlertsPerRule: 10, scanOnlyInScope: true }
     rules:
-      - description: the role's bearer
-        url: "^${ZAP_TARGET}/((admin|users)(/[^?]*)?|me)([?].*)?$"
-        matchType: req_header
-        matchString: Authorization
-        replacementString: "Bearer ${ZAP_AUTH_TOKEN}"
-        initiators: []
-      - description: the SR-041 CSRF header, so an unsafe request reaches RBAC
-        url: "^${ZAP_TARGET}/((admin|users)(/[^?]*)?|me)([?].*)?$"
-        matchType: req_header
-        matchString: X-CSRF-Token
-        replacementString: "${ZAP_CSRF_TOKEN}"
-        initiators: []
-      - description: the SR-041 CSRF cookie the header must match
-        url: "^${ZAP_TARGET}/((admin|users)(/[^?]*)?|me)([?].*)?$"
-        matchType: req_header
-        matchString: Cookie
-        replacementString: "__Host-cv_csrf=${ZAP_CSRF_TOKEN}"
-        initiators: []
+      - { id: 10020, name: Anti-clickjacking header, threshold: Low }
+      - { id: 10021, name: X-Content-Type-Options header missing, threshold: Low }
+      - { id: 10038, name: CSP header not set, threshold: Low }
+      - { id: 10055, name: CSP, threshold: Low }
   - type: requestor
     name: session-live-before-scan
     requests:
@@ -52,25 +54,16 @@ jobs:
         responseCode: 200 # a 401 here aborts the gate: an unauthenticated scan is no clean scan
   - type: openapi
     parameters:
-      apiFile: /zap/wrk/docs/plan/22-api-openapi.yaml # the checkout, mounted at /zap/wrk
+      apiFile: /zap/wrk/docs/plan/22-api-openapi.yaml # replaced by the cut admin-openapi.yaml
       context: cv-admin
       targetUrl: "${ZAP_TARGET}"
-  - type: passiveScan-config
-    parameters: { maxAlertsPerRule: 10, scanOnlyInScope: true }
-    rules:
-      - { id: 10020, name: Anti-clickjacking header, threshold: Low }
-      - { id: 10021, name: X-Content-Type-Options header missing, threshold: Low }
-      - { id: 10038, name: CSP header not set, threshold: Low }
-      - { id: 10055, name: CSP, threshold: Low }
-      - { id: 10049, name: Storable and cacheable content, threshold: Low }
   # The import, at most 2 minutes of passive wait and at most 8 of active scan stay inside the
   # 12-minute access token (ADR-0020), so the after-scan /me still holds the scan's live bearer.
   - type: passiveScan-wait
     parameters: { maxDuration: 2 }
   - type: activeScan
     parameters:
-      context: cv-admin
-      policy: admin-surface
+      context: cv-admin # the policy is the policyDefinition below, so no named policy
       maxScanDurationInMins: 8 # with the passive wait, within the 12-minute bearer (ADR-0020)
     policyDefinition:
       defaultStrength: Medium

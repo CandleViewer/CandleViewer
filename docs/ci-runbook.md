@@ -172,8 +172,8 @@ capped by its 15-minute timeout.
 **Nightly issues, one per signal (#1849).** `fixture-drift.yml` (signal `fixture-drift`),
 `perf-storage-nightly.yml` (`perf-storage`), `perf-ingestion-nightly.yml` (`perf-ingestion-soak`,
 `perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full`) and
-`dast-admin-nightly.yml` (`dast-admin`, labels `security`, `area/accounts-admin`; dispatch only
-until #3874 boots the real storage tier) report a red signal through `_nightly-issue.yml`, from
+`dast-admin-nightly.yml` (`dast-admin`, labels `security`, `area/accounts-admin`; nightly at
+03:27 UTC and on dispatch) report a red signal through `_nightly-issue.yml`, from
 scheduled and manual runs alike. Its `report` job comments on the
 newest open issue that `github-actions[bot]` opened with the signal's title prefix and all its
 labels, or opens one titled `<prefix> (YYYY-MM-DD)`, so a lasting drift or regression keeps one
@@ -186,15 +186,22 @@ the report jobs can write (`issues: write`, no checkout, no action), and a malfo
 job and files nothing.
 
 To triage a red `dast-admin` run (E42-X03's ZAP admin profile), find the step that failed:
-"Start the API" means the stack never came up (until #3874, the expected stop); "Every refusal
-planned and in the audit log" is the denial gate (`check_admin_denials.py`: a status other than
-the planned one, a refusal with no record, or a CSRF refusal); "The scans stayed signed in, and no
-new medium+ alert" is the scan gate (`check_liveness.py`, then `baseline_gate.py` against
-`.zap/admin-surface-baseline.json`); "No session value in the plans, logs or reports" means a
-token reached the artefact, which is then not uploaded. The `zap-admin-surface` artefact holds
-each role's plans, ZAP's logs and reports, the exported audit rows and the API's log. Triage each
-alert like any security finding: severity, disposition, remediation; an accepted one goes into the
-baseline by a reviewed PR.
+"Start the API" means the stack never came up (the step prints its log tail); a red "Phase A, the
+denials, as each role" or "Phase B, the passive and active scan, as each role" is ZAP's own exit
+code, which any plan failure or warning sets (ZAP 2.17): read `Automation plan failures:` and
+`Automation plan warnings:` at the end of that step's log; "Every refusal planned and in the audit
+log" is the denial gate (`check_admin_denials.py`: a status other than the planned one, a refusal
+with no record, a nameless record that answers for no refusal, or a CSRF refusal); "The scans
+stayed signed in, and no new medium+ alert" is the scan gate (`check_liveness.py`, then
+`baseline_gate.py` against `.zap/admin-surface-baseline.json`); "No session value in the plans,
+logs or reports" means a session value, or a password, key or TOTP secret the run generated,
+reached the artefact, which is then not uploaded. ZAP expands no variable inside a replacer rule,
+so each role's session reaches its requests through `security/zap/role_session.js`, and the scan
+imports `admin-openapi.yaml`, the contract cut to the admin surface (the whole contract's
+recursive schemas pass the import's nesting limit). The `zap-admin-surface` artefact holds each
+role's plans, ZAP's logs and reports, the exported audit rows and the API's log. Triage each
+alert like any security finding: severity, disposition, remediation; an accepted one goes into
+the baseline by a reviewed PR.
 
 ## 3. Reading the `ci-required` resolver summary
 

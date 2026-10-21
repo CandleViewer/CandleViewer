@@ -6,16 +6,28 @@ For each role it reads what `admin_requests.py` planned (`<role>-requests.json`)
 the role's denial run (`<role>-denials.log`) and the audit rows the workflow exported for the
 synthetic users (`audit-rows.json`: `username`, `request_id`, `action`, `outcome`), and fails on:
 
-- a requestor job that did not run to its end, a status other than the planned one (ZAP warns
-  `response code ... does not match`), or a plan failure;
-- a refused request with no `denied` record of its user: matched by its `X-Correlation-Id`,
-  which the API keeps as the record's `request_id`, else by one of the user's `denied`
-  `auth.step_up_required` records, the one refusal a planned request meets whose record names no
-  request id (the session chart writes it); no other record without a request id counts;
+- a requestor job that did not run to its end, a status other than the planned one (ZAP 2.17
+  warns `Difference in response code values ...`, older ZAP `response code ... does not
+  match`), or a plan failure;
+- a refused request with no `denied` record of its user: matched by its request id (sent as
+  `X-Correlation-Id` and `X-Request-Id`), which the API keeps as the record's `request_id`, else
+  by one of the user's `denied` records of the `NAMELESS_DENIALS` actions, the refusals a planned
+  request meets whose record names no request id; no other record without a request id counts;
+- a nameless `denied` record of those actions that no planned request needed (the budget is tight);
 - a CSRF refusal: an `auth.csrf_refused` record of either user, or that event in the API's log
   (`--api-log`; a throttled refusal is logged with no record). Its `403 csrf_token_invalid` is
   the planned status, but the request never reached RBAC: the scan lost its CSRF pair;
 - a `KNOWN_SILENT` operation that has a record after all: it is fixed, so its entry goes.
+
+What a nameless record proves is less than a request id does, in three ways:
+
+1. For the operations it answers for, the proof is cardinality, not identity: one refusal with no
+   record and one request that wrote two nameless records cancel out.
+2. So the budget is asserted tight: a nameless record left after every planned refusal has its
+   own is a failure, not a spare (#3990 names these records, and the stand-ins go).
+3. A step-up refusal comes before RBAC is consulted, so for those routes the role's refusal by
+   RBAC is held by the route x actor x elevation cells (none, stale, fresh), not by this nightly,
+   which only ever sends the none state.
 
 Stdlib only. Usage: check_admin_denials.py --dir DIR --audit FILE --user ROLE=USERNAME ...
 [--api-log FILE]
@@ -37,10 +49,14 @@ KNOWN_SILENT: dict[str, str] = {
 }
 _STARTED = re.compile(r"Job requestor started", re.I)
 _FINISHED = re.compile(r"Job requestor finished", re.I)
-_MISMATCH = re.compile(r"response code \d+ (?:does not|didn.t) match", re.I)
+_MISMATCH = re.compile(
+    r"response code \d+ (?:does not|didn.t) match|Difference in response code values[^\n]*", re.I
+)
 _PLAN_FAILED = re.compile(r"Automation plan (?:failures|failed)", re.I)
-#: The one denial record a planned request can meet without its request id: a step-up refusal.
-NAMELESS_DENIAL = "auth.step_up_required"
+#: The denial records a planned request can meet without its request id: a step-up refusal (the
+#: session chart writes it), and the invites router's `rbac.denied`, whose owner check passes no
+#: request id to `enforce` (#3990, with the other records that lose it).
+NAMELESS_DENIALS = frozenset({"auth.step_up_required", "rbac.denied"})
 #: A refusal before RBAC: the request's CSRF pair was missing or wrong (api/csrf.py).
 CSRF_REFUSED = "auth.csrf_refused"
 #: That refusal's events in the API's log, whatever its renderer: `auth.csrf_refused` and its
@@ -53,7 +69,9 @@ def log_problems(role: str, log: str) -> list[str]:
     problems: list[str] = []
     if not _STARTED.search(log) or not _FINISHED.search(log):
         problems.append(f"{role}: the denial requestor did not run to its end")
-    problems += [f"{role}: {match.group(0)}" for match in _MISMATCH.finditer(log)]
+    # ZAP 2.17 repeats each warning under "Automation plan warnings:": one problem per message.
+    mismatches = dict.fromkeys(match.group(0).strip() for match in _MISMATCH.finditer(log))
+    problems += [f"{role}: {mismatch}" for mismatch in mismatches]
     if _PLAN_FAILED.search(log):
         problems.append(f"{role}: ZAP reported automation plan failures")
     return problems
@@ -66,7 +84,8 @@ def audit_problems(
     denied = [row for row in rows if row.get("outcome") == "denied"]
     named = [row for row in denied if row.get("request_id") and row.get("action") != CSRF_REFUSED]
     by_id = Counter(str(row["request_id"]) for row in named)
-    spare = sum(1 for r in denied if not r.get("request_id") and r.get("action") == NAMELESS_DENIAL)
+    nameless = (row for row in denied if not row.get("request_id"))
+    spare = sum(1 for row in nameless if row.get("action") in NAMELESS_DENIALS)
     problems: list[str] = []
     lost = sum(1 for row in rows if row.get("action") == CSRF_REFUSED)
     if lost:
@@ -82,9 +101,11 @@ def audit_problems(
             if matched:
                 problems.append(f"{role}: {operation} is recorded now: drop it from KNOWN_SILENT")
         elif not matched and spare > 0:
-            spare -= 1  # a step-up refusal: its record names no request id
+            spare -= 1  # a nameless refusal record answers for one request
         elif not matched:
             problems.append(f"{role}: {operation} was refused with no audit record")
+    if spare:  # the count proves a refusal only while no nameless record is left over
+        problems.append(f"{role}: {spare} nameless denial record(s) answer for no planned request")
     return problems
 
 

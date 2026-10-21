@@ -6,23 +6,32 @@ For each synthetic role (`manager`, `viewer`) this writes, from the template
 
 - `<role>-denials.yaml`: one `requestor` request per `/admin*` and `/users*` operation that
   `matrix.yaml` runs (`executed` or `not_executable`) and refuses the role, expecting its status
-  (`403`, or a reviewed `DEVIATIONS` entry), each with its own `X-Correlation-Id`, a UUIDv4 the
-  API keeps as the record's `request_id`;
+  (`403`, or a reviewed `DEVIATIONS` entry), each with its own UUIDv4 as both `X-Correlation-Id`
+  (the correlation middleware's) and `X-Request-Id` (the admin principal's,
+  `api/audit_principal.py`), which the API keeps as the record's `request_id`;
 - `<role>-requests.json`: those requests, for `check_admin_denials.py` to find each one's
   denial record in the audit log;
-- `<role>-scan.yaml`: the template's own jobs, the passive and active scan of the surface.
+- `<role>-scan.yaml`: the template's own jobs, the passive and active scan of the surface, which
+  imports `admin-openapi.yaml`: the contract cut to the surface and the components it reaches.
+  ZAP's import resolves every schema in full, and the contract's recursive condition tree passes
+  its nesting limit, so the scan imports only what it scans.
 
 The expected statuses come from `matrix.yaml` alone (Security-owned, reviewed); nothing here
 restates them. A Manager is `manager_without_grant` (the synthetic one holds no grant), so the
 rows the matrix allows a Manager (`GET /admin/audit`, recorder compact and import) are not in
-its denial plan. Both plans read the role's bearer and SR-041 CSRF pair at run time from
-`ZAP_AUTH_TOKEN` and `ZAP_CSRF_TOKEN` (the template's `replacer` job): no token is written.
+its denial plan. Both plans load the template's `script` job, `security/zap/role_session.js`,
+which reads the role's bearer and SR-041 CSRF pair from `ZAP_AUTH_TOKEN` and `ZAP_CSRF_TOKEN`
+once, when ZAP loads it, and adds them to each request to the surface (ZAP expands no variable
+inside a replacer rule): no token is written.
 
 The target guard (#1026 Security notes): `--target` must be `http://127.0.0.1:<port>` or
 `http://localhost:<port>`. Any other target is refused, the contract's production server and
 any tailnet host first. Stdlib and PyYAML only.
 
 Usage: admin_requests.py --target URL --out DIR [--matrix PATH] [--template PATH]
+
+`--out` is a relative directory without `..`: ZAP mounts the checkout at /zap/wrk, so the plans
+must sit inside it to be read there (an absolute or climbing path is refused).
 """
 
 from __future__ import annotations
@@ -33,6 +42,7 @@ import json
 import re
 import sys
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import SplitResult, urlsplit
@@ -48,6 +58,8 @@ ROLES: dict[str, str] = {"manager": "manager_without_grant", "viewer": "viewer"}
 SURFACE = ("/admin", "/users")
 #: The matrix's filler for a path parameter it gives no value (tests/contract/rbac/rbac_harness.py).
 FILLER = "00000000-0000-4000-8000-0000000000ff"
+#: The request id each planned request carries, under both names the API reads it from.
+_ID_HEADERS = ("Correlation-Id", "Request-Id")
 #: Where the running stack answers otherwise than a refusal of the role, by finding: the status
 #: it gives instead, and whether that answer writes a record. Each entry turns the plan red the
 #: day it is fixed, so it is then removed here (as an `xfail(strict=True)`).
@@ -129,15 +141,16 @@ def denial_requests(matrix: dict[str, Any], role: str, target: str) -> list[dict
 def denial_plan(
     template: dict[str, Any], role: str, requests: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """Phase A: the template's environment and replacer, then one requestor job of `requests`."""
-    replacer = [job for job in template["jobs"] if job["type"] == "replacer"]
+    """Phase A: the template's environment and session script, then one requestor job of
+    `requests`."""
+    session = [job for job in template["jobs"] if job["type"] == "script"]
     entries = []
     for item in requests:
         entry: dict[str, Any] = {
             "name": f"{role} {item['operation']}",
             "url": item["url"],
             "method": item["method"],
-            "headers": [f"X-Correlation-Id: {item['correlation_id']}"],
+            "headers": [f"X-{name}: {item['correlation_id']}" for name in _ID_HEADERS],
             "responseCode": item["expected"],
         }
         if item["body"] is not None:
@@ -145,13 +158,47 @@ def denial_plan(
             entry["data"] = item["body"]
         entries.append(entry)
     requestor = {"type": "requestor", "name": f"{role}-denials", "requests": entries}
-    return {"env": template["env"], "jobs": [*replacer, requestor]}
+    return {"env": template["env"], "jobs": [*session, requestor]}
 
 
-def scan_plan(template: dict[str, Any], role: str) -> dict[str, Any]:
-    """Phase B: the template's jobs, its report named for the role."""
+def _refs(node: Any) -> Iterator[str]:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from [value] if key == "$ref" and isinstance(value, str) else _refs(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _refs(value)
+
+
+def admin_contract(contract: dict[str, Any]) -> dict[str, Any]:
+    """`contract` cut to the `SURFACE` paths and every component they reach through `$ref`; the
+    security schemes stay whole (requirements name them, they are not referenced)."""
+    paths = {path: item for path, item in contract["paths"].items() if path.startswith(SURFACE)}
+    reached: set[str] = set()
+    pending = list(_refs(paths))
+    while pending:
+        if (ref := pending.pop()) not in reached:
+            reached.add(ref)
+            _, _, kind, name = ref.split("/", 3)  # "#/components/<kind>/<name>"
+            pending += _refs(contract["components"][kind][name])
+    components: dict[str, dict[str, Any]] = {}
+    for ref in sorted(reached):
+        _, _, kind, name = ref.split("/", 3)
+        components.setdefault(kind, {})[name] = contract["components"][kind][name]
+    if "securitySchemes" in contract["components"]:
+        components["securitySchemes"] = contract["components"]["securitySchemes"]
+    keys = ("openapi", "info", "security")
+    kept: dict[str, Any] = {key: contract[key] for key in keys if key in contract}
+    return {**kept, "paths": paths, "components": components}
+
+
+def scan_plan(template: dict[str, Any], role: str, api_file: str) -> dict[str, Any]:
+    """Phase B: the template's jobs, importing `api_file` (the admin contract, as ZAP sees the
+    checkout), its report named for the role."""
     jobs = json.loads(json.dumps(template["jobs"]))  # a deep copy
     for job in jobs:
+        if job["type"] == "openapi":
+            job["parameters"]["apiFile"] = api_file
         if job["type"] == "report":
             job.setdefault("parameters", {})["reportFile"] = f"admin-surface-{role}"
     return {"env": template["env"], "jobs": jobs}
@@ -160,7 +207,12 @@ def scan_plan(template: dict[str, Any], role: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--target", required=True)
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="a relative directory, without '..', in the checkout ZAP mounts at /zap/wrk",
+    )
     parser.add_argument("--matrix", type=Path, default=MATRIX)
     parser.add_argument("--template", type=Path, default=TEMPLATE)
     args = parser.parse_args(argv)
@@ -169,9 +221,20 @@ def main(argv: list[str] | None = None) -> int:
     except TargetRefused as exc:
         print(f"admin_requests: {exc}", file=sys.stderr)
         return 2
+    if args.out.is_absolute() or ".." in args.out.parts:
+        print(
+            "admin_requests: --out must be a relative path, without '..', inside the checkout "
+            "ZAP mounts",
+            file=sys.stderr,
+        )
+        return 2
     matrix = yaml.safe_load(args.matrix.read_text(encoding="utf-8"))
     template = yaml.safe_load(args.template.read_text(encoding="utf-8"))
     args.out.mkdir(parents=True, exist_ok=True)
+    contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
+    api = args.out / "admin-openapi.yaml"
+    api.write_text(yaml.safe_dump(admin_contract(contract), sort_keys=False), encoding="utf-8")
+    api_file = f"/zap/wrk/{api.as_posix()}"  # the checkout is mounted at /zap/wrk
     for role in ROLES:
         requests = denial_requests(matrix, role, target)
         if not requests:
@@ -180,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
         (args.out / f"{role}-requests.json").write_text(json.dumps(requests, indent=1) + "\n")
         for name, plan in (
             (f"{role}-denials.yaml", denial_plan(template, role, requests)),
-            (f"{role}-scan.yaml", scan_plan(template, role)),
+            (f"{role}-scan.yaml", scan_plan(template, role, api_file)),
         ):
             (args.out / name).write_text(yaml.safe_dump(plan, sort_keys=False), encoding="utf-8")
         print(f"admin_requests: {role}: {len(requests)} refused operations planned")

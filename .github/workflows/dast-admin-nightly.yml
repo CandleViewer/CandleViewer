@@ -1,11 +1,9 @@
 name: dast-admin-nightly
 
-# E42-X03 (#1026, AC5): the ZAP admin profile, on dispatch only for now, never on a pull request.
-# No cron until the real storage tier boots: a synthetic user can sign in only with
-# CV_STORAGE_BACKEND=real (app.build_auth_service), and storage/service.py refuses that backend at
-# start ("no client implementation yet"), naming E07-T02, T03 and T04 (#168, #169, #170), all
-# three closed without composing the real clients into StorageService. #3874 owns that boot; its
-# fix brings the cron back. Until then this workflow stops at "Start the API".
+# E42-X03 (#1026, AC5): the ZAP admin profile, nightly at 03:27 UTC and on dispatch, never on a
+# pull request. A synthetic user signs in only with CV_STORAGE_BACKEND=real (app.build_auth_service),
+# which boots since #3915 (#3874) composed the real Postgres, QuestDB and Parquet clients into
+# StorageService.
 # It scans the admin surface authenticated as a synthetic Manager and a synthetic Viewer, each
 # with a real TOTP method and no MFA exception, against a throwaway stack on this runner (a run
 # against real staging needs the owner's runner, environment and users: the PR's Deviations).
@@ -16,11 +14,14 @@ name: dast-admin-nightly
 # session to stay authenticated (check_liveness.py) and no alert outside the baseline
 # (baseline_gate.py). Both roles run before a phase fails. The zap-admin-surface artefact holds
 # the plans, ZAP's logs and reports and the API's log, uploaded only if no session value of the
-# run reached them (check_artefact_secrets.py).
+# run, and none of the passwords, keys and TOTP secrets it generated, reached them
+# (check_artefact_secrets.py).
 # Every credential is made here, per run, masked and never echoed: no repository secret is read,
 # and the target is loopback, never an input (admin_requests.py and mint_sessions.py refuse any
 # other). A red run comments on, or opens, the signal's issue (_nightly-issue.yml, #1849).
 on:
+  schedule:
+    - cron: "27 3 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -59,15 +60,16 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          mkdir -p "$WORK" "$RUNNER_TEMP/cv"
+          mkdir -p "$WORK" "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane"
           secret() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
           for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
             CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX ZAP_OWNER_PASSWORD \
             ZAP_MANAGER_PASSWORD ZAP_VIEWER_PASSWORD; do secret "$name"; done
           suffix=$(openssl rand -hex 4)
           for role in owner manager viewer; do echo "ZAP_${role^^}_USER=zap-$role-$suffix" >> "$GITHUB_ENV"; done
-          # The audit lane key (ADR-0037 decision 6): 64 hex digits in a file of mode 0400.
-          (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv/lane.key")
+          # The audit lane key (ADR-0037 decision 6): 64 hex digits in a file of mode 0400, in a
+          # directory of its own: the settings refuse a backup root in, or around, the key's directory.
+          (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
 
       - name: Start Postgres and QuestDB (the compose data stores, loopback only)
         run: docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait postgres questdb
@@ -97,25 +99,37 @@ jobs:
           CV_ENVIRONMENT: testnet
           CV_STORAGE_BACKEND: real
           CV_FEED: synthetic
+          # The API runs on the host, outside the compose network: QuestDB is its loopback ports.
+          CV_QUESTDB_PG: 127.0.0.1:8812
+          CV_QUESTDB_ILP: 127.0.0.1:9009
           CV_BIND_HOST: 127.0.0.1
           CV_BIND_PORT: "8000"
           CV_METRICS_BIND: 127.0.0.1:9108
         run: |
           set -euo pipefail
           export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
-          export CV_AUDIT_LANE_KEY_FILE="$RUNNER_TEMP/cv/lane.key"
+          export CV_AUDIT_LANE_KEY_FILE="$RUNNER_TEMP/cv-lane/lane.key"
           export CV_AUDIT_WAL_PATH="$RUNNER_TEMP/cv/audit/audit.wal"
           export CV_PARQUET_ROOT="$RUNNER_TEMP/cv/data/parquet" CV_BACKUP_ROOT="$RUNNER_TEMP/cv/data/backups"
-          mkdir -p -m 700 "$RUNNER_TEMP/cv/audit" "$RUNNER_TEMP/cv/data"
-          nohup uv run --frozen python -m candleviewer.server > "$RUNNER_TEMP/cv/api.log" 2>&1 &
+          # The cold tier and the recorder need the Parquet root to exist and be writable at boot.
+          mkdir -p -m 700 "$RUNNER_TEMP/cv/audit" "$RUNNER_TEMP/cv/data" "$CV_PARQUET_ROOT" "$CV_BACKUP_ROOT"
+          # A native crash leaves no Python traceback: the fault handler prints one.
+          PYTHONFAULTHANDLER=1 nohup uv run --frozen python -m candleviewer.server > "$RUNNER_TEMP/cv/api.log" 2>&1 &
           api=$!
           for _ in $(seq 60); do
             if curl -fsS -o /dev/null "$ZAP_TARGET/healthz"; then exit 0; fi
-            kill -0 "$api" 2>/dev/null || break # it exited (the storage refusal): stop waiting
+            kill -0 "$api" 2>/dev/null || break # it exited: stop waiting
             sleep 2
           done
-          echo "::error title=zap-admin::the API did not answer /healthz; the last of its log follows"
-          tail -n 40 "$RUNNER_TEMP/cv/api.log"
+          if kill -0 "$api" 2>/dev/null; then
+            state="still running, not answering" # it has no exit code to report
+          else
+            code=0
+            wait "$api" || code=$?
+            state="exit ${code}"
+          fi
+          echo "::error title=zap-admin::the API did not answer /healthz (${state}); the last of its log follows"
+          tail -n 200 "$RUNNER_TEMP/cv/api.log"
           exit 1
 
       - name: Plan each role's denials and scan (admin_requests.py, from matrix.yaml)
@@ -188,7 +202,15 @@ jobs:
       - name: No session value in the plans, logs or reports (else nothing is uploaded)
         id: scrub
         if: always()
-        run: python3 security/zap/check_artefact_secrets.py --env-dir "$RUNNER_TEMP/cv" "$WORK" zap-reports
+        # The session values of the env files, then each secret this run made: its passwords,
+        # pepper and keys (in $GITHUB_ENV since the first step; only their names are passed) and
+        # the TOTP seeds seed_fixture_user.py wrote.
+        run: |
+          python3 security/zap/check_artefact_secrets.py --env-dir "$RUNNER_TEMP/cv" \
+            --env ZAP_OWNER_PASSWORD --env ZAP_MANAGER_PASSWORD --env ZAP_VIEWER_PASSWORD \
+            --env POSTGRES_PASSWORD --env CV_AUTH_PEPPER --env CV_AUTH_TOTP_KEY_HEX \
+            --env CV_AUTH_RECOVERY_HMAC_KEY_HEX --env CV_AUTH_CSRF_KEY_HEX \
+            --secret-file "$RUNNER_TEMP/cv/*.totp" "$WORK" zap-reports
 
       - name: Upload the plans, logs and reports (the sessions in them died with the stack)
         if: ${{ always() && steps.scrub.outcome == 'success' }}
