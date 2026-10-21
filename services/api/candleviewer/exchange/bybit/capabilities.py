@@ -4,8 +4,10 @@ Built once, at import, from §14.1's values: one record per environment the port
 and demo, and none for testnet, which carries no trading (§14.3, ruling R6). They describe the
 venue (`20-architecture.md` §9 rule 7): live offers WS order entry and demo does not, though v1
 sends every order over REST (SR-040a). `order_rate_per_uid_per_s` holds §8.7's defaults; demo
-keeps orders 7 days (§8.3 rule 6), live keeps them long (`None`). Consumers read the record,
-never the environment (§14.2 rule 3).
+keeps orders 7 days (§8.3 rule 6), live keeps them long (`None`), assumed pending E29-K01: the
+venue's history read shows an unfilled order 7 days at most, and a cancelled, rejected or
+deactivated one 24 hours (§14.1). Consumers read the record, never the environment (§14.2
+rule 3).
 """
 
 from __future__ import annotations
