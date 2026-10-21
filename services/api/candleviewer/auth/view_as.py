@@ -217,21 +217,28 @@ class ViewAsSessionStore(Protocol):
     """The storage contract of the view-as columns of `sessions`, apart from `SessionRepository`
     until every repository implements it. Each write is one conditional write: `None` if unmet. A
     refresh carries a context to the successor row and the rotated row keeps its copy, so a context
-    may sit on several rows: `admin.view_as_ended` is keyed by `context_id` (S4), so it has one."""
+    may sit on several rows: `admin.view_as_ended` is keyed by `context_id`, so it has one."""
 
     async def start_view_as(
         self, session_id: str, state: ViewAsState, *, now: datetime
     ) -> SessionRecord | None:
         """Put the fresh `state` on the row iff it is neither revoked nor absolute-expired at `now`
         and holds no context, or a cleared one whose end is recorded (of two concurrent starts,
-        exactly one); an ended or self-targeting `state` is a caller error. S13a's transaction wraps
-        it, flushing a pending end and writing the notice and the started record ahead."""
+        exactly one). An ended `state`, or a self-targeting one on a row that would take it, is a
+        caller error: `ValueError`, nothing written (a row that refuses the start answers `None`
+        first). The start request (#3085) wraps it, flushing a pending end and writing the notice
+        and the started record ahead."""
         ...
 
     async def end_view_as(
         self, session_id: str, context_id: UUID, *, ended_at: datetime, reason: ViewAsEndReason
     ) -> SessionRecord | None:
-        """Set the end (from `ViewAsState.end_at`) iff the row holds `context_id`, not yet ended."""
+        """Set the end (from `ViewAsState.end_at`) iff the row holds `context_id`, unended, and,
+        when the row is revoked, no other unrevoked row holds it. A rotated predecessor's copy is
+        therefore refused once its successor carries the context on, so a stale end cannot spend
+        the one keyed record on the predecessor; before the successor's insert commits (the gap
+        `SessionService.refresh` bounds) the predecessor alone holds it and is ended. An orphaned
+        or logged-out row is ended, as the sweeper does."""
         ...
 
     async def leave_view_as(
@@ -244,8 +251,10 @@ class ViewAsSessionStore(Protocol):
         now: datetime,
     ) -> tuple[SessionRecord, bool] | None:
         """The viewer's `DELETE` as one write, so a failure changes nothing: iff the row holds
-        `context_id`, not cleared, set the end (`ended_at`, `reason`) unless it has ended, and
-        `cleared_at`. The row and whether this call ended it (the caller then writes the record)."""
+        `context_id`, not cleared, and is not revoked, set the end (`ended_at`, `reason`) unless it
+        has ended, and `cleared_at`. The row and whether this call ended it (the caller then writes
+        the record). A revoked row is refused: a request in flight across a refresh would end the
+        predecessor's copy while the successor carried the context on after its recorded end."""
         ...
 
     async def clear_view_as(
@@ -266,14 +275,18 @@ class ViewAsSessionStore(Protocol):
         """Rows whose end is unrecorded and that ended, reached `expires_at`, or sit on a revoked
         or absolute-expired session: at most `limit`, earliest `expires_at` first. A row revoked
         `rotated` is due only once every row holding its context was revoked `rotated` at least
-        `rotated_grace` ago (no successor came, or it moved on), so a carried copy is never due."""
+        `rotated_grace` ago (no successor came, or it moved on), so a carried copy is never due.
+        Callers pass a `rotated_grace` longer than the gap between the `revoked_at` a refresh's
+        claim stamps and its successor's insert (`SessionService.refresh` states the bound; the
+        sweeper's setting must have a floor): a shorter one could end, as `session_ended`, a
+        context a slow successor then carries."""
         ...
 
     async def list_live_view_as(self, *, limit: int) -> tuple[SessionRecord, ...]:
         """Unrevoked rows whose context has not ended, at most `limit`, earliest `expires_at` first,
         for the sweeper's eligibility pass (22 ends a context at once when its viewer or target
-        stops being eligible). S2b: the `ix_sessions_view_as_target` predicate, `context_id IS NOT
-        NULL AND ended_at IS NULL`."""
+        stops being eligible). Its query keeps the `ix_sessions_view_as_target` predicate,
+        `context_id IS NOT NULL AND ended_at IS NULL`."""
         ...
 
     async def list_live_view_as_by_target(self, target_user_id: UUID) -> tuple[SessionRecord, ...]:

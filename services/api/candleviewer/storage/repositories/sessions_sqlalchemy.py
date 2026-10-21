@@ -13,8 +13,9 @@ or by one conditional statement (`consume_step_up_key`), never from a stale
 copy of the row (#2304). A session is inserted only for a user who exists and is
 not `disabled`, read under the user-row lock in the insert's transaction, and the
 reads by id and by refresh hash carry the user's status (#2911). Every record read
-carries the row's view-as context (#3085, `0042_sessions_view_as`); nothing here
-writes it yet.
+carries the row's view-as context (#3085, `0042_sessions_view_as`). The insert writes
+the context a record carries (a refresh carries it to the successor row), and the
+`ViewAsSessionStore` writes (`auth/view_as.py`) are one conditional statement each.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import sqlalchemy as sa
@@ -55,14 +56,20 @@ _LOCK_USER_SQL = sa.text(
     "SELECT status::text AS status FROM users WHERE id = CAST(:id AS uuid) "
     "AND deleted_at IS NULL FOR SHARE"
 )
+# #3085: a record's view-as context goes in with it (eight NULLs when it holds none), so the
+# successor a refresh mints carries the context as the claim returned it (SR-013).
 _INSERT_SQL = sa.text("""
     INSERT INTO sessions (id, user_id, refresh_token_hash, access_token_jti, issued_at,
         last_seen_at, expires_at, revoked_at, revoked_reason, ip, user_agent, device_label,
-        is_electron, mfa_satisfied_at, idle_timeout_s)
+        is_electron, mfa_satisfied_at, idle_timeout_s, view_as_context_id,
+        view_as_target_user_id, view_as_started_at, view_as_expires_at, view_as_ended_at,
+        view_as_end_recorded_at, view_as_cleared_at, view_as_end_reason)
     VALUES (CAST(:id AS uuid), CAST(:user_id AS uuid), :refresh_token_hash,
         CAST(:access_token_jti AS uuid), :issued_at, :last_seen_at, :expires_at, NULL, NULL,
         CAST(:ip AS inet), :user_agent, :device_label, :is_electron, :mfa_satisfied_at,
-        :idle_timeout_s)
+        :idle_timeout_s, CAST(:view_as_context_id AS uuid),
+        CAST(:view_as_target_user_id AS uuid), :view_as_started_at, :view_as_expires_at,
+        :view_as_ended_at, :view_as_end_recorded_at, :view_as_cleared_at, :view_as_end_reason)
     """)
 
 
@@ -145,6 +152,83 @@ _FAMILY_SQL = sa.text("""
     SELECT id::text AS id FROM fam
     """)
 
+# #3085, `auth.view_as.ViewAsSessionStore`: each write is one conditional UPDATE, exactly as the
+# Protocol's docstrings state it, so of two racing writers the row lock lets one apply and the other
+# finds its condition gone (None). Each RETURNING builds its record through `row_to_fields`, which
+# validates the context. A start overwrites all eight columns, the end ones with NULL.
+_VIEW_AS_START_SQL = _sql(
+    "UPDATE sessions SET view_as_context_id = CAST(:context_id AS uuid), "
+    "view_as_target_user_id = CAST(:target_user_id AS uuid), view_as_started_at = :started_at, "
+    "view_as_expires_at = :view_as_expires_at, view_as_ended_at = NULL, view_as_end_reason = NULL, "
+    "view_as_end_recorded_at = NULL, view_as_cleared_at = NULL "
+    "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL AND expires_at > :now "
+    "AND (view_as_context_id IS NULL "
+    "OR (view_as_cleared_at IS NOT NULL AND view_as_end_recorded_at IS NOT NULL)) RETURNING @COLS@"
+)
+# An end applies to a revoked row only while no other unrevoked row holds its context: a refresh
+# revokes the row but its successor carries the context on, so a stale end reaching the rotated copy
+# would spend the context's one keyed record on it, early. Until the successor's insert commits (the
+# gap `SessionService.refresh` bounds) the rotated row alone holds it and is ended; so is an orphan
+# (no successor came) or a logged-out head, as the sweeper does. `o.id <> sessions.id` keeps the row
+# from counting as its own holder.
+_VIEW_AS_END_SQL = _sql(
+    "UPDATE sessions SET view_as_ended_at = :ended_at, view_as_end_reason = :reason "
+    "WHERE id = CAST(:id AS uuid) AND view_as_context_id = CAST(:context_id AS uuid) "
+    "AND view_as_ended_at IS NULL AND (revoked_at IS NULL OR NOT EXISTS (SELECT 1 FROM sessions o "
+    "WHERE o.view_as_context_id = sessions.view_as_context_id AND o.id <> sessions.id "
+    "AND o.revoked_at IS NULL)) RETURNING @COLS@"
+)
+# RETURNING sees the row as updated, so whether this call set the end comes from `prev`: the row as
+# locked before the update. Joined in FROM, `prev` runs before the update, and a racing write that
+# holds the row makes it wait and then read the row as that write left it (READ COMMITTED returns
+# a locked row's newest version). Its columns are renamed so the unqualified `@COLS@` stay
+# unambiguous.
+_VIEW_AS_LEAVE_SQL = _sql(
+    "WITH prev AS (SELECT id AS prev_id, view_as_ended_at AS prev_ended_at FROM sessions "
+    "WHERE id = CAST(:id AS uuid) FOR NO KEY UPDATE) "
+    "UPDATE sessions SET view_as_ended_at = COALESCE(view_as_ended_at, :ended_at), "
+    "view_as_end_reason = COALESCE(view_as_end_reason, :reason), view_as_cleared_at = :now "
+    "FROM prev WHERE id = prev.prev_id AND view_as_context_id = CAST(:context_id AS uuid) "
+    "AND view_as_cleared_at IS NULL AND revoked_at IS NULL "
+    "RETURNING @COLS@, prev.prev_ended_at IS NULL AS ended_now"
+)
+_VIEW_AS_CLEAR_SQL = _sql(
+    "UPDATE sessions SET view_as_cleared_at = :now "
+    "WHERE id = CAST(:id AS uuid) AND view_as_context_id = CAST(:context_id AS uuid) "
+    "AND view_as_ended_at IS NOT NULL AND view_as_cleared_at IS NULL RETURNING @COLS@"
+)
+_VIEW_AS_RECORDED_SQL = _sql(
+    "UPDATE sessions SET view_as_end_recorded_at = :now "
+    "WHERE id = CAST(:id AS uuid) AND view_as_context_id = CAST(:context_id AS uuid) "
+    "AND view_as_ended_at IS NOT NULL AND view_as_end_recorded_at IS NULL RETURNING @COLS@"
+)
+# The sweeper's read. The first two conditions are `ix_sessions_view_as_due`'s predicate, which
+# serves the scan in `ORDER BY` order; the NOT EXISTS probes `ix_sessions_view_as_context`. A row a
+# refresh rotated keeps a copy of the context its successor carries (one row per refresh during a
+# view, Owner-only), unrecorded, so it stays in that index and each scan steps past it here; it
+# comes due only once no row carries the context (the last carrier rotated `:cutoff` or earlier).
+# Nothing deletes `sessions` rows today (the 30-day purge is #3223 L2), so the copies stay, and they
+# also sit in `ix_sessions_view_as_target`, which both live reads walk, filtered by their
+# `revoked_at IS NULL`. A row revoked `rotated` with no `revoked_at` would be live: it carries.
+_VIEW_AS_DUE_SQL = _sql(
+    "SELECT @COLS@ FROM sessions s "
+    "WHERE s.view_as_context_id IS NOT NULL AND s.view_as_end_recorded_at IS NULL "
+    "AND (s.view_as_ended_at IS NOT NULL OR s.view_as_expires_at <= :now "
+    "OR s.revoked_at IS NOT NULL OR s.expires_at <= :now) "
+    "AND (s.revoked_reason IS DISTINCT FROM 'rotated' OR NOT EXISTS (SELECT 1 FROM sessions o "
+    "WHERE o.view_as_context_id = s.view_as_context_id AND (o.revoked_reason IS DISTINCT FROM "
+    "'rotated' OR o.revoked_at IS NULL OR o.revoked_at > :cutoff))) "
+    "ORDER BY s.view_as_expires_at LIMIT :limit"
+)
+_VIEW_AS_LIVE_SQL = _sql(
+    "SELECT @COLS@ FROM sessions WHERE view_as_context_id IS NOT NULL "
+    "AND view_as_ended_at IS NULL AND revoked_at IS NULL ORDER BY view_as_expires_at LIMIT :limit"
+)
+_VIEW_AS_LIVE_BY_TARGET_SQL = _sql(
+    "SELECT @COLS@ FROM sessions WHERE view_as_target_user_id = CAST(:target AS uuid) "
+    "AND view_as_context_id IS NOT NULL AND view_as_ended_at IS NULL AND revoked_at IS NULL"
+)
+
 
 def _elevations(stored: str | None) -> dict[str, datetime]:
     """`step_up_elevations` as read (`::text`): key -> ISO-8601 expiry."""
@@ -167,6 +251,50 @@ def _view_as(m: Any) -> dict[str, Any] | None:
         "end_recorded_at": m["view_as_end_recorded_at"],
         "cleared_at": m["view_as_cleared_at"],
     }
+
+
+#: `ViewAsState`'s fields, each stored in the column `view_as_<field>` (storage never imports auth).
+_VIEW_AS_FIELDS = (
+    "context_id",
+    "target_user_id",
+    "started_at",
+    "expires_at",
+    "ended_at",
+    "end_recorded_at",
+    "cleared_at",
+    "end_reason",
+)
+
+
+def _view_as_params(state: Any) -> dict[str, Any]:
+    """A record's context (`SessionRecord.view_as`) as the insert's eight parameters, uuids and the
+    reason as text; all NULL when it holds none. The inverse of `_view_as`."""
+    if state is None:
+        return dict.fromkeys(f"view_as_{name}" for name in _VIEW_AS_FIELDS)
+    text = {"context_id", "target_user_id", "end_reason"}
+    values = {name: getattr(state, name) for name in _VIEW_AS_FIELDS}
+    return {
+        f"view_as_{name}": str(value) if name in text and value is not None else value
+        for name, value in values.items()
+    }
+
+
+def _held(session_id: str, context_id: uuid.UUID, params: dict[str, Any]) -> dict[str, Any]:
+    """A view-as write's parameters: the row and the context it must hold, plus `params`."""
+    return {"id": session_id, "context_id": str(context_id), **params}
+
+
+#: `0042_sessions_view_as`'s CHECK of a context's shape. A `ViewAsState` is valid on its own, so
+#: what it can still refuse is a target that is the row's own user, which only the row knows.
+_VIEW_AS_SHAPE = "sessions_view_as_shape"
+
+
+def _violates(exc: sa.exc.IntegrityError, constraint: str) -> bool:
+    """Whether the driver names `constraint` as the one violated (asyncpg's adapter keeps the name
+    on the driver error it chains: `orders_sqlalchemy` reads it from the same places)."""
+    orig: Any = exc.orig
+    sources = (orig, getattr(orig, "__cause__", None), getattr(orig, "driver_exception", None))
+    return any(getattr(source, "constraint_name", None) == constraint for source in sources)
 
 
 def row_to_fields(row: Any) -> dict[str, Any]:
@@ -230,6 +358,7 @@ class SqlAlchemySessionRepository:
                     "is_electron": session.is_electron,
                     "mfa_satisfied_at": session.mfa_satisfied_at,
                     "idle_timeout_s": session.idle_timeout_s,
+                    **_view_as_params(session.view_as),
                 },
             )
             await uow.commit()
@@ -311,3 +440,71 @@ class SqlAlchemySessionRepository:
             rows = (await uow.session.execute(_FAMILY_SQL, {"id": session_id})).all()
             await uow.commit()
         return tuple(str(r._mapping["id"]) for r in rows)
+
+    # -- #3085 `ViewAsSessionStore`: one statement each; the Protocol's docstrings are the contract.
+
+    async def start_view_as(self, session_id: str, state: Any, *, now: datetime) -> Any:
+        if state.ended_at is not None:
+            raise ValueError("a start puts a fresh context on the row, never an ended one")
+        params = {
+            "id": session_id,
+            "now": now,
+            "context_id": str(state.context_id),
+            "target_user_id": str(state.target_user_id),
+            "started_at": state.started_at,
+            "view_as_expires_at": state.expires_at,
+        }
+        try:
+            return await self._one(_VIEW_AS_START_SQL, params)
+        except sa.exc.IntegrityError as exc:
+            if not _violates(exc, _VIEW_AS_SHAPE):
+                raise
+            # Only the row knows its user, so a state naming it is refused here, by the CHECK, and
+            # only where the write would apply (a row that refuses a start answers None before).
+            # Never chained: the driver's DETAIL carries the failing row (C-12.6).
+            raise ValueError("a session must never view as its own user") from None
+
+    async def end_view_as(
+        self, session_id: str, context_id: uuid.UUID, *, ended_at: datetime, reason: str
+    ) -> Any:
+        params = {"ended_at": ended_at, "reason": str(reason)}
+        return await self._one(_VIEW_AS_END_SQL, _held(session_id, context_id, params))
+
+    async def leave_view_as(
+        self,
+        session_id: str,
+        context_id: uuid.UUID,
+        *,
+        ended_at: datetime,
+        reason: str,
+        now: datetime,
+    ) -> tuple[Any, bool] | None:
+        params = _held(session_id, context_id, {"ended_at": ended_at, "reason": str(reason)})
+        async with self._relational.unit_of_work() as uow:
+            row = (await uow.session.execute(_VIEW_AS_LEAVE_SQL, {**params, "now": now})).first()
+            await uow.commit()
+        if row is None:
+            return None
+        return self._make(**row_to_fields(row)), row._mapping["ended_now"] is True
+
+    async def clear_view_as(self, session_id: str, context_id: uuid.UUID, *, now: datetime) -> Any:
+        return await self._one(_VIEW_AS_CLEAR_SQL, _held(session_id, context_id, {"now": now}))
+
+    async def mark_view_as_recorded(
+        self, session_id: str, context_id: uuid.UUID, *, now: datetime
+    ) -> Any:
+        return await self._one(_VIEW_AS_RECORDED_SQL, _held(session_id, context_id, {"now": now}))
+
+    async def list_view_as_due(
+        self, *, now: datetime, rotated_grace: timedelta, limit: int
+    ) -> tuple[Any, ...]:
+        """See `ViewAsSessionStore.list_view_as_due`: `rotated_grace` must exceed the gap from a
+        refresh's claim (its `revoked_at`) to its successor's insert (`SessionService.refresh`)."""
+        params = {"now": now, "cutoff": now - rotated_grace, "limit": limit}
+        return await self._many(_VIEW_AS_DUE_SQL, params)
+
+    async def list_live_view_as(self, *, limit: int) -> tuple[Any, ...]:
+        return await self._many(_VIEW_AS_LIVE_SQL, {"limit": limit})
+
+    async def list_live_view_as_by_target(self, target_user_id: uuid.UUID) -> tuple[Any, ...]:
+        return await self._many(_VIEW_AS_LIVE_BY_TARGET_SQL, {"target": str(target_user_id)})

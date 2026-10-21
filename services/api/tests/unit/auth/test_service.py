@@ -18,6 +18,7 @@ from candleviewer.observability.health import HealthStatus
 from candleviewer.settings import Environment
 from tests.unit.auth.auth_fakes import FakeUserRepository
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.session_fakes import FakeSessionRepository
 
 
 @dataclass
@@ -149,3 +150,21 @@ async def test_auth_service_start_with_explicit_key_allows_live_environment() ->
     await service.start(ctx=ctx)  # type: ignore[arg-type]
 
     assert service.mfa_is_active is True
+
+
+def test_auth_service_exposes_its_session_repository_as_the_view_as_store() -> None:
+    """#3085 S2b: the view-as service and its sweeper (S4, S5) write the store the session service
+    writes, from construction on (no `start()` needed)."""
+    repository = FakeSessionRepository()
+    service = AuthService(session_repository=repository)
+
+    assert service.view_as_store_is_active is True
+    assert service.view_as_store is repository
+
+
+def test_auth_service_without_a_session_repository_has_no_view_as_store() -> None:
+    service = AuthService()
+
+    assert service.view_as_store_is_active is False
+    with pytest.raises(RuntimeError, match="without a session repository"):
+        _ = service.view_as_store

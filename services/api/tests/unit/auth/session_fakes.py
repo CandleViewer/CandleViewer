@@ -184,6 +184,13 @@ class FakeSessionRepository:
         held = None if session is None else session.view_as
         return held if held is not None and held.context_id == context_id else None
 
+    def _carried_on(self, session_id: str, context_id: UUID) -> bool:
+        """A revoked row whose context another, unrevoked row holds: its successor carries it on."""
+        others = (s for sid, s in self.sessions.items() if sid != session_id and not s.is_revoked)
+        return self.sessions[session_id].is_revoked and any(
+            s.view_as is not None and s.view_as.context_id == context_id for s in others
+        )
+
     def _put_view_as(self, session_id: str, state: ViewAsState) -> SessionRecord:
         """Store `state` on the row, rebuilt so its CHECKs apply (`model_copy` would skip them)."""
         updated = SessionRecord.model_validate(
@@ -203,13 +210,15 @@ class FakeSessionRepository:
         held = session.view_as
         if held is not None and (held.cleared_at is None or held.end_recorded_at is None):
             return None
+        if state.target_user_id == session.user_id:  # the CHECK, where the write would apply
+            raise ValueError("a session must never view as its own user")
         return self._put_view_as(session_id, state)
 
     async def end_view_as(
         self, session_id: str, context_id: UUID, *, ended_at: datetime, reason: ViewAsEndReason
     ) -> SessionRecord | None:
         held = self._view_as_context(session_id, context_id)
-        if held is None or held.ended_at is not None:
+        if held is None or held.ended_at is not None or self._carried_on(session_id, context_id):
             return None
         end = {"ended_at": ended_at, "end_reason": reason}
         return self._put_view_as(session_id, held.model_copy(update=end))
@@ -224,7 +233,7 @@ class FakeSessionRepository:
         now: datetime,
     ) -> tuple[SessionRecord, bool] | None:
         held = self._view_as_context(session_id, context_id)
-        if held is None or held.cleared_at is not None:
+        if held is None or held.cleared_at is not None or self.sessions[session_id].is_revoked:
             return None
         ends = held.ended_at is None
         end = {"ended_at": ended_at, "end_reason": reason} if ends else {}
