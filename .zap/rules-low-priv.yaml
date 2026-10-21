@@ -1,38 +1,75 @@
-# E35-X02: OWASP ZAP automation plan for the /rules* surface (authenticated, LOW-privilege).
-# Run: zap.sh -cmd -autorun .zap/rules-low-priv.yaml  (run nightly by .github/workflows/dast-rules-nightly.yml)
-# Credentials come from env vars (never committed): ZAP_LOWPRIV_TOKEN.
+# E35-X02, #3991: the OWASP ZAP plan for the /rules* surface, authenticated as a low-privilege
+# (rules:read) synthetic Viewer with a real TOTP method and no MFA exception, against the
+# throwaway CI stack of .github/workflows/_dast-low-priv.yml (called by dast-rules-nightly.yml),
+# never a live exchange. Never run as it is: security/zap/nightly_plans.py writes the plan from
+# it, importing the contract cut to this surface. The Viewer's bearer and SR-041 CSRF pair come
+# from ZAP_AUTH_TOKEN and ZAP_CSRF_TOKEN at run time (security/zap/mint_sessions.py). ZAP expands
+# no variable inside a replacer rule, so security/zap/role_session.js (ZAP_PROFILE=rules) reads
+# them from the environment once, when ZAP loads it, and adds them to each request to the surface
+# and to /me, the liveness check. No credential is committed or written.
 env:
   contexts:
     - name: rules-api
-      urls: ["http://127.0.0.1:8000"]
-      includePaths: ["http://127.0.0.1:8000/rules.*", "http://127.0.0.1:8000/schemas/rule-ir.json"]
+      urls: ["${ZAP_TARGET}/rules", "${ZAP_TARGET}/schemas/rule-ir.json"]
+      includePaths:
+        - "${ZAP_TARGET}/rules([/?].*)?"
+        - "${ZAP_TARGET}/schemas/rule-ir\\.json"
   parameters:
     failOnError: true
+    failOnWarning: false
     progressToStdout: true
 jobs:
+  - type: script # the Viewer's session, from the environment (security/zap/role_session.js)
+    parameters:
+      action: add
+      type: httpsender
+      engine: "ECMAScript : Graal.js"
+      name: cv-role-session
+      source: /zap/wrk/security/zap/role_session.js # the checkout, mounted at /zap/wrk
+  # Tuning, before any request so it covers every alert. Rule 6's low-confidence check sends a
+  # URL's own last segment as a parameter (`/rules/vocabulary?symbol=vocabulary`) and flags a
+  # response like the page's. `symbol` must be 4-20 ASCII letters and digits and names a market
+  # symbol for an in-memory lookup (api/rules.py), so no file is read. Only that attack on that
+  # parameter is filtered: any other traversal payload is still reported (#3991, run 1).
+  - type: alertFilter
+    alertFilters:
+      - ruleId: 6
+        newRisk: "False Positive"
+        url: ".*/rules/vocabulary([?].*)?"
+        urlRegex: true
+        parameter: symbol
+        attack: vocabulary
+  - type: requestor
+    name: session-live-before-scan
+    requests:
+      - url: "${ZAP_TARGET}/me"
+        method: GET
+        responseCode: 200 # a 401 here fails the run: an unauthenticated scan is no clean scan
   - type: openapi
     parameters:
-      apiFile: docs/plan/22-api-openapi.yaml
-      targetUrl: http://127.0.0.1:8000
+      apiFile: /zap/wrk/docs/plan/22-api-openapi.yaml # replaced by the cut rules-openapi.yaml
       context: rules-api
-  - type: replacer
-    rules:
-      - description: low-privilege session (rules:read only)
-        matchType: req_header
-        matchString: Authorization
-        replacementString: "Bearer ${ZAP_LOWPRIV_TOKEN}"
-        initiators: []
+      targetUrl: "${ZAP_TARGET}"
+  # The import, at most 2 minutes of passive wait and at most 8 of active scan stay inside the
+  # 12-minute access token (ADR-0020), so the after-scan /me still holds the scan's live bearer.
+  - type: passiveScan-wait
+    parameters: { maxDuration: 2 }
   - type: activeScan
     parameters:
       context: rules-api
+      maxScanDurationInMins: 8
     policyDefinition:
       defaultStrength: Medium
       defaultThreshold: Medium
+  - type: requestor
+    name: session-live-after-scan
+    requests:
+      - url: "${ZAP_TARGET}/me"
+        method: GET
+        responseCode: 200
   - type: report
     parameters:
-      template: traditional-json
-      reportDir: zap-reports
-      reportFile: rules-low-priv
-    risks: [high, medium]
-# Disposition: any 2xx returning data outside the session grants is a HIGH finding (IDOR / authz gap);
-# see docs/security/e35/abuse-case-suite.md "DAST".
+      { template: traditional-json, reportDir: /zap/wrk/zap-reports, reportFile: rules-viewer }
+    risks: [high, medium, low, info]
+# Disposition: any 2xx returning data outside the session grants is a HIGH finding (IDOR / authz
+# gap); see docs/security/e35/abuse-case-suite.md "DAST".

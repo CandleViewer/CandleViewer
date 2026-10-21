@@ -94,6 +94,15 @@ def test_zap_gate_new_medium_alert_fails() -> None:
     assert keys == {"40018 GET /market/bars": "x"}
 
 
+def test_zap_gate_alert_the_plan_marked_false_positive_does_not_count() -> None:
+    """An alertFilter `newRisk: "False Positive"` keeps the risk and sets ZAP's confidence to 0;
+    once filtered, the alert also has no instances (#3991, dast-rules-nightly run 2)."""
+    report = _report(("6", 3, "/rules/vocabulary"), ("40018", 3, "/rules"))
+    alerts = report["site"][0]["alerts"]  # type: ignore[index]  # the helper's shape
+    alerts[0].update(confidence="0", instances=[])
+    assert gate.alert_keys(report) == {"40018 GET /rules": "x"}
+
+
 def test_zap_gate_baselined_alert_passes_and_expired_entry_fails(tmp_path: Path) -> None:
     rep, base = tmp_path / "r.json", tmp_path / "b.json"
     rep.write_text(json.dumps(_report(("10202", 2, "/market/klines"))), encoding="utf-8")

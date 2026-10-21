@@ -165,20 +165,23 @@ fix merged (#2140 → #2137, #2141 → #2138, #2142 → #2139). The rules now co
 ## DAST
 
 - **Workflow:** `.github/workflows/dast-market-nightly.yml`, triggered by `schedule` (03:47 UTC)
-  and `workflow_dispatch` only, **never on PR**. It runs against the compose stack that
-  `dast-rules-nightly` / `dast-storage-nightly` use. "Staging" in the ticket is E17's target; when
-  that exists, change `urls`/`targetUrl` in the plan.
-- **Plan:** `.zap/market-data.yaml`. OpenAPI import of `22-api-openapi.yaml`, scoped to
-  `/market/klines` and `/market/bars`; active scan with SQLi/command-injection/XSS rules at Low
-  threshold. Authentication uses the low-privilege bearer `ZAP_LOWPRIV_TOKEN` (CI secret, seeded
-  read-only demo user, never committed). Rotate it with the other ZAP fixture credentials each
-  release cycle and whenever a maintainer with secret access leaves.
+  and `workflow_dispatch` only, **never on PR**. It calls `_dast-low-priv.yml` (#3991), as
+  `dast-rules-nightly` does: a throwaway stack on the runner (the compose data stores and the API
+  on loopback). "Staging" in the ticket is E17's target; when that exists, it is the owner's call.
+- **Plan:** `.zap/market-data.yaml`. OpenAPI import of `22-api-openapi.yaml`, cut to
+  `/market/klines` and `/market/bars` by `security/zap/nightly_plans.py`; active scan with
+  SQLi/command-injection/XSS rules at Low threshold, at most 8 minutes. Authentication: a
+  synthetic `marketdata:read` Viewer with a real TOTP method, made per run on the throwaway stack;
+  its session is minted by `security/zap/mint_sessions.py` and reaches ZAP through
+  `security/zap/role_session.js`. No credential is stored, so none needs rotating. A scan that
+  loses its session fails (`security/zap/check_liveness.py`).
 - **Tuning for expected 4xx:** `alertFilter` marks two alerts as false positives on these two
   paths only: 90022 when the evidence is our problem+json codes (`validation_failed`,
-  `bar_window_too_large`, `no_data_recorded`, `response_too_large`), and 10049 (non-cacheable
-  4xx). Injection and disclosure rules are never filtered.
+  `bar_window_too_large`, `no_data_recorded`, `response_too_large`). Rule 10049 is not in the
+  pinned ZAP 2.17.0 image, so it has no filter. Injection and disclosure rules are never filtered.
 - **Baseline:** `.zap/market-data-baseline.json` (empty at merge). `security/zap/baseline_gate.py`
-  fails the job on any High/Medium alert whose `pluginId METHOD path` key is not in the baseline.
+  fails the job on any High/Medium alert whose `pluginId METHOD path` key is not in the baseline;
+  an alert a plan's `alertFilter` marks "False Positive" (ZAP's confidence 0) does not count.
   It also fails on a baseline entry without `reason`/`owner`/`review`, or one past its review date.
 - **Triage SLA:** the SR-134 clock applies: triage within 48 h (the market-data read path feeds
   charts, not orders, but a High is treated as order-path severity), and within 7 days for a

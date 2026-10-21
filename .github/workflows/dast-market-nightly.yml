@@ -1,48 +1,24 @@
 name: dast-market-nightly
 
-# E12-X03: nightly (never per-PR) authenticated low-privilege OWASP ZAP scan of the market-data
-# read surface (/market/klines, /market/bars). Plan: .zap/market-data.yaml. Gate: any High/Medium
-# alert not in .zap/market-data-baseline.json fails the job (security/zap/baseline_gate.py);
-# expected 400/422 problem responses are tuned out in the plan, never in this file.
-# Target: the locally-started compose stack (same as dast-rules-nightly / dast-storage-nightly);
-# never a live exchange. ZAP_LOWPRIV_TOKEN is a repository secret for the seeded read-only demo
-# user (never committed); rotation: docs/plan/security/ci-gates-e12.md "DAST".
+# E12-X03: the nightly (never per-PR) low-privilege OWASP ZAP scan of the market-data read surface
+# (/market/klines, /market/bars; plan: .zap/market-data.yaml), authenticated as a synthetic
+# marketdata:read Viewer on a throwaway stack (_dast-low-priv.yml, #3991). Gate: the scan stays
+# signed in, and any High/Medium alert not in .zap/market-data-baseline.json fails the job
+# (security/zap/baseline_gate.py); expected 400/422 problem responses are tuned out in the plan,
+# never in this file. Never a live exchange; no repository secret.
 on:
   schedule:
     - cron: "47 3 * * *"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 jobs:
   zap-market:
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Require low-privilege token
-        env:
-          ZAP_LOWPRIV_TOKEN: ${{ secrets.ZAP_LOWPRIV_TOKEN }}
-        # An unauthenticated scan is a failed scan, not a clean one.
-        run: test -n "$ZAP_LOWPRIV_TOKEN" || { echo "ZAP_LOWPRIV_TOKEN secret missing"; exit 1; }
-      - name: Start stack
-        run: docker compose -f infra/compose/docker-compose.yml up -d --wait
-      - name: ZAP automation plan (low-privilege /market/klines + /market/bars)
-        env:
-          ZAP_LOWPRIV_TOKEN: ${{ secrets.ZAP_LOWPRIV_TOKEN }}
-        run: |
-          docker run --rm --network host -e ZAP_LOWPRIV_TOKEN -v "$PWD:/zap/wrk:rw" \
-            ghcr.io/zaproxy/zaproxy:2.16.1 zap.sh -cmd -autorun /zap/wrk/.zap/market-data.yaml
-      - name: Block on new medium+ alerts above the baseline
-        run: python security/zap/baseline_gate.py zap-reports/market-data.json .zap/market-data-baseline.json
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: zap-market-data
-          path: zap-reports/
-          retention-days: 14
-      - name: Tear down
-        if: always()
-        run: docker compose -f infra/compose/docker-compose.yml down -v
+    uses: ./.github/workflows/_dast-low-priv.yml
+    with:
+      profile: market
+      report: market-viewer
+      baseline: .zap/market-data-baseline.json
+      artifact: zap-market-data

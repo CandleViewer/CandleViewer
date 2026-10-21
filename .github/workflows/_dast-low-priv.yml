@@ -1,0 +1,201 @@
+name: _dast-low-priv
+
+# #3991: one low-privilege ZAP nightly, called by dast-rules-nightly.yml (E35-X02, /rules*) and
+# dast-market-nightly.yml (E12-X03, /market/klines and /market/bars). It scans the profile's
+# surface authenticated as a synthetic Viewer with a real TOTP method and no MFA exception, against
+# a throwaway stack on this runner, never a live exchange, as dast-admin-nightly.yml does (#1026).
+# A synthetic user signs in only with CV_STORAGE_BACKEND=real (app.build_auth_service).
+# Every credential is made here, per run, masked and never echoed: no repository secret is read,
+# and the target is loopback, never an input (mint_sessions.py refuses any other). The Viewer's
+# bearer and CSRF pair reach ZAP through the environment and security/zap/role_session.js
+# (ZAP_PROFILE), never through a plan. "The scan stayed signed in" (check_liveness.py: both /me
+# requestors answered 200) fails a scan that lost its session, and "no new medium+ alert"
+# (baseline_gate.py) any High or Medium alert outside the profile's baseline. The artefact holds
+# the plan, the cut contract, ZAP's output and report and the API's log, uploaded only if no
+# session value of the run, and none of the passwords, keys and TOTP secrets it generated,
+# reached them (check_artefact_secrets.py).
+on:
+  workflow_call:
+    inputs:
+      profile:
+        description: The ZAP profile (security/zap/nightly_plans.py PROFILES, role_session.js)
+        type: string
+        required: true
+      report:
+        description: The plan's report file, without `.json`
+        type: string
+        required: true
+      baseline:
+        description: The profile's accepted alerts (security/zap/baseline_gate.py)
+        type: string
+        required: true
+      artifact:
+        description: The artefact's name
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  zap:
+    name: zap-${{ inputs.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ZAP_TARGET: http://127.0.0.1:8000
+      ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef
+      ZAP_PROFILE: ${{ inputs.profile }}
+      ZAP_REPORT: zap-reports/${{ inputs.report }}.json
+      ZAP_BASELINE: ${{ inputs.baseline }}
+      WORK: zap-work
+      # Compose checks every service's variables on each command; these stores never start here.
+      GF_SECURITY_ADMIN_PASSWORD: unused-ci
+      MINIO_ROOT_PASSWORD: unused-ci
+      CV_ALERT_PAGE_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_TICKET_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_DEADMAN_URL: http://127.0.0.1:1/unused
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+
+      - name: Make this run's synthetic credentials (masked, never echoed)
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$WORK" "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane"
+          secret() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
+          for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
+            CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX ZAP_OWNER_PASSWORD \
+            ZAP_VIEWER_PASSWORD; do secret "$name"; done
+          suffix=$(openssl rand -hex 4)
+          for role in owner viewer; do echo "ZAP_${role^^}_USER=zap-$role-$suffix" >> "$GITHUB_ENV"; done
+          # The audit lane key (ADR-0037 decision 6): 64 hex digits in a file of mode 0400, in a
+          # directory of its own: the settings refuse a backup root in, or around, the key's directory.
+          (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
+
+      - name: Start Postgres and QuestDB (the compose data stores, loopback only)
+        run: docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait postgres questdb
+
+      - name: Migrate, then seed the Owner the owner floor needs and the synthetic Viewer (testnet)
+        working-directory: services/api
+        env:
+          CV_ENVIRONMENT: testnet
+        run: |
+          set -euo pipefail
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          uv sync --frozen
+          uv run --frozen alembic upgrade head
+          # The owner floor refuses a user while no active Owner exists; this one never signs in.
+          CV_SEED_USERNAME="$ZAP_OWNER_USER" CV_SEED_PASSWORD="$ZAP_OWNER_PASSWORD" \
+            uv run --frozen python scripts/seed_fixture_user.py
+          CV_SEED_USERNAME="$ZAP_VIEWER_USER" CV_SEED_PASSWORD="$ZAP_VIEWER_PASSWORD" \
+            uv run --frozen python scripts/seed_fixture_user.py --role viewer \
+            --totp-secret-out "$RUNNER_TEMP/cv/viewer.totp"
+
+      - name: Start the API (testnet, real storage backend, loopback)
+        working-directory: services/api
+        env:
+          CV_ENVIRONMENT: testnet
+          CV_STORAGE_BACKEND: real
+          CV_FEED: synthetic
+          # The API runs on the host, outside the compose network: QuestDB is its loopback ports.
+          CV_QUESTDB_PG: 127.0.0.1:8812
+          CV_QUESTDB_ILP: 127.0.0.1:9009
+          CV_BIND_HOST: 127.0.0.1
+          CV_BIND_PORT: "8000"
+          CV_METRICS_BIND: 127.0.0.1:9108
+        run: |
+          set -euo pipefail
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          export CV_AUDIT_LANE_KEY_FILE="$RUNNER_TEMP/cv-lane/lane.key"
+          export CV_AUDIT_WAL_PATH="$RUNNER_TEMP/cv/audit/audit.wal"
+          export CV_PARQUET_ROOT="$RUNNER_TEMP/cv/data/parquet" CV_BACKUP_ROOT="$RUNNER_TEMP/cv/data/backups"
+          # The cold tier and the recorder need the Parquet root to exist and be writable at boot.
+          mkdir -p -m 700 "$RUNNER_TEMP/cv/audit" "$RUNNER_TEMP/cv/data" "$CV_PARQUET_ROOT" "$CV_BACKUP_ROOT"
+          # A native crash leaves no Python traceback: the fault handler prints one.
+          PYTHONFAULTHANDLER=1 nohup uv run --frozen python -m candleviewer.server > "$RUNNER_TEMP/cv/api.log" 2>&1 &
+          api=$!
+          for _ in $(seq 60); do
+            if curl -fsS -o /dev/null "$ZAP_TARGET/healthz"; then exit 0; fi
+            kill -0 "$api" 2>/dev/null || break # it exited: stop waiting
+            sleep 2
+          done
+          if kill -0 "$api" 2>/dev/null; then
+            state="still running, not answering" # it has no exit code to report
+          else
+            code=0
+            wait "$api" || code=$?
+            state="exit ${code}"
+          fi
+          echo "::error title=zap-${ZAP_PROFILE}::the API did not answer /healthz (${state}); the last of its log follows"
+          tail -n 200 "$RUNNER_TEMP/cv/api.log"
+          exit 1
+
+      - name: Write the plan (nightly_plans.py, importing the contract cut to the surface)
+        run: uv run --frozen --project services/api python security/zap/nightly_plans.py --profile "$ZAP_PROFILE" --out "$WORK"
+
+      - name: The passive and active scan, as the Viewer
+        run: |
+          set -euo pipefail
+          mkdir -p zap-reports && chmod a+rwx zap-reports "$WORK" # the image runs as its own user
+          envfile="$RUNNER_TEMP/cv/viewer-scan.env" # a fresh session: a bearer lives 12 minutes
+          python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "$ZAP_VIEWER_USER" \
+            --password-env ZAP_VIEWER_PASSWORD --totp-secret-file "$RUNNER_TEMP/cv/viewer.totp" \
+            --out "$envfile"
+          docker run --rm --network host --env-file "$envfile" -e ZAP_TARGET -e ZAP_PROFILE \
+            -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -autorun "/zap/wrk/$WORK/$ZAP_PROFILE-scan.yaml" \
+            2>&1 | tee "$WORK/$ZAP_PROFILE-scan.log"
+
+      - name: The scan stayed signed in, and no new medium+ alert
+        if: ${{ !cancelled() }}
+        run: |
+          set -uo pipefail
+          rc=0 # both checks run, then the step fails
+          # Both GET /me requestors of the plan ran and answered 200 (no "lost authentication").
+          python3 security/zap/check_liveness.py "$WORK/$ZAP_PROFILE-scan.log" "$ZAP_REPORT" || rc=1
+          python3 security/zap/baseline_gate.py "$ZAP_REPORT" "$ZAP_BASELINE" || rc=1
+          exit "$rc"
+
+      - name: Keep the API's log with the plan and report
+        if: always()
+        run: |
+          mkdir -p "$WORK"
+          if [ -f "$RUNNER_TEMP/cv/api.log" ]; then cp "$RUNNER_TEMP/cv/api.log" "$WORK/api.log"; fi
+
+      - name: No session value in the plan, logs or report (else nothing is uploaded)
+        id: scrub
+        if: always()
+        # The session values of the env file, then each secret this run made: its passwords,
+        # pepper and keys (in $GITHUB_ENV since the first step; only their names are passed), the
+        # TOTP seed seed_fixture_user.py wrote and the audit lane key.
+        run: |
+          python3 security/zap/check_artefact_secrets.py --env-dir "$RUNNER_TEMP/cv" \
+            --env ZAP_OWNER_PASSWORD --env ZAP_VIEWER_PASSWORD \
+            --env POSTGRES_PASSWORD --env CV_AUTH_PEPPER --env CV_AUTH_TOTP_KEY_HEX \
+            --env CV_AUTH_RECOVERY_HMAC_KEY_HEX --env CV_AUTH_CSRF_KEY_HEX \
+            --secret-file "$RUNNER_TEMP/cv/*.totp" --secret-file "$RUNNER_TEMP/cv-lane/lane.key" \
+            "$WORK" zap-reports
+
+      - name: Upload the plan, logs and report (the session in them died with the stack)
+        if: ${{ always() && steps.scrub.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact }}
+          path: |
+            zap-work/
+            zap-reports/
+          retention-days: 14
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/compose/docker-compose.yml --profile core down -v || true

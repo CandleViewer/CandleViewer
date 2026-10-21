@@ -2,7 +2,8 @@
 """E12-X03: fail a ZAP run on any High/Medium alert not in the committed baseline.
 
 Key = `<pluginId> <METHOD> <path>` (query string dropped, so fuzzed parameter values do not
-mint "new" alerts). Baseline entries must carry `reason`, `owner` and `review` (ISO date, not
+mint "new" alerts). An alert the plan's `alertFilter` marked "False Positive" (ZAP's confidence 0)
+never counts: the plan's filter, a reviewed file, is its disposition (#3991). Baseline entries must carry `reason`, `owner` and `review` (ISO date, not
 in the past); an expired entry no longer protects. Stdlib only; no network.
 
 Usage: baseline_gate.py <zap traditional-json report> <baseline.json> [--today YYYY-MM-DD]
@@ -19,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 MEDIUM = 2
+FALSE_POSITIVE = 0  # ZAP's confidence for an alert a plan's alertFilter marked "False Positive"
 
 
 def alert_keys(report: dict[str, object]) -> dict[str, str]:
@@ -27,6 +29,8 @@ def alert_keys(report: dict[str, object]) -> dict[str, str]:
     for site in report.get("site", []) or []:  # type: ignore[union-attr]  # report is untyped JSON
         for alert in site.get("alerts", []):
             if int(alert.get("riskcode", 0)) < MEDIUM:
+                continue
+            if int(alert.get("confidence", MEDIUM)) == FALSE_POSITIVE:
                 continue
             for inst in alert.get("instances", []) or [{"uri": "", "method": ""}]:
                 path = urlsplit(inst.get("uri", "")).path
