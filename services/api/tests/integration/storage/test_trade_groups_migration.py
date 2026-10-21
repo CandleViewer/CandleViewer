@@ -829,6 +829,14 @@ def _env_of(c: Conn, account: str) -> str:
     return str(_one(c, "SELECT env::text FROM exchange_accounts WHERE id = %s", account))
 
 
+def _without_the_write_once_guard(dsn: str) -> None:
+    """In this test's own database only, as the superuser: switch off 0040's blanket
+    `trg_ea_env_write_once` (#2333), which refuses every change of `env`, so the scenario meets
+    0039's narrower guards alone."""
+    with _conn(dsn) as c:
+        c.execute("ALTER TABLE exchange_accounts DISABLE TRIGGER trg_ea_env_write_once")
+
+
 def test_leg_env_must_match_group_env(pg_dsn: str) -> None:
     """`trg_tgl_env`, by its name: a live account's leg in a demo group is refused, with a message
     that names no value; a demo account's leg is stored."""
@@ -908,10 +916,14 @@ def test_an_account_in_use_keeps_its_environment(pg_dsn: str, use: str) -> None:
         assert _env_of(c, account) == "demo"
 
 
-def test_an_account_in_no_group_or_definition_may_change_its_environment(pg_dsn: str) -> None:
-    """The guard is the part E28-T01 owns; blanket immutability of `exchange_accounts.env` is
-    #2333's, so until it lands an account that is in no group and no definition may move."""
-    with _conn(_fresh(pg_dsn)) as c:
+def test_the_in_use_guard_lets_an_account_in_no_group_or_definition_move(pg_dsn: str) -> None:
+    """`trg_ea_env_in_use` is the part E28-T01 owns, and it is narrow: it refuses only an account
+    that is a member or has a leg. Since #2333 `trg_ea_env_write_once` (0040) refuses every
+    account (`test_account_env_write_once_migration.py`); with it switched off, an account in no
+    group and no definition passes this guard and moves."""
+    dsn = _fresh(pg_dsn)
+    _without_the_write_once_guard(dsn)  # isolates 0039's guard from 0040's blanket one
+    with _conn(dsn) as c:
         account = _account(c)
         _leg(c, _group(c, _user(c)), _account(c))  # another account is in use
         c.execute(_ENV_CHANGE, (account,))
@@ -940,9 +952,12 @@ def test_a_leg_insert_and_an_env_change_serialise(pg_dsn: str) -> None:
 
 
 def test_an_env_change_and_a_leg_insert_serialise(pg_dsn: str) -> None:
-    """The other order: the leg insert waits on the open environment change, then `trg_tgl_env`
-    reads the committed environment and refuses the leg."""
+    """The other order, for `trg_tgl_env`: the leg insert waits on the open environment change,
+    then reads the committed environment and refuses the leg. Since #2333
+    `trg_ea_env_write_once` (0040) refuses the change itself, so it is switched off here: the
+    lock and the re-read are 0039's own defence and stay tested."""
     dsn = _fresh(pg_dsn)
+    _without_the_write_once_guard(dsn)  # isolates 0039's guards from 0040's blanket one
     with _conn(dsn) as c:
         account = _account(c)
         group = _group(c, _user(c))

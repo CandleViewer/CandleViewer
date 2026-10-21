@@ -535,6 +535,25 @@ async def test_update_empty_patch_rejected_and_integrity_mapped() -> None:
         )
 
 
+def test_an_account_patch_carries_no_environment() -> None:
+    """#2333: `exchange_accounts.env` is write-once, so the patch the store takes has no `env`."""
+    assert "env" not in {f.name for f in dataclasses.fields(ExchangeAccountPatch)}
+
+
+@pytest.mark.parametrize("trigger", ["trg_ea_env_write_once", "trg_ea_env_in_use"])
+async def test_an_environment_guard_refusal_is_a_typed_rule_error(trigger: str) -> None:
+    """Both `env` guards refuse with SQLSTATE 23514 naming themselves as the constraint (0039,
+    0040), so an update that met one is the store's rule error, raised `from None` (the driver
+    text carries P1 parameters), and nothing commits."""
+    rel = _Rel(_Result(), raises=_integrity("23514", trigger))
+    with pytest.raises(AccountsStoreRuleError) as ei:
+        await _store(rel).update_account(
+            _OWNER, uuid4(), ExchangeAccountPatch(label="b"), if_match=None
+        )
+    assert ei.value.rule == trigger and ei.value.__cause__ is None
+    assert ei.value.__suppress_context__ is True and rel.commits == 0
+
+
 async def test_soft_delete_reports_rowcount() -> None:
     rel = _Rel(_Result(), _Result(rowcount=1))
     assert await _store(rel).soft_delete_account(_OWNER, uuid4()) is True

@@ -199,7 +199,7 @@
     },
     "0040_account_env_write_once": {
       "path": "services/api/candleviewer/migrations/versions/0040_account_env_write_once.py",
-      "sha256": "f24c950f28f7f5a4380922f22932d4811953289a8a6bfeb8c2f90af924e087e4",
+      "sha256": "0f69f031e2b41320f0756dca20a989d13333dac5ae16a5e38071aa799b4bded3",
       "down_revision": "0039_trade_groups"
     }
   }
