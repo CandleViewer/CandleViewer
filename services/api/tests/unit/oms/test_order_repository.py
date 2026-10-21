@@ -593,6 +593,19 @@ async def test_a_settle_hands_its_audit_to_the_store_and_a_late_audit_writes_not
     assert err.value.__cause__ is None and not isinstance(err.value, TimeoutError)
 
 
+@pytest.mark.parametrize("outcome", ["refused", "not_shown"])
+async def test_a_void_with_no_audit_reaches_no_store(outcome: str) -> None:
+    """SEC-2A-D1-03 (C-2.9): a void is audited write-ahead, as a first persist is, so with no hook
+    it is refused before the store; an answer may go without one."""
+    store = _Settles()
+    repo = RecordedStopRepository(cast(Any, store))
+    with pytest.raises(ValueError, match="audited write-ahead"):
+        await repo.settle(ACCOUNT, [STOP.id], cast(Any, outcome), at=T0)
+    assert store.hooks == []
+    assert await repo.settle(ACCOUNT, [STOP.id], "answered", at=T0) == (STOP_ROW,)
+    assert store.hooks == [None]
+
+
 async def test_a_sweep_whose_audit_did_not_land_voided_nothing() -> None:
     error = WriteAheadTimeout("write-ahead audit exceeded 5.0 s")
     with pytest.raises(AuditNotDurable) as err:

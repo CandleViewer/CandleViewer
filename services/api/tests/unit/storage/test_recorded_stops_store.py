@@ -20,6 +20,8 @@ from sqlalchemy.engine import Dialect, make_url
 from sqlalchemy.sql.elements import TextClause
 
 from candleviewer.db import models
+from candleviewer.oms.order_machine import Legality
+from candleviewer.statechart.registry import Registry
 from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
 from candleviewer.storage.repositories import recorded_stops_sqlalchemy as mod
 from candleviewer.storage.repositories.recorded_stops import (
@@ -358,6 +360,10 @@ def test_the_sweep_proves_an_entry_never_placed_and_nothing_else() -> None:
     assert dict(REFUSED_ENTRY) == {"state": "rejected", "cum_exec_qty": Decimal(0)}
     assert set(UNSENT_ENTRY) | set(REFUSED_ENTRY) <= set(models.orders.c.keys())
     assert REFUSED_BY == ("submitted", "rejected")
+    # SEC-2A-D1-05: `submitting -> rejected` is the create's own answer only, so the sweep's proof
+    # holds while B1 has no other edge into `rejected` out of `submitting`.
+    edges = Legality.of(Registry().get("order")).triggers
+    assert edges[("submitting", "rejected")] == {"done.invoke.place"}
 
 
 _SWEPT = [{"id": str(_SL), "exchange_account_id": str(_ACCOUNT), "order_id": str(_ORDER),

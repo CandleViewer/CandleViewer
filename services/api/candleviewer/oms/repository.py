@@ -423,7 +423,11 @@ class RecordedStopRepository:
         """One request's answer, all its rows together; `StaleRecordedStop` when one is no
         longer in flight, with nothing written. `write_ahead`, the writer's audit of the answer
         (a void is `sl.modified` or `tp.modified`, 21 Sec.3.3.11), is awaited before the commit:
-        `AuditNotDurable` when it outlasts its bound, with nothing written (C-2.9, SEC-2A-05)."""
+        `AuditNotDurable` when it outlasts its bound, with nothing written (C-2.9, SEC-2A-05). A
+        void (`refused`, `not_shown`) needs it: with none, `ValueError` before the store
+        (SEC-2A-D1-03), as a first persist with no hook is refused."""
+        if outcome != "answered" and write_ahead is None:
+            raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
         try:
             with self._timer.measure("recorded_stops"):
                 rows = await self._store.settle(
