@@ -1,7 +1,7 @@
 """exchange_accounts: cv_app loses DELETE, the last item of #2758's write-once guarantee
 
 Revision ID: 0044_account_no_hard_delete
-Revises: 0041_account_env_write_once
+Revises: 0042_sessions_view_as
 Create Date: 2026-10-21
 
 `REVOKE DELETE ON exchange_accounts FROM cv_app`, the residual that 0024 (`api_keys`) and 0041
@@ -23,10 +23,16 @@ grants cascading with it, and insert the id again: in another environment, which
   held TRUNCATE (a separate privilege), REFERENCES or TRIGGER, and `cv_ro` holds no DELETE. After
   this revision `cv_app` holds INSERT, SELECT and UPDATE (the integration tests pin the set); the
   downgrade's GRANT restores DELETE alone, so a round trip leaves the ACL as it was.
+* An UPDATE of `id` is the other way to free an id, and no trigger guards that column. It stays
+  refused through the children: every foreign key into the table is ON UPDATE NO ACTION, every
+  account has its Default profile (`trg_ea_default_profile`), and `cv_app` can neither re-point a
+  profile or a key (the write-once guards, SQLSTATE 23514) nor delete one (0037, 0024: no DELETE),
+  so the UPDATE fails with SQLSTATE 23503 (the integration tests pin it). A foreign key declared
+  ON UPDATE CASCADE would re-open it; a write-once guard on `id` would close it directly.
 * Guarded like 0024 and 0032: each statement runs only where `pg_bootstrap.sql` created `cv_app`
-  (a migration-only test cluster has none), and it narrows a grant and widens none.
-* Residuals: the owner (`cv_owner`, migrations only) and superusers can still delete accounts, grant
-  DELETE again, and disable or drop either guard.
+  (a migration-only test cluster has none). The upgrade narrows one grant and widens none.
+* Residuals: the owner (`cv_owner`: migrations, and the alert purge when `CV_PG_OWNER_DSN` is set)
+  and superusers can still delete accounts, grant DELETE again, and disable or drop either guard.
 
 No table, column or row changes (C-5.1), so an empty or a seeded database round-trips (C-5.5).
 Reversible (C-5.2): `downgrade()` grants DELETE back (the `pg_bootstrap.sql` default), which
@@ -41,7 +47,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "0044_account_no_hard_delete"
-down_revision: str | None = "0041_account_env_write_once"
+down_revision: str | None = "0042_sessions_view_as"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

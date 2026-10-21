@@ -3,7 +3,9 @@
 `cv_app`, the role every request handler runs as, cannot hard-delete an account, so it cannot
 delete one and insert its id again, in another environment (`trg_ea_env_write_once`, 0041) or with
 an older key row (`trg_api_keys_write_once`, 0024), neither of which fires on DELETE or INSERT. It
-cannot TRUNCATE either, and `cv_ro` can do neither. The owner's delete, the purge path, still
+cannot TRUNCATE either, and `cv_ro` can do neither. Rewriting the id (`UPDATE ... SET id`) is the
+other way to free one, and no trigger guards that column: the foreign keys of the account's default
+profile and keys refuse it (SQLSTATE 23503). The owner's delete, the purge path, still
 removes the account and cascades to its keys and profiles. The downgrade lets `cv_app` delete
 again and the upgrade refuses it again, with the ACL as it was. Bootstrapped with the shipped
 `infra/scripts/pg_bootstrap.sql` and migrated as `cv_owner` (the CI `migrations` order), so every
@@ -34,7 +36,7 @@ pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
 _BOOTSTRAP = _ROOT.parents[1] / "infra" / "scripts" / "pg_bootstrap.sql"
-_REV, _PREV = "0044_account_no_hard_delete", "0041_account_env_write_once"
+_REV, _PREV = "0044_account_no_hard_delete", "0042_sessions_view_as"
 _TEMPLATE = "no_hard_delete_template"
 _SNAPSHOT: dict[str, Any] = {"uid": "1", "permissions": {"ContractTrade": ["Order"], "Wallet": []}}
 _DELETE = "DELETE FROM exchange_accounts WHERE id = %s"
@@ -116,21 +118,24 @@ def _fresh(dsn: str) -> str:
     return _database(dsn, name)
 
 
-def _account(dsn: str) -> str:
-    """A demo account and one key, written as the runtime role: the account's id."""
+def _account(dsn: str, *, keyed: bool = True) -> str:
+    """A demo account and, unless `keyed` is false, one key, written as the runtime role (the
+    default profile comes from `trg_ea_default_profile`): the account's id."""
     account, key = str(uuid.uuid4()), str(uuid.uuid4())
+    sealed = (key, account, b"sealed-key-id", b"sealed-secret", bytes(12), json.dumps(_SNAPSHOT))
     with _conn(_as(dsn, "cv_app")) as c:
         c.execute(
             "INSERT INTO exchange_accounts (id, exchange, env, kind, exchange_uid, label) "
             "VALUES (%s, 'bybit', 'demo', 'main', %s, %s)",
             (account, str(uuid.uuid4().int % 10**15), f"acct {account[:8]}"),
         )
-        c.execute(
-            "INSERT INTO api_keys (id, exchange_account_id, label, key_id_enc, key_id_last4, "
-            "secret_enc, enc_nonce, dek_ref, permission_snapshot) "
-            "VALUES (%s, %s, 'k', %s, 'WXYZ', %s, %s, 'v1:00', %s::jsonb)",
-            (key, account, b"sealed-key-id", b"sealed-secret", bytes(12), json.dumps(_SNAPSHOT)),
-        )
+        if keyed:
+            c.execute(
+                "INSERT INTO api_keys (id, exchange_account_id, label, key_id_enc, key_id_last4, "
+                "secret_enc, enc_nonce, dek_ref, permission_snapshot) "
+                "VALUES (%s, %s, 'k', %s, 'WXYZ', %s, %s, 'v1:00', %s::jsonb)",
+                sealed,
+            )
     return account
 
 
@@ -179,6 +184,33 @@ def test_cv_app_cannot_delete_an_account_so_its_id_stays_taken(pg_dsn: str) -> N
     with _conn(dsn) as c:
         cur = c.execute("SELECT env::text FROM exchange_accounts WHERE id = %s", (account,))
         assert cur.fetchone() == ("demo",)  # still the environment it was created in
+
+
+@pytest.mark.parametrize("keyed", [True, False], ids=["profile-and-key", "profile-only"])
+def test_cv_app_cannot_free_an_account_id_by_updating_it(pg_dsn: str, keyed: bool) -> None:
+    """The other way to free an id: rewrite it, then insert the old one again. No trigger guards
+    `exchange_accounts.id`, so the refusal rests on the children: every foreign key into the table
+    is ON UPDATE NO ACTION, the account's Default profile (and its keys) still reference the old
+    id, and `cv_app` can neither re-point them (the write-once guards) nor delete them (no DELETE).
+    The UPDATE fails with SQLSTATE 23503, the row is as it was and the new id was never written.
+    The profile alone pins the id, so an account with no key is refused too. A write-once guard on
+    `id` would answer 23514 instead, and this case would change with it."""
+    dsn = _fresh(pg_dsn)
+    account, freed = _account(dsn, keyed=keyed), str(uuid.uuid4())
+    pins = {"account_profiles_exchange_account_id_fkey"}  # the key's FK may fire first, if any
+    if keyed:
+        pins.add("api_keys_exchange_account_id_fkey")
+    with _conn(_as(dsn, "cv_app")) as c, pytest.raises(pgerr.ForeignKeyViolation) as refused:
+        c.execute("UPDATE exchange_accounts SET id = %s WHERE id = %s", (freed, account))
+    assert refused.value.sqlstate == "23503"
+    assert refused.value.diag.constraint_name in pins
+    assert _held(dsn, account) == (1, int(keyed), 1)
+    with _conn(dsn) as c:
+        rows = c.execute(
+            "SELECT id::text, env::text FROM exchange_accounts WHERE id IN (%s, %s)",
+            (account, freed),
+        ).fetchall()
+    assert rows == [(account, "demo")]
 
 
 @pytest.mark.parametrize(
@@ -241,7 +273,7 @@ def test_the_owner_still_deletes_an_account_and_its_children_cascade(pg_dsn: str
 
 
 def test_the_round_trip_lets_cv_app_delete_again_then_refuses_it(pg_dsn: str) -> None:
-    """C-5.5, on a seeded database: the downgrade (rollback only) grants DELETE back, so at 0041
+    """C-5.5, on a seeded database: the downgrade (rollback only) grants DELETE back, so at 0042
     the hole is open and `cv_app` deletes an account with its key and profile; the upgrade closes
     it again, with the ACL as it was at head, byte for byte."""
     dsn = _fresh(pg_dsn)

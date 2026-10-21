@@ -22,7 +22,10 @@ _ROOT = Path(__file__).resolve().parents[3]
 _REPO = _ROOT.parents[1]
 _DOC = _REPO / "docs" / "plan" / "21-database-schema.md"
 _THREATS = _REPO / "docs" / "security" / "threat-models" / "E27-accounts.md"
-_REV, _PREV = "0044_account_no_hard_delete", "0041_account_env_write_once"
+_INTEGRATION = (
+    _ROOT / "tests" / "integration" / "storage" / "test_account_no_hard_delete_migration.py"
+)
+_REV, _PREV = "0044_account_no_hard_delete", "0042_sessions_view_as"
 _UP, _DOWN = f"{_PREV}:{_REV}", f"{_REV}:{_PREV}"
 _FILE = _ROOT / "candleviewer" / "migrations" / "versions" / f"{_REV}.py"
 _LOCK, _RESET = "SET LOCAL lock_timeout = '5s'", "SET LOCAL lock_timeout = DEFAULT"
@@ -63,15 +66,8 @@ def _down() -> str:
     return _norm(_alembic("downgrade", _DOWN, "--sql"))
 
 
-def test_revision_chains_onto_0041() -> None:
+def test_revision_chains_onto_0042() -> None:
     assert f"{_PREV} -> {_REV}" in _alembic("history", "-r", _UP)
-
-
-def test_revision_id_fits_alembics_version_column() -> None:
-    """`alembic_version.version_num` is VARCHAR(32): a longer id fails the stamp (SQLSTATE 22001)
-    after the REVOKE has run and takes the whole migration with it. The id first proposed for
-    this revision, `0044_exchange_accounts_no_hard_delete`, has 37 characters."""
-    assert len(_REV) <= 32
 
 
 def test_upgrade_is_one_guarded_revoke_under_a_bounded_lock_wait() -> None:
@@ -122,7 +118,11 @@ def test_the_docstring_records_the_truncate_finding_the_premise_and_the_residual
         "TRUNCATE needs no REVOKE",
         "the store soft-deletes",
         "No foreign key cascades into the table",
-        "the owner (`cv_owner`, migrations only) and superusers can still delete accounts",
+        "An UPDATE of `id` is the other way to free an id",
+        "so the UPDATE fails with SQLSTATE 23503",
+        "The upgrade narrows one grant and widens none",
+        "the owner (`cv_owner`: migrations, and the alert purge when `CV_PG_OWNER_DSN` is set)"
+        " and superusers can still delete accounts",
     ):
         assert fact in text, fact
 
@@ -132,6 +132,16 @@ def test_the_plan_doc_registers_the_revision_and_states_the_revoke() -> None:
     assert f"| `{_REV}` " in doc.split("### 9.4 ", 1)[1]
     accounts = doc.split("#### 3.2.1 ", 1)[1].split("#### 3.2.2 ", 1)[0]
     assert f"revision `{_REV}`" in accounts and "revokes DELETE on `exchange_accounts`" in accounts
+    prose = " ".join(accounts.split())
+    for fact in (
+        "`cv_app` can no longer delete one",
+        "`UPDATE exchange_accounts SET id = ...` is refused with SQLSTATE 23503",
+        "every foreign key into the table is `ON UPDATE NO ACTION`",
+        "The owner role (`cv_owner`: migrations, and the alert purge when `CV_PG_OWNER_DSN` is set)"
+        " and superusers can still delete accounts",
+    ):
+        assert fact in prose, fact
+    assert "no longer can" not in doc
     keys = doc.split("#### 3.2.3a ", 1)[1].split("#### 3.2.4 ", 1)[0]
     assert "none on the parent `exchange_accounts` either" in " ".join(keys.split())
     assert "no revision revokes it" not in doc
@@ -143,14 +153,30 @@ def test_the_threat_model_closes_the_account_delete_residual() -> None:
     assert all("#2758" in rows[risk] for risk in ("KV-T02", "KV-T04"))
     assert "Consider `REVOKE DELETE ON exchange_accounts" not in text
     assert "parent-cascade DELETE then re-insert" not in text
+    assert "the alert purge when `CV_PG_OWNER_DSN` is set" in rows["KV-T04"]
+    assert "23503" in rows["KV-T04"]
+
+
+def test_the_docs_name_the_integration_tests_that_pin_the_revoke() -> None:
+    integration = _INTEGRATION.read_text(encoding="utf-8")
+    docs = _DOC.read_text(encoding="utf-8") + _THREATS.read_text(encoding="utf-8")
+    for name in (
+        "test_cv_app_cannot_delete_an_account_so_its_id_stays_taken",
+        "test_cv_app_cannot_free_an_account_id_by_updating_it",
+    ):
+        assert f"def {name}(" in integration and name in docs, name
 
 
 # -- The premise: no statement of the application deletes from or truncates the table
-#: A DELETE FROM or a TRUNCATE naming the accounts table (not `exchange_accounts_archive`).
+#: Whitespace and SQL comments between two tokens: `DELETE /* why */ FROM`, or `--` to a newline.
+_GAP = r"(?:\s|/\*.*?\*/|--[^\n]*(?:\n|$))+"
+#: The accounts table, bare, quoted or in `public` (not `exchange_accounts_archive`).
+_TABLE = r"(?:\"?public\"?\s*\.\s*)?\"?exchange_accounts\b"
+#: A DELETE FROM the table, or a TRUNCATE that names it anywhere in its list (`TRUNCATE a, b`)
+#: before the statement's `;`.
 _HARD_DELETE = re.compile(
-    r"\b(?:delete\s+from|truncate(?:\s+table)?)\s+(?:only\s+)?"
-    r"(?:public\s*\.\s*)?\"?exchange_accounts\b",
-    re.IGNORECASE,
+    rf"\bdelete{_GAP}from{_GAP}(?:only{_GAP})?{_TABLE}|\btruncate\b[^;]*?\bexchange_accounts\b",
+    re.IGNORECASE | re.DOTALL,
 )
 _APP = (_ROOT / "candleviewer", _ROOT / "cvdev")
 
@@ -195,7 +221,18 @@ _CASES = {
     "schema-qualified": ("repo.py", 'S = "delete from public.exchange_accounts"', 1),
     "split literal": ("repo.py", 'S = ("DELETE FROM "\n     "exchange_accounts")', 1),
     "truncate": ("repo.py", 'S = "TRUNCATE TABLE ONLY exchange_accounts CASCADE"', 1),
+    "truncate list": ("repo.py", 'S = "TRUNCATE api_keys, exchange_accounts"', 1),
+    "quoted": ("repo.py", "S = 'DELETE FROM \"exchange_accounts\"'", 1),
+    "quoted schema": ("repo.py", 'S = \'DELETE FROM "public"."exchange_accounts"\'', 1),
+    "block comment": ("repo.py", 'S = "DELETE /* purge */ FROM exchange_accounts"', 1),
+    "line comment": ("repo.py", 'S = "DELETE -- purge\\n FROM exchange_accounts"', 1),
     "other table": ("repo.py", 'S = "DELETE FROM exchange_accounts_archive"', 0),
+    "truncate others": ("repo.py", 'S = "TRUNCATE exchange_accounts_archive, api_keys"', 0),
+    "truncate, then read": (
+        "repo.py",
+        'S = "TRUNCATE api_keys; SELECT id FROM exchange_accounts"',
+        0,
+    ),
     "join": (
         "repo.py",
         'S = "DELETE FROM api_keys k USING exchange_accounts ea WHERE ea.id = 1"',

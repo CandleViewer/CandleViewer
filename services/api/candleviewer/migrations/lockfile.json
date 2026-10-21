@@ -209,8 +209,8 @@
     },
     "0044_account_no_hard_delete": {
       "path": "services/api/candleviewer/migrations/versions/0044_account_no_hard_delete.py",
-      "sha256": "6cbd5627fa31fe1c1b5f911866f257eb38e950834af7f5727db612594fedf56c",
-      "down_revision": "0041_account_env_write_once"
+      "sha256": "789aaa0df34db5600b82cc85dc3a50a8d969f5dfcc5033f595496fa83980cd81",
+      "down_revision": "0042_sessions_view_as"
     }
   }
 }
