@@ -51,6 +51,8 @@ MSGPACK = ["cv.v1.msgpack"]
 REJECTED_MARK = "zz-rejected"
 #: §2.5: the TestClient's own origin, allow-listed and sent on every upgrade.
 ORIGIN = "http://testserver"
+#: A wall-clock bound, and it has to be: the TestClient runs the gateway on its portal's loop in
+#: another thread, so a virtual clock on the test's thread cannot see it (#3938).
 _TIMEOUT_S = 5.0
 
 

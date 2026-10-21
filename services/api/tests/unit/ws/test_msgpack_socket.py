@@ -165,7 +165,8 @@ def test_msgpack_server_fault_sends_its_bye_in_msgpack_then_1011() -> None:
     """The fault path writes its `bye` in the negotiated encoding too: an authenticator that
     reports no token expiry is a server fault (#2259)."""
     client = _bare_gateway(("sess", _USER), _Clock()).client
-    with client, client.websocket_connect("/ws", subprotocols=MSGPACK) as ws:
+    # Captured, not rendered: the fault's traceback costs seconds on a loaded host (#3938).
+    with capture_logs(), client, client.websocket_connect("/ws", subprotocols=MSGPACK) as ws:
         _hello(ws)
         bye = _auth(ws)
         code = _closed(ws)

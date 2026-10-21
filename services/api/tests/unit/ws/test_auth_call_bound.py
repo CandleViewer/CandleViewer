@@ -3,7 +3,9 @@
 `authenticate`, the principal read and a first `auth`'s SR-189 re-read each get
 `auth_call_timeout_s`. Past it: `bye internal_error` + `1011`, a re-`auth`'s too, no strike, no
 `auth.login_failed` row and no registration left. The bound is on the loop's clock: a test whose
-call `hangs` past it gets a 10 ms one from the rig, which parks the call on an event.
+call `hangs` past it gets a 10 ms one from the rig, which parks the call on an event. Every async
+test runs on a `VirtualTimeLoop` (`@virtual`, #3938): that clock, each bound on it and
+`DEADLINE_S` are fake seconds, which a slow host cannot spend.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.limits import AUTH_CALL_TIMEOUT_S, AUTH_TIMEOUT_S
 from candleviewer.ws.metrics import cv_ws_auth_failures_total, cv_ws_closes_total
 from candleviewer.ws_wiring import PRINCIPAL_LOAD_TIMEOUT_S
+from tests.unit.audit.audit_waits import virtual
 from tests.unit.ws._auth_rig import DEADLINE_S, NOTHING_LEFT, Rig, Sock, bye_of, hang_up
 
 _FAULT = ("bye", "internal_error", 1011)
@@ -36,6 +39,7 @@ def _timed_out(logs: Sequence[Mapping[str, Any]]) -> list[tuple[Any, Any]]:
 
 
 @pytest.mark.parametrize("call", ["authenticate", "resolve", "recheck"])
+@virtual
 async def test_auth_call_times_out_first_auth_closes_with_internal_error(call: str) -> None:
     """No `auth_ok` and no `err auth_failed`, but the server fault's `bye`; what the `auth`
     registered (#2739's hub entry, SR-189's registry entry) is gone when that `bye` is out."""
@@ -58,6 +62,7 @@ async def test_auth_call_times_out_first_auth_closes_with_internal_error(call: s
 
 
 @pytest.mark.parametrize("call", ["authenticate", "resolve"])
+@virtual
 async def test_auth_call_times_out_reauth_closes_with_internal_error(call: str) -> None:
     """A re-`auth` onto a rotated session ends the socket the same way, not as a failed re-`auth`
     that keeps the prior identity. The rotated session's registration (made before its principal
@@ -78,6 +83,7 @@ async def test_auth_call_times_out_reauth_closes_with_internal_error(call: str) 
     assert rows == [("ws.connection.closed", "internal_error", Severity.WARNING)]
 
 
+@virtual
 async def test_a_timeout_error_the_call_raises_itself_is_a_failed_auth() -> None:
     """Only the bound's own expiry is a server fault: a `TimeoutError` the session service raises
     at once (its store's own timeout, say) is a failed `auth`, as any other error it raises."""
@@ -94,6 +100,7 @@ async def test_a_timeout_error_the_call_raises_itself_is_a_failed_auth() -> None
     assert _timed_out(logs) == []
 
 
+@virtual
 async def test_a_cancellation_during_an_auth_call_propagates_and_leaves_nothing() -> None:
     """uvicorn's graceful-timeout cancel while a bounded call is pending reaches the caller as a
     `CancelledError`, never a timeout, and the teardown still runs."""

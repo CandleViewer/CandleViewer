@@ -314,7 +314,8 @@ def test_gateway_refuses_a_token_expired_by_its_own_clock(left: timedelta) -> No
 def test_authenticator_without_a_tz_aware_expiry_is_a_server_fault_1011(result: Any) -> None:
     clock = _Clock()
     client = _bare_gateway(result, clock).client
-    with client, client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+    # Captured, not rendered: the fault's traceback costs seconds on a loaded host (#3938).
+    with capture_logs(), client, client.websocket_connect("/ws", subprotocols=_JSON) as ws:
         bye = _open(ws, "any")  # never auth_ok, never a default lifetime
         code = _closed(ws)
     assert (bye["t"], bye["p"]["reason"], code) == ("bye", "internal_error", 1011)
