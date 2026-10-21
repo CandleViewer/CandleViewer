@@ -961,9 +961,9 @@ Drag preview                Drop zones
 
 ### SCR-041 — Symbol/interval quick-switcher (in-chart)
 
-- **Type:** Popover, opened from the chart toolbar's symbol button or `/` with the chart focused (E08-D05 D-1). Type-ahead symbol search with favourites, recents and instrument metadata preview (tick size, lot size, max leverage, funding, 24 h turnover), and the chart's time-interval favourites (`1..9`) in the same overlay; bar modes are E12-D04's.
-- **Data:** the local instrument index loaded from `GET /api/v1/instruments` (no request per keystroke), `GET /api/v1/instruments/{symbol}`, `GET /api/v1/recording/symbols`, `GET /api/v1/recording/status`.
-- **States:** no match ("No USDT perpetual matches 'xyz'." "v1 supports Bybit USDT linear perpetuals only.") · not trading ("LUNAUSDT is not trading on Bybit.") · not recorded chip with "Record this symbol" action (owner; others read "Only the owner can start recording.") · catalogue loading / load failed · delisted current symbol (E08-D05 §7).
+- **Type:** Popover, opened from the chart toolbar's symbol button or `/` with the chart focused (E08-D05 D-1). Type-ahead symbol search with favourites, recents and instrument metadata preview (tick size, lot size, max leverage, funding, 24 h turnover), and the chart's interval favourites (`1..9`) in the same overlay; bar modes are E12-D04's. `Enter` commits; `Shift+Enter` opens the symbol in a new chart.
+- **Data:** the local instrument index loaded from `GET /api/v1/instruments` (no request per keystroke), `GET /api/v1/instruments/{symbol}`, `GET /api/v1/recording/symbols`, `GET /api/v1/recording/status`, `GET /api/v1/recording/storage`.
+- **States:** no match ("No USDT perpetual matches 'xyz'." "v1 supports Bybit USDT linear perpetuals only.") · not trading ("LUNAUSDT is not trading on Bybit.") · not recorded chip with "Record this symbol" action (owner; others read the `rbac.owner_only` sentence, E09-D09; E11-D04 D12 to converge) · catalogue loading / load failed · delisted current symbol (E08-D05 §7).
 - **Components:** CMP-048 Combobox / AutoComplete, CMP-213 FuzzyList, CMP-219 SymbolPicker, CMP-220 IntervalPicker.
 - **Stories:** US-MKT-002, US-CHART-005, US-REC-002.
 - **A11y:** Combobox with `aria-autocomplete="list"`; results are announced as a count; the current symbol is the initial value and Esc restores it.
@@ -2148,9 +2148,9 @@ Drag preview                Drop zones
 
 ### SCR-102 — Symbol search (global)
 
-- **Type:** Modal (`/` when no chart has focus, the top-bar trigger, or "Search symbols" in SCR-012; `Ctrl+P` retired, E08-D05 D-1, owner decision Q1 pending). Fuzzy search across USDT perpetuals with metadata preview, recording status, and actions (open in the target panel, open in a new chart, open DOM ladder, add to watchlist, view info, record (owner)).
-- **Data:** the local instrument index from `GET /api/v1/instruments` (Trading only, paged) at shell start and hourly; `GET /api/v1/instruments/{symbol}` for a well-formed query with no match; `POST /api/v1/instruments/refresh` (owner); `GET /api/v1/recording/symbols`, `GET /api/v1/recording/status`; 24 h values from tickers the client already holds or `GET /api/v1/instruments/{symbol}/ticker` for the active result.
-- **Interactions:** `Enter` opens in the target panel named in the header; `Shift+Enter` opens a new chart; `Shift+F10` or the row's `⋯` opens the action menu; `↑/↓` and `PageUp/PageDown` move; `Esc` closes and restores focus.
+- **Type:** Modal (`/` when no chart has focus, the top-bar trigger, or "Search symbols" in SCR-012; `Ctrl+P` retired, E08-D05 D-1). Fuzzy search across USDT perpetuals with metadata preview, recording status, and actions (open in the target panel, open in a new chart, open DOM ladder, add to watchlist, view info, record (owner)).
+- **Data:** the local instrument index from `GET /api/v1/instruments` (Trading only, paged) at shell start and hourly; `GET /api/v1/instruments/{symbol}` for a settled query with no match; `POST /api/v1/instruments/refresh` (owner), then `GET /api/v1/admin/jobs/{jobId}`; `GET /api/v1/recording/symbols`, `GET /api/v1/recording/status`, `GET /api/v1/recording/storage`; 24 h values only from tickers the client already holds (else "—").
+- **Interactions:** `Enter` opens in the target panel named in the header; `Shift+Enter` opens a new chart; `Shift+F10`, a right-click or the detail bar's `⋯` opens the action menu; `↑/↓` and `PageUp/PageDown` move; `Esc` closes and restores focus.
 - **States:** idle (recent, then favourites) · results · catalogue loading · catalogue load failed (Retry; owner refresh) · stale catalogue · symbol check · no results with an explicit scope reminder ("No USDT perpetual matches 'xyz'." "v1 supports Bybit USDT linear perpetuals only.") · not trading · delisted recent or favourite (marked, not openable) · disconnected · armed target (E08-D05 §6.2).
 - **Components:** CMP-011 Tag / Chip, CMP-026 EmptyState, CMP-048 Combobox / AutoComplete, CMP-160 SymbolSearchInput, CMP-213 FuzzyList.
 - **Stories:** US-MKT-002, US-MKT-001.
