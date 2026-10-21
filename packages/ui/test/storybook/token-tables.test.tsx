@@ -32,6 +32,36 @@ describe("Foundations token tables", () => {
     ]);
   });
 
+  it("lists a typography token as one row per field, each with the custom property the bundles define", () => {
+    // The bundles write `--type-ui-label-font-size` and its siblings, never one `--type-ui-label`.
+    const type = {
+      ui: {
+        label: {
+          fontFamily: ["Inter"],
+          fontSize: "12",
+          fontWeight: "500",
+          letterSpacing: "0.2",
+          lineHeight: "1.2",
+        },
+      },
+    };
+    expect(tokenRows({ type })).toEqual([
+      {
+        path: "type.ui.label.fontFamily",
+        property: "--type-ui-label-font-family",
+        value: '["Inter"]',
+      },
+      { path: "type.ui.label.fontSize", property: "--type-ui-label-font-size", value: "12" },
+      { path: "type.ui.label.fontWeight", property: "--type-ui-label-font-weight", value: "500" },
+      {
+        path: "type.ui.label.letterSpacing",
+        property: "--type-ui-label-letter-spacing",
+        value: "0.2",
+      },
+      { path: "type.ui.label.lineHeight", property: "--type-ui-label-line-height", value: "1.2" },
+    ]);
+  });
+
   it("renders one captioned table per group, colour rows with a swatch of the live property", async () => {
     const host = document.body.appendChild(document.createElement("div"));
     const root = createRoot(host);
