@@ -6,7 +6,6 @@ Exit 0 merged, 1 gate failed (reason printed), 2 error."""
 import json, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 import publish_board as pb
-from done_gate import PENPOT_PAGE_ID_RE  # page-id evidence form, shared with the done-gate
 GH = pb.GH; REPO = pb.REPO
 pr, key = sys.argv[1], sys.argv[2]; design = "--design" in sys.argv
 def gh(*a):
@@ -40,8 +39,10 @@ r = subprocess.run([sys.executable, os.path.join(HERE, "verify_pr.py"), pr], cap
 print(r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-200:])
 if r.returncode: fail("verify_pr FAIL")
 if design:
+    from done_gate import has_penpot_reference  # only design merges need it
+
     body = d["body"] or ""
-    if not ("design.penpot.app" in body or PENPOT_PAGE_ID_RE.search(body)) or not re.search(r"!\[[^\]]*\]\([^)]*\.png", body): fail("design evidence missing (Penpot workspace link or page name + page id, and/or embedded PNG)")
+    if not has_penpot_reference(body) or not re.search(r"!\[[^\]]*\]\([^)]*\.png", body): fail("design evidence missing (Penpot workspace link or page name + page id, and/or embedded PNG)")
 if d["mergeable"] == "CONFLICTING": fail("CONFLICTING — needs rebase")
 m = gh("pr", "merge", pr, "--squash", "--delete-branch")
 if m.returncode: fail("merge: " + (m.stderr or m.stdout).strip()[-200:])

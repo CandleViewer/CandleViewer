@@ -73,34 +73,66 @@ def design_failures(ref: str) -> list[str]:
     return rules(dg.evaluate(ticket([], ["type/design"]), issue(c), []))
 
 
-@pytest.mark.parametrize(
-    "ref",
-    [
-        f"page **`E42-D02`**, page id `{PAGE_ID}`",
-        f"Page ID: {PAGE_ID.upper()}",
-        f"page-id={PAGE_ID}",
-        f"pageId `{PAGE_ID}`",
-    ],
-)
-def test_design_page_name_and_id_pass_without_workspace_link(ref: str) -> None:
-    assert design_failures(ref) == []
+def test_design_page_name_and_id_pass_without_workspace_link() -> None:
+    assert design_failures(f"Page `E42-D02` · id `{PAGE_ID}`") == []
 
 
-@pytest.mark.parametrize(
-    "ref",
-    [
-        "page **`E42-D02`**",  # page name, no id
-        "page id `E42-D02`",  # label without a UUID
-        f"file id `{PAGE_ID}`",  # a UUID that is not labelled as a page id
-        f"page id {'-' * 30} {PAGE_ID}",  # UUID too far from the label
-    ],
-)
-def test_design_page_name_without_page_id_still_fails(ref: str) -> None:
-    assert design_failures(ref) == ["design"]
+def test_design_page_name_without_page_id_still_fails() -> None:
+    assert design_failures("page **`E42-D02`**") == ["design"]
 
 
 def test_design_workspace_link_still_passes() -> None:
     assert design_failures(PENPOT) == []
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        f"Page `E42-D02` · id `{PAGE_ID}`",  # the wording of the open design PRs
+        f"Page `E42-D02` — id `{PAGE_ID}`",
+        f"Page `E42-D02`: id {PAGE_ID}",
+        f"Page `E42-D02`, id {PAGE_ID}",
+        f"page: `E42-D02` (id {PAGE_ID})",
+        f"page **`E42-D02`**, page id `{PAGE_ID}`",
+        f"page id `{PAGE_ID}`",
+        f"page-id={PAGE_ID}",
+        f"page_id: {PAGE_ID}",
+        f"pageId: {PAGE_ID}",
+        f"page ids {PAGE_ID}",
+        f"Page ID: {PAGE_ID.upper()}",
+        f"page id {'-' * 11}{PAGE_ID}",  # exactly 12 separator characters
+        PENPOT,  # the workspace link
+    ],
+)
+def test_has_penpot_reference_accepts_link_or_page_id(ref: str) -> None:
+    assert dg.has_penpot_reference(ref)
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "page **`E42-D02`**",  # a page name alone
+        "page id `E42-D02`",  # a label, no UUID
+        f"page id {PAGE_ID[:8]}",  # a label and an 8-hex run, not a UUID
+        PAGE_ID,  # a UUID alone
+        PAGE_ID[:8],  # an 8-hex run alone
+        f"team id {PAGE_ID}",
+        f"file id {PAGE_ID}",
+        f"homepage id {PAGE_ID}",  # `page` inside another word
+        f"webpage-id={PAGE_ID}",
+        f"page id pending (file `{PAGE_ID}`)",  # prose between label and UUID
+        f"page id TBD, file id `{PAGE_ID}`",
+        f"page id pending; board ids `{PAGE_ID}`",
+        f"board ids `{PAGE_ID}`, page id pending",
+        f"page\nid {PAGE_ID}",  # label split over two lines
+        f"page id {'-' * 12}{PAGE_ID}",  # 13 separator characters, one too many
+        f"Page `E42-D02` · id pending (file `{PAGE_ID}`)",
+        f"Page `E42-D02` · team id {PAGE_ID}",
+        "https://design.penpot.app/",  # a bare host mention is not a workspace link
+    ],
+)
+def test_has_penpot_reference_rejects_look_alikes(ref: str) -> None:
+    assert not dg.has_penpot_reference(ref)
 
 
 def test_perf_needs_number_or_exception() -> None:
@@ -180,7 +212,7 @@ def test_regress_1462_design_without_penpot_or_png() -> None:
     t = ticket(["- [x] hi-fi published"], ["type/design", "a11y"])
     res = dg.evaluate(t, issue([QA_PASS, owner("approved")]), [])
     details = " ".join(f["detail"] for f in res["failures"])
-    assert "workspace link or page name + page id" in details and "PNG" in details
+    assert "workspace link, or page name + page id" in details and "PNG" in details
 
 
 def test_regress_1803_spike_measurement_not_run() -> None:

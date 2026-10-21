@@ -6,7 +6,8 @@ Exit 0 = every required evidence kind present (or specifically waived), 1 = gaps
 Evidence rules (C-11.2, docs/design/README.md, C-10.4):
   qa        every ticket: a `QA verification ... VERDICT: PASS` comment (latest verdict wins)
   design    label type/design: owner `approved` comment or merged PR, Penpot page reference
-            (workspace link, or page name + page id since 2026-10-21), PNG exports
+            (workspace link, or a labelled page id since 2026-10-21; the name is not
+            checked), PNG exports
   perf      label perf / DoD lines naming a measurement: a number+unit near the metric in PR/issue text
   security  security label: `Security review ... VERDICT: APPROVE` on the PR
   a11y      UI tickets: axe report / Storybook link
@@ -37,12 +38,19 @@ GhFn = Callable[[list[str]], Any]
 PENPOT_RE = re.compile(
     r"https://design\.penpot\.app/#/workspace\?[^\s)]*file-id=[^\s)]+", re.IGNORECASE
 )
-# Self-hosted Penpot (2026-10-21): design PRs name their page by name + page id, with
-# no workspace URL. Accepts `page id` / `page-id` / `pageId` followed within 24 chars
-# by a UUID, e.g. page **`E42-D02`**, page id `0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d`;
-# a page name alone does not count.
+# Self-hosted Penpot (2026-10-21): design PRs name their page by name + page id, no
+# workspace URL. The label is `page id` / `page_id` / `pageid` / `page-id` / `pageId` /
+# `page ids`, or a backticked name then `id` as in "Page `E42-D02` · id" (up to 6 of
+# space, dot, colon, comma, parenthesis, dash in between). A UUID must follow the label
+# directly: at most 12 separator characters, never a letter, digit, underscore or
+# newline. The page name is not checked. So "page id `<uuid>`" and "page-id=<uuid>"
+# count; "page id pending (file `<uuid>`)", "homepage id <uuid>", "file id <uuid>", a
+# bare UUID or a page name alone do not.
 PENPOT_PAGE_ID_RE = re.compile(
-    r"page[\s_-]?id\b.{0,24}?\b"
+    r"(?<![A-Za-z0-9])page"
+    r"(?:[ \t_-]?ids?\b"
+    r"|:?\s*[*_]*`[^`\n]{1,60}`[*_]*[\s\u00b7:,(\u2014\u2013-]{0,6}\bids?\b)"
+    r"[^\w\n]{0,12}"
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
     re.IGNORECASE,
 )
@@ -270,6 +278,14 @@ def _text_of(issue: dict[str, Any], prs: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
+def has_penpot_reference(text: str) -> bool:
+    """A Penpot workspace link or a page-id reference: the design evidence.
+
+    Shared by the design check in `evaluate` and by merge_ready.py's `--design` gate.
+    """
+    return bool(PENPOT_RE.search(text) or PENPOT_PAGE_ID_RE.search(text))
+
+
 def has_measurement(line: str, text: str, rx: re.Pattern[str]) -> bool:
     if not rx.search(line):
         return bool(NUM_RE.search(text))
@@ -406,9 +422,9 @@ def evaluate(
         )
         need(
             "design",
-            bool(PENPOT_RE.search(text) or PENPOT_PAGE_ID_RE.search(text)),
-            "no Penpot page reference (workspace link or page name + page id"
-            " — docs/design/README.md)",
+            has_penpot_reference(text),
+            "no Penpot page reference (workspace link, or page name + page id)"
+            " — docs/design/README.md",
         )
         pngs = bool(PNG_RE.search(text)) or any(
             PNG_RE.search(f.get("path", "")) for p in prs for f in p.get("files", [])
