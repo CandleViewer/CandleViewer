@@ -29,6 +29,7 @@ def test_settings_defaults_are_named_in_the_contract() -> None:
             "audit_verify_deadline_s",
             "audit_verify_statement_timeout_ms",
             "audit_verify_max_entry_bytes",
+            "view_as_refusal_budget_per_hour",  # #3085: the view-as refusals' own cap
         )
         if name not in text
     ]
@@ -45,6 +46,16 @@ def test_settings_defaults_are_named_in_the_contract() -> None:
     assert s.audit_verify_rate_per_hour == 30
     assert (s.audit_verify_deadline_s, s.audit_verify_statement_timeout_ms) == (60.0, 10_000)
     assert s.audit_verify_max_entry_bytes == 4_194_304  # 4 MiB
+    assert s.view_as_refusal_budget_per_hour == 120
+
+
+def test_view_as_refusal_cap_default_is_the_one_the_contract_states() -> None:
+    """#3085: "View-as session" names the refusal records' own hourly cap with its default; a
+    drift on either side fails here."""
+    text = " ".join(_SPEC.read_text(encoding="utf-8").split())
+    stated = re.search(r"`view_as_refusal_budget_per_hour` \(default (\d+)\)", text)
+    assert stated, "the View-as session section no longer states the cap's default"
+    assert Settings.model_fields["view_as_refusal_budget_per_hour"].default == int(stated[1])
 
 
 def _verify_limits() -> str:

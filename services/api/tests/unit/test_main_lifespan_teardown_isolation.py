@@ -61,6 +61,7 @@ _STEPS = (
     "account_access_service",
     "csrf_refusal_audits",
     "audit_budget_flush",
+    "view_as_refusal_flush",
     "account_health",
 )
 #: The steps whose `start()` the lifespan awaits.
