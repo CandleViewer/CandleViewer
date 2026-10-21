@@ -947,7 +947,7 @@ them yet (#2746), so read them when investigating:
 
 | Series                                   | Meaning                                                                                                                                                                                     | Audit row                                                                                                                                                                                |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auth_refresh_reuse_total`               | a rotated-out refresh token was presented again; the whole session family is revoked                                                                                                        | `auth.refresh_reuse_detected` (critical)                                                                                                                                                 |
+| `auth_refresh_reuse_total`               | a rotated-out refresh token was presented again; the whole session family is revoked                                                                                                        | `auth.refresh_reuse_detected` (critical); a replay of a contained family: `auth.refresh_reuse_replayed` (warning)                                                                        |
 | `auth_session_revocations_total{reason}` | sessions revoked; `reason` is from a closed set (logout, logout_all, rotated, rotation_reuse, expired, idle, admin, user_revoked, locked, timeout, unlock_attempts_exceeded) plus `other`   | `auth.session_revoked` for the logout and revoke routes                                                                                                                                  |
 | `auth_session_revoke_denied_total`       | `DELETE /me/sessions/{id}` named an id that is not one of the caller's live sessions: a foreign or unknown id (the probe) or the caller's own ended session; the answer is the same 404     | `auth.session_revoke_denied` (denied, warning, reason `not_live_own_session`; object: the id named). Rows are budgeted at 10 a minute per user and 30 overall; every probe is counted.   |
 | `users_invites_rejected_total{reason}`   | invite requests refused: unknown, expired, redeemed, revoked, enrollment_invalid, role_tamper (a `role` or `roles` claim) or identity_tamper (`username`, `user_id` or `email` in the body) | `users.invite_rejected` (warning for redeemed, role_tamper and identity_tamper). Tamper requests count against the per-address invite budget: the 11th in a minute gets `429` and no row |
@@ -974,6 +974,8 @@ again. A few of these rows from the user's
 own address, after that user's last `auth.session_refreshed` row, are expected. Rows from another
 address, or across many users' sessions, mean someone holds rotated-out cookies: treat them as
 stolen.
+
+A burst on `auth_refresh_reuse_total` may be a replay flood: see section 10 for its rows and bounds.
 
 A lone `auth_session_revoke_denied_total` hit is as likely a stale Sessions row (the caller's own
 session ended, for example by rotation) as a probe, and the series cannot tell them apart: look the
@@ -1128,7 +1130,19 @@ its targets in `after_state.session_ids`: the first 50, with the total in
 revoked: a refusal at the first row is a `503` that changes nothing, at a later row still a `204`.
 `POST /auth/refresh` writes `auth.refresh_reuse_detected` for a concurrent-refresh race after the
 service has refused it, and `auth.session_refreshed` (`denied`, reason `user_disabled`, #2911)
-after it refuses a disabled user's refresh; the answer stays the uniform `401`.
+after it refuses a disabled user's refresh; the answer stays the uniform `401`. A rotated token
+presented again is not among them: its row is written ahead, `auth.refresh_reuse_detected`
+(`critical`) when this process first contains its family and `auth.refresh_reuse_replayed`
+(`denied`, `warning`; ADR-0037 decision 13) for each later presentation of a member of that family.
+Each replay the session service refuses (the `401`) is counted on `auth_refresh_reuse_total`. A
+replay the refresh throttles refuse (`429`), or that gets a `503` because the lane and the sink both
+refused, never reaches the service: the `503` shows on `cv_audit_lane_refused_total{class="shared"}`
+and `cv_audit_writer_refused_total{domain="auth"}` and logs `auth.session_audit.writer_refused` with
+the action; the `429` shows on neither. One `auth.refresh_reuse.replay_refused` warning
+(`session_id` only) per family per 60 s shows a flood. The families are held in a bounded memory
+only: at most 4096 session ids (the oldest forgotten first), each for 3600 s since its family's last
+containment (a replay the service refuses renews it). After a restart, an eviction or that hour, the
+next replay of a family writes one `critical` row again.
 
 Each lost row adds one to `auth_audit_outcome_lost_total{action}` and logs one error,
 `auth.session_audit.outcome_lost`, with `action`, `session_id` and `error` (the writer's refusal

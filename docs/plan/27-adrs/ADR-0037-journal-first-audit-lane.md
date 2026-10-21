@@ -104,6 +104,7 @@ Option (b), built from the proven patterns of (a) and (c) without sharing their 
    | `auth.logout`                 | `reserved` | any       | the sign-out intent (RR-16)                                        |
    | `auth.session_revoked`        | `reserved` | any       | logout's outcome rows (EX-07); revoke-my-session's intent (RR-16)  |
    | `auth.refresh_reuse_detected` | `reserved` | any       | reuse containment: its intent (RR-16) and the race outcome (EX-07) |
+   | `auth.refresh_reuse_replayed` | `shared`   | `denied`  | a replay against a family already contained (decision 13)          |
    | `auth.session_refreshed`      | `shared`   | `denied`  | a disabled user's refused refresh (EX-07)                          |
    | the six login outcome actions | `shared`   | any       | #2914 item 2, ruling D1                                            |
    | `audit.lane_started`          | `reserved` | `success` | the lane's first record                                            |
@@ -206,6 +207,25 @@ Option (b), built from the proven patterns of (a) and (c) without sharing their 
     after S4a's alerts and runbook rows have landed (C-11.2 item 9), so the flag is never turned on in live by
     hand. No state exists in which the flag disables a control that no exception covers. ADR-0036's decision 10
     chose a boot-fixed switch because its code is absent from the release image; this code ships.
+13. **A replay of a contained family is `shared` (Q9).** Ruled (a) by main-orchestrator on 2026-10-21 (#3009
+    S4b-1a). Only a family's first containment intent is `reserved` (`auth.refresh_reuse_detected`, `critical`). A
+    rotated refresh token presented again once this process has contained its family, that token or another rotated
+    member, writes `auth.refresh_reuse_replayed` (`shared`, `denied`, `warning`) ahead through the lane instead, so
+    a flood of replays fills the `shared` share and falls back to the writer, and never spends a `reserved` byte or
+    waiter: Q3's one `reserved` source reachable without a session becomes one frame per family. No store query says
+    a family was contained, so the refresh route keeps an in-process memo (`ContainedFamilies`, `api/sessions.py`),
+    filled, once the service has revoked a family (a refresh that lost a claim race revoked none), from
+    `RefreshReuseDetected.revoked_session_ids` and the presented session, and bounded by a capacity and a TTL. A family
+    it no longer holds, after an eviction, the TTL or a restart, takes the `reserved` intent once more:
+    the safe direction, as often as the refresh throttles allow. Each replay the session service refuses is counted
+    on the existing `auth_refresh_reuse_total` (route refusals cannot reach `cv_audit_lane_anomalies_total`, which
+    counts the drain's anomalies), and the first replay refusal per family per window is logged
+    (`auth.refresh_reuse.replay_refused`, the session id only), so a flood is visible. The `401`, and the `503` when
+    the lane and the sink both refuse, are unchanged. The action id, the `warning` severity and the memo apply
+    whether or not `audit.lane_journal_first` is on: the route never reads the flag, and off, the façade hands the
+    row to the writer, as decision 12 says. A replay flood now shares the `shared` class (64 waiters) with the login
+    outcome rows, which under a sink outage fall back and are counted lost, as decision 1 already accepts (its bound
+    is decision 4's).
 
 ## How E27 KV-D04 joins the lane
 
@@ -351,7 +371,8 @@ lane drains again without duplicates, and an older copy shows as a lower head in
 - **Q8, owner.** `quarantine/` keeps PII (`actor_ip`, user and session ids) for good. Do account erasure and
   the retention job reach it, or does it follow `audit_log`'s indefinite retention (C-12.8)?
 - **Q9, Security.** Should a replay against an already-revoked family get its own `shared` action id, keeping
-  only the first containment intent `reserved`?
+  only the first containment intent `reserved`? Answered: yes, `auth.refresh_reuse_replayed` (main-orchestrator
+  2026-10-21, ruling (a)); decision 13.
 - **Q10, main-orchestrator.** Who owns #2615, which S4b needs? hpe-worker-1 can carry it in S4b if nobody has
   claimed it by 2026-10-28. Answered: #2615 was closed by #3290 on 2026-10-17.
 

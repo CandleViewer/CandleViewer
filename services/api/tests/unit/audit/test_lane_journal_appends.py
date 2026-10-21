@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import errno
 import os
+import re
 import stat
 import tempfile
 import threading
@@ -31,6 +32,7 @@ KEYS, OTHER_KEYS = lj.LaneKeys(KEY), lj.LaneKeys(bytes(range(32, 64)))
 LANE, OTHER = uuid.UUID(int=7), uuid.UUID(int=8)
 WAIT_S = 5.0  # a hang fails instead of blocking
 LOGINS = "login login_failed account_locked mfa_failed recovery_codes_exhausted recovery_code_used"
+ADR = Path(__file__).resolve().parents[5] / "docs/plan/27-adrs/ADR-0037-journal-first-audit-lane.md"
 
 
 def rec(n: int = 0, action: str = "auth.logout", outcome: str = "success", pad: int = 0) -> Rec:
@@ -148,17 +150,21 @@ def fds() -> int:
 
 def test_lane_actions_hold_the_adr_rows() -> None:
     """Decision 3. S2a2 registers the three `audit.lane_*` actions in `AUDIT_ACTIONS`; the anomaly
-    row is no frame."""
+    row is no frame. Q9 (decision 13): a replay against a contained family is `shared` and
+    `denied`, in the registry and in decision 3's table."""
     every, success = frozenset({"success", "failure", "denied"}), frozenset({"success"})
     reserved = ("logout", "session_revoked", "refresh_reuse_detected")
     rows = {f"auth.{name}": ("shared", every) for name in LOGINS.split()}
     rows |= {f"auth.{name}": ("reserved", every) for name in reserved}
-    rows |= {"auth.session_refreshed": ("shared", frozenset({"denied"}))}
+    denied = ("auth.session_refreshed", "auth.refresh_reuse_replayed")
+    rows |= dict.fromkeys(denied, ("shared", frozenset({"denied"})))
     rows |= dict.fromkeys(("audit.lane_started", "audit.lane_resumed"), ("reserved", success))
     rows |= {"auth.disabled_user_session_revoked": ("reserved", success)}  # #3120 (EX-08)
 
     assert dict(LANE_ACTIONS) == rows and {*LANE_ACTIONS} <= AUDIT_ACTIONS
     assert {f"audit.lane_{name}" for name in ("started", "resumed", "anomaly")} <= AUDIT_ACTIONS
+    table_row = r"\| `auth\.refresh_reuse_replayed` +\| `shared` +\| `denied` +\|"
+    assert re.search(table_row, ADR.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize(
