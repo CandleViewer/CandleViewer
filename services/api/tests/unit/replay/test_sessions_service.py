@@ -1142,7 +1142,8 @@ async def test_a_revive_without_a_snapshot_runs_the_orphan_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     env = make_env()
-    sid = (await env.s.create(USER_A, request())).id
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, sid, "PLAY")  # a live row: revived at the next start
     await env.s.stop()  # no persister: no snapshot is written
     _sealed, kw = _persistence()
     scans = _Scans(monkeypatch)

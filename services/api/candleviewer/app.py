@@ -295,6 +295,7 @@ from candleviewer.recorder.metrics import current_write_backlog_rows, export_rec
 from candleviewer.recorder.service import RecorderService
 from candleviewer.replay.metrics import export_replay_metrics
 from candleviewer.replay.service import ReplayService
+from candleviewer.replay.sessions_service import LANE as REPLAY_LANE
 from candleviewer.replay.sessions_service import (
     ReplayLimits,
     ReplaySessionService,
@@ -315,8 +316,15 @@ from candleviewer.settings import (
     get_settings,
 )
 from candleviewer.statechart.bindings.b16_session import set_audit_sink as set_b16_audit_sink
-from candleviewer.statechart.gateway import Gateway, GatewayOverloadedError
+from candleviewer.statechart.gateway import (
+    ALWAYS_ADMIT,
+    Gateway,
+    GatewayDegradedError,
+    GatewayOverloadedError,
+)
+from candleviewer.statechart.persistence import HmacKeys
 from candleviewer.statechart.plugins import MachineStatePort
+from candleviewer.statechart_wiring import StatechartPersistence, build_statechart_persistence
 from candleviewer.storage.cold.archive_import import FileImportLedger
 from candleviewer.storage.cold.compaction_run import compact_all
 from candleviewer.storage.cold.compactor import Compactor
@@ -558,9 +566,13 @@ def _build_replay_sessions(
     coverage: CoverageService,
     audit: AuditHandle,
     feed: MachineStatePort | None = None,
+    persistence: StatechartPersistence | None = None,
 ) -> ReplaySessionService:
     """E26-T01: the B12 session lifecycle. Paper-account grants and source handles are ports
-    E26-T05/E36 wire: until then a paper-trading session is refused (fail closed)."""
+    E26-T05/E36 wire: until then a paper-trading session is refused (fail closed). E50-T63: with
+    the persistence bundle, sessions are persisted and restored through it (its `control`-lane
+    `Restorer`) and their gateway refuses a chain-trip-latched session's gated events; without
+    it (no HMAC keys) persist and restore stay unwired."""
     limits = ReplayLimits(
         idle_ttl=timedelta(seconds=settings.replay_idle_ttl_s),
         max_sessions_per_user=settings.replay_max_sessions_per_user,
@@ -572,9 +584,12 @@ def _build_replay_sessions(
         coverage=_ReplayCoverage(coverage),
         audit=_LazyAuditEmitter(audit),
         limits=limits,
-        gateway=Gateway(),
+        gateway=Gateway(admission=persistence.admission if persistence else ALWAYS_ADMIT),
         env=settings.environment.value,
         machine_feed=feed,
+        snapshots=persistence.snapshots if persistence else None,
+        restorer=persistence.restorer(REPLAY_LANE) if persistence else None,
+        persister=persistence.persister if persistence else None,
     )
 
 
@@ -584,11 +599,13 @@ def _attach_replay_sessions(
     pg: SqlAlchemyRelationalRepository | None,
     coverage: CoverageService | None,
     feed: MachineStatePort | None = None,
+    persistence: StatechartPersistence | None = None,
 ) -> None:
     """Replay sessions need Postgres and the recorded-coverage service (real backend only);
     without them the module stays scaffold-only and nothing is attached."""
     if pg is not None and coverage is not None:
-        ctx.replay.attach_sessions(_build_replay_sessions(settings, pg, coverage, ctx.audit, feed))
+        sessions = _build_replay_sessions(settings, pg, coverage, ctx.audit, feed, persistence)
+        ctx.replay.attach_sessions(sessions)
 
 
 def _audit_ready(audit: AuditHandle) -> Callable[[], bool]:
@@ -1104,7 +1121,8 @@ def build_ws_principal_loader(
 
 
 async def gateway_overloaded_handler(_request: Request, exc: Exception) -> JSONResponse:
-    """Map a refused statechart inbox to RFC 7807 HTTP 503 (E50-T15, CV-C33)."""
+    """Map a refused statechart inbox (E50-T15, CV-C33), or a command a degraded machine's
+    admission refused (E50-T63, `GatewayDegradedError`), to RFC 7807 HTTP 503."""
     return JSONResponse(
         status_code=GatewayOverloadedError.status_code,
         content={
@@ -1279,6 +1297,7 @@ def create_app(
     bars_now_us: Callable[[], int] | None = None,
     secrets_bundle: SecretsBundle | None = None,
     audit_verify_runner: AuditVerifyRunner | None = None,
+    hmac_keys: HmacKeys | None = None,
 ) -> FastAPI:
     """Build the FastAPI application without touching Postgres/QuestDB/network.
 
@@ -1312,6 +1331,7 @@ def create_app(
         dependencies=[Depends(make_deny_undeclared_dependency(declared_operations(spec)))],
     )
     app.add_exception_handler(GatewayOverloadedError, gateway_overloaded_handler)
+    app.add_exception_handler(GatewayDegradedError, gateway_overloaded_handler)  # E50-T63
     app.add_exception_handler(AdminAreaRefused, admin_area_refused_handler)
     install_error_redaction(app)  # E43-T06: no secret echo via 422/500 bodies
     audit = _build_audit(resolved)
@@ -1364,8 +1384,6 @@ def create_app(
     )
     app.state.machine_feed = machine_feed
     ctx.auth.attach_machine_feed(machine_feed)
-    # Started by the supervisor:
-    _attach_replay_sessions(ctx, resolved, _kb_pg, coverage_service, machine_feed)
     # E16-T07 (#491): DiskBudget on the real backend (no recorder flag; lifespan-started).
     app.state.disk_budget = build_disk_budget(
         resolved,
@@ -1846,6 +1864,16 @@ def create_app(
     # Process collectors read /proc; the lifespan adds them (no I/O here).
     metrics_facade = Metrics(resolved.environment.value, registry=ctx.metrics)
     app.state.metrics_facade = metrics_facade
+    # E50-T63: the statechart persistence bundle, on this one facade; `None` without HMAC keys
+    # (no provider yet, #2701) or on the fake backend: persist and restore stay unwired. The
+    # lifespan starts it before `start_all` and stops it after `stop_all`.
+    persistence = build_statechart_persistence(
+        resolved, hmac_keys=hmac_keys, metrics=metrics_facade
+    )
+    app.state.statechart_persistence = persistence
+    _attach_replay_sessions(
+        ctx, resolved, _kb_pg, coverage_service, feed=machine_feed, persistence=persistence
+    )  # supervised
     # E08-T06: serve the declared ingestion/adapter series on the scraped
     # registry with consistent `env` + `exchange` labels (the venue name is
     # owned by the adapter, C-2.2).
@@ -2066,7 +2094,10 @@ def create_app(
         )
     )
     # E42-T07: the statechart inspector read API behind the same audited admin-area guard.
-    inspector = build_statechart_inspector()
+    inspector = build_statechart_inspector(
+        store=None if persistence is None else persistence.snapshots,
+        keys=None if persistence is None else hmac_keys,
+    )
     app.include_router(
         make_statechart_router(
             inspector, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)

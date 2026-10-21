@@ -24,25 +24,54 @@ over these adapters.
   "Faults"). It never raises: a raising `drain_error` would lose the drained events and a raising
   `quarantine` would mask the refusal and skip its page, so a row it cannot write is logged
   CRITICAL and paged P1 by the writer itself.
+
+The persistence bundle (E50-T63): `build_statechart_persistence` returns a `StatechartPersistence`
+on the real backend when `HmacKeys` are injected, else `None`, so persist, restore and the
+inspector's snapshots stay unwired and fail closed until a key provider exists (a plan gap,
+#2701). It holds the `statechart` pool and its three stores, the WAL-backed sink (reached through
+`admin.wiring`: M19 is not importable here, C-3.3), one process-wide `Persister` whose sealer
+looks the chart up by `key.machine_kind`, one `Restorer` per lane (`prepare` = the sink's `seed`,
+`plugins` = the `cv_plugins` triple with the sink's head and the audit redactor), the one
+`ChainTripLatch` with `LatchAdmission` over it for the gateways, the `PagerAdapter` over
+`LogPager`, the fault-row writers and `PersistOps`, the two persistence metric families. The
+lifespan starts it before `Supervisor.start_all` and stops it last, after `stop_all`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
-from collections.abc import Callable, Sequence
-from dataclasses import fields, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any, Final, Protocol
 
 import structlog
 
 from candleviewer.admin.inspector import SnapshotRow, SnapshotStore
+from candleviewer.admin.wiring import (
+    MachineEventSinkHandle,
+    MachineEventSinkMetrics,
+    build_machine_event_sink,
+    system_event_redactor,
+)
+from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.replay.sessions_service import SnapshotSource
+from candleviewer.settings import Settings
+from candleviewer.statechart.config import LANES, Lane
+from candleviewer.statechart.factory import default_clock
+from candleviewer.statechart.gateway import ADMITTED, REASON_DEGRADED, Decision
 from candleviewer.statechart.persistence import (
     PAGE_TIMEOUT_S,
     SEAL_LAYOUT_V,
+    ChainSeedError,
+    ChainTripLatch,
+    DegradedLatchError,
     DrainJournal,
+    HmacKeys,
     JournalConflict,
     JournalEntry,
     JournalLane,
@@ -51,19 +80,31 @@ from candleviewer.statechart.persistence import (
     OpsRecorder,
     Pager,
     PersistAudit,
+    Persister,
     RestoreAudit,
+    Restorer,
     RowStoreDrainJournal,
     Seal,
     SealedSnapshot,
+    Sealer,
     SnapshotRepo,
+    seal,
 )
+from candleviewer.statechart.plugins import LogPager, cv_plugins
+from candleviewer.statechart.plugins._base import Pager as AlertPager
+from candleviewer.statechart.plugins._base import Severity
 from candleviewer.statechart.plugins.audit import GENESIS_HASH, MachineEventRow, Phase, row_digest
+from candleviewer.statechart.registry import Registry
 from candleviewer.statechart.schema import canonical_json
+from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.repositories.statechart_sqlalchemy import (
     EventRecord,
     JournalConflictRecord,
     JournalRecord,
     SnapshotRecord,
+    SqlAlchemyEventStore,
+    SqlAlchemyJournalStore,
+    SqlAlchemySnapshotStore,
 )
 
 _KEY_FIELDS: Final = tuple(f.name for f in fields(MachineKey))
@@ -409,6 +450,213 @@ class FaultRows:
                 reason="fault row",
                 error=type(exc).__name__,
             )
+
+
+class EventFramesAdapter:
+    """The sink's `MachineEventStore` over `EventsAdapter`: each WAL frame is rebuilt as the
+    `MachineEventRow` it was (`MachineEventRow(**frame)`), which `EventsAdapter` checks."""
+
+    def __init__(self, events: EventsAdapter) -> None:
+        self._events = events
+
+    async def insert_batch(self, frames: Sequence[Mapping[str, Any]]) -> None:
+        await self._events.insert_batch([MachineEventRow(**frame) for frame in frames])
+
+    async def head(self, machine_kind: str, entity_id: str, env: str) -> str:
+        return await self._events.head(MachineKey(machine_kind, entity_id, env))
+
+
+#: The events a chain-trip latch refuses, by machine kind (C-2.21, CV-C63): those that start
+#: work. A stop-type event (pause, cancel, destroy, the kill switch) always passes, so a latched
+#: machine can still be stopped; a latched key of a kind not listed here refuses every event.
+GATED_EVENTS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
+    {"replay": frozenset({"PREPARE", "PLAY", "STEP", "SEEK", "SET_SPEED"})}
+)
+
+
+class LatchAdmission:
+    """The latch-backed gateway `Admission` (E50-T63): a gated event of a machine the
+    `ChainTripLatch` holds is refused (`DegradedLatchError` becomes a refused `Decision`); any
+    other event, an unlatched machine and a machine registered without a key are admitted."""
+
+    def __init__(
+        self, latch: ChainTripLatch, gated: Mapping[str, frozenset[str]] = GATED_EVENTS
+    ) -> None:
+        self.latch, self._gated = latch, gated
+
+    def admit(self, key: MachineKey | None, event_type: str) -> Decision:
+        if key is None:
+            return ADMITTED
+        gated = self._gated.get(key.machine_kind)
+        if gated is not None and event_type not in gated:
+            return ADMITTED
+        try:
+            self.latch.admit_command(key)
+        except DegradedLatchError:
+            return Decision(False, REASON_DEGRADED)
+        return ADMITTED
+
+
+class PagerAdapter:
+    """`persistence.Pager` over the plugins' `LogPager`: a P1 page is its CRITICAL `cv_page=true`
+    line, which the log-based alert rules key on, anything else an ERROR line. No new channel."""
+
+    def __init__(self, pager: AlertPager | None = None) -> None:
+        self._pager: AlertPager = pager or LogPager()
+
+    async def page(self, key: MachineKey, severity: str, message: str) -> None:
+        level: Severity = "page" if severity == "P1" else "alert"
+        summary = f"{key.machine_kind}/{key.entity_id} ({key.env}): {message}"
+        self._pager.raise_alert(level, summary, machine_kind=key.machine_kind)
+
+
+#: `cv_machine_persist_ops_total`'s closed label sets: 4 x 4, the catalogue's cap of 16.
+PERSIST_OPERATIONS: Final = ("persist", "restore", "quarantine", "event_flush")
+PERSIST_OUTCOMES: Final = ("ok", "refused", "degraded", "error")
+
+
+class PersistOps:
+    """The two persistence families (catalogued `planned`, E50), registered on the app's one
+    facade: `record(operation, outcome)` counts `cv_machine_persist_ops_total`, where a value
+    outside the closed sets makes no series; `pending(rows)` sets `cv_machine_event_wal_pending`."""
+
+    def __init__(self, metrics: Metrics) -> None:
+        specs = {spec.name: spec for spec in CATALOGUE}
+        ops, wal = specs["cv_machine_persist_ops_total"], specs["cv_machine_event_wal_pending"]
+        self._ops = metrics.counter(ops.name, ops.help, ops.labels, max_series=ops.max_series)
+        gauge = metrics.gauge(wal.name, wal.help, wal.labels, max_series=wal.max_series)
+        self._pending = gauge.child()
+
+    def record(self, operation: str, outcome: str) -> None:
+        if operation in PERSIST_OPERATIONS and outcome in PERSIST_OUTCOMES:
+            self._ops.labels(operation, outcome).inc()
+
+    def flushed(self, outcome: str) -> None:
+        self.record("event_flush", outcome)
+
+    def pending(self, rows: int) -> None:
+        self._pending.set(rows)
+
+
+def _registry_sealer(keys: HmacKeys, registry: Registry) -> Sealer:
+    """`Persister.seal` for every chart: `hmac_sealer` binds one chart, and the process-wide
+    `Persister` seals for the chart of the key it persists."""
+
+    async def _seal(
+        snapshot: dict[str, Any], machine_hash: str, version: int, key: MachineKey
+    ) -> Seal:
+        return seal(keys, registry.get(key.machine_kind), snapshot, machine_hash, version, key=key)
+
+    return _seal
+
+
+#: The bound on closing the `statechart` pool at stop; the sink's drain has its own.
+DISPOSE_TIMEOUT_S: Final = 5.0
+
+
+@dataclass(slots=True)
+class StatechartPersistence:
+    """The persistence bundle (see the module docstring); on `app.state.statechart_persistence`."""
+
+    relational: SqlAlchemyRelationalRepository
+    snapshots: SnapshotAdapter
+    journal: RowStoreDrainJournal
+    events: EventsAdapter
+    sink: MachineEventSinkHandle
+    persister: Persister
+    restorers: Mapping[Lane, Restorer]
+    latch: ChainTripLatch
+    admission: LatchAdmission
+    pager: PagerAdapter
+    faults: FaultRows
+    keys: HmacKeys
+    registry: Registry
+    ops: PersistOps
+    metrics: Metrics
+
+    def restorer(self, lane: Lane) -> Restorer:
+        return self.restorers[lane]
+
+    def plugins(self, key: MachineKey, lane: Lane) -> tuple[Any, ...]:
+        """The mandatory triple for `key`: the audit plugin chains from the sink's held head and
+        redacts payloads with the shared audit serializer before hashing."""
+        return cv_plugins(
+            machine_kind=key.machine_kind, lane=lane, entity_id=key.entity_id, env=key.env,
+            metrics=self.metrics, sink=self.sink, head=lambda: self.sink.head(key),
+            redactor=system_event_redactor(),
+        )  # fmt: skip
+
+    async def plugins_for(self, key: MachineKey, lane: Lane) -> tuple[Any, ...]:
+        """For an owner's fresh build (`factory.build(plugins=...)`), a start without a verified
+        snapshot: seeds the key's chain, runs the orphan scan (`Restorer.page_unclaimed`, 24
+        §17.6), then builds the triple. A failed seed raises `ChainSeedError`; a failed scan its
+        own error, paged: the machine must not start."""
+        try:
+            await self.sink.seed(key)
+        except Exception as exc:
+            raise ChainSeedError(key, type(exc).__name__) from None
+        await self.restorer(lane).page_unclaimed(key)
+        return self.plugins(key, lane)
+
+    async def start(self) -> None:
+        """The sink: the WAL's lock and replay, and the flusher. Never waits on Postgres."""
+        await self.sink.start()
+
+    async def stop(self) -> None:
+        """The lifespan's last step: the sink stops accepting and drains (bounded by its own
+        grace; what it leaves is durable in the WAL), then the pool closes, within its bound."""
+        try:
+            await self.sink.stop()
+        finally:
+            try:
+                async with asyncio.timeout(DISPOSE_TIMEOUT_S):
+                    await self.relational.dispose()
+            except Exception as exc:
+                _logger().critical("statechart_pool_dispose_failed", error=type(exc).__name__)
+
+
+def build_statechart_persistence(
+    settings: Settings,
+    *,
+    hmac_keys: HmacKeys | None,
+    metrics: Metrics,
+    registry: Registry | None = None,
+) -> StatechartPersistence | None:
+    """The bundle on the real backend when `hmac_keys` are injected, else `None` (fail closed). No
+    I/O: the pool is lazy, and `start()` opens the WAL. `registry` is the charts' (tests inject
+    their fixtures); the default loads the committed ones."""
+    if hmac_keys is None or settings.storage_backend != "real":
+        return None
+    charts = registry or Registry()
+    relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "statechart")
+    snapshots = SnapshotAdapter(SqlAlchemySnapshotStore(relational))
+    journal = RowStoreDrainJournal(JournalRowsAdapter(SqlAlchemyJournalStore(relational)))
+    events = EventsAdapter(SqlAlchemyEventStore(relational))
+    ops = PersistOps(metrics)
+    sink = build_machine_event_sink(
+        settings,
+        EventFramesAdapter(events),
+        metrics=MachineEventSinkMetrics(flushed=ops.flushed, pending=ops.pending),
+    )
+    pager, latch = PagerAdapter(), ChainTripLatch()
+    faults = FaultRows(sink, pager, ops=ops.record)
+    persister = Persister(
+        repo=snapshots, journal=journal, audit=faults, seal=_registry_sealer(hmac_keys, charts),
+        machine_hash_of=charts.hash, pager=pager, ops=ops.record,
+    )  # fmt: skip
+    restorers: dict[Lane, Restorer] = {}
+    bundle = StatechartPersistence(
+        relational=relational, snapshots=snapshots, journal=journal, events=events, sink=sink,
+        persister=persister, restorers=restorers, latch=latch, admission=LatchAdmission(latch),
+        pager=pager, faults=faults, keys=hmac_keys, registry=charts, ops=ops, metrics=metrics,
+    )  # fmt: skip
+    for lane in LANES:
+        restorers[lane] = Restorer(
+            registry=charts, keys=hmac_keys, journal=journal, audit=faults, pager=pager,
+            latch=latch, plugins=functools.partial(bundle.plugins, lane=lane),
+            clock=default_clock(), lane=lane, prepare=sink.seed, ops=ops.record,
+        )  # fmt: skip
+    return bundle
 
 
 #: Checked by mypy, which CI runs on `candleviewer`: the adapters serve the ports they implement.

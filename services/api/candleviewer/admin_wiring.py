@@ -40,7 +40,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Final
 
-from candleviewer.admin.inspector import StatechartInspector
+from candleviewer.admin.inspector import SnapshotStore, StatechartInspector
 from candleviewer.admin.ops.incident_metrics import OpenIncidentsGauge
 from candleviewer.admin.ops.incidents import AdminIncidentsService
 from candleviewer.admin.overview.capacity import AdminCapacityService, project
@@ -59,6 +59,7 @@ from candleviewer.api.admin_statecharts import machine_key
 from candleviewer.recorder.budget import RECORDED_TIERS, DiskBudget
 from candleviewer.settings import Settings
 from candleviewer.statechart.lock import DEFAULT_LOCK_PATH, load_lock
+from candleviewer.statechart.persistence import HmacKeys
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import SqlAlchemyAdminCounts
 from candleviewer.storage.repositories.incidents_sqlalchemy import SqlAlchemyIncidents
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -223,12 +224,19 @@ def build_admin_read_models(
     return overview, capacity
 
 
-def build_statechart_inspector(*, now: Callable[[], datetime] = utc_now) -> StatechartInspector:
-    """The E42-T07 inspector over the sources that exist: the chart registry and the committed lock.
-    No snapshot store or KMS-backed HMAC keys (E50-T61, #2744) and no metrics source exist yet, so
-    `snapshots` and `metrics` stay `unavailable` and the list stays empty."""
+def build_statechart_inspector(
+    *,
+    now: Callable[[], datetime] = utc_now,
+    store: SnapshotStore | None = None,
+    keys: HmacKeys | None = None,
+) -> StatechartInspector:
+    """The E42-T07 inspector over the chart registry, the committed lock and, when the statechart
+    persistence bundle is wired (E50-T63: the real backend with HMAC keys), its snapshot store and
+    the keys that verify it. Without both, as until a KMS-backed key provider exists (a plan gap,
+    #2701), `snapshots` stays `unavailable` and the list empty; no metrics source exists yet, so
+    `metrics` stays `unavailable`."""
     lock = {kind: str(entry.get("hash")) for kind, entry in load_lock(DEFAULT_LOCK_PATH).items()}
-    return StatechartInspector(SliceFanOut(now=now), machine_key, lock)
+    return StatechartInspector(SliceFanOut(now=now), machine_key, lock, store=store, keys=keys)
 
 
 def build_admin_incidents(

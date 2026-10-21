@@ -1391,6 +1391,8 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Statechart | `cv_machine_transitions_total{kind}` | counter | committed transitions per family (`CvMetricsPlugin`, E50-T60) |
 | Statechart | `cv_machine_timer_handles{kind}` | gauge | live `after:` timer handles per family; alert on monotonic growth (leaked timers) |
 | Statechart | `cv_machine_send_refused_total{kind,reason}` | counter | inbox `overflow_policy="refuse"` refusals; order lane pages |
+| Statechart | `cv_machine_persist_ops_total{operation,outcome}` | counter | persistence operations (E50-T63): `operation` persist, restore, quarantine or event_flush; `outcome` ok, refused, degraded or error; **page on any `error` for persist, restore or quarantine** |
+| Statechart | `cv_machine_event_wal_pending` | gauge | machine-event rows the WAL accepted that Postgres does not hold yet (E50-T63); alert above 0 for 60 s, page at 80 % of the WAL cap |
 | Statechart | `cv_statechart_library_info{version,sha256}` | gauge | pinned `xstate-statemachine` build identity (always `0.9.1`); a mismatch with the lock fails readiness |
 | Rule engine | `cv_rule_prefilter_rejection_ratio` | gauge | must hold ≥ 0.99; below that, rule dispatch is disabled and alerts (the budget is shared with the OMS) |
 | Rule engine | `cv_alert_compile_rejected_total{reason}` | counter | alert compiles refused by reason (E40-T02); `action_node` > 0 is a security signal |

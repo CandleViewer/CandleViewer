@@ -101,7 +101,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     default_registry()  # E17-T08: load and validate the 20 charts once, before a module builds one
     fixture_boot = await account_fixture_guard(ctx.settings)  # #2893 S8: before any module starts
     supervisor = Supervisor(ctx)
-    await supervisor.start_all()
+    # E50-T63: the statechart persistence bundle (the `machine_events` sink) runs before any module:
+    # a restore inside `start_all` writes rows. It is the last teardown step, after `stop_all`,
+    # whose persists write rows too, and it is stopped as well when `start_all` raises.
+    persistence = getattr(app.state, "statechart_persistence", None)
+    if persistence is not None:
+        await persistence.start()
+    try:
+        await supervisor.start_all()
+    except BaseException:
+        if persistence is not None:  # `start_all` stopped what it started; the sink goes last
+            await _Teardown().run("statechart_persistence", persistence.stop)
+        raise
     # #3446: the boot after `start_all` runs in the `try` whose `finally` is the teardown, so what a
     # boot step raises leaves the lifespan only once what has started is stopped, as at shutdown.
     # Each step is bound as the boot reaches it, before its start: one that raised half-way is
@@ -296,6 +307,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("account_health", account_health.stop)
         finally:
             await teardown.run("supervisor.stop_all", supervisor.stop_all)
+            if persistence is not None:  # E50-T63: drained after `stop_all`, bounded by itself
+                await teardown.run("statechart_persistence", persistence.stop)
             teardown.raise_held()
 
 

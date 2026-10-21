@@ -21,7 +21,7 @@ from typing import Any, Final
 import candleviewer.statechart.bindings.b10_alert as b10
 from candleviewer.statechart import build
 from candleviewer.statechart.factory import default_clock
-from candleviewer.statechart.gateway import Gateway
+from candleviewer.statechart.gateway import ALWAYS_ADMIT, Gateway
 from candleviewer.statechart.plugins import FeedBinding, MachineStatePort, feed_plugins
 
 MACHINE: Final = "alert"
@@ -58,7 +58,7 @@ class AlertCharts:
     ) -> None:
         self._feed = feed  # 23 §6.4: `machines.alert:{id}.state`, scoped to the alert's owner
         self._charts: OrderedDict[str, Any] = OrderedDict()
-        self._gateway = Gateway()
+        self._gateway = Gateway(admission=ALWAYS_ADMIT)  # E50-T63: until it adopts the bundle
         self.refusals = _Refusals()
         self._lock = asyncio.Lock()
         self._max = max_charts

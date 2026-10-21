@@ -16,6 +16,12 @@
 * A `wait=True` receipt with `changed=False, error=None` is never a gate on a
   `defer` chart (CV-C06): `receipt_is_conclusive()` is the only sanctioned
   way to read one.
+* Admission (E50-T63, C-2.21): a `Gateway` is built with an `Admission`, and
+  `send`/`send_threadsafe` ask `admit(machine_key, event_type)` synchronously
+  before they deliver; a refusal is `GatewayDegradedError` (HTTP 503), counted
+  `degraded`. The check is a constructor argument, never shared state, so it
+  stays visible in every call path. `ALWAYS_ADMIT` admits everything; the
+  latch-backed one is `statechart_wiring.LatchAdmission`. Reads are never gated.
 
 This module never imports the runtime (CV-LINT-IMPORT); the overflow
 exception is re-exported by `factory.py`.
@@ -27,13 +33,16 @@ import asyncio
 import concurrent.futures
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import structlog
 
 from candleviewer.statechart.config import Lane
 from candleviewer.statechart.factory import InboxFullError, re_mint
 from candleviewer.statechart.plugins._base import LogPager, Pager, Severity
+
+if TYPE_CHECKING:
+    from candleviewer.statechart.persistence import MachineKey
 
 
 def logger() -> Any:
@@ -45,6 +54,35 @@ def logger() -> Any:
 REASON_QUEUE_FULL: Final = "queue_full"
 REASON_SEND_FAILED: Final = "send_failed"
 REASON_SYSTEM_EVENT: Final = "system_event"
+REASON_DEGRADED: Final = "degraded"
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    """An admission's answer: admitted, or refused for `reason` (a metric label value)."""
+
+    admitted: bool
+    reason: str
+
+
+ADMITTED: Final = Decision(True, "")
+
+
+class Admission(Protocol):
+    """The synchronous check before any send (C-2.21): `key` is the machine's `MachineKey`, or
+    `None` for one registered without a key; `event_type` the event's `type`."""
+
+    def admit(self, key: MachineKey | None, event_type: str) -> Decision: ...
+
+
+class _AlwaysAdmit:
+    def admit(self, key: MachineKey | None, event_type: str) -> Decision:
+        return ADMITTED
+
+
+#: Admits everything: the default, and the explicit choice of an owner that has not adopted the
+#: persistence bundle's latch, or that gates on its own (the OMS facade).
+ALWAYS_ADMIT: Final[Admission] = _AlwaysAdmit()
 
 
 class RefusalRecorder(Protocol):
@@ -70,6 +108,21 @@ class SystemEventRefusedError(GatewayError):
     """Caller tried to forward a system-provenance event (CV-C42)."""
 
 
+class GatewayDegradedError(GatewayError):
+    """The admission refused the command: the machine is degraded (the chain-trip latch, CV-C63)
+    until an operator acknowledges it (E42). Maps to HTTP 503 at the API edge."""
+
+    status_code: Final = 503
+
+    def __init__(self, key: str, lane: Lane) -> None:
+        self.key = key
+        self.lane = lane
+        super().__init__(
+            f"machine '{key}' ({lane} lane) is degraded (chain-trip latch, CV-C63): "
+            "commands refused until acknowledged"
+        )
+
+
 class GatewayOverloadedError(GatewayError):
     """Inbox refused the event. Maps to HTTP 503 at the API edge."""
 
@@ -88,6 +141,7 @@ class _Entry:
     lane: Lane
     metrics: RefusalRecorder
     loop: asyncio.AbstractEventLoop
+    machine_key: MachineKey | None = None
 
 
 def receipt_is_conclusive(receipt: Any) -> bool:
@@ -138,18 +192,28 @@ Event = str | Mapping[str, Any]
 class Gateway:
     """Registry of running interpreters plus the sanctioned send paths."""
 
-    def __init__(self, *, pager: Pager | None = None) -> None:
+    def __init__(self, *, pager: Pager | None = None, admission: Admission = ALWAYS_ADMIT) -> None:
         self._pager: Pager = pager or LogPager()
+        self._admission = admission
         self._entries: dict[str, _Entry] = {}
 
     def register(
-        self, key: str, interpreter: Any, *, kind: str, lane: Lane, metrics: RefusalRecorder
+        self,
+        key: str,
+        interpreter: Any,
+        *,
+        kind: str,
+        lane: Lane,
+        metrics: RefusalRecorder,
+        machine_key: MachineKey | None = None,
     ) -> None:
         """Bind *key* to a started interpreter. Must run on its owning loop:
-        that loop is recorded and asserted on every `send()`."""
+        that loop is recorded and asserted on every `send()`. `machine_key` is
+        what the admission is asked about (`None`: admitted as before)."""
         if key in self._entries:
             raise GatewayError(f"machine '{key}' already registered")
-        self._entries[key] = _Entry(interpreter, kind, lane, metrics, asyncio.get_running_loop())
+        loop = asyncio.get_running_loop()
+        self._entries[key] = _Entry(interpreter, kind, lane, metrics, loop, machine_key)
 
     def unregister(self, key: str) -> None:
         self._entries.pop(key, None)
@@ -164,6 +228,19 @@ class Gateway:
         if getattr(event, "system", False):
             entry.metrics.record_send_refused(REASON_SYSTEM_EVENT)
             raise SystemEventRefusedError("system-provenance events are never forwarded (CV-C42)")
+
+    def _admit(self, key: str, entry: _Entry, event: Event) -> None:
+        """C-2.21: the injected admission, asked before any delivery; a refusal is counted and
+        raised as `GatewayDegradedError`, and nothing reaches the interpreter."""
+        event_type = event if isinstance(event, str) else str(event.get("type", ""))
+        decision = self._admission.admit(entry.machine_key, event_type)
+        if decision.admitted:
+            return
+        entry.metrics.record_send_refused(decision.reason or REASON_DEGRADED)
+        logger().warning(
+            "statechart_send_refused", key=key, kind=entry.kind, reason=REASON_DEGRADED
+        )
+        raise GatewayDegradedError(key, entry.lane)
 
     def _overloaded(self, key: str, entry: _Entry, *, count: bool) -> GatewayOverloadedError:
         if count:
@@ -184,6 +261,7 @@ class Gateway:
         if asyncio.get_running_loop() is not entry.loop:
             raise LoopAffinityError(f"send('{key}') off its owning loop; use send_threadsafe")
         self._reject_system(entry, event)
+        self._admit(key, entry, event)
         try:
             pending = entry.interpreter.send(event, wait=wait)
         except InboxFullError:
@@ -195,6 +273,7 @@ class Gateway:
         failure on the loop is logged, counted and (order lane) paged."""
         entry = self._entry(key)
         self._reject_system(entry, event)
+        self._admit(key, entry, event)
         try:
             fut: concurrent.futures.Future[None] = entry.interpreter.send_threadsafe(event)
         except InboxFullError:
@@ -226,7 +305,12 @@ class Gateway:
 
 
 __all__ = [
+    "ADMITTED",
+    "ALWAYS_ADMIT",
+    "Admission",
+    "Decision",
     "Gateway",
+    "GatewayDegradedError",
     "GatewayError",
     "GatewayOverloadedError",
     "LoopAffinityError",

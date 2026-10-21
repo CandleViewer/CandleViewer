@@ -64,7 +64,12 @@ from candleviewer.observability.tracing import span
 from candleviewer.statechart import Registry, build
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.factory import default_clock
-from candleviewer.statechart.gateway import Gateway, GatewayError, receipt_is_conclusive
+from candleviewer.statechart.gateway import (
+    ALWAYS_ADMIT,
+    Gateway,
+    GatewayError,
+    receipt_is_conclusive,
+)
 from candleviewer.statechart.persistence import ChainTripLatch, MachineKey
 from candleviewer.statechart.plugins import LogPager, MachineEventSink, Pager, cv_plugins
 from candleviewer.storage.errors import StorageQueryFailed
@@ -571,7 +576,9 @@ class OrderMachines:
         self._hash = self._registry.hash(MACHINE)
         self._now_us = now_us
         self._max = max_machines
-        self._gateway = Gateway(pager=self._pager)
+        # E50-T63: the order path's one gate is this facade's latch (`_admit`), so its gateway
+        # admits everything.
+        self._gateway = Gateway(pager=self._pager, admission=ALWAYS_ADMIT)
         self._orders: dict[UUID, _Order] = {}
         #: Orders a resync is rebuilding, by the machine it closed, whose lock it holds: a caller
         #: finds the order here between the old machine's close and the new one's build.

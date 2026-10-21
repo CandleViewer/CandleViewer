@@ -24,7 +24,7 @@ from candleviewer.auth.models import SessionRecord
 from candleviewer.statechart import build
 from candleviewer.statechart.bindings import b16_session
 from candleviewer.statechart.factory import default_clock
-from candleviewer.statechart.gateway import Gateway, receipt_is_conclusive
+from candleviewer.statechart.gateway import ALWAYS_ADMIT, Gateway, receipt_is_conclusive
 from candleviewer.statechart.plugins import FeedBinding, MachineStatePort, feed_plugins
 
 #: Max live interpreters per process; least-recently-used is stopped first
@@ -70,7 +70,7 @@ class SessionChart:
     ) -> None:
         self._feed = feed  # 23 §6.4: each chart publishes `machines.session:{id}.state`
         self._charts: OrderedDict[str, Any] = OrderedDict()
-        self._gateway = Gateway()
+        self._gateway = Gateway(admission=ALWAYS_ADMIT)  # E50-T63: until it adopts the bundle
         self.refusals = _Refusals()
         self._lock = asyncio.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -84,7 +84,7 @@ class SessionChart:
         if loop is not self._loop:
             self._loop = loop
             self._charts = OrderedDict()
-            self._gateway = Gateway()
+            self._gateway = Gateway(admission=ALWAYS_ADMIT)
             self._lock = asyncio.Lock()
 
     def interpreter(self, session_id: str) -> Any | None:

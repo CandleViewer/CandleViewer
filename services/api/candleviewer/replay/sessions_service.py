@@ -42,7 +42,7 @@ from candleviewer.statechart import build
 from candleviewer.statechart.config import Lane
 from candleviewer.statechart.factory import default_clock
 from candleviewer.statechart.factory import restore as restore_chart
-from candleviewer.statechart.gateway import Gateway, receipt_is_conclusive
+from candleviewer.statechart.gateway import ALWAYS_ADMIT, Gateway, receipt_is_conclusive
 from candleviewer.statechart.persistence import (
     MachineKey,
     Persister,
@@ -276,7 +276,7 @@ class ReplaySessionService:
         self._repo, self._coverage, self._audit, self._limits = repo, coverage, audit, limits
         self._handles: SessionHandles = handles or NoHandles()
         self._paper_gate, self._env, self._clock, self._sleep = paper_gate, env, clock, sleep
-        self._gateway = gateway or Gateway()
+        self._gateway = gateway or Gateway(admission=ALWAYS_ADMIT)
         self._snapshots, self._restorer, self._persister = snapshots, restorer, persister
         self._on_ended, self._feed = on_ended, machine_feed
         self._live: dict[str, _Live] = {}
@@ -598,7 +598,13 @@ class ReplaySessionService:
         return feed_plugins(self._feed, FeedBinding(MACHINE, row.id, user=uuid.UUID(row.user_id)))
 
     async def _build(self, row: ReplaySessionRow, gaps: Sequence[Sequence[int]] = ()) -> Any:
-        """A fresh chart in `created`; the facts land under `context["input"]` (`b12.facts`)."""
+        """A fresh chart in `created`; the facts land under `context["input"]` (`b12.facts`).
+        Every such start is one without a verified snapshot (new, revived without one, or after a
+        refused restore), so the orphan scan runs first, before the chart starts (24 §17.6,
+        E50-T63): a scan that raises refuses the start; the `Restorer` pages it."""
+        if self._restorer is not None:
+            key = MachineKey(MACHINE, row.id, self._env)
+            await self._io("orphan scan", self._restorer.page_unclaimed(key))
         ctx = {
             "session_id": row.id, "symbols": [row.symbol], "range_start": to_us(row.range_start),
             "range_end": to_us(row.range_end), "cursor": to_us(row.cursor_ts or row.range_start),
@@ -631,8 +637,9 @@ class ReplaySessionService:
             b12.attach_hook(interp, hook)
             live.unsubscribe = interp.subscribe(lambda _interp: self._mark(row.id))
             self._gateway.register(
-                live.key, interp, kind="replay", lane=LANE, metrics=self.refusals
-            )
+                live.key, interp, kind="replay", lane=LANE, metrics=self.refusals,
+                machine_key=MachineKey(MACHINE, row.id, self._env),
+            )  # fmt: skip
         except BaseException:
             await self._release(live)
             await interp.stop()
