@@ -21,10 +21,13 @@ starts from it and asks it on every row, so the fault rows other writers
 appended are picked up. While the head was never held, the plugin's own last
 hash applies. Once it has been held, a `None` means the sink evicted it from its
 bounded map: the row is refused (`ChainHeadEvicted`, a counted and paged sink
-failure), never chained to an older hash, which would fork the chain. An
-optional `redactor` (the shared audit serializer) runs on the payload before it
-is hashed, so the stored payload is the hashed one. Without either, the
-behaviour is the earlier one, from `GENESIS_HASH`.
+failure), never chained to an older hash, which would fork the chain. A live
+machine whose head was evicted is not re-seeded automatically: each of its rows
+is refused, and paged, until a fault-row write for its key or its owner's
+`seed` holds the head again. An optional `redactor` (the shared audit
+serializer) runs on the payload before it is hashed, so the stored payload is
+the hashed one. Without either, the behaviour is the earlier one, from
+`GENESIS_HASH`.
 
 A sink failure is counted (`sink_failures`) and logged CRITICAL; a refused row
 (the WAL sink's `MachineEventRejected`, a `ValueError`) or a lost head is a lost

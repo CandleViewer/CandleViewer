@@ -47,14 +47,21 @@ lossy; fail closed) and reuses `AuditWal` (24-internal-schemas.md §17.6):
   durable in the WAL, replayed at the next start (a kill during the drain loses nothing).
 - Chain continuity: one hash chain per machine key, advanced by every writer (the audit plugin
   and the fault-row writers) and continuous across restarts. `head(key)` is the last accepted
-  `row_hash`, O(1) from a map bounded at `HEAD_KEYS_MAX` (least recently used evicted; a live
-  machine whose key was evicted refuses its next row, as `CvAuditPlugin` fails closed on a head it
-  saw held and no longer finds, until its key is seeded again).
+  `row_hash`, O(1) from a map bounded at `HEAD_KEYS_MAX` (least recently used evicted).
   `seed(key)` returns at once for a held key; otherwise it waits for the WAL to drain (rows of the
   key may still be in it) and reads the head through the store, both within `SEED_DRAIN_S`; a
   timeout or a read error raises `MachineEventUnavailable`, so no machine starts a chain that
   could fork. It is awaited before a restore calls `plugins(key)`, before an owner builds a
   machine, and by the fault-row writers before they build a row.
+- A live machine whose key was evicted is not re-seeded automatically: `CvAuditPlugin` fails
+  closed on a head it saw held and no longer finds, so each of its rows is refused, and paged,
+  until a fault-row write for the key or its owner's `seed(key)` holds the head again. Owners that
+  adopt `plugins_for` keep their long-lived machines' keys resident until the keys that have a
+  live plugin are pinned (review round 2, a follow-up).
+
+`append`, `head` and `seed` run on the loop that started the sink, and a machine on another loop
+(the order lane's own loop) hops there first with `call_soon_threadsafe` (for the coroutine `seed`,
+`run_coroutine_threadsafe`).
 
 Rows are dataclass instances and frames the dicts `dataclasses.asdict` gives. `MachineEventRow`
 lives in `statechart/plugins/audit.py` and is named here for annotations only: a run-time import
@@ -315,7 +322,8 @@ class MachineEventWalSink:
         self._stalled_since: datetime | None = None
         self._stall_paged_at: datetime | None = None
         #: Each machine key's chain head, the last accepted `row_hash`; the least recently used is
-        #: evicted past `HEAD_KEYS_MAX` (its live plugin then fails closed until it is seeded).
+        #: evicted past `HEAD_KEYS_MAX`. Nothing re-seeds an evicted key by itself: its live plugin
+        #: fails closed until a fault-row write or the owner's `seed` holds the head again.
         self._heads: OrderedDict[tuple[str, str, str], str] = OrderedDict()
 
     @property

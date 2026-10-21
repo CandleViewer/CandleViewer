@@ -1627,7 +1627,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "rows",
         (),
         "Machine-event rows the WAL accepted that Postgres does not hold yet (E50-T63).",
-        "> 0 for 60s; page at 80% of the WAL cap",
+        "> 0 for 60 s; a full WAL pages itself through machine_events.append_failed",
         _P,
         "E50",
         max_series=1,

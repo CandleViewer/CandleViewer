@@ -3,9 +3,8 @@ statechart's DTOs to the M10 row stores of `statechart_sqlalchemy`, and back.
 
 `storage` may not import `statechart` (C-3.4; the `SqlAlchemyAuditRepository` precedent), so this
 module, which imports both, maps `MachineKey`, `JournalEntry`, `SealedSnapshot` with its `Seal`
-and `MachineEventRow` to and from the store records; the dependency graph gains no edge. Nothing
-here is wired yet and nothing has a `start()`: E50-T63 builds `Persister`, `Restorer` and the sink
-over these adapters.
+and `MachineEventRow` to and from the store records; the dependency graph gains no edge. E50-T63
+builds `Persister`, `Restorer` and the sink over these adapters (the persistence bundle, below).
 
 - `SnapshotAdapter` is the one snapshot adapter: `persistence.SnapshotRepo.write_snapshot`,
   `replay.sessions_service.SnapshotSource.load` and `admin.inspector.SnapshotStore.snapshots`,

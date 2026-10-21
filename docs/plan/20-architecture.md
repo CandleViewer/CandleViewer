@@ -928,7 +928,8 @@ path keeps its spaces), except the spill WAL and the bar state: their own checks
 `~`-expand them, and derive their defaults from the `~`-expanded lake, and so does the comparison.
 An unknown `~user` there refuses the root, naming the setting:
 
-- the directories of `CV_AUDIT_WAL_PATH` and `CV_AUDIT_CHECKPOINT_PATH`;
+- the directories of `CV_AUDIT_WAL_PATH` and `CV_AUDIT_CHECKPOINT_PATH`, and of an explicit
+  `CV_MACHINE_EVENT_WAL_PATH`;
 - `CV_PARQUET_ROOT`, `CV_RECORDER_WAL_DIR` and `CV_BARS_STATE_ROOT`, defaults derived as their own
   checks derive them;
 - the directories of `CV_KEK_HANDLE`, `CV_KEK_PREV_HANDLE`, `CV_KEK_ACK_PATH`,
@@ -1393,7 +1394,7 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Statechart | `cv_machine_timer_handles{kind}` | gauge | live `after:` timer handles per family; alert on monotonic growth (leaked timers) |
 | Statechart | `cv_machine_send_refused_total{kind,reason}` | counter | inbox `overflow_policy="refuse"` refusals; order lane pages |
 | Statechart | `cv_machine_persist_ops_total{operation,outcome}` | counter | persistence operations (E50-T63): `operation` persist, restore, quarantine or event_flush; `outcome` ok, refused, degraded or error; **page on any `error` for persist, restore or quarantine** |
-| Statechart | `cv_machine_event_wal_pending` | gauge | machine-event rows the WAL accepted that Postgres does not hold yet (E50-T63); alert above 0 for 60 s, page at 80 % of the WAL cap |
+| Statechart | `cv_machine_event_wal_pending` | gauge | machine-event rows the WAL accepted that Postgres does not hold yet (E50-T63); alert above 0 for 60 s; a full WAL pages itself through `machine_events.append_failed` |
 | Statechart | `cv_statechart_library_info{version,sha256}` | gauge | pinned `xstate-statemachine` build identity (always `0.9.1`); a mismatch with the lock fails readiness |
 | Rule engine | `cv_rule_prefilter_rejection_ratio` | gauge | must hold ≥ 0.99; below that, rule dispatch is disabled and alerts (the budget is shared with the OMS) |
 | Rule engine | `cv_alert_compile_rejected_total{reason}` | counter | alert compiles refused by reason (E40-T02); `action_node` > 0 is a security signal |
