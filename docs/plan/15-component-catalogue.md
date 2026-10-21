@@ -145,6 +145,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Props**: `label` · `variant: "neutral"|"info"|"warning"|"danger"|"estimated"` · `icon?` · `removable?` · `onRemove?`.
 - **A11y**: if removable, remove control is a labelled `IconButton` (CMP-002) child, not a bare `×`.
 - **Tokens**: `color.chip.*`, `radius.pill`.
+- **E25-D05**: the `estimated` variant is a deprecated alias that renders CMP-227 EstimatedBadge (the one canonical badge, bound to the methodology drawer by its provider) — new consumers use CMP-227 directly.
 - **Storybook**: AllVariants, Removable, EstimatedChip (with tooltip).
 - **Tests**: unit, visual, axe, keyboard remove.
 
@@ -334,7 +335,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 - **Tier**: Atom · **Purpose**: low/med/high confidence indicator for heuristic detectors (iceberg/stop-run/regime).
 - **Props**: `level: "low"|"medium"|"high"` · `label?`.
-- **A11y**: never colour-only — filled-dot-count + text label always paired.
+- **A11y**: never colour-only — filled-dot-count + text label always paired. The dots are a supplement to a numeric confidence value the consumer renders adjacent (or passes as `label`), never its replacement; the word low / medium / high is always present in the text (E25-D05 §9).
 - **Tokens**: `color.status.*`.
 - **Storybook**: AllLevels.
 - **Tests**: unit, visual, axe.
@@ -672,6 +673,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tier**: Molecule · **Purpose**: the linked methodology drawer referenced by every "(estimated)" chip (CMP-011 estimated variant) — explains heuristic detector logic in plain language.
 - **Props**: `title` · `content: ReactNode` · `relatedDetector?: string`.
 - **A11y**: opens as CMP-046 Drawer (non-modal), triggerable from the chip's tooltip via `Enter`.
+- **E25-D05**: the chip that references this panel is CMP-227 EstimatedBadge (CMP-011's `estimated` variant is its alias); every badge opens this drawer at its detector's section through the CMP-227 provider.
 - **Tokens**: inherits CMP-046.
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe.
@@ -1494,42 +1496,55 @@ interface TradeGroupSummary {
 
 ### CMP-131 SpeedOfTapeGauge
 
-- **Tier**: Molecule (trading, chart-adjacent) · **Purpose**: rolling trades/sec + notional/sec gauge or strip-chart.
-- **Props**: `tradesPerSec: number` · `notionalPerSec: number` · `mode: "gauge"|"strip"` · `alertThreshold?`.
-- **A11y**: numeric values always shown as text alongside the gauge needle position (never gauge-angle-only); threshold breach announced via polite live region (throttled).
-- **Tokens**: `color.status.warning`, `font.mono`.
-- **Data contract**: computed client-side as a rolling window over the aggregated-trades WS stream (`publicTrade.{symbol}`).
-- **Storybook**: Gauge, Strip, ThresholdBreach.
-- **Tests**: unit, visual, axe, throttled-announcement test.
+- **Tier**: Molecule (trading, chart-adjacent) · **Purpose**: rolling trades/sec and notional/sec readout with a gauge and a strip chart; the text readout is the first-class element, never a tooltip (`docs/design/E25/E25-D05.md` §5).
+- **Props**: `tradesPerSec: number | null` · `notionalPerSec: number | null` · `windowSec: 1|5|30` (default 5) · `primaryUnit: "trades"|"notional"` (default `trades`) · `sideSplit?: {buy, sell}` · `zScore: number | null` · `band: "calm"|"elevated"|"extreme"|null` (extreme = the alert threshold `z > 3`) · `baselineWindowSec` (from the series `params` echo; the readout names it) · `warmupRemainingSec?` · `state: "loading"|"warming"|"live"|"idle-zero"|"stale"|"disconnected"|"error"` · `mode: "gauge"|"strip"|"number"` · `alertThreshold?: number` (z).
+- **Variants**: `mode` gauge / strip / number (the composite shows all three); side split.
+- **States**: loading ("Loading…"), warming ("Warming up — 4 min 52 s to go": the remaining time, never the elapsed), live with the band word calm / elevated / extreme, idle-zero ("0 /s · quiet", never the last value held), stale ("—" + CMP-239 "Stale 12s"), disconnected ("—" + the panel's CMP-028 banner), error ("Detector error — last value 13:58:02"), hc, reduced-motion.
+- **A11y**: the readout "42 trades/s over 5 s · 3.1 σ above the 5-min mean" is the panel's primary accessible value (`aria-live="off"`); numeric values always shown as text beside the needle position (never gauge-angle-only); the band is a word on a chip (CMP-011, not CMP-227 — the metric is exact) plus the needle's position on a stepped scale and a thicker extreme segment, never hue alone; band crossings announced politely from the panel's one `role="status"` region at most once every 5 s; digits swap at ≤2 Hz, the needle and the strip step at 4 Hz with nothing animated; the window control is CMP-003 (roving `←`/`→`); table alternative via `Alt+T`. Pattern (hollow, dashed, hatched) marks estimated or absent, never a side (E25-D01 §9.5, PROPOSED for `16` §6; binding today under `16` §6 rules 1 and 5): the usual-rate reference line is solid.
+- **Tokens**: `font.family.mono`, `type.num.lg`, `type.ui.label`, `type.ui.caption`, `color.text.primary/secondary/tertiary`, `color.surface.raised`, `color.border.strong` (the track, decorative), `color.border.default`, `color.status.warning.default` + `color.status.warning.subtle` (extreme, always with the word; measured 7.98 / 3.00 / 7.98 on the panel), `color.buy.default`/`color.sell.default` (side split), `border.thick`, `space.inset.sm/md`.
+- **API sketch**: `interface SpeedOfTapeGaugeProps { tradesPerSec: number | null; notionalPerSec: number | null; windowSec: 1 | 5 | 30; primaryUnit?: "trades" | "notional"; sideSplit?: { buy: number; sell: number }; zScore: number | null; band: "calm" | "elevated" | "extreme" | null; baselineWindowSec: number; warmupRemainingSec?: number; state: "loading" | "warming" | "live" | "idle-zero" | "stale" | "disconnected" | "error"; mode: "gauge" | "strip" | "number"; alertThreshold?: number; }`
+- **Data contract**: computed **backend-side** and pushed on `metrics.{symbol}` at 4 Hz (`MetricsUpdate` series items `trades_per_sec`, `volume_per_sec`, `tape_acceleration`; `GET /market/metrics` for history); the window and the baseline come from the per-series `params` echo; the shipped ids are `tape_speed` / `tape_speed_zscore` (shared: XG-METRICCODE, E25-D05 G3); never a client recompute over `trades.{symbol}` (E25-D01 C6). Exact data: no `(estimated)` chip.
+- **Storybook**: Gauge, Strip, Number, Composite, WindowOneSec, WindowFiveSec, WindowThirtySec, SideSplit, BandCalm, BandElevated, BandExtreme, WarmingUp, IdleZero, Loading, Stale, Disconnected, DetectorError, LongReadout, HighContrast, ReducedMotion.
+- **Tests**: unit, visual (three themes × two densities), axe, throttled-announcement test (≤1 per 5 s), digits-≤2-Hz test, performance budget (SCR-055: 1 ms at ≤4 Hz), table-alternative parity.
 
 ### CMP-132 ImbalanceStackIndicator
 
-- **Tier**: Chart-primitive (trading) · **Purpose**: on-chart marker for a stacked/diagonal imbalance zone (Imbalance Tracker) with virgin-zone/zone-crossed states.
-- **Props**: `zone: {priceFrom,priceTo,barsExtent}` · `state: "virgin"|"crossed"` · `direction: "bid"|"ask"`.
-- **A11y**: DOM-mirror region marker with `aria-label` describing zone + state in words.
-- **Tokens**: `color.buy/sell`, `pattern.hatch` (virgin vs crossed distinguished by pattern, not colour alone).
-- **Data contract**: zone state computed client-side by the imbalance-detector heuristic running over the aggregated-trades/orderbook WS streams; `(estimated)`-class output per `05-accessibility-standard.md`/owner decisions on heuristic labelling.
-- **Storybook**: Virgin, Crossed, BidSide, AskSide.
-- **Tests**: unit, visual, axe.
+- **Tier**: Chart-primitive (trading) · **Purpose**: on-chart mark for a stacked/diagonal imbalance zone (Imbalance Tracker) with its status active / tested / broken; exact data (`docs/design/E25/E25-D05.md` §6).
+- **Props**: `id` (the zone id focus follows) · `zone: {priceFrom, priceTo, barsExtent}` · `direction: "bid"|"ask"` (rendered ▲ BUY / ▼ SELL: glyph + word + hue, never hue alone) · `depth: number` ("×4") · `ratio: number` (percent, "420 %"; spoken "ratio 4.2 to 1") · `age` ("13:58 (12 m)") · `status: "active"|"tested"|"broken"` (mapped from `imbalance_zone_mitigated` / `imbalance_zone_retest_count`: not mitigated and never retested = active, not mitigated and retested = tested, mitigated = broken — E25-D01 F14; the former `virgin`/`crossed` pair is retired) · `distanceTicks?` ("150 ticks below") · `estimated?: boolean` (default false; inherited from a resyncing book, `25` §1) · `selected?` (the SCR-056 cross-highlight).
+- **Variants**: `status` active / tested / broken × `direction` bid / ask.
+- **States**: active (solid 1 px outline in the side hue over the `.subtle` fill), tested (dashed outline in the side hue, fill at `opacity.muted`), broken (no side fill; a neutral `color.text.tertiary` hatch, 45°, 6 px pitch, inside a `color.border.default` outline), selected (+2 px `color.border.selected`), inherited-estimated (+ the CMP-227 `marker` affordance at the left edge, ", estimated" appended in the mirror, the `inline` chip on the row), focus-visible, hc (fills change, patterns do not), greyscale.
+- **A11y**: DOM-mirror surrogate per visible zone (CMP-195's contract) with `aria-label` "Sell stack ×3, 64,060 to 64,090, ratio 310 percent, tested, 350 ticks above"; the surrogates are one roving stop per pane ordered nearest-first, `↑`/`↓` between zones, `Enter` selects the matching SCR-056 row and cross-highlights, `Esc` back to the plot; focus follows the zone id through a re-rank and never moves on a push; surrogate ≥24×24 CSS px. Every prop has a text carrier in the row and the mirror. Pattern (hollow, dashed, hatched) marks estimated or absent, never a side (E25-D01 §9.5, PROPOSED for `16` §6; binding today under `16` §6 rules 1 and 5): the pattern carries `status`; the glyph, the word and the hue carry `direction`.
+- **Tokens**: `color.buy.default`/`color.sell.default` (outline), `color.buy.subtle`/`color.sell.subtle` (fill), `color.text.tertiary` (hatch ink — `color.border.strong` measures 1.91 / 1.57 / 1.91 on the canvas and fails 1.4.11 for a meaning-carrying pattern), `color.border.default`, `color.border.selected`, `opacity.muted`, `border.hairline`, `color.focus.ring`; pattern ids `pattern.dashed.estimated` (the CMP-227 marker) and the status patterns (E25-D05 CR-1; `pattern.hatch` is not a token). The hatch is +1 draw call per pane (E11-D02 D19); the dashed outline is a stroke style.
+- **API sketch**: `interface ImbalanceStackIndicatorProps { id: string; zone: { priceFrom: number; priceTo: number; barsExtent: number }; direction: "bid" | "ask"; depth: number; ratio: number; age: number; status: "active" | "tested" | "broken"; distanceTicks?: number; estimated?: boolean; selected?: boolean; }`
+- **Data contract**: zone events computed **backend-side** and appended on `metrics.{symbol}` (SCR-056: a bounded 2,000-event ring buffer, ≤4 Hz, 1.5 ms): the shipped exact codes `nearest_imbalance_zone_distance`, `imbalance_zone_side` / `_strength` / `_mitigated` / `_retest_count` (none is a `MetricCode` member — shared: XG-METRICCODE, E25-D05 G3; the per-zone item shape is G8). Imbalance is **exact** (`24` §7.2; the shipped vocabulary): **no `(estimated)` chip** unless an input carries `estimated=True` (`25` §1 Derived); `imbalance_hold_rate`'s scoreboard chip is E25-D01 C18's, not this component's.
+- **Storybook**: ActiveBuy, ActiveSell, TestedBuy, TestedSell, BrokenBuy, BrokenSell, Selected, InheritedEstimated, FocusVisible, HighContrast, Greyscale.
+- **Tests**: unit, visual, axe (mirror), DOM-mirror parity, keyboard (roving, `Enter`, `Esc`), performance budget.
 
 ### CMP-133 RegimeIndicatorChip
 
-- **Tier**: Atom (trading) · **Purpose**: current market-regime classification chip (trend/range/volatile/calm), always `(estimated)`.
-- **Props**: `regime: "trend"|"range"|"volatile"|"calm"` · `confidence`.
-- **Tokens**: inherits CMP-011 estimated variant.
-- **Data contract**: `regime`/`confidence` computed client-side by the regime-classifier heuristic over recent OHLCV + orderbook WS data; always rendered with the `(estimated)` chip.
-- **Storybook**: AllRegimes.
-- **Tests**: unit, visual, axe.
+- **Tier**: Atom (trading) · **Purpose**: the market-regime classification chip, always `(estimated)`: the L3 form "Trending up (estimated) · medium" over an evidence row led by the labelled number (E25-D01 R3; `docs/design/E25/E25-D05.md` §7).
+- **Props**: `regime: "trending_up"|"trending_down"|"ranging"|"volatile_expansion"|"compression"` (`22` `RegimeExplanation.regime`, rendered through one display-label map — Trending up / Trending down / Ranging / Volatile / Calm — never a raw enum token; the enum itself is the owner's, E25-D01 C8) · `confidence: number | null` (0..1; optional in `22`) · `warmup?: {have, need}` (the hurst window in force, from the `params` echo) · `size: "sm"|"md"`.
+- **Variants**: the five regimes.
+- **States**: default, hover, focus-visible, confidence-absent (chip "Trending up (estimated)", cell "Confidence — not supplied"), insufficient-data (chip "Insufficient data (estimated)", cell "210 of 512 bars"), hc, greyscale.
+- **A11y**: the chip **is** the badge's host — one native `<button>` consuming CMP-227's provider, accessible name "Market regime, estimated: trending up, medium confidence", `Enter`/`Space` opens SCR-058 at the regime section (focus to its heading and back on close), `Esc` closes the tooltip; the chip text is ≤40 characters on one line and the label and "(estimated)" are never truncated; the confidence word on the chip, the number only in the evidence cell that names it ("Confidence 0.71 (sub-signal agreement)") beside CMP-032's dots — never a bare number beside the direction word; regime colour is never `color.buy.*`/`color.sell.*`, no direction arrow in a side hue, no imperative verb; ≤1 Hz, rendered only on change, the change announced politely once (≤1 per 5 s). Pattern (hollow, dashed, hatched) marks estimated or absent, never a side (E25-D01 §9.5, PROPOSED for `16` §6; binding today under `16` §6 rules 1 and 5): low-confidence strip segments are dashed.
+- **Tokens**: CMP-227's — `color.status.info.subtle`, `color.status.info.default`, `color.text.primary`, `radius.badge`, `type.ui.caption`/`type.ui.label`; `type.num.base` for the evidence number.
+- **API sketch**: `interface RegimeIndicatorChipProps { regime: "trending_up" | "trending_down" | "ranging" | "volatile_expansion" | "compression"; confidence: number | null; warmup?: { have: number; need: number }; size?: "sm" | "md"; }`
+- **Data contract**: computed **backend-side**: `regime` on `metrics.{symbol}` (shipped `market_regime` and `hurst`, both `estimated`; shared: XG-METRICCODE, E25-D05 G3) and `GET /market/regime/explain` (`RegimeExplanation`: `regime`, optional `confidence` 0..1, `signals[]`), fetched once per change; the hurst window from the `params` echo (512 shipped, 256 in `22` — E25-D01 C16); the 0..1 → low / medium / high bands are PROPOSED (E25-D05 G5). Always rendered as the `(estimated)` badge (E25-D01 C6).
+- **Storybook**: TrendingUp, TrendingDown, Ranging, Volatile, Calm, LowConfidence, MediumConfidence, HighConfidence, ConfidenceAbsent, InsufficientData, Hover, FocusVisible, LongLabelGuard, HighContrast, Greyscale.
+- **Tests**: unit (the display map; the ≤40-character guard; the host's accessible name), visual, axe, keyboard, copy lint (no imperative verb).
 
 ### CMP-134 DetectorEventCard (iceberg/stop-run/absorption)
 
-- **Tier**: Molecule (trading) · **Purpose**: card describing one heuristic detector event, always carrying the `(estimated)` chip and a link to the methodology InfoPanel — used in journal auto-tags and live event feed.
-- **Props**: `detectorType: "iceberg"|"stop_run"|"absorption"|"unfinished_auction"` · `time` · `price` · `confidence` · `details: Record<string,unknown>`.
-- **A11y**: Card (CMP-050) composition with CMP-011 estimated chip mandatory.
-- **Tokens**: inherits CMP-050.
-- **Data contract**: `detectorType`/`confidence`/`details` produced client-side (or by a backend detector service, per architecture decision) from the aggregated-trades/orderbook WS streams; always `(estimated)`-flagged heuristic output, never treated as ground truth.
-- **Storybook**: Iceberg, StopRun, Absorption, UnfinishedAuction.
-- **Tests**: unit, visual, axe.
+- **Tier**: Molecule (trading) · **Purpose**: card describing one heuristic detector event — the `(estimated)` chip first and mandatory, the parameter snapshot in force, observed vs inferred copy — used in the SCR-056 event feed and journal auto-tags (`docs/design/E25/E25-D05.md` §8).
+- **Props**: `detectorType: "iceberg"|"stop_run"|"absorption"|"exhaustion"|"big_trade"|"regime"|"unfinished_auction"` (`DetectorMethodology.detector` plus `unfinished_auction`, E25-D05 G2) · `time` · `price` · `side?: "buy"|"sell"` · `confidence: number | null` · `params: Record<string, number | string | boolean>` (the `DetectorConfig` names in force at detection — `window_ms`, `min_reloads`, `price_tolerance_ticks`, `lookback_bars`, `penetration_ticks`, `reversal_pct`, `min_volume_multiple`, `max_price_move_ticks`, `min_delta_divergence`; shared: XG-DETECTORCONFIG, E25-D05 G4) · `observed: string` · `inferred: string` · `unknown?: string` · `freshness?: DataConfidenceState` · `presentation: "static"|"flat"` · `selected?` · `actions?` · `onOpen`. The chip is not a prop: it cannot be omitted.
+- **Variants**: `detectorType` × `presentation` (`static`: `elevation.card`; `flat`: a 1 px `color.border.default` border, no shadow, no transition — for ≤4 Hz lists).
+- **States**: static, flat, stale (CMP-239 after the chip, ≥4 px), selected, focus-visible, detector-off-flag ("Not available on this server — the stop-run detector is behind a feature flag"; the platform flag wins), detector-off-user ("Off — turn on in Detector settings"), error ("Detector error — last value 13:58:02"), loading and empty (list states), hc, reduced-motion.
+- **A11y**: Card (CMP-050) composition with **CMP-227 `inline` mandatory as the first element**, then CMP-239 when stale, then the header (detector name, time, price, ▲ BUY / ▼ SELL glyph + word); `article` inside a `role="list"`, one roving stop per list: `↑`/`↓` between cards, `Home`/`End`, `Enter` opens the detail, `Tab` enters the chip then `actions`, `Esc` returns to the card, `Shift+F10` the row menu; nothing is hover-only (the parameter snapshot and the copy are always rendered); new cards never move focus and the panel's `role="status"` summarises at most once per 5 s; confidence as number + CMP-032 dots + word, never dots alone; a role-gated action renders CMP-079 disabled-with-reason, never hidden. Pattern (hollow, dashed, hatched) marks estimated or absent, never a side (E25-D01 §9.5, PROPOSED for `16` §6; binding today under `16` §6 rules 1 and 5): the card's marker glyphs are hollow.
+- **Tokens**: `color.surface.raised`, `radius.card`, `elevation.card` (static; CMP-050's `elevation.1` is its primitive), `color.border.default` (flat), `color.surface.selected`, `color.text.primary/secondary/tertiary`, `type.ui.label`, `type.ui.body`, `type.ui.caption`, `type.num.base`, `color.buy.default`/`color.sell.default`, `space.inset.sm/md`, `space.stack.sm`, `color.focus.ring`.
+- **API sketch**: `interface DetectorEventCardProps { detectorType: "iceberg" | "stop_run" | "absorption" | "exhaustion" | "big_trade" | "regime" | "unfinished_auction"; time: number; price: number; side?: "buy" | "sell"; confidence: number | null; params: Record<string, number | string | boolean>; observed: string; inferred: string; unknown?: string; freshness?: DataConfidenceState; presentation?: "static" | "flat"; selected?: boolean; actions?: ReactNode; onOpen?: () => void; }`
+- **Data contract**: detector events produced **backend-side** and pushed on `metrics.{symbol}` (event-like `MetricsUpdate` items: `v` the confidence, `unit: "confidence"`, `estimated: true`, `meta {price, side, reloads}`; `GET /market/metrics` for history); `params` is the per-series echo; never run client-side (E25-D01 C6). Always `estimated` heuristic output, never ground truth; the health / error field is E25-D05 G6.
+- **Storybook**: Iceberg, StopRun, Absorption, Exhaustion, UnfinishedAuction, Flat, Static, Stale, DetectorOffFlag, DetectorOffUser, DetectorError, Loading, Empty, Selected, FocusVisible, LongText, HighContrast, ReducedMotion.
+- **Tests**: unit (the chip cannot be omitted; the snapshot renders every `params` key), visual, axe, keyboard (roving, inner stops), hover/focus parity, performance budget (SCR-056: 1.5 ms at ≤4 Hz in `flat`).
 
 ### CMP-135 VwapBandLegend
 
@@ -2171,11 +2186,16 @@ interface FootprintSeriesProps {
 
 ### CMP-187 SpeedOfTapePane
 
-- **Tier**: Chart-primitive · **Purpose**: strip-chart mode of CMP-131 SpeedOfTapeGauge as a chart pane (vs. the standalone gauge widget).
-- **Props**: same as CMP-131 plus `windowSec`.
-- **Tokens**: inherits CMP-131.
-- **Storybook**: Default.
-- **Tests**: unit, visual, axe.
+- **Tier**: Chart-primitive · **Purpose**: the strip mode of CMP-131 SpeedOfTapeGauge as a pane inside the chart chassis (E11-D02), with its legend row, window label and baseline sentence (`docs/design/E25/E25-D05.md` §5.6).
+- **Props**: same as CMP-131 plus `windowSec` (the pane's own) and `paneHeightPx` (≥64); the chassis supplies the legend and the cursor.
+- **Variants**: pane.
+- **States**: default, warming (the sentence in the caption), stale (the line dimmed per E11-D06 D13, instant under reduced motion), table-alternative, hc.
+- **A11y**: the sparkline is `role="img"` with the summary "tape speed, last 6 seconds, rising from 12 to 42 trades a second"; the legend row per E11-D02 D12 (8×8 swatch, label "Tape speed · 5 s", cursor value in mono, eye toggle 24×24); table alternative via `Alt+T` (time · trades/s · notional/s · z · band · window); the chassis Tab order (E11-D02 D18). Pattern (hollow, dashed, hatched) marks estimated or absent, never a side (E25-D01 §9.5, PROPOSED for `16` §6; binding today under `16` §6 rules 1 and 5): the usual-rate reference is a solid `color.text.tertiary` line.
+- **Tokens**: inherits CMP-131 plus `color.surface.canvas`, `type.num.sm`.
+- **API sketch**: `interface SpeedOfTapePaneProps extends SpeedOfTapeGaugeProps { paneHeightPx: number; }`
+- **Data contract**: as CMP-131 — **backend-side** on `metrics.{symbol}`, windowed by `windowSec`; one line batch plus the axis text call (E11-D02 D19), never a hatch. Exact data: no `(estimated)` chip.
+- **Storybook**: Default, LegendRow, TableAlternative, WarmingUp, Stale, HighContrast.
+- **Tests**: unit, visual, axe, table-alternative parity, performance budget.
 
 ### CMP-188 PriceAxis
 
@@ -2575,13 +2595,17 @@ This band was added during the cross-document traceability reconciliation (see `
 
 ### CMP-227 EstimatedBadge
 
-- **Tier**: Atom (honesty affordance, cross-cutting) · **Purpose**: the mandatory `(estimated)` chip on every heuristic-derived view, opening CMP-069 InfoPanel / SCR-058 with the methodology.
-- **Props**: `detector: DetectorId` · `confidence?: "low"|"medium"|"high"` · `onOpenMethodology`.
-- **A11y**: the literal word "estimated" is in the accessible name — this badge may **never** be conveyed by colour, icon or opacity alone; it is focusable and opens the methodology drawer by `Enter`.
+- **Tier**: Atom (honesty affordance, cross-cutting) · **Purpose**: the one canonical `(estimated)` badge on every heuristic-derived value, opening CMP-069 InfoPanel / SCR-058 at the detector's section; CMP-011's `estimated` variant is a deprecated alias that renders this component (`docs/design/E25/E25-D05.md` §3–§4).
+- **Props**: `detector: DetectorId` (`DetectorMethodology.detector`'s six members — `iceberg`, `stop_run`, `absorption`, `exhaustion`, `big_trade`, `regime` — plus `queue_position`, `order_count`, `liquidity_cluster`, `trade_cluster`, `liquidation_cluster`, `funding`; the union is PROPOSED, E25-D05 G2) · `variant: "inline"|"marker"|"section"` · `size: "sm"|"md"` · `confidence?: "low"|"medium"|"high"`. **No `onOpenMethodology` prop**: the drawer binding comes from the required `EstimatedMethodologyProvider` (name PROPOSED), which supplies `openMethodology(detector)` and emits `methodology.opened{detector}`; rendering outside the provider is a development-time error, never a decorative chip.
+- **Variants**: `inline` (beside the value it qualifies — rows, header value cells, alert rows, option lists), `marker` (the on-chart affordance: a hollow glyph-only pill with a dashed outline, the word in the DOM-mirror label, the hit target the mirror surrogate), `section` (the `md` pill after a heading's text, still a button). The inline callout at decision points is a composition — CMP-028 `tone="info"` with the sentence "this is an estimate, not exchange-provided fact" and an `inline` badge — not a fourth variant.
+- **States**: default, hover (2 px outline), focus-visible (`color.focus.ring` 2 px at 2 px offset), active, tooltip-open (CMP-016: hover and focus, `Esc`, dismissible — WCAG 2.2 SC 1.4.13; the first sentence is provenance), with CMP-239 (leftmost, ≥4 px gap, two accessible names), with confidence word, hc, greyscale.
+- **A11y**: a native `<button>`; the literal word "estimated" is in the accessible name — "Estimated, <display name>[, <low|medium|high> confidence]" — this badge may **never** be conveyed by colour, icon or opacity alone; the visible word is "(estimated)" in both sizes (the hue rides on the outline and the glyph, never on the word; "Est." only where a sibling spec already uses it in a table cell, pending E25-D01 C15 / Q4); `aria-describedby` → the tooltip, `aria-haspopup="dialog"`; it is focusable and `Enter`/`Space` opens the methodology drawer at the section with focus on its heading, returned to the chip on close; hit target ≥24×24 CSS px by padding, never by glyph size; never on exact data. Pattern (hollow, dashed, hatched) marks estimated or absent, never a side (E25-D01 §9.5, PROPOSED for `16` §6; binding today under `16` §6 rules 1 and 5).
 - **E08-D04 — composition with CMP-239 FreshnessMarker (confirmed contract)**: `estimated` and data-confidence `stale`/`gapped` are different claims — one says "derived, not raw" (never changes once computed), the other says "not current" (temporal). They are never merged into one chip. When a value is both, CMP-227 renders first (leftmost) and CMP-239 renders immediately after it; each keeps its own accessible name so a screen reader announces both ("Estimated, low confidence. Stale, 4 seconds."). Visual separation: distinct shapes (pill vs dot+text) plus a minimum 4px gap — never touching or overlapping.
-- **Tokens**: `color.status.info`, `radius.pill`, `font.size.xs`.
-- **Storybook**: Default, LowConfidence, HighConfidence, WithStaleFreshnessMarker.
-- **Tests**: unit, visual, axe; plus a **catalogue-level test** asserting that every screen listed in `14-screens-catalogue.md` §12.3 under "(estimated) labelling" renders this component, and a composition test asserting CMP-227 + CMP-239 never collapse into a single accessible name.
+- **Tokens**: `color.status.info.subtle` (fill), `color.status.info.default` (outline `border.hairline`, glyph), `color.text.primary` (the word), `radius.badge`, `type.ui.caption` (sm) / `type.ui.label` (md), `size.icon.sm` (glyph; IconName `estimated`, PROPOSED), `space.inset.xs` (the 4 px composition gap) / `space.inset.sm` (padding), `border.thick` (hover), `color.focus.ring` + `border.focus`, `size.target.min`; pattern id `pattern.dashed.estimated` for `marker` (PROPOSED). Measured: the word 10.74 / 15.44 / 12.16 (dark / light / hc); `color.status.info.strong` text on the `.subtle` fill fails light (4.34) and is never used.
+- **API sketch**: `interface EstimatedBadgeProps { detector: DetectorId; variant: "inline" | "marker" | "section"; size: "sm" | "md"; confidence?: "low" | "medium" | "high"; }` · `useEstimatedMethodology(): { openMethodology(detector: DetectorId): void }` (throws outside the provider).
+- **Data contract**: the chip exists when the series item carries `estimated: true` (`23` §14.7), the descriptor `confidence: "estimated"` (`24` §7.1; `22` `MetricSeries.estimated`) or a Derived value inherits `estimated=True` (`25` §1) — never from a catalogue adjective; the drawer reads `GET /detectors/methodology`; the provider emits `methodology.opened{detector}` (transport: E25-D05 G9).
+- **Storybook**: Inline, Marker, Section, SizeSm, SizeMd, Hover, FocusVisible, Active, TooltipOpen, WithConfidenceWord, WithStaleFreshnessMarker, CalloutComposition, LongDetectorName, HighContrast, Greyscale, ReducedMotion, OutsideProviderThrows.
+- **Tests**: unit (the provider requirement throws; the name carries the word), visual, axe; plus a **catalogue-level test** asserting that every screen listed in `14-screens-catalogue.md` §12.3 under "(estimated) labelling" renders this component, and a composition test asserting CMP-227 + CMP-239 never collapse into a single accessible name.
 
 ### CMP-228 PreviewTile
 
