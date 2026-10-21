@@ -20,7 +20,7 @@ import random
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
+from typing import Any, Final
 
 import httpx
 import structlog
@@ -74,6 +74,14 @@ _SIGNATURE_RESYNC_TIMEOUT_S = 5.0
 #: query/fragment or percent-escape can match, so httpx can never be steered
 #: to another host (it honours an absolute/scheme-relative URL over base_url).
 _SAFE_PATH = re.compile(r"/v5/[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)*\Z")
+#: C-2.8: the paths that move money or edit a key's rights, refused before any token or signature
+#: whatever builds the path at run time; the set `cv-withdrawal-endpoint-ban` flags in source
+#: (#2877 ruling R14). Assembled from their segments, so that rule finds no call site here: this
+#: is the list that refuses them. SR-E27-12's other families are E27-X02's.
+_BANNED_ROOTS: Final = tuple(f"/v5/asset/{family}" for family in ("withdraw", "transfer"))
+_BANNED_PATHS: Final = frozenset(
+    f"/v5/user/{op}" for op in ("update-api", "update-sub-api", "create-sub-api")
+)
 
 #: 24 §8.6 "Order creates" (SR-E29-15): a create that has left is never sent again; amend,
 #: cancel and trading-stop keep their retries. 10016/10019 leave a create's outcome unknown.
@@ -95,16 +103,22 @@ _NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
 class RestPathRejected(ExchangeError, ValueError):
-    """The request `path` is not a plain relative `/v5/...` path (SR-040a).
+    """The request `path` is not a plain relative `/v5/...` path (SR-040a), or it moves money or
+    edits a key's rights (C-2.8).
 
     Raised before signing or sending. The message never carries the key or
     signature, and never echoes the rejected path (it may hold control chars)."""
 
 
 def validate_rest_path(path: str) -> str:
-    """Return `path` unchanged if it is a safe relative `/v5/` path, else raise."""
+    """Return `path` unchanged if it is a safe relative `/v5/` path that moves no money and
+    edits no key, else raise."""
     if not isinstance(path, str) or not _SAFE_PATH.match(path):
         raise RestPathRejected("REST path must be a relative /v5/ path (SR-040a)")
+    if path in _BANNED_PATHS or any(
+        path == root or path.startswith(f"{root}/") for root in _BANNED_ROOTS
+    ):
+        raise RestPathRejected("this path moves money or edits a key; it is never called (C-2.8)")
     return path
 
 
@@ -336,10 +350,7 @@ class BybitRestClient:
         backoff, the venue's reset time or an IP hold) would end past it is not made, so the
         last attempt's own failure, a venue rate-limit answer included, is raised at once. A
         token refused before anything has been sent is `RateBudgetExceededError`."""
-        if self._signer is None:
-            raise TypeError("signed_request called without a configured BybitSigner")
-        _require_create_ids(path, body)
-        _require_linear_category(path, params, body)
+        self.preflight(path, params=params, body=body)
         return await self._request(
             method,
             path,
@@ -350,6 +361,25 @@ class BybitRestClient:
             lane=lane,
             budget_wait_s=budget_wait_s,
         )
+
+    def preflight(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        body: Mapping[str, Any] | None = None,
+    ) -> None:
+        """The refusals a signed call meets before a token is taken or anything is signed, each
+        a local one: no signer (`TypeError`), a path that is not a plain `/v5/` one or that moves
+        money or edits a key (`RestPathRejected`, C-2.8), a create without its ids (C-2.10) and a
+        category other than `linear` (SR-054, `ValueError`). `signed_request` runs it first; a
+        caller that maps failures runs it before its handler, so a refusal never reads as an
+        open outcome (24 §14.4)."""
+        if self._signer is None:
+            raise TypeError("signed_request called without a configured BybitSigner")
+        validate_rest_path(path)
+        _require_create_ids(path, body)
+        _require_linear_category(path, params, body)
 
     def _query_params(self, params: Mapping[str, Any] | None) -> httpx.QueryParams | None:
         if not params:

@@ -350,9 +350,12 @@ class BybitTradingPort:
         params: Mapping[str, Any] | None = None,
         body: Mapping[str, Any] | None = None,
     ) -> tuple[Mapping[str, Any], ExchangeError | None, int]:
-        """One call through the account's client: its reply, or its failure as it leaves."""
+        """One call through the account's client: its reply, or its failure as it leaves. The
+        client's local refusals run before the handler, so they leave as they are, never as an
+        unreadable answer (24 §14.4: a local refusal raises; nothing was taken, signed or sent)."""
         endpoint = ENDPOINTS[name]
         client = await self._client(account)
+        client.preflight(endpoint.path, params=params, body=body)
         use = endpoint.lane or lane
         started = self._monotonic()
         failure: Exception | None = None

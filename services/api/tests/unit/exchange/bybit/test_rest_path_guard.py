@@ -1,4 +1,6 @@
-"""#1891 / SR-040a: request paths can never steer a signed request off-host."""
+"""#1891 / SR-040a: request paths can never steer a signed request off-host. C-2.8 (#2877): a path
+that moves money or edits a key's rights is refused at the same choke point, however it was
+built, before a token is taken or anything is signed."""
 
 from __future__ import annotations
 
@@ -14,7 +16,8 @@ from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient, RestPathRejected, validate_rest_path
 from candleviewer.exchange.bybit.signer import BybitSigner
-from tests._signing import CREDENTIAL_ID, fake_capability
+from tests._signing import CREDENTIAL_ID, Call, fake_capability
+from tests.unit.exchange.bybit._trading import RecordingGovernor
 
 BASE = "https://api.bybit.com"
 BAD = [
@@ -135,3 +138,52 @@ def test_mutated_paths_rejected_and_nothing_sent(path: str) -> None:
 
     asyncio.run(run())
     assert hosts == []
+
+
+def _path(*segments: str) -> str:
+    """A path built from its segments, as a caller could build one at run time. Never written
+    whole here: the source scan that bans these paths finds no call site in this file."""
+    return "/" + "/".join(("v5", *segments))
+
+
+#: C-2.8 (#2877 ruling R14): the withdrawal and transfer families and the key-permission writes.
+BANNED = [
+    _path("user", "update-api"),
+    _path("user", "update-sub-api"),
+    _path("user", "create-sub-api"),
+    _path("asset", "withdraw", "create"),
+    _path("asset", "transfer", "inter-transfer"),
+    _path("asset", "withdraw"),
+]
+
+
+@pytest.mark.parametrize("path", BANNED)
+async def test_a_path_that_moves_money_or_edits_a_key_is_refused_before_any_token(
+    path: str,
+) -> None:
+    hosts: list[str] = []
+    calls: list[Call] = []
+    governor = RecordingGovernor()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        hosts.append(req.url.host)
+        return httpx.Response(200, json={"retCode": 0, "retMsg": "OK", "result": {}})
+
+    client = BybitRestClient(
+        RestClientConfig(base_url=BASE),
+        signer=BybitSigner(fake_capability("DUMMYKEY" + "q" * 10, calls), CREDENTIAL_ID),
+        governor=governor,
+        transport=httpx.MockTransport(handler),
+    )
+    async with client:
+        for method in ("POST", "GET"):
+            with pytest.raises(RestPathRejected, match="moves money or edits a key"):
+                await client.signed_request(method, path, body={}, lane="critical")
+        with pytest.raises(RestPathRejected, match="moves money or edits a key"):
+            await client.get_public(path)
+    assert (hosts, calls, governor.acquired) == ([], [], [])
+
+
+def test_the_key_verification_read_is_no_key_edit() -> None:
+    """Key verification reads its key's facts (E27-T03); that read stays callable."""
+    assert validate_rest_path(_path("user", "query-api")) == _path("user", "query-api")

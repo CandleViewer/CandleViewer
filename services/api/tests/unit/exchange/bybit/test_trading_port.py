@@ -465,6 +465,7 @@ async def test_the_client_refuses_a_missing_or_other_category_unsigned(
         uid="100001",
         signer=BybitSigner(fake_capability(SIGNER_ID, calls), CREDENTIAL_ID),
         governor=governor,
+        transport=httpx.MockTransport(venue.handler),
     )
     async with client:
         with pytest.raises(ValueError, match="SR-054"):

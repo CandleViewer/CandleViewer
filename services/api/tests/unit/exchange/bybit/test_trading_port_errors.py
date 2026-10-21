@@ -31,6 +31,7 @@ from candleviewer.exchange.base.errors import (
     UnknownStateError,
 )
 from candleviewer.exchange.base.models import AmendOrderRequest, CancelOrderRequest
+from candleviewer.exchange.bybit import trading
 from candleviewer.exchange.bybit.trading import BybitTradingPort
 from candleviewer.oms.order_link_resolution import Adopted, place_or_adopt
 from candleviewer.secrets import (
@@ -43,7 +44,7 @@ from candleviewer.secrets import (
 )
 from candleviewer.secrets.errors import SnapshotInvalid
 from tests._corpus import rest
-from tests._signing import fake_capability
+from tests._signing import Call, fake_capability
 from tests.unit.exchange.bybit._trading import (
     RecordingGovernor,
     Venue,
@@ -186,6 +187,30 @@ async def test_a_read_meeting_an_expired_key_raises_an_auth_error() -> None:
     with pytest.raises(AuthError) as caught:
         await make_port(venue).positions(account())
     assert caught.value.exchange_ret_code == 33004 and _bare(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("builder", "drop", "reason"),
+    [("_cancel_body", "category", "SR-054"), ("_create_item", "orderLinkId", "C-2.10")],
+    ids=["exit-without-category", "create-without-id"],
+)
+async def test_a_local_refusal_of_the_client_leaves_as_itself_with_nothing_taken(
+    monkeypatch: pytest.MonkeyPatch, builder: str, drop: str, reason: str
+) -> None:
+    """24 §14.4 (ruling 11): a local refusal raises as itself. A body the client refuses before
+    any token (a category it does not state, a create without its id) is a `ValueError`, never
+    an unreadable answer: a create so refused never reads as an open outcome (`unknown`)."""
+    build = getattr(trading, builder)
+    monkeypatch.setattr(
+        trading, builder, lambda req: {k: v for k, v in build(req).items() if k != drop}
+    )
+    venue, governor, calls = Venue(), RecordingGovernor(), list[Call]()
+    port = make_port(venue, governor=governor, calls=calls)
+    call = port.cancel_order(_cancel()) if builder == "_cancel_body" else port.place_order(place())
+    with pytest.raises(ValueError, match=reason) as caught:
+        await call
+    assert not isinstance(caught.value, ExchangeError)
+    assert (venue.sent, governor.acquired, calls) == ([], [], [])
 
 
 async def test_a_transport_fault_on_a_read_raises_without_its_httpx_cause() -> None:
