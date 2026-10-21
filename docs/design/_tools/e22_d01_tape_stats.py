@@ -12,7 +12,8 @@ fraction, and reconstructed rows at their best case of one row per side per 250 
 bubble radius under linear, area-linear ("sqrt" in CMP-112 terms: r squared linear in notional
 between the anchors) and log scaling over the range that is actually drawn (the class's big
 threshold, where r_min sits, to its tier-2 threshold at 4x, where r_max sits), the area one
-threshold step adds, and the share of prints above the cap; the WCAG contrast of every tape
+threshold step adds, the sell mark's equal-area square side and the share of prints above the
+cap; the WCAG contrast of every tape
 colour pair over the real token JSON, layered per `themes.json` (dark, light, high-contrast)
 with the formula of `contrast_check.py`; and the same tape colours under the greyscale and
 deuteranopia simulation of `cvd_sim.py` (its Rec. 601 weights and Machado 2009 matrix, quoted
@@ -54,6 +55,7 @@ HZ, PANEL_PX, ROW_PX = 60, 600, {"compact": 24, "comfortable": 32}  # 16 §3 row
 WPM, TOKENS_FULL = 238, 5  # Brysbaert 2019; a full row = Time, Price, Size, Notional, Side
 READ_ROWS_PER_S = {"full": round(WPM / 60 / TOKENS_FULL, 1), "scan": 4.0}  # scan = heuristic
 R_MIN_PX, R_MAX_PX, WHALE_MULTIPLE = 3.0, 24.0, 4  # PROPOSED: r_min at big, r_max at tier 2 (4x)
+GLYPH_R_PX = 10.0  # the side glyph is drawn inside a mark from this radius (memo F16)
 MULTIPLES = (1, 1.5, 2, 3, 4)  # of the class's big threshold; 4x = the tier-2 threshold = the cap
 RECON_WINDOW_S, RECON_SIDES = 0.25, 2  # US-BIG-004 250 ms / 1 tick; best case one row per side
 KIND3_RECORD_B, CVWB_HEADER_B, TRADES_THROTTLE_MS = 22, 24, 100  # 23 §3.4 body_kind 3; §6.1
@@ -95,7 +97,7 @@ CVD_CHECKS = (  # (fg, bg, bar, use): bar 0 = a buy-vs-sell separation, informat
     ("color.buy.default", "color.surface.raised", NON_TEXT, "buy glyph + accent on the row"),
     ("color.sell.default", "color.surface.raised", NON_TEXT, "sell glyph + accent on the row"),
     ("color.buy.default", "color.surface.canvas", NON_TEXT, "buy bubble disc on the chart"),
-    ("color.sell.default", "color.surface.canvas", NON_TEXT, "sell bubble ring on the chart"),
+    ("color.sell.default", "color.surface.canvas", NON_TEXT, "sell bubble square on the chart"),
     ("color.text.primary", "color.buy.subtle", TEXT, "row text on the tier-2 buy fill"),
     ("color.text.primary", "color.sell.subtle", TEXT, "row text on the tier-2 sell fill"),
 )
@@ -122,7 +124,7 @@ PAIRS = (  # (fg, bg, bar, use) — every colour pair the tape design (memo F4, 
     ("color.buy.default", "color.buy.subtle", NON_TEXT, "glyphs on the tier-2 buy fill"),
     ("color.sell.default", "color.sell.subtle", NON_TEXT, "glyphs on the tier-2 sell fill"),
     ("color.buy.default", "color.surface.canvas", NON_TEXT, "bubble disc (in pairs.mjs)"),
-    ("color.sell.default", "color.surface.canvas", NON_TEXT, "bubble ring (in pairs.mjs)"),
+    ("color.sell.default", "color.surface.canvas", NON_TEXT, "bubble square (in pairs.mjs)"),
     ("color.buy.subtle", "color.surface.raised", DECOR, "tier-2 fill edge (glyph + weight carry)"),
     ("color.sell.subtle", "color.surface.raised", DECOR, "tier-2 fill edge (glyph + weight carry)"),
 )
@@ -280,6 +282,17 @@ def worked(files: list[dict]) -> dict:
             "count": round(float(cap["fraction"]) * dense["prints"]),
             "fraction": cap["fraction"],
             "max_usdt": dense["notional_usdt"]["max"],
+        },
+        # the sell mark is a filled square of the buy disc's area (memo F16): side = r * sqrt(pi);
+        # a square on the diameter would carry 4/pi the area; hollow stays free for estimated
+        "equal_area_square": {
+            "side_over_r": round(math.sqrt(math.pi), 3),
+            "side_px": {
+                "floor": round(R_MIN_PX * math.sqrt(math.pi), 1),
+                "glyph": round(GLYPH_R_PX * math.sqrt(math.pi), 1),
+                "cap": round(R_MAX_PX * math.sqrt(math.pi), 1),
+            },
+            "diameter_square_area_bias_pct": round(100 * (4 / math.pi - 1)),
         },
     }
     reading = {"wpm": WPM, "tokens_full": TOKENS_FULL, "rows_per_s": READ_ROWS_PER_S}
@@ -518,7 +531,13 @@ def main(argv: list[str]) -> int:
     print(
         f"{b['r_floor_if_area_proportional_px']} px at the floor; above the cap on the dense tape:"
     )
-    print(f"{b['above_cap_dense']}\n")
+    print(f"{b['above_cap_dense']}")
+    sq = b["equal_area_square"]
+    print(
+        f"sell mark = a filled square of equal area: side / r {sq['side_over_r']}, side px "
+        f"{sq['side_px']}; a square on the diameter carries "
+        f"+{sq['diameter_square_area_bias_pct']} %\n"
+    )
     print("| class | big | tier 2 | " + " | ".join(f"{m}x USDT" for m in b["radii_px"]) + " |")
     print("|---|---:|---:|" + "---:|" * len(MULTIPLES))
     for k, c in b["classes"].items():
