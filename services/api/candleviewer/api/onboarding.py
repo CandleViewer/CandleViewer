@@ -19,6 +19,7 @@ from candleviewer.api.onboarding_checklist import Probe, assemble
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.observability.context import current_request_uuid
 
 #: SR-026 (#2632): `getOnboardingChecklist` declares no query parameter (22-api-openapi.yaml), so
 #: any query key (a target user or a step state included) is refused, never silently ignored.
@@ -104,6 +105,7 @@ def make_onboarding_router(
                     outcome=AuditOutcome.DENIED,
                     severity=Severity.WARNING,
                     reason="client_supplied_state",
+                    request_id=current_request_uuid(),
                 )
             return _problem(403, "Forbidden", "the checklist accepts no client-supplied state")
         _, complete, _raw = await assemble(principal.user_id, probes, flags, dismissed=False)

@@ -18,6 +18,7 @@ from structlog.testing import capture_logs
 from candleviewer.api import alert_deliveries
 from candleviewer.api.alert_deliveries import ACK_ALL_BATCH, ACK_ALL_MAX_BATCHES, DenialBudget
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
+from candleviewer.observability.correlation import CorrelationMiddleware
 
 
 @pytest.fixture
@@ -617,3 +618,15 @@ def test_a_denial_cut_short_keeps_its_slot_and_its_count() -> None:
     assert env.c.post(f"/alerts/deliveries/{b.id}/ack").status_code == 404
     (denial,) = env.denials()
     assert denial["after_state"] == {"suppressed_before": 1}
+
+
+def test_a_delivery_record_names_the_request_the_middleware_bound() -> None:
+    """#3990: the router's records carry the id `CorrelationMiddleware` bound."""
+    env = Env()
+    env.c.app.add_middleware(CorrelationMiddleware)  # type: ignore[attr-defined]  # typed as ASGIApp
+    d = env.store.add()
+    r = env.c.post(f"/alerts/deliveries/{d.id}/ack")
+    assert r.status_code == 200
+    ((action, record),) = env.audit.calls
+    assert action == "alert.delivery_acked"
+    assert str(record["request_id"]) == r.headers["x-correlation-id"]

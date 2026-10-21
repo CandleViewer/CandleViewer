@@ -21,6 +21,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import KEYED_ACTIONS, AuditUnavailable, AuditWriter
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import ViewAsEndReason, ViewAsPhase, ViewAsState
+from candleviewer.observability.context import bind_context
 from tests.unit.audit.audit_fakes import FakeAuditRepository, FakeClock
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.auth.test_step_up import _T0, _Clock, _session
@@ -203,11 +204,24 @@ async def test_end_record_names_the_viewer_and_no_session_in_its_states(
                 "expires_at": _at(30).isoformat(),
             },
             "after_state": {"ended_at": _at(5).isoformat()},
+            "request_id": None,  # no request is bound here
         }
     ]
     states = json.dumps([rig.ports.calls[0]["before_state"], rig.ports.calls[0]["after_state"]])
     assert str(record.id) not in states and "session" not in states
     assert rig.held(record).end_recorded_at == _at(6)
+
+
+async def test_end_record_carries_the_id_of_the_request_that_ended_it() -> None:
+    """#3990: the record's `request_id` is the id the correlation middleware bound for the ending
+    request; the tracked write inherits it."""
+    rig = _Rig()
+    record = await rig.viewing()
+    bound = uuid4()
+    with bind_context(request_id=str(bound)):
+        assert await rig.service.end(record, reason=ViewAsEndReason.ENDED, now=_at(5))
+    await rig.settled()
+    assert [call["request_id"] for call in rig.ports.calls] == [bound]
 
 
 async def _ends_ineligible(reason: Ineligible) -> None:

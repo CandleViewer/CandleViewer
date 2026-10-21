@@ -7,8 +7,8 @@ HTML-decoded or encoded. DR22 is not pinned here.
 Rendering sinks (SR-E14-01..03: DOM, aria-label, SDF text) are unbuilt: residual RR6.
 Router-level only (in-memory repository): none of these cases has a Postgres leg (only the
 existing batch pack in `tests/contract/drawings` does); hostile corpus through real JSONB is open.
-No `nosniff` header exists in the repo: the JSON content type is the only inertness signal
-(finding for E14-X03).
+Router-level cases run without the app's middleware: the JSON content type is their only inertness
+signal. The deployed app adds `nosniff` to every answer (`NoSniff`, #3990; the E14-X03 finding).
 Tripwire: `layout_id` is unknown today (no layouts table, every non-null value is refused); when
 E15 makes layouts real (#402, RR2, SR-E14-09) add a same-owner foreign-layout case here."""
 

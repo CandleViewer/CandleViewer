@@ -1919,7 +1919,7 @@
             "type": "string"
           },
           "instance": {
-            "description": "Correlation id, `urn:cv:req:{uuid}`; matches the `X-Request-Id` header and the audit entry.",
+            "description": "Correlation id, `urn:cv:req:{uuid}`; matches the `X-Correlation-Id` header and the audit entry.",
             "type": "string"
           },
           "required_permissions": {

@@ -48,6 +48,7 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_service import SessionClass
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.observability.context import bind_context
 from candleviewer.ws.metrics import AUDIT_FAILURE_REASONS as _REASONS
 from candleviewer.ws.metrics import cv_ws_audit_failures_total
 
@@ -549,7 +550,16 @@ def test_guard_refusal_is_audited_with_the_actor_session_and_route_template(
         "severity": Severity.WARNING,
         "reason": _CODE,
         "after_state": {"channel": "http", "method": "DELETE", "path": "/me/sessions/{sessionId}"},
+        "request_id": None,  # this world has no correlation middleware
     }
+
+
+@pytest.mark.parametrize(("channel", "named"), [("http", True), ("ws", False)])
+async def test_guard_refusal_names_the_http_request_not_a_ws_one(channel: Any, named: bool) -> None:
+    audit, bound = _Audit(), uuid.uuid4()
+    with bind_context(request_id=str(bound)):  # as `CorrelationMiddleware` binds it (#3990)
+        await _refusals(audit).refused(_record(), channel=channel, method="GET", path="/x", ip=None)
+    assert [r["request_id"] for r in audit.records] == [bound if named else None]
 
 
 def test_guard_refusal_is_counted_and_logged_with_the_template_never_the_raw_path(

@@ -154,6 +154,7 @@ from candleviewer.auth.session_service import (
 )
 from candleviewer.auth.step_up import PasswordVerdict, grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.statechart.gateway import GatewayError
 
 REFRESH_COOKIE_PATH = "/api/v1/auth"
@@ -275,6 +276,7 @@ class AuditEmitter(Protocol):
         severity: Severity = Severity.INFO,
         reason: str | None = None,
         after_state: dict[str, Any] | None = None,
+        request_id: uuid.UUID | None = None,
     ) -> None: ...
 
 
@@ -665,6 +667,7 @@ def make_session_router(
                 severity=severity,
                 reason=reason,
                 after_state=after_state,
+                request_id=current_request_uuid(),
             )
         except AuditError as exc:
             # The writer refused the record (WAL full or unwritable, writer stopped, #2251), or with
@@ -767,6 +770,7 @@ def make_session_router(
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="not_live_own_session",
+                request_id=current_request_uuid(),
             ),
             late_failure_event=_PROBE_LATE_FAILURE,
         )
@@ -825,6 +829,7 @@ def make_session_router(
                 severity=Severity.WARNING,
                 reason="unknown_token",
                 after_state=where,
+                request_id=current_request_uuid(),
             )
         else:
             emitted = audit_service.writer.emit(
@@ -837,6 +842,7 @@ def make_session_router(
                 severity=Severity.WARNING,
                 reason="rotation_reuse",
                 after_state={**where, "family_revoked": False},
+                request_id=current_request_uuid(),
             )
         task = tracker.track(emitted, on_lost=_count_fixation_audit_lost, late_failure_event=late)
         try:

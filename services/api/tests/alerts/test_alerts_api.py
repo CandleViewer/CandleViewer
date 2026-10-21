@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import UNSTORABLE_TEXT
+from candleviewer.observability.correlation import CorrelationMiddleware
 
 ACTION = {"node_id": "a1", "type": "place_order", "params": {"side": "buy", "qty": "1"}}
 
@@ -173,3 +174,14 @@ def test_a_refused_audit_write_is_the_declared_503_and_nothing_persists(env: Env
     r = env.c.post("/alerts", json=PRICE_CROSS)
     assert r.status_code == 503 and r.json()["code"] == "audit_unavailable"
     assert env.repo.rows == {}
+
+
+def test_an_alert_record_names_the_request_the_middleware_bound() -> None:
+    """#3990: the router's records carry the id `CorrelationMiddleware` bound."""
+    env = Env()
+    env.c.app.add_middleware(CorrelationMiddleware)  # type: ignore[attr-defined]  # typed as ASGIApp
+    r = env.c.post("/alerts", json=PRICE_CROSS)
+    assert r.status_code == 201, r.text
+    ((action, record),) = env.audit.calls
+    assert action == "alert.created"
+    assert str(record["request_id"]) == r.headers["x-correlation-id"]

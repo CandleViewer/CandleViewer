@@ -21,8 +21,10 @@ from structlog.testing import capture_logs
 from candleviewer.admin.backups import limits
 from candleviewer.admin.backups.downloads import Fetched
 from candleviewer.api import admin_backup_download as route
+from candleviewer.api.response_headers import NoSniff
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.net import RESOLVED_SOURCE_KEY
+from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.storage.backup_artefacts import ArtefactUnreadable, LocalArtefactStore
 from tests.contract._admin_support import SPEC, validate_example
 from tests.unit.admin._admin_fakes import principal
@@ -136,11 +138,10 @@ async def test_a_bearer_is_optional_but_one_sent_must_resolve_and_names_its_user
     _refused(await _get(app, token, Authorization="Bearer stale"), 401, "unauthenticated")
     _refused(await _get(app, token, Authorization="Bearer manager"), 404, "not_found")
     assert not fx.spent(token)
-    rid = "00000000-0000-4000-8000-0000000000aa"
-    served = await _get(app, token, Authorization="Bearer owner", **{"x-request-id": rid})
+    served = await _get(app, token, Authorization="Bearer owner")
     (record,) = fx.served()
     assert (served.status_code, record["after_state"]["bearer"]) == (200, "matched")
-    assert (record["actor_ip"], str(record["request_id"])) == ("127.0.0.1", rid)
+    assert record["actor_ip"] == "127.0.0.1"
 
 
 async def test_a_sent_bearer_with_no_resolver_wired_is_401_and_spends_nothing(
@@ -150,6 +151,45 @@ async def test_a_sent_bearer_with_no_resolver_wired_is_401_and_spends_nothing(
     token, _ = await fx.issue()
     _refused(await _get(app, token, Authorization="Bearer owner"), 401, "unauthenticated")
     assert not fx.spent(token) and fx.served() == []
+
+
+_BOUND = "3f2b8c1e-9d4a-4b7e-8a51-0c6d2e7f9a10"
+_OLD_CLIENT = "00000000-0000-4000-8000-0000000000aa"
+
+
+async def _served_with(tmp_path: Path, **headers: str) -> tuple[httpx.Response, Any]:
+    """One served fetch behind the real `CorrelationMiddleware`: the response, the one record."""
+    fx, app = await _mount(tmp_path)
+    app.add_middleware(CorrelationMiddleware)
+    token, _ = await fx.issue()
+    served = await _get(app, token, **headers)
+    (record,) = fx.served()
+    assert served.status_code == 200
+    return served, record
+
+
+@pytest.mark.parametrize(
+    ("headers", "kept"),
+    [({}, None), ({"X-Correlation-Id": _BOUND}, _BOUND), ({"x-request-id": _OLD_CLIENT}, None)],
+    ids=["names_none", "inbound_correlation_id", "old_client_x_request_id"],
+)
+async def test_the_record_carries_the_id_the_middleware_bound(
+    tmp_path: Path, headers: dict[str, str], kept: str | None
+) -> None:
+    served, record = await _served_with(tmp_path, **headers)
+    echoed = served.headers["x-correlation-id"]  # minted when the request names no valid id
+    assert str(record["request_id"]) == echoed != _OLD_CLIENT  # #3990
+    assert kept in (None, echoed)  # a valid inbound id is the one kept
+
+
+async def test_the_artefact_still_carries_nosniff_exactly_once_behind_the_stamping_wrapper(
+    tmp_path: Path,
+) -> None:
+    fx, app = await _mount(tmp_path)  # the route sets the header itself (#3990 sets it for all)
+    token, _ = await fx.issue()
+    served = await _get(NoSniff(app), token)  # type: ignore[arg-type]  # an ASGI app, as in create_app
+    assert served.status_code == 200
+    assert served.headers.get_list("x-content-type-options") == ["nosniff"]
 
 
 class _Admitted:  # MeshOnly's admitted address (a trusted proxy's client), not the socket peer

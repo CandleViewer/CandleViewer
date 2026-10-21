@@ -35,6 +35,7 @@ from candleviewer.auth.view_as import (
     ViewAsPhase,
     ViewAsSessionStore,
 )
+from candleviewer.observability.context import current_request_uuid
 
 _ENDED_ACTION: Final = "admin.view_as_ended"
 RECORD_TIMEOUT_S: Final = 2.0  # bounds a record's read, write and mark; past it the end is pending
@@ -64,6 +65,7 @@ class ViewAsAudit(Protocol):  # `AuditWriter.emit_keyed` (Q3), with `emit()`'s k
         reason: str,
         before_state: dict[str, Any],
         after_state: dict[str, Any],
+        request_id: UUID | None,
     ) -> None: ...
 
 
@@ -221,6 +223,7 @@ class ViewAsService:
                         "expires_at": state.expires_at.isoformat(),
                     },
                     after_state=(after | {"recorded_late": True}) if late else after,
+                    request_id=current_request_uuid(),  # the ending request; none from the sweeper
                 )
                 await self._store.mark_view_as_recorded(
                     str(record.id), state.context_id, now=self._clock()

@@ -145,6 +145,7 @@ from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restrict
 from candleviewer.api.openapi_publish import install_contract_openapi
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.recorder_purge import make_recorder_purge_router
+from candleviewer.api.response_headers import NoSniff
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
 from candleviewer.api.session_backstop_audit import SessionBackstopAudit
@@ -1247,10 +1248,11 @@ class _StampedApp(FastAPI):
     """#966 BK-11: the whole ASGI stack inside `NoStoreNoReferrer`, outside every user middleware
     and Starlette's own error middleware, so every answer to the backup fetch's path (its token
     is a credential) is no-store and no-referrer, the guards' refusals and a `500` included. The
-    pinned order of the user middleware (#2421, #2295) is untouched."""
+    pinned order of the user middleware (#2421, #2295) is untouched. `NoSniff` (#3990) is the
+    outermost layer: `X-Content-Type-Options: nosniff` on every HTTP answer, a `500` included."""
 
     def build_middleware_stack(self) -> ASGIApp:
-        return NoStoreNoReferrer(super().build_middleware_stack())
+        return NoSniff(NoStoreNoReferrer(super().build_middleware_stack()))
 
 
 def create_app(
@@ -2536,8 +2538,8 @@ def create_app(
     # Middleware order, outermost first (Starlette: last added = outermost):
     #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> Cors (ADR-0038) -> IdleLock (#2300)
     #   -> enrolment-only guard (#2295) -> read-only/step-up guard -> routes.
-    # Outside all of it, Starlette's error middleware included, `_StampedApp` wraps the stack
-    # in BK-11's `NoStoreNoReferrer` (the backup fetch's path only).
+    # Outside all of it, Starlette's error middleware included, `_StampedApp` wraps the stack in
+    # BK-11's `NoStoreNoReferrer` (the backup fetch's path) and, outermost, #3990's `NoSniff`.
     # ADR-0038 2c (#3519): the CORS layer sits inside MeshOnly (an off-mesh peer gets no CORS
     # answer) and the CSRF guard, outside idle-lock. It and the guard's token refusals take this one
     # policy and one flag reader; an empty allow-list (the default) or the flag off changes nothing.

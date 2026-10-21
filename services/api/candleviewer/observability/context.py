@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import functools
+import uuid
 from collections.abc import Callable, Coroutine, Iterator
 from concurrent.futures import Executor
 from contextlib import contextmanager
@@ -63,6 +64,21 @@ def get_context() -> dict[str, Any]:
 def current_request_id() -> str | None:
     value = get_context().get("request_id")
     return str(value) if value is not None else None
+
+
+def current_request_uuid() -> uuid.UUID | None:
+    """The id `CorrelationMiddleware` bound for this request, as the `UUID` an audit record's
+    `request_id` takes (#3990): the one source for it, never a client header read directly. The
+    middleware accepts only a canonical UUIDv4 or mints one, so on an HTTP request this is never
+    `None`; it is `None` outside one (a job, a test with no middleware) and for a bound value that
+    is no UUID, which an audit write must never fail on."""
+    value = current_request_id()
+    if value is None:
+        return None
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        return None
 
 
 def spawn[T](coro: Coroutine[Any, Any, T], *, name: str) -> asyncio.Task[T]:

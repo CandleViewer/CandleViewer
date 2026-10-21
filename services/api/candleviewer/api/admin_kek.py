@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
-import uuid
 from typing import Any, Final, Protocol
 
 from fastapi import APIRouter, Request
@@ -31,7 +30,7 @@ from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import ForbiddenError, enforce
-from candleviewer.observability.context import current_request_id
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _RETRY_AFTER_S: Final = 5
@@ -112,8 +111,8 @@ def make_admin_kek_router(
         body = await _body(request)
         if isinstance(body, JSONResponse):
             return body
-        ip, rid = source_ip(request.scope), current_request_id()  # the request id: a UUID4
-        who: dict[str, Any] = {"actor_ip": ip, "request_id": uuid.UUID(rid) if rid else None}
+        ip = source_ip(request.scope)
+        who: dict[str, Any] = {"actor_ip": ip, "request_id": current_request_uuid()}
         try:
             await enforce(
                 principal, Permission.KEYS_MANAGE, scope=Scope.NONE, emitter=emitter, **who

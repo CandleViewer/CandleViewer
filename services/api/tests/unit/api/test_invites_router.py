@@ -15,6 +15,7 @@ from candleviewer.api.invites import make_invites_router
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.invite_service import INVITE_TTL, InviteService, hash_token
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.observability.correlation import CorrelationMiddleware
 from tests.unit.api.test_step_up_router import _H, _build, _code, _Emitter
 from tests.unit.auth.test_invite_service import (
     GOOD_PW,
@@ -274,3 +275,48 @@ async def test_a_tamper_that_passed_the_gate_as_the_budget_filled_is_still_refus
     monkeypatch.setattr(svc, "is_blocked", gate_then_real)
     assert c.post(f"/invites/{tok}", json=tamper).status_code == 429
     assert len(_tamper_rows(em)) == 10 and len(reads) == 2  # the gate, then the spend point
+
+
+# ---- #3990: every invite record names the id `CorrelationMiddleware` bound ----------------------
+
+_BOUND = "3f2b8c1e-9d4a-4b7e-8a51-0c6d2e7f9a10"
+
+
+def _correlated(c: TestClient) -> None:
+    """The real middleware, which Starlette takes only before the first request."""
+    c.app.add_middleware(CorrelationMiddleware)  # type: ignore[attr-defined]  # typed as ASGIApp
+
+
+async def test_the_owner_check_denial_names_the_request_and_the_address() -> None:
+    c, em, seed, clock, _, _ = await _setup(role="viewer")
+    _correlated(c)
+    _elevate(c, seed, clock)
+    r = c.post("/users", headers=_H, json=_BODY)  # neither correlation header: the id is minted
+    assert r.status_code == 403
+    (denied,) = [x for x in em.calls if x["action"] == "rbac.denied"]
+    assert str(denied["request_id"]) == r.headers["x-correlation-id"]
+    assert denied["actor_ip"] == "testclient"
+
+
+async def test_the_owner_records_carry_the_inbound_correlation_id() -> None:
+    c, em, seed, clock, _, _ = await _setup()
+    _correlated(c)
+    _elevate(c, seed, clock)
+    sent = {**_H, "X-Correlation-Id": _BOUND}
+    assert c.post("/users", headers=sent, json=_BODY).status_code == 201
+    refused = c.post("/users", headers=sent, json={**_BODY, "roles": ["manager"]})
+    assert refused.status_code == 422
+    seen = {x["action"]: x["request_id"] for x in em.calls if x["action"].startswith("users.")}
+    assert {a: str(i) for a, i in seen.items()} == {
+        "users.invited": _BOUND,
+        "users.invite_refused": _BOUND,
+    }
+
+
+async def test_the_invitee_records_carry_the_minted_id_when_the_request_names_none() -> None:
+    c, em, *_ = await _setup()
+    _correlated(c)
+    r = c.get(f"/invites/{'t' * 43}")  # an unknown link: rejected and audited
+    assert r.status_code == 404
+    (rejected,) = [x for x in em.calls if x["action"] == "users.invite_rejected"]
+    assert str(rejected["request_id"]) == r.headers["x-correlation-id"]

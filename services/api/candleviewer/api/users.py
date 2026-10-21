@@ -105,7 +105,7 @@ from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.session_chart import SessionChartError
-from candleviewer.observability.context import current_request_id
+from candleviewer.observability.context import current_request_id, current_request_uuid
 from candleviewer.storage.errors import StorageQueryFailed, WriteAheadTimeout
 from candleviewer.storage.repositories import account_access as aa
 from candleviewer.storage.repositories.user_lifecycle import (
@@ -440,6 +440,7 @@ async def _audit(
         reason=reason,
         before_state={"roles": sorted(before)},
         after_state={"roles": sorted(after)},
+        request_id=current_request_uuid(),
     )
 
 
@@ -486,7 +487,7 @@ async def _schedule_purge(
         scheduled = await purge.schedule(
             user_id,
             actor_user_id=actor,
-            request_id=uuid.UUID(rid) if rid else None,
+            request_id=current_request_uuid(),
             session_id=session,
         )
     except PurgeUserNotFoundError:
@@ -547,8 +548,11 @@ def make_users_router(
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
             return _unauthenticated()  # the registry's 401 code (AD-F24)
+        who = _who(request)
         try:
-            await enforce(principal, Permission.USERS_WRITE, scope=Scope.NONE, emitter=emitter)
+            await enforce(
+                principal, Permission.USERS_WRITE, scope=Scope.NONE, emitter=emitter, **who
+            )
         except ForbiddenError as exc:
             return _forbidden(exc.deny.reason.value)
         if user_id == principal.user_id:  # SR-055: never the acting user, step-up or not
@@ -561,6 +565,7 @@ def make_users_router(
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="self_target",
+                **who,
             )
             return _forbidden("self_target")
         # SR-025: step-up after authn + RBAC, before any mutation. Fail closed
@@ -666,7 +671,6 @@ def make_users_router(
             return _registered(
                 ErrorCode.UNAUTHENTICATED, 401, "no verified session for this request"
             )
-        correlation = current_request_id()  # bound by `CorrelationMiddleware`: a UUID if present
         try:  # before any lookup: the same 403 for an id that exists and one that does not
             await enforce(
                 principal,
@@ -674,7 +678,7 @@ def make_users_router(
                 scope=Scope.NONE,
                 emitter=_NamesTarget(emitter, user_id, partial(session_of, request)),
                 actor_ip=source_ip(request.scope),
-                request_id=uuid.UUID(correlation) if correlation else None,
+                request_id=current_request_uuid(),
             )
         except ForbiddenError as exc:
             return _forbidden(exc.deny.reason.value)
@@ -711,8 +715,8 @@ def make_users_router(
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
             return _registered(ErrorCode.UNAUTHENTICATED, 401, "no verified session")
-        ip, rid = source_ip(request.scope), current_request_id()  # a UUID4, as the GET reads it
-        who: dict[str, Any] = {"actor_ip": ip, "request_id": uuid.UUID(rid) if rid else None}
+        who = _who(request)
+        ip = who["actor_ip"]
         denials = _NamesTarget(emitter, user_id, partial(session_of, request))
         try:  # before any lookup, as the GET: one 403 for an existing and a missing id (U25)
             await enforce(principal, Permission.USERS_WRITE, emitter=denials, **who)
@@ -975,8 +979,7 @@ async def _audit_revoke_ahead(auth: _AuthLike, record: SessionRecord, now: datet
 
 
 def _who(request: Request) -> dict[str, Any]:
-    rid = current_request_id()  # bound by `CorrelationMiddleware`: a UUID if present
-    return {"actor_ip": source_ip(request.scope), "request_id": uuid.UUID(rid) if rid else None}
+    return {"actor_ip": source_ip(request.scope), "request_id": current_request_uuid()}
 
 
 async def _audit_owner_revoke(

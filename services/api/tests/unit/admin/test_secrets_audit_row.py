@@ -13,6 +13,7 @@ import candleviewer.app as app_module
 from candleviewer.admin.wiring import secrets_audit_row, secrets_audit_sink
 from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.redact import REDACTION_MARKER
+from candleviewer.observability.context import bind_context
 from candleviewer.settings import Environment, Settings
 
 T0 = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
@@ -29,12 +30,15 @@ async def test_the_row_builder_writes_the_columns_the_wal_sink_writes() -> None:
     async def emit(action: str, **columns: Any) -> None:
         emitted.append((action, columns))
 
-    writer = SimpleNamespace(emit=emit)
-    await secrets_audit_sink(cast(Any, SimpleNamespace(writer=writer)))(ACTION, FIELDS)
-    build = secrets_audit_row("testnet", clock=lambda: T0)
-    row, again = build(ACTION, FIELDS), build(ACTION, FIELDS)
+    writer, bound = SimpleNamespace(emit=emit), uuid.uuid4()
+    with bind_context(request_id=str(bound)):  # as `CorrelationMiddleware` binds it (#3990)
+        await secrets_audit_sink(cast(Any, SimpleNamespace(writer=writer)))(ACTION, FIELDS)
+        build = secrets_audit_row("testnet", clock=lambda: T0)
+        row, again = build(ACTION, FIELDS), build(ACTION, FIELDS)
     [(action, columns)] = emitted
-    assert row["action"] == action and {k: row[k] for k in columns} == columns
+    assert columns["request_id"] == bound
+    sent = columns | {"request_id": str(bound)}  # the row holds the UUID as its JSON string
+    assert row["action"] == action and {k: row[k] for k in columns} == sent
     assert (row["object_kind"], row["env"], row["outcome"]) == ("api_key", "testnet", "success")
     assert datetime.fromisoformat(row["event_ts"]) == T0 and row["record_id"] != again["record_id"]
 

@@ -72,6 +72,7 @@ from candleviewer.auth.metrics import auth_enrolment_refused_total
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_service import SessionClass
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.ws.metrics import AuditFailureReason, count_audit_failure
 
 #: The only operations an enrolment-only session may call (decision on #2295, contract).
@@ -299,6 +300,8 @@ class EnrolmentRefusals:
                 severity=Severity.WARNING,
                 reason="mfa_enrollment_required",
                 after_state=fields,
+                # #3990: the HTTP request's id; a WS refusal's record stays as it was
+                request_id=current_request_uuid() if channel == "http" else None,
             ),
             on_lost=lost,
             late_failure_event="auth.enrolment_only.audit_failed_late",

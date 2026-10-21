@@ -62,7 +62,7 @@ from candleviewer.auth.owner_floor import OwnerFloorError
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.session_service import RevocationSink, publish_revoked
 from candleviewer.auth.step_up import PositionStateProvider
-from candleviewer.observability.context import current_request_id, spawn
+from candleviewer.observability.context import current_request_id, current_request_uuid, spawn
 from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.user_lifecycle import (
     REVOKED_REASON,
@@ -198,13 +198,6 @@ def _log() -> Any:
     return structlog.get_logger(__name__)
 
 
-def _request_uuid() -> uuid.UUID | None:  # the bound correlation id (a UUID4 at the edge)
-    try:
-        return uuid.UUID(current_request_id() or "")
-    except ValueError:
-        return None
-
-
 def _who(actor: uuid.UUID, target: uuid.UUID, rid: uuid.UUID | None) -> dict[str, Any]:  # O6
     return {
         "actor_label": str(actor),
@@ -287,7 +280,7 @@ class UserDisableService:
         outcome is unknown: if it landed, a retry closes the user's sockets but records no B16
         REVOKE, since AC5's no-op returns no session ids. A caller cancelled after the commit, or
         after a read-back found it, leaves the steps, and its record, to their task (R7)."""
-        rid, now, uid = _request_uuid(), self._clock(), str(user_id)
+        rid, now, uid = current_request_uuid(), self._clock(), str(user_id)
         await self._guard(user_id, actor, rid)
         bound = self._count_timeout_s
         positions = await _count(self._positions.open_position_count(uid), "positions", bound)
@@ -318,7 +311,7 @@ class UserDisableService:
         read. A route that must put its step-up between the guard and the change (SR-025: the
         refusals no step-up can cure come first) calls it before the gate; `disable` repeats it,
         so no caller reaches the change without it."""
-        await self._guard(user_id, actor, _request_uuid())
+        await self._guard(user_id, actor, current_request_uuid())
 
     def _untrack(self, task: asyncio.Task[tuple[str, ...]]) -> None:
         """A raise is logged here too: once the caller is cancelled, no one awaits the task."""

@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from candleviewer.observability.context import (
     bind_context,
     current_request_id,
+    current_request_uuid,
     executor_future,
     get_context,
     run_in_thread,
@@ -71,6 +72,40 @@ def test_middleware_mints_and_echoes_when_absent() -> None:
 def test_middleware_accepts_valid_inbound_id() -> None:
     r = TestClient(_app()).get("/x", headers={"X-Correlation-Id": GOOD})
     assert r.headers["X-Correlation-Id"] == GOOD
+
+
+def _uuid_app() -> FastAPI:
+    app = FastAPI()
+    app.add_middleware(CorrelationMiddleware)
+
+    @app.get("/rid")
+    async def rid() -> dict[str, str | None]:
+        bound = current_request_uuid()
+        return {"uuid": None if bound is None else str(bound)}
+
+    return app
+
+
+@pytest.mark.parametrize(
+    ("headers", "echoed_is_sent"),
+    [({}, False), ({"X-Correlation-Id": GOOD}, True), ({"X-Request-Id": GOOD}, False)],
+    ids=["names_none", "valid_inbound_id", "old_client_x_request_id"],
+)
+def test_current_request_uuid_is_the_id_the_response_echoes(
+    headers: dict[str, str], echoed_is_sent: bool
+) -> None:
+    r = TestClient(_uuid_app()).get("/rid", headers=headers)
+    assert r.json()["uuid"] == r.headers["X-Correlation-Id"]  # a #3990 audit record's request_id
+    assert (r.headers["X-Correlation-Id"] == GOOD) is echoed_is_sent  # never `X-Request-Id`
+
+
+def test_current_request_uuid_is_none_outside_a_request() -> None:
+    assert current_request_uuid() is None
+
+
+def test_current_request_uuid_is_none_for_a_bound_value_that_is_no_uuid() -> None:
+    with bind_context(request_id="not-a-uuid"):
+        assert current_request_uuid() is None  # never an error: an audit write must not fail on it
 
 
 @pytest.mark.parametrize(
