@@ -37,6 +37,8 @@ ChildOrder { order_link_id, group_id, account_id, profile_snapshot, qty, price,
              native_sl, native_tp?, state (ADR-0006), exchange_order_id?, legs[] }
 ```
 
+_As built (2026-10-20, E28-T01 #905):_ the profile snapshot lives on the trade-group leg (`trade_group_legs.profile_snapshot`, `21-database-schema.md` §3.3.3), with the profile id and version it was sized from, not on each child order, which names its leg through `orders.trade_group_leg_id`. A group's states are the eight of `24-internal-schemas.md` §9.1 (`draft`, `submitting`, `partially_open`, `open`, `closing`, `closed`, `failed`, `cancelled`), not the six above.
+
 Binding rules:
 
 1. **Fan-out is server-side.** The client sends one intent; the backend resolves target accounts (after an RBAC scope check), applies each account's profile, sizes each leg, attaches the native SL, and submits. The client is never the orchestrator — a closed browser tab must not be able to leave a half-executed group.
@@ -51,11 +53,13 @@ Binding rules:
 ### Consequences
 
 Positive:
+
 - Process death, network partition, power loss or a WSL sleep never leaves an unprotected position — the guarantee the entire risk story rests on.
 - Group semantics give the UI, the journal and the risk dashboard one coherent object to display, aggregate and audit.
 - Reserved protective budget removes a whole class of "couldn't place the stop because the entries used the quota" incidents.
 
 Negative / risks:
+
 - The mandatory SL means every strategy must express a stop level, even ones that would prefer a purely rule-managed exit. Accepted: a very wide native SL is permitted as a disaster floor, and the rule engine may tighten it freely.
 - Attaching stops costs extra API calls where `stopLoss` cannot be attached inline. Budgeted in the per-UID accounting and measured in spike S4.
 - N-account fan-out multiplies latency variance. Target: all legs submitted within 1.5 s for 5 accounts (spike S4 gate).

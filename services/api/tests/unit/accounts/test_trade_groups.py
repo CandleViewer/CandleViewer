@@ -607,7 +607,7 @@ def test_the_write_models_repeat_the_checks_at_their_edges(
 
 
 @pytest.mark.parametrize("status", sorted(NO_STOP_LEG_STATUSES))
-def test_a_rejected_cancelled_or_failed_leg_draft_may_go_without_a_stop(
+def test_a_rejected_cancelled_or_error_leg_draft_may_go_without_a_stop(
     status: LegStatus,
 ) -> None:
     assert _leg_draft(status=status, resolved_sl_price=None).resolved_sl_price is None
@@ -717,7 +717,7 @@ def test_every_leg_update_field_is_a_patch_column() -> None:
 
 
 @settings(max_examples=200, deadline=None)
-@given(us=st.integers(min_value=-(2**40), max_value=253_402_300_799_999_999))
+@given(us=st.integers(min_value=-(2**40), max_value=MAX_TS_US))
 def test_times_round_trip_exactly(us: int) -> None:
     moment = from_us(us)
     assert moment.tzinfo is UTC and to_us(moment) == us
@@ -772,6 +772,18 @@ def test_an_update_refuses_a_time_outside_that_range(
     update refuses the time first, as a `ValidationError`."""
     with pytest.raises(ValidationError, match=field):
         model.model_validate({field: us})
+
+
+@pytest.mark.parametrize("us", [True, "0", 0.0], ids=["bool", "numeric-string", "float"])
+@pytest.mark.parametrize(("model", "field"), _UPDATE_TIMES, ids=_UPDATE_TIME_IDS)
+def test_an_update_refuses_a_time_that_is_not_an_integer(
+    model: type[BaseModel], field: str, us: object
+) -> None:
+    """`WriterTs` is a strict integer: `True` would read as 1, `"0"` and `0.0` as 0, so each is
+    refused as the wrong type, not coerced to a time the writer never gave."""
+    with pytest.raises(ValidationError, match=field) as refused:
+        model.model_validate({field: us})
+    assert [error["type"] for error in refused.value.errors()] == ["int_type"]
 
 
 # -- the leg snapshot (SR-E28-07, D-10) ------------------------------------------------------------
@@ -1071,11 +1083,16 @@ def test_take_profit_leg_is_reduce_only_and_a_ladder_sums_to_at_most_one_exactly
     ],
 )  # fmt: skip
 def test_aggregate_invariants(changes: dict[str, Any]) -> None:
-    assert TradeGroupAggregate.model_validate(_AGGREGATE_BASE)
-    full = _AGGREGATE_BASE | {"filled_qty": _AGGREGATE_BASE["target_qty"]}
-    assert TradeGroupAggregate.model_validate(full)  # fully filled: filled_qty == target_qty
     with pytest.raises(ValidationError):
         TradeGroupAggregate.model_validate(_AGGREGATE_BASE | changes)
+
+
+def test_a_fully_filled_aggregate_is_valid() -> None:
+    """The base aggregate, and the edge the overfill refusal sits next to: `filled_qty` equal to
+    `target_qty`."""
+    assert TradeGroupAggregate.model_validate(_AGGREGATE_BASE)
+    full = _AGGREGATE_BASE | {"filled_qty": _AGGREGATE_BASE["target_qty"]}
+    assert TradeGroupAggregate.model_validate(full)
 
 
 def test_an_aggregate_with_nothing_filled_has_no_average() -> None:
