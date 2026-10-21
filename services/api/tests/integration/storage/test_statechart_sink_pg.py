@@ -115,7 +115,8 @@ async def test_the_chain_verifies_across_a_restart(pg_dsn: str, tmp_path: Path) 
     key = _key()
     first = _bundle(pg_dsn, tmp_path)
     await first.start()
-    plugins = await first.plugins_for(key, "order")  # the order lane writes ahead
+    # The plugins are duck-typed: `build` takes them as the runtime's base (as the OMS does).
+    plugins: tuple[Any, ...] = await first.plugins_for(key, "order")  # the order lane writes ahead
     built = await build("persist_min", clock=default_clock(), lane="order", plugins=plugins,
                         registry=_REGISTRY)  # fmt: skip
     interp = built.interpreter
@@ -272,9 +273,9 @@ async def test_a_refusal_is_a_fault_row_never_a_snapshot(pg_dsn: str, tmp_path: 
     key, bundle = _key(), _bundle(pg_dsn, tmp_path)
     await bundle.start()
     try:
+        plugins: tuple[Any, ...] = await bundle.plugins_for(key, "platform")
         interp = (await build("persist_min", clock=default_clock(), lane="platform",
-                              plugins=await bundle.plugins_for(key, "platform"),
-                              registry=_REGISTRY)).interpreter  # fmt: skip
+                              plugins=plugins, registry=_REGISTRY)).interpreter  # fmt: skip
         await interp.send("PING", wait=True, n=1)
         await bundle.persister.persist(interp, key=key)
         _sql(pg_dsn, "UPDATE machine_snapshots SET hmac_tag = %s WHERE entity_id = %s",
@@ -285,9 +286,9 @@ async def test_a_refusal_is_a_fault_row_never_a_snapshot(pg_dsn: str, tmp_path: 
         with capture_logs() as logs:
             with pytest.raises(RestoreRefusedError):
                 await bundle.restorer("platform").restore(key, envelope)
+            again: tuple[Any, ...] = await bundle.plugins_for(key, "platform")
             fresh = (await build("persist_min", clock=default_clock(), lane="platform",
-                                 plugins=await bundle.plugins_for(key, "platform"),
-                                 registry=_REGISTRY)).interpreter  # fmt: skip
+                                 plugins=again, registry=_REGISTRY)).interpreter  # fmt: skip
             fresh.context["_fault"] = {"kind": "ActionError"}
             with pytest.raises(PersistRefusedError):
                 await bundle.persister.persist(fresh, key=key)
