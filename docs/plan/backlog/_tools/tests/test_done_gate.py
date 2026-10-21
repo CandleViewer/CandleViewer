@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 from typing import Any
 
@@ -18,6 +20,10 @@ QA_PASS = {
 }
 PENPOT = "https://design.penpot.app/#/workspace?team-id=t&file-id=f&page-id=p"
 PAGE_ID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+# Literals on purpose: they pin the arguments done_gate passes to `gh`.
+GH_REPO = "CandleViewer/CandleViewer"
+GH_LIST_FIELDS = "number,body,mergedAt"
+GH_VIEW_FIELDS = "number,body,files,reviews,comments,mergedAt"
 
 
 def owner(body: str) -> dict[str, Any]:
@@ -243,20 +249,11 @@ def test_regress_1830_missing_qa_signoff_contribution() -> None:
 
 
 def test_run_gate_with_fake_gh_filters_prs_and_renders() -> None:
-    def fake(args: list[str]) -> Any:
-        if args[0] == "issue":
-            return issue([QA_PASS])
-        return [
-            {"number": 1, "body": "Closes #5", "reviews": [], "comments": []},
-            {
-                "number": 2,
-                "body": "unrelated #5 mention",
-                "reviews": [],
-                "comments": [],
-            },
-        ]
-
-    prs = dg.fetch("5", fake)[1]
+    found = [
+        {"number": 1, "body": "Closes #5", "mergedAt": None},
+        {"number": 2, "body": "unrelated #5 mention", "mergedAt": None},
+    ]
+    prs = dg.fetch("5", search_gh({"#5 in:body": found}, []))[1]
     assert [p["number"] for p in prs] == [1]
     out = dg.render(
         {
@@ -387,14 +384,7 @@ def test_fetch_links_closing_prs_and_merged_refs_prs_only() -> None:
         },
     ]
 
-    def fake_gh(args: list[str]) -> Any:
-        return (
-            {"body": "", "comments": [], "labels": [], "state": "OPEN"}
-            if args[0] == "issue"
-            else prs
-        )
-
-    _, linked = dg.fetch("380", fake_gh)
+    _, linked = dg.fetch("380", search_gh({"#380 in:body": prs}, []))
     assert [p["number"] for p in linked] == [1, 2]
 
 
@@ -402,55 +392,143 @@ def search_of(args: list[str]) -> str:
     return args[args.index("--search") + 1]
 
 
-def search_gh(answers: dict[str, Any], searches: list[list[str]]) -> Any:
-    """A `gh` stub: an empty issue view; each PR search answers from `answers`."""
+def crowd(n: int) -> list[dict[str, Any]]:
+    """`n` PRs that merely cite issue 5, as other PRs' review records do."""
+    return [
+        {"number": 100 + i, "body": "review of #5", "mergedAt": None} for i in range(n)
+    ]
+
+
+def search_gh(
+    answers: dict[str, Any], calls: list[list[str]], views: dict[int, Any] | None = None
+) -> Any:
+    """A `gh` stub that pins every argument. The issue view is empty; PR searches
+    answer from `answers` (no entry: nothing found; an exception: raised) and PR views
+    from `views` (default: the PR as a search returned it). PR calls go to `calls`."""
+    found = {p["number"]: p for r in answers.values() if isinstance(r, list) for p in r}
 
     def fake_gh(args: list[str]) -> Any:
         if args[0] == "issue":
             return issue([QA_PASS])
-        searches.append(args)
-        return answers.get(search_of(args), [])
+        calls.append(args)
+        if args[1] == "view":
+            n = args[2]
+            assert args == ["pr", "view", n, "-R", GH_REPO, "--json", GH_VIEW_FIELDS]
+            return (views or found)[int(n)]
+        query = search_of(args)
+        assert args == [
+            "pr",
+            "list",
+            "-R",
+            GH_REPO,
+            "--state",
+            "all",
+            "--search",
+            query,
+            "--limit",
+            str(dg.PR_SEARCH_LIMIT),
+            "--json",
+            GH_LIST_FIELDS,
+        ]
+        result = answers.get(query, [])
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     return fake_gh
 
 
-@pytest.mark.parametrize("kw", ["closes", "fixes", "resolves"])
-def test_fetch_finds_a_closing_pr_by_keyword_when_saturated(kw: str) -> None:
-    """A ticket cited by many other PRs' review records fills the best-match search and
-    pushes its closing PR past the limit; the search for that PR's own closing keyword
-    finds it, and every search reads 100 PRs."""
-    crowd = [{"number": 100 + n, "body": "review of #5"} for n in range(100)]
-    closer = {"number": 7, "body": f"{kw.title()} #5", "mergedAt": None}
-    searches: list[list[str]] = []
-    answers = {"#5 in:body": crowd, f'"{kw} #5" in:body': [closer]}
+def queries(calls: list[list[str]]) -> list[str]:
+    return [search_of(a) for a in calls if a[1] == "list"]
 
-    _, linked = dg.fetch("5", search_gh(answers, searches))
-    assert [search_of(a) for a in searches] == [
+
+def viewed(calls: list[list[str]]) -> list[str]:
+    return [a[2] for a in calls if a[1] == "view"]
+
+
+def test_fetch_runs_the_fallback_searches_in_phrase_order_when_saturated() -> None:
+    calls: list[list[str]] = []
+    dg.fetch("5", search_gh({"#5 in:body": crowd(dg.PR_SEARCH_LIMIT)}, calls))
+    assert queries(calls) == [
         "#5 in:body",
         '"closes #5" in:body',
         '"fixes #5" in:body',
         '"resolves #5" in:body',
+        '"refs #5" in:body',
+        '"ref #5" in:body',
     ]
-    assert {a[a.index("--limit") + 1] for a in searches} == {"100"}
+
+
+def test_fetch_asks_every_search_for_pr_search_limit_prs() -> None:
+    calls: list[list[str]] = []
+    dg.fetch("5", search_gh({"#5 in:body": crowd(dg.PR_SEARCH_LIMIT)}, calls))
+    limits = {a[a.index("--limit") + 1] for a in calls if a[1] == "list"}
+    assert limits == {str(dg.PR_SEARCH_LIMIT)}
+
+
+@pytest.mark.parametrize("phrase", ["closes", "fixes", "resolves", "refs", "ref"])
+def test_fetch_links_a_pr_found_only_by_its_phrase_search(phrase: str) -> None:
+    """A ticket cited by many other PRs' review records fills the best-match search and
+    pushes its linked PR past the limit; the search for its own phrase finds it."""
+    pr = {"number": 7, "body": f"{phrase.title()} #5", "mergedAt": "2026-10-20"}
+    answers = {"#5 in:body": crowd(dg.PR_SEARCH_LIMIT), f'"{phrase} #5" in:body': [pr]}
+    _, linked = dg.fetch("5", search_gh(answers, []))
     assert [p["number"] for p in linked] == [7]
 
 
-def test_fetch_merges_the_closing_searches_by_number_first_search_first() -> None:
-    """A PR found by two searches is linked once; the first search's results come
-    first, then each keyword search's new ones, in keyword order."""
+def test_fetch_links_a_pr_found_by_two_searches_once_first_search_first() -> None:
+    """The first search's results come first, then each phrase search's new ones."""
     in_first = {"number": 8, "body": "Closes #5", "mergedAt": None}
     closes_only = {"number": 6, "body": "Closes #5", "mergedAt": None}
-    two_keywords = {"number": 9, "body": "Fixes #5, Resolves #5", "mergedAt": None}
-    crowd = [{"number": 100 + n, "body": "review of #5"} for n in range(99)]
+    two_phrases = {"number": 9, "body": "Fixes #5, Resolves #5", "mergedAt": None}
+    refs_only = {"number": 4, "body": "Refs #5", "mergedAt": "2026-10-20"}
     answers = {
-        "#5 in:body": [in_first, *crowd],
+        "#5 in:body": [in_first, *crowd(dg.PR_SEARCH_LIMIT - 1)],
         '"closes #5" in:body': [in_first, closes_only],
-        '"fixes #5" in:body': [two_keywords],
-        '"resolves #5" in:body': [two_keywords],
+        '"fixes #5" in:body': [two_phrases],
+        '"resolves #5" in:body': [two_phrases],
+        '"refs #5" in:body': [refs_only, two_phrases],
     }
-
     _, linked = dg.fetch("5", search_gh(answers, []))
-    assert [p["number"] for p in linked] == [8, 6, 9]
+    assert [p["number"] for p in linked] == [8, 6, 9, 4]
+
+
+def test_fetch_does_not_link_an_open_pr_found_by_the_refs_search() -> None:
+    open_refs = {"number": 9, "body": "Refs #5", "mergedAt": None}
+    answers = {
+        "#5 in:body": crowd(dg.PR_SEARCH_LIMIT),
+        '"refs #5" in:body': [open_refs],
+    }
+    _, linked = dg.fetch("5", search_gh(answers, []))
+    assert linked == []
+
+
+FULL_PR = {
+    "number": 1,
+    "body": "Closes #5",
+    "mergedAt": "2026-10-20",
+    "files": [{"path": "docs/design/img/a.png"}],
+    "reviews": [{"body": "Security review — VERDICT: APPROVE"}],
+    "comments": [],
+}
+
+
+def test_fetch_returns_the_pr_view_record_of_a_linked_pr() -> None:
+    light = {"number": 1, "body": "Closes #5", "mergedAt": "2026-10-20"}
+    answers = {"#5 in:body": [light]}
+    _, linked = dg.fetch("5", search_gh(answers, [], views={1: FULL_PR}))
+    assert linked == [FULL_PR]
+
+
+def test_fetch_views_linked_prs_only() -> None:
+    found = [
+        {"number": 1, "body": "Closes #5", "mergedAt": None},
+        {"number": 2, "body": "see #5", "mergedAt": None},
+        {"number": 3, "body": "Refs #5", "mergedAt": None},
+    ]
+    calls: list[list[str]] = []
+    dg.fetch("5", search_gh({"#5 in:body": found}, calls))
+    assert viewed(calls) == ["1"]
 
 
 @pytest.mark.parametrize(
@@ -459,14 +537,98 @@ def test_fetch_merges_the_closing_searches_by_number_first_search_first() -> Non
         None,
         [],
         [{"number": 1, "body": "Closes #5", "mergedAt": None}],
-        [{"number": n, "body": "see #5"} for n in range(99)],
+        crowd(dg.PR_SEARCH_LIMIT - 1),
     ],
-    ids=["null", "empty", "one", "99"],
+    ids=["null", "empty", "one", "limit-minus-one"],
 )
-def test_fetch_adds_no_closing_search_below_the_limit(found: Any) -> None:
-    searches: list[list[str]] = []
-    dg.fetch("5", search_gh({"#5 in:body": found}, searches))
-    assert [search_of(a) for a in searches] == ["#5 in:body"]
+def test_fetch_adds_no_fallback_search_below_the_limit(found: Any) -> None:
+    calls: list[list[str]] = []
+    dg.fetch("5", search_gh({"#5 in:body": found}, calls))
+    assert queries(calls) == ["#5 in:body"]
+
+
+def test_fetch_propagates_a_failing_fallback_search() -> None:
+    answers = {
+        "#5 in:body": crowd(dg.PR_SEARCH_LIMIT),
+        '"fixes #5" in:body': RuntimeError("gh pr list failed: HTTP 502"),
+    }
+    with pytest.raises(RuntimeError, match="HTTP 502"):
+        dg.fetch("5", search_gh(answers, []))
+
+
+TIMEOUT = subprocess.TimeoutExpired("gh", dg.GH_TIMEOUT)
+
+
+def done(rc: int, out: str = "", err: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(["gh"], rc, out, err)
+
+
+def gh_runs(monkeypatch: Any, *outcomes: Any) -> list[dict[str, Any]]:
+    """Make `subprocess.run` give each of `outcomes` in turn (raising it if it is an
+    exception); return the keyword arguments of every call."""
+    queue, kwargs = list(outcomes), []
+
+    def fake_run(cmd: list[str], **kw: Any) -> Any:
+        kwargs.append(kw)
+        outcome = queue.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(dg.subprocess, "run", fake_run)
+    return kwargs
+
+
+def test_main_exits_2_when_a_fallback_search_fails(
+    monkeypatch: Any, capsys: Any
+) -> None:
+    first = json.dumps(crowd(dg.PR_SEARCH_LIMIT))
+
+    def fake_run(cmd: list[str], **_kw: Any) -> subprocess.CompletedProcess[str]:
+        args = cmd[1:]
+        if args[0] == "issue":
+            return done(0, json.dumps(issue([QA_PASS])))
+        if search_of(args) == "#5 in:body":
+            return done(0, first)
+        return done(1, err="gh: HTTP 502: 502 Bad Gateway")
+
+    monkeypatch.setattr(dg.subprocess, "run", fake_run)
+    monkeypatch.setattr(dg, "load_ticket", lambda key: ticket([]))
+    assert dg.main(["K", "5"]) == 2
+    assert "done_gate error" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "first",
+    [done(1, err="gh: HTTP 502: Bad Gateway"), done(1, err="HTTP 504"), TIMEOUT],
+    ids=["502", "504", "timeout"],
+)
+def test_gh_json_retries_once_after_an_http_5xx_or_a_timeout(
+    monkeypatch: Any, first: Any
+) -> None:
+    kwargs = gh_runs(monkeypatch, first, done(0, "[1]"))
+    assert dg.gh_json(["pr", "list"]) == [1]
+    assert len(kwargs) == 2
+
+
+def test_gh_json_gives_each_call_a_timeout(monkeypatch: Any) -> None:
+    kwargs = gh_runs(monkeypatch, done(0, "[]"))
+    dg.gh_json(["pr", "list"])
+    assert kwargs[0]["timeout"] == dg.GH_TIMEOUT
+
+
+def test_gh_json_gives_up_after_one_retry(monkeypatch: Any) -> None:
+    kwargs = gh_runs(monkeypatch, TIMEOUT, TIMEOUT)
+    with pytest.raises(RuntimeError, match="timed out"):
+        dg.gh_json(["pr", "list"])
+    assert len(kwargs) == 2
+
+
+def test_gh_json_does_not_retry_other_failures(monkeypatch: Any) -> None:
+    kwargs = gh_runs(monkeypatch, done(1, err="HTTP 404: Not Found"))
+    with pytest.raises(RuntimeError, match="404"):
+        dg.gh_json(["issue", "view", "5"])
+    assert len(kwargs) == 1
 
 
 def test_security_rc_on_one_part_is_not_masked_by_later_approve_on_another() -> None:

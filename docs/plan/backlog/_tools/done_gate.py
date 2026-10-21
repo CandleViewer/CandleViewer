@@ -33,8 +33,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = "CandleViewer/CandleViewer"
 OWNER = "basiltt"
 WAIVER_REF = "#1778"
-PR_SEARCH_LIMIT = 100  # PRs read per `gh pr list --search` (one GraphQL page)
+# PRs read per `gh pr list --search` (one GraphQL page). Measured 2026-10-21 on a
+# saturated ticket (`#2701 in:body`): 100 PRs of number,body,mergedAt took 1.9 to 2.4 s.
+# With files,reviews,comments added: 11 to 12 s, ~10 MB, and a 502 on one of two runs.
+PR_SEARCH_LIMIT = 100
 CLOSING_KEYWORDS = ("closes", "fixes", "resolves")  # what a linked PR's body may say
+LINK_PHRASES = (*CLOSING_KEYWORDS, "refs", "ref")  # the link filter's forms, searched
+PR_FIELDS = "number,body,files,reviews,comments,mergedAt"  # read per linked PR
+GH_TIMEOUT = 60  # seconds one `gh` call may take
 GhFn = Callable[[list[str]], Any]
 
 PENPOT_RE = re.compile(
@@ -166,15 +172,27 @@ STOPWORDS = frozenset(
 UI_AREAS = ("area/charting-ui", "area/design-system", "area/frontend-platform")
 
 
+def run_gh(args: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["gh", *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=GH_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            args, 1, "", f"timed out after {GH_TIMEOUT}s"
+        )
+
+
 def gh_json(args: list[str]) -> Any:
-    r = subprocess.run(
-        ["gh", *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    r = run_gh(args)
+    if r.returncode and re.search(r"HTTP 5\d\d|timed out", r.stderr):
+        r = run_gh(args)  # one retry, for an HTTP 5xx or a timeout only
     if r.returncode:
         raise RuntimeError(f"gh {' '.join(args[:3])} failed: {r.stderr.strip()[:200]}")
     return json.loads(r.stdout or "null")
@@ -490,7 +508,12 @@ def evaluate(
 
 
 def search_prs(gh: GhFn, query: str) -> list[dict[str, Any]]:
-    """Up to PR_SEARCH_LIMIT PRs (any state) for `query`, in gh's best-match order."""
+    """Up to PR_SEARCH_LIMIT PRs (any state) for `query`, in gh's best-match order.
+
+    Only number, body and mergedAt: with files, reviews and comments too, a 100-PR
+    read is ~10 MB and often times out (HTTP 502) on GitHub's API. `fetch` reads those
+    per linked PR instead.
+    """
     found = gh(
         [
             "pr",
@@ -504,7 +527,7 @@ def search_prs(gh: GhFn, query: str) -> list[dict[str, Any]]:
             "--limit",
             str(PR_SEARCH_LIMIT),
             "--json",
-            "number,body,files,reviews,comments,mergedAt",
+            "number,body,mergedAt",
         ]
     )
     return found or []
@@ -517,25 +540,31 @@ def fetch(issue_no: str, gh: GhFn) -> tuple[dict[str, Any], list[dict[str, Any]]
     prs = search_prs(gh, f"#{issue_no} in:body")
     if len(prs) >= PR_SEARCH_LIMIT:
         # Saturated: other PRs' review records cite the issue too, and best-match
-        # order can push the linked PR past the limit. Also search for each closing
-        # phrase and merge by number, keeping the first query's results first.
-        for kw in CLOSING_KEYWORDS:
+        # order can push the linked PR past the limit. Also search for each phrase the
+        # link filter accepts and merge by number, first query's results first.
+        for phrase in LINK_PHRASES:
             seen = {p.get("number") for p in prs}
-            closers = search_prs(gh, f'"{kw} #{issue_no}" in:body')
-            prs = prs + [p for p in closers if p.get("number") not in seen]
+            found = search_prs(gh, f'"{phrase} #{issue_no}" in:body')
+            prs = prs + [p for p in found if p.get("number") not in seen]
     # The linked PR carries `Closes|Fixes|Resolves #N` in its body (C-4.7). Multi-PR tickets
     # (parts land with `Refs #N` and QA closes the ticket, e.g. E17-T02) also count — but only
     # PRs that are already MERGED, so an open `Refs` PR can never satisfy the security gate.
     closing = re.compile(
-        rf"(?:{'|'.join(CLOSING_KEYWORDS)})\s+#{issue_no}\b", re.IGNORECASE
+        rf"(?:{'|'.join(map(re.escape, CLOSING_KEYWORDS))})\s+#{issue_no}\b",
+        re.IGNORECASE,
     )
     # `Refs #N` must start a line (footer style); an in-prose mention never links.
     refs = re.compile(rf"^\s*refs?\s+#{issue_no}\b", re.IGNORECASE | re.MULTILINE)
-    linked = [
+    hits = [
         p
         for p in prs
         if closing.search(p.get("body") or "")
         or (refs.search(p.get("body") or "") and p.get("mergedAt"))
+    ]
+    # The searches carry only what the filter needs; the evidence comes per linked PR.
+    linked = [
+        gh(["pr", "view", str(p["number"]), "-R", REPO, "--json", PR_FIELDS])
+        for p in hits
     ]
     return issue, linked
 
