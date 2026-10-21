@@ -310,13 +310,17 @@ def test_a_pending_record_answered_ok_ends_as_one_in_force_and_says_so() -> None
     rule = _words(_INTERNAL_DOC.split("6. **The recorded stop (SR-E29-06", 1)[1].split("\n", 1)[0])
     assert not _missing(
         rule,
-        "A flat read ends no pending record, except one whose request the exchange answered `ok` "
-        "and that no resting entry carries",
+        "A flat read ends no pending record, except one whose request the exchange answered `ok`, "
+        "that no resting entry carries and that is not waiting for the complete read",
+        "Apart from that end, a pending record ends only once its request is known not to have "
+        "placed the stop",
         "its end is marked as one no read confirmed in force",
     )
     assert not _missing(
         _words(_SECTION),
         "An `ended` row with no `in_force_at` is that end, answered and never shown",
+        "and that is not waiting for the complete read (an entry's row whose entry ended with no "
+        "confirmed count, which that read's fill test resolves, above)",
         "`pending` → `in_force`, `void`, `replaced` or, once answered (`answered_at` set before "
         "the move), `ended`",
     )
