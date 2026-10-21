@@ -841,8 +841,8 @@ async def test_a_removal_is_audited_as_evicted() -> None:
     ]
 
 
-def _abandoned() -> float:
-    return REGISTRY.get_sample_value("cv_ws_audit_failures_total", {"reason": "abandoned"}) or 0.0
+def _abandoned(reason: str = "abandoned") -> float:
+    return REGISTRY.get_sample_value("cv_ws_audit_failures_total", {"reason": reason}) or 0.0
 
 
 class _Peak(_Audit):
@@ -916,17 +916,78 @@ async def test_a_batch_that_raises_ends_only_itself_and_a_cancel_abandons_the_re
     writer = _writer(conn, registry, _Audit())
     audit = AsyncMock(side_effect=[KeyError("frame"), asyncio.CancelledError])
     monkeypatch.setattr(writer.registry, "audit_revoked_many", audit)
-    before = _abandoned()
+    before, errors = _abandoned(), _abandoned("error")
     for _ in range(3):
         writer([(conn.authz, {})])
     (task,) = [t for t in asyncio.all_tasks() if t.get_name() == "ws-machine-revoked-audit"]
     with capture_logs() as logs, pytest.raises(asyncio.CancelledError):
         await task
     assert _abandoned() - before == 1 and (writer._waiting, len(writer._pending)) == (0, 0)
+    assert _abandoned("error") - errors == 1  # #3988 R2C-03: the raising batch is counted too
     assert [(e["event"], e.get("error") or e["cause"]) for e in logs] == [
         ("ws machine revocation audit failed", "KeyError"),
         ("ws machine revocations not audited", "cancelled"),
     ]
+
+
+class _Stop(BaseException):
+    """Not an `Exception`, so it ends the writer past its per-batch handler."""
+
+
+@pytest.mark.parametrize(("end", "cause"), [(None, "cancelled"), (_Stop, "writer_stopped")])
+async def test_a_writer_that_ends_early_counts_and_logs_what_it_left(
+    end: type[BaseException] | None, cause: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3988 R2C-01: a done callback, so a writer cancelled before its first step, or ended by a
+    raise its handler cannot catch, still counts and logs the removals it left queued."""
+    conn, registry, _ = _world()
+    writer, before = _writer(conn, registry, _Audit()), _abandoned()
+    monkeypatch.setattr(writer.registry, "audit_revoked_many", AsyncMock(side_effect=end))
+    for _ in range(2):
+        writer([(conn.authz, {})])
+    (task,) = [t for t in asyncio.all_tasks() if t.get_name() == "ws-machine-revoked-audit"]
+    if end is None:
+        task.cancel()  # before its first step: `_write` never runs
+    with capture_logs() as logs, pytest.raises(end or asyncio.CancelledError):
+        await task
+    assert _abandoned() - before == (2 if end is None else 1)
+    assert (writer._waiting, len(writer._pending), logs[-1]["cause"]) == (0, 0, cause)
+
+
+async def test_drain_waits_for_a_writer_started_as_the_last_one_ended(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3988 R2C-05: a removal queued as the writer ends starts the next one; `drain` (at
+    `WsRuntime.stop`) waits for that one too, and the ended writer's callback leaves it alone."""
+    conn, registry, _ = _world()
+    writer, before, calls = _writer(conn, registry, _Audit()), _abandoned(), []
+
+    async def audit(batch: list[Any]) -> None:  # the first queues a removal to land just after
+        if not calls:  # this writer's last step, before its done callback
+            asyncio.get_running_loop().call_soon(writer, [(conn.authz, {})])
+        else:
+            await asyncio.sleep(0)  # a scheduling yield: the next writer is still writing
+        calls.append(batch)
+
+    monkeypatch.setattr(writer.registry, "audit_revoked_many", audit)
+    writer([(conn.authz, {})])
+    await writer.drain()
+    assert len(calls) == 2 and _abandoned() == before
+
+
+async def test_one_call_that_drops_several_removals_logs_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3988 R2C-09: a mass expiry drops what the queue cannot hold in one line per call."""
+    monkeypatch.setattr(ws_wiring, "MACHINE_AUDIT_PENDING_MAX", 6)
+    conn, registry, _ = _world()
+    writer, before = _writer(conn, registry, _Audit()), _abandoned()
+    monkeypatch.setattr(writer.registry, "audit_revoked_many", AsyncMock())
+    with capture_logs() as logs:
+        for frames in (3, 3, 6):  # the last brings 12 frames: both earlier removals go
+            writer([(conn.authz, {})] * frames)
+    await writer.drain()
+    assert _abandoned() - before == 6 and [(e["count"], e["cause"]) for e in logs] == [(6, "queue")]
 
 
 def _expired(registry: MachineStateRegistry, count: int) -> None:

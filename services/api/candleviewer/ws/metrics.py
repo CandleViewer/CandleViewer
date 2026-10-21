@@ -309,7 +309,8 @@ AUTH_FAILURE_REASONS: Final = frozenset(
 #: row is lost. `timeout`: its bound expired first; it may still land (the writer finishes an
 #: append it began). `cancelled`: a cancellation ended the wait, and the row is lost unless its
 #: append had begun. `abandoned`: never handed to the writer, after `FANOUT_AUDIT_MAX_FAILURES`
-#: failed rows in a row (`ws audit rows abandoned`), or a §6.4 removal's dropped by its queue.
+#: failed rows in a row (`ws audit rows abandoned`), or a §6.4 removal's dropped by its queue or
+#: left in it when its writer ended (`ws machine revocations not audited`).
 AuditFailureReason = Literal["error", "timeout", "cancelled", "abandoned"]  # the closed set
 AUDIT_FAILURE_REASONS: Final[tuple[str, ...]] = get_args(AuditFailureReason)
 cv_ws_audit_failures_total = Counter(

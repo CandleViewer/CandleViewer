@@ -393,10 +393,14 @@ class MachineRevocationAudit:
             return
         self._pending.append(revoked)
         self._waiting += len(revoked)
-        while self._waiting > MACHINE_AUDIT_PENDING_MAX and len(self._pending) > 1:
-            self._abandon(1, "queue")
+        over, drop = self._waiting - MACHINE_AUDIT_PENDING_MAX, 0
+        while over > 0 and drop < len(self._pending) - 1:  # the oldest first, never this removal
+            over, drop = over - len(self._pending[drop]), drop + 1
+        if drop:  # one line per call, however many removals it drops (C-2.18)
+            self._abandon(drop, "queue")
         if self._task is None or self._task.done():
             self._task = spawn(self._write(), name="ws-machine-revoked-audit")
+            self._task.add_done_callback(self._ended)
 
     def _abandon(self, batches: int, cause: str) -> None:
         """Drop the `batches` oldest removals: counted `abandoned`, logged with their users' ids."""
@@ -413,24 +417,27 @@ class MachineRevocationAudit:
         )
 
     async def _write(self) -> None:
-        try:
-            while self._pending:
-                batch = self._pending.popleft()
-                self._waiting -= len(batch)
-                try:
-                    await self.registry.audit_revoked_many(batch)
-                except Exception as exc:  # outside the row writes, which contain their own errors
-                    logger().error("ws machine revocation audit failed", error=type(exc).__name__)
-        except BaseException as exc:  # a cancel or any other end: what is still queued is lost
-            cause = "cancelled" if isinstance(exc, asyncio.CancelledError) else "writer_stopped"
-            if self._pending:
-                self._abandon(len(self._pending), cause)
-            raise
+        while self._pending:
+            batch = self._pending.popleft()
+            self._waiting -= len(batch)
+            try:
+                await self.registry.audit_revoked_many(batch)
+            except Exception as exc:  # outside the row writes, which contain their own errors
+                count_audit_failure(len(batch), "error")
+                logger().error("ws machine revocation audit failed", error=type(exc).__name__)
+
+    def _ended(self, task: asyncio.Task[None]) -> None:
+        """A done callback, so it runs even for a task cancelled before its first step (C-2.9)."""
+        error = None if task.cancelled() else task.exception()
+        if error is not None:
+            logger().error("ws machine revocation audit writer failed", error=type(error).__name__)
+        if task is self._task and self._pending:  # else a later writer owns the queue
+            self._abandon(len(self._pending), "cancelled" if task.cancelled() else "writer_stopped")
 
     async def drain(self) -> None:
-        """Wait for the rows queued so far (`WsRuntime.stop`, before the audit writer stops)."""
-        if self._task is not None:
-            await asyncio.wait({self._task})
+        """Wait until no writer runs (`WsRuntime.stop`): one started as the last ended too."""
+        while (task := self._task) is not None and not task.done():
+            await asyncio.wait({task})
 
 
 class WsRuntime:
