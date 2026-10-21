@@ -87,3 +87,22 @@ def test_questdb_healthcheck_uses_tool_present_in_image() -> None:
     assert "start_period" in health
     # api must still gate on questdb health (the CI work-around is gone).
     assert compose["services"]["api"]["depends_on"]["questdb"] == {"condition": "service_healthy"}
+
+
+def test_postgres_logs_an_error_without_its_row_values() -> None:
+    """#2748 (C-12.6, C-5.9): the server log keeps an error's message, not its DETAIL (`Failing
+    row contains (...)`, `Key (col)=(val)`) nor its bound parameters. The base file is the one the
+    dev stack and the VPS deploy both extend, and neither override sets the command."""
+    import yaml
+
+    compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
+    command = compose["services"]["postgres"]["command"]
+    assert command[0] == "postgres"
+    flags, values = command[1::2], command[2::2]
+    assert len(flags) == len(values) and set(flags) == {"-c"}
+    settings = dict(value.split("=", 1) for value in values)
+    assert settings["log_error_verbosity"] == "terse"
+    assert settings["log_parameter_max_length_on_error"] == "0"
+    for override in ("docker-compose.dev.yml", "docker-compose.vps.yml"):
+        layer = yaml.safe_load((COMPOSE_PATH.parent / override).read_text(encoding="utf-8"))
+        assert "command" not in (layer.get("services") or {}).get("postgres", {})

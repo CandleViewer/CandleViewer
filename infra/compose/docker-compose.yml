@@ -54,6 +54,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-cv}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in infra/compose/.env}
       POSTGRES_DB: ${POSTGRES_DB:-candleviewer}
+    # #2748 (C-12.6, C-5.9): the server log keeps an error's message but not its DETAIL, HINT,
+    # QUERY or CONTEXT (`Failing row contains (...)`, `Key (col)=(val)`: P1 values), nor its bound
+    # parameters. Clients still receive every field. docs/ops/runbooks/postgres-logging.md.
+    command:
+      ["postgres", "-c", "log_error_verbosity=terse", "-c", "log_parameter_max_length_on_error=0"]
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
