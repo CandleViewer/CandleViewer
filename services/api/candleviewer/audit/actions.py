@@ -50,6 +50,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.unlock_failed",
         "auth.session_extended",
         "auth.refresh_reuse_detected",
+        # #3009 (ADR-0037 decision 13, Q9): a rotated refresh token presented again after this
+        # process contained its family; the first containment keeps `auth.refresh_reuse_detected`.
+        "auth.refresh_reuse_replayed",
         "auth.csrf_refused",
         # E09-X02 AC2 (#2144, U6/SR-013): a session credential this server never issued, or
         # another user's, presented to the session routes or carried into the MFA step.
@@ -293,6 +296,9 @@ LANE_ACTIONS: Mapping[str, tuple[LaneClass, frozenset[str]]] = MappingProxyType(
         "auth.logout": ("reserved", _ANY),
         "auth.session_revoked": ("reserved", _ANY),
         "auth.refresh_reuse_detected": ("reserved", _ANY),
+        # Q9 (decision 13): only a family's first containment intent is `reserved`; a replay
+        # against a contained family is `shared`, so a flood of them never spends that share.
+        "auth.refresh_reuse_replayed": ("shared", frozenset({AuditOutcome.DENIED})),
         # #3120 (EX-08): the backstop revocation's outcome; #3355 adds it to AUDIT_ACTIONS.
         "auth.disabled_user_session_revoked": ("reserved", frozenset({AuditOutcome.SUCCESS})),
         "auth.session_refreshed": ("shared", frozenset({AuditOutcome.DENIED})),

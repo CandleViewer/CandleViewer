@@ -64,7 +64,8 @@ is the time-boxed exception EX-07 (§16.2).
 
 Journal-first audit lane (ADR-0037, #3009 S3): the rows its Q1 default admits go to
 `AuditService.lane`, the façade with `emit()`'s shape: those outcome records, the `auth.logout`
-intent, revoke-my-session's `auth.session_revoked` and the reuse intent. While the flag
+intent, revoke-my-session's `auth.session_revoked` and the reuse intent (a replay's is `shared`:
+`ContainedFamilies`, Q9). While the flag
 `audit.lane_journal_first` is on the lane takes them first and the writer is the fallback, so these
 answer 503, or count a record lost, only when both refuse; off, the façade hands each one to the
 writer, today's path, as does a service with no façade (`LaneNotWired`: before `start()`, or once
@@ -85,8 +86,11 @@ write-ahead record (#3331).
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections import OrderedDict
+from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Protocol
 
@@ -366,6 +370,13 @@ def _source_ip(request: Request) -> str | None:
 # retries and multiple tabs while bounding token-guessing and rotation storms.
 REFRESH_MAX_PER_WINDOW = 10
 REFRESH_WINDOW_S = 60.0
+#: Q9 (ADR-0037 decision 13): a replay, a rotated token of a family this process contained, writes
+#: `auth.refresh_reuse_replayed` (`shared`) ahead, not the `reserved` intent. `ContainedFamilies`
+#: holds at most CONTAINED_IDS_MAX session ids, each CONTAINED_TTL_S after its family's last
+#: containment; one replay refusal per family per REPLAY_LOG_WINDOW_S is logged.
+CONTAINED_IDS_MAX = 4096
+CONTAINED_TTL_S = 3600.0
+REPLAY_LOG_WINDOW_S = 60.0
 #: Presentations of a session credential this server never issued (U6/SR-013, E09-X02
 #: AC2) that are audited per source IP, and for all sources together, per window, with at
 #: most the shared `RefusalAuditTracker` cap in flight. Past any of them the 401 is
@@ -474,6 +485,74 @@ class AuditUnavailableError(RuntimeError):
     actions fail closed (C-2.9). The only error `_audit` raises for an audit failure."""
 
 
+@dataclass(slots=True)
+class _Family:
+    """One contained family, shared by its members' entries."""
+
+    expires_at: float
+    logged_at: float | None = None  # its last logged replay refusal
+
+
+class ContainedFamilies:
+    """Q9's memo, in process: no store query says a family was contained. Bounded (C-2.18): past
+    `max_ids` (CONTAINED_IDS_MAX) the oldest containment is forgotten first, and none outlives
+    `ttl_s` (CONTAINED_TTL_S). A family forgotten, by either or by a restart, takes the `reserved`
+    intent once more and is held again: the safe direction, as often as the refresh throttles
+    allow."""
+
+    def __init__(
+        self,
+        *,
+        max_ids: int = CONTAINED_IDS_MAX,
+        ttl_s: float = CONTAINED_TTL_S,
+        log_window_s: float = REPLAY_LOG_WINDOW_S,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._max_ids, self._ttl_s, self._window_s = max_ids, ttl_s, log_window_s
+        self._clock = clock
+        self._ids: OrderedDict[str, _Family] = OrderedDict()  # session id -> family, oldest first
+
+    def __len__(self) -> int:
+        return len(self._ids)
+
+    def _held(self, session_id: str, now: float) -> _Family | None:
+        while self._ids and next(iter(self._ids.values())).expires_at <= now:
+            self._ids.popitem(last=False)
+        family = self._ids.get(session_id)
+        return family if family is not None and family.expires_at > now else None
+
+    def contains(self, session_id: str) -> bool:
+        return self._held(session_id, self._clock()) is not None
+
+    def remember(self, session_ids: Iterable[str]) -> None:
+        """A reuse contained the family of *session_ids*: each is held `ttl_s` from now. A family
+        held already keeps its log window."""
+        now, ids = self._clock(), list(dict.fromkeys(session_ids))
+        expires_at = now + self._ttl_s
+        family = next(filter(None, (self._held(i, now) for i in ids)), None)
+        if family is None:
+            family = _Family(expires_at)
+        else:
+            family.expires_at = expires_at  # renewed: the TTL runs from the last containment
+        for session_id in ids:
+            self._ids.pop(session_id, None)
+            self._ids[session_id] = family
+        while len(self._ids) > self._max_ids:
+            self._ids.popitem(last=False)
+
+    def take_log_slot(self, session_id: str) -> bool:
+        """Test-and-set: True, and the slot is taken, for the first replay refusal of *session_id*'s
+        family in `log_window_s`: the one logged."""
+        now = self._clock()
+        family = self._held(session_id, now)
+        if family is None or (
+            family.logged_at is not None and now - family.logged_at < self._window_s
+        ):
+            return False
+        family.logged_at = now
+        return True
+
+
 def make_session_router(
     auth_service: AuthServiceLike,
     audit_service: AuditServiceLike | None = None,
@@ -492,13 +571,15 @@ def make_session_router(
     unlock_authority: Callable[[], UnlockAuthority | None] | None = None,
     unlock_throttle: PerIpLoginThrottle | None = None,
     enrolment_refusals: EnrolmentRefusals,
+    contained: ContainedFamilies | None = None,
 ) -> APIRouter:
     """*audit_tracker*: pass the app's CSRF refusal tracker so both guards share one
     in-flight cap and one shutdown drain. *unlock_authority* is a thunk (step-up exists
     only after `AuthService.start()`); without one `POST /auth/unlock` answers 503.
     *enrolment_refusals*: the enrolment guard's recorder, so unlock's refusals share its
-    budgets (#2295)."""
+    budgets (#2295). *contained*: Q9's memo, one per router (a test passes a small one)."""
     router = APIRouter(tags=["auth"])
+    families = contained if contained is not None else ContainedFamilies()
 
     def now() -> datetime:
         """Lock state and `server_time` come from the session service's own clock."""
@@ -1023,6 +1104,7 @@ def make_session_router(
             return _throttled(by_session.retry_after_s(session_key))
         by_session.record_failure(session_key)
         reuse = presented_record.revoked_reason == "rotated"
+        replay = reuse and families.contains(session_key)  # Q9 (decision 13)
         if not reuse:
             # SR-041: validate against the exact session this refresh would rotate,
             # after the throttles and before any audit write or state change. A
@@ -1045,7 +1127,17 @@ def make_session_router(
         # rotates or revokes anything; if the sink is down we refuse (503)
         # with no state change.
         try:
-            if reuse:  # containment: the lane's row (ADR-0037 Q1); a refresh stays fail closed
+            if replay:  # Q9: `shared`, so no flood of replays spends the `reserved` share
+                await _audit(
+                    "auth.refresh_reuse_replayed",
+                    record=presented_record,
+                    ip=ip,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason="rotation_reuse",
+                    lane=True,
+                )
+            elif reuse:  # containment: the lane's row (ADR-0037 Q1); a refresh stays fail closed
                 await _audit(
                     "auth.refresh_reuse_detected",
                     record=presented_record,
@@ -1063,7 +1155,13 @@ def make_session_router(
             outcome = await auth_service.sessions.refresh(
                 presented, ip=ip, user_agent=request.headers.get("user-agent")
             )
-        except RefreshReuseDetected:
+        except RefreshReuseDetected as exc:
+            # Q9: hold the family the service revoked, the presented session too (a lost claim race
+            # revokes none: its error has no ids); log a replay once a window
+            if exc.revoked_session_ids:
+                families.remember((*exc.revoked_session_ids, session_key))
+            if replay and families.take_log_slot(session_key):
+                _log().warning("auth.refresh_reuse.replay_refused", session_id=session_key)
             if not reuse:
                 # Concurrent-refresh race detected inside the service: the intent record above is
                 # followed by the critical outcome. Not write-ahead: the service has already

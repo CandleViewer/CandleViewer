@@ -163,7 +163,9 @@ class RefreshReuseDetected(AuthError):
     family has been revoked with `revoked_reason='rotation_reuse'`, and every
     id in `revoked_session_ids` published to the revocation sink (WS close
     4401, US-ONB-009, #2272), by the time this is raised; callers must emit
-    `auth.refresh_reuse_detected` at severity `critical`."""
+    `auth.refresh_reuse_detected` at severity `critical`, or
+    `auth.refresh_reuse_replayed` at `warning` for a replay of a family they
+    already contained (ADR-0037 decision 13)."""
 
     def __init__(self, message: str, *, revoked_session_ids: tuple[str, ...] = ()) -> None:
         super().__init__(message)

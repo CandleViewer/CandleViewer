@@ -3090,7 +3090,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "reuses",
         (),
         "Rotated refresh tokens presented again (family revoked, audited as "
-        "auth.refresh_reuse_detected).",
+        "auth.refresh_reuse_detected, or as auth.refresh_reuse_replayed for a family already "
+        "contained).",
         "none yet (credential theft signal; #2746)",
         _L,
         "E09",
