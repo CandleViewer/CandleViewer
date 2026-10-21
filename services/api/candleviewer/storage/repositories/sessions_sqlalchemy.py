@@ -15,7 +15,10 @@ not `disabled`, read under the user-row lock in the insert's transaction, and th
 reads by id and by refresh hash carry the user's status (#2911). Every record read
 carries the row's view-as context (#3085, `0042_sessions_view_as`). The insert writes
 the context a record carries (a refresh carries it to the successor row), and the
-`ViewAsSessionStore` writes (`auth/view_as.py`) are one conditional statement each.
+`ViewAsSessionStore` writes (`auth/view_as.py`) are one conditional statement each. The
+insert also writes the step-up strikes and read-only window a refresh carries from the
+claim's row (#4051): a new row, from a revoked source row whose step-up columns no writer
+can change (`_STEP_UP_SQL` needs `revoked_at IS NULL`).
 """
 
 from __future__ import annotations
@@ -63,13 +66,15 @@ _INSERT_SQL = sa.text("""
         last_seen_at, expires_at, revoked_at, revoked_reason, ip, user_agent, device_label,
         is_electron, mfa_satisfied_at, idle_timeout_s, view_as_context_id,
         view_as_target_user_id, view_as_started_at, view_as_expires_at, view_as_ended_at,
-        view_as_end_recorded_at, view_as_cleared_at, view_as_end_reason)
+        view_as_end_recorded_at, view_as_cleared_at, view_as_end_reason, step_up_failures,
+        readonly_until)
     VALUES (CAST(:id AS uuid), CAST(:user_id AS uuid), :refresh_token_hash,
         CAST(:access_token_jti AS uuid), :issued_at, :last_seen_at, :expires_at, NULL, NULL,
         CAST(:ip AS inet), :user_agent, :device_label, :is_electron, :mfa_satisfied_at,
         :idle_timeout_s, CAST(:view_as_context_id AS uuid),
         CAST(:view_as_target_user_id AS uuid), :view_as_started_at, :view_as_expires_at,
-        :view_as_ended_at, :view_as_end_recorded_at, :view_as_cleared_at, :view_as_end_reason)
+        :view_as_ended_at, :view_as_end_recorded_at, :view_as_cleared_at, :view_as_end_reason,
+        :step_up_failures, :readonly_until)
     """)
 
 
@@ -358,6 +363,10 @@ class SqlAlchemySessionRepository:
                     "is_electron": session.is_electron,
                     "mfa_satisfied_at": session.mfa_satisfied_at,
                     "idle_timeout_s": session.idle_timeout_s,
+                    # #4051: a refresh carries the step-up penalty (SR-025), so the insert binds
+                    # the record's, never the columns' defaults.
+                    "step_up_failures": session.step_up_failures,
+                    "readonly_until": session.readonly_until,
                     **_view_as_params(session.view_as),
                 },
             )

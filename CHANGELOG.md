@@ -5132,3 +5132,4 @@ tracker).
 - **auth-rbac**: a refresh token replayed against a session family that was already contained is audited as `auth.refresh_reuse_replayed`, so a flood of replays cannot use up the audit lane's share kept for first containments, sign-out and revoke-my-session; each family's first containment is still recorded as critical (#3009) (#4019)
 - **auth-rbac**: the journal-first audit lane is always on: auth containment and sign-out rows are journaled before the answer, and the `audit.lane_journal_first` flag is removed (#3009) (#4037)
 - **auth-rbac**: the audit record of a session revoked because its user is disabled, when it cannot be written, is counted on `auth_audit_outcome_lost_total` and so raises `AuthAuditOutcomeLost` (#3009) (#4037)
+- **auth-rbac**: a token refresh keeps a session's step-up penalty, so the read-only period after failed step-up codes can no longer be lifted by refreshing (#4051) (#4060)
