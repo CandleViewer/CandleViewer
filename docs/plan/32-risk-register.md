@@ -755,7 +755,7 @@ the 30-minute canary meanwhile.
 `Risk: R5` · Category **Security** · L 2 · I 5 · **Score 10 — High** · Owner **Security engineer** · Epics E27 · Status **Open**
 
 - **Description** — Introduced by E27-X01 (KV-E05, KV-S08, model §5). The `createApiKey` contract checks only `Withdraw` and its example stores `Wallet: [AccountTransfer]`; its IP check accepts any whitelist that merely contains the egress IP; and the C-2.8 substring rule (`withdraw`, `transfer`) passes fund-moving groups the exchange reports under other names, such as `FiatP2P` and `FiatBitPay`. Contract-first work implements the text it is given.
-- **Mitigation** — A contract-first fix before E27-T03 and E27-S02 mount (SR-E27-03, SR-E27-04); an allow-list gate (#2270) proven on a recorded, redacted key-info capture (#2240); a re-check at the borrow (#2267 item 8); hourly re-verification per C-12.2.
+- **Mitigation** — A contract-first fix before E27-T03 and E27-S02 mount (SR-E27-03, SR-E27-04); an allow-list gate (#2270) proven on a recorded, redacted key-info capture (#2701); a re-check at the borrow (#2267 item 8); hourly re-verification per C-12.2.
 - **Trigger** — An E27-T03 or E27-S02 PR merging with the contract text unchanged; any stored `permission_snapshot` with a non-empty group outside the allow-list, or a whitelist entry other than the egress IP.
 - **Contingency** — Put the whole system read-only with a P1 (C-12.2, C-2.8; cancel, flatten and SL repair stay allowed), then force-disable the account, revoke the key and re-verify every stored key against the allow-list; trading resumes only after a passing check and an Owner review.
 

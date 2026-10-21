@@ -3,7 +3,7 @@
 The substring deny-list misses inner spacing or punctuation, invisible separators, lookalike
 letters and fund rights named without `withdraw` or `transfer` (#2262 review). The gate accepts
 only the allow-listed rights, spelled exactly, with every other group empty or absent, and keeps
-the deny-list as its second line. No recorded, redacted key-info capture exists yet (#2240), so
+the deny-list as its second line. No recorded, redacted key-info capture exists yet (#2701), so
 the cases are structural: names come from SR-030a, the E27 threat model (section 5 item 2) and
 the synthetic accounts fixture.
 """

@@ -1,7 +1,7 @@
 """E27-T03 (#836 slice 2b5): the one-shot private-WS `auth` probe and its adapter seam.
 
 Replies: the documented-shape `tests/fixtures/key_verification/ws_auth_*.json` (README there; no
-recorded capture exists, #2240). `Stream` stands in for the private stream and records every dial
+recorded capture exists, #2701). `Stream` stands in for the private stream and records every dial
 and frame. Clocks are fakes; a hang ends at a bound cut to zero, never a sleep. No network.
 """
 
