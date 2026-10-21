@@ -15,6 +15,10 @@ from typing import Any
 
 import pytest
 from audit_waits import virtual
+from structlog.testing import capture_logs
+from wal_double import record_wal_io
+
+from candleviewer.audit import machine_events
 from candleviewer.audit.machine_events import (
     MAX_FRAME_BYTES,
     RETRY_INITIAL_S,
@@ -24,10 +28,6 @@ from candleviewer.audit.machine_events import (
     MachineEventWalSink,
     SinkMetrics,
 )
-from structlog.testing import capture_logs
-from wal_double import record_wal_io
-
-from candleviewer.audit import machine_events
 from candleviewer.audit.wal import AuditWal, encode_frame
 from candleviewer.statechart.plugins.audit import GENESIS_HASH, MachineEventRow, row_digest
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable

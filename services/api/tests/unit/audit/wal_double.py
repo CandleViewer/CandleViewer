@@ -71,5 +71,5 @@ def record_wal_io(monkeypatch: pytest.MonkeyPatch) -> Recorded:
         real_fsync(fd)
 
     monkeypatch.setattr(wal_module, "open", recording_open, raising=False)
-    monkeypatch.setattr(wal_module.os, "fsync", recording_fsync)
+    monkeypatch.setattr(os, "fsync", recording_fsync)  # `wal.py` calls `os.fsync`
     return recorded

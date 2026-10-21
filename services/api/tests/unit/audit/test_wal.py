@@ -281,9 +281,7 @@ def test_read_window_raises_when_the_file_is_shorter_than_its_acknowledged_end(
     wal.append({"a": 2})
     with open(path, "r+b") as fh:
         fh.truncate(first + 4)  # acknowledged bytes lost under the WAL
-    assert wal.read_window(1, 1 << 16) == [(first, {"a": 1})]
-    wal.mark_committed(first)
-    with pytest.raises(AuditWalCorrupt) as exc:
+    with pytest.raises(AuditWalCorrupt) as exc:  # as `replay()`: before anything is returned
         wal.read_window(1, 1 << 16)
     assert exc.value.offset == first
 
