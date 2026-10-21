@@ -3227,6 +3227,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_view_as_pending_end_rows",
+        "gauge",
+        "rows",
+        (),
+        "Session rows whose view-as end is not yet recorded, as the sweeper last read them.",
+        "none yet (#2746); above 0 for minutes, the sweeper's late writes fail",
+        _L,
+        "E42",
+        exported=True,
+    ),
+    _s(
         "auth_audit_outcome_lost_total",
         "counter",
         "records",

@@ -398,6 +398,17 @@ class Settings(BaseSettings):
     # value to `auth_csrf_previous_key_hex` (verify-only) for one refresh lifetime.
     auth_csrf_key_hex: SecretStr | None = None
     auth_csrf_previous_key_hex: SecretStr | None = None
+    # #3085: how often the view-as sweeper ends what no request ends (an expiry, a session's end,
+    # an eligibility lost with no request coming) and writes a pending end's record late. HTTP
+    # and the sockets act at once; the tick bounds only those ends and records.
+    view_as_sweep_interval_s: float = Field(default=5.0, ge=1.0, le=60.0)
+    # #3085: how long after its rotation a row whose context no other row carries waits to end it
+    # `session_ended`. It must outlast the gap between a refresh's claim and its successor's
+    # insert, which `SessionService.refresh` bounds from the claim's `revoked_at` stamp: the
+    # claim's own waits (120 s) and the insert's (a pool checkout 30 s, a new asyncpg connection
+    # 60 s, two statements of 30 s), 270 s in all. The floor keeps a margin of more than the
+    # bound again: a shorter grace could end a context a slow successor's insert then carries.
+    view_as_rotated_grace_s: float = Field(default=600.0, ge=600.0, le=3600.0)
     # #2086: server test clock for the seeded e2e stack (`candleviewer.auth.testnet_clock`).
     # Auth time = UTC + the offset in `CV_TEST_CLOCK_FILE`. Both are set together, and only on
     # testnet with no exchange key; anything else refuses startup (E16-FR-11). #2728: the file

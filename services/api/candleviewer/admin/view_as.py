@@ -1,9 +1,10 @@
 """`ViewAsService`: a view-as context's evaluation, its one end, the viewer's leave and its clear
-(#3085 S4).
+(#3085).
 
 `22-api-openapi.yaml` "View-as session" and `endViewAs`; the state, its phase and the store
-contract are `auth/view_as.py`'s. Nothing calls it yet (Q13): S5 wires the sweeper and the
-lifecycle, S7 and S12 the HTTP side, S10 the sockets.
+contract are `auth/view_as.py`'s. The sweeper (`admin/view_as_sweeper.py`) runs it from the
+lifespan; nothing starts a context until the HTTP routes land (Q13), and the socket closer is a
+no-op until the WebSocket side is wired.
 
 A context ends exactly once: of concurrent ends only the call whose conditional write
 (`end_view_as`, or `leave_view_as`, which also clears it) ended it closes the session's sockets
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Collection, Coroutine, Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
@@ -78,7 +79,7 @@ class EndRecordRunner(Protocol):  # `api.csrf.RefusalAuditTracker`, which admin 
     ) -> object: ...  # `on_lost`: its shutdown drain left the write running
 
 
-class ViewAsEligibility(Protocol):  # S5. A read it cannot make raises: 503, never a scope
+class ViewAsEligibility(Protocol):  # a read it cannot make raises: 503, never a scope
     async def ineligible(self, viewer: SessionRecord, target_user_id: UUID) -> Ineligible | None:
         """`viewer_ineligible` once the viewer's session lacks `users:write`; `target_ineligible`
         once the target is gone, disabled or an Owner (`PrincipalSnapshot.is_owner`; a role it
@@ -86,11 +87,11 @@ class ViewAsEligibility(Protocol):  # S5. A read it cannot make raises: 503, nev
         ...
 
 
-class ViewAsSocketCloser(Protocol):  # S10: every socket of the session's rotation family
+class ViewAsSocketCloser(Protocol):  # every socket of the session's rotation family
     async def close_family(self, session_id: str, *, reason: CloseReason) -> None: ...
 
 
-class ViewAsLabels(Protocol):  # S5: usernames in one read; a user whose row is gone is absent
+class ViewAsLabels(Protocol):  # a user whose row is gone is absent
     async def usernames(self, user_ids: Collection[UUID]) -> Mapping[UUID, str]: ...
 
 
@@ -100,7 +101,7 @@ def _log() -> Any:
 
 
 def _pending(context_id: UUID, error: str, *, late: bool = False) -> None:
-    """The end's record is not written: the end stays pending on the row, for the sweeper (S5)."""
+    """The end's record is not written: the end stays pending on the row, for the sweeper."""
     _log().warning(
         "admin.view_as_ended.record_pending", context_id=str(context_id), late=late, error=error
     )
@@ -133,8 +134,11 @@ class ViewAsService:
         target stay eligible. One that is not ends here with that reason and answers held. A
         failed read raises. A revoked row is never ended here: a revoked session grants nothing,
         and a rotated row keeps a copy of the context its successor carries, so an end here would
-        spend the context's one record while the successor is live. The sweeper (S5) ends a
-        revoked session's context, through `end`."""
+        spend the context's one record while the successor is live. The sweeper ends a
+        revoked session's context, through `end`. A caller holding a binding that now reads
+        `None` (a revoked row: a rotated predecessor, say) never widens its scope on it: it keeps
+        the binding until re-auth, or closes `view_as_changed`; `None` never means the viewer's
+        scope."""
         state = None if record.is_revoked else record.view_as
         binding = None if state is None else state.binding(now=now)
         if state is None or binding is None or binding.phase is ViewAsPhase.HELD:
@@ -151,7 +155,7 @@ class ViewAsService:
         whatever `reason` asked. True iff this call's conditional write applied: only then are the
         session's sockets closed and `admin.view_as_ended` written, never waited on. False with no
         context or one already ended: no close, no record. A store failure raises, with no end.
-        A revoked row's context ends too: the sweeper (S5) ends an orphaned or revoked session's
+        A revoked row's context ends too: the sweeper ends an orphaned or revoked session's
         from the store's due list, which already leaves out a copy another row carries."""
         state = record.view_as
         if state is None or state.ended_at is not None:
@@ -232,6 +236,13 @@ class ViewAsService:
             _pending(state.context_id, type(exc).__name__, late=late)
             return False
         return True
+
+    @property
+    @audit_exempt("read")
+    def end_record_bound(self) -> timedelta:
+        """How long after an end's write its own record may still land: the bounded socket close,
+        then the bounded record. A late write before then could race it (`recorded_late`)."""
+        return timedelta(seconds=self._close_timeout_s + self._record_timeout_s)
 
     @audit_exempt("contract_unrecorded")
     async def clear(self, record: SessionRecord, *, now: datetime) -> SessionRecord | None:

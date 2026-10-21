@@ -400,6 +400,7 @@ from candleviewer.storage.retention.workspaces_tasks import (
 )
 from candleviewer.storage.service import StorageService
 from candleviewer.user_cascade_wiring import build_user_disable_service, build_users_purge_task
+from candleviewer.view_as_wiring import build_view_as
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
@@ -502,6 +503,9 @@ class _LazyAuditEmitter:
 
     async def emit(self, action: str, **kwargs: Any) -> None:
         await self._audit.writer.emit(action, **kwargs)
+
+    async def emit_keyed(self, action: str, name: str, **kwargs: Any) -> None:
+        await self._audit.writer.emit_keyed(action, name, **kwargs)  # #3085: one per context
 
 
 class _LazyLaneEmitter:
@@ -1724,6 +1728,17 @@ def create_app(
         sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
         spec=spec,
     )
+    # #3085: the view-as service and its sweeper, which the lifespan runs (`None` on the fake
+    # backend, which has no session store).
+    view_as = build_view_as(
+        resolved,
+        auth=ctx.auth,
+        identity=identity,
+        audit=_LazyAuditEmitter(ctx.audit),
+        runner=csrf_audits,  # one in-flight cap and shutdown drain for the end records
+        clock=auth_clock,
+    )
+    app.state.view_as, app.state.view_as_sweeper = view_as or (None, None)
     # Audit emitter + notifier are mandatory; store/resolver `None` -> 501.
     app.include_router(
         make_users_router(

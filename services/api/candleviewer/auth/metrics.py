@@ -265,6 +265,12 @@ auth_break_glass_state_read_failures_total = Counter(
     "auth_break_glass_state_read_failures_total",
     "Failed reads of the break-glass state from Postgres (the gauges keep their last value).",
 )
+# #3085: `sessions` rows with a view-as end whose `admin.view_as_ended` is unwritten, as the
+# sweeper's last good due read saw them (at most its bound). Above 0 for minutes: late writes fail.
+auth_view_as_pending_end_rows = Gauge(
+    "auth_view_as_pending_end_rows",
+    "Session rows whose view-as end is not yet recorded, as the sweeper last read them.",
+)
 
 _KNOWN_REASONS = frozenset(
     {
@@ -377,6 +383,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_break_glass_unresolved_events",
         "auth_break_glass_attempts",
         "auth_break_glass_state_read_failures_total",
+        "auth_view_as_pending_end_rows",  # #3085
         # SR-029 revoke-to-close latency, observed by the WS hub and the per-user close (#3415)
         "auth_revocation_latency_seconds",
         # SR-029 failed closes of those two paths, declared in `ws/revocation.py` (`ws` may import
