@@ -5,6 +5,7 @@ injected into the real lane engine and must flip the verdict."""
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import itertools
 from pathlib import Path
@@ -264,6 +265,38 @@ async def test_run_soak_reports_a_forced_full_collection_first_and_leaves_no_gc_
     assert v.metrics["gc_full_pause_ms (natural)"]["count"] == 0  # the forced one is apart
     assert v.metrics["gc_blocks_in_use"]["max"] > 10_000
     assert gc.callbacks == before  # the run's timer left with it
+
+
+class _Dies(ScriptedSampler):
+    """A sampler that fails at its third reading, inside the sampled window."""
+
+    def __init__(self, exc: BaseException) -> None:
+        super().__init__()
+        self.exc = exc
+
+    def sample(self) -> tuple[int, float]:
+        if self.n >= 2:
+            raise self.exc
+        return super().sample()
+
+
+@pytest.mark.parametrize(
+    "exc", [RuntimeError("sampler died"), asyncio.CancelledError()], ids=["raises", "cancelled"]
+)
+async def test_run_lanes_takes_its_gc_timer_out_when_the_run_dies(exc: BaseException) -> None:
+    before = gc.callbacks[:]
+    with pytest.raises(type(exc)):
+        await run_lanes(_cfg(), _Dies(exc))
+    assert gc.callbacks == before
+
+
+def test_bench_gc_timer_keeps_full_collections_only() -> None:
+    natural: list[float] = []
+    timer = engine._gc_timer(natural)
+    for generation in (0, 1, 2):
+        timer("start", {"generation": generation})
+        timer("stop", {"generation": generation, "collected": 0, "uncollectable": 0})
+    assert len(natural) == 1 and natural[0] >= 0  # the young ones are not "full pause" rows
 
 
 def test_soak_smoke_declares_a_warmup_and_the_full_profile_keeps_its_hour_2_base() -> None:

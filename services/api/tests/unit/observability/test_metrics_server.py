@@ -16,7 +16,7 @@ from prometheus_client.parser import text_string_to_metric_families
 from structlog.testing import capture_logs
 
 from candleviewer.observability import metrics_server
-from candleviewer.observability.metrics import Metrics, generate_latest
+from candleviewer.observability.metrics import Metrics, generate_latest, single_process_values
 from candleviewer.observability.metrics_catalogue import register_r0, registered_specs
 from candleviewer.observability.metrics_server import (
     MetricsBindError,
@@ -159,6 +159,24 @@ async def test_start_joins_the_gc_pause_timer_and_stop_takes_it_out(
     finally:
         await runtime.stop()
     assert runtime.gc_timer not in gc.callbacks
+
+
+async def test_start_leaves_the_gc_pause_timer_out_under_multiprocess_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(monkeypatch, "none")
+    monkeypatch.setattr(metrics_server, "single_process_values", lambda: False)
+    with capture_logs() as logs:
+        runtime.start()
+    try:
+        assert runtime.gc_timer not in gc.callbacks
+        assert [e["event"] for e in logs if e["log_level"] == "warning"] == ["gc_pause_timer_off"]
+    finally:
+        await runtime.stop()
+
+
+def test_metric_values_take_the_in_process_lock_by_default() -> None:
+    assert single_process_values()  # the GC pause timer's precondition (#3641)
 
 
 async def test_stop_does_not_swallow_a_cancellation_of_its_caller(

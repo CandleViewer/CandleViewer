@@ -23,6 +23,7 @@ from candleviewer.observability.metrics import (
     CollectorRegistry,
     Metrics,
     generate_latest,
+    single_process_values,
 )
 from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.observability.metrics_runtime import (
@@ -107,7 +108,11 @@ class MetricsRuntime:
         ]
         for task in self._tasks:
             task.add_done_callback(_task_ended)
-        self.gc_timer.install()
+        if single_process_values():
+            self.gc_timer.install()
+        else:  # its metric updates could deadlock the collecting thread there
+            log = structlog.get_logger(__name__)
+            log.warning("gc_pause_timer_off", reason="multiprocess_values")
 
     async def stop(self) -> None:
         """Leave `gc.callbacks` first, before any await, so a cancelled `stop()` still removes the

@@ -109,6 +109,18 @@ def test_record_writes_the_74_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert {"p50", "p95", "max"} <= set(data["metrics"][M])
 
 
+def test_record_keeps_the_gc_readings_out_of_a_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CI", raising=False)
+    v = _verdict(3.0)
+    v.metrics["gc_full_pause_ms (forced, worst case)"] = {
+        "p50": 60.0, "p95": 60.0, "max": 60.0, "count": 1.0
+    }  # fmt: skip
+    data = json.loads(gate.record(v, "lap", "s", "smoke", tmp_path).read_text(encoding="utf-8"))
+    assert M in data["metrics"] and not any(k.startswith("gc_") for k in data["metrics"])
+
+
 def test_committed_baselines_are_laptop_warn_only_and_cover_every_scenario() -> None:
     expected = {"soak_bars": "laptop-i7-13850HX"}  # recorded on the second laptop (#399)
     for name in SCENARIOS:

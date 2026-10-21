@@ -31,7 +31,7 @@ rules:
       #   max_series=13.
       # filter_class (E42-T02): the audit query's 10 shape classes; max_series=10.
       # generation (#3641, cv_gc_pause_seconds): CPython's three collector generations {0, 1, 2};
-      #   max_series=3.
+      #   max_series=3. GC generations only: the bars/CVWB `generation` is unbounded.
       # operation (E15-T01): the 11 /workspaces router operations; max_series=11.
       # outcome (E42-T04, #965, cv_user_lifecycle_steps_total): {ok, failed} for each cascade
       #   step, the closing record and the role push (E42-T09), `skipped` too for b16_revoke and

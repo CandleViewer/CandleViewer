@@ -97,7 +97,9 @@ class GcPauseTimer:
     read, where counting `gc.get_objects()` costs about 19 ms and is a block itself. It reads 0
     until the first full collection. The callback runs inside the collector on whichever thread
     allocates, so it only reads a clock and updates children bound here; a `stop` without its
-    `start` (an `install` from another thread mid-collection) is skipped."""
+    `start` (an `install` from another thread mid-collection) is skipped. That is safe only with
+    prometheus_client's in-process value lock (`single_process_values`, which `MetricsRuntime`
+    checks), and an `on_pause` hook runs in the collector too, so it must be as cheap."""
 
     def __init__(
         self,
@@ -133,6 +135,8 @@ class GcPauseTimer:
             gc.callbacks.append(self)
 
     def remove(self) -> None:
-        """Leave `gc.callbacks`; any other callback stays."""
+        """Leave `gc.callbacks`, forgetting a start whose stop it will not see; any other
+        callback stays."""
+        self._started = None
         if self in gc.callbacks:
             gc.callbacks.remove(self)

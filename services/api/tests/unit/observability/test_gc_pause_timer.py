@@ -5,9 +5,12 @@ collection on any thread stalls the event loop)."""
 from __future__ import annotations
 
 import gc
+import sys
+import time
 from collections.abc import Iterator
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE, register_r0
@@ -144,3 +147,33 @@ def test_gc_pause_histogram_is_bounded_and_brackets_the_loop_budget() -> None:
     spec = next(s for s in CATALOGUE if s.name == "cv_gc_pause_seconds")
     assert (spec.labels, spec.max_series) == (("generation",), 3)
     assert spec.buckets is not None and {0.05, 0.1} <= set(spec.buckets)
+
+
+def test_gc_pause_timer_defaults_are_the_cheap_reads() -> None:
+    defaults = GcPauseTimer.__init__.__kwdefaults__
+    assert defaults is not None
+    assert defaults["clock"] is time.perf_counter
+    assert defaults["blocks"] is sys.getallocatedblocks  # not `len(gc.get_objects())`: 19 ms
+
+
+def test_gc_pause_timer_binds_exactly_three_series(metrics: Metrics) -> None:
+    _real(metrics)
+    pauses = register_r0(metrics)["cv_gc_pause_seconds"]
+    assert pauses.series_count == 3 and not pauses.breached
+
+
+def test_gc_pause_timer_logs_nothing_from_inside_the_collector(metrics: Metrics) -> None:
+    timer = _real(metrics)
+    timer.install()
+    with capture_logs() as logs:
+        gc.collect(2)
+    timer.remove()
+    assert logs == []
+
+
+def test_gc_pause_timer_remove_forgets_a_pending_start(metrics: Metrics) -> None:
+    timer = _timer(metrics, iter([1.0, 9.0]), iter([4096]))
+    timer("start", {"generation": 2})
+    timer.remove()  # between the two phases of a collection
+    timer("stop", _stop(2))  # an install that lands mid-collection must not pair with it
+    assert _full_collections(metrics) == 0
