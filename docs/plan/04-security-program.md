@@ -654,6 +654,43 @@ approved.
 | RK13 | Tampering              | A database writer or a restore reopens trading (RK-T05, RK-E06)                                                                                                                                                          | L   | H   | Medium       | SR-E39-10, SR-E42-04, SR-E42-06                                                                       | Low (RK-T05 an accepted residual, as PF-T08) |
 | RK14 | Elevation of privilege | A lockout ends early, a forged event or a rule lifts a block, or a release crosses environments (RK-T07, RK-E05, RK-E07, RK-E08)                                                                                         | L   | H   | Medium       | SR-E39-09, SR-E39-18, SR-E39-19; D-3                                                                  | Low                                          |
 
+### 5.17 Area 16 — Emulated-algo supervisor (E33, A-05, A-06, A-11, A-17, A-18, TB-4, TB-7)
+
+**E33 emulated algos** (`docs/security/threat-models/E33-emulated-algos.md`, ticket E33-X01, Draft) models the
+emulated-algo supervisor before any E33 code exists: long-lived runs that place, amend and cancel orders on their
+creator's authority for up to 24 h, at the highest request rate in the product. 29 rows (AS-S01..AS-E05), 6 inherent
+Critical and 16 High, on E29's scale (H\* raises an outcome that leaves a position without a working stop or is an
+order the order path never authorised). Main findings: nothing re-resolves a run's authority after its start, so a
+revoked or disabled creator's TWAP keeps trading; a halt reaches no run (the guards cover child submission only, the
+charts' `KILL` leaves children working, the maintenance canceller is unwired); the protective reserve is not built and
+E33-T01 does not wait for it (nor for E39-S01 and E39-S03), so every `algo.*` flag stays off until E34-T02, E39-S01 and
+E39-S03 merge and a live start refuses synchronously with no risk policy or lockout service (CX-20, SR-E33-21);
+adoption takes a caller-chosen run and any order; the wire `AlgoSpec` is weaker than 24 §10, and a chase bound
+converts to market. Requirements SR-E33-01..21 (model §9), each naming its E33-T01 or E33-T02 test; contradictions
+CX-01..CX-21 (model §6); Owner decisions D6..D8 (model §4.3), queued on #2701 by the orchestrator (2026-10-21);
+abuse cases AC-01..AC-19 for E33-X02, whose nine cases are AC-01..AC-09. The model owns E29's OM-R04 and OM-E04. The
+backend-outage residual (AS-D05, Medium) awaits the Owner's acceptance, queued on #2701 by the orchestrator
+(2026-10-21). The rows below roll up every Critical and High row; the seven Medium rows are in the model only. They
+enter the §5.11 counts when the model is approved.
+
+| T    | STRIDE                 | Threat                                                                                                                                   | L   | I   | Risk         | Mitigations                                                                                  | Residual                                                                  |
+| ---- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --- | --- | ------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| AL1  | Spoofing               | A run keeps trading after its creator's grant, role or account access is withdrawn, or the creator is frozen or locked out (AS-S03)      | M   | H\* | **Critical** | SR-E33-02 (per-child re-check, halt on revocation); SR-103 is the rule engine's twin         | Low (after E33-T01, E33-T02)                                              |
+| AL2  | Elevation of privilege | A child, a reprice or a resumed run escapes the kill switch, a lockout, a freeze or maintenance; a halt leaves children working (AS-E03) | H   | H\* | **Critical** | SR-E33-06, SR-E33-19, SR-E33-21, SR-E39-01, SR-E28-27                                        | Low (after E33-T01, E39-S01, E39-S03)                                     |
+| AL3  | Denial of service      | Reprice and refill storms starve stop attach, repair and flatten; algo children draw the reserve (AS-D01)                                | M   | H\* | **Critical** | SR-071, SR-E33-08, SR-E29-14; E34-T02 before any `algo.*` flag                               | Low (after E34-T02)                                                       |
+| AL4  | Elevation of privilege | A Viewer or an out-of-scope Manager starts, resumes or controls a run, or acts on another user's run (AS-S01, AS-E01)                    | M   | H\* | **Critical** | SR-050, SR-E33-01, SR-E33-13; 04 §7.2.2 rows 13 and 16                                       | Low                                                                       |
+| AL5  | Elevation of privilege | Orphan adoption takes an `untracked`, foreign or other user's order, or a TP/SL, into a run (AS-E02)                                     | M   | H\* | **Critical** | SR-E29-12, SR-E33-14; D7 (Owner)                                                             | Low (after D7)                                                            |
+| AL6  | Tampering              | Client `AlgoSpec` fields, a mid-run change or a lowered floor exceed the intended exposure or remove a bound (AS-T01, AS-T02, AS-T07)    | M   | H   | **High**     | SR-052, SR-E33-03, SR-E33-04, SR-E33-09                                                      | Low                                                                       |
+| AL7  | Denial of service      | Denial of wallet: a chase or TWAP follows the market without a bound, or a bound converts to market (AS-D06)                             | M   | H   | **High**     | SR-E33-18, SR-E33-03                                                                         | Low                                                                       |
+| AL8  | Tampering              | A restart or a duplicated execution duplicates a child or over-fills a run (AS-T04, AS-T05)                                              | M   | H   | **High**     | SR-E33-10, SR-E33-11, SR-E29-03                                                              | Low                                                                       |
+| AL9  | Repudiation            | A verb, a halt or a child is not attributable to its run, creator and parameters (AS-R01, AS-R02; E29 OM-R04)                            | M   | H   | **High**     | C-2.9, SR-061, SR-062, SR-E33-16                                                             | Low                                                                       |
+| AL10 | Information disclosure | Run lists, ids or results reach another account's or another manager's runs (AS-I02)                                                     | M   | H   | **High**     | SR-051, SR-E29-13, SR-E33-13, SR-E33-15                                                      | Low                                                                       |
+| AL11 | Denial of service      | Unbounded runs, a resume storm or cancel-all griefing exhaust slots and budgets or stop another user's runs (AS-D02 to AS-D04)           | M   | H   | **High**     | SR-E33-09, SR-E33-10, SR-E33-13                                                              | Low                                                                       |
+| AL12 | Denial of service      | A backend outage stops every emulated behaviour while children rest unmanaged (AS-D05)                                                   | M   | H   | **High**     | C-2.6 native stop, `on_disconnect="freeze"`, the degraded banner and the monitor (SR-E33-20) | Medium (Owner acceptance queued on #2701 by the orchestrator, 2026-10-21) |
+| AL13 | Elevation of privilege | A child skips a check a human order passes, or opens exposure without its stop (AS-E04)                                                  | L   | H\* | **High**     | C-2.6, SR-056, SR-E33-07; E32-T01                                                            | Low                                                                       |
+| AL14 | Elevation of privilege | A group-level algo escapes the single-account budget and authority checks (AS-E05)                                                       | M   | H   | **High**     | SR-E33-01; E34-X01 models group algos                                                        | Low                                                                       |
+| AL15 | Spoofing               | A stolen session, a cross-site page or XSS starts a long-lived run (AS-S02)                                                              | M   | H   | **High**     | SR-041, SR-043, SR-E29-07; D8 (Owner)                                                        | Low                                                                       |
+
 ### 5.11 Risk summary
 
 | Residual level  | Count                                                                                                                                                                                                                                                                                                                                                            |
@@ -705,6 +742,11 @@ RR5) are not added to the 116 Low and 12 Medium counts above, as the E28 rows ar
 The E39 rows (E39-X01, Area 15 RK1 to RK14, model RK-S01..RK-E09) are Draft and outside the counts above until the
 model is approved. RK1 (Critical until E39-S01, E39-S03 and E32-T01 ship) and the High rows whose controls are still
 requirements are R3 release blockers; at approval they go to §16.1 and `32-risk-register.md`.
+The E33 rows (E33-X01, Area 16 AL1 to AL15, model AS-S01..AS-E05) are Draft and outside the counts above until the
+model is approved. AL1 to AL5 (Critical until E33-T01, E33-T02, E34-T02, E39-S01 and E39-S03 ship their controls) and
+the High rows whose controls are still requirements are R3 release blockers; at approval they go to §16.1 and
+`32-risk-register.md`, with AL12's backend-outage residual for the Owner's acceptance, queued on #2701 by the
+orchestrator (2026-10-21). Every `algo.*` flag stays off until E34-T02, E39-S01 and E39-S03 merge (model CX-20).
 
 ---
 
