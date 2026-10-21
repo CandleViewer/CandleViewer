@@ -46,6 +46,7 @@ from candleviewer.exchange.bybit.trades import (
     recent_trades_fetcher,
     trade_topic,
 )
+from candleviewer.exchange.bybit.trading import DEFAULT_ENTRY_WAIT_S, BybitTradingPort
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.secrets import WithdrawPermissionRejected
 
@@ -201,6 +202,32 @@ class ExchangeBybitService:
             raise ValueError("not this process's environment")
         return await self._ws_probe.probe(
             self._credentials, env, credential_id, clock_offset_ms=clock_offset_ms
+        )
+
+    def trading_port(
+        self,
+        env: str,
+        *,
+        clock_offset_ms: Callable[[], int] | None = None,
+        entry_wait_s: float = DEFAULT_ENTRY_WAIT_S,
+    ) -> BybitTradingPort:
+        """G-8 (#2877): the exchange `TradingPort` of this process's environment only (C-2.11),
+        signed by M2 under `sign_rest`, on the process's one governor (OM-D08) and the adapter's
+        account REST transport (#2893 S4); `entry_wait_s` bounds an `entry` token wait (24 §8.7).
+        Any other environment is refused before a client exists, and testnet, which has no
+        capability record (ruling R6), is refused too. A factory, not trading methods: the
+        service itself trades nothing."""
+        if self._credentials is None:
+            raise RuntimeError("no signing capability is wired")
+        if env != self._environment:
+            raise ValueError("not this process's environment")
+        return BybitTradingPort(
+            environment=env,
+            credentials=self._credentials,
+            governor=self._governor,
+            transport=self._rest_transport,
+            clock_offset_ms=clock_offset_ms,
+            entry_wait_s=entry_wait_s,
         )
 
     def key_verification_calls(

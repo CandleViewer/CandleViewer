@@ -56,6 +56,9 @@ ALLOWED_LABELS: Final[frozenset[str]] = frozenset(
         "socket",
         "topic_class",
         "subscriber",
+        # #2877 R7: the adapter's strict reply models, a closed set of class labels (the
+        # `MODEL_LABELS` of its trading parser, 13); never a field name or a value.
+        "model",
     }
 )
 
@@ -198,6 +201,18 @@ SPECS: Final[tuple[MetricSpec, ...]] = (
         "bybit_rate_limited_total",
         "Rate-limited responses, by code.",
         "code",
+        owner="adapter",
+    ),
+    _c(
+        "bybit_rows_refused_total",
+        "Rows a trading read dropped, by reason (another environment or account, or no fill).",
+        "reason",
+        owner="adapter",
+    ),
+    _c(
+        "cv_bybit_unknown_fields_total",
+        "Reply fields the adapter's strict models do not know, by model (silent drift).",
+        "model",
         owner="adapter",
     ),
     _c("bus_published_total", "Events published, by topic class.", "topic_class", owner="bus"),

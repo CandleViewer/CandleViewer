@@ -87,15 +87,19 @@ def test_a_public_client_is_not_a_signed_build() -> None:
 
 
 def test_every_signed_client_in_the_product_passes_the_transport() -> None:
-    """The one signed build today is the key-verification factory's; listing it shows the scan
-    sees it, and a new signed build fails until it passes the transport."""
+    """The signed builds are the key-verification factory's and the trading port's (G-8,
+    #2877); listing them shows the scan sees them, and a new signed build fails until it passes
+    the transport."""
     found = {}
     for root in ROOTS:
         for path in sorted(root.rglob("*.py")):
             text = path.read_text(encoding="utf-8")
             if CLIENT in text and (builds := _signing_builds(text)):
                 found[path.relative_to(root.parent).as_posix()] = [ok for _, ok in builds]
-    assert found == {"candleviewer/exchange/bybit/key_verify.py": [True]}
+    assert found == {
+        "candleviewer/exchange/bybit/key_verify.py": [True],
+        "candleviewer/exchange/bybit/trading.py": [True],
+    }
 
 
 def test_the_signed_client_factory_takes_the_transport_with_no_default() -> None:
