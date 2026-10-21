@@ -383,9 +383,9 @@ class TradingStopRequest(BaseModel):
 
 
 class OrderAck(BaseModel):
-    """§14.4. `exchange_ret_code`/`exchange_ret_msg` are stored verbatim
-    alongside the internal `error_code` (§8.6 "Verbatim rule") — traders need
-    the exchange's own words, developers need the stable code."""
+    """§14.4. `exchange_ret_code`/`exchange_ret_msg` travel beside the internal `error_code` into
+    the call's stored record, redacted (§8.6 code-only rule): an order route answers with the code
+    and `retCode`, never the exchange's `retMsg`."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

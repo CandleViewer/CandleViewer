@@ -63,3 +63,6 @@ docs/plan/backlog/_reconciliation-report.md
 scripts/tests/fixtures/pnpm-audit/*.json
 # #3558: `gh api --paginate --slurp` Dependabot alert listings as gh wrote them (compact, one line).
 scripts/tests/fixtures/dependabot-alerts/*.json
+# #913 (G-6 #3972, 24 section 19.19): tools/statechart/render_catalogue.py writes the machine index
+# of 28, which is not prettier-formatted on main; edits stay minimal and are never reflowed.
+docs/plan/28-statechart-catalogue.md

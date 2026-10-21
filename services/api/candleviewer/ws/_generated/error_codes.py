@@ -48,6 +48,7 @@ class ErrorCode(StrEnum):
     EXPOSURE_UNKNOWN = "exposure_unknown"
     KEK_ROTATION_NOT_STAGED = "kek_rotation_not_staged"
     KEK_ROTATION_IN_PROGRESS = "kek_rotation_in_progress"
+    STOP_REQUEST_IN_FLIGHT = "stop_request_in_flight"
     VERSION_CONFLICT = "version_conflict"
     PAYLOAD_TOO_LARGE = "payload_too_large"
     GONE = "gone"
@@ -63,6 +64,7 @@ class ErrorCode(StrEnum):
     NOT_IMPLEMENTED = "not_implemented"
     EXCHANGE_ERROR = "exchange_error"
     EXCHANGE_UNAVAILABLE = "exchange_unavailable"
+    CLOCK_DRIFT = "clock_drift"
     STORE_UNAVAILABLE = "store_unavailable"
     AUDIT_UNAVAILABLE = "audit_unavailable"
     PURGE_UNAVAILABLE = "purge_unavailable"
@@ -127,7 +129,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.ACCOUNT_SCOPE_DENIED: ErrorMeta(("rest", "ws",), "any", False, None, None, "Caller has no granted access to the targeted exchange account"),
     ErrorCode.KEK_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "The credential key is unavailable; operations that need it are refused"),
     ErrorCode.TRADING_DISABLED: ErrorMeta(("rest",), None, False, None, None, "Order entry refused"),
-    ErrorCode.RISK_LIMIT_BREACHED: ErrorMeta(("rest",), None, False, None, None, "Per-account profile risk cap (daily loss, max position, allowed symbols) would be exceeded"),
+    ErrorCode.RISK_LIMIT_BREACHED: ErrorMeta(("rest",), None, False, None, None, "The account's profile is disabled, is not trading-enabled, does not allow the symbol, or a risk cap (daily loss, max position) would be exceeded"),
     ErrorCode.VIEW_AS_READ_ONLY: ErrorMeta(("rest", "ws",), "any", False, None, None, "Session is viewing as another user, read-only; end view-as to make changes"),
     ErrorCode.VIEW_AS_EXPIRED: ErrorMeta(("rest",), None, False, None, None, "View-as context ended by the server; clear it with DELETE /auth/session/view-as"),
     ErrorCode.VIEW_AS_SELF_TARGET: ErrorMeta(("rest",), None, False, None, None, "A session cannot view as its own user"),
@@ -141,6 +143,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.EXPOSURE_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "The account's open exposure cannot be read because none of its keys can be used to read it"),
     ErrorCode.KEK_ROTATION_NOT_STAGED: ErrorMeta(("rest",), None, False, None, None, "No KEK rotation is staged as the request states (previous KEK not loaded, or another environment or version)"),
     ErrorCode.KEK_ROTATION_IN_PROGRESS: ErrorMeta(("rest",), None, True, None, None, "A KEK re-wrap run is already in progress for this environment"),
+    ErrorCode.STOP_REQUEST_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None, "A stop request for this position is still in flight"),
     ErrorCode.VERSION_CONFLICT: ErrorMeta(("rest",), None, False, None, None, "If-Match / ETag precondition failed"),
     ErrorCode.PAYLOAD_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Request body or batch exceeds the operation's size ceiling"),
     ErrorCode.GONE: ErrorMeta(("rest",), None, False, None, None, "Resource existed but was purged by retention, or a one-time link that expired or was used"),
@@ -156,6 +159,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.NOT_IMPLEMENTED: ErrorMeta(("rest",), None, False, None, None, "Operation declared but its backing provider is not wired yet; nothing was done"),
     ErrorCode.EXCHANGE_ERROR: ErrorMeta(("rest",), None, True, None, None, "Bybit returned a non-zero exchange refusal code"),
     ErrorCode.EXCHANGE_UNAVAILABLE: ErrorMeta(("rest", "ws",), "any", True, None, None, "Exchange connectivity lost (WS down and REST failing)"),
+    ErrorCode.CLOCK_DRIFT: ErrorMeta(("rest",), None, True, None, None, "Order entry halted until the server clock is back in sync with the exchange"),
     ErrorCode.STORE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "QuestDB / Postgres / Parquet tier unavailable"),
     ErrorCode.AUDIT_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)"),
     ErrorCode.PURGE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "No purge reaper is running, so no purge is scheduled; nothing would anonymise the user"),

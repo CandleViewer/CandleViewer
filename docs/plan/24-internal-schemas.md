@@ -1340,6 +1340,7 @@ class Order(BaseModel):
     origin: Literal[...]
     origin_ref: str | None
     algo_id: UUID | None
+    provenance: Literal["placed","reconciliation","recorded_stop"] = "placed"  # how its row came to exist (21 §3.3.4)
 ```
 
 ```python
@@ -1558,7 +1559,7 @@ order_link_id = "{prefix}{env}-{group22}-{acct4}-{seq2}{suffix}"
 | `seq2`    | 2     | base62 leg/child sequence, 0–3843                                                               |
 | `suffix`  | 2     | purpose tag: `en` entry, `sl` stop, `tp` take-profit, `sc` scale, `fl` flatten, `ac` algo child |
 
-Base62 digits are `0-9A-Za-z` in value order. `crc32` is `zlib.crc32` over the ASCII bytes of `str(account_id).lower()`. A full crc32 needs up to six base62 digits, so `mod 62^4` keeps the low four: `acct4` only labels the account for diagnostics, and uniqueness comes from `group22`, `seq2` and the collision check (rule 5).
+Base62 digits are `0-9A-Za-z` in value order. `crc32` is `zlib.crc32` over the ASCII bytes of `str(account_id).lower()`. A full crc32 needs up to six base62 digits, so `mod 62^4` keeps the low four: `acct4` only labels the account for diagnostics, and uniqueness comes from `group22`, `seq2` and the collision check (rule 5). An order that joins no trade group (a reduce-only `placeOrder`, 22 `OrderAcceptance`) takes `group22` from its own `id`, a server-minted UUID as the group's is.
 
 `env` comes from the order, never from a process-wide setting: `ExecutionMode` `exchange` takes the letter of the account's `Environment` and `paper` takes `p`, so a paper order and a demo order for the same group differ. `replay` has no letter, so generation raises a typed `OmsError` ([#846 ruling Q4](https://github.com/CandleViewer/CandleViewer/issues/846#issuecomment-6204432470)).
 
@@ -1584,29 +1585,36 @@ Rules:
 sequenceDiagram
   participant UI
   participant API as REST /orders
-  participant RISK as RiskGate
   participant OMS
-  participant PG as Postgres
+  participant RISK as RiskGate
   participant RL as RateBudget
+  participant PG as Postgres
   participant AD as BybitAdapter
   participant BY as Bybit
   participant WS as PrivateWS
 
-  UI->>API: POST /orders (intent)
-  API->>RISK: check(intent, account, profile)
-  RISK-->>API: allow | deny(reason)
+  UI->>API: POST /orders (intent, Idempotency-Key)
+  API->>API: scope, arm token, idempotency lookup, live enabled, kill switch, order-entry gate
   API->>OMS: submit(intent)
-  OMS->>OMS: size, round, validate filters, build order_link_id
-  OMS->>PG: INSERT order (state=validated) + order_event
-  OMS->>RL: acquire(account_uid, "order.create")
-  RL-->>OMS: token | RATE_BUDGET_EXCEEDED
+  OMS->>OMS: clock guard, validate, size and round, instrument filters on the sized order
+  OMS->>RISK: check(sized order, account, profile)
+  RISK-->>OMS: allow | deny(reason)
+  OMS->>AD: headroom(account, "order.create"), read from RL, takes no token
+  AD-->>OMS: headroom | none (429, nothing written or sent, no key bound)
+  OMS->>OMS: build order_link_id (§8.3)
+  OMS->>PG: VALIDATE, one transaction: anchor (+ trade group and leg for an entry), order (state=validated, gate verdicts with rate) + order_event
   OMS->>PG: state=submitting + event
   OMS->>AD: place_order(request)
-  AD->>BY: POST /v5/order/create (or WS trade on live)
+  AD->>RL: acquire(account_uid, "order.create", lane), waiting at most its factory's bound
+  RL-->>AD: token | none within the bound
+  AD->>BY: POST /v5/order/create (or WS trade on live), with a token only
   alt retCode 0
     BY-->>AD: ack (orderId)
     AD-->>OMS: OrderAck
     OMS->>PG: state=submitted, exchange_order_id, event
+  else no rate token within the bound
+    AD-->>OMS: RateBudgetExceededError, nothing sent: a refused send (not-ok ack), never ambiguous
+    OMS->>PG: state=rejected, reject_code=RATE_BUDGET_EXCEEDED, event
   else business reject
     BY-->>AD: retCode != 0
     AD-->>OMS: mapped error
@@ -1615,6 +1623,8 @@ sequenceDiagram
     AD-->>OMS: TransportError
     OMS->>PG: state=unknown + event + alert
   end
+  OMS->>PG: outcome on the anchor (compare-and-set from NULL)
+  API-->>UI: 202 OrderAcceptance (submitted, unknown or held) | 429 exchange_rate_limited | 502 exchange_error
   BY-->>WS: order / execution push
   WS-->>OMS: OrderUpdate / Execution
   OMS->>PG: apply fills, state transitions, events
@@ -1622,6 +1632,19 @@ sequenceDiagram
 ```
 
 The synchronous REST response is an **accept acknowledgement, not a fill confirmation** — the private WS `order`/`execution` streams are the source of truth (research 06 §5, §19).
+
+**Order of the checks and the answers (E29-T04; rulings R2, R8 and R12 on [#913](https://github.com/CandleViewer/CandleViewer/issues/913#issuecomment-6303723669)).**
+
+1. After authentication, CSRF, the session state and RBAC, the route checks in this order: account scope (`403 account_scope_denied`), the arm token (`403 session_not_armed`), the idempotency lookup, live trading enabled, the B18 kill switch and the order-entry gate (each `403 trading_disabled`, only the gate's with a `reason`, §8.10). The lookup comes after authorisation, so a caller who has lost access reads no outcome back, and before the `trading_disabled` checks: the exact repeat of an accepted request (same principal, key and fingerprint) is answered with its stored outcome, never refused (C-2.10), and the same key with another body is `409 idempotency_key_reuse`. A refused request binds no key. `amendOrder` checks in the same order (its scope is the order id's `404`); the amends §8.10 exempts skip the arm token and the `trading_disabled` checks.
+2. The OMS refuses while order entry is halted for clock drift (`503 clock_drift` with `Retry-After`: `10002` in §8.6, or the clock guard's `block_trading` in §2.8), then validates and sizes: the native stop and the intent rule (SR-E29-01), size and round, and the instrument filters on the sized order (`tick_size_violation`, `lot_size_violation`).
+3. Risk checks the sized and rounded order, never the raw intent (SR-E29-04): `403 risk_limit_breached`.
+4. B1's `rate` verdict, recorded with the other gates at `VALIDATE`, reads the account's headroom through the trading port, a figure that takes no token, until E34-T02's `reserve()` replaces it ([#2877 ruling 4](https://github.com/CandleViewer/CandleViewer/issues/2877#issuecomment-6305045660)): with none, the request is refused with `429 exchange_rate_limited` (`RATE_BUDGET_EXCEEDED`) and `Retry-After` before anything is written or sent, and the key is not bound (`22-api-openapi.yaml` Idempotency), so the same key and body after `Retry-After` are a first submission. The token itself is taken once, by the trading port as the create leaves (step 6), never by a governor call from `oms` (C-2.2).
+5. The write-ahead persist is one transaction, B1's `VALIDATE` step: the idempotency anchor (`21-database-schema.md` §3.3.10), for an entry the one-leg trade group and its leg, and the order's `validated` row with its event, under the `order_link_id` generated before it (§8.3). So an anchor never exists without its order, and a transaction that does not commit leaves nothing: a repeat is then a first submission. An allocation that spends its bound (`OrderLinkIdExhausted`, §8.3 rule 5) sends nothing and answers `500 internal_error`, which pages. An entry whose stop request collides with one still in flight on the same position (the recorded stop, `21-database-schema.md` §3.3.11, which lands with E29-T04's slice 2a) commits nothing: after a bounded retry it is refused with `409 stop_request_in_flight` and `Retry-After`, and the key is not bound.
+6. The send's outcome is the answer, recorded on the anchor by compare-and-set from NULL before the request answers, for every later repeat: an acknowledgement is `202` with the order `submitted`; an id the exchange already holds `202` with the order adopted after its full match or `held` (§8.3 rule 3); a business rejection `502 exchange_error` (code-only, §8.6), `10002` included, which also starts the clock-drift halt; an ambiguous result `202` with the order `unknown`, its event and an alert, and it is never re-sent (§8.2 S1, C-2.10); and a create that gets no rate token `429 exchange_rate_limited` with `Retry-After`. The trading port takes that token once, in the order's lane, waiting at most the bound its factory sets (for an entry `CV_FANOUT_ADMIT_WAIT_MS`, 750 ms, `20-architecture.md` §4.3) and never queueing past it (§8.7), then raises `RateBudgetExceededError` with nothing sent; B1's command port answers it as a refused send (a not-ok ack), never as an ambiguous outcome, so the order ends `rejected` with `RATE_BUDGET_EXCEEDED` (§8.6) and never reaches `unknown`; the request answers `429 exchange_rate_limited`, the slug the anchor stores as its `outcome_code` (`21-database-schema.md` §3.3.10), and a repeat at any age gets that `429` and sends nothing: placing the order again takes a new key. It is not retryable under its key: the repeat carries `Idempotency-Replayed: true` and no `Retry-After` (`22-api-openapi.yaml` `placeOrder`).
+
+A request that ends without recording its answer (a crash, or a store failure after the send) leaves its anchor undecided. A repeat is `409 idempotency_in_flight` only within `CV_OMS_INFLIGHT_STUCK_S` (30 s, E29-T08's in-flight threshold) of the anchor's `created_at`, longer than the submission's own bounds; past it, the repeat decides the anchor, `202` with the rows in their current state, recorded by compare-and-set from NULL (an order still `validated` was never sent). A repeat never sends: only the first request starts its order's send (B1's `SEND`, after its live, kill-switch and gate checks), and only B1 resumes a send that had begun, after a restart (§8.2 Recovery).
+
+A store that cannot be reached before the send refuses the request with `503 store_unavailable`, and nothing reaches the exchange (S7). A store failure after the send is never a `503`: the request answers its outcome, `202` with the order's last known state or the `502`.
 
 **8.4.1 Account checks of the order-entry gate (E27-T04, decision Q5 on #837).** Submit routes
 ask one composed synchronous gate before any OMS work (C-2.21). Its kernel is
@@ -1970,7 +1993,7 @@ Transport-level: HTTP 403 → `IP_NOT_ALLOWED` (or geo-block); HTTP 429 → `RAT
 
 **Order creates (SR-E29-15, #3866).** Once an order create (`POST /v5/order/create` or `/v5/order/create-batch`, under any endpoint class) has left the process, a timeout, a transport error, an HTTP 5xx, an answer the client cannot read (over the body cap, undecodable, not JSON or nested too deep to parse, or with no usable `retCode`: an integer, non-zero on an HTTP error), `10016` or `10019` leaves its outcome unknown. The REST client raises `AmbiguousResultError`, a `TRANSPORT_ERROR` with `retryable` false that carries the `order_link_id`, and never resends the create, so the order reaches `unknown` through the `onError` of B1's `place` invoke (the runtime's `error.platform.place`; [`28-statechart-catalogue.md` §B1.4](28-statechart-catalogue.md#b14-invoked-services)). `110079`, or a code the mapping does not list, is never `retryable` for a create either. A success reply that carries no `orderId` is ambiguous too, never a success (§8.3 rule 7; G-8, #2877, enforces it in the adapter): the order reaches `unknown`, never `submitted`. Only a connect error, a connect timeout or a pool timeout proves that nothing left; such a create is retried under the same `order_link_id` (C-2.10). Amend, cancel and `trading-stop` keep the retries above: a resend sets the same values or meets an order that is already gone, and the stop and cancel paths must stay reliable (C-12.7). `unknown` never re-sends (S1). Any later re-send of an ambiguous create, such as a restart re-driving its row, first looks the id up in realtime, then in history, and adopts what it finds only after the full match, holding the order on a mismatch (§8.3 rule 3); it re-sends once, under the same id, only when neither shows it and history still covers the id (§8.3 rule 6), and never after a failed lookup (`adopt_or_resend` in `oms/order_link_resolution.py`).
 
-**Verbatim rule:** every business rejection carries the exchange's own `retMsg` to the UI unchanged, alongside our internal code. Traders need the exchange's words; developers need the stable code.
+**Code-only rule (SR-E29-09; #913 ruling R8):** a business rejection reaches the caller as CandleViewer's own code and text with the exchange's `retCode` (`OrderExchangeProblem`, whose `exchange` holds `ret_code` only); the exchange's `retMsg` never reaches an order route's answer. It is kept only in the call's stored record (`order_events`, redacted before insert, `21-database-schema.md` §3.3.5) and served only by the audited diagnostics read (`getOrderDiagnostics`).
 
 **Re-verification (#3005).** Quoted Meaning text is the official v5 error table, <https://bybit-exchange.github.io/docs/v5/error> (page dated 2026-10-14), as verified by main-orchestrator for #2893 S15; text after "#3005:" is that table in #3005's words, not verbatim. `110017`'s observed `retMsg` values are "Reduce-only rule not satisfied" (2023) and "current position is zero, cannot fix reduce-only order qty" (2025). S15 also confirmed the readings of the unchanged `10002`, `10004` and `10005` rows; no other uncited row was re-verified. To re-verify, re-read that page, compare every cited row's code and text, record the page date here, and change `exchange/bybit/mapping.py`, `tests/unit/exchange/bybit/test_mapping.py` and this table in one PR.
 
