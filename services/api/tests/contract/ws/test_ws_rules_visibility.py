@@ -8,10 +8,12 @@ import uuid
 from functools import partial
 from typing import Any
 
+import pytest
+
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.rules.manager import RuleRow
 from candleviewer.ws_wiring import rule_frame_visible
-from tests.contract.ws._harness import World, connect
+from tests.contract.ws._harness import World, connect, delta_body
 from tests.unit.ws._seq_support import ACC_A, ACC_B, USER
 from tests.unit.ws.test_rule_frame_visible import OTHER as OWNER
 from tests.unit.ws.test_rule_frame_visible import _row
@@ -34,12 +36,31 @@ def test_rules_update_withholds_an_owners_rule_from_a_manager_and_follows_their_
         assert result["ok"] and result["effective"]["rule_ids"] == ids  # no id told apart
         assert c.recv()["t"] == "snap"
         assert [_send(w, r) for r in (theirs, bare, mine)] == [0, 0, 1]
-        assert [(d["s"], d["p"]["rules"][0]["id"]) for d in [c.recv()]] == [(2, mine.id)]
+        d = c.recv()  # the two withheld spent no sequence number
+        assert (d["s"], d["p"]["rules"][0]["id"]) == (2, mine.id)
         w.grants = (AccountGrant(ACC_A, True, False, False),)  # account B is withdrawn
         w.call(w.registry.grants_changed, USER)
         c.next_of("permission_change")
         assert [_send(w, r) for r in (mine, on_a)] == [0, 1]
         assert c.recv()["p"]["rules"][0]["id"] == on_a.id
+
+
+def test_rules_publish_without_a_viewer_is_refused_before_any_frame() -> None:
+    w, mine = World(), _row(USER, ACC_A)
+    with connect(w) as c:
+        for ch in ("rules", "orders"):
+            c.sub({"ch": ch, "opts": {"exchange_account_ids": [str(ACC_A)]}})
+            assert c.recv()["t"] == "snap"
+        event = [("rules", {"rules": []}), ("orders", delta_body("orders"))]  # orders goes first
+        for refused in (
+            lambda: w.hub.publish("rules", {"rules": []}, account=ACC_A),
+            lambda: w.hub.publish_private(ACC_A, event),  # a whole event, before its `orders`
+        ):
+            with pytest.raises(ValueError, match="needs its viewer"):
+                w.call(refused)
+        assert _send(w, mine) == 1
+        d = c.recv()  # the next frame: nothing went out before it, and no number was spent
+        assert (d["ch"], d["s"]) == ("rules", 2)
 
 
 class _OwnerRole(World):

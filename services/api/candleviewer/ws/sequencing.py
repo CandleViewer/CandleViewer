@@ -883,6 +883,13 @@ def _refuse_bodyless(ch: str, body: Mapping[str, Any] | None) -> None:
         raise ValueError(f"a {family} publish needs its structured body")
 
 
+def _refuse_unviewed(ch: str, viewer: object) -> None:
+    """A `rules` publish names who may receive it (`_VIEWED`; 23 §15.6, #3488). One without a
+    `viewer` is refused before the fan-out, so no producer can leave the check out."""
+    if viewer is None and (family := ch.split(".", 1)[0]) in _VIEWED:
+        raise ValueError(f"a {family} publish needs its viewer")
+
+
 def causal_sort(items: Iterable[tuple[str, Any]]) -> list[tuple[str, Any]]:
     """Stable sort of one account event's private frames into executions -> orders -> positions ->
     trade_groups (§16.1 S5); other topics keep their relative order after them."""
@@ -1016,8 +1023,7 @@ class SequencingHub:
         nothing and spends no sequence number. A `rules` publish needs one (`_VIEWED`, `ValueError`;
         23 §15.6, #3488). Pure and total, like `select`."""
         _refuse_bodyless(ch, body)
-        if viewer is None and (family := ch.split(".", 1)[0]) in _VIEWED:
-            raise ValueError(f"a {family} publish needs its viewer")
+        _refuse_unviewed(ch, viewer)
         sent = 0
         for authz, emitter in list(self._conns.values()):
             sub = authz.find(ch, replay_session_id)
@@ -1074,11 +1080,13 @@ class SequencingHub:
 
     def publish_private(self, account: uuid.UUID, frames: Iterable[tuple[str, Any]]) -> int:
         """One account event spanning several private topics, in §16.1 S5 causal order. The
-        whole event is checked first: a paced frame without its body refuses it before any of its
-        frames is published (`ValueError`, #3268)."""
+        whole event is checked first: a paced frame without its body, or a `rules` frame (an event
+        names no viewer), refuses it before any of its frames is published (`ValueError`, #3268,
+        #3488)."""
         ordered = causal_sort(frames)
         for ch, body in ordered:
             _refuse_bodyless(ch, body)
+            _refuse_unviewed(ch, None)
         sent = 0
         for ch, body in ordered:
             sent += self.publish(ch, body, account=account)
