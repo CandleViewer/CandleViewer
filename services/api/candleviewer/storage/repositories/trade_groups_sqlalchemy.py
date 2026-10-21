@@ -10,7 +10,10 @@ The replay anchor is read only with its creator: `anchor_statement` matches `(cr
 client_group_ref)` and returns whether the stored request fingerprint equals the one given, never
 the fingerprint (G-6(b), SR-E29-07). `create_group` inserts the group `ON CONFLICT (created_by,
 client_group_ref) DO NOTHING`: a replay, or a create racing the first one, waits for that one and
-then writes nothing and answers `GroupExists`. Otherwise it locks `FOR SHARE`, in this order, the
+then writes nothing and answers `GroupExists`. The wait counts against the statement cap (below),
+so a replay racing a first create slower than the cap (by default 2 s, while the write-ahead hook
+alone may take 5 s) surfaces as the unknown-outcome `StorageQueryFailed('57014')`, having written
+nothing, and is retried by the client. Otherwise it locks `FOR SHARE`, in this order, the
 definition the group names, the leg accounts by id and the leg profiles by id; refuses
 (`TradeGroupStoreRefusedError`) a definition or account that is missing or soft-deleted and a
 profile that is not live at its leg's account and `profile_version` (SR-E28-15); inserts every leg
@@ -32,7 +35,10 @@ stop flag as `NOT native_sl_confirmed`, never `IS false`, so the planner can use
 is the scoped read, its scope in the SQL (SR-051): an `OwnerScope` first passes the accounts
 store's live-owner gate and sees every group; a `GrantScope` sees a group only when it has a leg
 and every leg account is live, in the scope and under a live `can_view` grant that is not frozen
-(`group_visible`, SR-E28-21); an empty `GrantScope` runs no SQL.
+(`group_visible`, SR-E28-21); an empty `GrantScope` runs no SQL. It reads the group, then its legs,
+each statement under the predicate: a grant frozen or revoked, or a leg account soft-deleted,
+between the two leaves no leg to read, and a `GrantScope` then reads the group as missing, never as
+a group without legs.
 
 Every unit of work caps each of its statements, lock waits included, at the store's
 `statement_timeout` (`OMS_STATEMENT_TIMEOUT_MS` unless given: the store is on the order submit
@@ -661,6 +667,8 @@ class SqlAlchemyTradeGroupStore:
                 return None
             scoped = scoped_legs_statement(scope, group_id)
             legs = list((await uow.session.execute(scoped)).mappings())
+        if isinstance(scope, GrantScope) and not legs:  # the scope changed in between: all or none
+            return None
         return _records((group,), legs)[0]
 
 

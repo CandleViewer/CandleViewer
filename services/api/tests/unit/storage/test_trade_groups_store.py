@@ -1,5 +1,6 @@
 """Unit tests for `SqlAlchemyTradeGroupStore` (E28-T01 #905): the Core statements rendered for
-asyncpg, the error mapping and every store path against a recording fake unit of work.
+asyncpg, the error mapping and every store path against a recording fake unit of work, and a row
+the store cannot decode as the M13 facade answers it.
 
 The codec, the port dataclasses and the name pins are test_trade_groups_port.py's. Real SQL runs
 in tests/integration/storage/test_trade_groups_store_pg.py (CI only).
@@ -22,10 +23,14 @@ from uuid import UUID
 
 import pytest
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.engine import Dialect, make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
+from candleviewer.accounts.errors import AccountsError
+from candleviewer.accounts.trade_group_repository import TradeGroupRepository
 from candleviewer.db import models
+from candleviewer.domain.primitives import GroupId
 from candleviewer.storage.errors import (
     StorageQueryFailed,
     StorageTierUnavailable,
@@ -746,6 +751,21 @@ async def test_a_grant_read_runs_without_the_gate_and_an_invisible_group_reads_a
     assert rel.commits == 0
 
 
+async def test_a_grant_read_is_all_or_nothing_across_its_two_statements() -> None:
+    """SR-E28-21: a grant frozen or revoked, or a leg account soft-deleted, between the group
+    read and the legs read leaves no leg to read; a grant scope then reads the group as missing,
+    never as a group without legs, while an owner, who may see a leg-less group, keeps it."""
+    shown = _Rel(_Result([_group_mapping()]), _Result([_leg_mapping()]))
+    record = await _store(shown).get_group(_GRANT, _GROUP)
+    assert record is not None and [leg.id for leg in record.legs] == [_LEG_A]
+    vanished = _Rel(_Result([_group_mapping()]), _Result([]))
+    assert await _store(vanished).get_group(_GRANT, _GROUP) is None
+    assert len(vanished.calls) == 2 and vanished.commits == 0
+    owner = _Rel(_GATE_OK, _Result([_group_mapping()]), _Result([]))
+    kept = await _store(owner).get_group(_OWNER, _GROUP)
+    assert kept is not None and kept.group.id == _GROUP and kept.legs == ()
+
+
 async def test_find_anchor_answers_the_group_and_whether_the_body_matches() -> None:
     rel = _Rel(_Result([{"id": str(_GROUP), "body_matches": False}]), _Result([]))
     assert await _store(rel).find_anchor(_CALLER, _REF, _BODY) == GroupAnchor(_GROUP, False)
@@ -973,6 +993,34 @@ async def test_a_stored_float_is_refused_on_read() -> None:
     rel = _Rel(_Result([_group_mapping(algo_params='{"tp": 1.5}')]), _Result([]))
     with pytest.raises(ValueError, match="fraction"):
         await _store(rel).load_group(_GROUP)
+
+
+@pytest.mark.parametrize(
+    ("script", "read"),
+    [
+        (
+            [_Result([_group_mapping(algo_params='{"tp": 1.5}')]), _Result([])],
+            lambda repo: repo.get(GroupId(_GROUP)),
+        ),
+        (
+            [_Result([_leg_mapping(profile_snapshot='{"leverage": 1.5}')])],
+            lambda repo: repo.leg_with_profile(_LEG_A),
+        ),
+    ],
+    ids=["algo-params", "profile-snapshot"],
+)
+async def test_the_facade_fails_a_float_the_store_refuses_closed(
+    script: list[_Result], read: Any
+) -> None:
+    """The refusal above reaches a caller of the M13 facade as its fail-closed `AccountsError`,
+    logged with the error class only, never as a bare `ValueError`."""
+    repo = TradeGroupRepository(_store(_Rel(*script)))
+    with structlog.testing.capture_logs() as logs, pytest.raises(AccountsError) as ei:
+        await read(repo)
+    assert str(ei.value) == "stored trade group unreadable" and ei.value.__cause__ is None
+    assert [(log["event"], log["error"]) for log in logs] == [
+        ("trade_group.read_failed_closed", "ValueError")
+    ]
 
 
 async def test_list_open_groups_reads_legs_once_for_every_group() -> None:

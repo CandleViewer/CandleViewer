@@ -5,10 +5,16 @@ The database is set up like production (`pg_bootstrap.sql`'s roles, then the mig
 only a database proves: Decimal and the leg snapshot through asyncpg with no float; the replay
 anchor under its creator, also when two creates race; the share-locked refusals of a soft-deleted
 account or definition and of a profile past the leg's version (SR-E28-15), also when the profile
-update races the create; that any refusal leaves no row; the failure policy stored as named and
-never changed; the set-once times and the status compare-and-set; the partial indexes the C-2.6
-reads use; the SR-E28-21 visibility matrix; and the constraint names the store maps. The DDL
+update races the create; that any refusal leaves no row; `tgl_sl_px` (C-2.6) named through the
+store; the failure policy stored as named and never changed; the set-once times and the status
+compare-and-set; the partial indexes the C-2.6 reads use; the SR-E28-21 visibility matrix and the
+owner predicate inside the scoped statements; and the constraint names the store maps. The DDL
 itself is test_trade_groups_migration.py's.
+
+Profiles come from plain SQL: each account's bootstrap default profile (`trg_ea_default_profile`),
+at version 1, which a test moves to version 2 with a superuser UPDATE when it needs to. A leg's
+snapshot is `AccountProfile.model_dump(mode="json")` of a profile fixture under that account,
+profile and version (`_projection`): the projection `leg_values` stores (SR-E28-07).
 
 The race tests poll `pg_stat_activity` for a lock wait and never sleep for a fixed time; each
 is bounded by `asyncio.timeout`. The facade (`TradeGroupRepository`, `TradeGroupReader`) is
@@ -74,6 +80,8 @@ from candleviewer.storage.repositories.trade_groups import (
 from candleviewer.storage.repositories.trade_groups_sqlalchemy import (
     SqlAlchemyTradeGroupStore,
     open_groups_statement,
+    scoped_group_statement,
+    scoped_legs_statement,
     unprotected_legs_statement,
 )
 
@@ -747,6 +755,29 @@ async def test_a_leg_refused_mid_insert_rolls_back_its_group(
     assert _rows_of(pg_dsn, group, legs) == (0, 0)
 
 
+@pytest.mark.parametrize("stop", [None, Decimal("0")], ids=["no-stop", "zero-stop"])
+async def test_a_leg_that_may_open_without_a_positive_stop_is_refused_as_tgl_sl_px(
+    store: SqlAlchemyTradeGroupStore, pg_dsn: str, stop: Decimal | None
+) -> None:
+    """C-2.6 through the store: a pending leg without a positive native stop is refused by name
+    and leaves no row; a rejected one needs no stop and is stored, and opening it is refused the
+    same way."""
+    creator = _user(pg_dsn)
+    pending = _new_group(creator)
+    legs = [_new_leg(pg_dsn, _account(pg_dsn), resolved_sl_price=stop)]
+    with pytest.raises(TradeGroupStoreRuleError) as refused:
+        await store.create_group(pending, legs)
+    assert refused.value.rule == "tgl_sl_px" and _rows_of(pg_dsn, pending, legs) == (0, 0)
+    rejected = _new_group(creator)
+    leg = _new_leg(pg_dsn, _account(pg_dsn), status="rejected", resolved_sl_price=stop)
+    assert isinstance(await store.create_group(rejected, [leg]), GroupCreated)
+    with pytest.raises(TradeGroupStoreRuleError) as reopened:
+        await store.update_leg(rejected.id, leg.id, LegPatch(status="open"))
+    assert reopened.value.rule == "tgl_sl_px"
+    stored = "SELECT status::text FROM trade_group_legs WHERE id = %s"
+    assert _one(pg_dsn, stored, leg.id) == "rejected"  # nothing written
+
+
 async def test_a_leg_outside_the_group_environment_is_refused_by_trg_tgl_env(
     store: SqlAlchemyTradeGroupStore, pg_dsn: str
 ) -> None:
@@ -999,6 +1030,26 @@ async def test_a_non_owner_holding_an_owner_scope_is_refused(
     group, _ = await _created(store, pg_dsn)
     with pytest.raises(TradeGroupStoreScopeDeniedError):
         await store.get_group(OwnerScope(_user(pg_dsn, "manager")), group.id)
+
+
+@pytest.mark.parametrize(
+    "build", [scoped_group_statement, scoped_legs_statement], ids=["group", "legs"]
+)
+async def test_the_scoped_statements_carry_the_owner_predicate_beyond_the_gate(
+    rel: SqlAlchemyRelationalRepository,
+    store: SqlAlchemyTradeGroupStore,
+    pg_dsn: str,
+    build: Any,
+) -> None:
+    """Run on a session with no live-owner gate before it, a scoped statement reads nothing for
+    a manager holding an `OwnerScope`, and the group or its leg for the Owner: a path that
+    skipped the gate stays scoped."""
+    owner, manager = _user(pg_dsn, "owner"), _user(pg_dsn, "manager")
+    group, _ = await _created(store, pg_dsn)
+    async with rel.unit_of_work() as uow:
+        as_manager = (await uow.session.execute(build(OwnerScope(manager), group.id))).all()
+        as_owner = (await uow.session.execute(build(OwnerScope(owner), group.id))).all()
+    assert as_manager == [] and len(as_owner) == 1
 
 
 async def test_an_empty_grant_scope_sees_nothing(

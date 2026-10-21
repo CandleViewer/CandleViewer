@@ -1,8 +1,8 @@
 """`TradeGroupRepository` and `TradeGroupReader` (E28-T01 #905): store rows to the 24 Sec.9.1
 models, store errors to the accounts domain errors (`from None`), one not-found for every miss,
-the replay anchor's answers, and a stored row the models refuse failing closed with no value in
-the log. The store is a scripted fake of the M10 port; its SQL is `tests/unit/storage/` and
-`tests/integration/storage/`.
+the replay anchor's answers, and a stored row the store cannot decode or the models refuse
+failing closed with no value in the log. The store is a scripted fake of the M10 port; its SQL is
+`tests/unit/storage/` and `tests/integration/storage/`.
 """
 
 from __future__ import annotations
@@ -45,6 +45,7 @@ from candleviewer.accounts.trade_groups import (
 from candleviewer.domain.primitives import GroupId, UserId
 from candleviewer.storage.errors import (
     StorageQueryFailed,
+    StorageRecordInvalid,
     StorageTierUnavailable,
     WriteAheadTimeout,
 )
@@ -213,6 +214,22 @@ async def _hook(record: TradeGroupRecord) -> None:  # the fake store never await
     raise AssertionError("not awaited here")
 
 
+class _HookingStore(_Store):
+    """Awaits the write-ahead hook with `_RECORD` before it answers, as the adapter does once it
+    has decoded the stored rows and before its commit."""
+
+    async def create_group(
+        self,
+        group: NewTradeGroup,
+        legs: Sequence[NewTradeGroupLeg],
+        *,
+        write_ahead: GroupWriteAhead | None = None,
+    ) -> GroupCreated | GroupExists:
+        assert write_ahead is not None
+        await write_ahead(_RECORD)
+        return await super().create_group(group, legs, write_ahead=write_ahead)
+
+
 def _repo(answer: object = None) -> tuple[TradeGroupRepository, _Store]:
     store = _Store(answer)
     return TradeGroupRepository(store), store
@@ -338,12 +355,14 @@ async def test_a_changed_profile_is_logged_at_info_with_ids_only() -> None:
         StorageQueryFailed("57014"),
         WriteAheadTimeout(),
         TimeoutError(),
+        StorageRecordInvalid("x"),
     ],
-    ids=["tier-unavailable", "query-failed", "write-ahead-timeout", "timeout"],
+    ids=["tier-unavailable", "query-failed", "write-ahead-timeout", "timeout", "record-invalid"],
 )
 @pytest.mark.parametrize("call", list(_CALLS))
 async def test_storage_errors_pass_unmapped(raised: Exception, call: str) -> None:
-    """Whether a write committed is the caller's to reconcile: the facade never relabels it."""
+    """Whether a write committed is the caller's to reconcile: the facade never relabels it, not
+    even a `StorageError` that is a `ValueError` too."""
     repo, _ = _repo(raised)
     with pytest.raises(type(raised)) as exc:
         await _CALLS[call](repo)
@@ -414,14 +433,35 @@ async def test_find_replay_refuses_a_malformed_fingerprint_before_the_store() ->
 
 async def test_create_sends_the_values_with_the_hook_and_returns_the_stored_group() -> None:
     draft, legs = _draft(), [_leg_draft()]
-    repo, store = _repo(GroupCreated(record=_RECORD))
-    created = await repo.create(draft, legs, write_ahead=_hook)
-    assert store.calls == [
-        ("create_group", (group_values(draft), [leg_values(legs[0])]), {"write_ahead": _hook})
-    ]
+    store = _HookingStore(GroupCreated(record=_RECORD))
+    seen: list[TradeGroupRecord] = []
+
+    async def hook(record: TradeGroupRecord) -> None:
+        seen.append(record)
+
+    created = await TradeGroupRepository(store).create(draft, legs, write_ahead=hook)
+    ((name, args, _),) = store.calls
+    assert (name, args) == ("create_group", (group_values(draft), [leg_values(legs[0])]))
+    assert seen == [_RECORD]  # the store's await reaches the caller's hook, once
     assert not isinstance(created, GroupReplay)
     assert created.group.group_id == _GROUP and created.account_ids == (_P.account_id,)
     assert created.legs[0].resolved_leverage == Decimal("5")
+
+
+@pytest.mark.parametrize(
+    "raised", [ValueError(f"{_MARK} audit"), KeyError(_MARK)], ids=["value", "key"]
+)
+async def test_an_error_the_hook_raises_passes_as_it_is(raised: Exception) -> None:
+    """The store decodes the rows before it awaits the hook, so what the hook raises is its own
+    refusal: never read as an unreadable row, nor logged as one."""
+    store = _HookingStore(GroupCreated(record=_RECORD))
+
+    async def refuses(record: TradeGroupRecord) -> None:
+        raise raised
+
+    with structlog.testing.capture_logs() as logs, pytest.raises(type(raised)) as exc:
+        await TradeGroupRepository(store).create(_draft(), [_leg_draft()], write_ahead=refuses)
+    assert exc.value is raised and logs == []
 
 
 @pytest.mark.parametrize(
@@ -563,6 +603,44 @@ async def test_an_unreadable_row_fails_closed_with_its_error_class_only(
     assert _MARK not in repr(logs)
 
 
+#: The ids each call logs when the store cannot decode a row it read (none for a list).
+_CALL_IDS: dict[str, dict[str, str]] = {
+    "find_replay": {},
+    "create": {"group_id": str(_GROUP)},
+    "update_leg": {"group_id": str(_GROUP), "leg_id": str(_LEG)},
+    "update_group": {"group_id": str(_GROUP)},
+    "get": {"group_id": str(_GROUP)},
+    "leg_with_profile": {"leg_id": str(_LEG)},
+    "open_groups": {},
+    "unprotected_legs": {},
+}
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [ValueError(f"{_MARK} fraction"), TypeError(_MARK), KeyError(_MARK), ArithmeticError(_MARK)],
+    ids=["value", "type", "key", "arithmetic"],
+)
+@pytest.mark.parametrize("call", list(_CALLS))
+async def test_a_row_the_store_cannot_decode_fails_closed_on_every_call(
+    call: str, raised: Exception
+) -> None:
+    """`parse_json` refusing a stored `algo_params` or snapshot, or any other decode error the
+    store raises, fails closed as a row a model refuses does: one `AccountsError`, unchained,
+    and a log of the ids and the error class, never a value."""
+    repo, store = _repo(raised)
+    with structlog.testing.capture_logs() as logs, pytest.raises(AccountsError) as exc:
+        await _CALLS[call](repo)
+    assert type(exc.value) is AccountsError and str(exc.value) == "stored trade group unreadable"
+    assert exc.value.__cause__ is None and exc.value.__suppress_context__
+    error = type(raised).__name__
+    assert logs == [
+        {"event": "trade_group.read_failed_closed", "error": error, "log_level": "warning"}
+        | _CALL_IDS[call]
+    ]
+    assert _MARK not in repr(logs) and len(store.calls) == 1
+
+
 # -- the scoped read (SR-E28-21) -------------------------------------------------------------------
 
 
@@ -602,3 +680,15 @@ async def test_a_scoped_read_passes_storage_errors_and_fails_closed_on_a_bad_row
     bad = TradeGroupRecord(group=replace(_GROUP_ROW, **_LONG), legs=())
     with pytest.raises(AccountsError, match="stored trade group unreadable"):
         await TradeGroupReader(_Store(bad)).get(_OWNER, GroupId(_GROUP))
+    undecodable = TradeGroupReader(_Store(ValueError(f"{_MARK} fraction")))
+    with structlog.testing.capture_logs() as logs, pytest.raises(AccountsError) as failed:
+        await undecodable.get(_OWNER, GroupId(_GROUP))
+    assert str(failed.value) == "stored trade group unreadable" and failed.value.__cause__ is None
+    assert logs == [
+        {
+            "event": "trade_group.read_failed_closed",
+            "error": "ValueError",
+            "group_id": str(_GROUP),
+            "log_level": "warning",
+        }
+    ]
