@@ -131,7 +131,7 @@ MISSING = [
     ("color.border.input", "E30-D02 CR-1 (shared)", "measured above as CR:color.border.input = color.text.tertiary"),
     ("space.emptystate.*", "CMP-026 Tokens field", "space.inset.md padding, space.stack.sm gaps"),
     ("font.mono", "CMP-022 / CMP-219 / CMP-220 Tokens", "the token is font.family.mono (a naming fix)"),
-    ("color.surface.hover (light value)", "the hover; equals color.surface.overlay in light", "color.surface.selected, no bar"),
+    ("color.surface.hover (light value)", "the row hover (= surface.overlay in light)", "in light, until the CR lands: color.surface.selected, no bar"),
 ]
 
 
