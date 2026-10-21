@@ -2,6 +2,7 @@ name: design-qa-ledger-export
 
 # E49-T02: push design_qa_findings_open{severity} to the pushgateway when the ledger changes
 # on main, and hourly. Reads one repo file; the only secret is the (tailnet) pushgateway URL.
+# Until E49-D01 (#1330) commits the ledger, a run only notes its absence and succeeds.
 on:
   push:
     branches: [main]
@@ -31,4 +32,10 @@ jobs:
       - name: Push ledger counts
         env:
           PUSHGATEWAY_URL: ${{ secrets.PUSHGATEWAY_URL }}
-        run: python -m tools.ga_defects.run ledger --require-push
+          LEDGER: docs/plan/backlog/artifacts/e49-design-qa-ledger.csv
+        run: |
+          if [ ! -f "$LEDGER" ]; then
+            echo "::notice::$LEDGER not found (E49-D01, #1330, opens it); nothing pushed"
+            exit 0
+          fi
+          python -m tools.ga_defects.run ledger --path "$LEDGER" --require-push
