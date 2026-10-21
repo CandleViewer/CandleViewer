@@ -21,9 +21,9 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from candleviewer.domain.events import Instrument, MarketEvent
 from candleviewer.domain.primitives import (
@@ -50,6 +50,8 @@ __all__ = [
     "CancelOrderRequest",
     "ClosedPnl",
     "ExchangeCapabilities",
+    "ExchangeRecord",
+    "ExchangeRecordFields",
     "Execution",
     "FeeRate",
     "FundingEvent",
@@ -59,9 +61,12 @@ __all__ = [
     "OpenInterestEvent",
     "Order",
     "OrderAck",
+    "OrderKind",
+    "OrderLane",
     "PlaceOrderRequest",
     "Position",
     "PrivateEvent",
+    "RateLane",
     "RiskLimitTier",
     "Ticker",
     "TickerEvent",
@@ -71,6 +76,26 @@ __all__ = [
     "TradingStopRequest",
     "Wallet",
 ]
+
+type RateLane = Literal["critical", "entry", "poll"]
+"""The rate lane of one exchange request (`20-architecture.md` §4.3, 24 §8.7): `critical` for
+exits and stop writes, `entry` for new exposure and amends, `poll` for reads."""
+
+type OrderLane = Literal["critical", "entry"]
+"""The lanes a create or an amend may take: the OMS sets it by the order's effect (SR-E29-01)."""
+
+type OrderKind = Literal[
+    "order",
+    "conditional",
+    "take_profit",
+    "stop_loss",
+    "partial_take_profit",
+    "partial_stop_loss",
+    "trailing_stop",
+    "mm_rate_close",
+]
+"""What an exchange order is: a plain order, a conditional order, or one of the take-profit,
+stop-loss and trailing orders the exchange holds for a position."""
 
 
 class TradeSide(StrEnum):
@@ -260,7 +285,9 @@ class ExchangeCapabilities(BaseModel):
     read fields off this record; they never test `exchange == "<venue>"` or
     `env == "demo"`. Constructed once per `(exchange, environment)` at
     adapter-instance startup — zero runtime cost thereafter (performance
-    notes, ticket body)."""
+    notes, ticket body). Fields describe the venue (`20-architecture.md` §9
+    rule 7): `supports_ws_order_entry` says what the exchange offers, not
+    that a trade socket exists; v1 sends every order over REST (SR-040a)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -297,7 +324,8 @@ class ExchangeCapabilities(BaseModel):
 
 class AccountRef(BaseModel):
     """§14.4. `key_ref` is an opaque handle into the key vault — NEVER the
-    key itself (C-2.7, C-12.2)."""
+    key itself (C-2.7, C-12.2): the string form of the `api_keys.id` of the
+    account's active key (SR-E27-21). An adapter refuses any other shape."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -308,7 +336,8 @@ class AccountRef(BaseModel):
 
 
 class PlaceOrderRequest(BaseModel):
-    """§14.4 / §8.9 exchange request mapping."""
+    """§14.4 / §8.9 exchange request mapping. `lane` is the rate lane the OMS
+    chose by the order's effect (SR-E29-01, 24 §8.7)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -331,13 +360,15 @@ class PlaceOrderRequest(BaseModel):
     tp_trigger_by: Literal["last", "mark", "index"] = "last"
     sl_trigger_by: Literal["last", "mark", "index"] = "mark"
     tpsl_mode: Literal["full", "partial"] = "full"
+    lane: OrderLane = "entry"
 
 
 class AmendOrderRequest(BaseModel):
     """Amend an open order in place. Declared alongside `TradingPort`
     (§14.1) so E29 (OMS) is authored against a merged signature; the field
     set mirrors `PlaceOrderRequest`'s amendable subset per the exchange
-    `POST /v5/order/amend`."""
+    `POST /v5/order/amend`. An `ext-` order is amended by `exchange_order_id`
+    alone (§14.2 rule 11); `lane` is chosen as on a create."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -350,6 +381,7 @@ class AmendOrderRequest(BaseModel):
     trigger_price: Px | None = None
     take_profit: Px | None = None
     stop_loss: Px | None = None
+    lane: OrderLane = "entry"
 
 
 class CancelOrderRequest(BaseModel):
@@ -382,15 +414,92 @@ class TradingStopRequest(BaseModel):
     tpsl_mode: Literal["full", "partial"] = "full"
 
 
+_DecimalText = Annotated[str, StringConstraints(pattern=r"^-?[0-9]+(\.[0-9]+)?$")]
+_Code64 = Annotated[str, StringConstraints(max_length=64, pattern=r"^[A-Za-z0-9_]{1,64}$")]
+_Text64 = Annotated[str, StringConstraints(max_length=64)]
+_RestPath = Annotated[str, StringConstraints(max_length=64, pattern=r"^/[A-Za-z0-9/._-]*$")]
+_WireName = Annotated[str, StringConstraints(max_length=64, pattern=r"^[a-z][a-z0-9._-]*$")]
+_TriggerSource = Literal["LastPrice", "MarkPrice", "IndexPrice"]
+
+
+class ExchangeRecordFields(BaseModel):
+    """The allow-listed fields of one exchange request, response or push (SR-E29-08), field for
+    field the contract's `ExchangeRecordFields` (`22-api-openapi.yaml`, a parity test pins it).
+    An adapter keeps no other field: adding one is a contract change. Decimals are C6 text."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    order_link_id: Annotated[str, StringConstraints(max_length=36)] | None = None
+    exchange_order_id: _Text64 | None = None
+    symbol: Annotated[str, StringConstraints(pattern=r"^[A-Z0-9]{2,20}USDT$")] | None = None
+    side: Literal["buy", "sell"] | None = None
+    order_type: Literal["market", "limit"] | None = None
+    qty: _DecimalText | None = None
+    price: _DecimalText | None = None
+    time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = None
+    reduce_only: bool | None = None
+    close_on_trigger: bool | None = None
+    position_idx: Literal[0, 1, 2] | None = None
+    trigger_price: _DecimalText | None = None
+    trigger_by: _TriggerSource | None = None
+    trigger_direction: Literal["rise", "fall"] | None = None
+    take_profit: _DecimalText | None = None
+    stop_loss: _DecimalText | None = None
+    tpsl_mode: Literal["Full", "Partial"] | None = None
+    trailing_stop: _DecimalText | None = None
+    activation_price: _DecimalText | None = None
+    tp_size: _DecimalText | None = None
+    sl_size: _DecimalText | None = None
+    tp_trigger_by: _TriggerSource | None = None
+    sl_trigger_by: _TriggerSource | None = None
+    category: Literal["linear"] | None = None
+    order_filter: _Text64 | None = None
+    leverage: _DecimalText | None = None
+    order_status: _Code64 | None = None
+    filled_qty: _DecimalText | None = None
+    remaining_qty: _DecimalText | None = None
+    avg_fill_price: _DecimalText | None = None
+    reject_reason: _Code64 | None = None
+    exec_id: _Text64 | None = None
+    exec_qty: _DecimalText | None = None
+    exec_price: _DecimalText | None = None
+    fee: _DecimalText | None = None
+    is_maker: bool | None = None
+
+
+class ExchangeRecord(BaseModel):
+    """One exchange call as the adapter records it (SR-E29-08, E29 model §6 item 1): the
+    contract's `ExchangeCallRecord` without `event_id` and `at`, which the store adds. Built only
+    from the neutral request and the parsed reply, never from headers, a signature, an `auth`
+    frame or a URL query; the OMS stores it as it is and never reads into it (C-2.3)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    transport: Literal["rest", "ws_trade", "ws_private"]
+    method: Literal["GET", "POST"] | None = None
+    endpoint: _RestPath | None = None
+    op: _WireName | None = None
+    req_id: _Text64 | None = None
+    topic: _WireName | None = None
+    http_status: int | None = None
+    ret_code: int | None = None
+    ret_msg: Annotated[str, StringConstraints(max_length=2048)] | None = None
+    latency_ms: Annotated[int, Field(ge=0)] | None = None
+    request_redacted: ExchangeRecordFields | None = None
+    response_redacted: ExchangeRecordFields | None = None
+
+
 class OrderAck(BaseModel):
     """§14.4. `exchange_ret_code`/`exchange_ret_msg` travel beside the internal `error_code` into
     the call's stored record, redacted (§8.6 code-only rule): an order route answers with the code
-    and `retCode`, never the exchange's `retMsg`."""
+    and `retCode`, never the exchange's `retMsg`. `order_link_id` is `None` only where no order is
+    named: a position-level stop write, or a refused `cancel_all`. `record` is the call's
+    allow-listed record (SR-E29-08)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     ok: bool
-    order_link_id: OrderLinkId
+    order_link_id: OrderLinkId | None
     exchange_order_id: str | None
     error_code: str | None = None
     exchange_ret_code: int | None = None
@@ -398,6 +507,7 @@ class OrderAck(BaseModel):
     retryable: bool = False
     latency_ms: int
     transport: Literal["rest", "ws"]
+    record: ExchangeRecord | None = None
 
 
 class Order(BaseModel):
@@ -409,11 +519,13 @@ class Order(BaseModel):
     module (M3 may not depend on M-oms per CONSTITUTION.md §3).
     **Deviation, noted in the PR**: §14.4 does not give `Order` a formal
     field list; this shape is the read-facing minimum implied by
-    `TradingPort.open_orders`/`order_history`."""
+    `TradingPort.open_orders`/`order_history`. `order_id` is the OMS's local
+    id, which an adapter cannot know, so a read leaves it `None`. B1's full
+    match (SR-E29-03) reads `reduce_only`, `trigger_price` and `stop_loss`."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    order_id: OrderId
+    order_id: OrderId | None = None
     order_link_id: OrderLinkId
     exchange_order_id: str | None
     account_id: AccountId
@@ -428,16 +540,25 @@ class Order(BaseModel):
     avg_fill_price: Px | None
     created_at: TsUs
     terminal_at: TsUs | None
+    reduce_only: bool = False
+    trigger_price: Px | None = None
+    stop_loss: Px | None = None
+    take_profit: Px | None = None
+    tpsl_mode: Literal["full", "partial"] | None = None
+    order_kind: OrderKind = "order"
+    position_idx: Literal[0, 1, 2] = 0
+    time_in_force: Literal["gtc", "ioc", "fok", "post_only", "rpi"] = "gtc"
 
 
 class Execution(BaseModel):
     """§8.2 immutable fill record. **Deviation, noted in the PR**: read-only
-    subset for `TradingPort.executions`; the full record lives with the OMS."""
+    subset for `TradingPort.executions`; the full record lives with the OMS.
+    `order_id` is the OMS's local id: an adapter leaves it `None`."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     exec_id: str
-    order_id: OrderId
+    order_id: OrderId | None = None
     order_link_id: OrderLinkId
     account_id: AccountId
     symbol: Symbol
@@ -480,13 +601,14 @@ class ClosedPnl(BaseModel):
     """§14.4 `TradingPort.closed_pnl`. **Deviation, noted in the PR**: no
     formal field list is given in §14.4; this mirrors the exchange's
     `GET /v5/position/closed-pnl` response shape at the neutral-vocabulary
-    level (no `retCode`/camelCase, C-2.2)."""
+    level (no `retCode`/camelCase, C-2.2). `order_id` is the OMS's local id:
+    an adapter leaves it `None`; `qty` is the size the record closed."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     account_id: AccountId
     symbol: Symbol
-    order_id: OrderId
+    order_id: OrderId | None = None
     side: Side
     qty: Qty
     avg_entry_price: Px
@@ -498,7 +620,8 @@ class ClosedPnl(BaseModel):
 
 
 class Wallet(BaseModel):
-    """§14.4."""
+    """§14.4. `available_to_withdraw` is `None` when the exchange reports no figure (it has
+    deprecated the field for unified accounts); this product never withdraws (C-2.8)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -506,7 +629,7 @@ class Wallet(BaseModel):
     coin: str = "USDT"
     equity: Notional
     wallet_balance: Notional
-    available_to_withdraw: Notional
+    available_to_withdraw: Notional | None
     available_margin: Notional
     used_margin: Notional
     unrealised_pnl: Notional
@@ -531,14 +654,16 @@ class FeeRate(BaseModel):
 class AccountInfo(BaseModel):
     """§14.4 `TradingPort.account_info`. **Deviation, noted in the PR**: no
     formal field list is given; this is the neutral-vocabulary minimum
-    (margin mode, position mode) an OMS needs before placing an order."""
+    (margin mode, position mode) an OMS needs before placing an order.
+    `position_mode` is `None` when the account read does not report it: the
+    exchange reports it per position (`Position.position_idx`), §14.3."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     account_id: AccountId
     uid: str
-    margin_mode: Literal["regular", "portfolio"]
-    position_mode: Literal["one_way", "hedge"]
+    margin_mode: Literal["regular", "portfolio", "isolated"]
+    position_mode: Literal["one_way", "hedge"] | None
     unified_margin: bool
 
 

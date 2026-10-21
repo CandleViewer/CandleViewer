@@ -114,6 +114,19 @@ class RateLimitError(ExchangeError):
         super().__init__(message, **kwargs)  # type: ignore[arg-type]
 
 
+class RateBudgetExceededError(ExchangeError):
+    """The local rate budget had no token within the wait its lane allows (§8.7,
+    `20-architecture.md` §4.3): **nothing was sent**, so the outcome is known and the order
+    never becomes `unknown` on this account. Not a venue answer: it carries no exchange code.
+    Retryable, as nothing left; `retry_after_s` is the wait the token needed, when known."""
+
+    code = OmsErrorCode.RATE_BUDGET_EXCEEDED
+
+    def __init__(self, message: str, **kwargs: object) -> None:
+        kwargs.setdefault("retryable", True)
+        super().__init__(message, **kwargs)  # type: ignore[arg-type]
+
+
 class InsufficientMarginError(ExchangeError):
     """Insufficient wallet/available balance or margin (retCodes
     110004/110007/110012/110014/110044/110045). Never retryable as-is; the
@@ -142,10 +155,11 @@ class InstrumentFilterError(ExchangeError):
 
 
 class DuplicateClientIdError(ExchangeError):
-    """`order_link_id` was already accepted (retCodes 10001/20006/110072).
-    Per C-2.10 / §14.2 rule 2, this means *already accepted, not a failure*:
-    the caller must resolve it via success-after-lookup, never resubmit
-    under a new id."""
+    """`order_link_id` was already accepted (retCodes 10001/20006/110072), raised
+    for an order create only. Per C-2.10 / §14.2 rule 2, this means *already
+    accepted, not a failure*: the adapter surfaces it and the OMS, which holds
+    the row, resolves it via success-after-lookup, never a resubmit under a new
+    id."""
 
     code = OmsErrorCode.DUPLICATE_CLIENT_ID
 

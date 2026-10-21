@@ -8,14 +8,20 @@ total: no I/O, no clock, no process-wide setting; the collision check is in
 
 from __future__ import annotations
 
-import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Final, Literal, cast
 from uuid import UUID
 
-from candleviewer.domain.order_link import OUR_ID
+from candleviewer.domain.order_link import (
+    BASE62,
+    ENV_LETTER,
+    OUR_ID,
+    EnvLetter,
+    account_tag,
+)
+from candleviewer.domain.order_link import base62 as _base62
 from candleviewer.domain.primitives import (
     AccountId,
     Environment,
@@ -43,11 +49,7 @@ OrderPurpose = Literal[
 ]
 """`OrderIntent.purpose` (§8.1)."""
 
-EnvLetter = Literal["l", "d", "t", "p"]
 PurposeTag = Literal["en", "sl", "tp", "sc", "fl", "ac"]
-
-BASE62: Final = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-"""Base62 digits in value order."""
 
 SEQ_MAX: Final = 62**2 - 1
 """The largest `seq2`, 3843: two base62 digits."""
@@ -67,20 +69,9 @@ PURPOSE_TAG: Final[Mapping[OrderPurpose, PurposeTag]] = MappingProxyType(
     }
 )
 
-_ENV_LETTER: Final[Mapping[Environment, EnvLetter]] = MappingProxyType(
-    {"live": "l", "demo": "d", "testnet": "t"}
-)
 _DIGIT: Final[Mapping[str, int]] = MappingProxyType(
     {char: value for value, char in enumerate(BASE62)}
 )
-
-
-def _base62(value: int, width: int) -> str:
-    digits = ""
-    while value:
-        value, digit = divmod(value, 62)
-        digits = BASE62[digit] + digits
-    return digits.rjust(width, "0")
 
 
 def _decode(text: str) -> int:
@@ -94,16 +85,10 @@ def env_letter(mode: ExecutionMode, environment: Environment) -> EnvLetter:
     """The order's own letter: `exchange` takes the account's environment, `paper` takes
     `p`, and `replay` has none, so it fails closed (#846 Q4)."""
     if mode == "exchange":
-        return _ENV_LETTER[environment]
+        return ENV_LETTER[environment]
     if mode == "paper":
         return "p"
     raise UnsupportedExecutionMode(f"execution mode {mode!r} has no order_link_id letter")
-
-
-def account_tag(account_id: AccountId) -> str:
-    """`acct4`: crc32 of the lowercase account id, mod 62^4. A diagnostic tag only;
-    uniqueness comes from `group22`, `seq2` and the collision check."""
-    return _base62(zlib.crc32(str(account_id).lower().encode("ascii")) % 62**4, 4)
 
 
 @dataclass(frozen=True, slots=True)
