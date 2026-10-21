@@ -167,8 +167,10 @@ technical notes: "The clock offset is injected, not read from a global")."""
 
 
 class _LaneBudget:
-    """The lane's wait for one call (24 §8.7), on the client's monotonic clock: every attempt's
-    token wait and every pause before a retry come out of it. Without one, nothing is bounded."""
+    """The lane's wait for one call (24 §8.7): a deadline from the call's start, on the client's
+    monotonic clock. Everything the call spends counts against it: every attempt's token wait,
+    its time on the network, a clock re-measure and every pause before a retry, so an attempt
+    that is slow to answer leaves no time for a retry. Without one, nothing is bounded."""
 
     __slots__ = ("_clock", "_until", "left")
 
@@ -181,6 +183,12 @@ class _LaneBudget:
     def allows(self, pause_s: float) -> bool:
         """Whether a pause of `pause_s` from now ends within the budget."""
         return self._until is None or self._clock() + pause_s <= self._until
+
+    def within(self, cap_s: float) -> float:
+        """`cap_s`, or what is left of the wait when that is shorter."""
+        if self._until is None:
+            return cap_s
+        return max(0.0, min(cap_s, self._until - self._clock()))
 
     def refresh(self) -> None:
         if self._until is not None:
@@ -610,13 +618,19 @@ class BybitRestClient:
                 bybit_rest_requests_total.labels(endpoint=path, result="clock_drift").inc()
                 # Re-measure the offset (ClockGuard.resync_after_signature_failure,
                 # injected by the composition root) *before* the single retry
-                # re-signs with it (E08-S07 "Signature failure fallback").
+                # re-signs with it (E08-S07 "Signature failure fallback"), within what is
+                # left of the lane's wait (24 §8.7): with none left before the re-measure, or
+                # after it, the venue's answer is the call's and no retry is made.
+                if not budget.allows(0.0):
+                    raise error
                 if self._on_signature_failure is not None:
                     try:
-                        async with asyncio.timeout(_SIGNATURE_RESYNC_TIMEOUT_S):
+                        async with asyncio.timeout(budget.within(_SIGNATURE_RESYNC_TIMEOUT_S)):
                             await self._on_signature_failure()
                     except Exception as exc:  # re-measure failure must not mask the 10002
                         logger().warning("bybit_clock_resync_failed", error=type(exc).__name__)
+                if not budget.allows(0.0):
+                    raise error
                 budget.refresh()
                 continue
 

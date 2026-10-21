@@ -191,3 +191,44 @@ async def test_acquire_ip_only_waits_on_the_injected_sleep() -> None:
     await governor.acquire_ip_only()
     await governor.acquire_ip_only()
     assert sleeps.waits and sum(sleeps.waits) == pytest.approx(5.0)
+
+
+@pytest.mark.asyncio
+async def test_a_deadline_bounds_the_queue_behind_a_busy_bucket() -> None:
+    """24 §8.7: the lane's wait bounds the queue for a bucket too. A taker holding the bucket's
+    lock (one with no deadline, sleeping for its token) never keeps a critical acquire past its
+    wait: it is refused at once, with nothing taken, and the next acquire goes through."""
+    governor = TokenBucketGovernor()
+    bucket = governor._get_bucket("uid-1", EndpointClass.ORDER)
+    await bucket.lock.acquire()  # a taker in front, holding the lock
+    with pytest.raises(RateBudgetExceededError, match="busy past the lane's wait"):
+        async with asyncio.timeout(1.0):  # a guard: the refusal comes at once
+            await governor.acquire("uid-1", EndpointClass.ORDER, lane="critical", deadline_s=0.0)
+    assert bucket.tokens == pytest.approx(10.0)
+    bucket.lock.release()
+    await governor.acquire("uid-1", EndpointClass.ORDER, lane="critical", deadline_s=0.0)
+    assert not bucket.lock.locked()
+
+
+@pytest.mark.asyncio
+async def test_a_view_refused_in_the_queue_gives_its_cap_token_back() -> None:
+    governor = TokenBucketGovernor()
+    view = governor.capped(5)
+    bucket = governor._get_bucket("uid-1", EndpointClass.ACCOUNT)
+    await bucket.lock.acquire()
+    with pytest.raises(RateBudgetExceededError):
+        async with asyncio.timeout(1.0):  # a guard: the refusal comes at once
+            await view.acquire("uid-1", EndpointClass.ACCOUNT, lane="poll", deadline_s=0.0)
+    bucket.lock.release()
+    assert view._cap is not None and view._cap.tokens == pytest.approx(5.0)
+
+
+def test_a_capped_view_holds_every_attribute_of_its_governor() -> None:
+    """A view is a copy: an attribute the governor gains is never missing from a view, and the
+    IP gate and buckets are the governor's own; only the cap is the view's."""
+    governor = TokenBucketGovernor()
+    view = governor.capped(5)
+    assert vars(view).keys() == vars(governor).keys()
+    assert (view._ip, view._buckets) == (governor._ip, governor._buckets)
+    assert view._ip is governor._ip and view._buckets is governor._buckets
+    assert governor._cap is None and view._cap is not None

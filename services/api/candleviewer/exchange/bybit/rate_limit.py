@@ -18,6 +18,7 @@ alike until E34-T02 builds the reserve behind it (#2877 ruling R3).
 from __future__ import annotations
 
 import asyncio
+import copy
 import math
 import time
 from collections.abc import Awaitable, Callable
@@ -115,14 +116,9 @@ class TokenBucketGovernor:
 
     def capped(self, per_5s: int) -> TokenBucketGovernor:
         """A view that shares this governor's IP bucket, hold and per-UID buckets and adds a
-        cap of its own: `per_5s` acquisitions per five seconds across every UID it serves."""
-        view = TokenBucketGovernor.__new__(TokenBucketGovernor)
-        view._sleep = self._sleep
-        view._default_capacity = self._default_capacity
-        view._default_refill_per_s = self._default_refill_per_s
-        view._buckets = self._buckets
-        view._now = self._now
-        view._ip = self._ip
+        cap of its own: `per_5s` acquisitions per five seconds across every UID it serves. A
+        shallow copy, so a view holds every attribute the governor holds, shared."""
+        view = copy.copy(self)
         view._cap = _Bucket(float(per_5s), per_5s / 5.0, now=self._now())
         return view
 
@@ -148,9 +144,10 @@ class TokenBucketGovernor:
     ) -> None:
         """Wait until the view's cap (if any), the per-UID/endpoint-class bucket and the
         IP-wide bucket each have a spare token, then consume one from each. `lane` is
-        accepted and served like any other until E34-T02. With `deadline_s`, a wait (a hold
-        included) that would end later raises `RateBudgetExceededError`; a token taken before
-        the refusal is given back, so nothing is spent on a request that is never sent."""
+        accepted and served like any other until E34-T02. With `deadline_s`, a wait (a hold,
+        and the queue behind other takers of a bucket, included) that would end later raises
+        `RateBudgetExceededError`; a token taken before the refusal is given back, so nothing is
+        spent on a request that is never sent."""
         limit = None if deadline_s is None else self._now() + max(0.0, deadline_s)
         await self._wait_ip_hold(limit)
         targets = [b for b in (self._cap, self._get_bucket(uid, endpoint_class)) if b is not None]
@@ -165,7 +162,8 @@ class TokenBucketGovernor:
             raise
 
     async def _take(self, target: _Bucket, limit: float | None) -> None:
-        async with target.lock:
+        await self._queue(target, limit)
+        try:
             while True:
                 # A hold set while we queued on this lock must not be missed.
                 await self._wait_ip_hold(limit)
@@ -181,6 +179,23 @@ class TokenBucketGovernor:
                         retry_after_s=wait_s,
                     )
                 await self._sleep(min(wait_s, _MAX_POLL_S))
+        finally:
+            target.lock.release()
+
+    async def _queue(self, target: _Bucket, limit: float | None) -> None:
+        """Hold the bucket's lock, queued behind other takers for no longer than the deadline
+        leaves (24 §8.7: the queue counts against the lane's wait). The bound runs on the event
+        loop's clock, which is the monotonic clock this governor reads in production."""
+        if limit is None:
+            await target.lock.acquire()
+            return
+        try:
+            async with asyncio.timeout(max(0.0, limit - self._now())):
+                await target.lock.acquire()
+        except TimeoutError:
+            raise RateBudgetExceededError(
+                "the rate bucket was busy past the lane's wait; nothing was sent"
+            ) from None
 
     async def acquire_ip_only(self) -> None:
         """Wait for a spare token on the IP-wide bucket only, without
