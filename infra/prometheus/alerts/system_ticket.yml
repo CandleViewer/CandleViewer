@@ -386,14 +386,16 @@ groups:
           runbook_url: "docs/plan/07-release-and-prr.md#alert-rolloffstreamunlisted"
       - alert: AlertOutboxBacklog
         # #1016 (E40-T04): the alert.deliver outbox, its unprocessed and not-dead rows as the
-        # dispatcher samples them every 15 s (`cv_outbox_depth`). A healthy poller claims up to 64
-        # rows a poll and polls at least once a second, so over 100 for five minutes is a poller
-        # that is stalled, failing or slower than the firings. A ticket, not a page: each firing
-        # is already a committed `alert_deliveries` row with its outbox row, replayed after a
-        # restart, and an alert never places an order. A condition, so no hold, as PublicWsDown:
-        # a backlog that clears inside the 22:00-07:00 UTC ticket mute is not sent. For
-        # alert.deliver alone, as the ticket reads: no other topic has a poller that sets the
-        # gauge. No absent() guard, see AlertOutboxDeadLettered.
+        # dispatcher's own poll loop samples them every 15 s (`cv_outbox_depth`). A healthy
+        # poller claims up to 64 rows a poll and polls at least once a second, so over 100 for
+        # five minutes is a poller that is failing every poll or slower than the firings. A
+        # stopped, hung or dead poller samples nothing and freezes the gauge, so the ticket
+        # fires for it only if the last sample was already over 100 (the runbook's row 1). A
+        # ticket, not a page: each firing is already a committed `alert_deliveries` row with its
+        # outbox row, replayed after a restart, and an alert never places an order. A condition,
+        # so no hold, as PublicWsDown: a backlog that clears inside the 22:00-07:00 UTC ticket
+        # mute is not sent. For alert.deliver alone, as the ticket reads: no other topic has a
+        # poller that sets the gauge. No absent() guard, see AlertOutboxDeadLettered.
         expr: max by (env) (cv_outbox_depth{topic="alert.deliver"}) > 100
         for: 5m
         labels:

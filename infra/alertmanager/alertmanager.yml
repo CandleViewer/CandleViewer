@@ -58,6 +58,7 @@ time_intervals:
 inhibit_rules:
   # A Postgres outage suppresses DB-dependent Tickets only. Security signals (auth, secrets,
   # network/egress) are deliberately NOT inhibited so SR-125 stays visible during a DB outage.
+  # The alerts module's security tickets (webhook egress, key checks) carry component network or auth, never alerts, so this matcher misses them.
   - source_matchers: [alertname = "PostgresDown"]
     target_matchers: [severity = "ticket", component =~ "storage|oms|rules|book|audit|alerts"]
     equal: [env]

@@ -21,9 +21,10 @@ adapter, and settles delivery + outbox row in one store call:
   dead-letters after `max_attempts` instead of looping once per lease;
 - `stop()` lets the in-flight send finish (bounded by `grace_s`) before cancelling;
 - the poll loop also samples the topic's backlog onto `cv_outbox_depth{topic}` (at most every
-  `DEPTH_EVERY_S`, even while a backlog keeps every poll full); a failed read is logged and never
-  stops dispatching. `AlertOutboxBacklog` (over 100 for 5 min) reads that gauge and
-  `AlertOutboxDeadLettered` reads `cv_outbox_dead_total` (infra/prometheus/alerts);
+  `DEPTH_EVERY_S`, even while a backlog keeps every poll full); a read that fails or outlasts
+  `DEPTH_TIMEOUT_S` is logged and never stops dispatching. `AlertOutboxBacklog` (over 100 for
+  5 min) reads that gauge and `AlertOutboxDeadLettered` reads `cv_outbox_dead_total`
+  (infra/prometheus/alerts);
 - `suppressed` rows carry a bounded reason code (`SUPPRESSION_REASONS`) in
   `error_message` and `context.suppression_reason`;
 - `webhook` (flag `alerts_webhook_enabled`, E40-S03) and `push` (out of scope) are
@@ -62,6 +63,9 @@ MAX_ERROR_LEN = 200
 #: `cv_outbox_depth` is read at most this often (monotonic seconds): a backlog gauge, not a
 #: per-poll cost, since the loop polls every second.
 DEPTH_EVERY_S = 15.0
+#: A depth read that outlasts this is abandoned and logged like a failed one: the poll loop waits
+#: on it, so a half-open connection must not hold up the claims behind it.
+DEPTH_TIMEOUT_S = 5.0
 
 #: Bounded `suppressed` reason codes (stored in `error_message` and `context`).
 SUPPRESSION_REASONS: frozenset[str] = frozenset(
@@ -280,7 +284,8 @@ def default_adapters(
 class AlertDispatcher:
     """Outbox poller for `alert.deliver`. `run_once` is the unit of work (tests drive it);
     `start` runs it in a tracked task, woken by `notify()` or every `interval_s`, and samples the
-    backlog's depth from there (`monotonic` is the clock of that throttle)."""
+    backlog's depth from there (`monotonic` is the clock of that throttle, `depth_timeout_s` the
+    bound on each read)."""
 
     def __init__(
         self,
@@ -296,6 +301,7 @@ class AlertDispatcher:
         lease_s: float = 60.0,
         interval_s: float = 1.0,
         depth_every_s: float = DEPTH_EVERY_S,
+        depth_timeout_s: float = DEPTH_TIMEOUT_S,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         missing = set(CHANNELS) - adapters.keys()
@@ -305,6 +311,7 @@ class AlertDispatcher:
         self._now, self._rng, self._metric, self._on_change = now, rng, metric, on_change
         self._batch, self._lease, self._interval = batch, lease_s, interval_s
         self._depth_every, self._monotonic = depth_every_s, monotonic
+        self._depth_timeout = depth_timeout_s
         self._depth_due: float | None = None  # monotonic time of the next sample; None: at once
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -396,15 +403,16 @@ class AlertDispatcher:
 
     async def _sample_depth(self) -> None:
         """`cv_outbox_depth{topic="alert.deliver"}`, the gauge `AlertOutboxBacklog` reads, at most
-        once per `depth_every_s`. A failed read is logged by type and keeps the last value: the
-        gauge is a signal, never a reason to stop dispatching (a database that is down is
-        PostgresDown's, and the poll logs it)."""
+        once per `depth_every_s`. A failed read, or one that outlasts `depth_timeout_s`, is logged
+        by type and keeps the last value: the gauge is a signal, never a reason to stop
+        dispatching (a database that is down is PostgresDown's, and the poll logs it)."""
         now = self._monotonic()
         if self._depth_due is not None and now < self._depth_due:
             return
         self._depth_due = now + self._depth_every  # also after a failure: no retry per poll
         try:
-            depth = await self._store.depth(TOPIC_ALERT_DELIVER)
+            async with asyncio.timeout(self._depth_timeout):
+                depth = await self._store.depth(TOPIC_ALERT_DELIVER)
             self._metric("cv_outbox_depth", (TOPIC_ALERT_DELIVER,)).set(depth)
         except asyncio.CancelledError:
             raise

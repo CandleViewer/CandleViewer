@@ -127,7 +127,6 @@ async def test_the_snapshot_is_bounded_and_the_count_exact(
     ((kind, ids, count),) = conn.items()
     assert kind == "snap" and len(ids) == 3 and count == 5
     assert SNAPSHOT_MAX == 500  # the module's own bound, SCR-014's 500
-    assert (LOAD_TRIES, LOAD_BACKOFF_S) == (3, 0.5)  # 23 §6.2.1: "tried three times in all"
 
 
 async def test_a_second_attach_is_served_from_the_view_without_a_read(world: World) -> None:
@@ -198,6 +197,28 @@ async def test_the_topic_is_private_never_cached_and_never_continuous(world: Wor
 
 
 # --- snapshot loads: tried again, and bounded ---------------------------------------------
+
+
+def test_the_load_retry_constants_match_the_contract_doc() -> None:
+    """23-ws-protocol.md §6.2.1 (Integrity): a load whose read fails is "tried three times in all,
+    backed off and jittered". `LOAD_TRIES` is that three and `LOAD_BACKOFF_S` (doubled per try) the
+    first wait: changing either is a contract change, so the doc changes with it."""
+    assert (LOAD_TRIES, LOAD_BACKOFF_S) == (3, 0.5)
+
+
+@pytest.mark.parametrize(("jitter", "share"), [(0.0, 0.5), (1.0, 1.0)], ids=["floor", "ceiling"])
+async def test_the_backoff_is_jittered_between_half_and_the_whole_of_each_wait(
+    make_world: Callable[..., World], jitter: float, share: float
+) -> None:
+    """The owners a database blip failed together must not retry in lockstep: `rng` at 0 waits half
+    of each doubled step (0.25 s, then 0.5 s), at 1 the whole of it, the range [0.5, 1.0]. Written
+    on the constants, so a change to them fails the test that pins them and not this one."""
+    w = make_world(rng=lambda: jitter)
+    w.reader.add(USER_A)
+    w.reader.fail.add("list_page")
+    w.conn(USER_A).sub()
+    await w.loads()
+    assert w.slept == [LOAD_BACKOFF_S * 2**n * share for n in range(LOAD_TRIES - 1)]
 
 
 @pytest.mark.parametrize("read", ["list_page", "unacked_count"])
