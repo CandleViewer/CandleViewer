@@ -26,17 +26,19 @@ import pytest
 
 import candleviewer.exchange.bybit as adapter_package
 from candleviewer.domain.order_link import ext_key
+from candleviewer.domain.primitives import Environment
 from candleviewer.exchange.base.errors import ExchangeError, RateBudgetExceededError
 from candleviewer.exchange.base.models import (
     AmendOrderRequest,
     CancelOrderRequest,
     TradingStopRequest,
 )
+from candleviewer.exchange.bybit import trading
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.exchange.bybit.signer import BybitSigner
-from candleviewer.exchange.bybit.trading import CRITICAL_WAIT_S, BybitTradingPort
+from candleviewer.exchange.bybit.trading import CRITICAL_WAIT_S, ENDPOINTS, BybitTradingPort
 from tests._corpus import rest
 from tests._signing import CREDENTIAL_ID, Call, fake_capability
 from tests.unit.exchange.bybit._trading import (
@@ -233,9 +235,16 @@ async def test_a_critical_exit_answered_10006_retries_within_its_wait() -> None:
 
 
 @pytest.mark.parametrize("reset", [600.0, None], ids=["reset-header-600s", "no-header"])
-@pytest.mark.parametrize("lane", ["critical", "entry"])
+@pytest.mark.parametrize(
+    ("lane", "send"),
+    [
+        ("critical", lambda port: port.cancel_order(_cancel())),
+        ("entry", lambda port: port.place_order(place())),
+    ],
+    ids=["critical", "entry"],
+)
 async def test_a_10018_comes_back_at_once_as_a_retryable_rejection(
-    lane: str, reset: float | None
+    lane: str, send: Callable[[BybitTradingPort], Awaitable[Any]], reset: float | None
 ) -> None:
     """The hold it sets outlasts every lane's wait: no sleep, the venue's answer, whatever the
     retries (the default configuration takes three)."""
@@ -249,10 +258,7 @@ async def test_a_10018_comes_back_at_once_as_a_retryable_rejection(
     )
     port = make_port(venue, governor=governor, max_retries=3, clock=clock)
 
-    if lane == "critical":
-        ack = await port.cancel_order(_cancel())
-    else:
-        ack = await port.place_order(place())
+    ack = await send(port)
 
     assert (ack.ok, ack.error_code, ack.retryable, ack.exchange_ret_code) == (
         False,
@@ -260,7 +266,8 @@ async def test_a_10018_comes_back_at_once_as_a_retryable_rejection(
         True,
         10018,
     )
-    assert len(venue.sent) == 1 and sum(clock.sleeps) == 0.0 <= WAITS[lane]
+    assert (len(venue.sent), sum(clock.sleeps)) == (1, 0.0)
+    assert [taken for _, _, taken, _ in governor.acquired] == [lane]
     assert governor.ip_hold_remaining_s() >= 600.0
 
 
@@ -315,6 +322,43 @@ async def test_the_service_port_answers_a_10018_as_an_ack_with_its_default_retri
     assert len(venue.sent) == 1 and svc._governor.ip_hold_remaining_s() >= 590.0
 
 
+@pytest.mark.parametrize(
+    ("name", "requested", "lane"),
+    [
+        ("cancel_order", None, "critical"),
+        ("cancel_all", None, "critical"),
+        ("set_trading_stop", None, "critical"),
+        ("set_leverage", None, "entry"),
+        ("open_orders", None, "poll"),
+        ("place_order", "critical", "critical"),
+        ("place_batch", "entry", "entry"),
+        ("amend_order", "critical", "critical"),
+    ],
+)
+def test_a_calls_lane_is_the_tables_or_its_requests(name: str, requested: Any, lane: str) -> None:
+    assert trading._lane(ENDPOINTS[name], requested) == lane
+
+
+@pytest.mark.parametrize(
+    ("name", "requested"),
+    [("cancel_order", "entry"), ("open_orders", "critical"), ("place_order", None)],
+    ids=["exit-given-a-lane", "read-given-a-lane", "create-given-none"],
+)
+def test_a_call_naming_its_lane_twice_or_never_is_refused(name: str, requested: Any) -> None:
+    """One place names each lane: a call site that also names one could only mask a mismatch."""
+    with pytest.raises(ValueError, match="endpoint table's or its request's"):
+        trading._lane(ENDPOINTS[name], requested)
+
+
+async def test_a_call_site_naming_a_lane_the_table_fixes_is_refused_unsent() -> None:
+    venue, governor = Venue(), RecordingGovernor()
+    port = make_port(venue, governor=governor)
+    body = {"category": "linear", "symbol": "BTCUSDT", "orderId": ORDER_ID}
+    with pytest.raises(ValueError, match="endpoint table's or its request's"):
+        await port._trade("cancel_order", account(), body=body, lane="entry")
+    assert (venue.sent, governor.acquired) == ([], [])
+
+
 # -- 3. one governor per process (OM-D08, R5) ---------------------------------------------------
 
 
@@ -365,47 +409,65 @@ def test_the_adapter_package_holds_no_trade_socket() -> None:
     assert found == []
 
 
+def _live_calls() -> dict[str, Call_]:
+    """Each port method of `CALLS`, called with a live account."""
+    live = account(environment="live")
+    return {
+        "place_order": lambda p: p.place_order(place(live)),
+        "place_order_critical": lambda p: p.place_order(place(live, lane="critical")),
+        "place_batch": lambda p: p.place_batch([place(live)]),
+        "place_batch_critical": lambda p: p.place_batch([place(live, lane="critical")]),
+        "amend_order": lambda p: p.amend_order(
+            AmendOrderRequest(account=live, symbol="BTCUSDT", order_link_id=link(),
+                              qty=Decimal("1"))
+        ),
+        "cancel_order": lambda p: p.cancel_order(
+            CancelOrderRequest(account=live, symbol="BTCUSDT", order_link_id=link())
+        ),
+        "cancel_all": lambda p: p.cancel_all(live, None),
+        "set_trading_stop": lambda p: p.set_trading_stop(
+            TradingStopRequest(account=live, symbol="BTCUSDT")
+        ),
+        "set_leverage": lambda p: p.set_leverage(live, "BTCUSDT", Decimal("5")),
+        "open_orders": lambda p: p.open_orders(live),
+        "order_history": lambda p: p.order_history(live),
+        "positions": lambda p: p.positions(live),
+        "executions": lambda p: p.executions(live, NOW_US - 1, NOW_US),
+        "closed_pnl": lambda p: p.closed_pnl(live, NOW_US - 1, NOW_US),
+        "wallet": lambda p: p.wallet(live),
+        "fee_rate": lambda p: p.fee_rate(live, "BTCUSDT"),
+        "account_info": lambda p: p.account_info(live),
+    }  # fmt: skip
+
+
+LIVE_CALLS = _live_calls()
+
+
 @pytest.mark.parametrize("name", sorted(CALLS))
 async def test_an_account_of_another_environment_is_refused_before_anything(name: str) -> None:
     """Nothing signed, no token taken, no client built: the demo port meets a live account."""
     venue, governor, calls = Venue(), RecordingGovernor(), list[Call]()
     port = make_port(venue, governor=governor, calls=calls)
-    live = account(environment="live")
-    swap: dict[str, Any] = {"account": live}
 
     with pytest.raises(ValueError, match="another environment"):
-        if name.startswith("place_order"):
-            await port.place_order(place(live))
-        elif name.startswith("place_batch"):
-            await port.place_batch([place(live)])
-        elif name in {"amend_order", "cancel_order", "set_trading_stop"}:
-            await _swapped(port, name, swap)
-        else:
-            await getattr(port, name)(live, *_args(name))
+        await LIVE_CALLS[name](port)
 
     assert (venue.sent, governor.acquired, calls, port._clients) == ([], [], [], {})
 
 
-def _args(name: str) -> tuple[object, ...]:
-    return {
-        "cancel_all": (None,),
-        "set_leverage": ("BTCUSDT", Decimal("5")),
-        "executions": (NOW_US - 1, NOW_US),
-        "closed_pnl": (NOW_US - 1, NOW_US),
-        "fee_rate": ("BTCUSDT",),
-    }.get(name, ())
-
-
-async def _swapped(port: BybitTradingPort, name: str, swap: dict[str, Any]) -> None:
-    ref = account()
-    requests: dict[str, Any] = {
-        "amend_order": AmendOrderRequest(
-            account=ref, symbol="BTCUSDT", order_link_id=link(), qty=Decimal("1")
-        ),
-        "cancel_order": CancelOrderRequest(account=ref, symbol="BTCUSDT", order_link_id=link()),
-        "set_trading_stop": TradingStopRequest(account=ref, symbol="BTCUSDT"),
-    }
-    await getattr(port, name)(requests[name].model_copy(update=swap))
+@pytest.mark.parametrize(
+    ("environment", "origin"),
+    [("demo", ("https", "api-demo.bybit.com")), ("live", ("https", "api.bybit.com"))],
+)
+async def test_each_environments_port_sends_to_its_own_host(
+    environment: Environment, origin: tuple[str, str]
+) -> None:
+    """C-2.11, SR-040a: a port signs and sends for its own environment's host only (the mock
+    transport answers in-process; nothing leaves the test)."""
+    venue = Venue().on("/v5/account/info", rest("rest/trading-account-info.json"))
+    port = make_port(venue, environment=environment)
+    await port.account_info(account(environment=environment))
+    assert venue.origins() == [origin]
 
 
 async def test_every_ack_says_rest() -> None:
@@ -438,17 +500,25 @@ def test_the_factory_and_port_signatures_hold_no_trade_transport() -> None:
 # -- 5. category=linear (SR-054) ----------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", sorted(CALLS))
+#: The account endpoints, which take no category.
+NO_CATEGORY = {"wallet", "account_info"}
+
+
+@pytest.mark.parametrize("name", sorted(set(CALLS) - NO_CATEGORY))
 async def test_every_call_that_takes_a_category_states_linear(name: str) -> None:
     _, path, _, _, answer = CALLS[name]
     venue = Venue().on(path, answer)
     await _run(name, make_port(venue))
-    get = venue.sent[0].method == "GET"
-    sent: dict[str, Any] = venue.queries()[0] if get else venue.bodies()[0]
-    if path in {"/v5/account/wallet-balance", "/v5/account/info"}:
-        assert "category" not in sent  # account endpoints take none
-    else:
-        assert sent["category"] == "linear"
+    assert [sent["category"] for sent in venue.payloads()] == ["linear"]
+
+
+@pytest.mark.parametrize("name", sorted(NO_CATEGORY))
+async def test_the_account_endpoints_send_no_category(name: str) -> None:
+    _, path, _, _, answer = CALLS[name]
+    venue = Venue().on(path, answer)
+    await _run(name, make_port(venue))
+    [sent] = venue.payloads()
+    assert "category" not in sent
 
 
 @pytest.mark.parametrize(
@@ -512,6 +582,30 @@ async def test_a_history_filter_by_order_id_goes_on_the_wire_and_is_applied_agai
 
     assert [o.exchange_order_id for o in found] == [row_id] and other == []
     assert venue.queries()[0]["orderId"] == row_id and "orderLinkId" not in venue.queries()[0]
+
+
+async def test_a_history_lookup_by_both_ids_sends_the_exchange_id_and_applies_both() -> None:
+    """One id names the order on the wire, the exchange's; both are applied again locally, so a
+    row under another of our ids is not this lookup's (a test input on the transcribed row)."""
+    page = with_result(rest("rest/trading-order-history.json"), nextPageCursor="")
+    row = page["result"]["list"][0]
+    venue = Venue().on(
+        "/v5/order/history", with_result(page, list=[{**row, "orderLinkId": link()}])
+    )
+    port = make_port(venue)
+
+    found = await port.order_history(
+        account(), order_link_id=link(), exchange_order_id=row["orderId"]
+    )
+    other = await port.order_history(
+        account(), order_link_id=link(seq=5), exchange_order_id=row["orderId"]
+    )
+
+    assert ([o.exchange_order_id for o in found], other) == ([row["orderId"]], [])
+    assert [(q.get("orderId"), q.get("orderLinkId")) for q in venue.queries()] == [
+        (row["orderId"], None),
+        (row["orderId"], None),
+    ]
 
 
 @pytest.mark.parametrize("key", [ext_key("x-1"), "linear-004", "cv-1"])

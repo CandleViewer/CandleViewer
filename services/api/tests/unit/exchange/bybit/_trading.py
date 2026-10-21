@@ -155,6 +155,17 @@ class Venue:
     def queries(self) -> list[dict[str, str]]:
         return [dict(request.url.params) for request in self.sent]
 
+    def payloads(self) -> list[dict[str, Any]]:
+        """What each request carried: its query for a GET, its JSON body for a POST."""
+        return [
+            dict(request.url.params) if request.method == "GET" else body
+            for request, body in zip(self.sent, self.bodies(), strict=True)
+        ]
+
+    def origins(self) -> list[tuple[str, str]]:
+        """The scheme and host each request went to (C-2.11: the environment's own)."""
+        return [(request.url.scheme, request.url.host) for request in self.sent]
+
     def paths(self) -> list[str]:
         return [request.url.path for request in self.sent]
 

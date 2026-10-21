@@ -11,6 +11,7 @@ ours, or its codes set, as the test says: test inputs on a documented shape.
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from typing import Any
 
@@ -18,8 +19,8 @@ import pytest
 
 from candleviewer.domain.order_link import ext_key
 from candleviewer.exchange.base.errors import AmbiguousResultError, UnknownStateError
-from candleviewer.exchange.base.models import TradingStopRequest
-from candleviewer.exchange.bybit.trading import _order_ref, _wall_us
+from candleviewer.exchange.base.models import AmendOrderRequest, TradingStopRequest
+from candleviewer.exchange.bybit.trading import BybitTradingPort, _order_ref, _wall_us
 from tests._corpus import rest
 from tests.unit.exchange.bybit._trading import (
     ACCOUNT_B,
@@ -81,6 +82,144 @@ async def test_a_create_maps_the_request_as_section_8_9_says() -> None:
         link(),
         CREATED["result"]["orderId"],
     )
+
+
+#: Each case: request fields and the wire's spelling of them, written out here, never read from
+#: the port's maps (24 §8.9). Every case keeps `place()`'s native stop (C-2.6).
+WIRE_CASES: list[tuple[dict[str, Any], dict[str, Any]]] = [
+    ({"side": "buy"}, {"side": "Buy"}),
+    ({"side": "sell"}, {"side": "Sell"}),
+    ({"order_type": "limit"}, {"orderType": "Limit", "price": "60000"}),
+    ({"order_type": "market"}, {"orderType": "Market"}),
+    ({"time_in_force": "gtc"}, {"timeInForce": "GTC"}),
+    ({"time_in_force": "ioc"}, {"timeInForce": "IOC"}),
+    ({"time_in_force": "fok"}, {"timeInForce": "FOK"}),
+    ({"time_in_force": "post_only"}, {"timeInForce": "PostOnly"}),
+    (
+        {"trigger_price": Decimal("59000"), "trigger_by": "last"},
+        {"triggerPrice": "59000", "triggerBy": "LastPrice"},
+    ),
+    (
+        {"trigger_price": Decimal("59000"), "trigger_by": "mark"},
+        {"triggerPrice": "59000", "triggerBy": "MarkPrice"},
+    ),
+    (
+        {"trigger_price": Decimal("59000"), "trigger_by": "index"},
+        {"triggerPrice": "59000", "triggerBy": "IndexPrice"},
+    ),
+    ({"trigger_price": Decimal("61000"), "trigger_direction": "rise"}, {"triggerDirection": 1}),
+    ({"trigger_price": Decimal("59000"), "trigger_direction": "fall"}, {"triggerDirection": 2}),
+    (
+        {"take_profit": Decimal("65000"), "tp_trigger_by": "last"},
+        {"takeProfit": "65000", "tpTriggerBy": "LastPrice"},
+    ),
+    (
+        {"take_profit": Decimal("65000"), "tp_trigger_by": "mark"},
+        {"takeProfit": "65000", "tpTriggerBy": "MarkPrice"},
+    ),
+    (
+        {"take_profit": Decimal("65000"), "tp_trigger_by": "index"},
+        {"takeProfit": "65000", "tpTriggerBy": "IndexPrice"},
+    ),
+    (
+        {"stop_loss": Decimal("57000"), "sl_trigger_by": "last"},
+        {"stopLoss": "57000", "slTriggerBy": "LastPrice"},
+    ),
+    (
+        {"stop_loss": Decimal("57000"), "sl_trigger_by": "mark"},
+        {"stopLoss": "57000", "slTriggerBy": "MarkPrice"},
+    ),
+    (
+        {"stop_loss": Decimal("57000"), "sl_trigger_by": "index"},
+        {"stopLoss": "57000", "slTriggerBy": "IndexPrice"},
+    ),
+    ({"tpsl_mode": "full"}, {"tpslMode": "Full"}),
+    ({"tpsl_mode": "partial"}, {"tpslMode": "Partial"}),
+    ({"reduce_only": True}, {"reduceOnly": True}),
+    ({"close_on_trigger": True}, {"closeOnTrigger": True}),
+    ({"close_on_trigger": False}, {"closeOnTrigger": False}),
+    ({"position_idx": 0}, {"positionIdx": 0}),
+    ({"position_idx": 1}, {"positionIdx": 1}),
+    ({"position_idx": 2}, {"positionIdx": 2}),
+]
+WIRE_IDS = [",".join(f"{k}={v}" for k, v in fields.items()) for fields, _ in WIRE_CASES]
+
+
+@pytest.mark.parametrize(("fields", "wire"), WIRE_CASES, ids=WIRE_IDS)
+async def test_a_create_spells_each_field_as_the_wire_does(
+    fields: dict[str, Any], wire: dict[str, Any]
+) -> None:
+    """A Sell sent as a Buy, or a stop under a name the venue ignores, would be a live fault."""
+    venue = Venue().on("/v5/order/create", with_result(CREATED, orderLinkId=link()))
+    await make_port(venue).place_order(place(**fields))
+    [body] = venue.bodies()
+    assert {key: body[key] for key in wire} == wire
+    assert body["stopLoss"] and body["slTriggerBy"]  # C-2.6: the native stop rides the create
+
+
+@pytest.mark.parametrize(("fields", "wire"), WIRE_CASES, ids=WIRE_IDS)
+async def test_every_batch_item_spells_each_field_as_the_wire_does(
+    fields: dict[str, Any], wire: dict[str, Any]
+) -> None:
+    links = [link(seq=0), link(seq=1)]
+    reply = _batch(links, [(0, "OK"), (0, "OK")], ["e-1", "e-2"])
+    venue = Venue().on("/v5/order/create-batch", reply)
+    await make_port(venue).place_batch([place(order_link_id=lk, **fields) for lk in links])
+    [body] = venue.bodies()
+    assert [{key: item[key] for key in wire} for item in body["request"]] == [wire, wire]
+    assert all(item["stopLoss"] and item["slTriggerBy"] for item in body["request"])  # C-2.6
+
+
+async def test_an_amend_sends_each_value_it_changes_under_its_wire_name() -> None:
+    """Literal names (24 §8.9, the venue's amend): the record test reads the port's own map, so
+    it could not see a renamed or dropped field."""
+    reply = with_result(rest("rest/trading-amend-reply.json"), orderLinkId=link())
+    venue = Venue().on("/v5/order/amend", reply)
+    request = AmendOrderRequest(
+        account=account(),
+        symbol="BTCUSDT",
+        order_link_id=link(),
+        qty=Decimal("0.020"),
+        price=Decimal("61000"),
+        trigger_price=Decimal("59000"),
+        take_profit=Decimal("65000"),
+        stop_loss=Decimal("58500"),
+    )
+    ack = await make_port(venue).amend_order(request)
+    assert venue.bodies() == [
+        {
+            "category": "linear",
+            "symbol": "BTCUSDT",
+            "orderLinkId": link(),
+            "qty": "0.020",
+            "price": "61000",
+            "triggerPrice": "59000",
+            "takeProfit": "65000",
+            "stopLoss": "58500",
+        }
+    ]
+    assert (ack.ok, ack.order_link_id) == (True, link())
+
+
+async def test_an_amend_of_an_attached_stop_sends_that_stop_alone_by_order_id() -> None:
+    """C-2.6: moving an order's native stop names the order by its exchange id and sends the
+    stop and nothing else, so no other value of the order moves with it."""
+    reply = rest("rest/trading-amend-reply.json")
+    order_id = reply["result"]["orderId"]
+    venue = Venue().on("/v5/order/amend", reply)
+    request = AmendOrderRequest(
+        account=account(),
+        symbol="BTCUSDT",
+        order_link_id=ext_key(order_id),
+        exchange_order_id=order_id,
+        stop_loss=Decimal("57000"),
+        lane="critical",
+    )
+    ack = await make_port(venue).amend_order(request)
+    assert venue.bodies() == [
+        {"category": "linear", "symbol": "BTCUSDT", "orderId": order_id, "stopLoss": "57000"}
+    ]
+    assert (ack.ok, ack.exchange_order_id) == (True, order_id)
 
 
 async def test_a_market_create_sends_no_price_and_no_unset_stop_fields() -> None:
@@ -266,16 +405,28 @@ async def test_leverage_sets_both_sides() -> None:
     ]
 
 
-@pytest.mark.parametrize("name", ["set_leverage", "set_trading_stop"])
-async def test_a_position_write_without_a_result_object_is_unknown(name: str) -> None:
-    path = "/v5/position/set-leverage" if name == "set_leverage" else "/v5/position/trading-stop"
+@pytest.mark.parametrize(
+    ("path", "write"),
+    [
+        (
+            "/v5/position/set-leverage",
+            lambda port: port.set_leverage(account(), "BTCUSDT", Decimal("5")),
+        ),
+        (
+            "/v5/position/trading-stop",
+            lambda port: port.set_trading_stop(
+                TradingStopRequest(account=account(), symbol="BTCUSDT")
+            ),
+        ),
+    ],
+    ids=["set_leverage", "set_trading_stop"],
+)
+async def test_a_position_write_without_a_result_object_is_unknown(
+    path: str, write: Callable[[BybitTradingPort], Awaitable[object]]
+) -> None:
     broken = {**rest("rest/trading-set-leverage-reply.json"), "result": []}
-    port = make_port(Venue().on(path, broken))
     with pytest.raises(UnknownStateError):
-        if name == "set_leverage":
-            await port.set_leverage(account(), "BTCUSDT", Decimal("5"))
-        else:
-            await port.set_trading_stop(TradingStopRequest(account=account(), symbol="BTCUSDT"))
+        await write(make_port(Venue().on(path, broken)))
 
 
 async def test_a_conditional_create_sends_only_the_trigger_fields_it_has() -> None:

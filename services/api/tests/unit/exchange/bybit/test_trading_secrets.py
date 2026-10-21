@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 import traceback
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -162,8 +162,26 @@ async def test_a_transport_fault_leaves_none_of_its_httpx_text_in_the_error() ->
     assert all(_FIGURE not in text for text in texts)
 
 
-@pytest.mark.parametrize("failure", ["5xx", "unreadable", "venue-code"])
-async def test_no_frame_of_a_raised_error_holds_the_signed_request(failure: str) -> None:
+def _cancel_by_link(port: BybitTradingPort) -> Awaitable[object]:
+    request = CancelOrderRequest(account=account(), symbol="BTCUSDT", order_link_id=link())
+    return port.cancel_order(request)
+
+
+@pytest.mark.parametrize(
+    ("respond", "send"),
+    [
+        (lambda: httpx.Response(503, json=rest("rest/error_503.json")), _cancel_by_link),
+        (lambda: httpx.Response(200, content=b'{"retCode":0,"result":'), _cancel_by_link),
+        (
+            lambda: httpx.Response(200, json={"retCode": 10001, "retMsg": "params error"}),
+            lambda port: port.account_info(account()),
+        ),
+    ],
+    ids=["5xx", "unreadable", "venue-code"],
+)
+async def test_no_frame_of_a_raised_error_holds_the_signed_request(
+    respond: Callable[[], httpx.Response], send: Callable[[BybitTradingPort], Awaitable[object]]
+) -> None:
     """SR-E29-08: the port strips the traceback too. The REST client's frames, whose locals
     hold the signed headers, never travel with an error the port raises: no frame is the
     client's or the port's attempt, and no frame of the product holds the key id or a MAC."""
@@ -171,19 +189,11 @@ async def test_no_frame_of_a_raised_error_holds_the_signed_request(failure: str)
 
     def answer(request: httpx.Request) -> httpx.Response:
         sent.append(request)
-        if failure == "5xx":
-            return httpx.Response(503, json=rest("rest/error_503.json"))
-        if failure == "unreadable":
-            return httpx.Response(200, content=b'{"retCode":0,"result":')
-        return httpx.Response(200, json={"retCode": 10001, "retMsg": "params error"})
+        return respond()
 
     port = _port(answer)
     with pytest.raises(ExchangeError) as caught:
-        if failure == "venue-code":
-            await port.account_info(account())
-        else:
-            request = CancelOrderRequest(account=account(), symbol="BTCUSDT", order_link_id=link())
-            await port.cancel_order(request)
+        await send(port)
 
     frames = []
     tb = caught.value.__traceback__

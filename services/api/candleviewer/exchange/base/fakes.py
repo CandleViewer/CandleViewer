@@ -195,7 +195,11 @@ CANCEL_ALL_SCOPE: Final = "order"
 #: The most orders one `cancel_all` cancels, as the venue's futures cancel-all does (24 §14.2
 #: rule 12): one call is no proof of a flat book.
 CANCEL_ALL_LIMIT: Final = 500
-_TERMINAL: Final = frozenset({"rejected", "filled", "cancelled", "deactivated"})
+#: The terminal states, as the exchange's parser names them (24 §8.2): a seeded order in one of
+#: them is history, as the venue keeps it.
+_TERMINAL: Final = frozenset(
+    {"rejected", "partially_filled_canceled", "filled", "cancelled", "deactivated"}
+)
 #: What an unscripted `headroom` reads: a fresh per-UID bucket (the exchange adapter's governor
 #: starts each one at 10 tokens, 24 §8.7's default of 10 requests a second), with no wait.
 FRESH_HEADROOM_TOKENS: Final = 10.0

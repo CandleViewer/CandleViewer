@@ -37,7 +37,7 @@ from candleviewer.exchange.base.errors import (
 )
 from candleviewer.exchange.base.models import RateLane
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
-from candleviewer.exchange.bybit.mapping import map_ret_code
+from candleviewer.exchange.bybit.mapping import OPEN_CREATE_CODES, map_ret_code
 from candleviewer.exchange.bybit.metrics import (
     bybit_rate_limit_remaining,
     bybit_rate_limited_total,
@@ -84,10 +84,10 @@ _BANNED_PATHS: Final = frozenset(
 )
 
 #: 24 §8.6 "Order creates" (SR-E29-15): a create that has left is never sent again; amend,
-#: cancel and trading-stop keep their retries. 10016/10019 leave a create's outcome unknown.
+#: cancel and trading-stop keep their retries. `OPEN_CREATE_CODES` (10016, 10019) leave a
+#: create's outcome unknown.
 _BATCH_PATH = "/v5/order/create-batch"
 _CREATE_PATHS = frozenset({"/v5/order/create", _BATCH_PATH})
-_AMBIGUOUS_RET_CODES = frozenset({10016, 10019})
 #: SR-054: the signed paths that take a `category`, which must be `linear`, stated by the caller.
 _CATEGORY_PREFIXES = ("/v5/order/", "/v5/position/", "/v5/execution/")
 _CATEGORY_PATHS = frozenset({"/v5/account/fee-rate"})
@@ -613,7 +613,7 @@ class BybitRestClient:
                 return dict(data)
 
             ret_msg = str(data.get("retMsg", ""))
-            if creates and ret_code in _AMBIGUOUS_RET_CODES:
+            if creates and ret_code in OPEN_CREATE_CODES:
                 # Not a rate limit (#2863): no bucket drain, counted as the error raised.
                 venue = {"exchange_ret_code": ret_code, "exchange_ret_msg": ret_msg}
                 raise _answer_ambiguous(path, body, f"retCode {ret_code}", **venue)

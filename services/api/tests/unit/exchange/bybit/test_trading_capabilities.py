@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from candleviewer.exchange.bybit.capabilities import CAPABILITIES, capabilities_for
+from candleviewer.exchange.bybit.capabilities import ENVIRONMENTS, capabilities_for
 from candleviewer.exchange.bybit.config import EndpointClass
 from candleviewer.exchange.bybit.trading import CANCEL_ALL_FILTER, ENDPOINTS
 from candleviewer.oms.order_link_resolution import HistoryRetentionPolicy
@@ -22,7 +22,7 @@ from tests.unit.exchange.bybit._trading import DAY_US, NOW_US
 
 
 def test_there_is_a_live_and_a_demo_record_and_no_other() -> None:
-    assert set(CAPABILITIES) == {"live", "demo"}
+    assert ENVIRONMENTS == {"live", "demo"}
     for environment in ("testnet", "mainnet", ""):
         with pytest.raises(ValueError, match="no trading capability record"):
             capabilities_for(environment)
@@ -46,13 +46,80 @@ def test_each_record_states_its_venue(
     assert record.trailing_stop_unit == "price_distance"
 
 
+#: 24 §14.1's values, field by field, written out here (the OMS reads the record, never the
+#: environment, 24 §14.2 rule 3): `order_rate_per_uid_per_s` holds §8.7's defaults.
+SECTION_14_1: dict[str, Any] = {
+    "exchange": "bybit",
+    "supports_native_oco": False,
+    "supports_native_iceberg": False,
+    "supports_native_twap": False,
+    "supports_native_chase": False,
+    "supports_native_trailing": True,
+    "supports_native_conditional": True,
+    "supports_attached_sl_tp": True,
+    "supports_batch_orders": True,
+    "supports_reduce_only": True,
+    "supports_post_only": True,
+    "supports_hedge_mode": True,
+    "supports_dead_mans_switch": False,
+    "max_batch_size": 10,
+    "max_ws_topics_per_request": 10,
+    "max_orders_per_symbol": 500,
+    "max_conditional_orders_per_symbol": 10,
+    "order_link_id_max_len": 36,
+    "order_rate_per_uid_per_s": {
+        "order.create": 10,
+        "order.amend": 10,
+        "order.cancel": 10,
+        "order.cancel_all": 1,
+        "position.read": 50,
+        "account.read": 50,
+        "market.read": 50,
+    },
+    "ip_rate_per_5s": 600,
+    "book_depths": (1, 50, 200, 500),
+    "book_cadence_ms": {1: 10, 50: 20, 200: 100, 500: 200},
+    "position_modes": ("one_way", "hedge"),
+    "trigger_sources": ("last", "mark", "index"),
+    "trailing_stop_unit": "price_distance",
+}
+VENUES: dict[str, dict[str, Any]] = {
+    "live": {
+        "environment": "live",
+        "supports_ws_order_entry": True,
+        "order_retention_days": None,
+        "has_public_ws": True,
+    },
+    "demo": {
+        "environment": "demo",
+        "supports_ws_order_entry": False,
+        "order_retention_days": 7,
+        "has_public_ws": False,
+    },
+}
+
+
+@pytest.mark.parametrize("environment", sorted(VENUES))
+def test_each_record_is_section_14_1_field_for_field(environment: str) -> None:
+    assert capabilities_for(environment).model_dump() == SECTION_14_1 | VENUES[environment]
+
+
 def test_the_records_are_frozen() -> None:
-    record: Any = CAPABILITIES["demo"]  # untyped on purpose: the writes below must fail
-    table: Any = CAPABILITIES
+    record: Any = capabilities_for("demo")  # untyped on purpose: the write below must fail
     with pytest.raises(ValidationError):
         record.supports_ws_order_entry = True
-    with pytest.raises(TypeError):
-        table["testnet"] = record
+
+
+def test_a_write_to_one_callers_tables_reaches_no_other_caller() -> None:
+    """The model is frozen but its rate and cadence tables are dicts: each caller gets its own
+    copy, so one consumer's write never changes the record another consumer reads."""
+    first = capabilities_for("demo")
+    first.order_rate_per_uid_per_s["order.create"] = 1
+    first.book_cadence_ms[1] = 999
+    again = capabilities_for("demo")
+    assert again.order_rate_per_uid_per_s["order.create"] == 10
+    assert again.book_cadence_ms[1] == 10
+    assert again.model_dump() == SECTION_14_1 | VENUES["demo"]
 
 
 def test_demo_history_expires_an_id_after_six_days_and_live_never() -> None:

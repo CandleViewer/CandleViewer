@@ -306,3 +306,85 @@ async def test_a_refusal_record_holds_the_venue_code_and_no_reply_fields() -> No
         category="linear", exchange_order_id="x-1", symbol="BTCUSDT"
     )
     _contract_valid(record)
+
+
+def test_the_wire_names_are_the_contracts_in_full() -> None:
+    """Literal: the record tests above read this map, so it is pinned here on its own."""
+    assert dict(rec.WIRE_NAMES) == {
+        "category": "category",
+        "symbol": "symbol",
+        "side": "side",
+        "orderType": "order_type",
+        "qty": "qty",
+        "price": "price",
+        "timeInForce": "time_in_force",
+        "orderLinkId": "order_link_id",
+        "orderId": "exchange_order_id",
+        "reduceOnly": "reduce_only",
+        "closeOnTrigger": "close_on_trigger",
+        "positionIdx": "position_idx",
+        "triggerPrice": "trigger_price",
+        "triggerBy": "trigger_by",
+        "triggerDirection": "trigger_direction",
+        "takeProfit": "take_profit",
+        "stopLoss": "stop_loss",
+        "tpTriggerBy": "tp_trigger_by",
+        "slTriggerBy": "sl_trigger_by",
+        "tpslMode": "tpsl_mode",
+        "trailingStop": "trailing_stop",
+        "activePrice": "activation_price",
+        "orderFilter": "order_filter",
+    }
+
+
+@pytest.mark.parametrize(
+    ("wire", "recorded"),
+    [
+        ({"side": "Buy"}, {"side": "buy"}),
+        ({"side": "Sell"}, {"side": "sell"}),
+        ({"orderType": "Limit"}, {"order_type": "limit"}),
+        ({"orderType": "Market"}, {"order_type": "market"}),
+    ],
+)
+def test_the_record_spells_a_side_and_an_order_type_as_the_contract_does(
+    wire: dict[str, str], recorded: dict[str, str]
+) -> None:
+    assert rec.request_fields(wire) == recorded
+
+
+@pytest.mark.parametrize(
+    ("message", "recorded"), [("m" * 2048, "m" * 2048), ("m" * 2049, None)], ids=["2048", "2049"]
+)
+def test_a_venue_message_is_kept_up_to_the_contracts_bound_and_never_cut(
+    message: str, recorded: str | None
+) -> None:
+    record = rec.record(
+        method="POST", endpoint="/v5/order/cancel", request={}, response=None,
+        ret_code=110001, ret_msg=message, latency_ms=1,
+    )  # fmt: skip
+    assert record.ret_msg == recorded
+    _contract_valid(record)
+
+
+#: A message past the contract's 2048 characters, as a test input on the transcribed envelopes.
+LONG = "x" * 3000
+
+
+async def test_an_over_long_message_on_a_refusal_still_answers_the_ack() -> None:
+    """The venue answered: the call answers too, its record without the message, never a
+    validation error raised out of the port after the exchange acted."""
+    refused = {**rest("rest/trading-error-110001.json"), "retMsg": LONG}
+    port = make_port(Venue().on("/v5/order/cancel", refused))
+    request = CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id="x-1")
+    ack = await port.cancel_order(request)
+    assert (ack.ok, ack.error_code) == (False, "ORDER_NOT_FOUND")
+    assert ack.record is not None and ack.record.ret_msg is None
+    _contract_valid(ack.record)
+
+
+async def test_an_over_long_message_on_an_accepted_create_still_answers_the_ack() -> None:
+    created = {**with_result(CREATED, orderLinkId=link()), "retMsg": LONG}
+    ack = await make_port(Venue().on("/v5/order/create", created)).place_order(place())
+    assert (ack.ok, ack.exchange_order_id) == (True, CREATED["result"]["orderId"])
+    assert ack.record is not None and ack.record.ret_msg is None
+    _contract_valid(ack.record)

@@ -14,6 +14,8 @@ duplicate: `10001` stays the parameter error and the other two are unmapped.
 
 from __future__ import annotations
 
+from typing import Final
+
 from candleviewer.exchange.base.errors import (
     AuthError,
     ClockDriftError,
@@ -78,6 +80,12 @@ _RET_CODE_MAP: dict[int, tuple[type[ExchangeError], dict[str, str]]] = {
     110089: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
     3400139: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
 }
+
+#: The codes that leave an order create's outcome open (24 §8.6 "Order creates"): the venue
+#: answered, but whether the order landed is unknown, so the create is never sent again and its
+#: order goes to `unknown`. The REST client raises them as an ambiguous result for a create and
+#: the trading port reads a batch item's code by them: one definition for both.
+OPEN_CREATE_CODES: Final = frozenset({10016, 10019})
 
 #: The duplicate-`orderLinkId` codes of an order create (24 §8.6): `110072` on REST, `20006` on
 #: the trade socket. `10001` is one too when its text says so; its exact text is assumed pending

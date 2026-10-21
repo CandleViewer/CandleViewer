@@ -71,7 +71,9 @@ def _class(lane: RateLane) -> EndpointClass:
 
 
 def test_the_port_reads_its_headroom_through_the_small_protocol() -> None:
-    port: RateHeadroomPort = make_port(Venue())  # mypy checks the assignment
+    """The runtime shape; the signature is checked by `trading.py`'s `TYPE_CHECKING`
+    assignment to `RateHeadroomPort`, which CI's mypy lane reads."""
+    port: RateHeadroomPort = make_port(Venue())
     assert isinstance(port, RateHeadroomPort)
 
 
@@ -91,29 +93,35 @@ async def test_reading_the_headroom_takes_no_token_and_sends_nothing() -> None:
     assert port.headroom(account(), "poll").tokens == 3.0  # the reads' class is untouched
 
 
-@pytest.mark.parametrize(
-    ("lane", "refused"), [("critical", False), ("entry", True), ("poll", False)]
-)
-async def test_the_reading_agrees_with_the_next_call_of_its_lane(
-    lane: RateLane, refused: bool
-) -> None:
-    """A drained bucket refills in 1 s: within `critical`'s and `poll`'s 5 s, past `entry`'s
-    0.75 s. The call waits exactly the read wait, or is refused with nothing sent."""
+def _drained(lane: RateLane) -> tuple[FakeClock, Venue, BybitTradingPort]:
+    """A port whose lane's bucket is drained: it refills in 1 s."""
     clock, governor = _governed(1.0)
     venue = _venue()
     port = make_port(venue, governor=governor, clock=clock)
     governor.drain(UID, _class(lane), 1.0)
+    return clock, venue, port
 
+
+@pytest.mark.parametrize("lane", ["critical", "poll"])
+async def test_a_lane_whose_wait_covers_the_reading_waits_exactly_that_long(
+    lane: RateLane,
+) -> None:
+    """1 s is within `critical`'s and `poll`'s 5 s: the call waits the read wait, then sends."""
+    clock, venue, port = _drained(lane)
     reading = port.headroom(account(), lane)
-
     assert (reading.lane, reading.tokens, reading.wait_s) == (lane, 0.0, 1.0)
-    if refused:
-        with pytest.raises(RateBudgetExceededError, match="nothing was sent"):
-            await CALLS[lane](port)
-        assert venue.sent == []
-    else:
-        await CALLS[lane](port)
-        assert sum(clock.sleeps) == pytest.approx(reading.wait_s) and len(venue.sent) == 1
+    await CALLS[lane](port)
+    assert sum(clock.sleeps) == pytest.approx(reading.wait_s) and len(venue.sent) == 1
+
+
+async def test_a_lane_whose_wait_the_reading_passes_is_refused_with_nothing_sent() -> None:
+    """1 s is past `entry`'s 0.75 s: the reading says so, and the call is refused unsent."""
+    _, venue, port = _drained("entry")
+    reading = port.headroom(account(), "entry")
+    assert (reading.lane, reading.tokens, reading.wait_s) == ("entry", 0.0, 1.0)
+    with pytest.raises(RateBudgetExceededError, match="nothing was sent"):
+        await CALLS["entry"](port)
+    assert venue.sent == []
 
 
 async def test_a_spare_token_means_the_next_call_does_not_wait() -> None:

@@ -9,7 +9,7 @@ hold the signed request (SR-E29-08). Replies are transcribed shapes (ruling R2) 
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -122,6 +122,46 @@ async def test_a_create_answered_with_an_open_outcome_code_raises(code: int) -> 
     assert caught.value.retryable is False and _bare(caught.value)
 
 
+#: The codes that leave a create's outcome open (24 §8.6 "Order creates"), on the transcribed
+#: error envelope (a test input: no documented example carries them).
+OPEN_CODES = [10016, 10019]
+
+
+def _answered(code: int) -> dict[str, object]:
+    return {**DUPLICATE, "retCode": code, "retMsg": f"code {code}"}
+
+
+@pytest.mark.parametrize("code", OPEN_CODES)
+async def test_a_create_answered_with_an_open_code_raises_ambiguous_never_a_rejection(
+    code: int,
+) -> None:
+    """The venue answered with a code, yet whether the order landed is unknown: it raises, so B1
+    takes it to `unknown`, never `rejected` (ruling 11), and the create is never sent again."""
+    venue = Venue().on("/v5/order/create", _answered(code))
+    with pytest.raises(AmbiguousResultError) as caught:
+        await make_port(venue, max_retries=3).place_order(place())
+    error = caught.value
+    assert (error.order_link_id, error.retryable, error.exchange_ret_code) == (link(), False, code)
+    assert _bare(error) and len(venue.sent) == 1
+
+
+@pytest.mark.parametrize("code", OPEN_CODES)
+async def test_a_batch_answered_with_an_open_code_raises_naming_every_item(code: int) -> None:
+    links = [link(seq=0), link(seq=1)]
+    venue = Venue().on("/v5/order/create-batch", _answered(code))
+    with pytest.raises(AmbiguousResultError) as caught:
+        await make_port(venue, max_retries=3).place_batch([place(order_link_id=k) for k in links])
+    assert (caught.value.order_link_ids, caught.value.retryable) == (tuple(links), False)
+    assert _bare(caught.value) and len(venue.sent) == 1
+
+
+@pytest.mark.parametrize("code", OPEN_CODES)
+async def test_the_same_code_on_a_cancel_is_the_venues_answer_an_ack(code: int) -> None:
+    """Only a create's outcome is left open by these codes: a cancel's is an ack, not raised."""
+    ack = await make_port(Venue().on("/v5/order/cancel", _answered(code))).cancel_order(_cancel())
+    assert (ack.ok, ack.error_code, ack.exchange_ret_code) == (False, "RATE_LIMITED", code)
+
+
 async def test_a_creates_5xx_is_ambiguous_and_bare() -> None:
     venue = Venue().on("/v5/order/create", rest("rest/error_503.json"), status=503)
     with pytest.raises(AmbiguousResultError) as caught:
@@ -195,13 +235,19 @@ async def test_a_read_meeting_an_expired_key_raises_an_auth_error() -> None:
     assert caught.value.exchange_ret_code == 33004 and _bare(caught.value)
 
 
+Send = Callable[[BybitTradingPort], Awaitable[object]]
+
+
 @pytest.mark.parametrize(
-    ("builder", "drop", "reason"),
-    [("_cancel_body", "category", "SR-054"), ("_create_item", "orderLinkId", "C-2.10")],
+    ("builder", "drop", "reason", "send"),
+    [
+        ("_cancel_body", "category", "SR-054", lambda port: port.cancel_order(_cancel())),
+        ("_create_item", "orderLinkId", "C-2.10", lambda port: port.place_order(place())),
+    ],
     ids=["exit-without-category", "create-without-id"],
 )
 async def test_a_local_refusal_of_the_client_leaves_as_itself_with_nothing_taken(
-    monkeypatch: pytest.MonkeyPatch, builder: str, drop: str, reason: str
+    monkeypatch: pytest.MonkeyPatch, builder: str, drop: str, reason: str, send: Send
 ) -> None:
     """24 §14.4 (ruling 11): a local refusal raises as itself. A body the client refuses before
     any token (a category it does not state, a create without its id) is a `ValueError`, never
@@ -212,9 +258,8 @@ async def test_a_local_refusal_of_the_client_leaves_as_itself_with_nothing_taken
     )
     venue, governor, calls = Venue(), RecordingGovernor(), list[Call]()
     port = make_port(venue, governor=governor, calls=calls)
-    call = port.cancel_order(_cancel()) if builder == "_cancel_body" else port.place_order(place())
     with pytest.raises(ValueError, match=reason) as caught:
-        await call
+        await send(port)
     assert not isinstance(caught.value, ExchangeError)
     assert (venue.sent, governor.acquired, calls) == ([], [], [])
 
@@ -382,16 +427,29 @@ async def test_an_exit_answer_naming_another_order_is_unknown() -> None:
         await port.cancel_order(_cancel())
 
 
+#: A create, and a batch whose first item is valid and whose second is not: 24 §14.2 rule 11
+#: refuses the whole batch before anything is taken, signed or sent.
+CREATES: dict[str, Callable[[BybitTradingPort, str], Awaitable[object]]] = {
+    "create": lambda port, key: port.place_order(place(order_link_id=key)),
+    "batch": lambda port, key: port.place_batch(
+        [place(order_link_id=link(seq=1)), place(order_link_id=key)]
+    ),
+}
+
+
+@pytest.mark.parametrize("create", sorted(CREATES))
 @pytest.mark.parametrize(
     "key",
     [ext_key("x-1"), "linear-004", link(environment="live"), link(AccountId(UUID(int=7)))],
     ids=["ext", "foreign", "other-environment", "other-account"],
 )
-async def test_a_create_without_a_generated_id_of_its_account_is_refused_unsent(key: str) -> None:
-    venue = Venue()
+async def test_a_create_without_a_generated_id_of_its_account_is_refused_unsent(
+    create: str, key: str
+) -> None:
+    venue, governor, calls = Venue(), RecordingGovernor(), list[Call]()
     with pytest.raises(ValueError, match="order_link_id"):
-        await make_port(venue).place_order(place(order_link_id=key))
-    assert venue.sent == []
+        await CREATES[create](make_port(venue, governor=governor, calls=calls), key)
+    assert (venue.sent, governor.acquired, calls) == ([], [], [])
 
 
 def _errors(cls: str) -> float:

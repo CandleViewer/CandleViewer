@@ -79,7 +79,7 @@ from candleviewer.exchange.base.models import (
 from candleviewer.exchange.bybit import record as rec
 from candleviewer.exchange.bybit.capabilities import capabilities_for
 from candleviewer.exchange.bybit.config import SIGNED_REST_BASES, EndpointClass, RestClientConfig
-from candleviewer.exchange.bybit.mapping import map_ret_code
+from candleviewer.exchange.bybit.mapping import OPEN_CREATE_CODES, map_ret_code
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.signer import BybitSigner
@@ -175,7 +175,7 @@ CANCEL_ALL_FILTER: Final = "Order"
 DEFAULT_ENTRY_WAIT_S: Final = 0.75
 CRITICAL_WAIT_S: Final = 5.0
 POLL_WAIT_S: Final = 5.0
-#: USDT linear perpetuals only (C-1.3): reads without a symbol name the settle coin.
+#: USDT linear perpetuals only (C-1.2 item 3): reads without a symbol name the settle coin.
 _SETTLE: Final = "USDT"
 #: The venue answers at most 7 days per history call; it keeps two years of it.
 _WINDOW_MS: Final = 7 * 86_400_000
@@ -184,8 +184,6 @@ _MAX_PAGES: Final = 200
 _PAGE_LIMIT: Final[Mapping[str, int]] = MappingProxyType(
     {"open_orders": 50, "order_history": 50, "executions": 100, "positions": 200, "closed_pnl": 100}
 )
-#: 10016 and 10019 leave a create's outcome open (24 §8.6 "Order creates").
-_OPEN_CREATE_CODES: Final = frozenset({10016, 10019})
 
 _SIDE: Final = {"buy": "Buy", "sell": "Sell"}
 _TYPE: Final = {"market": "Market", "limit": "Limit"}
@@ -252,6 +250,17 @@ def _venue_answer(error: ExchangeError, *, create: bool) -> ExchangeError | None
     if create and isinstance(error, UnknownStateError):
         return None
     return error
+
+
+def _lane(endpoint: Endpoint, requested: RateLane | None) -> RateLane:
+    """The lane a call goes in, named in one place: the endpoint table's, or for a create, a
+    batch or an amend (no lane in the table) the request's own, which the OMS sets by effect
+    (SR-E29-01). A call that names both, or neither, is a defect of the port: refused."""
+    if endpoint.lane is None and requested is not None:
+        return requested
+    if endpoint.lane is not None and requested is None:
+        return endpoint.lane
+    raise ValueError(f"{endpoint.path}: its lane is the endpoint table's or its request's")
 
 
 def _credential_id(key_ref: str) -> UUID:
@@ -355,7 +364,7 @@ class BybitTradingPort:
         name: str,
         account: AccountRef,
         *,
-        lane: RateLane,
+        lane: RateLane | None = None,
         params: Mapping[str, Any] | None = None,
         body: Mapping[str, Any] | None = None,
     ) -> tuple[Mapping[str, Any], ExchangeError | None, int]:
@@ -363,9 +372,9 @@ class BybitTradingPort:
         client's local refusals run before the handler, so they leave as they are, never as an
         unreadable answer (24 §14.4: a local refusal raises; nothing was taken, signed or sent)."""
         endpoint = ENDPOINTS[name]
+        use = _lane(endpoint, lane)
         client = await self._client(account)
         client.preflight(endpoint.path, params=params, body=body)
-        use = endpoint.lane or lane
         started = self._monotonic()
         failure: Exception | None = None
         reply: Mapping[str, Any] = {}
@@ -389,8 +398,8 @@ class BybitTradingPort:
         name: str,
         account: AccountRef,
         *,
-        lane: RateLane,
         body: Mapping[str, Any],
+        lane: RateLane | None = None,
         create: bool = False,
     ) -> _Answer:
         reply, error, latency_ms = await self._attempt(name, account, lane=lane, body=body)
@@ -404,7 +413,7 @@ class BybitTradingPort:
     async def _read(
         self, name: str, account: AccountRef, params: Mapping[str, Any] | None
     ) -> Mapping[str, Any]:
-        reply, error, _ = await self._attempt(name, account, lane="poll", params=params)
+        reply, error, _ = await self._attempt(name, account, params=params)
         if error is not None:
             raise error
         return reply
@@ -588,7 +597,7 @@ class BybitTradingPort:
         self._check_environment(req.account)
         check_exit_ids(req.order_link_id, req.exchange_order_id)
         body = _cancel_body(req)
-        answer = await self._trade("cancel_order", req.account, lane="critical", body=body)
+        answer = await self._trade("cancel_order", req.account, body=body)
         fields = rec.request_fields(body)
         if answer.refusal is not None:  # named as an accepted cancel names it (rule 11)
             named = req.order_link_id
@@ -605,7 +614,7 @@ class BybitTradingPort:
         book, so the OMS repeats it until `open_orders` is empty (24 §14.2 rule 12)."""
         self._check_environment(account)
         body = _cancel_all_body(symbol)
-        answer = await self._trade("cancel_all", account, lane="critical", body=body)
+        answer = await self._trade("cancel_all", account, body=body)
         fields = rec.request_fields(body)
         if answer.refusal is not None:
             return [self._refused(None, answer.refusal, answer.latency_ms, "cancel_all", fields)]
@@ -634,7 +643,7 @@ class BybitTradingPort:
         left `None` is not sent."""
         self._check_environment(req.account)
         body = _stop_body(req)
-        answer = await self._trade("set_trading_stop", req.account, lane="critical", body=body)
+        answer = await self._trade("set_trading_stop", req.account, body=body)
         fields = rec.request_fields(body)
         if answer.refusal is not None:
             return self._refused(
@@ -654,7 +663,7 @@ class BybitTradingPort:
             "buyLeverage": _text(leverage),
             "sellLeverage": _text(leverage),
         }
-        answer = await self._trade("set_leverage", account, lane="entry", body=body)
+        answer = await self._trade("set_leverage", account, body=body)
         if answer.refusal is not None:
             raise answer.refusal  # no ack carries it: the venue's answer leaves as raised
         if not isinstance(answer.reply.get("result"), dict):
@@ -915,7 +924,7 @@ def _item_error(code: int, msg: str) -> ExchangeError:
     to `unknown`, never `rejected` (24 §8.6 "Order creates")."""
     if code == 0:
         return AmbiguousResultError("the item was accepted without an order id")
-    if code in _OPEN_CREATE_CODES:
+    if code in OPEN_CREATE_CODES:
         return AmbiguousResultError(msg, exchange_ret_code=code, exchange_ret_msg=msg)
     error = map_ret_code(code, msg, create=True)
     if isinstance(error, UnknownStateError):

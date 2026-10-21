@@ -220,7 +220,9 @@ def harness(request: pytest.FixtureRequest) -> Iterator[Harness]:
 
 
 def test_both_satisfy_the_port(harness: Harness) -> None:
-    port: TradingPort = harness.port  # mypy checks the assignment; isinstance the runtime shape
+    """The runtime shape; the signatures are checked by the `TYPE_CHECKING` assignments beside
+    each class (`trading.py`, `fakes.py`), which CI's mypy lane reads."""
+    port: TradingPort = harness.port
     assert isinstance(port, TradingPort)
     assert port.capabilities.environment == "demo"
     assert port.capabilities.supports_ws_order_entry is False
@@ -345,10 +347,41 @@ async def test_both_answer_a_batch_item_whose_id_was_taken_with_a_duplicate_ack(
     assert (acks[1].error_code, acks[1].retryable) == ("DUPLICATE_CLIENT_ID", False)
 
 
-async def test_both_take_a_create_or_an_amend_in_its_requests_lane(harness: Harness) -> None:
+async def _critical_create(harness: Harness) -> None:
     request = place(lane="critical")
     harness.prime_create(request.order_link_id)
     await harness.port.place_order(request)
+
+
+async def _critical_batch(harness: Harness) -> None:
+    fresh, taken = link(seq=3), link(seq=4)
+    harness.prime_batch_duplicate(fresh, taken)
+    await harness.port.place_batch(
+        [place(order_link_id=fresh, lane="critical"), place(order_link_id=taken, lane="critical")]
+    )
+
+
+async def _critical_amend(harness: Harness) -> None:
+    """A protective amend, as AC-31's (24 §8.8 rule 5); the fake answers it not found."""
+    harness.prime_amend(link())
+    await harness.port.amend_order(
+        AmendOrderRequest(
+            account=account(),
+            symbol="BTCUSDT",
+            order_link_id=link(),
+            stop_loss=Decimal("58500"),
+            lane="critical",
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "send", [_critical_create, _critical_batch, _critical_amend], ids=["create", "batch", "amend"]
+)
+async def test_both_take_a_create_a_batch_or_an_amend_in_its_requests_lane(
+    harness: Harness, send: Callable[[Harness], Awaitable[None]]
+) -> None:
+    await send(harness)
     assert harness.lanes() == ["critical"]
 
 
@@ -382,16 +415,26 @@ async def test_both_refuse_another_environments_account_before_anything(harness:
     assert harness.sent() == 0
 
 
+#: A create, and a batch whose first item is valid and whose second is not (24 §14.2 rule 11).
+CREATES: dict[str, Callable[[TradingPort, str], Awaitable[object]]] = {
+    "create": lambda port, key: port.place_order(place(order_link_id=key)),
+    "batch": lambda port, key: port.place_batch(
+        [place(order_link_id=link(seq=1)), place(order_link_id=key)]
+    ),
+}
+
+
+@pytest.mark.parametrize("create", sorted(CREATES))
 @pytest.mark.parametrize(
     "key",
     [ext_key("x-1"), "linear-004", link(environment="live"), link(ACCOUNT_B)],
     ids=["ext", "foreign", "other-environment", "other-account"],
 )
 async def test_both_refuse_a_create_without_a_generated_id_of_its_account(
-    harness: Harness, key: str
+    harness: Harness, create: str, key: str
 ) -> None:
     with pytest.raises(ValueError, match="order_link_id"):
-        await harness.port.place_order(place(order_link_id=key))
+        await CREATES[create](harness.port, key)
     assert harness.sent() == 0
 
 

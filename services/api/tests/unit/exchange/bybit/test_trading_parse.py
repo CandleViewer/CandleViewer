@@ -9,6 +9,7 @@ USDT wallet row, a derivatives fee-rate row).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -20,6 +21,7 @@ from hypothesis import strategies as st
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.errors import UnknownStateError
+from candleviewer.exchange.base.models import Order, Position, Wallet
 from candleviewer.exchange.bybit import trading_parse as tp
 from candleviewer.exchange.bybit.metrics import cv_bybit_unknown_fields_total
 from tests.unit.exchange.bybit._trading import ACCOUNT_B, account, link
@@ -103,21 +105,106 @@ def test_a_partial_mode_stop_row_maps_its_kind_and_mode() -> None:
     assert order.reduce_only and order.state == "untriggered"
 
 
+#: `T_MS` in microseconds: when a terminal row's order ended (its `updatedTime`).
+T_US = int(T_MS) * 1000
+
+
 @pytest.mark.parametrize(
-    ("status", "terminal"),
+    ("status", "state", "terminal_at"),
     [
-        ("Filled", True),
-        ("Cancelled", True),
-        ("Rejected", True),
-        ("Deactivated", True),
-        ("PartiallyFilledCanceled", True),
-        ("Triggered", False),
-        ("PartiallyFilled", False),
+        ("New", "new", None),
+        ("PartiallyFilled", "partially_filled", None),
+        ("Untriggered", "untriggered", None),
+        ("Triggered", "triggered", None),
+        ("Rejected", "rejected", T_US),
+        ("PartiallyFilledCanceled", "partially_filled_canceled", T_US),
+        ("Filled", "filled", T_US),
+        ("Cancelled", "cancelled", T_US),
+        ("Deactivated", "deactivated", T_US),
     ],
 )
-def test_terminal_statuses_carry_their_time(status: str, terminal: bool) -> None:
+def test_every_status_maps_to_its_state_and_a_terminal_one_carries_its_time(
+    status: str, state: str, terminal_at: int | None
+) -> None:
+    """Every documented `orderStatus`, by literal name: B1 and reconciliation read the state."""
     order = tp.to_order(tp.parse(tp.OrderRow, _row(orderStatus=status), "order"), account())
-    assert (order.terminal_at is not None) is terminal
+    assert (order.state, order.terminal_at) == (state, terminal_at)
+
+
+@pytest.mark.parametrize(
+    ("stop_order_type", "kind"),
+    [
+        ("", "order"),
+        ("UNKNOWN", "order"),
+        ("Stop", "conditional"),
+        ("TakeProfit", "take_profit"),
+        ("StopLoss", "stop_loss"),
+        ("PartialTakeProfit", "partial_take_profit"),
+        ("PartialStopLoss", "partial_stop_loss"),
+        ("TrailingStop", "trailing_stop"),
+        ("MmRateClose", "mm_rate_close"),
+    ],
+)
+def test_every_stop_order_type_maps_to_its_order_kind(stop_order_type: str, kind: str) -> None:
+    """Ruling R8: `order_kind` is how the OMS tells an exchange-made stop from a plain order
+    (C-2.6), so each documented `stopOrderType` maps by literal name."""
+    row = _row(stopOrderType=stop_order_type)
+    assert tp.to_order(tp.parse(tp.OrderRow, row, "order"), account()).order_kind == kind
+
+
+@pytest.mark.parametrize(
+    ("time_in_force", "expected"),
+    [("GTC", "gtc"), ("IOC", "ioc"), ("FOK", "fok"), ("PostOnly", "post_only"), ("RPI", "rpi")],
+)
+def test_every_time_in_force_maps_by_name(time_in_force: str, expected: str) -> None:
+    row = _row(timeInForce=time_in_force)
+    order = tp.to_order(tp.parse(tp.OrderRow, row, "order"), account())
+    assert order.time_in_force == expected
+
+
+@pytest.mark.parametrize(
+    ("tpsl_mode", "expected"),
+    [("Full", "full"), ("Partial", "partial"), ("", None), ("UNKNOWN", None)],
+)
+def test_every_tpsl_mode_maps_by_name(tpsl_mode: str, expected: str | None) -> None:
+    order = tp.to_order(tp.parse(tp.OrderRow, _row(tpslMode=tpsl_mode), "order"), account())
+    assert order.tpsl_mode == expected
+
+
+def test_a_partly_filled_row_maps_every_field_to_its_own() -> None:
+    """Quantities, prices and times that all differ, so a swapped or dropped field shows."""
+    row = _row(
+        orderId="e-7", qty="0.030", leavesQty="0.010", cumExecQty="0.020", avgPrice="60010.5",
+        orderStatus="PartiallyFilled", triggerPrice="59000", takeProfit="65000",
+        stopLoss="58000", tpslMode="Partial", stopOrderType="Stop", positionIdx=2,
+        timeInForce="IOC", reduceOnly=True, side="Sell", createdTime="1700000000001",
+        updatedTime="1700000000002",
+    )  # fmt: skip
+    order = tp.to_order(tp.parse(tp.OrderRow, row, "order"), account())
+    assert order == Order(
+        order_link_id=link(),
+        exchange_order_id="e-7",
+        account_id=account().account_id,
+        symbol="BTCUSDT",
+        side="sell",
+        order_type="limit",
+        qty=Decimal("0.030"),
+        price=Decimal("60000"),
+        state="partially_filled",
+        filled_qty=Decimal("0.020"),
+        leaves_qty=Decimal("0.010"),
+        avg_fill_price=Decimal("60010.5"),
+        created_at=1_700_000_000_001_000,
+        terminal_at=None,
+        reduce_only=True,
+        trigger_price=Decimal("59000"),
+        stop_loss=Decimal("58000"),
+        take_profit=Decimal("65000"),
+        tpsl_mode="partial",
+        order_kind="conditional",
+        position_idx=2,
+        time_in_force="ioc",
+    )
 
 
 def test_a_limit_order_without_a_price_is_unknown() -> None:
@@ -184,16 +271,6 @@ def test_every_model_label_is_one_of_the_closed_set() -> None:
         if isinstance(model, type) and issubclass(model, tp._Venue) and model is not tp._Venue
     }
     assert labels == tp.MODEL_LABELS
-
-
-@pytest.mark.parametrize("rows", [51, 0])
-def test_a_page_is_bounded_by_its_limit(rows: int) -> None:
-    page = {"category": "linear", "nextPageCursor": "", "list": [_row()] * rows}
-    if rows > 50:
-        with pytest.raises(UnknownStateError):
-            tp.parse(tp.OrderPage, page, "open_orders")
-    else:
-        assert tp.parse(tp.OrderPage, page, "open_orders").rows == []
 
 
 @pytest.mark.parametrize("category", ["spot", "inverse", "option", None])
@@ -278,6 +355,26 @@ def test_a_usdt_wallet_row_maps_with_an_unreported_withdrawable_figure() -> None
     assert wallet.updated_at == 1_700_000_000_000_000
 
 
+def test_a_wallet_maps_every_figure_to_its_own() -> None:
+    coin = _coin(equity="1000.5", walletBalance="990.25", availableToWithdraw="800",
+                 unrealisedPnl="10.5", cumRealisedPnl="-3")  # fmt: skip
+    page = tp.parse(tp.WalletPage, _wallet(coin), "wallet")
+    assert tp.to_wallet(page, account(), "USDT", 1_700_000_000_004) == Wallet(
+        account_id=account().account_id,
+        coin="USDT",
+        equity=Decimal("1000.5"),
+        wallet_balance=Decimal("990.25"),
+        available_to_withdraw=Decimal("800"),
+        available_margin=Decimal("900"),
+        used_margin=Decimal("90"),
+        unrealised_pnl=Decimal("10.5"),
+        cum_realised_pnl=Decimal("-3"),
+        account_im_rate=Decimal("0.01"),
+        account_mm_rate=Decimal("0.005"),
+        updated_at=1_700_000_000_004_000,
+    )
+
+
 def test_a_wallet_with_two_usdt_rows_is_unknown() -> None:
     page = tp.parse(tp.WalletPage, _wallet(_coin(), _coin()), "wallet")
     with pytest.raises(UnknownStateError):
@@ -297,6 +394,32 @@ def test_a_linear_position_row_maps_a_flat_side_to_none() -> None:
         None,
     )
     assert position.stop_loss == Decimal("58000") and position.take_profit is None
+
+
+def test_a_position_row_maps_every_field_to_its_own() -> None:
+    """Every figure differs, so a swapped or dropped field shows (the PnL pair included)."""
+    row = {"positionIdx": 1, "symbol": "BTCUSDT", "side": "Buy", "size": "0.5",
+           "avgPrice": "60000", "markPrice": "60100", "liqPrice": "55000", "leverage": "7",
+           "unrealisedPnl": "50", "cumRealisedPnl": "-12.5", "takeProfit": "65000",
+           "stopLoss": "58000", "trailingStop": "150", "updatedTime": "1700000000003"}  # fmt: skip
+    position = tp.to_position(tp.parse(tp.PositionRow, row, "positions"), account())
+    assert position == Position(
+        account_id=account().account_id,
+        symbol="BTCUSDT",
+        position_idx=1,
+        side="buy",
+        qty=Decimal("0.5"),
+        avg_entry_price=Decimal("60000"),
+        mark_price=Decimal("60100"),
+        liq_price=Decimal("55000"),
+        leverage=Decimal("7"),
+        unrealised_pnl=Decimal("50"),
+        cum_realised_pnl=Decimal("-12.5"),
+        take_profit=Decimal("65000"),
+        stop_loss=Decimal("58000"),
+        trailing_stop_distance=Decimal("150"),
+        updated_at=1_700_000_000_003_000,
+    )
 
 
 def test_a_position_without_a_leverage_is_unknown() -> None:
@@ -371,19 +494,42 @@ def test_the_parser_reads_21s_execution_types_and_sets_every_other_documented_on
     assert "Funding" in tp.NOT_FILLS
 
 
-@pytest.mark.parametrize("exec_type", sorted(DOCUMENTED_EXEC_TYPES | {"SessionSettlePnl"}))
-def test_every_known_execution_type_is_read_with_its_exec_type_or_set_aside(
-    exec_type: str,
-) -> None:
+@pytest.mark.parametrize(
+    ("exec_type", "stored"),
+    [
+        ("Trade", "trade"),
+        ("AdlTrade", "adl_trade"),
+        ("BustTrade", "bust_trade"),
+        ("Settle", "settle"),
+        ("SessionSettlePnl", "session_settle_pnl"),
+    ],
+)
+def test_every_type_21_stores_is_read_with_its_exec_type(exec_type: str, stored: str) -> None:
     """A documented type never fails the read (it would halt fill reconciliation)."""
     row = EXEC_ROW | {"execType": exec_type}
-    reason = tp.set_aside(row)
-    if exec_type in tp.EXEC_TYPES:
-        fill = tp.to_execution(tp.parse(tp.ExecutionRow, row, "executions"), account(), 42)
-        assert reason is None and fill.exec_type == STORED_EXEC_TYPES[exec_type]
-    else:
-        expected = "not_a_fill" if exec_type in {"Funding", "UNKNOWN"} else "unmapped_type"
-        assert reason == expected
+    fill = tp.to_execution(tp.parse(tp.ExecutionRow, row, "executions"), account(), 42)
+    assert (tp.set_aside(row), fill.exec_type) == (None, stored)
+
+
+@pytest.mark.parametrize(
+    ("exec_type", "reason"),
+    [
+        ("Funding", "not_a_fill"),
+        ("UNKNOWN", "not_a_fill"),
+        ("Delivery", "unmapped_type"),
+        ("BlockTrade", "unmapped_type"),
+        ("MovePosition", "unmapped_type"),
+        ("FutureSpread", "unmapped_type"),
+        ("ForwardSplitSettle", "unmapped_type"),
+        ("ForwardSplitOpen", "unmapped_type"),
+        ("ReverseSplitSettle", "unmapped_type"),
+        ("ReverseSplitOpen", "unmapped_type"),
+    ],
+)
+def test_every_other_documented_type_is_set_aside_with_its_reason(
+    exec_type: str, reason: str
+) -> None:
+    assert tp.set_aside(EXEC_ROW | {"execType": exec_type}) == reason
 
 
 def test_an_undocumented_execution_type_fails_the_read() -> None:
@@ -445,21 +591,57 @@ def test_an_execution_without_its_order_id_fails_the_read(order_id: object) -> N
         tp.parse(tp.ExecutionRow, EXEC_ROW | {"orderId": order_id}, "executions")
 
 
+#: A unit input with every field the closed-PnL parser reads (names as documented).
+CLOSED_ROW: dict[str, Any] = {
+    "symbol": "BTCUSDT", "side": "Sell", "closedSize": "0.5", "avgEntryPrice": "60000",
+    "avgExitPrice": "61000", "closedPnl": "500", "leverage": "5", "createdTime": T_MS,
+    "updatedTime": T_MS,
+}  # fmt: skip
+
+
 @pytest.mark.parametrize(
-    ("model", "data"),
+    ("model", "row", "field", "value"),
     [
-        (tp.ExecutionRow, {"execPrice": "2000000000000"}),
-        (tp.ExecutionRow, {"execFee": "2000000000000000"}),
-        (tp.ClosedPnlRow, {"closedPnl": "-2000000000000000"}),
+        (tp.ExecutionRow, EXEC_ROW, "execPrice", "0"),
+        (tp.ExecutionRow, EXEC_ROW, "execPrice", "-1"),
+        (tp.ExecutionRow, EXEC_ROW, "execPrice", "1000000000000.1"),
+        (tp.ExecutionRow, EXEC_ROW, "execPrice", "2000000000000"),
+        (tp.ExecutionRow, EXEC_ROW, "execFee", "2000000000000000"),
+        (tp.ExecutionRow, EXEC_ROW, "execFee", "-2000000000000000"),
+        (tp.ExecutionRow, EXEC_ROW, "execFee", "1000000000000001"),
+        (tp.ClosedPnlRow, CLOSED_ROW, "closedPnl", "-2000000000000000"),
+        (tp.ClosedPnlRow, CLOSED_ROW, "closedPnl", "1000000000000001"),
     ],
-    ids=["price-over-bound", "amount-over-bound", "negative-amount-over-bound"],
-)
-def test_an_amount_or_price_past_its_bound_fails_the_reply(
-    model: type[tp._Venue], data: dict[str, str]
+    ids=[
+        "price-zero", "price-negative", "price-past-max", "price-twice-max", "fee-over",
+        "fee-under", "fee-edge", "pnl-under", "pnl-edge",
+    ],
+)  # fmt: skip
+def test_an_amount_or_price_past_its_bound_fails_a_complete_row(
+    model: type[tp._Venue], row: dict[str, Any], field: str, value: str
 ) -> None:
+    """The row is read as it is, so the failure is the one field's: a fill at no price, or a
+    figure no account comes near, fails the reply (plausibility, `frame_guard`)."""
+    assert tp.parse(model, row, "bounds") is not None
     with pytest.raises(UnknownStateError):
-        tp.parse(model, data, "bounds")
-    assert tp._decimal("-999999999999999") == Decimal("-999999999999999")
+        tp.parse(model, row | {field: value}, "bounds")
+
+
+@pytest.mark.parametrize(
+    ("model", "row", "field", "value"),
+    [
+        (tp.ExecutionRow, EXEC_ROW, "execPrice", "1000000000000"),
+        (tp.ExecutionRow, EXEC_ROW, "execFee", "1000000000000000"),
+        (tp.ExecutionRow, EXEC_ROW, "execFee", "-1000000000000000"),
+        (tp.ClosedPnlRow, CLOSED_ROW, "closedPnl", "-999999999999999"),
+    ],
+    ids=["price-max", "fee-max", "fee-min", "pnl-inside"],
+)
+def test_an_amount_or_price_on_its_bound_is_read(
+    model: type[tp._Venue], row: dict[str, Any], field: str, value: str
+) -> None:
+    parsed = tp.parse(model, row | {field: value}, "bounds")
+    assert getattr(parsed, field) == Decimal(value)
 
 
 @pytest.mark.parametrize("data", [[_row()], "row", None, 7])
@@ -470,7 +652,103 @@ def test_a_reply_that_is_no_object_fails_without_counting_fields(data: object) -
     assert _unknown("order") == before
 
 
+@pytest.mark.parametrize(
+    ("status", "unified"), [(1, False), (3, True), (4, True), (5, True), (6, True)]
+)
+def test_every_unified_margin_status_says_whether_the_account_is_unified(
+    status: int, unified: bool
+) -> None:
+    """`1` is a classic account; `3` to `6` are unified trading accounts."""
+    result = {"marginMode": "REGULAR_MARGIN", "unifiedMarginStatus": status, "updatedTime": T_MS}
+    info = tp.to_account_info(tp.parse(tp.AccountInfoResult, result, "account-info"), account())
+    assert info.unified_margin is unified
+
+
 def test_account_info_refuses_a_boolean_status() -> None:
     result = {"marginMode": "REGULAR_MARGIN", "unifiedMarginStatus": True, "updatedTime": T_MS}
     with pytest.raises(UnknownStateError):
         tp.parse(tp.AccountInfoResult, result, "account-info")
+
+
+# -- page bounds, per model -----------------------------------------------------------------------
+
+#: A unit input with every field the position parser reads (names as documented).
+POSITION_ROW: dict[str, Any] = {
+    "positionIdx": 0, "symbol": "BTCUSDT", "side": "Buy", "size": "1", "avgPrice": "60000",
+    "markPrice": "60100", "liqPrice": "", "leverage": "5", "unrealisedPnl": "100",
+    "cumRealisedPnl": "0", "takeProfit": "", "stopLoss": "58000", "trailingStop": "",
+    "updatedTime": T_MS,
+}  # fmt: skip
+#: One `create-batch` item and its code, as unit inputs.
+BATCH_ITEM: dict[str, Any] = {"symbol": "BTCUSDT", "orderId": "e-1", "orderLinkId": link()}
+BATCH_CODE: dict[str, Any] = {"code": 0, "msg": "OK"}
+
+
+def _page(row: dict[str, Any]) -> Callable[[int], dict[str, Any]]:
+    return lambda rows: {"category": "linear", "nextPageCursor": "", "list": [row] * rows}
+
+
+def _batch_reply(items: int, codes: int | None = None) -> dict[str, Any]:
+    """`items` orders and as many codes, or `codes` of them."""
+    count = items if codes is None else codes
+    return {"result": {"list": [BATCH_ITEM] * items}, "retExtInfo": {"list": [BATCH_CODE] * count}}
+
+
+PAGES: list[tuple[type[Any], Callable[[int], dict[str, Any]], int, Callable[[Any], int]]] = [
+    (tp.OrderPage, _page(_row()), 50, lambda parsed: len(parsed.rows)),
+    (tp.ExecutionPage, _page(EXEC_ROW), 100, lambda parsed: len(parsed.rows)),
+    (tp.PositionPage, _page(POSITION_ROW), 200, lambda parsed: len(parsed.rows)),
+    (tp.ClosedPnlPage, _page(CLOSED_ROW), 100, lambda parsed: len(parsed.rows)),
+    (
+        tp.BatchReply,
+        _batch_reply,
+        20,
+        lambda parsed: min(len(parsed.result.items), len(parsed.retExtInfo.codes)),
+    ),
+]
+PAGE_IDS = ["order", "execution", "position", "closed_pnl", "batch"]
+
+
+@pytest.mark.parametrize(("model", "page", "limit", "count"), PAGES, ids=PAGE_IDS)
+def test_a_page_of_the_venues_limit_is_read_whole(
+    model: type[Any], page: Callable[[int], dict[str, Any]], limit: int, count: Callable[[Any], int]
+) -> None:
+    """The port asks for the venue's page limit (`_PAGE_LIMIT`), so a full page is a normal
+    answer; a bound below it would fail every full page."""
+    assert count(tp.parse(model, page(limit), "page")) == limit
+    assert count(tp.parse(model, page(0), "page")) == 0
+
+
+@pytest.mark.parametrize(
+    ("model", "data"),
+    [
+        (tp.OrderPage, _page(_row())(51)),
+        (tp.ExecutionPage, _page(EXEC_ROW)(101)),
+        (tp.PositionPage, _page(POSITION_ROW)(201)),
+        (tp.ClosedPnlPage, _page(CLOSED_ROW)(101)),
+        (tp.BatchReply, _batch_reply(21, 20)),
+        (tp.BatchReply, _batch_reply(20, 21)),
+    ],
+    ids=[*PAGE_IDS[:4], "batch-items", "batch-codes"],
+)
+def test_a_page_past_the_venues_limit_fails_the_reply(
+    model: type[Any], data: dict[str, Any]
+) -> None:
+    with pytest.raises(UnknownStateError):
+        tp.parse(model, data, "page")
+
+
+@pytest.mark.parametrize(
+    ("model", "row"),
+    [(tp.OrderRow, _row()), (tp.PositionRow, POSITION_ROW), (tp.ClosedPnlRow, CLOSED_ROW)],
+    ids=["order", "position", "closed_pnl"],
+)
+def test_a_dated_futures_row_fails_the_read_as_rule_12_says(
+    model: type[tp._Venue], row: dict[str, Any]
+) -> None:
+    """24 §14.2 rule 12: the port reads USDT linear perpetuals only (C-1.2 item 3). A dated
+    future's symbol (`BTCUSDT-26DEC25`) fails the read, closed, rather than being read as a
+    perpetual's; that `settleCoin=USDT` lists none is assumed pending E29-K01."""
+    assert tp.parse(model, row, "row") is not None
+    with pytest.raises(UnknownStateError):
+        tp.parse(model, row | {"symbol": "BTCUSDT-26DEC25"}, "row")

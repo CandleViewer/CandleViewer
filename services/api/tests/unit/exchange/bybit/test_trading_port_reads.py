@@ -7,6 +7,7 @@ under one of our ids), it changes that one field of the transcription and says s
 from __future__ import annotations
 
 import itertools
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from typing import Any
 
@@ -14,8 +15,10 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.exchange.base.errors import UnknownStateError
+from candleviewer.exchange.base.models import Wallet
 from candleviewer.exchange.bybit import trading
 from candleviewer.exchange.bybit.metrics import bybit_rows_refused_total
+from candleviewer.exchange.bybit.trading import BybitTradingPort
 from tests._corpus import rest
 from tests.unit.exchange.bybit._trading import (
     ACCOUNT_B,
@@ -116,15 +119,22 @@ async def test_a_range_longer_than_the_venue_keeps_is_refused_unsent() -> None:
     assert venue.sent == []
 
 
-@pytest.mark.parametrize("name", ["executions", "closed_pnl", "order_history"])
-async def test_a_window_that_ends_before_it_starts_is_refused_unsent(name: str) -> None:
+Read = Callable[[BybitTradingPort], Awaitable[object]]
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        lambda port: port.executions(account(), NOW_US, NOW_US - 1),
+        lambda port: port.closed_pnl(account(), NOW_US, NOW_US - 1),
+        lambda port: port.order_history(account(), start=NOW_US, end=NOW_US - 1),
+    ],
+    ids=["executions", "closed_pnl", "order_history"],
+)
+async def test_a_window_that_ends_before_it_starts_is_refused_unsent(read: Read) -> None:
     venue = Venue()
-    port = make_port(venue)
     with pytest.raises(ValueError, match="start is after end"):
-        if name == "order_history":
-            await port.order_history(account(), start=NOW_US, end=NOW_US - 1)
-        else:
-            await getattr(port, name)(account(), NOW_US, NOW_US - 1)
+        await read(make_port(venue))
     assert venue.sent == []
 
 
@@ -326,3 +336,173 @@ async def test_a_refused_cancel_all_is_one_rejection_naming_no_order() -> None:
     port = make_port(Venue().on("/v5/order/cancel-all", rest("rest/error_10018.json")))
     [ack] = await port.cancel_all(account(), "BTCUSDT")
     assert (ack.ok, ack.order_link_id, ack.error_code) == (False, None, "RATE_LIMITED")
+
+
+# -- every page's rows, the reads' bounds and their queries ----------------------------------------
+
+#: The transcribed inverse position (`rest/trading-position-list.json`) on a linear page: the
+#: documentation shows no linear position, so its symbol and the page's category are test inputs.
+POSITIONS = rest("rest/trading-position-list.json")
+LINEAR_POSITIONS = with_result(POSITIONS, category="linear", nextPageCursor="")
+RowKey = Callable[[Any], str]
+
+
+@pytest.mark.parametrize(
+    ("path", "page", "field", "values", "read", "key"),
+    [
+        (
+            "/v5/order/realtime", REALTIME, "orderId", ("order-a", "order-b"),
+            lambda port: port.open_orders(account()), lambda o: o.exchange_order_id,
+        ),
+        (
+            "/v5/execution/list", EXECUTIONS, "execId", ("exec-a", "exec-b"),
+            lambda port: port.executions(account(), NOW_US - DAY_US, NOW_US),
+            lambda e: e.exec_id,
+        ),
+        (
+            "/v5/position/list", LINEAR_POSITIONS, "symbol", ("BTCUSDT", "ETHUSDT"),
+            lambda port: port.positions(account()), lambda p: p.symbol,
+        ),
+        (
+            "/v5/position/closed-pnl", CLOSED, "symbol", ("BTCUSDT", "ETHUSDT"),
+            lambda port: port.closed_pnl(account(), NOW_US - DAY_US, NOW_US),
+            lambda c: c.symbol,
+        ),
+    ],
+    ids=["open_orders", "executions", "positions", "closed_pnl"],
+)  # fmt: skip
+async def test_a_walk_returns_every_pages_rows_in_order(
+    path: str, page: dict[str, Any], field: str, values: tuple[str, str], read: Read, key: RowKey
+) -> None:
+    """Row A on the first page, row B on the second (each the transcribed row with one field
+    changed, a test input): a read that kept one page only would hide orders, fills or stops
+    from reconciliation."""
+    row = page["result"]["list"][0]
+    first = with_result(page, list=[{**row, field: values[0]}], nextPageCursor="c1")
+    second = with_result(page, list=[{**row, field: values[1]}], nextPageCursor="")
+    venue = Venue().on(path, first, second)
+
+    rows: Any = await read(make_port(venue))
+
+    assert [key(r) for r in rows] == list(values)
+    assert [q.get("cursor") for q in venue.queries()] == [None, "c1"]
+
+
+@pytest.mark.parametrize(
+    ("path", "answer", "read", "query"),
+    [
+        (
+            "/v5/order/realtime", _last(REALTIME), lambda port: port.open_orders(account()),
+            {"category": "linear", "limit": "50", "settleCoin": "USDT"},
+        ),
+        (
+            "/v5/order/realtime", _last(REALTIME),
+            lambda port: port.open_orders(account(), "BTCUSDT"),
+            {"category": "linear", "limit": "50", "symbol": "BTCUSDT"},
+        ),
+        (
+            "/v5/position/list", LINEAR_POSITIONS, lambda port: port.positions(account()),
+            {"category": "linear", "settleCoin": "USDT", "limit": "200"},
+        ),
+        (
+            "/v5/execution/list", _last(EXECUTIONS),
+            lambda port: port.executions(account(), NOW_US - DAY_US, NOW_US),
+            {
+                "category": "linear", "settleCoin": "USDT", "limit": "100",
+                "startTime": str((NOW_US - DAY_US) // 1000), "endTime": str(NOW_US // 1000),
+            },
+        ),
+        (
+            "/v5/position/closed-pnl", _last(CLOSED),
+            lambda port: port.closed_pnl(account(), NOW_US - DAY_US, NOW_US),
+            {
+                "category": "linear", "limit": "100",
+                "startTime": str((NOW_US - DAY_US) // 1000), "endTime": str(NOW_US // 1000),
+            },
+        ),
+    ],
+    ids=["open-orders", "open-orders-by-symbol", "positions", "executions", "closed-pnl"],
+)  # fmt: skip
+async def test_each_read_sends_its_scope_and_the_venues_page_limit(
+    path: str, answer: dict[str, Any], read: Read, query: dict[str, str]
+) -> None:
+    """A page limit above the venue's maximum fails every such read, and a read without its
+    settle coin or symbol is no read of the account's USDT linear book (C-1.2 item 3)."""
+    venue = Venue().on(path, answer)
+    await read(make_port(venue))
+    assert venue.queries() == [query]
+
+
+async def test_open_orders_of_a_symbol_keep_only_that_symbols_rows() -> None:
+    """The symbol goes on the wire and is applied again: the transcribed row is `ETHUSDT`."""
+    venue = Venue().on("/v5/order/realtime", _last(REALTIME))
+    port = make_port(venue)
+    assert await port.open_orders(account(), "BTCUSDT") == []
+    [kept] = await port.open_orders(account(), "ETHUSDT")
+    assert kept.symbol == "ETHUSDT"
+
+
+async def test_closed_pnl_walks_every_window_of_the_range() -> None:
+    venue = Venue().on("/v5/position/closed-pnl", _last(CLOSED))
+    records = await make_port(venue).closed_pnl(account(), NOW_US - 15 * DAY_US, NOW_US)
+    sent = [(int(q["startTime"]), int(q["endTime"])) for q in venue.queries()]
+    assert len(sent) == 3 and len(records) == 3  # one record a window: no dedupe by design
+    assert sent[0][0] == (NOW_US - 15 * DAY_US) // 1000 and sent[-1][1] == NOW_US // 1000
+    assert all(b[0] == a[1] + 1 for a, b in itertools.pairwise(sent))
+
+
+def test_a_range_takes_at_most_106_windows_of_7_days() -> None:
+    """106 windows of 7 days cover the venue's two years; the 107th is refused, unsent."""
+    week_ms = 7 * 86_400_000
+    end_ms = NOW_US // 1000
+    start_ms = end_ms - (106 * week_ms + 105)  # each later window starts 1 ms past the last
+    windows = trading._windows(start_ms * 1000, NOW_US)
+    assert len(windows) == 106 and windows[0][0] == start_ms and windows[-1][1] == end_ms
+    with pytest.raises(ValueError, match="longer than the exchange keeps"):
+        trading._windows((start_ms - 1) * 1000, NOW_US)
+
+
+def test_a_window_ends_on_the_millisecond_that_holds_its_end() -> None:
+    """The end rounds up: a range ending 1 µs into a millisecond still reads that millisecond."""
+    assert trading._windows(NOW_US, NOW_US + 1) == [(NOW_US // 1000, NOW_US // 1000 + 1)]
+
+
+async def test_executions_carry_the_ports_ingest_time() -> None:
+    venue = Venue().on("/v5/execution/list", _last(EXECUTIONS))
+    port = make_port(venue, now_us=lambda: NOW_US + 7)
+    [fill] = await port.executions(account(), NOW_US - DAY_US, NOW_US)
+    transcribed = EXECUTIONS["result"]["list"][0]
+    assert (fill.ts_ingest, fill.ts_exec) == (NOW_US + 7, int(transcribed["execTime"]) * 1000)
+
+
+async def test_a_unified_usdt_wallet_maps_every_figure_at_the_replys_time() -> None:
+    """The transcribed reply's account and envelope with a USDT coin row whose figures all
+    differ (test inputs: the documentation's example holds a BTC row only), so a swap shows."""
+    reply = rest("rest/trading-wallet-balance.json")
+    unified = reply["result"]["list"][0]
+    usdt = {
+        **unified["coin"][0], "coin": "USDT", "equity": "1000.5", "walletBalance": "990.25",
+        "availableToWithdraw": "800", "unrealisedPnl": "10.5", "cumRealisedPnl": "-3",
+    }  # fmt: skip
+    figures = {
+        "accountIMRate": "0.01", "accountMMRate": "0.005", "totalAvailableBalance": "900",
+        "totalInitialMargin": "90",
+    }  # fmt: skip
+    answer = with_result(reply, list=[{**unified, **figures, "coin": [usdt]}])
+
+    wallet = await make_port(Venue().on("/v5/account/wallet-balance", answer)).wallet(account())
+
+    assert wallet == Wallet(
+        account_id=account().account_id,
+        coin="USDT",
+        equity=Decimal("1000.5"),
+        wallet_balance=Decimal("990.25"),
+        available_to_withdraw=Decimal("800"),
+        available_margin=Decimal("900"),
+        used_margin=Decimal("90"),
+        unrealised_pnl=Decimal("10.5"),
+        cum_realised_pnl=Decimal("-3"),
+        account_im_rate=Decimal("0.01"),
+        account_mm_rate=Decimal("0.005"),
+        updated_at=reply["time"] * 1000,
+    )

@@ -7,7 +7,8 @@ sends every order over REST (SR-040a). `order_rate_per_uid_per_s` holds §8.7's 
 keeps orders 7 days (§8.3 rule 6), live keeps them long (`None`), assumed pending E29-K01: the
 venue's history read shows an unfilled order 7 days at most, and a cancelled, rejected or
 deactivated one 24 hours (§14.1). Consumers read the record, never the environment (§14.2
-rule 3).
+rule 3). Each caller gets its own deep copy: the model is frozen, but its rate and cadence tables
+are dicts, so a write to a shared record would reach every other consumer.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from typing import Final
 from candleviewer.domain.primitives import Environment
 from candleviewer.exchange.base.models import ExchangeCapabilities
 
-__all__ = ["CAPABILITIES", "capabilities_for"]
+__all__ = ["ENVIRONMENTS", "capabilities_for"]
 
 #: §8.7's defaults per endpoint class; no default is given for `batch`, so none is set.
 _ORDER_RATES: Final[Mapping[str, int]] = MappingProxyType(
@@ -68,15 +69,18 @@ def _record(environment: Environment, *, demo: bool) -> ExchangeCapabilities:
     )
 
 
-#: The records, frozen and built once (`ExchangeCapabilities` is a frozen model).
-CAPABILITIES: Final[Mapping[str, ExchangeCapabilities]] = MappingProxyType(
+#: The records, built once and never handed out: `capabilities_for` returns a copy.
+_RECORDS: Final[Mapping[str, ExchangeCapabilities]] = MappingProxyType(
     {"live": _record("live", demo=False), "demo": _record("demo", demo=True)}
 )
+#: The environments the port trades, the ones with a record (ruling R6).
+ENVIRONMENTS: Final = frozenset(_RECORDS)
 
 
 def capabilities_for(environment: str) -> ExchangeCapabilities:
-    """The record of `environment`; testnet, or anything else, is refused (ruling R6)."""
-    record = CAPABILITIES.get(environment)
+    """A deep copy of `environment`'s record; testnet, or anything else, is refused (ruling R6).
+    No caller's write to its rate or cadence table reaches another caller's record."""
+    record = _RECORDS.get(environment)
     if record is None:
         raise ValueError("no trading capability record for this environment")
-    return record
+    return record.model_copy(deep=True)

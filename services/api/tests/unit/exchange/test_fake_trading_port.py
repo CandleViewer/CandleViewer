@@ -7,6 +7,7 @@ file covers what only the fake has: scripted outcomes, venue-like state and the 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from decimal import Decimal
 from uuid import UUID
 
@@ -257,26 +258,102 @@ def test_the_cancel_all_limit_is_the_venues_by_default_and_never_below_one() -> 
         FakeTradingPort(cancel_all_limit=0)
 
 
-def _order(order_link_id: str, exchange_order_id: str, *, kind: str = "order") -> Order:
+def _order(
+    order_link_id: str,
+    exchange_order_id: str,
+    *,
+    kind: str = "order",
+    account_id: AccountId = ACCOUNT,
+    state: str = "untriggered",
+    created_at: int = T0,
+) -> Order:
     return Order.model_validate(
         {
             "order_link_id": order_link_id,
             "exchange_order_id": exchange_order_id,
-            "account_id": ACCOUNT,
+            "account_id": account_id,
             "symbol": "BTCUSDT",
             "side": "sell",
             "order_type": "market",
             "qty": Decimal("1"),
             "price": None,
-            "state": "untriggered",
+            "state": state,
             "filled_qty": Decimal(0),
             "leaves_qty": Decimal("1"),
             "avg_fill_price": None,
-            "created_at": T0,
+            "created_at": created_at,
             "terminal_at": None,
             "order_kind": kind,
         }
     )
+
+
+#: Where a seeded order is listed: (history, open book), by the exchange's id.
+HISTORY: tuple[list[str], list[str]] = (["fake-seeded"], [])
+OPEN: tuple[list[str], list[str]] = ([], ["fake-seeded"])
+
+
+@pytest.mark.parametrize(
+    ("state", "listed"),
+    [
+        ("rejected", HISTORY),
+        ("partially_filled_canceled", HISTORY),
+        ("filled", HISTORY),
+        ("cancelled", HISTORY),
+        ("deactivated", HISTORY),
+        ("new", OPEN),
+        ("partially_filled", OPEN),
+        ("untriggered", OPEN),
+        ("triggered", OPEN),
+    ],
+)
+async def test_a_seeded_order_is_in_history_once_terminal_and_open_before(
+    state: str, listed: tuple[list[str], list[str]]
+) -> None:
+    """The states the exchange's parser gives (24 §8.2): a terminal one is history, as the
+    venue keeps it, and any other is in the open book."""
+    port = _port()
+    port.seed_order(_order(_link(), "fake-seeded", state=state), uid="100001")
+    history = await port.order_history(_ref())
+    is_open = await port.open_orders(_ref())
+    assert ([o.exchange_order_id for o in history], [o.exchange_order_id for o in is_open]) == (
+        listed
+    )
+
+
+async def test_open_orders_answer_only_the_accounts_own() -> None:
+    port = _port()
+    mine = _order(_link(0), "fake-mine")
+    theirs = _order(_link(1, OTHER), "fake-theirs", account_id=OTHER)
+    port.seed_order(mine, uid="100001")
+    port.seed_order(theirs, uid="100001")
+    assert (await port.open_orders(_ref()), await port.open_orders(_ref(OTHER))) == (
+        [mine],
+        [theirs],
+    )
+
+
+def _history_port() -> tuple[FakeTradingPort, Order, Order]:
+    """Two orders in history: a filled one created before `T0` and a cancelled one at `T0`."""
+    port = _port()
+    early = _order(_link(0), "fake-early", state="filled", created_at=T0 - 10)
+    late = _order(_link(1), "fake-late", state="cancelled")
+    port.seed_order(early, uid="100001")
+    port.seed_order(late, uid="100001")
+    return port, early, late
+
+
+async def test_history_filters_by_the_exchange_order_id() -> None:
+    port, early, late = _history_port()
+    assert await port.order_history(_ref(), exchange_order_id="fake-late") == [late]
+    assert await port.order_history(_ref(), exchange_order_id="fake-early") == [early]
+
+
+async def test_history_filters_by_the_window() -> None:
+    port, early, late = _history_port()
+    assert await port.order_history(_ref(), start=T0 - 5) == [late]
+    assert await port.order_history(_ref(), end=T0 - 5) == [early]
+    assert await port.order_history(_ref(), start=T0 - 10, end=T0) == [early, late]
 
 
 def _position(account_id: AccountId = ACCOUNT) -> Position:
@@ -457,12 +534,14 @@ async def test_a_cancel_meets_only_this_accounts_orders_and_can_be_scripted() ->
     assert (scripted.ok, scripted.retryable) == (False, True)
 
 
-@pytest.mark.parametrize("second", ["account", "lane"])
-async def test_a_batch_is_one_accounts_in_one_lane(second: str) -> None:
-    other = (
-        _place(1, account=_ref(OTHER), order_link_id=_link(1, OTHER))
-        if second == "account"
-        else _place(1, lane="critical")
-    )
+@pytest.mark.parametrize(
+    "second",
+    [
+        lambda: _place(1, account=_ref(OTHER), order_link_id=_link(1, OTHER)),
+        lambda: _place(1, lane="critical"),
+    ],
+    ids=["account", "lane"],
+)
+async def test_a_batch_is_one_accounts_in_one_lane(second: Callable[[], PlaceOrderRequest]) -> None:
     with pytest.raises(ValueError, match="one account's, in one lane"):
-        await _port().place_batch([_place(0), other])
+        await _port().place_batch([_place(0), second()])
