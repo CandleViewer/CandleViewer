@@ -181,6 +181,16 @@ def test_a_conditional_create_records_its_trigger_direction_by_name(
     assert rec.request_fields(body)["trigger_direction"] == direction
 
 
+def test_a_wire_value_the_contract_cannot_spell_is_dropped_never_stored() -> None:
+    """A value outside the closed spelling map has no contract name: left out, alone."""
+    fields = rec.request_fields({"side": "Sideways", "triggerDirection": 3, "symbol": "BTCUSDT"})
+    record = rec.record(
+        method="POST", endpoint="/v5/order/create", request=fields, response=None,
+        ret_code=0, ret_msg=None, latency_ms=1,
+    )  # fmt: skip
+    assert record.request_redacted == ExchangeRecordFields(symbol="BTCUSDT")
+
+
 def test_a_cancel_all_record_holds_its_order_filter() -> None:
     """SR-E29-06: the filter that keeps a position's TP/SL orders is in the record, by name."""
     fields = rec.request_fields(_cancel_all_body(None))
