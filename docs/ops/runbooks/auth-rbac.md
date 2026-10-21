@@ -22,6 +22,16 @@ Quick facts the procedures rely on:
 | Session lifetime | 12 h absolute, 12 min access token, idle lock 15 min default (5–60 min)             | `auth/session_service.py`                                                        |
 | Audit volume     | `cv-audit-data` at `/var/lib/candleviewer/audit`; back it up with Postgres          | `infra/compose/docker-compose.yml`, §3                                           |
 
+**What counts as activity for the idle lock (#4012).** The idle clock runs from the session's
+`last_seen_at`, and only a request that authenticates its bearer with
+`authenticate_access_token(touch=True)` re-stamps it: `GET /me`, `GET /auth/session` with a
+bearer, the session routes outside the idle-locked set, MFA enrolment, and the rules and audit
+reads. The idle-lock middleware authenticates without re-stamping, and a token refresh carries the
+presented session's `last_seen_at` to its successor instead of starting the clock again. A tab
+whose only requests are its token refreshes (about every 11 minutes) therefore locks after its idle
+timeout, 15 minutes by default, and its next refresh is answered `401 session_idle_locked`; the
+user unlocks with their password (`POST /auth/unlock`).
+
 ## 1. Unlock a locked account (SR-016)
 
 `POST /auth/unlock` is dark until #2300's last slice wires it (2f, held for #1640): it answers `503`
