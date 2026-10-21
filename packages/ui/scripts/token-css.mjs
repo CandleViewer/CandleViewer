@@ -11,11 +11,13 @@
 //   typography  one declaration per field (`--type-ui-label-font-size: 12px`), not one `font`
 //               shorthand: the shorthand cannot carry letter-spacing. The composite's own name
 //               (`--type-ui-label`) is not written.
-// Any other object value has no CSS form here and fails the build.
+// Any other object value has no CSS form here and fails the build, and so does any property or
+// value with a character that would end or escape its declaration (`;`, a brace, a comment
+// delimiter, a control character): the minifier accepts a well-formed injected declaration.
 //
 // Error code (docs/plan/16-design-system-brief.md §11): TOKENS-E004 invalid CSS output, thrown for
-// a composite value the writer cannot serialise and for written CSS that esbuild warns about or
-// minifies to an empty custom property.
+// a value the writer cannot serialise or that would escape its declaration, and for written CSS
+// that esbuild warns about or minifies to an empty custom property.
 //
 // esbuild is an exact-pinned devDependency of packages/ui: the version Vite resolves in
 // pnpm-lock.yaml for its CSS minifier, so the check reads the CSS as the production bundle does.
@@ -26,14 +28,28 @@ const invalid = (message) => new Error(`TOKENS-E004 invalid CSS output: ${messag
 
 const asText = (value) => String(value).trim();
 
-/** A bare number is a length in px; a value that carries a unit (`0.75rem`, `calc(…)`) stays as written. */
-function length(value) {
+const NUMBER = /^-?(?:\d+(?:\.\d+)?|\.\d+)$/;
+const LENGTH = /^-?(?:\d+(?:\.\d+)?|\.\d+)(?:px|rem|em|%)$/;
+
+/** A bare number is a length in px; a number with a unit (`0.75rem`) stays as written; anything else fails. */
+function length(value, name = "(unnamed token)") {
   const text = asText(value);
-  return /^-?(?:\d+\.?\d*|\.\d+)$/.test(text) ? `${text}px` : text;
+  const css = NUMBER.test(text) ? `${text}px` : text;
+  if (!LENGTH.test(css))
+    throw invalid(`token "${name}" has a length with no CSS form: ${JSON.stringify(text)}`);
+  return css;
 }
 
 const SHADOW_LENGTHS = ["offsetX", "offsetY", "blur", "spread"];
 const SHADOW_FIELDS = [...SHADOW_LENGTHS, "color", "inset"];
+/** `inset` as DTCG writes it: a boolean (or its string), absent for an outer shadow. */
+const INSET = new Map([
+  [true, true],
+  ["true", true],
+  [false, false],
+  ["false", false],
+  [undefined, false],
+]);
 
 function shadowLayer(layer, name) {
   if (layer === null || typeof layer !== "object" || Array.isArray(layer)) {
@@ -48,10 +64,11 @@ function shadowLayer(layer, name) {
       throw invalid(`shadow token "${name}" has no ${field}`);
     }
   }
-  const inset = layer.inset === true || layer.inset === "true";
+  if (!INSET.has(layer.inset))
+    throw invalid(`shadow token "${name}" has an inset that is not true or false`);
   return [
-    ...(inset ? ["inset"] : []),
-    ...SHADOW_LENGTHS.map((field) => length(layer[field])),
+    ...(INSET.get(layer.inset) ? ["inset"] : []),
+    ...SHADOW_LENGTHS.map((field) => length(layer[field], name)),
     asText(layer.color),
   ].join(" ");
 }
@@ -106,10 +123,24 @@ function typographyParts(value, name) {
     );
   }
   const parts = TYPOGRAPHY_PARTS.filter(([field]) => value[field] !== undefined).map(
-    ([field, suffix, toCss]) => [suffix, toCss(value[field])],
+    ([field, suffix, toCss]) => [suffix, toCss(value[field], name)],
   );
   if (parts.length === 0) throw invalid(`typography token "${name}" has no field`);
   return parts;
+}
+
+/** `;`, a brace or a comment delimiter: each would end or escape a declaration. */
+const BREAKS_OUT = /[;{}]|\/\*|\*\//;
+/** A control character (U+0000 to U+001F, U+007F), which would break the declaration or its line. */
+const hasControl = (text) =>
+  [...text].some((ch) => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
+
+/** `css`, unless it would end or escape the declaration it is written into (TOKENS-E004). */
+function contained(css, name, what = "value") {
+  if (BREAKS_OUT.test(css) || hasControl(css)) {
+    throw invalid(`token "${name}" has a ${what} that would end or escape its CSS declaration`);
+  }
+  return css;
 }
 
 /**
@@ -117,6 +148,10 @@ function typographyParts(value, name) {
  * typography token is several declarations (see `cssDeclarations`), so it never comes through here.
  */
 export function cssValue(token, name = "(unnamed token)") {
+  return contained(rawCssValue(token, name), name);
+}
+
+function rawCssValue(token, name) {
   const v = token.$value;
   if (token.$type === "shadow") return shadowCss(v, name);
   if (v !== null && typeof v === "object" && !Array.isArray(v)) {
@@ -137,11 +172,11 @@ export function cssValue(token, name = "(unnamed token)") {
 
 /** `[[--property, css]]` for one resolved token: one entry, or one per field for a typography token. */
 export function cssDeclarations(name, token) {
-  const property = `--${name.replace(/\./g, "-")}`;
+  const property = contained(`--${name.replace(/\./g, "-")}`, name, "name");
   if (token.$type === "typography") {
     return typographyParts(token.$value, name).map(([suffix, css]) => [
       `${property}-${suffix}`,
-      css,
+      contained(css, name),
     ]);
   }
   return [[property, cssValue(token, name)]];

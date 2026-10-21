@@ -1,4 +1,7 @@
 // @vitest-environment node
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 type Token = { $type: string; $value: unknown };
@@ -35,6 +38,15 @@ describe("shadow tokens as a box-shadow value", () => {
     ["has no blur", { ...layer, blur: undefined }, /"elevation\.x" has no blur/],
     ["has a field with no CSS form", { ...layer, type: "inner" }, /no CSS form: type/],
     ["has no layer", [], /"elevation\.x" has no layer/],
+    ["has a length with no CSS form (`1.`)", { ...layer, offsetX: "1." }, /no CSS form: "1\."/],
+    ["has a signed length (`+1`)", { ...layer, offsetY: "+1" }, /no CSS form: "\+1"/],
+    ["has a null blur", { ...layer, blur: null }, /no CSS form: "null"/],
+    [
+      "has an inset that is not a boolean",
+      { ...layer, inset: "True" },
+      /inset that is not true or false/,
+    ],
+    ["has a numeric inset", { ...layer, inset: 1 }, /inset that is not true or false/],
   ])("fail with TOKENS-E004 for a shadow that %s", (_, value, message) => {
     expect(() => cssValue(shadow(value), "elevation.x")).toThrow(/^TOKENS-E004/);
     expect(() => cssValue(shadow(value), "elevation.x")).toThrow(message);
@@ -107,6 +119,51 @@ describe("other tokens", () => {
       $value: { color: "#FFF", width: "1", style: "solid" },
     };
     expect(() => cssDeclarations("border.card", border)).toThrow(/^TOKENS-E004.*"border\.card"/);
+  });
+});
+
+describe("a value that would end or escape its declaration (the minifier accepts it)", () => {
+  const color = (value: string): Token => ({ $type: "color", $value: value });
+
+  it.each([
+    ["appends a declaration", "#fff; --evil: 1"],
+    ["closes the theme block and opens a rule", "#fff } .evil { color: red"],
+    ["breaks the line", "#fff\n  --evil: 1"],
+    ["opens a comment", "#fff /* --evil: 1 */"],
+  ])("fails with TOKENS-E004 when a colour %s", (_, value) => {
+    expect(() => cssValue(color(value), "color.x")).toThrow(
+      /^TOKENS-E004 invalid CSS output: token "color\.x" has a value that would end or escape/,
+    );
+  });
+
+  it("fails the same way through a shadow colour, a typography part and a token name", () => {
+    expect(() => cssValue(shadow({ ...layer, color: "#000; --x: 1" }), "elevation.x")).toThrow(
+      /"elevation\.x" has a value that would end or escape/,
+    );
+    expect(() => cssDeclarations("type.x", typography({ ...label, fontWeight: "500}" }))).toThrow(
+      /"type\.x" has a value that would end or escape/,
+    );
+    expect(() => cssDeclarations("color.x}", color("#fff"))).toThrow(
+      /"color\.x}" has a name that would end or escape/,
+    );
+  });
+
+  it("fails closed on a quoted family name that holds one, though the quotes would contain it", () => {
+    expect(() => cssDeclarations("type.x", typography({ fontFamily: ["a; b"] }))).toThrow(
+      /^TOKENS-E004/,
+    );
+  });
+});
+
+describe("the check's esbuild", () => {
+  it("is the version Vite minifies the production CSS with, so it reads CSS as the bundle does", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const ui = createRequire(path.resolve(here, "../../package.json"));
+    const web = createRequire(path.resolve(here, "../../../../apps/web/package.json"));
+    const vite = createRequire(web.resolve("vite/package.json"));
+    const version = (from: NodeRequire): string =>
+      (from("esbuild/package.json") as { version: string }).version;
+    expect(version(ui)).toBe(version(vite));
   });
 });
 

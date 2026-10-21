@@ -9,7 +9,7 @@
     },
     {
       "name": "esbuild",
-      "reason": "Downloads the pinned platform-specific esbuild binary, a transitive dev-dependency of vitest. Fetches only from esbuild's own release CDN, pinned by the exact version in pnpm-lock.yaml.",
+      "reason": "Downloads the pinned platform-specific esbuild binary, a transitive dev-dependency of vitest and vite and, since #3422, a direct devDependency of @candleviewer/ui (the build:tokens CSS check, exact-pinned to the version Vite resolves). Fetches only from esbuild's own release CDN, pinned by the exact version in pnpm-lock.yaml.",
       "reviewedBy": "security-reviewer (E02-X01)"
     }
   ]

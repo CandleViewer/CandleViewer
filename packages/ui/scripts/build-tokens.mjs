@@ -161,8 +161,9 @@ async function buildCss(themeName, resolved) {
   );
   const content = `${header}[data-theme="${themeName}"] {\n${lines.join("\n")}\n}\n\n${modeCss(themeName, resolved, cssValue)}`;
   const file = path.join(BUILD_DIR, "css", `tokens.${themeName}.css`);
-  await writeFile(file, content, "utf-8");
+  // Checked before it is written: a file that fails TOKENS-E004 never reaches build/css or dist.
   await checkCss(content, path.relative(UI_ROOT, file).split(path.sep).join("/"));
+  await writeFile(file, content, "utf-8");
 }
 
 async function buildTs(resolvedDark) {
