@@ -118,8 +118,10 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "TradingPort",
         "ExchangeCapabilities",
         "FakeExchange",
-        # G-8 (#2877): the in-memory `TradingPort` the OMS's tests drive.
+        # G-8 (#2877): the in-memory `TradingPort` the OMS's tests drive, and the rate headroom
+        # read beside `TradingPort` that the OMS's `RateHeadroom` port binds to (ruling 4).
         "FakeTradingPort",
+        "RateHeadroomPort",
         "OmsErrorCode",
         "translate_exchange_error",
     },
