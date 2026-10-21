@@ -160,8 +160,10 @@ def alembic_config() -> Config:
 def alembic_upgrade(settings: Settings) -> None:
     """`alembic upgrade head`; `env.py` takes the DSN from `CV_PG_DSN`, else `Settings.pg_dsn`.
 
-    Alembic's connection is bounded (a DSN that sets either value wins): a dead host ends in an
-    error, and so does a lock another session holds. A long-running statement is not cut.
+    Alembic's connection is bounded: a dead host ends in an error, and so does a lock another
+    session holds. A long-running statement is not cut. The step sets both bounds itself, so the DSN
+    must not carry `connect_timeout` or `options`: the lock's asyncpg connection sends both to the
+    server as settings, and a `connect_timeout` there fails the step at the lock.
     """
     lock_wait = f"-c lock_timeout={round(settings.migration_lock_timeout_s * 1000)}ms"
 

@@ -10,11 +10,15 @@ the first failure:
 2. The E07-T03 runner (`run_migrations`) over the shipped DDL, on `CV_QUESTDB_PG`.
 3. The drift guard (`assert_no_schema_drift`): each DDL table's live column names must equal the DDL's.
 
-All three run under one Postgres advisory lock (`cv_migrations`, the key the retired boot runner
-used), so two runs never overlap: a second one waits up to `CV_MIGRATION_LOCK_TIMEOUT_S` (300 s), then
-exits 4. Alembic's connection has a 10 s connect timeout and gives up on a lock another session holds
-after that same wait (a `connect_timeout` or `options` parameter in the DSN wins). A long-running
-statement is not cut.
+All three run under one Postgres advisory lock named `cv_migrations`, the key the boot runner (not
+wired into the API) used, so two runs never overlap: a second one waits up to
+`CV_MIGRATION_LOCK_TIMEOUT_S` (300 s), then exits 4. Alembic's connection has a 10 s connect timeout
+and gives up on a lock another session holds after that same wait. The step sets both bounds itself:
+do not put `connect_timeout` or `options` in the DSN (`CV_PG_OWNER_DSN`, which the step reads as
+`CV_PG_DSN`). The lock's connection is asyncpg's, which sends both to the server as settings, not as
+libpq options, and a `connect_timeout` there fails the step at the lock (exit 4). A long-running
+statement is not cut. Ctrl-C releases the lock while Alembic's worker thread may still be running:
+wait for the process to exit before you run the step again.
 
 Exit 0 means all three passed or nothing was left to apply: a second run applies nothing and exits 0.
 
@@ -45,9 +49,12 @@ The step reads `CV_PG_OWNER_DSN` (the owner role, `cv_owner`: `21-database-schem
 hands it to the `migrate` container as its `CV_PG_DSN`; the `api` service does not take it, and
 `CV_PG_DSN` stays the app role's (`cv_app`, which has no DDL privileges). Give the owner DSN to that
 one command, as above, so the owner login is not left in the shell's environment or in
-`infra/compose/.env` for the commands that follow: never `export` it and never write it to `.env`. On
-the dev stack `cv` is the owner, so `CV_PG_OWNER_DSN` is the same DSN as `CV_PG_DSN`; left unset,
-compose uses its placeholder DSN and the login fails (exit 4).
+`infra/compose/.env` for the commands that follow: never `export` it and never write it to `.env`.
+The shell also keeps the line you type in its history, so never paste the literal DSN: use
+`CV_PG_OWNER_DSN="$(<secret-store read>)"` as the prefix, which reads it from the operator's secret
+store, or type the line with a leading space under `HISTCONTROL=ignorespace`. On the dev stack `cv` is
+the owner, so `CV_PG_OWNER_DSN` is the same DSN as `CV_PG_DSN`; left unset, compose uses its
+placeholder DSN and the login fails (exit 4).
 
 `--build` makes the one-shot and the API this checkout's build. Compose reuses an image that exists
 (`run` and `up` build only a missing one), so a release that adds a revision or a DDL file could
