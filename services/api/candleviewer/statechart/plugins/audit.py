@@ -11,7 +11,17 @@ gap or edit in the per-machine stream is detectable — the same chaining
 discipline as the M19 audit log. The sink is an injected Protocol:
 `statechart` may not import `audit`/`storage` (import-linter). The
 `machine_events` table (24-internal-schemas.md §17.6, E50-T61) stores `phase`,
-`prev_hash` and `row_hash` as columns; the Postgres sink is E50-T63.
+`prev_hash` and `row_hash` as columns; the Postgres sink is E50-T63's
+WAL-backed `audit.machine_events.MachineEventWalSink`.
+
+Chain continuity (E50-T63): one chain per machine key, advanced by every writer
+and continuous across restarts. An optional `head` provider returns the sink's
+held head for this machine, or `None` when the sink does not hold it (then the
+plugin's own last hash applies); it is asked on every row, so the fault rows
+other writers appended are picked up. An optional `redactor` (the shared audit
+serializer) runs on the payload before it is hashed, so the stored payload is
+the hashed one. Without either, the behaviour is the earlier one, from
+`GENESIS_HASH`.
 """
 
 from __future__ import annotations
@@ -89,14 +99,21 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _safe_payload(event: Any) -> dict[str, Any]:
+#: The payload redactor's shape: the audit serializer (`audit.redact.redact`), injected.
+Redactor = Callable[[dict[str, Any] | None], dict[str, Any] | None]
+#: The sink's held head for one machine, or `None` when it does not hold it.
+HeadProvider = Callable[[], str | None]
+
+
+def _safe_payload(event: Any, redactor: Redactor | None = None) -> dict[str, Any]:
     data = getattr(event, "data", None)
     if not isinstance(data, dict):
         return {}
     try:
-        return dict(json.loads(json.dumps(data, default=str)))
+        payload = dict(json.loads(json.dumps(data, default=str)))
     except (TypeError, ValueError):
         return {}
+    return payload if redactor is None else (redactor(payload) or {})
 
 
 class CvAuditPlugin(HookFailureCounter):
@@ -111,6 +128,8 @@ class CvAuditPlugin(HookFailureCounter):
         sink: MachineEventSink,
         write_ahead: bool,
         clock: Callable[[], datetime] = _utc_now,
+        head: HeadProvider | None = None,
+        redactor: Redactor | None = None,
     ) -> None:
         super().__init__()
         self.machine_kind = machine_kind
@@ -119,6 +138,8 @@ class CvAuditPlugin(HookFailureCounter):
         self.sink = sink
         self.write_ahead = write_ahead
         self._clock = clock
+        self._head = head
+        self._redactor = redactor
         self._prev = GENESIS_HASH
         self._event: Any = None
         self._ahead_written = False
@@ -139,14 +160,14 @@ class CvAuditPlugin(HookFailureCounter):
             entity_id=self.entity_id,
             env=self.env,
             event_type=event_name if event_name is not None else event_type(self._event),
-            payload=_safe_payload(self._event),
+            payload=_safe_payload(self._event, self._redactor),
             from_states=from_states,
             to_states=to_states,
             actions_run=list(self._actions),
             fault=fault,
             occurred_at=self._clock().isoformat(),
             phase=phase,
-            prev_hash=self._prev,
+            prev_hash=(self._head() if self._head is not None else None) or self._prev,
         )
         row = MachineEventRow(**{**asdict(row), "row_hash": row_digest(row)})
         try:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -100,7 +101,8 @@ _QUARANTINE_FAULT = {
     "hmac_key_id": "k1",
     "snapshot_sha256": hashlib.sha256(canonical_json(BLOB)).hexdigest(),
 }
-_WRITES = {
+Write = Callable[[FaultRows], Awaitable[None]]
+_WRITES: dict[str, tuple[Write, str, dict[str, Any]]] = {
     "persist_refused": (
         lambda w: w.persist_refused(KEY, "context carries _fault (MUST-01)"),
         "PERSIST_REFUSED",

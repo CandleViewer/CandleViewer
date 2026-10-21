@@ -19,18 +19,28 @@ over these adapters.
 - `EventsAdapter` maps `MachineEventRow`. `occurred_at` must be the audit plugin's ISO-8601 UTC
   string, so that `row_digest` over a row read back equals the `row_hash` it was stored with; one
   that would come back different is refused before the store sees the batch.
+- `FaultRows` (E50-T63) is `PersistAudit` and `RestoreAudit` over the `machine_events` sink: one
+  `phase="fault"` row in the machine's own chain per refusal, drain error or quarantine (24 §17.6
+  "Faults"). It never raises: a raising `drain_error` would lose the drained events and a raising
+  `quarantine` would mask the refusal and skip its page, so a row it cannot write is logged
+  CRITICAL and paged P1 by the writer itself.
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 from collections.abc import Callable, Sequence
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import UTC, datetime
 from typing import Any, Final, Protocol
+
+import structlog
 
 from candleviewer.admin.inspector import SnapshotRow, SnapshotStore
 from candleviewer.replay.sessions_service import SnapshotSource
 from candleviewer.statechart.persistence import (
+    PAGE_TIMEOUT_S,
     SEAL_LAYOUT_V,
     DrainJournal,
     JournalConflict,
@@ -38,12 +48,17 @@ from candleviewer.statechart.persistence import (
     JournalLane,
     JournalRowStore,
     MachineKey,
+    OpsRecorder,
+    Pager,
+    PersistAudit,
+    RestoreAudit,
     RowStoreDrainJournal,
     Seal,
     SealedSnapshot,
     SnapshotRepo,
 )
-from candleviewer.statechart.plugins.audit import MachineEventRow, Phase
+from candleviewer.statechart.plugins.audit import GENESIS_HASH, MachineEventRow, Phase, row_digest
+from candleviewer.statechart.schema import canonical_json
 from candleviewer.storage.repositories.statechart_sqlalchemy import (
     EventRecord,
     JournalConflictRecord,
@@ -288,9 +303,119 @@ class EventsAdapter:
         return [_event_row(r) for r in records]
 
 
+def _logger() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger("candleviewer.statechart_wiring")
+
+
+class ChainSink(Protocol):
+    """The `machine_events` sink as its writers use it (`audit.machine_events.MachineEventWalSink`,
+    reached through `admin.wiring`): seed a key's chain head, read it, append a row."""
+
+    async def seed(self, key: MachineKey) -> None: ...
+
+    def head(self, key: MachineKey) -> str | None: ...
+
+    def append(self, row: MachineEventRow) -> None: ...
+
+
+#: A fault row's `reason` is cut to this many characters.
+FAULT_REASON_MAX: Final = 256
+
+
+def _snapshot_digest(snapshot: Any) -> str | None:
+    """The sha256 of the canonical snapshot, never the snapshot; `None` for one that has no
+    canonical form (a NaN, a value JSON cannot hold)."""
+    try:
+        return hashlib.sha256(canonical_json(snapshot)).hexdigest()
+    except (TypeError, ValueError):
+        return None
+
+
+class FaultRows:
+    """`PersistAudit` and `RestoreAudit` over the sink: each writer seeds the key, then appends one
+    `phase="fault"` row chained to the held head, with `payload` `{}`, empty state lists and
+    `occurred_at` from the UTC clock. A refused persist also pages P1. Never raises (see the
+    module docstring); cancellation passes through. `ops` counts each quarantine row."""
+
+    def __init__(
+        self,
+        sink: ChainSink,
+        pager: Pager,
+        *,
+        clock: Callable[[], datetime] = _utc_now,
+        ops: OpsRecorder | None = None,
+    ) -> None:
+        self._sink, self._pager, self._clock, self._ops = sink, pager, clock, ops
+
+    async def persist_refused(self, key: MachineKey, reason: str) -> None:
+        cut = reason[:FAULT_REASON_MAX]
+        await self._write(key, "PERSIST_REFUSED", {"kind": "persist_refused", "reason": cut})
+        await self._page(key, f"persist refused, no snapshot written: {cut}")
+
+    async def drain_error(self, key: MachineKey, error: str) -> None:
+        fault = {"kind": "drain_error", "error": error[:FAULT_REASON_MAX]}
+        await self._write(key, "DRAIN_ERROR", fault)
+
+    async def quarantine(self, key: MachineKey, envelope: SealedSnapshot, reason: str) -> None:
+        seal = envelope.seal
+        fault = {
+            "kind": "restore_quarantined",
+            "reason": reason[:FAULT_REASON_MAX],
+            "machine_hash": envelope.machine_hash,
+            "version": envelope.version,
+            "hmac_key_id": seal.key_id if isinstance(seal, Seal) else None,
+            "snapshot_sha256": _snapshot_digest(envelope.snapshot),
+        }
+        written = await self._write(key, "RESTORE_QUARANTINED", fault)
+        if self._ops is not None:
+            self._ops("quarantine", "ok" if written else "error")
+
+    async def _write(self, key: MachineKey, event_type: str, fault: dict[str, Any]) -> bool:
+        try:
+            await self._sink.seed(key)
+            row = MachineEventRow(
+                machine_kind=key.machine_kind, entity_id=key.entity_id, env=key.env,
+                event_type=event_type, payload={}, from_states=[], to_states=[], actions_run=[],
+                fault=fault, occurred_at=self._clock().isoformat(), phase="fault",
+                prev_hash=self._sink.head(key) or GENESIS_HASH,
+            )  # fmt: skip
+            self._sink.append(replace(row, row_hash=row_digest(row)))
+        except Exception as exc:  # never raised: the caller's own path must go on
+            error = type(exc).__name__
+            _logger().critical(
+                "statechart_fault_row_failed",
+                machine_kind=key.machine_kind,
+                entity_id=key.entity_id,
+                env=key.env,
+                event_type=event_type,
+                error=error,
+            )
+            await self._page(key, f"machine_events fault row {event_type} not written ({error})")
+            return False
+        return True
+
+    async def _page(self, key: MachineKey, message: str) -> None:
+        """Best effort and bounded, as the `Restorer`'s pages."""
+        try:
+            async with asyncio.timeout(PAGE_TIMEOUT_S):
+                await self._pager.page(key, "P1", message)
+        except Exception as exc:
+            _logger().critical(
+                "statechart_page_failed",
+                machine_kind=key.machine_kind,
+                entity_id=key.entity_id,
+                env=key.env,
+                reason="fault row",
+                error=type(exc).__name__,
+            )
+
+
 #: Checked by mypy, which CI runs on `candleviewer`: the adapters serve the ports they implement.
 _SNAPSHOT_REPO: Callable[[SnapshotRows], SnapshotRepo] = SnapshotAdapter
 _SNAPSHOT_SOURCE: Callable[[SnapshotRows], SnapshotSource] = SnapshotAdapter
 _SNAPSHOT_STORE: Callable[[SnapshotRows], SnapshotStore] = SnapshotAdapter
 _JOURNAL_ROWS: Callable[[JournalRows], JournalRowStore] = JournalRowsAdapter
 _DRAIN_JOURNAL: Callable[[JournalRowStore], DrainJournal] = RowStoreDrainJournal
+_PERSIST_AUDIT: Callable[[ChainSink, Pager], PersistAudit] = FaultRows
+_RESTORE_AUDIT: Callable[[ChainSink, Pager], RestoreAudit] = FaultRows

@@ -31,6 +31,12 @@ quarantine row and fires a P1 alert; a tampered blob is never loaded. A machine 
 without a verified snapshot calls `Restorer.page_unclaimed` instead: no sealed set can claim its
 key's unreplayed rows. `from_snapshot(` appears only in this module (CV-LINT-RESTORE).
 
+E50-T63: `Restorer.prepare(key)` (the `machine_events` chain seed) is awaited before anything that
+can write a row or call `plugins(key)`; a failure is `ChainSeedError`. Every `persist()` exception
+pages P1 (a refusal through its fault row's writer), and every page and every `stop()` of a machine
+a restore started is bounded (`PAGE_TIMEOUT_S`, `STOP_TIMEOUT_S`); a start that does not settle is
+stopped and paged as a failed replay is. `ops` counts each persist's and restore's outcome.
+
 Storage and audit are injected Protocols: `statechart` may not import
 `audit` or `storage` directly (import-linter, forbidden-M18). The Postgres
 tables (`machine_snapshots`, `machine_drain_journal`, 24-internal-schemas.md
@@ -71,6 +77,17 @@ class PersistRefusedError(RuntimeError):
     """Raised when `persist()` refuses to write a snapshot (MUST-01)."""
 
 
+#: `(operation, outcome)`: counts `cv_machine_persist_ops_total` (E50-T63), the composition
+#: root's recorder; `None` counts nothing.
+OpsRecorder = Callable[[str, str], None]
+#: The bound on one best-effort page (#3898, SR-E50T62-04): a hung pager is cut, never awaited.
+PAGE_TIMEOUT_S: Final = 2.0
+#: The bound on stopping a machine a restore started: a hung `stop()` is reported, never awaited.
+STOP_TIMEOUT_S: Final = 5.0
+#: How a restore's page reports the machine it tried to stop.
+_STOPPED: Final = {True: "is stopped", False: "could not be stopped, see the log,"}
+
+
 @dataclass(frozen=True, slots=True)
 class MachineKey:
     """Primary key of `machine_snapshots` / `machine_drain_journal`."""
@@ -78,6 +95,18 @@ class MachineKey:
     machine_kind: str
     entity_id: str
     env: str
+
+
+class ChainSeedError(RuntimeError):
+    """The machine's `machine_events` chain head could not be seeded (E50-T63): the machine is not
+    started, so no chain can fork. Carries the key and the cause's type only."""
+
+    def __init__(self, key: MachineKey, cause: str) -> None:
+        super().__init__(
+            f"{key.machine_kind}/{key.entity_id}: the machine_events chain could not be seeded "
+            f"({cause})"
+        )
+        self.key = key
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,6 +417,8 @@ class Persister:
     pager: Pager
     version: int = field(default=SNAPSHOT_V)
     epoch_source: Callable[[], str] = field(default=_os_epoch)
+    #: Counts each persist's outcome, `ok`, `refused` or `error` (E50-T63).
+    ops: OpsRecorder | None = None
 
     def _life(self, interp: Interpreter[Any]) -> _Life:
         """The interpreter's life; for one that was not restored, a new life with a new epoch,
@@ -401,7 +432,30 @@ class Persister:
         return life
 
     async def persist(self, interp: Interpreter[Any], *, key: MachineKey) -> None:
-        """Quiescent persist (29 §1.3). See module docstring for the order."""
+        """Quiescent persist (29 §1.3); the order is the module docstring's. Any exception is
+        paged P1 by its type, best effort, and raised: never retried silently (MUST-01, #3898). A
+        refusal is paged by its fault row's writer (`PersistAudit.persist_refused`), never twice."""
+        try:
+            await self._persist(interp, key=key)
+        except PersistRefusedError:
+            self._count("refused")
+            raise
+        except Exception as exc:
+            self._count("error")
+            await _page_best_effort(
+                self.pager,
+                key,
+                "persist failed",
+                f"persist failed ({type(exc).__name__}); see the log",
+            )
+            raise
+        self._count("ok")
+
+    def _count(self, outcome: str) -> None:
+        if self.ops is not None:
+            self.ops("persist", outcome)
+
+    async def _persist(self, interp: Interpreter[Any], *, key: MachineKey) -> None:
         if not _is_settled(interp):
             raise AssertionError(
                 f"persist({key.machine_kind}/{key.entity_id}): interpreter is not "
@@ -610,8 +664,10 @@ class DegradedLatchError(RuntimeError):
 class ChainTripLatch:
     """Degraded-admission latch for restored machines with `chain_trips > 0`.
 
-    Reads stay served; `admit_command` refuses order-path commands. The
-    gateway (E50-T15) consults this synchronously before any send (C-2.21).
+    Reads stay served; `admit_command` refuses order-path commands. Its consumer checks it
+    synchronously before a send (C-2.21): the OMS facade its own latch (`oms.order_machine`),
+    and the gateway, through the latch-backed `Admission` it is built with
+    (`statechart_wiring.LatchAdmission`, E50-T63), the persistence bundle's `Restorer`s'.
     Acknowledgement UI is E42; `acknowledge` is its backend hook.
     """
 
@@ -727,6 +783,26 @@ def _logger() -> Any:
     return structlog.get_logger("candleviewer.statechart.persistence")
 
 
+async def _page_best_effort(pager: Pager, key: MachineKey, reason: str, message: str) -> None:
+    """A best-effort P1 page, bounded by `PAGE_TIMEOUT_S` (CR-E50T62R2-02, #3898): a pager that
+    raises or hangs never escapes, never masks the failure being paged and never orphans a started
+    machine. It is logged CRITICAL with the key, the page's fixed `reason` and the error's type,
+    never the pager's text or the message (which a refusal fills from library text). Cancellation
+    passes through."""
+    try:
+        async with asyncio.timeout(PAGE_TIMEOUT_S):
+            await pager.page(key, "P1", message)
+    except Exception as exc:
+        _logger().critical(
+            "statechart_page_failed",
+            machine_kind=key.machine_kind,
+            entity_id=key.entity_id,
+            env=key.env,
+            reason=reason,
+            error=type(exc).__name__,
+        )
+
+
 @dataclass(slots=True)
 class Restorer:
     """The only path from sealed bytes to a live machine (29 §1.3)."""
@@ -740,30 +816,23 @@ class Restorer:
     plugins: PluginsFactory
     clock: Clock
     lane: Lane
+    #: The chain seed (E50-T63): awaited first, before anything writes a row or calls `plugins`.
+    prepare: Callable[[MachineKey], Awaitable[None]] | None = None
+    #: Counts each restore's outcome: `ok`, `degraded`, `refused` or `error` (E50-T63).
+    ops: OpsRecorder | None = None
 
     async def _page(self, key: MachineKey, reason: str, message: str) -> None:
-        """A best-effort P1 page (CR-E50T62R2-02): a pager that raises never escapes `restore()`,
-        never masks the failure being paged and never orphans a started machine. It is logged
-        CRITICAL with the key, the page's fixed `reason` and the pager error's type, never the
-        pager's text or the message (which a refusal fills from library text). Cancellation
-        passes through."""
-        try:
-            await self.pager.page(key, "P1", message)
-        except Exception as exc:
-            _logger().critical(
-                "statechart_page_failed",
-                machine_kind=key.machine_kind,
-                entity_id=key.entity_id,
-                env=key.env,
-                reason=reason,
-                error=type(exc).__name__,
-            )
+        """A best-effort P1 page (`_page_best_effort`)."""
+        await _page_best_effort(self.pager, key, reason, message)
 
-    async def _stop(self, key: MachineKey, interp: Interpreter[Any]) -> None:
-        """Stop a machine this restore started; a `stop()` that raises is logged CRITICAL by its
-        type only and never replaces the failure that led here."""
+    async def _stop(self, key: MachineKey, interp: Interpreter[Any]) -> bool:
+        """Stop a machine this restore started, within `STOP_TIMEOUT_S`; whether it stopped. A
+        `stop()` that raises or hangs never replaces the failure that led here: it is logged
+        CRITICAL by its type only, marked as a page (`cv_page`, the log pager's mark), and the
+        caller's own page says the machine could not be stopped. Cancellation passes through."""
         try:
-            await interp.stop()
+            async with asyncio.timeout(STOP_TIMEOUT_S):
+                await interp.stop()
         except Exception as exc:
             _logger().critical(
                 "statechart_restore_stop_failed",
@@ -771,7 +840,10 @@ class Restorer:
                 entity_id=key.entity_id,
                 env=key.env,
                 error=type(exc).__name__,
+                cv_page=True,
             )
+            return False
+        return True
 
     async def _refuse(
         self, key: MachineKey, envelope: SealedSnapshot, reason: str
@@ -795,12 +867,12 @@ class Restorer:
             raise
         except Exception as exc:
             failure = exc
-        await self._stop(key, interp)
+        stopped = await self._stop(key, interp)
         await self._page(
             key,
             "drain journal replay failed",
-            f"drain journal replay failed ({type(failure).__name__}): the restored machine is "
-            "stopped and its rows stay unreplayed for the next restore",
+            f"drain journal replay failed ({type(failure).__name__}): the restored machine "
+            f"{_STOPPED[stopped]} and its rows stay unreplayed for the next restore",
         )
         raise failure from None
 
@@ -808,8 +880,20 @@ class Restorer:
         """The start of a machine without a verified snapshot (fresh, after a refused restore,
         after a reset): no sealed set can claim its key's unreplayed rows, such as those of a
         crash between the first append and the first snapshot, so each is skipped, left
-        unstamped, and named in one P1 page (24 §17.6). Returns how many."""
-        rows = sorted(await self.journal.list_unreplayed(key), key=lambda e: (e.ordinal, e.send_id))
+        unstamped, and named in one P1 page (24 §17.6). Returns how many. Call it before the
+        machine starts; a scan that raises (`StorageTierUnavailable`, `StorageQueryFailed`,
+        `JournalListTooLargeError`) is paged P1 by its type and raised: the machine must not start
+        (#3898)."""
+        try:
+            listed = await self.journal.list_unreplayed(key)
+        except Exception as exc:
+            await self._page(
+                key,
+                "drain journal scan failed",
+                f"drain journal scan failed ({type(exc).__name__}): the machine is not started",
+            )
+            raise
+        rows = sorted(listed, key=lambda e: (e.ordinal, e.send_id))
         # replay_sealed's skip-and-page branch under an empty sealed set: nothing is replayed.
         unclaimed = ReplayReport(
             0, tuple((r.send_id, "no verified snapshot claims it") for r in rows)
@@ -821,7 +905,33 @@ class Restorer:
     async def restore(
         self, key: MachineKey, envelope: SealedSnapshot, *, extra_plugins: Sequence[Any] = ()
     ) -> RestoreResult:
-        """`extra_plugins` (an owner's, e.g. the machines feed) follow `self.plugins(key)`."""
+        """The restore of 29 §1.3. `prepare(key)`, the chain seed, is awaited first, before
+        anything that can write a row or call `plugins(key)`; one that fails raises
+        `ChainSeedError` (the cause's type only) and restores nothing. `extra_plugins` (an
+        owner's, e.g. the machines feed) follow `self.plugins(key)`. Counts the outcome."""
+        try:
+            if self.prepare is not None:
+                try:
+                    await self.prepare(key)
+                except Exception as exc:
+                    raise ChainSeedError(key, type(exc).__name__) from None
+            result = await self._restore(key, envelope, extra_plugins=extra_plugins)
+        except RestoreRefusedError:
+            self._count("refused")
+            raise
+        except Exception:
+            self._count("error")
+            raise
+        self._count("degraded" if result.degraded else "ok")
+        return result
+
+    def _count(self, outcome: str) -> None:
+        if self.ops is not None:
+            self.ops("restore", outcome)
+
+    async def _restore(
+        self, key: MachineKey, envelope: SealedSnapshot, *, extra_plugins: Sequence[Any]
+    ) -> RestoreResult:
         chart = self.registry.get(key.machine_kind)
         expected = self.registry.hash(key.machine_kind)
         try:
@@ -851,7 +961,17 @@ class Restorer:
         factory._cv_bring_up(interp)
         try:
             await asyncio.wait_for(interp.start(), CV_START_TIMEOUT)
+        except asyncio.CancelledError:
+            await self._stop(key, interp)  # as `_replay`: never a started machine without owner
+            raise
         except TimeoutError as exc:
+            stopped = await self._stop(key, interp)
+            await self._page(
+                key,
+                "restore start did not settle",
+                f"restore start() did not settle within {CV_START_TIMEOUT}s (CV-C56): the "
+                f"machine {_STOPPED[stopped]}".rstrip(","),
+            )
             raise TimeoutError(
                 f"restore({key.machine_kind}) start() did not settle within "
                 f"{CV_START_TIMEOUT}s (CV-C56)"

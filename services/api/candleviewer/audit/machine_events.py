@@ -30,6 +30,14 @@ lossy; fail closed) and reuses `AuditWal` (24-internal-schemas.md §17.6):
   open scans the whole file, in a worker thread; the flusher then replays the leftover frames. It
   never waits on Postgres. `stop()` stops accepting, drains for at most `STOP_GRACE_S` and leaves
   the rest durable in the WAL, replayed at the next start (a kill during the drain loses nothing).
+- Chain continuity: one hash chain per machine key, advanced by every writer (the audit plugin
+  and the fault-row writers) and continuous across restarts. `head(key)` is the last accepted
+  `row_hash`, O(1) from a map bounded at `HEAD_KEYS_MAX` (least recently used evicted).
+  `seed(key)` returns at once for a held key; otherwise it waits for the WAL to drain (rows of the
+  key may still be in it) and reads the head through the store, both within `SEED_DRAIN_S`; a
+  timeout or a read error raises `MachineEventUnavailable`, so no machine starts a chain that
+  could fork. It is awaited before a restore calls `plugins(key)`, before an owner builds a
+  machine, and by the fault-row writers before they build a row.
 
 Rows are dataclass instances and frames the dicts `dataclasses.asdict` gives. `MachineEventRow`
 lives in `statechart/plugins/audit.py` and is named here for annotations only: a run-time import
@@ -44,7 +52,7 @@ import fcntl
 import json
 import os
 import re
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -108,6 +116,19 @@ class MachineEventUnavailable(AuditError):
 
 class MachineEventRejected(AuditError, ValueError):
     """The row is refused before anything is written: the table would never accept it."""
+
+
+class ChainKey(Protocol):
+    """A machine key (`statechart.persistence.MachineKey`): one chain per key."""
+
+    @property
+    def machine_kind(self) -> str: ...
+
+    @property
+    def entity_id(self) -> str: ...
+
+    @property
+    def env(self) -> str: ...
 
 
 class MachineEventStore(Protocol):
@@ -252,6 +273,9 @@ class MachineEventWalSink:
         self._uncommitted: deque[int] = deque()
         #: Bytes compactions removed from the front of the file.
         self._base = 0
+        #: Each machine key's chain head, the last accepted `row_hash`; least recently used last
+        #: evicted past `HEAD_KEYS_MAX` (an evicted key is seeded again before its next writer).
+        self._heads: OrderedDict[tuple[str, str, str], str] = OrderedDict()
 
     @property
     def failure(self) -> BaseException | None:
@@ -263,6 +287,50 @@ class MachineEventWalSink:
         """Frames this process appended that Postgres does not hold yet (an earlier run's backlog
         is not in it, as `AuditWriter.buffer_depth`)."""
         return len(self._uncommitted)
+
+    @property
+    def head_count(self) -> int:
+        """Machine keys whose chain head is held."""
+        return len(self._heads)
+
+    def head(self, key: ChainKey) -> str | None:
+        """The key's chain head, the last accepted `row_hash`, or `None` when not held. O(1)."""
+        chain = (key.machine_kind, key.entity_id, key.env)
+        held = self._heads.get(chain)
+        if held is not None:
+            self._heads.move_to_end(chain)
+        return held
+
+    async def seed(self, key: ChainKey) -> None:
+        """Hold the key's chain head before anything appends to it: at once when held; else after
+        the WAL drained, from the store, both within `SEED_DRAIN_S`. `MachineEventUnavailable`
+        on a timeout, a read error, a dead flusher or a sink that is not running."""
+        chain = (key.machine_kind, key.entity_id, key.env)
+        if chain in self._heads:
+            self._heads.move_to_end(chain)
+            return
+        if self._failure is not None:
+            raise MachineEventUnavailable(
+                f"the machine-event flusher died ({type(self._failure).__name__})"
+            )
+        if not self._accepting:
+            raise MachineEventUnavailable("the machine-event sink is not running")
+        try:
+            async with asyncio.timeout(SEED_DRAIN_S):
+                await self._idle.wait()
+                head = await self._store.head(*chain)
+        except Exception as exc:
+            raise MachineEventUnavailable(
+                f"the machine_events head could not be read ({type(exc).__name__})"
+            ) from None
+        if chain not in self._heads:  # an append meanwhile holds a newer head
+            self._hold(chain, head)
+
+    def _hold(self, chain: tuple[str, str, str], head: str) -> None:
+        self._heads[chain] = head
+        self._heads.move_to_end(chain)
+        while len(self._heads) > HEAD_KEYS_MAX:
+            self._heads.popitem(last=False)
 
     @property
     def append_failed_at(self) -> datetime | None:
@@ -345,6 +413,7 @@ class MachineEventWalSink:
                 f"machine-event WAL unavailable ({type(exc).__name__})"
             ) from None
         self._append_failed_at = None
+        self._hold((frame["machine_kind"], frame["entity_id"], frame["env"]), frame["row_hash"])
         self._uncommitted.append(self._base + end)
         self._metrics.pending(self.pending)
         self._idle.clear()

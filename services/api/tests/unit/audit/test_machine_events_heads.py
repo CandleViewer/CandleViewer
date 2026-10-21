@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from audit_waits import virtual
@@ -19,16 +18,15 @@ from test_machine_events import FakeStore, chain, frames, row, settle, sink_for
 from candleviewer.audit import machine_events
 from candleviewer.audit.machine_events import SEED_DRAIN_S, MachineEventUnavailable
 from candleviewer.audit.wal import AuditWal
+from candleviewer.statechart.persistence import MachineKey
 from candleviewer.statechart.plugins.audit import GENESIS_HASH, row_digest
 from candleviewer.storage.errors import StorageQueryFailed
 
-KEY = SimpleNamespace(
-    machine_kind="persist_min", entity_id="00000000-0000-4000-8000-000000000001", env="demo"
-)
+KEY = MachineKey("persist_min", "00000000-0000-4000-8000-000000000001", "demo")
 
 
-def _other(n: int) -> SimpleNamespace:
-    return SimpleNamespace(machine_kind="persist_min", entity_id=f"e-{n}", env="demo")
+def _other(n: int) -> MachineKey:
+    return MachineKey("persist_min", f"e-{n}", "demo")
 
 
 @virtual
