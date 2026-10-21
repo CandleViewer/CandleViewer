@@ -192,8 +192,8 @@ def test_a_trade_group_applies_the_intent_rule_to_every_leg() -> None:
         "`intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`" in text
     )
     assert (
-        "That refusal is the whole request's, before any leg is sent or any exchange call is made, "
-        "whatever `atomicity` says; it is never a per-leg failure" in text
+        "That refusal is the whole request's, before any leg is sent, whatever `atomicity` says; "
+        "it is never a per-leg failure" in text
     )
 
 

@@ -672,7 +672,8 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
     "recon_deadline_us": null,
     "sl_reading": null,
     "outbox": [],
-    "discovered": false
+    "discovered": false,
+    "recorded_stop": false
   },
   "states": {
     "lifecycle": {
@@ -702,6 +703,12 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               "target": "#order.lifecycle.untracked",
               "actions": [
                 "record_discovered"
+              ]
+            },
+            "MATERIALISED": {
+              "target": "#order.lifecycle.submitted",
+              "actions": [
+                "record_materialised"
               ]
             },
             "KILL": {
@@ -840,7 +847,18 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
             },
             "FAULT": {
               "target": "#order.lifecycle.quarantined"
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "triggered": {
@@ -880,7 +898,18 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               "actions": [
                 "adopt_remote_cancel"
               ]
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "partially_filled": {
@@ -931,7 +960,18 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               "actions": [
                 "adopt_remote_cancel"
               ]
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "cancel_pending": {
@@ -998,12 +1038,20 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
                 "adopt_remote_cancel"
               ]
             },
-            "KILL": {
-              "actions": [
-                "mark_halted_by_kill",
-                "audit_kill_cancel_in_flight"
-              ]
-            }
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "actions": [
+                  "mark_halted_by_kill",
+                  "audit_kill_cancel_in_flight"
+                ]
+              }
+            ]
           }
         },
         "amend_pending": {
@@ -1074,7 +1122,18 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               "actions": [
                 "adopt_remote_cancel"
               ]
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "unknown": {
@@ -1129,7 +1188,18 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               "actions": [
                 "record_mismatch"
               ]
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "quarantined": {
@@ -1171,7 +1241,18 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               "actions": [
                 "record_mismatch"
               ]
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "untracked": {
@@ -1566,6 +1647,7 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 | `lifecycle.draft` | `VALIDATE` | `passes_all_gates` | `lifecycle.validated` | `stamp_validated` | — |
 | `lifecycle.draft` | `VALIDATE` | — | `lifecycle.rejected` | `set_local_reject` | — |
 | `lifecycle.draft` | `DISCOVERED` | — | `lifecycle.untracked` | `record_discovered` *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.draft` | `MATERIALISED` | — | `lifecycle.submitted` | `record_materialised` *(Corrected 2026-10-21, #913)* | — |
 | `lifecycle.draft` | `*` | — | _(internal)_ | `defer` | — |
 | `lifecycle.validated` | `SEND` | — | `lifecycle.submitting` | — | — |
 | `lifecycle.validated` | `*` | — | _(internal)_ | `defer` | — |
@@ -1629,9 +1711,11 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 | `lifecycle.held`, `lifecycle.filled`, `lifecycle.cancelled`, `lifecycle.rejected`, `lifecycle.expired`, `lifecycle.killed` | `EXEC` | — | _(internal)_ | `audit_reconcile_anomaly`, `notify_protection_region` *(Corrected 2026-10-19, #847 slice 5)* | — |
 | `lifecycle` | `OPERATOR_RESOLVED`, `ADOPT` | — | _(internal)_ | `audit_operator_command_refused` *(Corrected 2026-10-19, #847 slice 5)* | — |
 | `lifecycle` | `KILL` | — | `lifecycle.killed` | — (entry of `killed`) | — |
+| `lifecycle.submitted`, `lifecycle.triggered`, `lifecycle.partially_filled`, `lifecycle.cancel_pending`, `lifecycle.amend_pending`, `lifecycle.unknown`, `lifecycle.quarantined` | `KILL` | `is_recorded_stop` | _(internal)_ | `audit_kill_spared_recorded_stop` *(Corrected 2026-10-21, #913)* | — |
+| `lifecycle.submitted`, `lifecycle.triggered`, `lifecycle.partially_filled`, `lifecycle.amend_pending`, `lifecycle.unknown`, `lifecycle.quarantined` | `KILL` | — | `lifecycle.killed` | — (entry of `killed`; the state's own copy of the `lifecycle` arm, after `is_recorded_stop`) *(Corrected 2026-10-21, #913)* | — |
 | `lifecycle.draft` | `KILL` | — | `lifecycle.killed` | `skip_kill_cancel` *(Corrected 2026-10-09, #2133 review)* | — |
 | `lifecycle.validated` | `KILL` | — | `lifecycle.killed` | `skip_kill_cancel` *(Corrected 2026-10-09, #2133 review)* | — |
-| `lifecycle.cancel_pending` | `KILL` | — | _(internal)_ | `mark_halted_by_kill`, `audit_kill_cancel_in_flight` *(Corrected 2026-10-09, #2133 review)* | — |
+| `lifecycle.cancel_pending` | `KILL` | — | _(internal)_ | `mark_halted_by_kill`, `audit_kill_cancel_in_flight` *(Corrected 2026-10-09, #2133 review; after `is_recorded_stop`, 2026-10-21, #913)* | — |
 | `lifecycle.untracked` | `KILL` | — | _(internal)_ | `audit_kill_ignored_unowned` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.held` | `KILL` | — | _(internal)_ | `audit_kill_ignored_unowned` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.filled` | `KILL` | — | _(internal)_ | `audit_kill_ignored_terminal` | — |
@@ -1667,6 +1751,7 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 | `is_duplicate_link_id` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `is_duplicate_link_id_full_match` *(Corrected 2026-10-19, #847; the `lookup` key, slice 5)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); reads the `lookup` the `place` service adds to a duplicate-id result (24 §8.3 rule 3); true only when the `place` result is a duplicate-id rejection whose lookup returned the order under our `order_link_id` and every SR-E29-03 field (account, symbol, side, quantity, order type, price or trigger, reduce-only, attached stop) matches the row, the order type read as `limit` exactly when the row has a price; a failed, empty or partial lookup is `False`, so the order parks in `unknown` |
 | `is_link_id_mismatch` *(Corrected 2026-10-19, #847)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); true when the `place` result's `lookup` found an order under our `order_link_id` that does not fully match the row (SR-E29-03) |
+| `is_recorded_stop` *(Corrected 2026-10-21, #913)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); true only when `recorded_stop` is set, which `record_materialised` alone sets: the row is a recorded stop's TP/SL order (24 §8.3 rule 7). It records which row a `KILL` met and decides nothing else (C-2.21) |
 | `passes_all_gates` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `ret_code_ok` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `ret_code_ok_and_has_fills` *(Corrected 2026-10-19, #847)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); `ret_code_ok` and `has_fills` together (the first `amend` result arm) |
@@ -1676,7 +1761,7 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 
 ### B1.6 Actions
 
-Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-19, #847.)* Under `actionErrorPolicy: "rollback"` an action that raises aborts its step: the interpreter restores the configuration and context from before it, so the order never runs ahead of its `order_events` row, and `CvErrorHooks` logs, counts and pages the failure (24 §8.2 S11). The snapshot writer still refuses a context carrying `_fault` (MUST-01). *(Amended 2026-10-19, #847 slice 5.)* `persist_event`, first in every `lifecycle` entry, is the one action that raises by design: it awaits the OMS's write-ahead step inside `asyncio.timeout`, so a refused or timed-out write rolls the step back before any later action of that entry runs (S7, S8). A timed-out write raises `StepOutcomeUnknown`: its row may still have committed, so the OMS facade rebuilds the order from its `order_events`, where the row decides, as it does for a write that meets a row which moved on (24 §8.2 "An unknown outcome"). Every other action is total (A1). No action sends to its own machine (CV-C25): the notices (`notify_*`, `emit_terminal`, the alerts and the `request_*` hand-offs) go to the bounded `outbox` in context, which the OMS facade drains, so a rolled-back step takes its notices with it (CV-C02). The four services call the OMS's command port, each attempt bounded by `CV_COMMAND_TIMEOUT` (a port that does not answer fails it, so the order reaches `unknown`, S1); each is idempotent under re-entry, `place`, `cancel` and `amend` keyed on the order and the `event_seq` of the step that entered their state, and `attach_native_sl` once per machine (a machine rebuilt from the order's events, after a restart or a resync, holds none of the attempts of the one before it, so its stop is attached and read back afresh, INV-B1-f), so a rollback that re-arms an invoke returns the recorded outcome and never sends twice, and a `place` this process did not begin looks the id up before it sends (S1, SR-E29-15). `issue_kill_cancel` uses the OMS's audited cancel service (SR-E29-06).
+Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-19, #847.)* Under `actionErrorPolicy: "rollback"` an action that raises aborts its step: the interpreter restores the configuration and context from before it, so the order never runs ahead of its `order_events` row, and `CvErrorHooks` logs, counts and pages the failure (24 §8.2 S11). The snapshot writer still refuses a context carrying `_fault` (MUST-01). *(Amended 2026-10-19, #847 slice 5.)* `persist_event`, first in every `lifecycle` entry, is the one action that raises by design: it awaits the OMS's write-ahead step inside `asyncio.timeout`, so a refused or timed-out write rolls the step back before any later action of that entry runs (S7, S8). A timed-out write raises `StepOutcomeUnknown`: its row may still have committed, so the OMS facade rebuilds the order from its `order_events`, where the row decides, as it does for a write that meets a row which moved on (24 §8.2 "An unknown outcome"). Every other action is total (A1). No action sends to its own machine (CV-C25): the notices (`notify_*`, `emit_terminal`, the alerts and the `request_*` hand-offs) go to the bounded `outbox` in context, which the OMS facade drains, so a rolled-back step takes its notices with it (CV-C02). The four services call the OMS's command port, each attempt bounded by `CV_COMMAND_TIMEOUT` (a port that does not answer fails it, so the order reaches `unknown`, S1); each is idempotent under re-entry, `place`, `cancel` and `amend` keyed on the order and the `event_seq` of the step that entered their state, and `attach_native_sl` once per machine (a machine rebuilt from the order's events, after a restart or a resync, holds none of the attempts of the one before it, so its stop is attached and read back afresh, INV-B1-f), so a rollback that re-arms an invoke returns the recorded outcome and never sends twice, and a `place` this process did not begin looks the id up before it sends (S1, SR-E29-15). *(Amended 2026-10-21, #913.)* An ok `place` answer whose exchange order id B1 cannot keep (`text_id`) raises, so the order lands in `unknown`, never `submitted` (ruling 3 on #3972; E29-T04's first slice pins it in the binding). `issue_kill_cancel` uses the OMS's audited cancel service (SR-E29-06).
 
 | Action |
 |---|
@@ -1729,6 +1814,8 @@ Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-
 | `audit_reconcile_anomaly` *(Corrected 2026-10-19, #847 slice 5)* |
 | `record_remote_state` *(Corrected 2026-10-19, #847 slice 5)* |
 | `stage_amend` *(Corrected 2026-10-19, #847 slice 5)* |
+| `audit_kill_spared_recorded_stop` *(Corrected 2026-10-21, #913)* |
+| `record_materialised` *(Corrected 2026-10-21, #913)* |
 
 ### B1.7 Invariants
 
@@ -1743,15 +1830,16 @@ Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-
 | **INV-B1-d** | A fill beats a pending cancel (S3): `cancel_pending` handles `EXEC` explicitly rather than deferring it. |
 | **INV-B1-e** | `unknown` never resubmits (S1); it may only be resolved by reconciliation: a `RECON_FOUND_*` event, a second `RECON_MISS`, or a `MISMATCH` into `held`. *(Amended 2026-10-19, #847.)* |
 | **INV-B1-f** | The `protection` region reaches `sl_present` only from an exchange read, never from a local assumption: an `SL_OBSERVED` read in `sl_missing` that `sl_observed_ok` confirms, or an `attach_sl` result whose read-back of the position shows the stop the OMS requested (`sl_attach_ok`, as INV-B8-a asks of B8). A rejected, empty or failed attach, or one whose read-back an `SL_LOST` stamped later by the exchange supersedes, goes to `sl_missing` (the naked-position alert and the fallback stop, C-2.6), never to `sl_present` or its `protected` tag; an `SL_OBSERVED` of another stop, of a flat position, or of a `discovered` order's stop (one found on the exchange, not requested by the OMS) leaves `sl_missing` as it is. A protection fact the leaf does not act on (`SL_OBSERVED`, `SL_LOST`, a repeated `FIRST_FILL` or a late `SL_DEADLINE`) is consumed by the region's `record_sl_fact_ignored` arm, which keeps the latest reading by exchange time, never deferred, so no stale reading replays into a later leaf. *(Amended 2026-10-19, #847 slices 1b and 5.)* The last reading decides: `sl_present`'s `SL_LOST` arm records its loss as the region's arm does, a loss and another reading of the same exchange time resolve to the loss, and both guards judge a reading against the one kept, so a reading the exchange stamped at or before a recorded loss never returns the region to `sl_present`. A kept reading only vetoes: the reading judged must itself show the requested stop on the open position, so a kept one stamped ahead of the exchange's clock never confirms a later reading that does not. *(Amended 2026-10-20, #847.)* |
-| **INV-B1-h** | *(Corrected 2026-10-09, #1650; reworded #2133; amended 2026-10-19, #847)* **At most one exchange cancel per `KILL`, and only if the order was submitted.** Root `KILL` from `draft`/`validated` reaches `killed` with audit only (`skip_kill_cancel`, no exchange call), and so does a `KILL` in `unknown` after an unverified duplicate, whose arm ran `skip_kill_cancel`: an order we could not verify holds the id, so nothing is cancelled under it until reconciliation binds the order (`adopt_recon` clears the flag, #847 slice 4); its audit names the reason, `kill_no_cancel_unverified_duplicate`, apart from a never-sent order's `kill_no_cancel_unsubmitted` (#847 slice 5). From any other non-terminal lifecycle state except `cancel_pending`, `untracked` and `held` (INV-B1-n) it reaches `killed`, sets `halted_by_kill`, writes `audit_kill` **before** the cancel (write-ahead, C-2.9) and issues one cancel through the OMS's audited cancel service (same `orderLinkId`, C-2.10; SR-E29-06) bounded by `CV_KILL_CANCEL_TIMEOUT`; failure or timeout is audited and never rolls the kill back. In `cancel_pending` KILL reuses the in-flight cancel (no second call): it sets `halted_by_kill` and audits, and the existing invoke resolves the order. If the exchange refuses that cancel, the order returns to its live state with `halted_by_kill` still set (INV-B1-j) and that KILL sends no second cancel: B18's `cancel_all_working_orders` and reconciliation settle the exchange side. Reconciliation re-syncs the true exchange state (C-2.5). `KILL` on a terminal state only audits. |
-| **INV-B1-i** | *(Corrected 2026-10-09, #1650)* `KILL` never changes the `protection` region (C-2.6, C-4.14): no SL is cancelled or amended; the region only audits. |
-| **INV-B1-g** | A write-ahead `order_events` row exists for every transition before the in-memory state changes (S8, A7, MUST-02). *(Amended 2026-10-19, #847 slice 5:)* every `lifecycle` step that enters a state writes its row in `persist_event`, first in the state's entry, before the step is observable, from the order's first row (`validated` or `untracked`) on; a step that cannot write rolls back (S7). Internal arms and the `protection` region write no row: `CvAuditPlugin` records them. |
+| **INV-B1-h** | *(Corrected 2026-10-09, #1650; reworded #2133; amended 2026-10-19, #847)* **At most one exchange cancel per `KILL`, and only if the order was submitted.** *(Amended 2026-10-21, #913:)* none ever for a recorded stop's row, whose `KILL` is audited in every state (INV-B1-p); what follows is every other order's. Root `KILL` from `draft`/`validated` reaches `killed` with audit only (`skip_kill_cancel`, no exchange call), and so does a `KILL` in `unknown` after an unverified duplicate, whose arm ran `skip_kill_cancel`: an order we could not verify holds the id, so nothing is cancelled under it until reconciliation binds the order (`adopt_recon` clears the flag, #847 slice 4); its audit names the reason, `kill_no_cancel_unverified_duplicate`, apart from a never-sent order's `kill_no_cancel_unsubmitted` (#847 slice 5). From any other non-terminal lifecycle state except `cancel_pending`, `untracked` and `held` (INV-B1-n) it reaches `killed`, sets `halted_by_kill`, writes `audit_kill` **before** the cancel (write-ahead, C-2.9) and issues one cancel through the OMS's audited cancel service (same `orderLinkId`, C-2.10; SR-E29-06) bounded by `CV_KILL_CANCEL_TIMEOUT`; failure or timeout is audited and never rolls the kill back. In `cancel_pending` KILL reuses the in-flight cancel (no second call): it sets `halted_by_kill` and audits, and the existing invoke resolves the order. If the exchange refuses that cancel, the order returns to its live state with `halted_by_kill` still set (INV-B1-j) and that KILL sends no second cancel: B18's `cancel_all_working_orders` and reconciliation settle the exchange side. Reconciliation re-syncs the true exchange state (C-2.5). `KILL` on a terminal state only audits. |
+| **INV-B1-i** | *(Corrected 2026-10-09, #1650)* `KILL` never changes the `protection` region (C-2.6, C-4.14): no SL is cancelled or amended; the region only audits. *(Amended 2026-10-21, #913:)* Nor does it cancel a recorded stop's row, the position's protective stop (INV-B1-p). |
+| **INV-B1-g** | A write-ahead `order_events` row exists for every transition before the in-memory state changes (S8, A7, MUST-02). *(Amended 2026-10-19, #847 slice 5:)* every `lifecycle` step that enters a state writes its row in `persist_event`, first in the state's entry, before the step is observable, from the order's first row (`validated`, `untracked` or, for a recorded stop's row, `submitted`, INV-B1-p) on; a step that cannot write rolls back (S7). Internal arms and the `protection` region write no row: `CvAuditPlugin` records them. |
 | **INV-B1-j** | *(Added 2026-10-19, #847)* A refused cancel never ends the order: only a `cancel` result that is `ret_code_ok` reaches `cancelled` (`adopt_cancel_ack`); any other result returns to the live state (`partially_filled` if `has_fills`, else `submitted`) with `record_cancel_refused`. A fill still beats the cancel (INV-B1-d). |
 | **INV-B1-k** | *(Added 2026-10-19, #847)* An order the exchange ends without a fill is never stranded: every live state (`submitted`, `triggered`, `partially_filled`, `cancel_pending`, `amend_pending`) reaches `cancelled` on `REMOTE_CANCELLED`; `submitted`, `triggered` and `partially_filled` reach `expired` on `EXPIRE`; `quarantined` reaches `cancelled` on `RECON_FOUND_CANCELLED`. Bybit does not order its `order` and `execution` topics against each other, so the facade sends `REMOTE_CANCELLED` or `EXPIRE` only once the push's cumulative executed quantity equals `filled_qty`: an end that outruns its executions waits in the S5 reorder buffer until they are applied, and the terminal record carries every fill (#847 slice 6). |
 | **INV-B1-l** | *(Added 2026-10-19, #847; amended slice 5)* `untracked` is never managed (S9, SR-E29-12): it is entered only from `draft` on `DISCOVERED`, and left only by `ADOPT` through `adoption_allowed` (a denial is audited and it stays `untracked`) to `submitted`, by `RECON_FOUND_CANCELLED` or a second `RECON_MISS` to `cancelled`, or by `RECON_FOUND_FILLED` to `filled`. The order-path commands `CANCEL`, `AMEND`, `SEND` and `VALIDATE` are consumed and audited there (`audit_command_refused_unowned`), never deferred, so none acts after an adoption; the exchange facts `RECON_FOUND_LIVE`, `RECON_FOUND_PARTIAL` and `EXEC` are consumed by `record_remote_state`, which resets `recon_misses`, never deferred. No other event moves it or runs a managing action. Its stop is the exchange's, never the OMS's: `record_discovered` sets `discovered`, which only `adopt_untracked` clears, so when a fill starts its protection region (`RECON_FOUND_FILLED`) the attach sends nothing and no reading confirms it, and the region goes to `sl_missing`, whose alert pages and whose fallback request hands the position to B8 (SR-E29-06). |
-| **INV-B1-m** | *(Added 2026-10-19, #847)* Verify before adopt (SR-E29-03): a duplicate-id `place` result reaches `submitted` only on positive evidence, `is_duplicate_link_id_full_match`; it lands in `held` if `is_link_id_mismatch` (checked first) and otherwise parks in `unknown` (24 §8.3 rule 3), where a KILL cancels nothing (INV-B1-h). `MISMATCH` in `submitted`, `unknown` or `quarantined` lands in `held` too; `held` is left only by the operator's `OPERATOR_RESOLVED` (to `rejected`), never by `adopt_recon` or by any exchange push or lookup. *(Amended 2026-10-19, #847 slice 5.)* `OPERATOR_RESOLVED` outside `held` and `ADOPT` outside `untracked` are consumed and audited by the `lifecycle` region's `audit_operator_command_refused` arm, never deferred, so no stale operator command resolves a later hold or adoption. Reconciliation sends `RECON_FOUND_*` to `unknown` or `quarantined` only after its SR-E29-03 full match against the row (24 §8.5 steps 3a and 3b, after G-6, #2876, and E29-T06), and `MISMATCH` otherwise: the arms adopt what they are sent. |
+| **INV-B1-m** | *(Added 2026-10-19, #847)* Verify before adopt (SR-E29-03): a duplicate-id `place` result reaches `submitted` only on positive evidence, `is_duplicate_link_id_full_match`; it lands in `held` if `is_link_id_mismatch` (checked first) and otherwise parks in `unknown` (24 §8.3 rule 3), where a KILL cancels nothing (INV-B1-h). `MISMATCH` in `submitted`, `unknown` or `quarantined` lands in `held` too; `held` is left only by the operator's `OPERATOR_RESOLVED` (to `rejected`), never by `adopt_recon` or by any exchange push or lookup. *(Amended 2026-10-19, #847 slice 5.)* `OPERATOR_RESOLVED` outside `held` and `ADOPT` outside `untracked` are consumed and audited by the `lifecycle` region's `audit_operator_command_refused` arm, never deferred, so no stale operator command resolves a later hold or adoption. Reconciliation sends `RECON_FOUND_*` to a row by the bound id, or after the full match: to a row bound to an exchange `orderId` (24 §8.3 rule 7) by that id, comparing no terms again; to an `unknown` or `quarantined` row with none bound only after its SR-E29-03 full match against the row (24 §8.5 steps 3a and 3b, after G-6, #2876, and E29-T06), and `MISMATCH` otherwise: the arms adopt what they are sent. |
 | **INV-B1-n** | *(Added 2026-10-19, #847)* `KILL` never cancels an order the OMS does not own (SR-E29-06): on `untracked` and `held` it only audits (`audit_kill_ignored_unowned`), with no transition and no exchange call. |
 | **INV-B1-o** | *(Added 2026-10-19, #847 slice 5)* The first fill always starts the `protection` region (24 §8.8 rule 2, C-2.6): `partially_filled`, `filled`, `cancelled` and `expired` run `notify_protection_region` on entry, which notifies always on entry to `partially_filled` and `filled` (an order enters them only on a reported fill, a `RECON_FOUND_PARTIAL` with no execution to apply yet included), and on entry to `cancelled` and `expired` when the order holds a fill (`filled_qty` above zero), so every arm that leaves an order with fills starts the region, a `RECON_FOUND_CANCELLED` after unwatched fills included; the region consumes a repeat. A reduce-only order opens no position, and C-2.6 covers position-opening orders, so its fills start nothing: an exit carries no stop and pages nothing (`starts_protection`, which the OMS facade also asks after a hydration). *(Amended 2026-10-19, #847 slice 5 review.)* An `EXEC` that reaches `held` or a final state is consumed by an internal arm that writes the S6 `ReconcileAnomaly` audit (`audit_reconcile_anomaly`) and runs the notice, with the lifecycle state and context unchanged but for the notice in the outbox (S6); it is never deferred. *(Amended 2026-10-20, #847.)* Such an `EXEC` starts the region only when it pairs with the order (a trade of the exchange order it is bound to, every field SR-E29-03 pairs on its own) or the order holds a fill: another order's fill, or a hostile one, never starts an attach of this order's stop (SR-E29-06), and the notice hands the position to B8 instead (`request_fallback_sl`), which reads it and attaches its fallback stop if none is there. |
+| **INV-B1-p** | *(Added 2026-10-21, #913)* A recorded stop's row (24 §8.3 rule 7, §8.8 rule 6) is the OMS's live order and is never killed (C-2.6). It enters only from `draft` on `MATERIALISED`, into `submitted`, bound at entry to its order's `exchange_order_id`, through an arm that invokes no service, so its entry sends nothing; it takes that live state whatever the exchange status of its order when first seen, so every fill, a fired stop's included, applies through the `EXEC` arms (`apply_fill`, written by `commit_fill` with its `executions` row), never as an S6 anomaly; and it is reduce-only, so its fills start no `protection` region (INV-B1-o). In every live state it can reach (`submitted`, `triggered`, `partially_filled`, `cancel_pending`, `amend_pending`, `unknown`, `quarantined`) a `KILL` meets the guarded `is_recorded_stop` arm before the cancelling one, which consumes and audits it (`audit_kill_spared_recorded_stop`), sends nothing and leaves `halted_by_kill` unset; `held` only audits a `KILL` (INV-B1-n). A `CANCEL` or `AMEND` reaches it only as 24 §8.8 rule 6 allows, enforced by synchronous code, not by a guard here (C-2.21; B1.8, version 4). Recovery replays it from its first `order_events` row (24 §8.2 Recovery). |
 
 ### B1.8 Implementation notes
 
@@ -1764,7 +1852,9 @@ Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-
 
 - **Corrected 2026-10-19 (#847, recovery): hydration from `order_events`.** B1 recovers from its `order_events`, not from a snapshot (ruling 4 on the #847 plan). The OMS facade checks the fold of an order's events against its row, then replays the recorded steps on a fresh machine between `b01_order.begin_replay` and `end_replay`: a replayed step writes no row, audits and notifies nothing, and a service answers the outcome the record holds; one the record does not answer runs once the replay ends, as an invoke this process did not begin (SR-E29-15). `begin_replay` first forgets the order's attempts this process kept, so a machine a resync rebuilt (24 §8.2 "An unknown outcome") resumes as a restarted one does. The `protection` region is not in the record, so an order with fills is sent `FIRST_FILL` again. 24 §8.2 "Recovery" owns the details. The snapshot round trip and the refused restores stay proven in the contract suite, on the real binding. Hydration changes no chart; version 3's hash is in §25.
 
-- **Corrected 2026-10-19 (#847 slice 5, the effectful bindings), chart `version: 3`.** (a) The first-fill notice is an entry action of `partially_filled`, `filled`, `cancelled` and `expired` (INV-B1-o), in place of version 2's per-arm notice, so `RECON_FOUND_FILLED` and a `RECON_FOUND_CANCELLED` after unwatched fills start the SL deadline too; `notify_protection_region` notifies on every entry to `partially_filled` and `filled`, and elsewhere only when the order holds a fill or is handling an `EXEC`, never for a reduce-only order (INV-B1-o). An `EXEC` that reaches `held` or a final state is an S6 anomaly: an internal arm audits it (`audit_reconcile_anomaly`) and, when the fill pairs with the order or the order holds a fill, notifies the region, otherwise asks B8 for its fallback stop (`request_fallback_sl`, INV-B1-o), with the lifecycle state and context unchanged but for that notice in the outbox, so a fill that races a cancel, an expiry or a `KILL` is never deferred for good. (b) `untracked` consumes `RECON_FOUND_LIVE`, `RECON_FOUND_PARTIAL` and `EXEC` (`record_remote_state`, which resets `recon_misses`) and ends `filled` on `RECON_FOUND_FILLED` (INV-B1-l). Its `filled` entry notifies the region like any fill, but the stop found on it is the exchange's, not one the OMS requested: `record_discovered` sets `discovered` (cleared only by `adopt_untracked`), the attach service sends nothing while it is set (SR-E29-06), and neither `sl_attach_ok` nor `sl_observed_ok` counts that stop, so the region goes to `sl_missing`, whose alert pages and whose fallback request hands the position to B8 (an attach could loosen a stop the user tightened, 24 §8.8 rule 5). (c) `OPERATOR_RESOLVED` outside `held` and `ADOPT` outside `untracked` are refused by the `lifecycle` region's `audit_operator_command_refused` arm, never deferred (INV-B1-m). (d) A protection reading is the position row the exchange reported: its exchange time (`updated_time`), stop and size. `record_sl_fact_ignored` keeps the latest reading in `sl_reading` (on a tie, the loss), on the region's arms and on `sl_present`'s `SL_LOST` arm alike; `sl_attach_ok` and `sl_missing`'s `sl_observed_ok` count a reading only as the last reading decides (the OMS's own stop on an open position), so a later `SL_LOST` supersedes a read-back and a reading delivered late never undoes a loss; and a late `SL_DEADLINE` is consumed like the other facts (INV-B1-f). (e) `AMEND` stages the requested terms (`stage_amend`): an invoked service reads the context, not the event that entered its state. (f) The context declares every key the bindings write (C-2.19): the stamped terms (`price`, `trigger_price`, `take_profit`, `stop_loss`, `reduce_only`), `exchange_order_id`, `reject_code`, `needs_lookup`, `amend_terms`, `rate_reservation`, the write-ahead cursor (`persisted_state`, the lifecycle state of the last committed `order_events` row, and `event_seq`, its `seq`), `recon_deadline_us`, `sl_reading`, `discovered` (the order was found on the exchange, so its stop is not the OMS's) and the `outbox`, which the OMS facade drains (at most `OUTBOX_MAX` entries; past it the oldest is dropped and logged at `ERROR`). `persist_event` writes nothing in `draft`, and a `VALIDATE` refused there or a `KILL` there writes no row: the first row is `validated`'s (24 §8.4) or `untracked`'s, from the order the OMS registered before it sent `VALIDATE` or `DISCOVERED`. (g) Every B1 event has a closed payload schema (`additionalProperties: false`, typed fields, none required, so an empty payload still reaches the guards, which deny it), and `CV_EVENT_SCHEMAS` is keyed by machine (§1.3c), as B1 shares `EXEC`, `CANCEL`, `KILL`, `SL_DEADLINE` and `SL_OBSERVED` with other charts. (h) Reconciliation sends `RECON_FOUND_*` to `unknown` or `quarantined` only after its SR-E29-03 full match against the row (24 §8.5 steps 3a and 3b, after G-6, #2876, and E29-T06), and `MISMATCH` otherwise; the arms adopt what they are sent, an execution included (`adopt_recon`), and never totals without the execution that justifies them (OM-R02). A `filled` order is reconciled with the execution that completes it: the store refuses `filled` without one. **Snapshot migration:** a snapshot sealed at version 2 (`53c262a41cbc…`) is refused on restore (quarantine row and P1 page). None exists: nothing outside the tests builds an `order` machine and no snapshot store exists yet, so no upcaster is registered; B1 recovers from `order_events`.
+- **Corrected 2026-10-19 (#847 slice 5, the effectful bindings), chart `version: 3`.** (a) The first-fill notice is an entry action of `partially_filled`, `filled`, `cancelled` and `expired` (INV-B1-o), in place of version 2's per-arm notice, so `RECON_FOUND_FILLED` and a `RECON_FOUND_CANCELLED` after unwatched fills start the SL deadline too; `notify_protection_region` notifies on every entry to `partially_filled` and `filled`, and elsewhere only when the order holds a fill or is handling an `EXEC`, never for a reduce-only order (INV-B1-o). An `EXEC` that reaches `held` or a final state is an S6 anomaly: an internal arm audits it (`audit_reconcile_anomaly`) and, when the fill pairs with the order or the order holds a fill, notifies the region, otherwise asks B8 for its fallback stop (`request_fallback_sl`, INV-B1-o), with the lifecycle state and context unchanged but for that notice in the outbox, so a fill that races a cancel, an expiry or a `KILL` is never deferred for good. (b) `untracked` consumes `RECON_FOUND_LIVE`, `RECON_FOUND_PARTIAL` and `EXEC` (`record_remote_state`, which resets `recon_misses`) and ends `filled` on `RECON_FOUND_FILLED` (INV-B1-l). Its `filled` entry notifies the region like any fill, but the stop found on it is the exchange's, not one the OMS requested: `record_discovered` sets `discovered` (cleared only by `adopt_untracked`), the attach service sends nothing while it is set (SR-E29-06), and neither `sl_attach_ok` nor `sl_observed_ok` counts that stop, so the region goes to `sl_missing`, whose alert pages and whose fallback request hands the position to B8 (an attach could loosen a stop the user tightened, 24 §8.8 rule 5). (c) `OPERATOR_RESOLVED` outside `held` and `ADOPT` outside `untracked` are refused by the `lifecycle` region's `audit_operator_command_refused` arm, never deferred (INV-B1-m). (d) A protection reading is the position row the exchange reported: its exchange time (`updated_time`), stop and size. `record_sl_fact_ignored` keeps the latest reading in `sl_reading` (on a tie, the loss), on the region's arms and on `sl_present`'s `SL_LOST` arm alike; `sl_attach_ok` and `sl_missing`'s `sl_observed_ok` count a reading only as the last reading decides (the OMS's own stop on an open position), so a later `SL_LOST` supersedes a read-back and a reading delivered late never undoes a loss; and a late `SL_DEADLINE` is consumed like the other facts (INV-B1-f). (e) `AMEND` stages the requested terms (`stage_amend`): an invoked service reads the context, not the event that entered its state. (f) The context declares every key the bindings write (C-2.19): the stamped terms (`price`, `trigger_price`, `take_profit`, `stop_loss`, `reduce_only`), `exchange_order_id`, `reject_code`, `needs_lookup`, `amend_terms`, `rate_reservation`, the write-ahead cursor (`persisted_state`, the lifecycle state of the last committed `order_events` row, and `event_seq`, its `seq`), `recon_deadline_us`, `sl_reading`, `discovered` (the order was found on the exchange, so its stop is not the OMS's) and the `outbox`, which the OMS facade drains (at most `OUTBOX_MAX` entries; past it the oldest is dropped and logged at `ERROR`). `persist_event` writes nothing in `draft`, and a `VALIDATE` refused there or a `KILL` there writes no row: the first row is `validated`'s (24 §8.4) or `untracked`'s, from the order the OMS registered before it sent `VALIDATE` or `DISCOVERED`. (g) Every B1 event has a closed payload schema (`additionalProperties: false`, typed fields, none required, so an empty payload still reaches the guards, which deny it), and `CV_EVENT_SCHEMAS` is keyed by machine (§1.3c), as B1 shares `EXEC`, `CANCEL`, `KILL`, `SL_DEADLINE` and `SL_OBSERVED` with other charts. (h) Reconciliation sends `RECON_FOUND_*` to a row by the bound id, or after the full match: to a row bound to an exchange `orderId` (24 §8.3 rule 7) by that id, comparing no terms again; to an `unknown` or `quarantined` row with none bound only after its SR-E29-03 full match against the row (24 §8.5 steps 3a and 3b, after G-6, #2876, and E29-T06), and `MISMATCH` otherwise; the arms adopt what they are sent, an execution included (`adopt_recon`), and never totals without the execution that justifies them (OM-R02). A `filled` order is reconciled with the execution that completes it: the store refuses `filled` without one. **Snapshot migration:** a snapshot sealed at version 2 (`53c262a41cbc…`) is refused on restore (quarantine row and P1 page). None exists: nothing outside the tests builds an `order` machine and no snapshot store exists yet, so no upcaster is registered; B1 recovers from `order_events`.
+
+- **Corrected 2026-10-21 (#913, E29-T04's contract PR; the orchestrator's ruling CR-G6-R3-01 on #3972), chart `version: 4`.** The B1 entry of a recorded stop's row, the OMS-owned row of a TP/SL order that enters outside the placement path (24 §8.3 rule 7), which E29-T05 materialises once per (account, `orderId`) (`ux_orders_exch_id` refuses a second). (a) `MATERIALISED`, accepted only in `draft` as `VALIDATE` and `DISCOVERED` are, moves to `submitted` with `record_materialised`, which stamps the order as the matched exchange order shows it (identity, terms, `reduce_only` set, `exchange_order_id` bound) and sets `recorded_stop`; an order that is not reduce-only, or names no exchange order id B1 can keep (`text_id`), is refused with its first row. No service is invoked, so nothing is sent; `persist_event` writes the row's first `order_events` row in `submitted`'s entry, `exchange_push` from `ws_private`, or from `reconcile` as its payload names (24 §8.2), from the order the OMS registered before it sent the event (`OrderMachines.materialise`). (b) Why `submitted`: it is the bound live state of an order the exchange holds. Its `EXEC` arms apply each fill through `apply_fill` and the step writer's `commit_fill` (an `executions` row and an order event) to `partially_filled` or `filled`, so a stop that fired before it was first seen still has its fills applied as steps, never as S6 anomalies, as they would be in `filled` or `cancelled`; its `TRIGGERED` arm takes a trigger push that comes later, which `triggered` as the entry state would claim before the exchange reports it; its `REMOTE_CANCELLED` and `EXPIRE` arms end it only once the push's cumulative quantity equals `filled_qty` (INV-B1-k); and it needs no `RECON_FOUND_*` arm: the row is bound at entry, so reconciliation reaches it by that id (INV-B1-m), its fills in steps 2 and 3d, as it reaches a row its own ack bound (24 §8.3 rule 7). (c) `KILL`: in each live state the row can reach, a guarded `is_recorded_stop` arm before the cancelling one consumes and audits it (`audit_kill_spared_recorded_stop`) and sends nothing; in `cancel_pending` it also comes before the arm that reuses the in-flight cancel and sets `halted_by_kill`, so the OMS facade never sends such a row a lost KILL again; `held` audits a `KILL` as for any order (INV-B1-n, INV-B1-p). (d) `CANCEL` and `AMEND` carry no guard: synchronous code enforces 24 §8.8 rule 6 (C-2.21). Every `CANCEL` and `AMEND` reaches B1 through the OMS's cancel and amend services (SR-E29-06; the facade's `command` is B1's only path for them, and the row joins no group, algo or rule), which refuse before they send: the cancel service a cancel of the row while its position is open (`cancelOrder` and `cancel-all` alike), the amend service every amend (`order_not_amendable`). The facade's `command` refuses an `AMEND` of the row too, before any send (`IllegalTransition`), as rule 6 refuses every one whatever the position; a `CANCEL` it leaves to the cancel service, which reads the position (E29-T04's third slice). A guard here would only repeat those refusals, a cancel's without the position, which B1 does not hold. A cancel the rule allows (the position is flat) runs as any order's, through `cancel_pending`, the command port's cancel and the same service. (e) The context gains `recorded_stop`, and the OMS facade's plain view reads it, so a KILL the guarded arm audited counts as recorded. **Snapshot migration:** a snapshot sealed at version 3 (`6cdf8750e255…`) is refused on restore (quarantine row and P1 page). None exists: nothing outside the tests builds an `order` machine and no `Persister` or `Restorer` is wired for it yet (E50-T63), so no snapshot of it is written and no upcaster is registered; B1 recovers from `order_events`, and recovery replays a recorded stop's row from its first row.
 
 ---
 
@@ -7624,7 +7714,7 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 |---|---|
 | **INV-B19-a** | Reconciliation must not share a failure mode with what it repairs: the supervisor starts this machine **before** the OMS accepts orders, and its own faults escalate to `stale_lockout` rather than retrying forever. |
 | **INV-B19-b** | `stale_lockout` locks the account for new orders and is cleared only by `OPERATOR_RESOLVED`. *(Corrected 2026-10-10, #2204, OC-05)* The chart now enforces this: `OPERATOR_RESOLVED` is the only arm leaving `stale_lockout` (→ `idle`, audited, account unlocked); `RECONNECTED` while locked is recorded (`audit_reconnect_while_locked`) and never clears the lock or re-pages. |
-| **INV-B19-c** | Diffs are by `orderLinkId` (C-2.10); `Unknown` orders are resolved by lookup, never by blind resubmission. |
+| **INV-B19-c** | Diffs are by the bound id, or after the full match: a row bound to an exchange `orderId` pairs by that id, and one with none bound only after the SR-E29-03 full match of the order found under its `orderLinkId` (C-2.10; 24 §8.3 rule 7, §8.5); `Unknown` orders are resolved by lookup, never by blind resubmission. |
 | **INV-B19-d** | `auto_remediate` is a **context value**, not a separate machine - capabilities drive behaviour, not conditionals (24 §14.3). |
 | **INV-B19-e** | A crash during fetching is re-driven on restore by re-sending the triggering event; a machine parked mid-fetch with no live service is a silent hang, and is the single most consequential consequence of static restore (LC-19). E45-T06/T07 chaos-test exactly this. |
 | **INV-B19-f** | Every sweep persists a report, whether or not divergences were found. |
@@ -8003,7 +8093,7 @@ There is no runtime switch. Every family runs on the pinned library from its fir
 | `leg` | 12 | `a7d8fb5d8c3e…` |
 | `live_gate` | 3 | `780accfd0086…` |
 | `oco` | 11 | `e09f72c6a367…` |
-| `order` | 2 | `6cdf8750e255…` |
+| `order` | 2 | `18d4f519f032…` |
 | `paper_account` | 4 | `401363766fb6…` |
 | `position_protection` | 3 | `d95cda091fac…` |
 | `reconciliation` | 8 | `95c8954fe5e7…` |

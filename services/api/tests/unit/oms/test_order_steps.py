@@ -149,6 +149,39 @@ async def test_an_untracked_order_is_created_as_reconciliation_found_it(
     assert [(e.kind, e.source) for e in events] == [("adopt", "reconcile")]
 
 
+@pytest.mark.parametrize(
+    ("source", "payload"), [("ws_private", {}), ("reconcile", {"pass_id": "p1"})]
+)
+async def test_a_recorded_stops_row_is_created_submitted_with_its_bound_id(
+    source: str, payload: dict[str, Any], writer: OrderStepWriter, db: InMemoryOrderStore
+) -> None:
+    """24 Sec.8.3 rule 7: `MATERIALISED`, and only it, creates a row in `submitted`, bound to the
+    exchange order id the machine stamped, which the registered order must hold too; its event is
+    the exchange fact of the TP/SL order, from the path that met it."""
+    stop: dict[str, Any] = {"id": UUID(int=8), "order_link_id": "ext-" + "c" * 32}
+    stop |= {"side": "Sell", "intent": "stop_loss", "order_type": "Market", "price": None}
+    stop |= {"stop_loss": None, "trigger_price": Decimal(62000), "reduce_only": True}
+    writer.expect(_order(**stop, exchange_order_id="x8"))
+    ctx: dict[str, Any] = {"order_id": str(UUID(int=8)), "exchange_order_id": "x8", "side": "sell"}
+    ctx |= {"price": None, "stop_loss": None, "trigger_price": "62000", "reduce_only": True}
+    found = {"order": {}} | payload | ({"source": source} if source == "reconcile" else {})
+
+    def first(event: str, **over: Any) -> Step:
+        step = _step(None, "submitted", event, found, **(ctx | over))
+        return replace(step, order_link_id=stop["order_link_id"])
+
+    with pytest.raises(ValueError, match="no registered order"):
+        await writer(first("SEND"))  # no other trigger creates a `submitted` row
+    with pytest.raises(ValueError, match="not the order the machine holds"):
+        await writer(first("MATERIALISED", exchange_order_id="x9"))
+    assert await writer(first("MATERIALISED")) == 0
+    row = await db.get(ACCOUNT, UUID(int=8))
+    assert row is not None and (row.state, row.lifecycle_state) == ("accepted", "submitted")
+    assert (row.exchange_order_id, row.reduce_only) == ("x8", True)
+    events = await db.list_for_order(ACCOUNT, UUID(int=8))
+    assert [(e.kind, e.source, e.from_state) for e in events] == [("exchange_push", source, None)]
+
+
 async def _submitted(writer: OrderStepWriter) -> None:
     await writer(_step(None, "validated", "VALIDATE"))
     await writer(_step("validated", "submitting", "SEND"))
@@ -468,6 +501,6 @@ def test_each_trigger_is_recorded_with_the_kind_and_source_24_names() -> None:
     with no `source` of its own keeps its default. The table and `_KINDS` name the same
     triggers."""
     table = _kind_table()
-    assert set(table) == set(steps._KINDS) and len(table) == 22
+    assert set(table) == set(steps._KINDS) and len(table) == 23
     for trigger, want in table.items():
         assert steps.event_kind(_step("submitted", "submitted", trigger)) == want, trigger

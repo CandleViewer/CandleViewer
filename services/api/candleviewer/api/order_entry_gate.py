@@ -6,8 +6,9 @@ submit route calls `order_entry_refusal(gate, account_id)`. `None` lets the orde
 otherwise the route returns the problem it gives back. Obligations for every submit route (E29):
 
 1. **Order of operations.** Authenticate, check RBAC, then resolve the target account within the
-   caller's scope (`404 not_found` when it is out of scope, so account health never leaks across
-   scopes, C-12.4), then call the gate, then the OMS. Maintenance is global, but
+   caller's scope (`403 account_scope_denied` for a body's account, `404 not_found` for an id
+   route, so account health never leaks across scopes, C-12.4; #913 ruling R2), then call the
+   gate, then the OMS. Maintenance is global, but
    `refusal(account_id)` takes the resolved account, so the route resolves scope first. The B18
    kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of
    the gate, after the same steps. A trade-group submit consults the gate once per leg's account,

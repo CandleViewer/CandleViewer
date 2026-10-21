@@ -3,9 +3,10 @@
 `persist_event` hands every `lifecycle` step of an order machine here before the machine moves on
 (24-internal-schemas.md Sec.8.2 S8), and the step commits in one unit of work or not at all (S7):
 
-* the first step creates the row (`OrderRepository.create`), at `validated` (24 Sec.8.4) or at
-  `untracked`, from the order the OMS registered with `expect` before it sent `VALIDATE` or
-  `DISCOVERED`; the registered order must be the one the machine stamped;
+* the first step creates the row (`OrderRepository.create`), at `validated` (24 Sec.8.4), at
+  `untracked`, or at `submitted` for a recorded stop's TP/SL order (Sec.8.3 rule 7), from the
+  order the OMS registered with `expect` before it sent `VALIDATE`, `DISCOVERED` or
+  `MATERIALISED`; the registered order must be the one the machine stamped;
 * a step that applies a fill (an `EXEC`, or a reconciliation finding that carries the execution)
   commits the execution, the totals the machine computed, the state and the fill event together
   (`ExecutionRepository.commit_fill`). An `exec_id` stored already refuses it, as the machine has
@@ -37,7 +38,7 @@ from decimal import Context, Decimal
 from typing import Any, Final, cast, get_args
 from uuid import UUID
 
-from candleviewer.statechart.bindings.b01_order import Step
+from candleviewer.statechart.bindings.b01_order import FIRST_ROWS, Step
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.storage.repositories.executions import (
     ExecType,
@@ -90,6 +91,7 @@ _FINDINGS: Final = ("RECON_FOUND_LIVE", "RECON_FOUND_PARTIAL", "RECON_FOUND_FILL
 _KINDS: Final[dict[str, tuple[OrderEventKind, OrderEventSource]]] = {
     "VALIDATE": ("local_create", "local"),
     "DISCOVERED": ("adopt", "reconcile"),
+    "MATERIALISED": ("exchange_push", "ws_private"),
     "SEND": ("submit_attempt", "local"),
     "CANCEL": ("cancel_request", "local"),
     "AMEND": ("amend_request", "local"),
@@ -127,8 +129,9 @@ class OrderStepWriter:
         self._expected: OrderedDict[UUID, NewOrder] = OrderedDict()
 
     def expect(self, order: NewOrder) -> None:
-        """Register the order the OMS built (E29-T04's pipeline; E29-T06 for one it discovered)
-        before it sends `VALIDATE` or `DISCOVERED`: that step creates the row from it."""
+        """Register the order the OMS built (E29-T04's pipeline; E29-T06 for one it discovered;
+        E29-T05 or E29-T06 for a recorded stop's TP/SL order) before it sends `VALIDATE`,
+        `DISCOVERED` or `MATERIALISED`: that step creates the row from it."""
         self._expected[order.id] = order
         self._expected.move_to_end(order.id)
         while len(self._expected) > MAX_EXPECTED:
@@ -189,7 +192,7 @@ class OrderStepWriter:
         self, step: Step, account: UUID, order_id: UUID, to_state: LifecycleState
     ) -> int:
         order = self._expected.get(order_id)
-        if order is None or to_state not in ("validated", "untracked"):
+        if order is None or FIRST_ROWS.get(to_state) != step.event:
             raise ValueError("no registered order for this order's first row")
         _agrees(order, step, account)
         kind, source = event_kind(step)
@@ -272,7 +275,8 @@ def _same(column: Decimal | None, raw: object) -> bool:
 
 def _agrees(order: NewOrder, step: Step, account: UUID) -> None:
     """The registered order is the one the machine stamped: its identity and terms (the fields
-    SR-E29-03 matches), and for an `untracked` one its exchange order id."""
+    SR-E29-03 matches), and for a row created outside the placement path (`untracked`, a recorded
+    stop's `submitted`) its exchange order id."""
     ctx = step.context
     same = (
         order.exchange_account_id == account
@@ -283,7 +287,7 @@ def _agrees(order: NewOrder, step: Step, account: UUID) -> None:
         and _same(order.qty, ctx.get("qty"))
         and all(_same(getattr(order, k), ctx.get(k)) for k in _TERMS)
         and (
-            step.to_state != "untracked" or order.exchange_order_id == ctx.get("exchange_order_id")
+            step.to_state == "validated" or order.exchange_order_id == ctx.get("exchange_order_id")
         )
     )
     if not same:

@@ -63,3 +63,9 @@ docs/plan/backlog/_reconciliation-report.md
 scripts/tests/fixtures/pnpm-audit/*.json
 # #3558: `gh api --paginate --slurp` Dependabot alert listings as gh wrote them (compact, one line).
 scripts/tests/fixtures/dependabot-alerts/*.json
+# #913 (G-6 #3972, 24 section 19.19): tools/statechart/render_catalogue.py writes the machine index
+# of 28, which is not prettier-formatted on main; edits stay minimal and are never reflowed.
+docs/plan/28-statechart-catalogue.md
+# #913 (CR-G6-R3-01 on #3972): the statechart contracts are json.dumps(indent=2) + LF, as every chart on
+# main is and as 28's B<n>.1 blocks hold them; prettier would fold their one-item arrays on a commit.
+services/api/candleviewer/statechart/machines/*.machine.json

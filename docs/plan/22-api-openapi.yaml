@@ -345,14 +345,22 @@ info:
     `createBackup` or `restoreBackup` refuses to start (a precondition, another backup or restore
     still running, the hourly limit, a dependency that is unavailable, or a backup engine that
     is not wired or is invalid) is not stored under the key, so the same key and body are
-    evaluated afresh once the cause clears.
+    evaluated afresh once the cause clears. Exception (E29-T04): `placeOrder` also keeps the key
+    in a permanent anchor scoped to the caller and the operation (`21-database-schema.md` section
+    3.3.10), so the exact repeat reaches the same rows at any age: within the 24 h it gets the
+    original response, later those rows in their current state (see `placeOrder`). A
+    `placeOrder` refused at the exchange budget's headroom, before its persist
+    (`429 exchange_rate_limited`), stores nothing under the key either: the same key and body
+    are evaluated afresh after `Retry-After`.
 
     **Binding point (#2304).** On every operation that requires the key (parameter
     `IdempotencyKeyRequired`, which every `x-idempotency: required` operation takes) the key is
     recorded only after the request has passed every admission check: authentication and CSRF,
     the session state (`session_read_only`, the idle lock of #2300, and a view-as context's
-    `view_as_read_only` and `view_as_expired` of #3085) and authorisation (RBAC, account scope,
-    `step_up_required` and the arm state's `session_not_armed` of SR-043). A request refused by
+    `view_as_read_only` and `view_as_expired` of #3085), authorisation (RBAC, account scope,
+    `step_up_required` and the arm state's `session_not_armed` of SR-043) and, on an order
+    submit or amend, the `trading_disabled` refusals (live trading not enabled, the B18 kill
+    switch and the order-entry gate; see `Forbidden`). A request refused by
     any of them stores no idempotency record and executes nothing; only the refusal's own
     effects remain (such as its audit record, where that refusal is audited, and for
     `step_up_required` the challenge it issues).
@@ -361,6 +369,18 @@ info:
     answered from the idempotency store (no `Idempotency-Replayed`). This is what lets a client
     hold a request refused with `step_up_required` and re-send it unchanged
     (`POST /auth/step-up`, C-2.10).
+
+    **Order of the checks on an order submit or amend (E29-T04).** On `placeOrder`, after
+    authentication, CSRF, the session state and RBAC, the checks run in this order: account
+    scope, the arm token, the idempotency lookup, live trading enabled, the kill switch, the
+    order-entry gate, then validation, sizing, risk, the write-ahead persist and the send
+    (24-internal-schemas.md section 8.4). `amendOrder` takes the same order (its scope is the
+    order id's `404`); the carve-out under `Forbidden` exempts the amends it names from the arm
+    token and the `trading_disabled` checks. The lookup comes after authorisation, so a caller
+    who has lost access cannot read an outcome back, and before the `trading_disabled` checks,
+    so the exact repeat of an accepted request (same key, same fingerprint) is answered with its
+    stored outcome, never refused, while the same key with another body is still
+    `409 idempotency_key_reuse` (C-2.10).
 
     ### Rate limiting
     Per-user token bucket (default 600 req/min, 60 req/s burst) plus a per-UID *exchange*
@@ -537,7 +557,7 @@ x-error-codes:
     retryable: false
   - code: risk_limit_breached
     status: 403
-    title: Per-account profile risk cap (daily loss, max position, allowed symbols) would be exceeded
+    title: The account's profile is disabled, is not trading-enabled, does not allow the symbol, or a risk cap (daily loss, max position) would be exceeded
     retryable: false
   - code: view_as_read_only
     status: 403
@@ -592,6 +612,10 @@ x-error-codes:
   - code: kek_rotation_in_progress
     status: 409
     title: A KEK re-wrap run is already in progress for this environment
+    retryable: true
+  - code: stop_request_in_flight
+    status: 409
+    title: A stop request for this position is still in flight
     retryable: true
   - code: version_conflict
     status: 412
@@ -658,6 +682,10 @@ x-error-codes:
     title: Exchange connectivity lost (WS down and REST failing)
     retryable: true
     surface: [rest, ws] # same slug, same meaning on the WS (23-ws-protocol.md §10.2)
+  - code: clock_drift
+    status: 503
+    title: Order entry halted until the server clock is back in sync with the exchange
+    retryable: true
   - code: store_unavailable
     status: 503
     title: QuestDB / Postgres / Parquet tier unavailable
@@ -5013,7 +5041,7 @@ paths:
                         exchange_account_id: "a1000000-0000-4000-8000-000000000001"
                         trade_group_id: "0c000000-0000-4000-8000-000000000001"
                         trade_group_leg_id: "0b000000-0000-4000-8000-000000000001"
-                        order_link_id: "cv-0c000000-1-entry"
+                        order_link_id: "cvl-0MduI3fiqJ6h0wkltsuR4T-JelO-00en"
                         exchange_order_id: "8a1f0f9c-3d2e-4b11-9f77-1b2c3d4e5f60"
                         symbol: BTCUSDT
                         side: buy
@@ -5048,14 +5076,24 @@ paths:
       operationId: placeOrder
       summary: Place an order on a single account
       description: |
-        Single-account convenience wrapper over the trade-group machinery: the server creates a
-        one-leg trade group internally so that every order — single or fanned-out — shares one
-        state machine, one audit trail and one journal linkage.
+        Single-account convenience wrapper over the trade-group machinery: for an entry the server
+        creates a one-leg trade group internally, so that an entry, single or fanned-out, has one
+        state machine, one audit trail and one journal linkage. A reduce-only order that only
+        reduces joins no trade group (`OrderAcceptance`).
 
         **Invariants enforced server-side:**
-        * The account's active profile must allow the symbol, otherwise `risk_limit_breached`.
-        * Price is snapped/validated against `tick_size`; qty against `qty_step`/min/max
-          (`tick_size_violation` / `lot_size_violation`).
+        * The account's active profile must be enabled and trading-enabled and allow the symbol,
+          otherwise `risk_limit_breached` (24-internal-schemas.md section 9.3 step 1; the profile
+          an account is created with is not trading-enabled, `21-database-schema.md` section
+          3.2.4).
+        * Price, trigger price and stop are held to the instrument's `min_price` to `max_price`,
+          and the quantity above zero and within its ceiling (`max_order_qty`, or
+          `max_mkt_order_qty` for a market order): each figure outside is listed in `errors[]`
+          with its `field` (`price`, `trigger.price`, `stop_loss`, `qty`) and the bound it breaks
+          as its `rule` (`min_price`, `max_price`, `min_order_qty`, `max_order_qty`,
+          `max_mkt_order_qty`), answered `lot_size_violation` when the quantity is listed and
+          `validation_failed` otherwise. Price is also snapped/validated against `tick_size`;
+          qty against `qty_step`/min/max (`tick_size_violation` / `lot_size_violation`).
         * A native exchange-side stop-loss is mandatory for every entry (C-2.6, arch P4). The
           server classifies an order by its effect on the exchange-truth position, never by
           its label: an order that is not reduce-only, or whose quantity exceeds the position
@@ -5069,14 +5107,85 @@ paths:
           order that is not an entry; `errors[]` lists every rule that fails, so a mislabelled
           opening order with no stop to apply carries both `native_stop_required` and
           `intent_mismatch`. `reverse` and `algo_child` are server-assigned (`reversePosition`,
-          the emulated algos), so `placeOrder` refuses them with `intent_mismatch` too.
-        * `Idempotency-Key` is REQUIRED. The server derives a deterministic `orderLinkId`
-          (≤36 chars) from it, so a retried request can never double-submit.
-        * The kill-switch, if engaged for the account or globally, rejects with
-          `trading_disabled` before anything reaches the exchange.
+          the emulated algos), so `placeOrder` refuses them with `intent_mismatch` too. Until
+          E28-T03's sizer and stop resolver (#907) land, the interim pipeline sizes `fixed_qty`
+          only: another `sizing.mode` is refused with `validation_failed` /
+          `sizing_mode_unsupported`, and a stop in `atr` or `r_multiple` units, whether
+          `stop_loss` or the profile's offset, with `validation_failed` / `stop_unit_unsupported`
+          (#913 ruling R4); the `marketWithBracket` and `conditional` examples need #907.
+        * These refusals answer with their `x-error-codes` status: `400` for `validation_failed`
+          (each failing rule in `errors[]`), `tick_size_violation` and `lot_size_violation`, and
+          `403` for `risk_limit_breached`.
+        * `Idempotency-Key` is REQUIRED, and it is never part of an exchange id: the server
+          generates each `orderLinkId` once, before the first send, from no client-supplied
+          string (24-internal-schemas.md section 8.3 rule 1), and a retried send re-sends that id,
+          so it can never double-submit (C-2.10). The key is kept with the request's fingerprint
+          in a permanent anchor scoped to the caller and this operation (`21-database-schema.md`
+          section 3.3.10, SR-E29-07), written in the one transaction that persists the request's
+          rows: the same key and body, at any age, reach the same rows before any send and never
+          mint new ids or a second order. Inside the 24 h record the replay is the original
+          answer; later it carries the same rows in their current state
+          (`Idempotency-Replayed: true` either way). The same key with another body is
+          `409 idempotency_key_reuse`, as is a key this principal already used for a trade group
+          (`createTradeGroup`); a repeat while the first is still being processed is
+          `409 idempotency_in_flight` with `retry_after_seconds`; and a key that another
+          principal sent is answered as one never seen.
+        * A repeat never sends: only the first request starts its order's send, B1's `SEND`
+          after its live, kill-switch and gate checks, and only B1 resumes it after a restart
+          (24-internal-schemas.md section 8.2). A request that ended without recording its
+          answer (a crash, or a store failure after the send) leaves its anchor undecided: a
+          repeat is `409 idempotency_in_flight` only within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of
+          the anchor's creation, longer than the submission's own bounds, and later decides it,
+          `202` with the rows in their current state (an order still `validated` was never sent).
+        * Live trading not enabled, the B18 kill switch (engaged for the account or globally) and
+          the order-entry gate refuse with `403 trading_disabled` before anything reaches the
+          exchange. They come after the idempotency lookup (the order of the checks under
+          Idempotency in `info.description`), so the exact repeat of an accepted request gets its
+          stored outcome.
+        * While order entry is halted for clock drift (Bybit `10002`, 24-internal-schemas.md
+          section 8.6, or the exchange clock guard past 2000 ms, section 2.8), the request is
+          refused with `503 clock_drift` and `Retry-After` until time sync recovers. A request
+          whose own create meets `10002` was sent and refused: its order is `rejected`, it
+          answers `502 exchange_error` with that `ret_code`, and the halt starts with it.
+        * An order is recorded before it is sent (24-internal-schemas.md section 8.4), so while
+          Postgres is unavailable the request is refused with `503 store_unavailable` before any
+          exchange call. A store failure after the send is never a `503`: the request answers
+          its outcome, `202` with the order's last known state or the `502`.
+        * An entry's stop request is recorded with its order, one stop request in flight per
+          position (`21-database-schema.md` section 3.3.11, the recorded stop, which lands with
+          E29-T04's slice 2a). An entry whose stop request collides with one still in flight on
+          the same position is retried for a bounded time, then refused with
+          `409 stop_request_in_flight` and `Retry-After`: nothing is recorded or sent and the key
+          is not bound, so the same key and body sent again after `Retry-After` are a first
+          submission.
+        * The account's per-UID exchange budget refuses at two points, each with
+          `429 exchange_rate_limited` and `Retry-After` (`RATE_BUDGET_EXCEEDED`,
+          24-internal-schemas.md sections 8.4 and 8.7). Before the persist, B1's `rate` verdict
+          reads the budget's headroom through the trading port without taking a token (#2877
+          ruling 4): with none, nothing is recorded or sent and the key is not bound, so the same
+          key and body sent again after `Retry-After` are a first submission. At the send, the
+          trading port takes the create's one token, waiting at most the bound its factory sets
+          (for an entry `CV_FANOUT_ADMIT_WAIT_MS`, 750 ms, `20-architecture.md` section 4.3) and
+          never queueing past it: without one, nothing is sent, and the recorded order ends
+          `rejected` with `RATE_BUDGET_EXCEEDED`, a refused send, never `unknown`, answered as
+          `429 exchange_rate_limited` and stored as the anchor's `outcome_code`
+          (`21-database-schema.md` section 3.3.10). That answer is recorded with the request's
+          rows, so a repeat at any age gets the same `429` and sends nothing: placing the order
+          again takes a new `Idempotency-Key`. It is not retryable under its key: the repeat
+          carries `Idempotency-Replayed: true` and no `Retry-After`.
 
-        The response is an **acknowledgement of acceptance into the OMS**, not a fill. Terminal
-        state arrives on the WS `orders` / `executions` topics.
+        The response is an **acknowledgement of acceptance into the OMS**, not a fill: `202` with
+        every order the request created and its state (`OrderAcceptance`). An order the exchange
+        acknowledged is `submitted` (`lifecycle_state`; its `state` is `accepted`). A send whose
+        result is ambiguous (a timeout or transport error after the request left;
+        24-internal-schemas.md section 8.6, order creates) also answers `202`, with the order in
+        `unknown`: it is never re-sent (C-2.10), an alert fires, and reconciliation settles it
+        (section 8.5). So does an id the exchange already holds: the order is adopted after its
+        full match, or `held` (SR-E29-03, section 8.3 rule 3). A business rejection is `502`
+        (`OrderExchangeProblem`). An `orderLinkId` allocation that spends its bound
+        (`OrderLinkIdExhausted`, section 8.3 rule 5) sends nothing and answers
+        `500 internal_error`, which pages. Terminal state arrives on the WS `orders` /
+        `executions` topics.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -5125,18 +5234,128 @@ paths:
                   stop_loss: { unit: atr, value: "1.5", atr_period: 14 }
       responses:
         "202":
-          description: Accepted into the OMS; submission to the exchange is in flight.
+          description: >
+            Accepted into the OMS, never a fill: every order the request created, with its state
+            (`OrderAcceptance`). `ETag` is the created order's version, for `If-Match` on
+            `amendOrder`.
           headers:
             Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
             ETag: { $ref: "#/components/headers/ETag" }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/TradeGroup" }
+              schema: { $ref: "#/components/schemas/OrderAcceptance" }
+              examples:
+                entry:
+                  summary: A limit entry the exchange acknowledged, in its one-leg trade group
+                  value:
+                    trade_group:
+                      id: "0c000000-0000-4000-8000-000000000002"
+                      client_group_ref: "6f2b8c1d-3e4a-4b5c-8d6e-7f8091a2b3c4"
+                      symbol: BTCUSDT
+                      side: buy
+                      intent: entry
+                      status: submitting
+                      legs:
+                        - id: "0b000000-0000-4000-8000-000000000004"
+                          exchange_account_id: "a1000000-0000-4000-8000-000000000001"
+                          status: submitted
+                          orders: ["0a000000-0000-4000-8000-000000000003"]
+                          order_details:
+                            - id: "0a000000-0000-4000-8000-000000000003"
+                              exchange_account_id: "a1000000-0000-4000-8000-000000000001"
+                              trade_group_id: "0c000000-0000-4000-8000-000000000002"
+                              order_link_id: "cvl-0MduI3fiqJ6h0wkltsuR4U-JelO-00en"
+                              symbol: BTCUSDT
+                              side: buy
+                              order_type: limit
+                              intent: entry
+                              state: accepted
+                              lifecycle_state: submitted
+                              qty: "0.250"
+                              price: "63100.00"
+                              reduce_only: false
+                              stop_loss: "62900.00"
+                              environment: live
+                    order: null
+                reduceOnly:
+                  summary: A reduce-only order, which joins no group, after an ambiguous send
+                  value:
+                    trade_group: null
+                    order:
+                      id: "0a000000-0000-4000-8000-000000000004"
+                      exchange_account_id: "a1000000-0000-4000-8000-000000000001"
+                      trade_group_id: null
+                      order_link_id: "cvl-0IrvF33lhqCcIJ8RAtKxBU-JelO-00sc"
+                      symbol: BTCUSDT
+                      side: sell
+                      order_type: limit
+                      intent: scale_out
+                      state: unknown
+                      lifecycle_state: unknown
+                      qty: "0.100"
+                      price: "63600.00"
+                      reduce_only: true
+                      stop_loss: null
+                      environment: live
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "409":
+          description: >
+            `idempotency_key_reuse` or `idempotency_in_flight` (see the description), or
+            `stop_request_in_flight`: an entry whose stop request collided with one still in
+            flight on the same position, past the server's bounded retry. Nothing was recorded or
+            sent for it and the key is not bound. Only `stop_request_in_flight` carries
+            `Retry-After`, with `retry_after_seconds`; after it the same key and body are a first
+            submission.
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                idempotency:
+                  value:
+                    type: "https://candleviewer.local/errors/idempotency_key_reuse"
+                    title: "Idempotency-Key reused with a different request payload"
+                    status: 409
+                    detail: "Key 4d9f… was first used with a different body fingerprint."
+                    instance: "urn:cv:req:0193f2bb-5555"
+                    code: idempotency_key_reuse
+                stopRequestInFlight:
+                  value:
+                    type: "https://candleviewer.local/errors/stop_request_in_flight"
+                    title: "A stop request for this position is still in flight"
+                    status: 409
+                    detail: "Send the entry again once the position's stop request is answered."
+                    instance: "urn:cv:req:0193f2bb-5560"
+                    code: stop_request_in_flight
+                    retry_after_seconds: 1
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
-        "429": { $ref: "#/components/responses/RateLimited" }
+        "429":
+          description: >
+            `exchange_rate_limited` with `Retry-After`, at either point of the exchange budget
+            (see the description), or the per-user `rate_limited` of every route. The headroom
+            refusal before the persist binds no key, so the same key and body may be sent again
+            after `Retry-After`. The refusal at the send is recorded under the key and is not
+            retryable under it: a repeat gets that `429` again with `Idempotency-Replayed: true`
+            and no `Retry-After`, and placing the order again takes a new `Idempotency-Key`.
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
+            RateLimit-Limit: { $ref: "#/components/headers/RateLimitLimit" }
+            RateLimit-Remaining: { $ref: "#/components/headers/RateLimitRemaining" }
+            RateLimit-Reset: { $ref: "#/components/headers/RateLimitReset" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "500":
+          description: >
+            `internal_error`. On this route it is also an `orderLinkId` allocation that spent its
+            bound (`OrderLinkIdExhausted`, 24-internal-schemas.md section 8.3 rule 5): nothing was
+            sent, and the condition pages the operator.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "502": { $ref: "#/components/responses/OrderExchangeError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -5178,6 +5397,12 @@ paths:
         Amending only one side of a TP/SL pair breaks Bybit's OCO pairing (digest 06 §19); the
         server therefore re-sends both sides whenever either changes, and records the paired
         amend in `order_events`.
+
+        `If-Match` takes the order's `ETag` from an answer about it (`placeOrder`'s `202` or this
+        route's). The `ETag` is opaque and changes with every step the order takes, each
+        `order_events` row (an accepted amend, a fill, any change of state): when the order has
+        changed since, the amend is refused with `412 version_conflict` and nothing is sent;
+        without `If-Match` it applies to the order as it stands.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -5196,6 +5421,8 @@ paths:
       responses:
         "202":
           description: Amend accepted.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Order" }
@@ -5369,8 +5596,20 @@ paths:
         **Intent.** The request's `intent` applies to every leg under `placeOrder`'s rule: an
         `intent` that disagrees with a leg's effect is refused with `validation_failed` /
         `intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`. That refusal
-        is the whole request's, before any leg is sent or any exchange call is made, whatever
-        `atomicity` says; it is never a per-leg failure.
+        is the whole request's, before any leg is sent, whatever `atomicity` says; it is never a
+        per-leg failure.
+
+        **Idempotency.** The group keeps the request's `Idempotency-Key` as its `client_group_ref`
+        with the request's fingerprint, unique per creator (24-internal-schemas.md section 8.3
+        rule 1), so the same key and body, at any age, reach the same group and send nothing. A
+        repeat is admitted as a first submission is, so a grant withdrawn since refuses it and
+        nothing stored is returned. While the 24 h record holds the key the replay is the original
+        answer, and otherwise (expired, evicted or lost at a restart) the group in its current
+        state as `getTradeGroup` returns it (`Idempotency-Replayed: true` either way). The same
+        key with another body is `409 idempotency_key_reuse` at any age, as is a key this
+        principal already used for a `placeOrder` entry; a repeat while the first is still being
+        processed is `409 idempotency_in_flight` with `retry_after_seconds`; and a key that
+        another principal sent is answered as one never seen.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -5454,6 +5693,8 @@ paths:
       responses:
         "202":
           description: Trade group accepted; legs are submitting.
+          headers:
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TradeGroup" }
@@ -5523,6 +5764,7 @@ paths:
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -12315,7 +12557,7 @@ paths:
                         machine_kind: order
                         environment: demo
                         state: submitted
-                        machine_hash: "6cdf8750e2558ce3b65334fe690b9f2fd5df35d386211e6f8a67099fe6df7456"
+                        machine_hash: "18d4f519f032b9394245f00f18b0c6fce9145d22969ef2eb3854f2695190c3dc"
                         lock_matches: true
                         chain_trips: 1
                         degraded: true
@@ -13059,10 +13301,12 @@ components:
       in: header
       required: true
       description: >
-        Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange
-        `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation
-        all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its
-        identical re-send with the same key is a first submission.
+        Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id:
+        the server generates every `orderLinkId` itself, from no client-supplied string
+        (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF,
+        session state and authorisation (and, on an order submit or amend, the
+        `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused
+        request binds nothing, so its identical re-send with the same key is a first submission.
       schema: { type: string, format: uuid }
     CsrfToken:
       name: X-CSRF-Token
@@ -13094,7 +13338,10 @@ components:
         gate, it is decided after authentication, RBAC and account-scope resolution, so a
         foreign or missing id still answers `404` and a foreign or missing body account
         `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
-        `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+        `Idempotency-Key`, and a replay of a bound key needs a valid token too. On `placeOrder`
+        and `amendOrder` the live-enabled, kill-switch and order-entry-gate checks come after the
+        lookup instead; the arm token stays before it (the order of the checks is under
+        Idempotency in `info.description`). Demo and paper
         need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
         refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
         quantity-reducing amends, a take-profit change, and attaching a missing native SL,
@@ -13225,8 +13472,10 @@ components:
         no answer, give `503 exchange_unavailable` with `Retry-After` (a `timeout` is a `503`
         here, not the registry's `504 timeout`, because these operations declare `502` and `503`
         only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
-        it answered with an error, give `502 exchange_error`. Keys that fail both ways give the
-        `503`. Neither answer echoes exchange text: `Problem.exchange` holds `ret_code` only
+        it answered with an error, give `502 exchange_error`. These are `KeyProbeError` values:
+        `clock_drift` here is a probe's `10002`, not order entry's `503 clock_drift`. Keys that
+        fail both ways give the `503`. Neither answer echoes exchange text: `Problem.exchange`
+        holds `ret_code` only
         (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
         other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
         `remedy`: the caller retries.
@@ -13462,7 +13711,7 @@ components:
                   idle_locked_at: "2026-09-14T10:46:02Z",
                 }
     Forbidden:
-      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1)."
+      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1)."
       content:
         application/problem+json:
           schema:
@@ -13974,7 +14223,10 @@ components:
                   code: payload_too_large,
                 }
     UnprocessableEntity:
-      description: Semantically invalid request.
+      description: >
+        Semantically invalid request. The `nativeStop` and `riskCap` examples predate the
+        registry statuses (#2088): the order routes answer `validation_failed` with `400` and
+        `risk_limit_breached` with `403`.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -14154,6 +14406,18 @@ components:
                   instance: "urn:cv:req:0193f2bb-eeee",
                   code: degraded_data,
                   retry_after_seconds: 2,
+                }
+            clockDrift:
+              summary: Order entry halted until time sync recovers (`placeOrder`, E29-T04)
+              value:
+                {
+                  type: "https://candleviewer.local/errors/clock_drift",
+                  title: "Order entry halted until the server clock is back in sync with the exchange",
+                  status: 503,
+                  detail: "Order entry is paused until time sync recovers.",
+                  instance: "urn:cv:req:0193f2bb-ddde",
+                  code: clock_drift,
+                  retry_after_seconds: 5,
                 }
     AuthUnavailable:
       description: |
@@ -14623,6 +14887,20 @@ components:
         **Open-ended for readers:** clients must tolerate values they do not know, so adding a state
         is an additive change (C-6.3); an unknown state reads as live (non-terminal), as for
         `OrderState`.
+    OrderProvenance:
+      type: string
+      enum: [placed, reconciliation, recorded_stop]
+      description: |
+        How the order's row came to exist, set once by its writer and never by a request
+        (`orders.provenance`, `21-database-schema.md` section 3.3.4; not `origin`, which names
+        the intent's source in 24-internal-schemas.md section 8.1): `placed`, the OMS's own
+        submission (`placeOrder`, `createTradeGroup` legs, algo children, rule actions, the
+        position routes' closes); `reconciliation`, an exchange order that reconciliation
+        adopted as `untracked` (24-internal-schemas.md section 8.5 step 3c, E29-T06);
+        `recorded_stop`, the TP/SL order of a stop the OMS recorded (section 8.8 rule 6), which
+        E29-T05 materialises bound to its exchange `orderId` when it first appears, on its push
+        or in reconciliation, so that every execution has an order. It decides nothing: an order
+        or fill is OMS intent only through a row or a recorded stop bound to it (section 8.3).
     OrderType: { type: string, enum: [market, limit] }
     OrderSide: { type: string, enum: [buy, sell] }
     TimeInForce: { type: string, enum: [GTC, IOC, FOK, PostOnly] }
@@ -16428,13 +16706,15 @@ components:
           {
             type: string,
             maxLength: 36,
-            description: "Deterministic, derived from the Idempotency-Key.",
+            pattern: "^(cv[ldtp]-[0-7][0-9A-Za-z]{21}-[0-9A-Za-z]{4}-[0-9A-Za-z]{2}(en|sl|tp|sc|fl|ac)|ext-[0-9a-f]{32})$",
+            description: "Generated by the server once, before the first send, by the 24-internal-schemas.md section 8.3 scheme (`OUR_ID`), or `ext-` and 32 hex digits for an adopted exchange order (`EXT_ID`); never derived from the `Idempotency-Key` or any other client-supplied string (section 8.3 rule 1). Every retry re-sends it unchanged (C-2.10).",
           }
         exchange_order_id: { type: ["string", "null"] }
         symbol: { $ref: "#/components/schemas/Symbol" }
         side: { $ref: "#/components/schemas/OrderSide" }
         order_type: { $ref: "#/components/schemas/OrderType" }
         intent: { $ref: "#/components/schemas/OrderIntent" }
+        provenance: { $ref: "#/components/schemas/OrderProvenance", readOnly: true }
         state: { $ref: "#/components/schemas/OrderState" }
         lifecycle_state:
           oneOf: [{ $ref: "#/components/schemas/OrderLifecycleState" }, { type: "null" }]
@@ -16626,7 +16906,8 @@ components:
       description: >
         One account's share of a fan-out. Field names mirror the `trade_group_legs`
         columns in 21-database-schema.md §3.3.3 one-for-one; the only additions are
-        `orders` (the leg's order ids, a join rather than a column) and `resolved`
+        `orders` (the leg's order ids, a join rather than a column), `order_details` (those
+        orders themselves, on `placeOrder`'s `202`) and `resolved`
         (the computed parameters, stored as `resolved_*` columns and the
         `profile_snapshot` JSONB).
       properties:
@@ -16643,6 +16924,13 @@ components:
           description: Deterministic submission order within the group, so a partial fan-out is reproducible.
         resolved: { oneOf: [{ $ref: "#/components/schemas/ResolvedLegParams" }, { type: "null" }] }
         orders: { type: array, items: { type: string, format: uuid } }
+        order_details:
+          type: array
+          description: >
+            The leg's orders as `Order` objects, each with its state, in the order of `orders`.
+            Set on `placeOrder`'s `202` (`OrderAcceptance`); the other trade-group answers omit it
+            and list `orders` only.
+          items: { $ref: "#/components/schemas/Order" }
         target_qty: { $ref: "#/components/schemas/Decimal" }
         filled_qty: { $ref: "#/components/schemas/Decimal" }
         avg_entry_price: { oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }] }
@@ -16691,7 +16979,13 @@ components:
             description: "True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2).",
           }
         id: { type: string, format: uuid }
-        client_group_ref: { type: string }
+        client_group_ref:
+          type: string
+          format: uuid
+          description: >
+            The placing request's `Idempotency-Key` (24-internal-schemas.md section 8.3 rule 1),
+            or the server-minted UUID of a rule-, alert- or replay-originated group, as canonical
+            lower-case UUID text.
         symbol: { $ref: "#/components/schemas/Symbol" }
         side: { $ref: "#/components/schemas/OrderSide" }
         intent: { $ref: "#/components/schemas/OrderIntent" }
@@ -16714,6 +17008,21 @@ components:
             filled_qty: { $ref: "#/components/schemas/Decimal" }
             target_qty: { $ref: "#/components/schemas/Decimal" }
             realised_pnl: { oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }] }
+    OrderAcceptance:
+      type: object
+      additionalProperties: false
+      required: [trade_group, order]
+      description: >
+        `placeOrder`'s `202` (#913 ruling R3): what the request created, each order with its
+        state, so a client finds every order and its state from this answer alone. Exactly one
+        member is non-null. An entry (an order that is not reduce-only, or that exceeds the
+        position it reduces; SR-E29-01) creates a one-leg trade group: `trade_group` holds it,
+        its leg carrying the order in `order_details`, and `order` is null. A reduce-only order
+        that only reduces joins no trade group: `order` holds it, its `trade_group_id` null, and
+        `trade_group` is null.
+      properties:
+        trade_group: { oneOf: [{ $ref: "#/components/schemas/TradeGroup" }, { type: "null" }] }
+        order: { oneOf: [{ $ref: "#/components/schemas/Order" }, { type: "null" }] }
     AmendTradeGroupRequest:
       type: object
       additionalProperties: false

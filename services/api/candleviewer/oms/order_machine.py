@@ -211,7 +211,7 @@ _REFUSALS: Final = frozenset({"audit_command_refused_unowned", "audit_operator_c
 #: The context keys the facade reads after each committed step: its plain view (C-2.20).
 _VIEW: Final = (
     "order_link_id", "symbol", "exchange_order_id", "filled_qty", "halted_by_kill", "recon_misses",
-    "event_seq", "reduce_only",
+    "event_seq", "reduce_only", "recorded_stop",
 )  # fmt: skip
 ANOMALY: Final = "oms.reconcile_anomaly"
 
@@ -229,6 +229,7 @@ B1_AUDITS: Final[Mapping[str, tuple[str, Outcome, Severity]]] = MappingProxyType
     "kill_no_cancel_unverified_duplicate": ("orders.cancel", "denied", "warning"),
     "kill_ignored_terminal": ("orders.cancel", "denied", "info"),
     "kill_ignored_unowned": ("orders.cancel", "denied", "warning"),
+    "kill_spared_recorded_stop": ("orders.cancel", "denied", "info"),
     "kill_cancel_timeout": ("orders.cancel", "failure", "error"),
     "kill_cancel_failed": ("orders.cancel", "failure", "error"),
     "kill_cancel_lost": ("orders.cancel", "failure", "error"),
@@ -637,6 +638,21 @@ class OrderMachines:
         payload = {"order": fields} | ({} if pass_id is None else {"pass_id": pass_id})
         return await self._first(order, environment, "DISCOVERED", payload)
 
+    async def materialise(
+        self, order: NewOrder, *, environment: str, pass_id: str | None = None
+    ) -> str:
+        """The TP/SL order of a stop the OMS recorded has appeared, matched by E29-T05's private
+        stream or E29-T06's reconciler (24 Sec.8.3 rule 7, Sec.8.8 rule 6): build its machine and
+        record `MATERIALISED`, which writes its `submitted` row bound to the order's exchange id
+        and sends nothing. With a *pass_id* reconciliation materialised it, which its first row
+        records as its source. Its fills apply as a live order's do; it is reduce-only, so they
+        start no stop (INV-B1-o); and a KILL never cancels it (C-2.6)."""
+        fields = _order_fields(order) | {"exchange_order_id": order.exchange_order_id}
+        payload: dict[str, Any] = {"order": fields}
+        if pass_id is not None:
+            payload |= {"pass_id": pass_id, "source": "reconcile"}
+        return await self._first(order, environment, "MATERIALISED", payload)
+
     async def hydrate(self, account_id: UUID, order_id: UUID, *, environment: str) -> str:
         """After a restart (A7), the order's machine from its `order_events` (24 Sec.8.2
         "Recovery"), as the composition root (E29-T04) calls it for each non-final order the
@@ -693,13 +709,14 @@ class OrderMachines:
     ) -> str:
         """A command to the order, from a route, a rule, an algo or E29-T06's reconciler. Refused
         with `IllegalTransition` unless it is one of `COMMAND_EVENTS` with no `type` in its
-        payload, its state lists it and its source may send it (S9), and with
-        `DegradedLatchError` on a latched machine; else sent, answering the lifecycle state once
-        the step settled. `OrderStepRefused` when B1 rolled the step back (S7), and
-        `OrderStepUnknown` when its write may have committed all the same: the machine is then
-        rebuilt from the order's events before this returns, and the caller reads the order's
-        state again rather than resending. A command that waited while a resync rebuilt the
-        order's machine is taken by the rebuilt one."""
+        payload, its state lists it, its source may send it (S9) and it is no `AMEND` of a
+        recorded stop's row (24 Sec.8.8 rule 6), and with `DegradedLatchError` on a latched
+        machine; else sent, answering the lifecycle state once the step settled.
+        `OrderStepRefused` when B1 rolled the step back (S7), and `OrderStepUnknown` when its write
+        may have committed all the same: the machine is then rebuilt from the order's events
+        before this returns, and the caller reads the order's state again rather than resending.
+        A command that waited while a resync rebuilt the order's machine is taken by the rebuilt
+        one."""
         payload = payload or {}
         self._vet(COMMAND_EVENTS, event, payload)
         o = self._live(account_id, order_id)
@@ -762,7 +779,7 @@ class OrderMachines:
         with no machine (24 Sec.8.2 "An unknown outcome") and one whose hydration, which the KILL
         waited on, refused its history (OM-T03). A reason B1's schema would refuse is cut to
         `MAX_TEXT`, or `kill` when empty, never refused: a malformed reason must not stop a
-        KILL."""
+        KILL. A recorded stop's row is never killed: it audits its KILL, which commits so."""
         reason = reason[: b01.MAX_TEXT] or "kill"
         targets = {o.order_id: o for o in self._orders.values()} | self._resyncing
         live = [o for o in targets.values() if account_id in (None, o.account_id)]
@@ -1060,7 +1077,8 @@ class OrderMachines:
 
     def _admit(self, o: _Order, event: str, actor: Actor) -> None:
         """The synchronous gates of a command, before any send: the chain-trip latch (CV-C63), S9
-        and SR-E29-12 (whose source may send it), and legality."""
+        and SR-E29-12 (whose source may send it), a recorded stop's amend (24 Sec.8.8 rule 6), and
+        legality."""
         if event in ORDER_PATH:
             key = MachineKey(MACHINE, o.key, o.environment)
             if getattr(o.interp, "chain_trips", 0) and not self._latch.is_latched(key):
@@ -1070,7 +1088,10 @@ class OrderMachines:
         misowned = (event in USER_ONLY and actor != "user") or (
             event in SYSTEM_ONLY and actor != "system"
         )
-        if unowned or misowned:
+        # A recorded stop changes only through its record (`setPositionTpSl`), never by an amend,
+        # whatever its position (`order_not_amendable`); a cancel is the cancel service's to judge.
+        unamendable = event == "AMEND" and o.view.get("recorded_stop") is True
+        if unowned or misowned or unamendable:
             raise self._refuse(o.lifecycle, event)
         try:
             self.legality.require(o.lifecycle, event)
@@ -1303,9 +1324,10 @@ class OrderMachines:
     async def _kill(self, o: _Order, reason: str) -> None:
         """KILL. Both regions take it, so where B1 lists it into `killed` the configuration, not
         the receipt, proves it committed: the receipt can read clean when the `lifecycle` step
-        rolled back and the `protection` audit did not (CV-C06)."""
+        rolled back and the `protection` audit did not (CV-C06). A recorded stop's row stays live
+        by design: its guarded arm audits the KILL and sends nothing (C-2.6, INV-B1-p)."""
         await self._send_order(o, "KILL", {"reason": reason})
-        if o.lifecycle in self._killable:
+        if o.lifecycle in self._killable and o.view.get("recorded_stop") is not True:
             raise OrderStepRefused("KILL", "the lifecycle step was rolled back")
 
     def _done(self, o: _Order) -> bool:

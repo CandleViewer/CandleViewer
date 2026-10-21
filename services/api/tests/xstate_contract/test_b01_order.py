@@ -83,8 +83,12 @@ INVARIANTS: dict[str, str | tuple[str, ...]] = {
         "test_inv_b1_h_kill_at_most_one_cancel_only_if_submitted",
         "test_b01_order_core.py::test_inv_b1_h_kill_cancels_a_reconciled_duplicate",
         "test_b01_order_core.py::test_inv_b1_h_kill_cancels_nothing_under_an_unverified_duplicate",
+        "test_b01_order_recorded_stop.py::test_kill_spares_a_recorded_stop_in_each_live_state",
     ),
-    "INV-B1-i": "test_inv_b1_i_kill_never_touches_protection_property",
+    "INV-B1-i": (
+        "test_inv_b1_i_kill_never_touches_protection_property",
+        "test_b01_order_recorded_stop.py::test_kill_spares_a_materialised_stop_which_still_takes_its_fills",
+    ),
     "INV-B1-j": "test_inv_b1_j_result_adopted_only_if_ret_code_ok_property",
     "INV-B1-k": "test_inv_b1_k_exchange_end_is_never_stranded_property",
     "INV-B1-l": "test_inv_b1_l_untracked_is_never_managed_property",
@@ -96,6 +100,15 @@ INVARIANTS: dict[str, str | tuple[str, ...]] = {
     "INV-B1-o": (
         "test_inv_b1_o_every_arm_into_a_filled_state_raises_the_notice",
         "test_inv_b1_o_a_fill_reaching_a_final_or_held_order_is_an_audited_anomaly",
+    ),
+    "INV-B1-p": (
+        "test_b01_order_recorded_stop.py::test_inv_b1_p_a_recorded_stop_is_never_killed_and_keeps_every_fill_property",
+        "test_b01_order_recorded_stop.py::test_the_entry_is_taken_only_in_draft_and_invokes_no_service",
+        "test_b01_order_recorded_stop.py::test_a_materialised_stop_is_written_submitted_and_bound_with_nothing_sent",
+        "test_b01_order_recorded_stop.py::test_a_recorded_stops_fills_are_committed_as_a_live_rows",
+        "test_b01_order_recorded_stop.py::test_kill_meets_the_guarded_arm_first_in_every_live_state_the_row_reaches",
+        "test_b01_order_recorded_stop.py::test_a_cancel_reaches_a_recorded_stop_only_through_the_cancel_service",
+        "test_b01_order_recorded_stop.py::test_a_recorded_stop_replays_from_its_first_row",
     ),
 }
 
@@ -146,8 +159,11 @@ def test_inv_b1_d_cancel_pending_handles_exec() -> None:
 
 
 def test_inv_b1_e_unknown_resolved_only_by_recon() -> None:
-    leaving = {e for e, _g, _t in exits(CHART, "lifecycle.unknown")}
-    assert {e for e in leaving if not e.startswith("RECON_")} == {"MISMATCH"}  # #847: held
+    """Besides reconciliation, only `MISMATCH` (#847: held) and INV-B1-h's `KILL` leave it; version
+    4 puts that arm on the state, after INV-B1-p's guarded one."""
+    leaving = {(e, t) for e, _g, t in exits(CHART, "lifecycle.unknown")}
+    others = {(e, t) for e, t in leaving if not e.startswith("RECON_")}
+    assert others == {("MISMATCH", "order.lifecycle.held"), ("KILL", "order.lifecycle.killed")}
 
 
 def test_b01_killed_is_final_terminal_with_cancel_and_audit() -> None:
@@ -387,7 +403,7 @@ async def test_b01_bindings_schemas_guards_and_audits() -> None:
     finally:
         b01.set_audit_hook(None)
     want = [{"audit_kill": "halted_by_kill"}.get(n, n[6:]) for n in audits]
-    assert len(audits) == 11 and [c.args[0] for c in hook.await_args_list] == want
+    assert len(audits) == 12 and [c.args[0] for c in hook.await_args_list] == want
 
 
 @_HYP

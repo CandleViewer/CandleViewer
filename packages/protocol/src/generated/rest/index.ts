@@ -3483,14 +3483,24 @@ export interface paths {
     put?: never;
     /**
      * Place an order on a single account
-     * @description Single-account convenience wrapper over the trade-group machinery: the server creates a
-     *     one-leg trade group internally so that every order — single or fanned-out — shares one
-     *     state machine, one audit trail and one journal linkage.
+     * @description Single-account convenience wrapper over the trade-group machinery: for an entry the server
+     *     creates a one-leg trade group internally, so that an entry, single or fanned-out, has one
+     *     state machine, one audit trail and one journal linkage. A reduce-only order that only
+     *     reduces joins no trade group (`OrderAcceptance`).
      *
      *     **Invariants enforced server-side:**
-     *     * The account's active profile must allow the symbol, otherwise `risk_limit_breached`.
-     *     * Price is snapped/validated against `tick_size`; qty against `qty_step`/min/max
-     *       (`tick_size_violation` / `lot_size_violation`).
+     *     * The account's active profile must be enabled and trading-enabled and allow the symbol,
+     *       otherwise `risk_limit_breached` (24-internal-schemas.md section 9.3 step 1; the profile
+     *       an account is created with is not trading-enabled, `21-database-schema.md` section
+     *       3.2.4).
+     *     * Price, trigger price and stop are held to the instrument's `min_price` to `max_price`,
+     *       and the quantity above zero and within its ceiling (`max_order_qty`, or
+     *       `max_mkt_order_qty` for a market order): each figure outside is listed in `errors[]`
+     *       with its `field` (`price`, `trigger.price`, `stop_loss`, `qty`) and the bound it breaks
+     *       as its `rule` (`min_price`, `max_price`, `min_order_qty`, `max_order_qty`,
+     *       `max_mkt_order_qty`), answered `lot_size_violation` when the quantity is listed and
+     *       `validation_failed` otherwise. Price is also snapped/validated against `tick_size`;
+     *       qty against `qty_step`/min/max (`tick_size_violation` / `lot_size_violation`).
      *     * A native exchange-side stop-loss is mandatory for every entry (C-2.6, arch P4). The
      *       server classifies an order by its effect on the exchange-truth position, never by
      *       its label: an order that is not reduce-only, or whose quantity exceeds the position
@@ -3504,14 +3514,85 @@ export interface paths {
      *       order that is not an entry; `errors[]` lists every rule that fails, so a mislabelled
      *       opening order with no stop to apply carries both `native_stop_required` and
      *       `intent_mismatch`. `reverse` and `algo_child` are server-assigned (`reversePosition`,
-     *       the emulated algos), so `placeOrder` refuses them with `intent_mismatch` too.
-     *     * `Idempotency-Key` is REQUIRED. The server derives a deterministic `orderLinkId`
-     *       (≤36 chars) from it, so a retried request can never double-submit.
-     *     * The kill-switch, if engaged for the account or globally, rejects with
-     *       `trading_disabled` before anything reaches the exchange.
+     *       the emulated algos), so `placeOrder` refuses them with `intent_mismatch` too. Until
+     *       E28-T03's sizer and stop resolver (#907) land, the interim pipeline sizes `fixed_qty`
+     *       only: another `sizing.mode` is refused with `validation_failed` /
+     *       `sizing_mode_unsupported`, and a stop in `atr` or `r_multiple` units, whether
+     *       `stop_loss` or the profile's offset, with `validation_failed` / `stop_unit_unsupported`
+     *       (#913 ruling R4); the `marketWithBracket` and `conditional` examples need #907.
+     *     * These refusals answer with their `x-error-codes` status: `400` for `validation_failed`
+     *       (each failing rule in `errors[]`), `tick_size_violation` and `lot_size_violation`, and
+     *       `403` for `risk_limit_breached`.
+     *     * `Idempotency-Key` is REQUIRED, and it is never part of an exchange id: the server
+     *       generates each `orderLinkId` once, before the first send, from no client-supplied
+     *       string (24-internal-schemas.md section 8.3 rule 1), and a retried send re-sends that id,
+     *       so it can never double-submit (C-2.10). The key is kept with the request's fingerprint
+     *       in a permanent anchor scoped to the caller and this operation (`21-database-schema.md`
+     *       section 3.3.10, SR-E29-07), written in the one transaction that persists the request's
+     *       rows: the same key and body, at any age, reach the same rows before any send and never
+     *       mint new ids or a second order. Inside the 24 h record the replay is the original
+     *       answer; later it carries the same rows in their current state
+     *       (`Idempotency-Replayed: true` either way). The same key with another body is
+     *       `409 idempotency_key_reuse`, as is a key this principal already used for a trade group
+     *       (`createTradeGroup`); a repeat while the first is still being processed is
+     *       `409 idempotency_in_flight` with `retry_after_seconds`; and a key that another
+     *       principal sent is answered as one never seen.
+     *     * A repeat never sends: only the first request starts its order's send, B1's `SEND`
+     *       after its live, kill-switch and gate checks, and only B1 resumes it after a restart
+     *       (24-internal-schemas.md section 8.2). A request that ended without recording its
+     *       answer (a crash, or a store failure after the send) leaves its anchor undecided: a
+     *       repeat is `409 idempotency_in_flight` only within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of
+     *       the anchor's creation, longer than the submission's own bounds, and later decides it,
+     *       `202` with the rows in their current state (an order still `validated` was never sent).
+     *     * Live trading not enabled, the B18 kill switch (engaged for the account or globally) and
+     *       the order-entry gate refuse with `403 trading_disabled` before anything reaches the
+     *       exchange. They come after the idempotency lookup (the order of the checks under
+     *       Idempotency in `info.description`), so the exact repeat of an accepted request gets its
+     *       stored outcome.
+     *     * While order entry is halted for clock drift (Bybit `10002`, 24-internal-schemas.md
+     *       section 8.6, or the exchange clock guard past 2000 ms, section 2.8), the request is
+     *       refused with `503 clock_drift` and `Retry-After` until time sync recovers. A request
+     *       whose own create meets `10002` was sent and refused: its order is `rejected`, it
+     *       answers `502 exchange_error` with that `ret_code`, and the halt starts with it.
+     *     * An order is recorded before it is sent (24-internal-schemas.md section 8.4), so while
+     *       Postgres is unavailable the request is refused with `503 store_unavailable` before any
+     *       exchange call. A store failure after the send is never a `503`: the request answers
+     *       its outcome, `202` with the order's last known state or the `502`.
+     *     * An entry's stop request is recorded with its order, one stop request in flight per
+     *       position (`21-database-schema.md` section 3.3.11, the recorded stop, which lands with
+     *       E29-T04's slice 2a). An entry whose stop request collides with one still in flight on
+     *       the same position is retried for a bounded time, then refused with
+     *       `409 stop_request_in_flight` and `Retry-After`: nothing is recorded or sent and the key
+     *       is not bound, so the same key and body sent again after `Retry-After` are a first
+     *       submission.
+     *     * The account's per-UID exchange budget refuses at two points, each with
+     *       `429 exchange_rate_limited` and `Retry-After` (`RATE_BUDGET_EXCEEDED`,
+     *       24-internal-schemas.md sections 8.4 and 8.7). Before the persist, B1's `rate` verdict
+     *       reads the budget's headroom through the trading port without taking a token (#2877
+     *       ruling 4): with none, nothing is recorded or sent and the key is not bound, so the same
+     *       key and body sent again after `Retry-After` are a first submission. At the send, the
+     *       trading port takes the create's one token, waiting at most the bound its factory sets
+     *       (for an entry `CV_FANOUT_ADMIT_WAIT_MS`, 750 ms, `20-architecture.md` section 4.3) and
+     *       never queueing past it: without one, nothing is sent, and the recorded order ends
+     *       `rejected` with `RATE_BUDGET_EXCEEDED`, a refused send, never `unknown`, answered as
+     *       `429 exchange_rate_limited` and stored as the anchor's `outcome_code`
+     *       (`21-database-schema.md` section 3.3.10). That answer is recorded with the request's
+     *       rows, so a repeat at any age gets the same `429` and sends nothing: placing the order
+     *       again takes a new `Idempotency-Key`. It is not retryable under its key: the repeat
+     *       carries `Idempotency-Replayed: true` and no `Retry-After`.
      *
-     *     The response is an **acknowledgement of acceptance into the OMS**, not a fill. Terminal
-     *     state arrives on the WS `orders` / `executions` topics.
+     *     The response is an **acknowledgement of acceptance into the OMS**, not a fill: `202` with
+     *     every order the request created and its state (`OrderAcceptance`). An order the exchange
+     *     acknowledged is `submitted` (`lifecycle_state`; its `state` is `accepted`). A send whose
+     *     result is ambiguous (a timeout or transport error after the request left;
+     *     24-internal-schemas.md section 8.6, order creates) also answers `202`, with the order in
+     *     `unknown`: it is never re-sent (C-2.10), an alert fires, and reconciliation settles it
+     *     (section 8.5). So does an id the exchange already holds: the order is adopted after its
+     *     full match, or `held` (SR-E29-03, section 8.3 rule 3). A business rejection is `502`
+     *     (`OrderExchangeProblem`). An `orderLinkId` allocation that spends its bound
+     *     (`OrderLinkIdExhausted`, section 8.3 rule 5) sends nothing and answers
+     *     `500 internal_error`, which pages. Terminal state arrives on the WS `orders` /
+     *     `executions` topics.
      */
     post: operations["placeOrder"];
     delete?: never;
@@ -3553,6 +3634,12 @@ export interface paths {
      *     Amending only one side of a TP/SL pair breaks Bybit's OCO pairing (digest 06 §19); the
      *     server therefore re-sends both sides whenever either changes, and records the paired
      *     amend in `order_events`.
+     *
+     *     `If-Match` takes the order's `ETag` from an answer about it (`placeOrder`'s `202` or this
+     *     route's). The `ETag` is opaque and changes with every step the order takes, each
+     *     `order_events` row (an accepted amend, a fill, any change of state): when the order has
+     *     changed since, the amend is refused with `412 version_conflict` and nothing is sent;
+     *     without `If-Match` it applies to the order as it stands.
      */
     patch: operations["amendOrder"];
     trace?: never;
@@ -4765,8 +4852,20 @@ export interface paths {
      *     **Intent.** The request's `intent` applies to every leg under `placeOrder`'s rule: an
      *     `intent` that disagrees with a leg's effect is refused with `validation_failed` /
      *     `intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`. That refusal
-     *     is the whole request's, before any leg is sent or any exchange call is made, whatever
-     *     `atomicity` says; it is never a per-leg failure.
+     *     is the whole request's, before any leg is sent, whatever `atomicity` says; it is never a
+     *     per-leg failure.
+     *
+     *     **Idempotency.** The group keeps the request's `Idempotency-Key` as its `client_group_ref`
+     *     with the request's fingerprint, unique per creator (24-internal-schemas.md section 8.3
+     *     rule 1), so the same key and body, at any age, reach the same group and send nothing. A
+     *     repeat is admitted as a first submission is, so a grant withdrawn since refuses it and
+     *     nothing stored is returned. While the 24 h record holds the key the replay is the original
+     *     answer, and otherwise (expired, evicted or lost at a restart) the group in its current
+     *     state as `getTradeGroup` returns it (`Idempotency-Replayed: true` either way). The same
+     *     key with another body is `409 idempotency_key_reuse` at any age, as is a key this
+     *     principal already used for a `placeOrder` entry; a repeat while the first is still being
+     *     processed is `409 idempotency_in_flight` with `retry_after_seconds`; and a key that
+     *     another principal sent is answered as one never seen.
      */
     post: operations["createTradeGroup"];
     delete?: never;
@@ -7868,13 +7967,14 @@ export interface components {
       is_paper: boolean;
       /** @description The B1 chart state of the order, verbatim; null until the OMS records it. */
       lifecycle_state?: components["schemas"]["OrderLifecycleState"] | null;
-      /** @description Deterministic, derived from the Idempotency-Key. */
+      /** @description Generated by the server once, before the first send, by the 24-internal-schemas.md section 8.3 scheme (`OUR_ID`), or `ext-` and 32 hex digits for an adopted exchange order (`EXT_ID`); never derived from the `Idempotency-Key` or any other client-supplied string (section 8.3 rule 1). Every retry re-sends it unchanged (C-2.10). */
       order_link_id?: string;
       order_type: components["schemas"]["OrderType"];
       /** Format: uuid */
       parent_order_id?: string | null;
       position_idx?: number;
       price?: components["schemas"]["Decimal"] | null;
+      readonly provenance?: components["schemas"]["OrderProvenance"];
       qty: components["schemas"]["Decimal"];
       reduce_only?: boolean;
       /** @description CandleViewer's reason, never the exchange's text, which only the audited diagnostics read serves (SR-E29-09). */
@@ -7897,6 +7997,11 @@ export interface components {
       trigger_price?: components["schemas"]["Decimal"] | null;
       /** Format: date-time */
       updated_at?: string;
+    };
+    /** @description `placeOrder`'s `202` (#913 ruling R3): what the request created, each order with its state, so a client finds every order and its state from this answer alone. Exactly one member is non-null. An entry (an order that is not reduce-only, or that exceeds the position it reduces; SR-E29-01) creates a one-leg trade group: `trade_group` holds it, its leg carrying the order in `order_details`, and `order` is null. A reduce-only order that only reduces joins no trade group: `order` holds it, its `trade_group_id` null, and `trade_group` is null. */
+    OrderAcceptance: {
+      order: components["schemas"]["Order"] | null;
+      trade_group: components["schemas"]["TradeGroup"] | null;
     };
     OrderbookSnapshot: {
       /** @description [price, size], ascending. */
@@ -8017,6 +8122,20 @@ export interface components {
       | "rejected"
       | "expired"
       | "killed";
+    /**
+     * @description How the order's row came to exist, set once by its writer and never by a request
+     *     (`orders.provenance`, `21-database-schema.md` section 3.3.4; not `origin`, which names
+     *     the intent's source in 24-internal-schemas.md section 8.1): `placed`, the OMS's own
+     *     submission (`placeOrder`, `createTradeGroup` legs, algo children, rule actions, the
+     *     position routes' closes); `reconciliation`, an exchange order that reconciliation
+     *     adopted as `untracked` (24-internal-schemas.md section 8.5 step 3c, E29-T06);
+     *     `recorded_stop`, the TP/SL order of a stop the OMS recorded (section 8.8 rule 6), which
+     *     E29-T05 materialises bound to its exchange `orderId` when it first appears, on its push
+     *     or in reconciliation, so that every execution has an order. It decides nothing: an order
+     *     or fill is OMS intent only through a row or a recorded stop bound to it (section 8.3).
+     * @enum {string}
+     */
+    OrderProvenance: "placed" | "reconciliation" | "recorded_stop";
     /** @enum {string} */
     OrderSide: "buy" | "sell";
     /**
@@ -9576,6 +9695,10 @@ export interface components {
       algo?: components["schemas"]["AlgoSpec"];
       /** @enum {string} */
       atomicity?: "best_effort" | "all_or_none";
+      /**
+       * Format: uuid
+       * @description The placing request's `Idempotency-Key` (24-internal-schemas.md section 8.3 rule 1), or the server-minted UUID of a rule-, alert- or replay-originated group, as canonical lower-case UUID text.
+       */
       client_group_ref?: string;
       /** Format: date-time */
       closed_at?: string | null;
@@ -9609,7 +9732,7 @@ export interface components {
       /** Format: date-time */
       updated_at?: string;
     };
-    /** @description One account's share of a fan-out. Field names mirror the `trade_group_legs` columns in 21-database-schema.md §3.3.3 one-for-one; the only additions are `orders` (the leg's order ids, a join rather than a column) and `resolved` (the computed parameters, stored as `resolved_*` columns and the `profile_snapshot` JSONB). */
+    /** @description One account's share of a fan-out. Field names mirror the `trade_group_legs` columns in 21-database-schema.md §3.3.3 one-for-one; the only additions are `orders` (the leg's order ids, a join rather than a column), `order_details` (those orders themselves, on `placeOrder`'s `202`) and `resolved` (the computed parameters, stored as `resolved_*` columns and the `profile_snapshot` JSONB). */
     TradeGroupLeg: {
       /**
        * Format: uuid
@@ -9633,6 +9756,8 @@ export interface components {
       native_sl_confirmed?: boolean;
       /** Format: date-time */
       native_sl_confirmed_at?: string | null;
+      /** @description The leg's orders as `Order` objects, each with its state, in the order of `orders`. Set on `placeOrder`'s `202` (`OrderAcceptance`); the other trade-group answers omit it and list `orders` only. */
+      order_details?: components["schemas"]["Order"][];
       orders?: string[];
       realised_pnl?: components["schemas"]["Decimal"] | null;
       resolved?: components["schemas"]["ResolvedLegParams"] | null;
@@ -10078,7 +10203,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
     Forbidden: {
       headers: {
         [name: string]: unknown;
@@ -10225,7 +10350,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Semantically invalid request. */
+    /** @description Semantically invalid request. The `nativeStop` and `riskCap` examples predate the registry statuses (#2088): the order routes answer `validation_failed` with `400` and `risk_limit_breached` with `403`. */
     UnprocessableEntity: {
       headers: {
         [name: string]: unknown;
@@ -10257,7 +10382,10 @@ export interface components {
      *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
      *     foreign or missing id still answers `404` and a foreign or missing body account
      *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
-     *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+     *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. On `placeOrder`
+     *     and `amendOrder` the live-enabled, kill-switch and order-entry-gate checks come after the
+     *     lookup instead; the arm token stays before it (the order of the checks is under
+     *     Idempotency in `info.description`). Demo and paper
      *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
      *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
      *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
@@ -10287,7 +10415,7 @@ export interface components {
     HotkeyProfileId: string;
     /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
     IdempotencyKey: string;
-    /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+    /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
     IdempotencyKeyRequired: string;
     /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
     IfMatch: string;
@@ -10382,8 +10510,10 @@ export interface components {
      *     no answer, give `503 exchange_unavailable` with `Retry-After` (a `timeout` is a `503`
      *     here, not the registry's `504 timeout`, because these operations declare `502` and `503`
      *     only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
-     *     it answered with an error, give `502 exchange_error`. Keys that fail both ways give the
-     *     `503`. Neither answer echoes exchange text: `Problem.exchange` holds `ret_code` only
+     *     it answered with an error, give `502 exchange_error`. These are `KeyProbeError` values:
+     *     `clock_drift` here is a probe's `10002`, not order entry's `503 clock_drift`. Keys that
+     *     fail both ways give the `503`. Neither answer echoes exchange text: `Problem.exchange`
+     *     holds `ret_code` only
      *     (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
      *     other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
      *     `remedy`: the caller retries.
@@ -10962,7 +11092,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -11467,7 +11597,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -11510,7 +11640,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -11575,7 +11705,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -13569,8 +13699,10 @@ export interface operations {
          *     no answer, give `503 exchange_unavailable` with `Retry-After` (a `timeout` is a `503`
          *     here, not the registry's `504 timeout`, because these operations declare `502` and `503`
          *     only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
-         *     it answered with an error, give `502 exchange_error`. Keys that fail both ways give the
-         *     `503`. Neither answer echoes exchange text: `Problem.exchange` holds `ret_code` only
+         *     it answered with an error, give `502 exchange_error`. These are `KeyProbeError` values:
+         *     `clock_drift` here is a probe's `10002`, not order entry's `503 clock_drift`. Keys that
+         *     fail both ways give the `503`. Neither answer echoes exchange text: `Problem.exchange`
+         *     holds `ret_code` only
          *     (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
          *     other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
          *     `remedy`: the caller retries.
@@ -13697,7 +13829,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -13821,8 +13953,10 @@ export interface operations {
          *     no answer, give `503 exchange_unavailable` with `Retry-After` (a `timeout` is a `503`
          *     here, not the registry's `504 timeout`, because these operations declare `502` and `503`
          *     only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
-         *     it answered with an error, give `502 exchange_error`. Keys that fail both ways give the
-         *     `503`. Neither answer echoes exchange text: `Problem.exchange` holds `ret_code` only
+         *     it answered with an error, give `502 exchange_error`. These are `KeyProbeError` values:
+         *     `clock_drift` here is a probe's `10002`, not order entry's `503 clock_drift`. Keys that
+         *     fail both ways give the `503`. Neither answer echoes exchange text: `Problem.exchange`
+         *     holds `ret_code` only
          *     (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
          *     other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
          *     `remedy`: the caller retries.
@@ -13878,7 +14012,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -15199,7 +15333,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -15978,7 +16112,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
@@ -15995,7 +16129,10 @@ export interface operations {
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
          *     foreign or missing id still answers `404` and a foreign or missing body account
          *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
-         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. On `placeOrder`
+         *     and `amendOrder` the live-enabled, kill-switch and order-entry-gate checks come after the
+         *     lookup instead; the arm token stays before it (the order of the checks is under
+         *     Idempotency in `info.description`). Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
          *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
@@ -16022,7 +16159,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Accepted into the OMS; submission to the exchange is in flight. */
+      /** @description Accepted into the OMS, never a fill: every order the request created, with its state (`OrderAcceptance`). `ETag` is the created order's version, for `If-Match` on `amendOrder`. */
       202: {
         headers: {
           ETag: components["headers"]["ETag"];
@@ -16030,14 +16167,45 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["TradeGroup"];
+          "application/json": components["schemas"]["OrderAcceptance"];
         };
       };
       400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
-      409: components["responses"]["Conflict"];
+      /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description), or `stop_request_in_flight`: an entry whose stop request collided with one still in flight on the same position, past the server's bounded retry. Nothing was recorded or sent for it and the key is not bound. Only `stop_request_in_flight` carries `Retry-After`, with `retry_after_seconds`; after it the same key and body are a first submission. */
+      409: {
+        headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       422: components["responses"]["UnprocessableEntity"];
-      429: components["responses"]["RateLimited"];
+      /** @description `exchange_rate_limited` with `Retry-After`, at either point of the exchange budget (see the description), or the per-user `rate_limited` of every route. The headroom refusal before the persist binds no key, so the same key and body may be sent again after `Retry-After`. The refusal at the send is recorded under the key and is not retryable under it: a repeat gets that `429` again with `Idempotency-Replayed: true` and no `Retry-After`, and placing the order again takes a new `Idempotency-Key`. */
+      429: {
+        headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+          "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+          "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+          "RateLimit-Reset": components["headers"]["RateLimitReset"];
+          "Retry-After": components["headers"]["RetryAfter"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description `internal_error`. On this route it is also an `orderLinkId` allocation that spent its bound (`OrderLinkIdExhausted`, 24-internal-schemas.md section 8.3 rule 5): nothing was sent, and the condition pages the operator. */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -16075,7 +16243,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -16113,7 +16281,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
@@ -16132,7 +16300,10 @@ export interface operations {
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
          *     foreign or missing id still answers `404` and a foreign or missing body account
          *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
-         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. On `placeOrder`
+         *     and `amendOrder` the live-enabled, kill-switch and order-entry-gate checks come after the
+         *     lookup instead; the arm token stays before it (the order of the checks is under
+         *     Idempotency in `info.description`). Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
          *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
@@ -16165,6 +16336,7 @@ export interface operations {
       /** @description Amend accepted. */
       202: {
         headers: {
+          ETag: components["headers"]["ETag"];
           [name: string]: unknown;
         };
         content: {
@@ -16209,7 +16381,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -16333,7 +16505,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -16375,7 +16547,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
@@ -16392,7 +16564,10 @@ export interface operations {
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
          *     foreign or missing id still answers `404` and a foreign or missing body account
          *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
-         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. On `placeOrder`
+         *     and `amendOrder` the live-enabled, kill-switch and order-entry-gate checks come after the
+         *     lookup instead; the arm token stays before it (the order of the checks is under
+         *     Idempotency in `info.description`). Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
          *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
@@ -16444,7 +16619,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
@@ -16461,7 +16636,10 @@ export interface operations {
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
          *     foreign or missing id still answers `404` and a foreign or missing body account
          *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
-         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. On `placeOrder`
+         *     and `amendOrder` the live-enabled, kill-switch and order-entry-gate checks come after the
+         *     lookup instead; the arm token stays before it (the order of the checks is under
+         *     Idempotency in `info.description`). Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
          *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
@@ -16510,7 +16688,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
@@ -16527,7 +16705,10 @@ export interface operations {
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
          *     foreign or missing id still answers `404` and a foreign or missing body account
          *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
-         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. On `placeOrder`
+         *     and `amendOrder` the live-enabled, kill-switch and order-entry-gate checks come after the
+         *     lookup instead; the arm token stays before it (the order of the checks is under
+         *     Idempotency in `info.description`). Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
          *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
@@ -16577,7 +16758,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -17159,7 +17340,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -17525,7 +17706,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -18376,7 +18557,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
@@ -18393,7 +18574,10 @@ export interface operations {
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
          *     foreign or missing id still answers `404` and a foreign or missing body account
          *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
-         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. On `placeOrder`
+         *     and `amendOrder` the live-enabled, kill-switch and order-entry-gate checks come after the
+         *     lookup instead; the arm token stays before it (the order of the checks is under
+         *     Idempotency in `info.description`). Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
          *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
@@ -18423,6 +18607,7 @@ export interface operations {
       /** @description Trade group accepted; legs are submitting. */
       202: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
@@ -18431,6 +18616,7 @@ export interface operations {
       };
       400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
@@ -18466,7 +18652,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
@@ -18483,7 +18669,10 @@ export interface operations {
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
          *     foreign or missing id still answers `404` and a foreign or missing body account
          *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
-         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. On `placeOrder`
+         *     and `amendOrder` the live-enabled, kill-switch and order-entry-gate checks come after the
+         *     lookup instead; the arm token stays before it (the order of the checks is under
+         *     Idempotency in `info.description`). Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
          *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
@@ -18532,7 +18721,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -18638,7 +18827,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify

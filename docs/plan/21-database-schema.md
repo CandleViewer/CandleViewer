@@ -268,7 +268,19 @@ erDiagram
     trade_group_definitions ||--o{ trade_group_definition_members : lists
     exchange_accounts ||--o{ trade_group_definition_members : joins
     trade_group_definitions ||--o{ trade_groups : fires
+    idempotency_anchors |o--o| trade_groups : names
+    idempotency_anchors |o--o| orders : names
 
+    idempotency_anchors {
+        uuid id PK
+        uuid created_by FK
+        text operation UK "with created_by, client_ref"
+        text client_ref UK
+        sha256_hex request_sha256
+        uuid trade_group_id FK
+        uuid order_id FK
+        smallint outcome_status
+    }
     trade_groups {
         uuid id PK
         text client_group_ref UK "unique per created_by"
@@ -1877,7 +1889,7 @@ Every order we ever intend to place gets a row **before** the network call, with
 | Column                | Type           | Null | Default    | Constraints / notes                                               |
 | --------------------- | -------------- | ---- | ---------- | ----------------------------------------------------------------- |
 | `id`                  | uuid           | no   | —          | PK                                                                |
-| `trade_group_leg_id`  | uuid           | yes  | NULL       | NULL for orders adopted during reconciliation                     |
+| `trade_group_leg_id`  | uuid           | yes  | NULL       | NULL for adopted orders and groupless ones (§3.3.10)              |
 | `exchange_account_id` | uuid           | no   | —          | FK RESTRICT; denormalised for account-scoped queries              |
 | `parent_order_id`     | uuid           | yes  | NULL       | FK self — algo children (TWAP slices, scaled rungs, OCO siblings) |
 | `oco_group_ref`       | text           | yes  | NULL       | Emulated OCO pairing key (Bybit has no API OCO)                   |
@@ -1916,6 +1928,7 @@ Every order we ever intend to place gets a row **before** the network call, with
 | `last_reconciled_at`  | timestamptz    | yes  | NULL       |                                                                   |
 | `is_paper`            | boolean        | no   | `false`    | Paper-matcher orders never hit the network                        |
 | `lifecycle_state`     | enum           | yes  | NULL       | `order_lifecycle_state`: the B1 chart state verbatim (`0034`)     |
+| `provenance`          | text           | no   | `'placed'` | placed / reconciliation / recorded_stop (22 `OrderProvenance`)    |
 
 ```sql
 CREATE TABLE orders (
@@ -2005,6 +2018,13 @@ ALTER TABLE orders ADD CONSTRAINT ord_lifecycle CHECK (lifecycle_state IS NULL O
 DROP INDEX ix_orders_open;
 CREATE INDEX ix_orders_open      ON orders (exchange_account_id, symbol)
   WHERE state IN ('pending_submit','submitted','accepted','partially_filled','pending_cancel','pending_amend','triggered','unknown','quarantined');
+```
+
+**Provenance (E29-T04).** `provenance` says how the row came to exist (22 `OrderProvenance`; not 24 §8.1's `origin`, the intent's source), set by its writer at insert and never changed: `placed`, the OMS's own submission, B1's `VALIDATE` insert (24 §8.4) that every OMS order takes (`placeOrder`, `createTradeGroup` legs, algo children, rule actions, the position routes' closes); `reconciliation`, an exchange order that reconciliation records as `untracked` (Adopted rows, above; E29-T06); `recorded_stop`, the TP/SL order of a stop the OMS recorded (24 §8.8 rule 6), which E29-T05 materialises bound to its exchange `orderId` when it first appears, on its push or in reconciliation, so that every execution has an order (the orchestrator's ruling of 2026-10-21). It decides nothing: an order or fill is OMS intent only through a row or a recorded stop bound to it (24 §8.3 rule 7). The default fills the rows that exist when the column lands, which only the submission path writes, and `ord_provenance` admits exactly the three values. The column lands with the E29-T04 implementation, in the revision that creates `idempotency_anchors` (§9.4).
+
+```sql
+ALTER TABLE orders ADD COLUMN provenance text NOT NULL DEFAULT 'placed';
+ALTER TABLE orders ADD CONSTRAINT ord_provenance CHECK (provenance IN ('placed','reconciliation','recorded_stop'));
 ```
 
 #### 3.3.5 `order_events` — append-only audit of the order lifecycle
@@ -2222,6 +2242,91 @@ CREATE TABLE instruments (
   CONSTRAINT inst_qty_rng CHECK (max_order_qty >= min_order_qty)
 );
 CREATE INDEX ix_instruments_status ON instruments (status);
+```
+
+#### 3.3.10 `idempotency_anchors` — the permanent, principal-scoped replay anchor (E29-T04)
+
+The request-level record of SR-E29-07 that [#913 ruling R3](https://github.com/CandleViewer/CandleViewer/issues/913#issuecomment-6303723669) adds for order-creating requests. The 24 h `Idempotency-Key` record of `22-api-openapi.yaml` is a response cache; this row outlives it, so the exact repeat of a request at any age reaches the rows it created before any send and never mints new ids or a second order. `placeOrder` writes one for every request it persists, naming an entry's one-leg group or a reduce-only order that joins no group (`ia_target`). E29-T07 (#915) records `closePosition`, `reversePosition` and `closeAllPositions` here too (OM-T11), adding in its own revision any column their outcomes need. The key is scoped to its principal and operation: the lookup by (`created_by`, `operation`, `client_ref`) never reads another principal's row, so a key another principal sent is answered as one never seen, and a key reused on another operation is another row here. An entry's group keeps the key as its `client_group_ref` too (§3.3.2, 24 §8.3 rule 1), its `client_body_sha256` holding the anchor's `request_sha256`, so entries share the group-level namespace with `createTradeGroup`: a key the principal already used for a group is `409 idempotency_key_reuse`, as is a fingerprint that differs from the row's.
+
+| Column             | Type        | Null | Default | Constraints / notes                                                                                     |
+| ------------------ | ----------- | ---- | ------- | ------------------------------------------------------------------------------------------------------- |
+| `id`               | uuid        | no   | —       | PK                                                                                                      |
+| `created_by`       | uuid        | no   | —       | FK → users RESTRICT; the principal that sent the request                                                |
+| `operation`        | text        | no   | —       | The `operationId` (`ia_operation`)                                                                      |
+| `client_ref`       | text        | no   | —       | The `Idempotency-Key` as canonical lower-case UUID text (`str(UUID(header))`)                           |
+| `request_sha256`   | sha256_hex  | no   | —       | The fingerprint: SHA-256 of the method, path and raw body (`request_fingerprint`, `api/idempotency.py`) |
+| `trade_group_id`   | uuid        | yes  | NULL    | FK → trade_groups RESTRICT; an entry's one-leg group                                                    |
+| `order_id`         | uuid        | yes  | NULL    | FK → orders RESTRICT; the order of a request that created no group                                      |
+| `outcome_status`   | smallint    | yes  | NULL    | The first answer's HTTP status (`202`, `429` or `502` on `placeOrder`); NULL until it is decided        |
+| `outcome_code`     | text        | yes  | NULL    | The first answer's problem `code` (an `x-error-codes` slug) when it was a refusal                       |
+| `outcome_ret_code` | integer     | yes  | NULL    | The exchange's `retCode` of an `exchange_error`, as `OrderExchangeProblem` carries it                   |
+| `created_at`       | timestamptz | no   | `now()` |                                                                                                         |
+| `decided_at`       | timestamptz | yes  | NULL    | When the outcome was recorded                                                                           |
+
+```sql
+CREATE TABLE idempotency_anchors (
+  id               uuid PRIMARY KEY,
+  created_by       uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  operation        text NOT NULL,
+  client_ref       text NOT NULL,
+  request_sha256   sha256_hex NOT NULL,
+  trade_group_id   uuid REFERENCES trade_groups(id) ON DELETE RESTRICT,
+  order_id         uuid REFERENCES orders(id) ON DELETE RESTRICT,
+  outcome_status   smallint,
+  outcome_code     text,
+  outcome_ret_code integer,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  decided_at       timestamptz,
+  CONSTRAINT ia_operation CHECK (operation IN ('placeOrder','closePosition','reversePosition','closeAllPositions')),
+  CONSTRAINT ia_ref_fmt   CHECK (client_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+  CONSTRAINT ia_target    CHECK (num_nonnulls(trade_group_id, order_id) <= 1
+    AND (operation <> 'placeOrder' OR num_nonnulls(trade_group_id, order_id) = 1)),
+  CONSTRAINT ia_decided   CHECK ((outcome_status IS NULL) = (decided_at IS NULL)
+    AND (outcome_status IS NULL OR outcome_status BETWEEN 200 AND 599)),
+  CONSTRAINT ia_code      CHECK ((outcome_code IS NOT NULL) = COALESCE(outcome_status >= 400, false)
+    AND (outcome_code IS NULL OR outcome_code ~ '^[a-z][a-z0-9_]{1,63}$')),
+  CONSTRAINT ia_ret_code  CHECK ((outcome_ret_code IS NULL OR outcome_code = 'exchange_error') IS TRUE),
+  CONSTRAINT ux_ia_principal_ref UNIQUE (created_by, operation, client_ref)
+);
+```
+
+**Writes.** The row is inserted before any send, in the one transaction that persists the request's rows, B1's `VALIDATE` step (24 §8.4 step 5): the anchor, for an entry the one-leg group and its leg, and the order's `validated` row with its first event. So an anchor never exists without its order, and a transaction that does not commit leaves nothing, its repeat being a first submission. `ux_ia_principal_ref` (with an entry's `ux_tg_creator_ref`) is the final guard between two concurrent first submissions: the loser writes nothing and is answered as a repeat. The request records its outcome before it answers, by compare-and-set from NULL: `202`, a business rejection's `502` with its `retCode`, or the `429 exchange_rate_limited` of a create the trading port sent nothing for, having no rate token (24 §8.4 step 6). A refusal before the persist leaves no row, so any other `4xx`, a `500` or a `503` is never stored.
+
+**Repeats.** A repeat with the same fingerprint, once it has passed account scope and the arm token under the caller's current grants (`22-api-openapi.yaml`, Idempotency), gets the recorded outcome, for a `202` the rows it names in their current state (`OrderAcceptance`). A row still undecided is `409 idempotency_in_flight` only within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of `created_at`, longer than the submission's own bounds. Past it, its request ended without recording an answer (a crash, or a store failure after the send, which still answered with its outcome, never `503`), and the repeat decides the row: `202` with the rows in their current state, recorded by compare-and-set from NULL (`validated` means never sent). A row answers repeats only, so nothing else needs to decide it, and a repeat never sends (24 §8.4).
+
+**Write-once.** `trg_ia_write_once` (BEFORE UPDATE, `ENABLE ALWAYS`) refuses with SQLSTATE 23514, naming itself, any change to `id`, `created_by`, `operation`, `client_ref`, `request_sha256`, `trade_group_id`, `order_id` or `created_at`, and, once `outcome_status` is set, any change to it, `outcome_code`, `outcome_ret_code` or `decided_at`, so with `ia_decided` the outcome is written once. `cv_app` and `cv_ro` hold no DELETE or TRUNCATE on the table where the roles exist, and `trg_ia_no_truncate` (BEFORE TRUNCATE, `ENABLE ALWAYS`, 0003's `audit_refuse_truncate()`) refuses a TRUNCATE by any role, SR-E29-05's pattern: the anchor is permanent (§7). Its migration lands with the E29-T04 implementation at the next free revision, re-parented per merge order (C-5.3, §9.4).
+
+```sql
+CREATE FUNCTION ia_write_once() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE changed text;
+BEGIN
+  changed := CASE
+    WHEN NEW.id IS DISTINCT FROM OLD.id THEN 'id'
+    WHEN NEW.created_by IS DISTINCT FROM OLD.created_by THEN 'created_by'
+    WHEN NEW.operation IS DISTINCT FROM OLD.operation THEN 'operation'
+    WHEN NEW.client_ref IS DISTINCT FROM OLD.client_ref THEN 'client_ref'
+    WHEN NEW.request_sha256 IS DISTINCT FROM OLD.request_sha256 THEN 'request_sha256'
+    WHEN NEW.trade_group_id IS DISTINCT FROM OLD.trade_group_id THEN 'trade_group_id'
+    WHEN NEW.order_id IS DISTINCT FROM OLD.order_id THEN 'order_id'
+    WHEN NEW.created_at IS DISTINCT FROM OLD.created_at THEN 'created_at'
+    WHEN OLD.outcome_status IS NOT NULL
+      AND (NEW.outcome_status, NEW.outcome_code, NEW.outcome_ret_code, NEW.decided_at)
+        IS DISTINCT FROM (OLD.outcome_status, OLD.outcome_code, OLD.outcome_ret_code, OLD.decided_at)
+      THEN 'outcome'
+  END;
+  IF changed IS NOT NULL THEN
+    RAISE EXCEPTION 'trg_ia_write_once: idempotency_anchors.% is write-once', changed
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ia_write_once';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_ia_write_once BEFORE UPDATE ON idempotency_anchors
+  FOR EACH ROW EXECUTE FUNCTION ia_write_once();
+ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_write_once;
+CREATE TRIGGER trg_ia_no_truncate BEFORE TRUNCATE ON idempotency_anchors
+  FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();
+ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_no_truncate;
 ```
 
 ### 3.4 Rules engine
@@ -4014,6 +4119,7 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | `engine_metrics`                      | 14 d               | —                                      | 14 d          | drop                         | Prometheus is the long-term store                                                 |
 | **Pinned symbol (any stream)**        | ∞                  | ∞                                      | ∞             | pin                          | Overrides everything above                                                        |
 | `orders` (PG)                         | ∞                  | —                                      | ∞             | —                            | Ledger of record                                                                  |
+| `idempotency_anchors` (PG)            | ∞                  | —                                      | ∞             | —                            | Permanent replay anchor (SR-E29-07, §3.3.10): kept as long as the rows it names   |
 | `order_events` (PG)                   | 24 mo live         | 7 y                                    | 7 y           | archive_parquet              | Monthly partitions detached                                                       |
 | `executions` (PG)                     | ∞                  | 7 y mirror                             | ∞             | archive_parquet              | Financial record                                                                  |
 | `trade_groups`, `trade_group_legs`    | ∞                  | —                                      | ∞             | —                            | Trading history; the replay anchor answers at any age (SR-E29-07)                 |
@@ -4212,6 +4318,7 @@ NAMING_CONVENTION = {
 | `0041_account_env_write_once`   | trigger `trg_ea_env_write_once` (§3.2.1): `exchange_accounts.env` is write-once — **#2333**; the downgrade (rollback only) drops the trigger and its function                                                                                                                              |
 | `0042_sessions_view_as`         | `sessions.view_as_*` (eight nullable columns), CHECKs `sessions_view_as_shape` and `sessions_view_as_end_reason`, the target FK `ON DELETE RESTRICT`, three partial indexes (§3.1.4) — **#3085 S2a**; the downgrade refuses while a row names a context                                    |
 | `0044_account_no_hard_delete`   | `REVOKE DELETE ON exchange_accounts FROM cv_app` (§3.2.1): no hard delete of an account, the last item of the `api_keys` write-once guarantee — **#2758**; the downgrade (rollback only) grants DELETE back                                                                                |
+| `NNNN_idempotency_anchors`      | `idempotency_anchors`, its six CHECKs, `ux_ia_principal_ref`, its two triggers, no `DELETE` or `TRUNCATE` for `cv_app` (§3.3.10), `orders.provenance` (§3.3.4) — **E29-T04 #913**, planned: the next free revision when its implementation lands, re-parented per merge order (C-5.3)      |
 
 ---
 
@@ -4547,6 +4654,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `position_snapshots`                                   | monetary columns                        | P1         | plaintext                                       | Financial personal data (the history of `positions`); never sent to third parties                                                               |
 | `order_events`                                         | `payload`, `ret_code`, `ret_msg`        | P1         | jsonb / text, redacted before insert            | Can repeat money values: `redact_exchange_payload()` / `redact_exchange_text()` before insert (§3.3.5); append-only, kept on erase; not logged  |
 | `orders`                                               | `reject_code`, `reject_message`         | P1         | text, redacted before insert                    | Taxonomy code and exchange text (24 §8.1): its writer (E29-T03/T04) applies `redact_exchange_text()`, `message=True` for the text; not logged   |
+| `idempotency_anchors`                                  | `client_ref`, `request_sha256`          | P1         | plaintext; SHA-256 digest                       | The client's key and a digest of its order request (SR-E29-07): read only by the principal's own lookup; never logged or returned by any API    |
 | `system_events`                                        | `details`                               | P0         | jsonb                                           | Same redaction serializer as audit                                                                                                              |
 | `system_events` (`dms_hook_owed` rows)                 | `details`                               | P0         | jsonb                                           | Only the closed `from_state` and `reason` codes (E27-T04, §3.10.2); any other value is refused, so these rows need no redaction serializer      |
 | `backups`                                              | `encryption_ref`                        | S          | keyring handle                                  | opaque keyring alias only; key material (restic password, age identity) never enters the DB (§8.1); not in the `Backup` contract; never logged  |
