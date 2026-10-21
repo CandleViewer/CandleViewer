@@ -1,12 +1,23 @@
-"""In-memory `SessionRepository` fake for E09-S03 unit tests. No database."""
+"""In-memory `SessionRepository` and `ViewAsSessionStore` fake for auth unit tests. No database."""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
+from uuid import UUID
 
 from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.session_repository import StepUpChange
+from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
+
+
+def _due(session: SessionRecord, held: ViewAsState, now: datetime) -> bool:
+    return held.end_recorded_at is None and (
+        held.ended_at is not None
+        or held.expires_at <= now
+        or session.is_revoked
+        or session.is_absolute_expired(now=now)
+    )
 
 
 class FakeSessionRepository:
@@ -159,6 +170,108 @@ class FakeSessionRepository:
             if prev is not None:
                 stack.append(prev)
         return tuple(seen)
+
+    # -- #3085 `ViewAsSessionStore`: no await between a write's check and its write.
+
+    def _view_as_context(self, session_id: str, context_id: UUID) -> ViewAsState | None:
+        session = self.sessions.get(session_id)
+        held = None if session is None else session.view_as
+        return held if held is not None and held.context_id == context_id else None
+
+    def _put_view_as(self, session_id: str, state: ViewAsState) -> SessionRecord:
+        """Store `state` on the row, rebuilt so its CHECKs apply (`model_copy` would skip them)."""
+        updated = SessionRecord.model_validate(
+            {**dict(self.sessions[session_id]), "view_as": state}
+        )
+        self.sessions[session_id] = updated
+        return updated
+
+    async def start_view_as(
+        self, session_id: str, state: ViewAsState, *, now: datetime
+    ) -> SessionRecord | None:
+        if state.ended_at is not None:
+            raise ValueError("a start puts a fresh context on the row, never an ended one")
+        session = self.sessions.get(session_id)
+        if session is None or session.is_revoked or session.is_absolute_expired(now=now):
+            return None
+        held = session.view_as
+        if held is not None and (held.cleared_at is None or held.end_recorded_at is None):
+            return None
+        return self._put_view_as(session_id, state)
+
+    async def end_view_as(
+        self, session_id: str, context_id: UUID, *, ended_at: datetime, reason: ViewAsEndReason
+    ) -> SessionRecord | None:
+        held = self._view_as_context(session_id, context_id)
+        if held is None or held.ended_at is not None:
+            return None
+        end = {"ended_at": ended_at, "end_reason": reason}
+        return self._put_view_as(session_id, held.model_copy(update=end))
+
+    async def leave_view_as(
+        self,
+        session_id: str,
+        context_id: UUID,
+        *,
+        ended_at: datetime,
+        reason: ViewAsEndReason,
+        now: datetime,
+    ) -> tuple[SessionRecord, bool] | None:
+        held = self._view_as_context(session_id, context_id)
+        if held is None or held.cleared_at is not None:
+            return None
+        ends = held.ended_at is None
+        end = {"ended_at": ended_at, "end_reason": reason} if ends else {}
+        state = held.model_copy(update={**end, "cleared_at": now})
+        return self._put_view_as(session_id, state), ends
+
+    async def clear_view_as(
+        self, session_id: str, context_id: UUID, *, now: datetime
+    ) -> SessionRecord | None:
+        held = self._view_as_context(session_id, context_id)
+        if held is None or held.ended_at is None or held.cleared_at is not None:
+            return None
+        return self._put_view_as(session_id, held.model_copy(update={"cleared_at": now}))
+
+    async def mark_view_as_recorded(
+        self, session_id: str, context_id: UUID, *, now: datetime
+    ) -> SessionRecord | None:
+        held = self._view_as_context(session_id, context_id)
+        if held is None or not held.end_pending:
+            return None
+        return self._put_view_as(session_id, held.model_copy(update={"end_recorded_at": now}))
+
+    async def list_view_as_due(
+        self, *, now: datetime, rotated_grace: timedelta, limit: int
+    ) -> tuple[SessionRecord, ...]:
+        held = [(s, s.view_as) for s in self.sessions.values() if s.view_as is not None]
+        cutoff = now - rotated_grace
+        carried = {  # contexts a row still carries: not revoked `rotated`, or within the grace
+            v.context_id
+            for s, v in held
+            if s.revoked_reason != "rotated" or s.revoked_at is None or s.revoked_at > cutoff
+        }
+        due = [
+            (v.expires_at, s)
+            for s, v in held
+            if _due(s, v, now) and (s.revoked_reason != "rotated" or v.context_id not in carried)
+        ]
+        due.sort(key=lambda pair: pair[0])  # stable: equal expiries keep insertion order
+        return tuple(s for _, s in due[:limit])
+
+    def _unended(self) -> list[tuple[SessionRecord, ViewAsState]]:
+        return [
+            (s, s.view_as)
+            for s in self.sessions.values()
+            if s.revoked_at is None and s.view_as is not None and s.view_as.ended_at is None
+        ]
+
+    async def list_live_view_as(self, *, limit: int) -> tuple[SessionRecord, ...]:
+        live = sorted(self._unended(), key=lambda pair: pair[1].expires_at)  # stable, as above
+        return tuple(s for s, _ in live[:limit])
+
+    async def list_live_view_as_by_target(self, target_user_id: UUID) -> tuple[SessionRecord, ...]:
+        return tuple(s for s, v in self._unended() if v.target_user_id == target_user_id)
 
 
 class YieldingFindRepository(FakeSessionRepository):
