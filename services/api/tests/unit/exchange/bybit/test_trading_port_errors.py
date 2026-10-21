@@ -30,7 +30,15 @@ from candleviewer.exchange.base.errors import (
 from candleviewer.exchange.base.models import AmendOrderRequest, CancelOrderRequest
 from candleviewer.exchange.bybit.trading import BybitTradingPort
 from candleviewer.oms.order_link_resolution import Adopted, place_or_adopt
-from candleviewer.secrets import CredentialBorrower, CredentialUnavailable, RequestSignature
+from candleviewer.secrets import (
+    CredentialBorrower,
+    CredentialUnavailable,
+    KekUnavailable,
+    RequestSignature,
+    SecretsError,
+    WithdrawPermissionRejected,
+)
+from candleviewer.secrets.errors import SnapshotInvalid
 from tests._corpus import rest
 from tests._signing import fake_capability
 from tests.unit.exchange.bybit._trading import (
@@ -192,18 +200,35 @@ def _credentials(refusal: Exception | None = None) -> CredentialBorrower:
     return CredentialBorrower(sign)
 
 
-async def test_an_m2_refusal_is_an_auth_error_with_nothing_sent() -> None:
+@pytest.mark.parametrize(
+    ("refusal", "taxonomy", "retryable"),
+    [
+        (CredentialUnavailable("revoked"), AuthError, False),
+        (WithdrawPermissionRejected("withdraw"), AuthError, False),
+        (SnapshotInvalid("not json"), AuthError, False),
+        (KekUnavailable("kek_unavailable"), TransportError, True),
+    ],
+    ids=lambda value: getattr(type(value), "code", None) or getattr(value, "__name__", None),
+)
+async def test_an_m2_refusal_leaves_as_its_class_says_with_nothing_sent(
+    refusal: SecretsError, taxonomy: type[ExchangeError], retryable: bool
+) -> None:
+    """A key M2 will not use is an `AuthError` (the account is disabled, 24 §8.6); the vault
+    being down is no verdict on the key: a retryable `TransportError` (24 §14.4)."""
     venue = Venue()
     port = BybitTradingPort(
         environment="demo",
-        credentials=_credentials(CredentialUnavailable("revoked")),
+        credentials=_credentials(refusal),
         governor=RecordingGovernor(),
         transport=httpx.MockTransport(venue.handler),
-        max_retries=0,
+        max_retries=3,
     )
-    with pytest.raises(AuthError, match="credential_unavailable") as caught:
+    with pytest.raises(ExchangeError) as caught:
         await port.place_order(place())
-    assert venue.sent == [] and _bare(caught.value) and caught.value.retryable is False
+    error = caught.value
+    assert type(error) is taxonomy and error.retryable is retryable
+    assert getattr(type(refusal), "code", "") in str(error)
+    assert venue.sent == [] and _bare(error)
 
 
 async def test_the_rate_limit_of_a_read_leaves_as_raised() -> None:

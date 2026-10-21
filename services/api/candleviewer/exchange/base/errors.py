@@ -16,6 +16,7 @@ reinterpret them.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
 
 
@@ -202,7 +203,8 @@ class AmbiguousResultError(TransportError):
     `error.platform.place`) into `lifecycle.unknown`, running `record_transport_fault`
     (`28` §B1.4), and a later re-send looks the id up first
     (`oms.order_link_resolution.adopt_or_resend`). `order_link_id` is the create's id,
-    `None` for a batch.
+    `None` for a batch; `order_link_ids` names every create it leaves open: that one id, or
+    each item's of a batch, in the batch's order.
 
     For E29-T04, this is not the only error that leaves a create unknown: a venue
     `UNKNOWN_STATE` code (`retryable` false for a create), and the caller's own
@@ -210,10 +212,20 @@ class AmbiguousResultError(TransportError):
     retryable `UnknownStateError`) or cancellation do too. Map them to `unknown` as well, and
     never resend a create because an error says `retryable`."""
 
-    def __init__(self, message: str, *, order_link_id: str | None = None, **kwargs: object) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        order_link_id: str | None = None,
+        order_link_ids: Sequence[str] = (),
+        **kwargs: object,
+    ) -> None:
         kwargs["retryable"] = False
         super().__init__(message, **kwargs)
         self.order_link_id = order_link_id
+        self.order_link_ids: tuple[str, ...] = tuple(order_link_ids) or (
+            () if order_link_id is None else (order_link_id,)
+        )
 
 
 class UnknownStateError(ExchangeError):

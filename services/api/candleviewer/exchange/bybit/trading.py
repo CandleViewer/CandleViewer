@@ -12,14 +12,17 @@ pinned by a test under `tests/unit/exchange/bybit/test_trading_*.py`:
 4. `category` is `linear`, written on every call that takes it (SR-054).
 5. Replies are parsed strictly and every row is checked against the call's account (E8-8,
    SR-E29-02, ruling R12).
-6. Only an allow-listed `ExchangeRecord` leaves with an ack; no exception leaves with the cause
-   or context that could hold the signed request (SR-E29-08, ruling 11).
+6. Only an allow-listed `ExchangeRecord` leaves with an ack, built from the body that went on
+   the wire; no exception leaves with the cause or context that could hold the signed request
+   (SR-E29-08, ruling 11).
 7. `open_orders` and `order_history` take keyword-only id filters, sent and re-applied (Q5).
 
 And `cancel-all` always sends `orderFilter=Order` (SR-E29-06, ruling R10: assumed pending
 E29-K01 to leave a position's TP/SL orders alone). A venue answer with a return code is an
 `OrderAck(ok=False)`; a create's duplicate, a create's open outcome, a transport fault and a
-local refusal raise; a read raises on every failure (ruling 11).
+local refusal raise; a read raises on every failure (ruling 11). A batch answers one ack per
+request instead (24 §14.4): an item whose outcome is open is an ack with `retryable` false and
+`error_code` `TRANSPORT_ERROR` or `UNKNOWN_STATE`, never a rejection.
 """
 
 from __future__ import annotations
@@ -43,6 +46,7 @@ from candleviewer.exchange.base.errors import (
     AuthError,
     DuplicateClientIdError,
     ExchangeError,
+    TransportError,
     UnknownStateError,
 )
 from candleviewer.exchange.base.fakes import (
@@ -101,7 +105,7 @@ from candleviewer.exchange.bybit.trading_parse import (
     to_position,
     to_wallet,
 )
-from candleviewer.secrets import SecretsError
+from candleviewer.secrets import KekUnavailable, SecretsError
 
 if TYPE_CHECKING:
     from candleviewer.secrets import SigningCapability
@@ -212,12 +216,14 @@ def _leaving(failure: Exception) -> ExchangeError:
     counted its own errors; an M2 refusal and any other failure are counted here."""
     if isinstance(failure, ExchangeError):
         return _bare(failure)
-    if isinstance(failure, SecretsError):  # M2 refused to sign: nothing was sent
+    if isinstance(failure, SecretsError):  # M2 refused to sign: nothing was sent (24 §14.4)
         code = getattr(type(failure), "code", None)
-        mapped: ExchangeError = AuthError(
-            "the account's key could not sign the request"
-            f" ({code if isinstance(code, str) else 'refused'})"
-        )
+        named = code if isinstance(code, str) else "refused"
+        mapped: ExchangeError
+        if isinstance(failure, KekUnavailable):  # the vault, not the key: retried later
+            mapped = TransportError(f"the key vault could not sign ({named}); nothing was sent")
+        else:  # the key itself: revoked, unreadable or refused by the permission gate
+            mapped = AuthError(f"the account's key could not sign the request ({named})")
     else:  # an undecodable or over-nested answer, or anything unforeseen: never its text
         mapped = UnknownStateError(f"unreadable exchange answer ({type(failure).__name__})")
     exchange_errors_total.labels(**{"class": mapped.code.value}).inc()
@@ -478,7 +484,7 @@ class BybitTradingPort:
         answer = await self._trade(
             "place_order", req.account, lane=req.lane, body=body, create=True
         )
-        fields = rec.create_fields(req)
+        fields = rec.request_fields(body)
         if answer.refusal is not None:
             return self._refused(
                 req.order_link_id, answer.refusal, answer.latency_ms, "place_order", fields
@@ -498,27 +504,28 @@ class BybitTradingPort:
         self._check_environment(account)
         for req in reqs:
             check_create_id(account, req.order_link_id)
-        body = {"category": "linear", "request": [_create_item(r) for r in reqs]}
+        items = [_create_item(r) for r in reqs]
         answer = await self._trade(
-            "place_batch", account, lane=reqs[0].lane, body=body, create=True
+            "place_batch",
+            account,
+            lane=reqs[0].lane,
+            body={"category": "linear", "request": items},
+            create=True,
         )
+        requests = [rec.request_fields({"category": "linear", **item}) for item in items]
         refusal = answer.refusal
         if refusal is not None:
             return [
-                self._refused(
-                    r.order_link_id,
-                    refusal,
-                    answer.latency_ms,
-                    "place_batch",
-                    rec.create_fields(r),
-                )
-                for r in reqs
+                self._refused(r.order_link_id, refusal, answer.latency_ms, "place_batch", f)
+                for r, f in zip(reqs, requests, strict=True)
             ]
-        return self._batch_acks(reqs, answer)
+        return self._batch_acks(reqs, requests, answer)
 
-    def _batch_acks(self, reqs: Sequence[PlaceOrderRequest], answer: _Answer) -> list[OrderAck]:
-        """Pairs each request with its item and code; a reply that cannot be paired leaves every
-        create's outcome open (24 §8.6 "Order creates")."""
+    def _batch_acks(
+        self, reqs: Sequence[PlaceOrderRequest], requests: Sequence[rec.Fields], answer: _Answer
+    ) -> list[OrderAck]:
+        """Pairs each request with its item and code (24 §14.4's item contract); a reply that
+        cannot be paired leaves every create's outcome open (24 §8.6 "Order creates")."""
         try:
             reply: BatchReply | None = parse(BatchReply, answer.reply, "create-batch")
         except UnknownStateError:
@@ -529,11 +536,13 @@ class BybitTradingPort:
             item.orderLinkId != req.order_link_id for item, req in zip(items, reqs, strict=True)
         ):
             raise _bare(
-                AmbiguousResultError("the batch answer pairs with no request; outcomes open")
+                AmbiguousResultError(
+                    "the batch answer pairs with no request; outcomes open",
+                    order_link_ids=[r.order_link_id for r in reqs],
+                )
             )
         acks: list[OrderAck] = []
-        for req, item, code in zip(reqs, items, codes, strict=True):
-            fields = rec.create_fields(req)
+        for req, fields, item, code in zip(reqs, requests, items, codes, strict=True):
             if code.code == 0 and item.orderId:
                 response = rec.reply_fields(item.orderLinkId, item.orderId)
                 acks.append(
@@ -553,22 +562,9 @@ class BybitTradingPort:
     async def amend_order(self, req: AmendOrderRequest) -> OrderAck:
         self._check_environment(req.account)
         check_exit_ids(req.order_link_id, req.exchange_order_id)
-        body: dict[str, Any] = {
-            "category": "linear",
-            "symbol": req.symbol,
-            **_order_ref(req.order_link_id, req.exchange_order_id),
-        }
-        for name, value in (
-            ("qty", req.qty),
-            ("price", req.price),
-            ("triggerPrice", req.trigger_price),
-            ("takeProfit", req.take_profit),
-            ("stopLoss", req.stop_loss),
-        ):
-            if value is not None:
-                body[name] = _text(value)
+        body = _amend_body(req)
         answer = await self._trade("amend_order", req.account, lane=req.lane, body=body)
-        fields = rec.amend_fields(req)
+        fields = rec.request_fields(body)
         if answer.refusal is not None:
             return self._refused(
                 req.order_link_id, answer.refusal, answer.latency_ms, "amend_order", fields
@@ -582,13 +578,9 @@ class BybitTradingPort:
     async def cancel_order(self, req: CancelOrderRequest) -> OrderAck:
         self._check_environment(req.account)
         check_exit_ids(req.order_link_id, req.exchange_order_id)
-        body = {
-            "category": "linear",
-            "symbol": req.symbol,
-            **_order_ref(req.order_link_id, req.exchange_order_id),
-        }
+        body = _cancel_body(req)
         answer = await self._trade("cancel_order", req.account, lane="critical", body=body)
-        fields = rec.cancel_fields(req)
+        fields = rec.request_fields(body)
         if answer.refusal is not None:
             return self._refused(
                 req.order_link_id, answer.refusal, answer.latency_ms, "cancel_order", fields
@@ -600,10 +592,9 @@ class BybitTradingPort:
 
     async def cancel_all(self, account: AccountRef, symbol: Symbol | None) -> Sequence[OrderAck]:
         self._check_environment(account)
-        scope = {"settleCoin": _SETTLE} if symbol is None else {"symbol": symbol}
-        body = {"category": "linear", "orderFilter": CANCEL_ALL_FILTER, **scope}
+        body = _cancel_all_body(symbol)
         answer = await self._trade("cancel_all", account, lane="critical", body=body)
-        fields = rec.cancel_all_fields(symbol, CANCEL_ALL_FILTER)
+        fields = rec.request_fields(body)
         if answer.refusal is not None:
             return [self._refused(None, answer.refusal, answer.latency_ms, "cancel_all", fields)]
         result = parse(CancelAllResult, answer.reply.get("result"), "cancel-all")
@@ -630,24 +621,9 @@ class BybitTradingPort:
         """Both sides go in one call (24 §8.9): the OMS sends the unchanged side's value; a side
         left `None` is not sent."""
         self._check_environment(req.account)
-        body: dict[str, Any] = {
-            "category": "linear",
-            "symbol": req.symbol,
-            "tpslMode": _TPSL[req.tpsl_mode],
-            "positionIdx": req.position_idx,
-        }
-        if req.take_profit is not None:
-            body["takeProfit"] = _text(req.take_profit)
-            body["tpTriggerBy"] = _TRIGGER[req.tp_trigger_by]
-        if req.stop_loss is not None:
-            body["stopLoss"] = _text(req.stop_loss)
-            body["slTriggerBy"] = _TRIGGER[req.sl_trigger_by]
-        if req.trailing_distance is not None:
-            body["trailingStop"] = _text(req.trailing_distance)
-        if req.active_price is not None:
-            body["activePrice"] = _text(req.active_price)
+        body = _stop_body(req)
         answer = await self._trade("set_trading_stop", req.account, lane="critical", body=body)
-        fields = rec.trading_stop_fields(req)
+        fields = rec.request_fields(body)
         if answer.refusal is not None:
             return self._refused(
                 None, answer.refusal, answer.latency_ms, "set_trading_stop", fields
@@ -842,6 +818,60 @@ def _create_item(req: PlaceOrderRequest) -> dict[str, Any]:
     if req.take_profit is not None or req.stop_loss is not None:
         item["tpslMode"] = _TPSL[req.tpsl_mode]
     return item
+
+
+def _amend_body(req: AmendOrderRequest) -> dict[str, Any]:
+    """An amend names its order (rule 11) and sends only the values it changes."""
+    body: dict[str, Any] = {
+        "category": "linear",
+        "symbol": req.symbol,
+        **_order_ref(req.order_link_id, req.exchange_order_id),
+    }
+    for name, value in (
+        ("qty", req.qty),
+        ("price", req.price),
+        ("triggerPrice", req.trigger_price),
+        ("takeProfit", req.take_profit),
+        ("stopLoss", req.stop_loss),
+    ):
+        if value is not None:
+            body[name] = _text(value)
+    return body
+
+
+def _cancel_body(req: CancelOrderRequest) -> dict[str, Any]:
+    return {
+        "category": "linear",
+        "symbol": req.symbol,
+        **_order_ref(req.order_link_id, req.exchange_order_id),
+    }
+
+
+def _cancel_all_body(symbol: Symbol | None) -> dict[str, Any]:
+    """Ruling R10's filter always; the symbol, or the settle coin when none is named."""
+    scope = {"settleCoin": _SETTLE} if symbol is None else {"symbol": symbol}
+    return {"category": "linear", "orderFilter": CANCEL_ALL_FILTER, **scope}
+
+
+def _stop_body(req: TradingStopRequest) -> dict[str, Any]:
+    """§8.9's stop write: a side left `None` is not sent, nor its trigger source."""
+    body: dict[str, Any] = {
+        "category": "linear",
+        "symbol": req.symbol,
+        "tpslMode": _TPSL[req.tpsl_mode],
+        "positionIdx": req.position_idx,
+    }
+    if req.take_profit is not None:
+        body["takeProfit"] = _text(req.take_profit)
+        body["tpTriggerBy"] = _TRIGGER[req.tp_trigger_by]
+    if req.stop_loss is not None:
+        body["stopLoss"] = _text(req.stop_loss)
+        body["slTriggerBy"] = _TRIGGER[req.sl_trigger_by]
+    if req.trailing_distance is not None:
+        body["trailingStop"] = _text(req.trailing_distance)
+    if req.active_price is not None:
+        body["activePrice"] = _text(req.active_price)
+    return body
 
 
 def _order_ref(link: OrderLinkId | None, exchange_order_id: str | None) -> dict[str, str]:

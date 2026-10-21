@@ -1,31 +1,58 @@
 """The allow-listed record of a trading call (G-8, #2877; SR-E29-08, E29 threat model §6 item 1).
 
 The record is the contract's `ExchangeCallRecord` without `event_id` and `at`: a parity test pins
-the field sets, and every record the adapter can build validates as the contract's. It is built
-from the neutral request and the parsed reply only; a value that does not fit its contract field
-is dropped, never stored.
+the field sets, and every record the adapter can build, dumped, validates against the published
+schema of `22-api-openapi.yaml` itself (Draft 2020-12), not only against its generated model,
+which tolerates a null. It is built from the body the port sent and the parsed reply only, so
+every field it states was on the wire; a value that does not fit its contract field is dropped,
+never stored.
 """
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from typing import Any
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from jsonschema import Draft202012Validator
 
 from candleviewer.api._generated.openapi_models import ExchangeCallRecord
 from candleviewer.api._generated.openapi_models import ExchangeRecordFields as ContractFields
+from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.domain.order_link import ext_key
 from candleviewer.exchange.base.models import (
     AmendOrderRequest,
     CancelOrderRequest,
     ExchangeRecord,
     ExchangeRecordFields,
+    OrderAck,
     TradingStopRequest,
 )
 from candleviewer.exchange.bybit import record as rec
+from candleviewer.exchange.bybit.trading import (
+    BybitTradingPort,
+    _amend_body,
+    _cancel_all_body,
+    _cancel_body,
+    _create_item,
+    _stop_body,
+)
 from tests._corpus import rest
+from tests.openapi_helpers import deref
 from tests.unit.exchange.bybit._trading import Venue, account, link, make_port, place, with_result
+
+_SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
+#: The published `ExchangeCallRecord`, every `$ref` inlined: what the store and the diagnostics
+#: response must accept (22-api-openapi.yaml).
+_PUBLISHED = Draft202012Validator(
+    deref(_SPEC, _SPEC["components"]["schemas"]["ExchangeCallRecord"])
+)
+_WIRE_KEY = {contract: wire for wire, contract in rec.WIRE_NAMES.items()}
+CREATED = rest("rest/trading-create-reply.json")
+CANCEL = rest("rest/trading-cancel-reply.json")
 
 
 def test_the_record_is_the_contracts_without_event_id_and_time() -> None:
@@ -34,11 +61,40 @@ def test_the_record_is_the_contracts_without_event_id_and_time() -> None:
     assert set(ExchangeRecordFields.model_fields) == set(ContractFields.model_fields)
     assert ExchangeRecord.model_config.get("extra") == "forbid"
     assert ExchangeRecordFields.model_config.get("extra") == "forbid"
+    published = _SPEC["components"]["schemas"]
+    assert set(published["ExchangeCallRecord"]["properties"]) - {"event_id", "at"} == contract
+    assert set(published["ExchangeRecordFields"]["properties"]) == set(
+        ExchangeRecordFields.model_fields
+    )
 
 
 def _contract_valid(record: ExchangeRecord) -> None:
     payload = record.model_dump(mode="json") | {"event_id": 1, "at": "2026-10-21T00:00:00Z"}
     ExchangeCallRecord.model_validate(payload)
+    errors = [error.message for error in _PUBLISHED.iter_errors(payload)]
+    assert errors == [], errors
+
+
+def test_an_unset_field_is_absent_from_a_dump_never_null() -> None:
+    """The published schema types `side`, `qty`, `category`... non-nullable: a null fails it."""
+    fields = ExchangeRecordFields(category="linear", symbol="BTCUSDT")
+    record = ExchangeRecord(transport="rest", method="POST", request_redacted=fields)
+    dumped = record.model_dump(mode="json")
+    assert dumped == {
+        "transport": "rest",
+        "method": "POST",
+        "request_redacted": {"category": "linear", "symbol": "BTCUSDT"},
+    }
+    assert json.loads(record.model_dump_json()) == dumped
+    _contract_valid(record)
+
+
+def test_a_dump_with_nulls_is_what_the_published_schema_refuses() -> None:
+    """The trap the sparse dump closes: the generated model takes a null, the schema does not."""
+    padded = dict.fromkeys(ExchangeRecordFields.model_fields) | {"category": "linear"}
+    payload = {"event_id": 1, "at": "2026-10-21T00:00:00Z", "transport": "rest"}
+    ContractFields.model_validate(padded)
+    assert not _PUBLISHED.is_valid(payload | {"request_redacted": padded})
 
 
 _DEC = st.decimals(min_value=0, max_value=Decimal("1e12"), places=6, allow_nan=False)
@@ -62,21 +118,19 @@ def test_every_record_the_adapter_builds_is_a_valid_contract_record(
     amend = AmendOrderRequest(
         account=account(), symbol=symbol, order_link_id=link(), qty=qty, stop_loss=stop
     )
-    for fields in (
-        rec.create_fields(request),
-        rec.amend_fields(amend),
-        rec.cancel_fields(
-            CancelOrderRequest(account=account(), symbol=symbol, order_link_id=link())
-        ),
-        rec.cancel_all_fields(symbol, "Order"),
-        rec.trading_stop_fields(
-            TradingStopRequest(account=account(), symbol=symbol, stop_loss=stop)
-        ),
+    cancel = CancelOrderRequest(account=account(), symbol=symbol, order_link_id=link())
+    stop_write = TradingStopRequest(account=account(), symbol=symbol, stop_loss=stop)
+    for body in (
+        {"category": "linear", **_create_item(request)},
+        _amend_body(amend),
+        _cancel_body(cancel),
+        _cancel_all_body(symbol),
+        _stop_body(stop_write),
     ):
         record = rec.record(
             method="POST",
             endpoint="/v5/order/create",
-            request=fields,
+            request=rec.request_fields(body),
             response=rec.reply_fields("x" * 40, "e-1"),
             ret_code=code,
             ret_msg=msg,
@@ -90,33 +144,113 @@ def test_every_record_the_adapter_builds_is_a_valid_contract_record(
         assert record.response_redacted.order_link_id is None  # over 36: dropped, never cut
 
 
-def test_a_create_record_holds_the_request_as_the_contract_names_it() -> None:
-    fields = rec.create_fields(place(take_profit=Decimal("65000"), trigger_by="index"))
+def test_a_create_record_holds_the_request_as_it_went_on_the_wire() -> None:
+    """`trigger_by` is set but no trigger price is, so the wire carried neither: nor does the
+    record."""
+    request = place(take_profit=Decimal("65000"), trigger_by="index")
+    fields = rec.request_fields({"category": "linear", **_create_item(request)})
     assert fields == {
         "category": "linear",
-        "order_link_id": link(),
         "symbol": "BTCUSDT",
         "side": "buy",
         "order_type": "limit",
         "qty": "0.010",
-        "price": "60000",
         "time_in_force": "GTC",
+        "order_link_id": link(),
         "reduce_only": False,
         "close_on_trigger": False,
         "position_idx": 0,
-        "trigger_price": None,
-        "trigger_by": "IndexPrice",
-        "trigger_direction": None,
+        "price": "60000",
         "take_profit": "65000",
-        "stop_loss": "58000",
         "tp_trigger_by": "LastPrice",
+        "stop_loss": "58000",
         "sl_trigger_by": "MarkPrice",
         "tpsl_mode": "Full",
     }
 
 
+async def test_a_market_create_records_no_price_and_no_stop_it_never_sent() -> None:
+    venue = Venue().on("/v5/order/create", with_result(CREATED, orderLinkId=link()))
+    request = place(order_type="market", price=Decimal("1"), stop_loss=None)
+    ack = await make_port(venue).place_order(request)
+    assert ack.record is not None and ack.record.request_redacted is not None
+    recorded = ack.record.request_redacted.model_dump(mode="json")
+    assert not {"price", "tpsl_mode", "sl_trigger_by", "tp_trigger_by", "trigger_by"} & set(
+        recorded
+    )
+
+
+async def _create(port: BybitTradingPort) -> OrderAck:
+    return await port.place_order(
+        place(trigger_price=Decimal("59000"), trigger_by="mark", trigger_direction="fall")
+    )
+
+
+async def _amend(port: BybitTradingPort) -> OrderAck:
+    """An `ext-` order (the transcribed reply's), amended by its exchange id alone."""
+    order_id = CANCEL["result"]["orderId"]
+    return await port.amend_order(
+        AmendOrderRequest(
+            account=account(),
+            symbol="BTCUSDT",
+            order_link_id=ext_key(order_id),
+            exchange_order_id=order_id,
+            stop_loss=Decimal("57000"),
+        )
+    )
+
+
+async def _cancel(port: BybitTradingPort) -> OrderAck:
+    return await port.cancel_order(
+        CancelOrderRequest(account=account(), symbol="BTCUSDT", order_link_id=link())
+    )
+
+
+async def _cancel_all(port: BybitTradingPort) -> OrderAck:
+    return (await port.cancel_all(account(), "BTCUSDT"))[0]
+
+
+async def _stop(port: BybitTradingPort) -> OrderAck:
+    return await port.set_trading_stop(
+        TradingStopRequest(
+            account=account(), symbol="BTCUSDT", stop_loss=Decimal("58000"), tpsl_mode="partial"
+        )
+    )
+
+
+_SENDS: dict[str, tuple[str, Any, Any]] = {
+    "create": ("/v5/order/create", with_result(CREATED, orderLinkId=link()), _create),
+    "amend": ("/v5/order/amend", rest("rest/trading-amend-reply.json"), _amend),
+    "cancel": ("/v5/order/cancel", with_result(CANCEL, orderLinkId=link()), _cancel),
+    "cancel-all": ("/v5/order/cancel-all", rest("rest/trading-cancel-all-reply.json"), _cancel_all),
+    "trading-stop": (
+        "/v5/position/trading-stop",
+        rest("rest/trading-trading-stop-reply.json"),
+        _stop,
+    ),
+}
+
+
+@pytest.mark.parametrize("call", sorted(_SENDS))
+async def test_every_record_field_was_on_the_wire_and_every_named_key_is_recorded(
+    call: str,
+) -> None:
+    path, reply, send = _SENDS[call]
+    venue = Venue().on(path, reply)
+    ack = await send(make_port(venue))
+    [body] = venue.bodies()
+    assert ack.record is not None and ack.record.request_redacted is not None
+    recorded = ack.record.request_redacted.model_dump(mode="json")
+    for name, value in recorded.items():
+        wire = _WIRE_KEY[name]
+        assert wire in body, name
+        assert rec.request_fields({wire: body[wire]}) == {name: value}
+    assert {rec.WIRE_NAMES[key] for key in body if key in rec.WIRE_NAMES} == set(recorded)
+    _contract_valid(ack.record)
+
+
 async def test_the_ack_carries_the_record_of_its_call_and_nothing_else() -> None:
-    reply = with_result(rest("rest/trading-create-reply.json"), orderLinkId=link())
+    reply = with_result(CREATED, orderLinkId=link())
     ack = await make_port(Venue().on("/v5/order/create", reply)).place_order(place())
     record = ack.record
     assert record is not None
@@ -143,3 +277,4 @@ async def test_a_refusal_record_holds_the_venue_code_and_no_reply_fields() -> No
     assert record.request_redacted == ExchangeRecordFields(
         category="linear", exchange_order_id="x-1", symbol="BTCUSDT"
     )
+    _contract_valid(record)

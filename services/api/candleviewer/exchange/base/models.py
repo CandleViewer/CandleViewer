@@ -23,7 +23,15 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    StringConstraints,
+    model_serializer,
+    model_validator,
+)
 
 from candleviewer.domain.events import Instrument, MarketEvent
 from candleviewer.domain.primitives import (
@@ -422,10 +430,21 @@ _WireName = Annotated[str, StringConstraints(max_length=64, pattern=r"^[a-z][a-z
 _TriggerSource = Literal["LastPrice", "MarkPrice", "IndexPrice"]
 
 
-class ExchangeRecordFields(BaseModel):
+class _Sparse(BaseModel):
+    """A record whose unset fields are absent when dumped, never null: the contract types most
+    of them non-nullable (`22-api-openapi.yaml`), so a dump validates against it as it is."""
+
+    @model_serializer(mode="wrap")
+    def _without_unset(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+        dumped: dict[str, object] = handler(self)
+        return {key: value for key, value in dumped.items() if value is not None}
+
+
+class ExchangeRecordFields(_Sparse):
     """The allow-listed fields of one exchange request, response or push (SR-E29-08), field for
     field the contract's `ExchangeRecordFields` (`22-api-openapi.yaml`, a parity test pins it).
-    An adapter keeps no other field: adding one is a contract change. Decimals are C6 text."""
+    An adapter keeps no other field: adding one is a contract change. Decimals are C6 text. A
+    field the call did not carry is absent from a dump (`_Sparse`)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -467,11 +486,12 @@ class ExchangeRecordFields(BaseModel):
     is_maker: bool | None = None
 
 
-class ExchangeRecord(BaseModel):
+class ExchangeRecord(_Sparse):
     """One exchange call as the adapter records it (SR-E29-08, E29 model §6 item 1): the
     contract's `ExchangeCallRecord` without `event_id` and `at`, which the store adds. Built only
-    from the neutral request and the parsed reply, never from headers, a signature, an `auth`
-    frame or a URL query; the OMS stores it as it is and never reads into it (C-2.3)."""
+    from the request as it went on the wire and the parsed reply, never from headers, a
+    signature, an `auth` frame or a URL query; the OMS stores it as it is and never reads into
+    it (C-2.3). Its dump leaves out what is unset, as the contract requires (`_Sparse`)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

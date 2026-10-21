@@ -688,16 +688,28 @@ class BybitRestClient:
 def _ambiguous(
     path: str, body: Mapping[str, Any] | None, cause: str, **detail: object
 ) -> AmbiguousResultError:
-    """The create to `path` left and `cause` hides its outcome (24 §8.6 "Order creates")."""
+    """The create to `path` left and `cause` hides its outcome (24 §8.6 "Order creates"); the
+    error names the create's id, or every item's of a batch (`order_link_ids`)."""
     link = body.get("orderLinkId") if body else None
     order_link_id = link if isinstance(link, str) else None
+    items = body.get("request") if body and path == _BATCH_PATH else None
+    order_link_ids = (
+        tuple(item["orderLinkId"] for item in items if _has_link(item))
+        if isinstance(items, list)
+        else ()
+    )
     exchange_errors_total.labels(**{"class": AmbiguousResultError.code.value}).inc()
     logger().warning(
-        "bybit_rest_create_ambiguous", path=path, cause=cause, order_link_id=order_link_id
+        "bybit_rest_create_ambiguous",
+        path=path,
+        cause=cause,
+        order_link_id=order_link_id,
+        order_link_ids=list(order_link_ids),
     )
     return AmbiguousResultError(
         f"{path}: {cause} after the create left; its outcome is unknown",
         order_link_id=order_link_id,
+        order_link_ids=order_link_ids,
         **detail,
     )
 

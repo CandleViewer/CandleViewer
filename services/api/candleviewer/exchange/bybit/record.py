@@ -1,49 +1,65 @@
 """The allow-listed record of one trading call (SR-E29-08, E29 threat model §6 item 1; G-8, #2877).
 
-Built only from the neutral request and the parsed reply, field by field into the contract's
-`ExchangeRecordFields`: no header, signature, `auth` frame or URL query is ever an input, so none
-can leave M4 in a record. A value that does not fit its contract field (a symbol outside USDT
-linear, an over-long id or message) is dropped from the record, never stored; the store redacts
-the record again before insert (E29-T01). The OMS treats it as opaque (C-2.3).
+Built only from the JSON body the port sent and the parsed reply, field by field into the
+contract's `ExchangeRecordFields` through a closed map of the wire's names: no header, signature,
+`auth` frame or URL query is ever an input, so none can leave M4 in a record, and no field states
+a value the wire did not carry. A body key the contract does not name (`settleCoin`) is left
+out; a value that does not fit its contract field (a symbol outside USDT linear, an over-long id
+or message) is dropped from the record, never stored; the store redacts the record again before
+insert (E29-T01). The OMS treats it as opaque (C-2.3).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from decimal import Decimal
+from types import MappingProxyType
 from typing import Final, Literal
 
 from pydantic import ValidationError
 
-from candleviewer.exchange.base.models import (
-    AmendOrderRequest,
-    CancelOrderRequest,
-    ExchangeRecord,
-    ExchangeRecordFields,
-    PlaceOrderRequest,
-    TradingStopRequest,
+from candleviewer.exchange.base.models import ExchangeRecord, ExchangeRecordFields
+
+__all__ = ["WIRE_NAMES", "record", "reply_fields", "request_fields"]
+
+#: A request body's keys (24 §8.9) as the contract names them; any other key is never recorded.
+WIRE_NAMES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "category": "category",
+        "symbol": "symbol",
+        "side": "side",
+        "orderType": "order_type",
+        "qty": "qty",
+        "price": "price",
+        "timeInForce": "time_in_force",
+        "orderLinkId": "order_link_id",
+        "orderId": "exchange_order_id",
+        "reduceOnly": "reduce_only",
+        "closeOnTrigger": "close_on_trigger",
+        "positionIdx": "position_idx",
+        "triggerPrice": "trigger_price",
+        "triggerBy": "trigger_by",
+        "triggerDirection": "trigger_direction",
+        "takeProfit": "take_profit",
+        "stopLoss": "stop_loss",
+        "tpTriggerBy": "tp_trigger_by",
+        "slTriggerBy": "sl_trigger_by",
+        "tpslMode": "tpsl_mode",
+        "trailingStop": "trailing_stop",
+        "activePrice": "activation_price",
+        "orderFilter": "order_filter",
+    }
 )
-
-__all__ = [
-    "amend_fields",
-    "cancel_all_fields",
-    "cancel_fields",
-    "create_fields",
-    "record",
-    "reply_fields",
-    "trading_stop_fields",
-]
-
-_TIF: Final = {"gtc": "GTC", "ioc": "IOC", "fok": "FOK", "post_only": "PostOnly"}
-_TRIGGER: Final = {"last": "LastPrice", "mark": "MarkPrice", "index": "IndexPrice"}
-_TPSL: Final = {"full": "Full", "partial": "Partial"}
+#: The values the contract spells otherwise; every other value is recorded as sent.
+_WIRE_VALUES: Final[Mapping[str, Mapping[object, str]]] = MappingProxyType(
+    {
+        "side": {"Buy": "buy", "Sell": "sell"},
+        "orderType": {"Market": "market", "Limit": "limit"},
+        "triggerDirection": {1: "rise", 2: "fall"},
+    }
+)
 _MAX_MSG: Final = 2048
 
 type Fields = Mapping[str, object]
-
-
-def _text(value: Decimal | None) -> str | None:
-    return None if value is None else format(value, "f")
 
 
 def _fields(candidates: Fields) -> ExchangeRecordFields:
@@ -60,70 +76,16 @@ def _fields(candidates: Fields) -> ExchangeRecordFields:
     return ExchangeRecordFields.model_validate(kept)
 
 
-def create_fields(req: PlaceOrderRequest) -> Fields:
-    return {
-        "category": "linear",
-        "order_link_id": req.order_link_id,
-        "symbol": req.symbol,
-        "side": req.side,
-        "order_type": req.order_type,
-        "qty": _text(req.qty),
-        "price": _text(req.price),
-        "time_in_force": _TIF[req.time_in_force],
-        "reduce_only": req.reduce_only,
-        "close_on_trigger": req.close_on_trigger,
-        "position_idx": req.position_idx,
-        "trigger_price": _text(req.trigger_price),
-        "trigger_by": None if req.trigger_by is None else _TRIGGER[req.trigger_by],
-        "trigger_direction": req.trigger_direction,
-        "take_profit": _text(req.take_profit),
-        "stop_loss": _text(req.stop_loss),
-        "tp_trigger_by": _TRIGGER[req.tp_trigger_by],
-        "sl_trigger_by": _TRIGGER[req.sl_trigger_by],
-        "tpsl_mode": _TPSL[req.tpsl_mode],
-    }
-
-
-def amend_fields(req: AmendOrderRequest) -> Fields:
-    return {
-        "category": "linear",
-        "order_link_id": req.order_link_id,
-        "exchange_order_id": req.exchange_order_id,
-        "symbol": req.symbol,
-        "qty": _text(req.qty),
-        "price": _text(req.price),
-        "trigger_price": _text(req.trigger_price),
-        "take_profit": _text(req.take_profit),
-        "stop_loss": _text(req.stop_loss),
-    }
-
-
-def cancel_fields(req: CancelOrderRequest) -> Fields:
-    return {
-        "category": "linear",
-        "order_link_id": req.order_link_id,
-        "exchange_order_id": req.exchange_order_id,
-        "symbol": req.symbol,
-    }
-
-
-def cancel_all_fields(symbol: str | None, order_filter: str) -> Fields:
-    return {"category": "linear", "symbol": symbol, "order_filter": order_filter}
-
-
-def trading_stop_fields(req: TradingStopRequest) -> Fields:
-    return {
-        "category": "linear",
-        "symbol": req.symbol,
-        "position_idx": req.position_idx,
-        "take_profit": _text(req.take_profit),
-        "stop_loss": _text(req.stop_loss),
-        "trailing_stop": _text(req.trailing_distance),
-        "activation_price": _text(req.active_price),
-        "tp_trigger_by": _TRIGGER[req.tp_trigger_by],
-        "sl_trigger_by": _TRIGGER[req.sl_trigger_by],
-        "tpsl_mode": _TPSL[req.tpsl_mode],
-    }
+def request_fields(body: Mapping[str, object]) -> Fields:
+    """The request as it went on the wire, in the contract's names: only the keys the body
+    carried, so a field the call did not send is never recorded."""
+    fields: dict[str, object] = {}
+    for key, value in body.items():
+        name = WIRE_NAMES.get(key)
+        if name is not None:
+            spelled = _WIRE_VALUES.get(key)
+            fields[name] = value if spelled is None else spelled.get(value)
+    return fields
 
 
 def reply_fields(order_link_id: str | None, exchange_order_id: str | None) -> Fields:

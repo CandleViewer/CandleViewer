@@ -1,9 +1,11 @@
 """Creates, batches, stop writes and leverage on the trading port (G-8, #2877; 24 §8.9).
 
 Request bodies follow §8.9's mapping; a batch pairs each request with its item and code, and an
-item whose outcome is open goes to `unknown`, never `rejected` (24 §8.6 "Order creates"). The
-batch reply is the transcribed one (ruling R2) with its items' ids set to ours, or its codes
-set, as the test says: test inputs on a documented shape.
+item whose outcome is open goes to `unknown`, never `rejected` (24 §8.6 "Order creates"): 24
+§14.4's item contract makes it an ack with `retryable` false and `error_code` `TRANSPORT_ERROR`
+or `UNKNOWN_STATE`. A batch whose answer cannot be paired raises `AmbiguousResultError` naming
+every item's id. The batch reply is the transcribed one (ruling R2) with its items' ids set to
+ours, or its codes set, as the test says: test inputs on a documented shape.
 """
 
 from __future__ import annotations
@@ -107,16 +109,32 @@ async def test_a_batch_pairs_each_request_with_its_item() -> None:
     assert all(a.record is not None and a.record.endpoint == "/v5/order/create-batch" for a in acks)
 
 
+#: 24 §14.4: the `error_code` of an item whose order may exist at the venue.
+OPEN_ITEM_CODES = frozenset({"TRANSPORT_ERROR", "UNKNOWN_STATE"})
+
+
 @pytest.mark.parametrize(
     ("code", "order_id", "error_code", "retryable"),
     [
         (110072, "", "DUPLICATE_CLIENT_ID", False),
         (10016, "", "TRANSPORT_ERROR", False),
+        (10019, "", "TRANSPORT_ERROR", False),
         (110079, "", "UNKNOWN_STATE", False),
+        (999999, "", "UNKNOWN_STATE", False),
         (110007, "", "INSUFFICIENT_MARGIN", False),
+        (10006, "", "RATE_LIMITED", True),
         (0, "", "TRANSPORT_ERROR", False),
     ],
-    ids=["duplicate", "10016-open", "110079-open", "margin", "accepted-without-id"],
+    ids=[
+        "duplicate",
+        "10016-open",
+        "10019-open",
+        "110079-open",
+        "unmapped-open",
+        "margin",
+        "rate-limited",
+        "accepted-without-id",
+    ],
 )
 async def test_a_batch_items_code_reads_as_the_taxonomy_with_open_outcomes_unknown(
     code: int, order_id: str, error_code: str, retryable: bool
@@ -128,6 +146,8 @@ async def test_a_batch_items_code_reads_as_the_taxonomy_with_open_outcomes_unkno
     )
     assert acks[0].ok
     assert (acks[1].ok, acks[1].error_code, acks[1].retryable) == (False, error_code, retryable)
+    is_open = code in {10016, 10019, 110079, 999999, 0}
+    assert (acks[1].error_code in OPEN_ITEM_CODES and not acks[1].retryable) is is_open
 
 
 async def test_the_transcribed_batch_reply_pairs_with_no_request_so_outcomes_are_open() -> None:
@@ -136,6 +156,17 @@ async def test_the_transcribed_batch_reply_pairs_with_no_request_so_outcomes_are
     with pytest.raises(AmbiguousResultError) as caught:
         await make_port(venue).place_batch([place(order_link_id=link(seq=n)) for n in range(2)])
     assert caught.value.order_link_id is None and caught.value.__cause__ is None
+    assert caught.value.order_link_ids == (link(seq=0), link(seq=1))
+
+
+async def test_a_batch_whose_send_goes_unanswered_names_every_item() -> None:
+    """The REST client's own ambiguity (here a 5xx after the send) names each item's id."""
+    venue = Venue().on("/v5/order/create-batch", rest("rest/error_503.json"), status=503)
+    with pytest.raises(AmbiguousResultError) as caught:
+        await make_port(venue).place_batch([place(order_link_id=link(seq=n)) for n in range(3)])
+    assert caught.value.order_link_id is None
+    assert caught.value.order_link_ids == tuple(link(seq=n) for n in range(3))
+    assert len(venue.sent) == 1
 
 
 async def test_a_refused_batch_refuses_every_item() -> None:
@@ -244,8 +275,9 @@ async def test_a_conditional_create_sends_only_the_trigger_fields_it_has() -> No
 async def test_a_batch_reply_that_cannot_be_read_leaves_every_outcome_open() -> None:
     unreadable = {**BATCH, "result": "not an object"}
     venue = Venue().on("/v5/order/create-batch", unreadable)
-    with pytest.raises(AmbiguousResultError):
+    with pytest.raises(AmbiguousResultError) as caught:
         await make_port(venue).place_batch([place()])
+    assert caught.value.order_link_ids == (link(),)
 
 
 def test_an_exit_with_no_way_to_name_its_order_is_refused_by_the_wire_mapping() -> None:
