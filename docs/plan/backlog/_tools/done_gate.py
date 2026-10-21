@@ -33,6 +33,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = "CandleViewer/CandleViewer"
 OWNER = "basiltt"
 WAIVER_REF = "#1778"
+PR_SEARCH_LIMIT = 100  # PRs read per `gh pr list --search` (one GraphQL page)
 GhFn = Callable[[list[str]], Any]
 
 PENPOT_RE = re.compile(
@@ -487,11 +488,9 @@ def evaluate(
     }
 
 
-def fetch(issue_no: str, gh: GhFn) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    issue = gh(
-        ["issue", "view", issue_no, "-R", REPO, "--json", "body,comments,labels,state"]
-    )
-    prs = gh(
+def search_prs(gh: GhFn, query: str) -> list[dict[str, Any]]:
+    """Up to PR_SEARCH_LIMIT PRs (any state) for `query`, in gh's best-match order."""
+    found = gh(
         [
             "pr",
             "list",
@@ -500,13 +499,28 @@ def fetch(issue_no: str, gh: GhFn) -> tuple[dict[str, Any], list[dict[str, Any]]
             "--state",
             "all",
             "--search",
-            f"#{issue_no} in:body",
+            query,
             "--limit",
-            "20",
+            str(PR_SEARCH_LIMIT),
             "--json",
             "number,body,files,reviews,comments,mergedAt",
         ]
     )
+    return found or []
+
+
+def fetch(issue_no: str, gh: GhFn) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    issue = gh(
+        ["issue", "view", issue_no, "-R", REPO, "--json", "body,comments,labels,state"]
+    )
+    prs = search_prs(gh, f"#{issue_no} in:body")
+    if len(prs) >= PR_SEARCH_LIMIT:
+        # Saturated: other PRs' review records cite the issue too, and best-match
+        # order can push the linked PR past the limit. Also search for the closing
+        # phrase and merge by number, keeping the first query's results first.
+        seen = {p.get("number") for p in prs}
+        closers = search_prs(gh, f'"closes #{issue_no}" in:body')
+        prs = prs + [p for p in closers if p.get("number") not in seen]
     # The linked PR carries `Closes|Fixes|Resolves #N` in its body (C-4.7). Multi-PR tickets
     # (parts land with `Refs #N` and QA closes the ticket, e.g. E17-T02) also count — but only
     # PRs that are already MERGED, so an open `Refs` PR can never satisfy the security gate.
@@ -515,7 +529,7 @@ def fetch(issue_no: str, gh: GhFn) -> tuple[dict[str, Any], list[dict[str, Any]]
     refs = re.compile(rf"^\s*refs?\s+#{issue_no}\b", re.IGNORECASE | re.MULTILINE)
     linked = [
         p
-        for p in prs or []
+        for p in prs
         if closing.search(p.get("body") or "")
         or (refs.search(p.get("body") or "") and p.get("mergedAt"))
     ]

@@ -398,6 +398,54 @@ def test_fetch_links_closing_prs_and_merged_refs_prs_only() -> None:
     assert [p["number"] for p in linked] == [1, 2]
 
 
+def search_of(args: list[str]) -> str:
+    return args[args.index("--search") + 1]
+
+
+def test_fetch_reads_100_prs_and_adds_a_closing_search_when_saturated() -> None:
+    """A ticket cited by many other PRs' review records fills the best-match search and
+    pushes its closing PR past the limit; the closing-phrase search finds it, and a PR
+    found by both queries is linked once."""
+    both = {"number": 8, "body": "Closes #5", "mergedAt": None}
+    crowd = [{"number": 100 + n, "body": "review of #5"} for n in range(99)]
+    narrow_only = {"number": 7, "body": "Closes #5", "mergedAt": None}
+    searches: list[list[str]] = []
+
+    def fake_gh(args: list[str]) -> Any:
+        if args[0] == "issue":
+            return issue([QA_PASS])
+        searches.append(args)
+        return [both, narrow_only] if "closes" in search_of(args) else [both, *crowd]
+
+    _, linked = dg.fetch("5", fake_gh)
+    assert [search_of(a) for a in searches] == ["#5 in:body", '"closes #5" in:body']
+    assert {a[a.index("--limit") + 1] for a in searches} == {"100"}
+    assert [p["number"] for p in linked] == [8, 7]
+
+
+@pytest.mark.parametrize(
+    "found",
+    [
+        None,
+        [],
+        [{"number": 1, "body": "Closes #5", "mergedAt": None}],
+        [{"number": n, "body": "see #5"} for n in range(99)],
+    ],
+    ids=["null", "empty", "one", "99"],
+)
+def test_fetch_adds_no_closing_search_below_the_limit(found: Any) -> None:
+    searches: list[list[str]] = []
+
+    def fake_gh(args: list[str]) -> Any:
+        if args[0] == "issue":
+            return issue([QA_PASS])
+        searches.append(args)
+        return found
+
+    dg.fetch("5", fake_gh)
+    assert [search_of(a) for a in searches] == ["#5 in:body"]
+
+
 def test_security_rc_on_one_part_is_not_masked_by_later_approve_on_another() -> None:
     """Multi-PR tickets: verdicts are keyed per (PR, reviewer). Agent reviewers share one
     login, so a later APPROVE on part B must not override an RC on part A."""
