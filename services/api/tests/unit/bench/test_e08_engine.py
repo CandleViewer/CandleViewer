@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import itertools
+import time
 from pathlib import Path
 from typing import Any
 
@@ -249,22 +250,50 @@ async def test_run_soak_takes_the_flatness_base_from_the_window_not_the_warmup()
     assert "t=3s baseline" in flat.note
 
 
-async def test_run_soak_reports_a_forced_full_collection_first_and_leaves_no_gc_callback() -> None:
+async def test_run_soak_reports_one_forced_full_collection_and_leaves_no_gc_callback() -> None:
     """#3641: every soak report carries a timed `gc.collect(2)` of the warm heap, labelled the
     forced worst case, beside the natural full collections (often none on a short run)."""
+    full: list[str] = []
+
+    def spy(phase: str, info: dict[str, int]) -> None:
+        if info["generation"] == 2:
+            full.append(phase)
+
     before, enabled = gc.callbacks[:], gc.isenabled()
     over = {"duration_s": 2.0, "sample_every_s": 1.0, "warmup_s": 0.0, "warmup_wall_s": 0.0}
+    gc.callbacks.append(spy)
     gc.disable()  # no natural collection, so the forced one is the run's only full collection
     try:
         v = await run_soak(load("soak_steady"), ScriptedSampler(), **over)
     finally:
+        gc.callbacks.remove(spy)
         if enabled:
             gc.enable()
+    assert full == ["start", "stop"]  # the forced collection ran, once
     forced = v.metrics["gc_full_pause_ms (forced, worst case)"]
     assert forced["count"] == 1 and forced["max"] > 0
     assert v.metrics["gc_full_pause_ms (natural)"]["count"] == 0  # the forced one is apart
     assert v.metrics["gc_blocks_in_use"]["max"] > 10_000
     assert gc.callbacks == before  # the run's timer left with it
+
+
+async def test_run_lanes_reports_a_natural_full_collection_in_ms() -> None:
+    outside: list[float] = []
+
+    def collect(_lanes: list[Lane]) -> None:  # a full collection while the lanes are built
+        t0 = time.perf_counter()
+        gc.collect(2)
+        outside.append((time.perf_counter() - t0) * 1000)
+
+    enabled = gc.isenabled()
+    gc.disable()  # this is then the run's only natural full collection
+    try:
+        res = await run_lanes(_cfg(duration_s=1.0), ScriptedSampler(), bind=collect)
+    finally:
+        if enabled:
+            gc.enable()
+    assert len(res.gc_natural_ms) == 1
+    assert 0.5 * outside[0] <= res.gc_natural_ms[0] <= outside[0]
 
 
 class _Dies(ScriptedSampler):

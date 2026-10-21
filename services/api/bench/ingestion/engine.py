@@ -141,7 +141,7 @@ class LaneResult:
     retained: int = 0
     #: #3641: each full (generation-2) collection while the lanes ran, in ms (`GcPauseTimer`);
     #: one forced `gc.collect(2)` after them, in ms (the deterministic worst case); and the
-    #: pymalloc blocks in use after it (`cv_gc_blocks_in_use`'s proxy for the heap it walked).
+    #: pymalloc blocks in use just before it (`cv_gc_blocks_in_use`'s proxy for the heap it walks).
     gc_natural_ms: list[float] = field(default_factory=list)
     gc_forced_ms: float = 0.0
     gc_blocks_in_use: int = 0
@@ -370,7 +370,8 @@ async def run_lanes(
     window that follows, and sample times count from its start. The bars path
     (`LaneConfig.bars_specs`) is built and hydrated after the lanes, inside budget #8's figure;
     its lanes stop however the run ends, an error included (`stop_each`: a stop that fails is
-    logged and skips no lane, and is raised only after a run that returned)."""
+    logged and skips no lane, and is raised only after a run that returned). Every run times its
+    garbage collections and ends with one timed, forced full collection (#3641)."""
     bars: list[BarsLane] = []
     returned = False
     natural: list[float] = []
@@ -379,8 +380,8 @@ async def run_lanes(
     try:
         res = await _drive(cfg, sampler, bars, record_stages, drain_ticks, bind)
         timer.remove()  # the forced collection below is not a natural one
+        res.gc_blocks_in_use = sys.getallocatedblocks()  # the heap the forced collection walks
         res.gc_natural_ms, res.gc_forced_ms = natural, _forced_full_collection_ms()
-        res.gc_blocks_in_use = sys.getallocatedblocks()
         returned = True
         return res
     finally:

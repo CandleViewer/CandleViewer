@@ -75,6 +75,19 @@ def test_gc_pause_timer_reads_the_heap_after_a_full_collection_only(metrics: Met
     assert _sample(metrics, "cv_gc_blocks_in_use") == 4096
 
 
+def test_gc_pause_timer_times_from_the_start_phase_to_the_stop_phase(metrics: Metrics) -> None:
+    now = [1.0]
+    r = register_r0(metrics)
+    timer = GcPauseTimer(
+        r["cv_gc_pause_seconds"], r["cv_gc_blocks_in_use"], clock=lambda: now[0], blocks=lambda: 1
+    )
+    timer("start", {"generation": 2})
+    now[0] = 1.25  # the collection runs between the two phases
+    timer("stop", _stop(2))
+    assert _sample(metrics, "cv_gc_pause_seconds_sum", generation="2") == 0.25
+    assert _full_collections(metrics) == 1
+
+
 def test_gc_pause_timer_heap_gauge_holds_the_latest_full_collection(metrics: Metrics) -> None:
     timer = _timer(metrics, iter([0.0, 0.1, 0.2, 0.3]), iter([4096, 1024]))
     for _ in range(2):
@@ -126,10 +139,7 @@ def test_gc_pause_timer_installs_once_and_removes_only_itself(metrics: Metrics) 
 def test_gc_pause_timer_times_a_real_full_collection_while_installed(metrics: Metrics) -> None:
     timer = _real(metrics)
     timer.install()
-    for _ in range(3):  # a collection already running on another thread makes this one a no-op
-        gc.collect(2)
-        if _full_collections(metrics) >= 1:
-            break
+    gc.collect(2)
     assert _full_collections(metrics) >= 1
     assert 0 < _sample(metrics, "cv_gc_pause_seconds_sum", generation="2") < 60
     assert _sample(metrics, "cv_gc_blocks_in_use") > 10_000

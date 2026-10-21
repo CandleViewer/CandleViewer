@@ -80,8 +80,8 @@ async def run_soak(sc: Scenario, sampler: ProcSampler, **over: Any) -> budgets.V
             "max": res.sampling_cost_ms,
             "count": float(len(res.samples)),
         },
-        # #3641: the forced full collection first, the worst case every run has; then any
-        # natural ones the run triggered, and the heap proxy after the forced one.
+        # #3641: the forced full collection, the worst case every run has, beside any natural
+        # ones the run triggered and the heap proxy the forced one walked.
         "gc_full_pause_ms (forced, worst case)": budgets.summary([res.gc_forced_ms]),
         "gc_full_pause_ms (natural)": budgets.summary(res.gc_natural_ms),
         "gc_blocks_in_use": budgets.summary([float(res.gc_blocks_in_use)]),
