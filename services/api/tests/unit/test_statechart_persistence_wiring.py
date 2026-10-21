@@ -34,6 +34,7 @@ from candleviewer.statechart.persistence import (
     open_sealed,
 )
 from candleviewer.statechart.plugins import CvAuditPlugin, CvErrorHooks, CvMetricsPlugin
+from candleviewer.statechart.plugins.audit import GENESIS_HASH
 from candleviewer.statechart_wiring import (
     LatchAdmission,
     PagerAdapter,
@@ -124,8 +125,11 @@ def test_with_keys_replay_the_inspector_and_the_metrics_are_wired(
     assert wal == tmp_path / "audit" / "machine_events.wal"  # beside the audit WAL
 
 
-def test_one_restorer_per_lane_seeds_before_it_builds_the_plugin_triple(tmp_path: Path) -> None:
+def test_one_restorer_per_lane_seeds_before_it_builds_the_plugin_triple(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     bundle = create_app(_real(tmp_path), hmac_keys=FixedKeys()).state.statechart_persistence
+    monkeypatch.setattr(bundle.sink, "head", lambda key: GENESIS_HASH)  # as after `prepare`
     for lane in LANES:
         restorer = bundle.restorer(lane)
         assert restorer.lane == lane and restorer.prepare == bundle.sink.seed
@@ -166,6 +170,7 @@ async def test_plugins_for_seeds_then_runs_the_orphan_scan_then_builds(
 
     async def seed(key: MachineKey) -> None:
         seen.steps.append(f"seed:{key.entity_id}")
+        monkeypatch.setattr(bundle.sink, "head", lambda k: GENESIS_HASH)  # now held
 
     async def scan(self: Restorer, key: MachineKey) -> int:
         seen.steps.append(f"scan:{self.lane}")
@@ -271,3 +276,28 @@ async def test_the_pager_adapter_pages_through_the_log_pager() -> None:
     [line] = [e for e in logs if e["event"] == "statechart_alert"]
     assert line["cv_page"] is True and line["log_level"] == "critical" and line["kind"] == "replay"
     assert KEY.entity_id in line["summary"] and "bad HMAC" in line["summary"]
+
+
+# --- review round 1 (E50-T63) ---------------------------------------------------------------
+
+
+def test_the_bundle_repr_names_neither_the_keys_nor_the_pool(tmp_path: Path) -> None:
+    """security-1: a debug line or an exception group that formats the bundle shows neither the
+    HMAC key provider nor the repository that holds the DSN."""
+    bundle = create_app(_real(tmp_path), hmac_keys=FixedKeys()).state.statechart_persistence
+    text = repr(bundle)
+    assert "keys=" not in text and "relational=" not in text and "FixedKeys" not in text
+    assert "persister=" in text  # the rest of the repr is kept
+
+
+def test_a_direct_plugin_build_for_an_unseeded_key_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """security-2: the synchronous builder refuses a key whose head the sink does not hold: its
+    first row would chain from the genesis and fork a stored chain. After a seed it builds."""
+    bundle = create_app(_real(tmp_path), hmac_keys=FixedKeys()).state.statechart_persistence
+    with pytest.raises(ChainSeedError, match="unseeded") as refused:
+        bundle.plugins(KEY, "control")
+    assert refused.value.key == KEY
+    monkeypatch.setattr(bundle.sink, "head", lambda key: GENESIS_HASH)
+    assert len(bundle.plugins(KEY, "control")) == 3

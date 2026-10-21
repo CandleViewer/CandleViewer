@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import stat
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -65,7 +66,11 @@ class FakeStore:
             await asyncio.Event().wait()
         if self.down:
             raise StorageTierUnavailable("statechart events.head failed (sqlstate 08006)")
-        return self.heads.get((machine_kind, entity_id, env), GENESIS_HASH)
+        key = (machine_kind, entity_id, env)
+        if key in self.heads:  # a test's own value
+            return self.heads[key]
+        stored = [r for r in self.rows if (r["machine_kind"], r["entity_id"], r["env"]) == key]
+        return str(stored[-1]["row_hash"]) if stored else GENESIS_HASH  # as the table's head
 
 
 class Clock:
@@ -618,4 +623,91 @@ async def test_something_that_is_no_row_is_rejected(tmp_path: Path, bad: Any) ->
         sink.append(bad)
     with pytest.raises(MachineEventRejected, match="occurred_at"):
         sink.append(row(0, occurred_at=1_700_000_000))
+    await sink.stop()
+
+
+# --- review round 1 (E50-T63): the stall page, the refused count, owner-only files, frame bound ---
+
+
+@virtual
+async def test_a_flush_failing_for_60_s_pages_once_per_window(tmp_path: Path) -> None:
+    """code-2: an insert that keeps failing without a commit pages after `FLUSH_STALL_PAGE_S`, at
+    most once per window (the WAL has room, so `append` would not page until it fills)."""
+    store, seen, clock = FakeStore(), Seen(), Clock()
+
+    async def sleep(delay: float) -> None:  # the injected clock moves with every backoff
+        clock.now += timedelta(seconds=delay)
+        await asyncio.sleep(delay)
+
+    store.down = True
+    sink = sink_for(tmp_path, store, clock=clock, sleep=sleep, metrics=seen.metrics())
+    await sink.start()
+    sink.append(row(0))
+
+    def pages(logs: list[Any]) -> int:
+        return sum(1 for e in logs if e["event"] == "machine_events.flush_stalled")
+
+    with capture_logs() as logs:
+        await settle(lambda: seen.flushed.count("error") >= 7)  # failing for 31.5 s
+        assert pages(logs) == 0
+        await settle(lambda: seen.flushed.count("error") >= 8)  # 61.5 s
+        assert pages(logs) == 1
+        await settle(lambda: seen.flushed.count("error") >= 9)  # 91.5 s: the same window
+        assert pages(logs) == 1
+        await settle(lambda: seen.flushed.count("error") >= 10)  # 121.5 s: the next one
+        assert pages(logs) == 2
+    [first, *_] = [e for e in logs if e["event"] == "machine_events.flush_stalled"]
+    assert first["cv_page"] is True and first["log_level"] == "critical"
+    assert first["error"] == "StorageTierUnavailable"
+    store.down = False
+    await settle(lambda: len(store.rows) == 1)
+    await sink.stop()
+
+
+@virtual
+async def test_a_rejected_row_is_counted_refused(tmp_path: Path) -> None:
+    """code-3: a rejection is a lost audit row: the sink counts it (`event_flush`, `refused`)."""
+    seen = Seen()
+    sink = sink_for(tmp_path, FakeStore(), metrics=seen.metrics())
+    await sink.start()
+    with pytest.raises(MachineEventRejected):
+        sink.append(row(0, occurred_at="2026-10-21T05:00:00+02:00"))
+    with pytest.raises(MachineEventRejected):
+        sink.append(row(1, payload={"x": float("nan")}))
+    assert seen.flushed == ["refused", "refused"]
+    await sink.stop()
+
+
+@virtual
+async def test_the_wal_and_its_cursor_stay_owner_only(tmp_path: Path) -> None:
+    """code-6: the WAL holds the table's P1 payloads: 0600, also after a commit and a compaction
+    replaced the files."""
+    store = FakeStore()
+    sink = sink_for(tmp_path, store)
+    await sink.start()
+    wal = tmp_path / "machine_events.wal"
+    cursor = tmp_path / "machine_events.wal.committed"
+    assert [stat.S_IMODE(p.stat().st_mode) for p in (wal, cursor)] == [0o600, 0o600]
+    sink.append(row(0))
+    await settle(lambda: len(store.rows) == 1 and sink.pending == 0)
+    assert [stat.S_IMODE(p.stat().st_mode) for p in (wal, cursor)] == [0o600, 0o600]
+    await sink.stop()
+
+
+@virtual
+async def test_a_frame_declared_larger_than_any_row_stops_the_flusher_unread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """code-7: the sink never writes a frame over `MAX_FRAME_BYTES`, so a larger one (here
+    valid, past the window) is corruption: refused before it is read, never read whole."""
+    path = tmp_path / "machine_events.wal"
+    big = {"pad": "b" * (300 * 1024)}
+    path.write_bytes(encode_frame(big))
+    store = FakeStore()
+    recorded = record_wal_io(monkeypatch)
+    sink = sink_for(tmp_path, store)
+    await sink.start()
+    await settle(lambda: sink.failure is not None)
+    assert type(sink.failure).__name__ == "AuditWalCorrupt" and store.rows == []
+    assert max(recorded.read_sizes(path.name)) <= machine_events.FLUSH_WINDOW_BYTES
     await sink.stop()

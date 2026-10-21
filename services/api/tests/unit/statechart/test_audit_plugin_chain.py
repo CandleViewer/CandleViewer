@@ -13,7 +13,10 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
+from structlog.testing import capture_logs
+
 from candleviewer.admin.wiring import system_event_redactor
+from candleviewer.audit.machine_events import MachineEventRejected, MachineEventUnavailable
 from candleviewer.audit.redact import REDACTION_MARKER
 from candleviewer.observability.metrics import Metrics
 from candleviewer.statechart.plugins import CvAuditPlugin, InMemoryMachineEventSink, cv_plugins
@@ -134,3 +137,59 @@ def test_cv_plugins_forwards_the_head_provider_and_the_redactor() -> None:
     _commit(audit, token=("t" * 3))
     assert heads.rows[0].prev_hash == "cd" * 32
     assert heads.rows[0].payload == {"token": REDACTION_MARKER}
+
+
+# --- review round 1 (E50-T63): a lost head fails closed; a refused row pages ---------------------
+
+
+def _sink_failures(logs: list[Any]) -> list[tuple[Any, Any, Any]]:
+    return [
+        (e["error"], e.get("cv_page"), e["log_level"])
+        for e in logs
+        if e["event"] == "statechart_audit_sink_failed"
+    ]
+
+
+def test_a_head_the_sink_stopped_holding_fails_closed_and_writes_nothing() -> None:
+    """code-1: the sink evicted this machine's head after the plugin saw it held; a row chained to
+    the plugin's own last hash could miss rows other writers appended, so no row is written: the
+    sink failure is counted, logged CRITICAL and paged."""
+    heads = HeldHeads()
+    heads.held = "ab" * 32
+    plugin = _plugin(heads, head=heads.head)
+    _commit(plugin)
+    heads.held = None  # evicted from the sink's bounded map
+    with capture_logs() as logs:
+        _commit(plugin)
+    assert len(heads.rows) == 1 and plugin.sink_failures == 1 and plugin.hook_errors == 1
+    assert _sink_failures(logs) == [("ChainHeadEvicted", True, "critical")]
+
+
+def test_the_plugin_starts_from_the_head_held_at_construction() -> None:
+    """code-1: `_prev` starts from the provider's head, and every head read refreshes it."""
+    heads = HeldHeads()
+    heads.held = "cd" * 32
+    plugin = _plugin(heads, head=heads.head)
+    assert plugin._prev == "cd" * 32
+    heads.held = "ef" * 32  # another writer appended
+    _commit(plugin)
+    assert heads.rows[0].prev_hash == "ef" * 32 and plugin._prev == heads.rows[0].row_hash
+
+
+def test_a_refused_row_is_a_paged_sink_failure_and_an_outage_is_not() -> None:
+    """code-3: a row the sink refuses is lost and nothing else pages it; an unavailable sink pages
+    on its own, once per window, so the plugin's line for it is not marked."""
+
+    class Refusing:
+        def __init__(self, error: Exception) -> None:
+            self.error = error
+
+        def append(self, row: MachineEventRow) -> None:
+            raise self.error
+
+    rejected = MachineEventRejected("machine event row refused: occurred_at is not ISO-8601")
+    for error, page in ((rejected, True), (MachineEventUnavailable("WAL full"), False)):
+        plugin = _plugin(Refusing(error))
+        with capture_logs() as logs:
+            _commit(plugin)
+        assert _sink_failures(logs) == [(type(error).__name__, page, "critical")]

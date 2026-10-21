@@ -306,3 +306,21 @@ def test_read_window_is_a_bounded_prefix_of_read_pending(
     assert span <= max_bytes or len(window) == 1
     if window and len(window) < min(max_records, len(records)):  # the next frame did not fit
         assert window[-1][0] + len(encode_frame(records[len(window)])) > max_bytes
+
+
+def test_read_window_refuses_a_first_frame_declared_larger_than_max_frame_unread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 1, code-7: with `max_frame`, a first frame whose header declares more is
+    corruption at the window's start, raised before the frame is read; `read_pending` and a
+    call without `max_frame` read it as before."""
+    big = {"pad": "y" * 5000}
+    wal = _filled(tmp_path / "w.wal", [big, {"a": 1}])
+    frame = len(encode_frame(big))
+    recorded = record_wal_io(monkeypatch)
+    with pytest.raises(AuditWalCorrupt) as exc:
+        wal.read_window(10, 100, max_frame=frame - 1)
+    assert exc.value.offset == 0 and max(recorded.read_sizes("w.wal")) < frame
+    assert [r for _, r in wal.read_window(10, 100, max_frame=frame)] == [big]
+    assert [r for _, r in wal.read_window(10, 100)] == [big]
+    assert [r for _, r in wal.read_pending(1)] == [big]

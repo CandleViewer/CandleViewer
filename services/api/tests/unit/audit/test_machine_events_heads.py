@@ -10,16 +10,24 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from audit_waits import virtual
-from test_machine_events import FakeStore, chain, frames, row, settle, sink_for
+from structlog.testing import capture_logs
+from test_machine_events import T0, FakeStore, chain, frames, row, settle, sink_for
 
 from candleviewer.audit import machine_events
 from candleviewer.audit.machine_events import SEED_DRAIN_S, MachineEventUnavailable
 from candleviewer.audit.wal import AuditWal
 from candleviewer.statechart.persistence import MachineKey
-from candleviewer.statechart.plugins.audit import GENESIS_HASH, row_digest
+from candleviewer.statechart.plugins import CvAuditPlugin
+from candleviewer.statechart.plugins.audit import (
+    GENESIS_HASH,
+    MachineEventRow,
+    row_digest,
+    verify_chain,
+)
 from candleviewer.storage.errors import StorageQueryFailed
 
 KEY = MachineKey("persist_min", "00000000-0000-4000-8000-000000000001", "demo")
@@ -187,3 +195,41 @@ async def test_the_head_map_is_bounded_and_evicts_the_least_recently_used(
 def test_rows_are_chained_by_their_digest() -> None:
     r = row(0)
     assert r.row_hash == row_digest(replace(r, row_hash=""))
+
+
+@virtual
+async def test_evict_then_commit_never_forks_the_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 1, code-1: a live machine idle while the head map evicts its key refuses its
+    next row (counted, paged) instead of chaining it to a stale hash; once its key is seeded again
+    the chain goes on from the stored head, unforked."""
+    monkeypatch.setattr(machine_events, "HEAD_KEYS_MAX", 2)
+    store = FakeStore()
+    sink = sink_for(tmp_path, store)
+    await sink.start()
+    await sink.seed(KEY)
+    plugin = CvAuditPlugin(
+        machine_kind=KEY.machine_kind, entity_id=KEY.entity_id, env=KEY.env, sink=sink,
+        write_ahead=False, head=lambda: sink.head(KEY), clock=lambda: T0,
+    )  # fmt: skip
+    interp = SimpleNamespace(_active_state_nodes=())
+
+    def commit(event: str) -> None:
+        plugin.on_event_received(interp, SimpleNamespace(type=event, data={}))
+        plugin.on_transition(interp, (), (), SimpleNamespace(event=event))
+
+    commit("PING")
+    for n in range(2):  # two other machines push this key out of the map
+        sink.append(row(n, key=("persist_min", f"e-{n}", "demo")))
+    assert sink.head(KEY) is None
+    with capture_logs() as logs:
+        commit("PONG")
+    assert plugin.sink_failures == 1
+    assert [e["cv_page"] for e in logs if e["event"] == "statechart_audit_sink_failed"] == [True]
+    await sink.seed(KEY)  # the owner seeds again (a fault-row writer would, too)
+    commit("PING")
+    await settle(lambda: sink.pending == 0)
+    ours = [MachineEventRow(**r) for r in store.rows if r["entity_id"] == KEY.entity_id]
+    assert [r.event_type for r in ours] == ["PING", "PING"] and verify_chain(ours)
+    await sink.stop()
