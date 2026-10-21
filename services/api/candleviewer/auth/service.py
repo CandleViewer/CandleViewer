@@ -49,8 +49,9 @@ if TYPE_CHECKING:
 
 
 class BackstopAuditNotAttached(RuntimeError):
-    """`require_active` revoked a disabled user's session but no audit port is attached: a wiring
-    fault. It is raised (and logged by the session service) rather than skipped in silence."""
+    """`require_active` or a refused `refresh()` (#3331) revoked a disabled user's session but no
+    audit port is attached: a wiring fault. It is raised (and logged by the session service)
+    rather than skipped in silence."""
 
 
 class AuthService:
@@ -194,9 +195,10 @@ class AuthService:
             await self._revocation_sink(session_id, reason)
 
     def attach_backstop_audit(self, sink: BackstopAuditSink) -> None:
-        """Write the audit record of every session `require_active` revokes as `user_disabled`
-        through *sink* (C-2.9; `auth` may not import `audit`). Looked up per call, so it reaches
-        the session service whether it is attached before or after `start()`."""
+        """Write the audit record of every session `require_active` or a refused `refresh()`
+        (#3331) revokes as `user_disabled` through *sink* (C-2.9; `auth` may not import `audit`).
+        Looked up per call, so it reaches the session service whether it is attached before or
+        after `start()`."""
         self._backstop_audit = sink
 
     async def _audit_backstop(self, revocation: BackstopRevocation) -> None:

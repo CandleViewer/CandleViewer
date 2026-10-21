@@ -621,8 +621,12 @@ it (login refuses `disabled` only):
   `auth.disabled_user_session_revoked` and the refusal, `auth.session_refreshed` (`denied`, reason
   `user_disabled`). While the audit sink refuses the write-ahead record the refresh answers `503`
   and revokes nothing; the first refresh after it recovers, or any strict-path use, revokes the
-  session. A disable that commits after the claim leaves no live successor either: the mint reads
-  the status under a lock on the user row, and the disable's own lock queues behind it.
+  session. Nothing is revoked without its record (C-2.9), and no refresh issues a token while the
+  sink refuses, so the user gains nothing; the outage shows as
+  `cv_audit_writer_refused_total{domain="auth"}` (alert `AuditSinkRefusing`) and as
+  `auth.session_audit.writer_refused` log lines naming the action. A disable that commits after
+  the claim leaves no live successor either: the mint reads the status under a lock on the user
+  row, and the disable's own lock queues behind it.
 - A session that survives is revoked on its next strict-path use, with reason `user_disabled`: the
   first REST request that authenticates it (every route but `POST /auth/logout`, which accepts it
   so the user can still sign out) or the first socket `auth` that presents its token. The request
@@ -961,10 +965,11 @@ An `auth.refresh_reuse_detected` row at `warning`, with `after_state.family_revo
 different event, and `auth_refresh_reuse_total` does not count it: a rotated-out `cv_refresh` cookie
 was presented outside `/auth/refresh`, for example to `GET /auth/session`. Nothing is revoked, the
 answer is the uniform `401`, and `auth_session_fixation_attempts_total{reason="rotated"}` counts it.
-Rows are written within a per-address and a global budget, and `reason="audit_throttled"` counts
-the attempts past them. The SPA's token client (#2712) writes such rows on purpose: after a refresh
-whose answer it lost, it asks `GET /auth/session` before it presents the possibly spent cookie, and
-it asks again on each page load until the user signs in again. A few of these rows from the user's
+Rows are written within a per-address and a global budget and the writer's in-flight cap, and
+`reason="audit_throttled"` counts the attempts past them. The SPA's token client (#2712) is expected
+to write such rows on purpose: after a refresh whose answer it lost, it asks `GET /auth/session`
+before it presents the possibly spent cookie, and it asks again on each page load until the user
+signs in again. A few of these rows from the user's
 own address, after that user's last `auth.session_refreshed` row, are expected. Rows from another
 address, or across many users' sessions, mean someone holds rotated-out cookies: treat them as
 stolen.
@@ -1153,8 +1158,10 @@ While the sink refuses records, sign-out, session revocation and refresh answer 
 nothing (C-2.9): an access token lapses within 12 minutes and a longer refusal ends every session
 and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). A refresh of an
 idle-locked session is answered `401 session_idle_locked` before its record, whether or not the
-sink accepts it, and changes nothing either (#3331); the unlock that follows writes its own record
-first, so it answers `503` until the sink recovers. The break-glass
+sink accepts it, and changes nothing either (#3331). A lock that engages between the route's check
+and the service's own leaves the attempt's intent record with no outcome record, and nothing is
+rotated. The unlock that follows writes its own record first, so it answers `503` until the sink
+recovers. The break-glass
 reset (section 3, E09-S11 #2119) is the Owner's emergency path: it runs only with cv-api stopped
 and journals to its own host file, never the sink. `AuthAuditOutcomeLost` is a
 `ticket`, muted 22:00-07:00 UTC by default (`CV_ALERT_QUIET_HOURS`) and active 15 minutes after the

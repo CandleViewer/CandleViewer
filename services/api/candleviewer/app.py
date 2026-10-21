@@ -1482,7 +1482,8 @@ def create_app(
     revocation_hub = RevocationHub(remember_s=ACCESS_TOKEN_TTL.total_seconds())
     app.state.revocation_hub = revocation_hub
     ctx.auth.attach_revocation_sink(_hub_publisher(revocation_hub))  # every revoke path (#2272)
-    # The `require_active` backstop's audit record (C-2.9, #3120), in flight under the shared cap.
+    # The backstop's audit record (C-2.9, #3120), from `require_active` or a refused `refresh()`
+    # (#3331), in flight under the shared cap.
     ctx.auth.attach_backstop_audit(
         SessionBackstopAudit(_LazyAuditEmitter(ctx.audit), tracker=csrf_audits)
     )

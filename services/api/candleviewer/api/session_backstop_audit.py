@@ -1,4 +1,5 @@
-"""`auth.disabled_user_session_revoked`: the audit record of the `require_active` backstop (#3120).
+"""`auth.disabled_user_session_revoked`: the audit record of the backstop (#3120), whether
+`require_active` or a refused `refresh()` (#3331) revoked the session.
 
 `SessionService` hands this port each session it revoked as `user_disabled`, after the revoke, the
 count, the log and the publish. `auth` may not import `audit` (`forbidden-M18`), so the composition
