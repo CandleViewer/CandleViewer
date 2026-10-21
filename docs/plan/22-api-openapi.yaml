@@ -5304,9 +5304,9 @@ paths:
             `idempotency_key_reuse` or `idempotency_in_flight` (see the description), or
             `stop_request_in_flight`: an entry whose stop request collided with one still in
             flight on the same position, past the server's bounded retry. Nothing was recorded or
-            sent for it and the key is not bound. Only `stop_request_in_flight` carries
-            `Retry-After`, with `retry_after_seconds`; after it the same key and body are a first
-            submission.
+            sent for it and the key is not bound. `idempotency_in_flight` and
+            `stop_request_in_flight` carry `Retry-After`, with `retry_after_seconds`; after a
+            `stop_request_in_flight` the same key and body are a first submission.
           headers:
             Retry-After: { $ref: "#/components/headers/RetryAfter" }
           content:

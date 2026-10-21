@@ -589,7 +589,8 @@ def test_an_entry_whose_stop_request_collides_with_one_in_flight_is_refused_with
     assert stop["value"]["code"] == "stop_request_in_flight"
     assert stop["value"]["title"] == entry["title"]
     assert stop["value"]["retry_after_seconds"] > 0
-    assert "Only `stop_request_in_flight` carries `Retry-After`" in _words(conflict["description"])
+    carries = "`idempotency_in_flight` and `stop_request_in_flight` carry `Retry-After`"
+    assert carries in _words(conflict["description"])
     assert not _missing(
         _words(_PLACE["description"]),
         "one stop request in flight per position (`21-database-schema.md` section 3.3.11, the "
