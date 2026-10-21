@@ -72,9 +72,18 @@ with every recording of the same route (the method and path of its `stream` labe
 code, and fails the moment one disagrees; an error-row transcription is compared on its code and
 text only, and a REST recording whose label names no route fails the check. The PR that adds
 such a recording (E29-K01, #843) deletes the transcription it replaces: the file, its manifest
-entry and `build_corpus.py` row, and its line below. Not documented, so not transcribed: a `10001` duplicate's text (E29
+entry and `build_corpus.py` row, and its line below. The same PR removes the file from
+`TRANSCRIBED` in `services/api/tests/contract/bybit/test_contract_trading.py`, and repoints to the
+recording, or updates, every test that loads the file by name (`rest("rest/trading-...")`; the
+modules are those `grep -rln 'rest/trading-' services/api/tests` lists), so no test reads a
+deleted file. Not documented, so not transcribed: a `10001` duplicate's text (E29
 model O-1), a Partial-mode TP/SL order row, a REST `create-batch` reply with a refused item, and a
 linear position, wallet (USDT) or fee-rate row; strict-model unit tests alone cover those parsers.
+
+Licence: the upstream repository `bybit-exchange/docs` has no licence file at that commit, so no
+licence grants these examples. Each file reproduces one short documented example, used only to
+test this adapter's parsers against the documented shape, under ruling R2 (#2701); E29-K01's
+recordings replace them.
 
 Each line: file; source; date; symbol; env; redaction. Every env is none (a documentation
 example, from no account), and no redaction is needed: no file holds a key, a signature or an

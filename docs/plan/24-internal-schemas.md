@@ -3997,7 +3997,13 @@ Queried by an id, `open_orders` can return a closed order too, its `state` sayin
     counted there as `not_a_fill`; every other documented type (a delisting's `Delivery`,
     `BlockTrade`, `MovePosition`, `FutureSpread` and the four stock-split types) has no
     `exec_type` in §8.1 or 21 §3.3.6 and is counted as `unmapped_type`, never mapped by guess.
-    Each is logged by its type, and an undocumented type fails the read.
+    Each is logged by its type, and an undocumented type fails the read. The port reads the USDT
+    linear perpetuals (C-1.2 item 3) of a unified trading account in regular or isolated margin.
+    A portfolio-margin account is outside that set: `account_info` reports it (`margin_mode`
+    `portfolio`), and its position read fails closed (`UnknownStateError`), because the venue
+    writes no position leverage there (`""` in `GET /v5/position/list`). A row of another
+    instrument, such as a dated future (`BTCUSDT-26DEC25`), fails its read closed as well; that a
+    `settleCoin=USDT` read lists none is assumed pending E29-K01.
 
 ### 14.3 Bybit implementation notes
 
@@ -5367,7 +5373,7 @@ These are contract-test obligations created by this pass; they belong in the CI 
 
 ### 19.21 2026-10-21 — §8.6, §8.7, §14 the exchange `TradingPort` (G-8, #2877)
 
-- §14.1: `open_orders` takes a keyword-only `order_link_id` and `order_history` a keyword-only `exchange_order_id` (#846 ruling Q5, §8.5); `supports_ws_order_entry` describes the venue, and v1 builds no trade socket (SR-040a). §14.2 rule 2 now says the adapter surfaces a create's duplicate and the OMS adopts it (#2877 ruling R9); rule 9 lists the two new adapter series; and rule 12 fixes endpoint classes and lanes, the `cancel-all` filter and its 500-order cap, the per-row account check and the execution rows that fill no order.
+- §14.1: `open_orders` takes a keyword-only `order_link_id` and `order_history` a keyword-only `exchange_order_id` (#846 ruling Q5, §8.5); `supports_ws_order_entry` describes the venue, and v1 builds no trade socket (SR-040a). §14.2 rule 2 now says the adapter surfaces a create's duplicate and the OMS adopts it (#2877 ruling R9); rule 9 lists the two new adapter series; and rule 12 fixes endpoint classes and lanes, the `cancel-all` filter and its 500-order cap, the per-row account check, the execution rows that fill no order, and the account modes and instruments the port reads.
 - §14.4: `RateLane` and `lane` on the place and amend requests (ruling R3); `key_ref` is the active key's `api_keys.id` (ruling R13); the read models `Order` and `Execution` are listed, with `order_id` optional on them and on `ClosedPnl` and the fields B1's full match reads (ruling R8); `OrderAck.order_link_id` is optional and the ack carries the allow-listed `ExchangeRecord` (SR-E29-08); `AccountInfo` gains `isolated` and an optional `position_mode`, and `Wallet.available_to_withdraw` is optional, because the venue's account and wallet reads do not report them; `RateBudgetExceededError` and the error surface (ruling 11), with M2's refusals, `place_batch`'s item contract and `AmbiguousResultError.order_link_ids`; the record is built from the wire and dumps no null.
 - §8.6: a duplicate is a create's only, and the exact text of a duplicate `10001` is assumed until E29-K01. §8.7: the lanes are the priority classes; each attempt of a request takes its own token, and the lane's wait bounds the whole request, retries included.
 - The review fold (G-8b ruling 3, the orchestrator's ruling 3 on #3972 and G-8 ruling 4's headroom figure): §14.4's `Execution` gains `exchange_order_id`, `exec_type` and `fee_rate` as §8.1 names them, with 21 §3.3.6's `SessionSettlePnl`, which §8.1 lacks; `Order.exchange_order_id` is never empty, and an `ok` ack always carries it; rule 12 says which execution types are read and which are set aside (`not_a_fill`, `unmapped_type`); §14.1 adds `RateHeadroomPort` and §14.4 `RateHeadroom`; §8.6 maps `33004` to `AUTH_ERROR`; §8.7 makes the lane's wait a deadline from the request's start; §14.4's error surface adds `set_leverage`, the stripped traceback and the counting; and §14.1 records `open_orders` by id and the live-history and demo fee-rate assumptions.
