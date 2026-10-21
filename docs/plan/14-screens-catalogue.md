@@ -1746,7 +1746,7 @@ Drag preview                Drop zones
 - **Performance:** Templates are static bundled definitions plus their IR; instantiating a template creates a draft rule in <=300 ms with no evaluation until armed.
 - **Analytics/audit:** `rule.template_previewed`, `rule.template_instantiated` with `{templateId}` (analytics); the resulting draft emits the audited `rule.created`.
 - **Design sign-off acceptance checklist:** [ ] all listed templates drawn as cards with plain-language behaviour text [ ] the metrics each needs and its recorded-history requirement stated [ ] estimated-detector dependency badged [ ] which editor it opens in is stated [ ] search/filter [ ] preview-before-instantiate
-- **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) §2 (E36-D01; heuristic, pending owner approval; the twelve templates read back in the PROPOSED grammar; the liquidity-cluster template's direction is its C11, an owner decision under C-2.6 — tightening is the only direction a manager can express, and as worded the template needs a stop-relative metric the vocabulary lacks, its G13).
+- **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) §2 (E36-D01; heuristic, pending owner approval; the twelve templates read back in the PROPOSED grammar; the liquidity-cluster template's direction is its C11, an owner decision under C-2.6 — tightening is the only direction a manager can express, and as worded the template needs a stop-relative metric the vocabulary lacks, its G13 gap).
 
 ### SCR-084 — Rule simulation / backtest panel
 
