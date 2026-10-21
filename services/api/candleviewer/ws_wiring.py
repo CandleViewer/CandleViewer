@@ -18,6 +18,8 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   deny-all snapshot and never raises.
 * **Events** (E09 / kill switch): `WsEvents` is the one entry point producers call:
   `grants_changed`, `user_disabled`, `kill_switch_changed`.
+* **Rule readers** (#3488): `rule_frame_visible` reads a WS principal as `/rules` reads a session;
+  it is the `viewer` a `rules` publish must name (23 §15.6).
 * **Shutdown** (§9.4): `candleviewer.server.PlannedShutdownServer` runs `WsRuntime.stop()` before
   uvicorn's own shutdown (#2546): the gateway sends `shutdown_notice` on `system`, waits the grace
   period, then `bye` + `1001`. The lifespan teardown's later call only stops the sweeper. The grace
@@ -42,11 +44,12 @@ import structlog
 from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.alerts.ws_topic import AlertsTopic
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot, scoped_account_ids
 from candleviewer.book.resync import BookEngine
 from candleviewer.book.snapshot_source import BookSnapshotSource, Record
 from candleviewer.observability.context import spawn
 from candleviewer.orderbook_wiring import BookStream
+from candleviewer.rules.manager import Actor, RuleRow, rule_visible
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws import permissions as ws_permissions
 from candleviewer.ws.binary import BOOK_SNAPSHOT, Frame
@@ -242,6 +245,20 @@ def alerts_topic(hub: SequencingHub) -> AlertsTopic[SnapshotBody]:
     or resyncs an owner's subscriptions through it. The composition root attaches the deliveries
     reader; before, `build` gives `None`."""
     return AlertsTopic(hub.publish, hub.flush_pending, hub.resnapshot, SnapshotBody)
+
+
+def rule_frame_visible(row: RuleRow, principal: PrincipalSnapshot) -> bool:
+    """#3488: whether a frame about `row` may reach `principal` on the `rules` topic: the rules
+    module's reading rule (`rule_visible`) on what `/rules` reads of a session: the user, the owner
+    role and the grants with `can_view` that are not frozen (`api/rules_actor.py`). `rules` imports
+    no `auth`, so the two meet here: `publish(.., viewer=partial(rule_frame_visible, row))`."""
+    actor = Actor(
+        str(principal.user_id),
+        "",  # the session id: no part of who may read a rule
+        granted_accounts=frozenset(str(a) for a in scoped_account_ids(principal)),
+        is_owner=principal.is_owner,
+    )
+    return rule_visible(row, actor)
 
 
 class _Identity(Protocol):

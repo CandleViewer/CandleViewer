@@ -66,6 +66,7 @@ from candleviewer.ws.topics import (
 )
 
 if TYPE_CHECKING:
+    from candleviewer.auth.scopes import PrincipalSnapshot
     from candleviewer.ws.permissions import ConnectionAuthz, Subscription
     from candleviewer.ws.revocation import RevokedReason
 
@@ -136,6 +137,9 @@ PRIVATE_CAUSAL_ORDER: Final[tuple[str, ...]] = ("executions", "orders", "positio
 _CAUSAL_RANK: Final = {fam: i for i, fam in enumerate(PRIVATE_CAUSAL_ORDER)}
 #: S4: the families whose updates never wait in a window, the only ones published without a body.
 _UNPACED: Final = frozenset(f.family for f in FAMILIES.values() if f.never_throttled)
+#: The families whose every publish names who may receive it (`publish(viewer=)`): a rule is read by
+#: its owner (24 §15.2), so the family's account scope never decides alone.
+_VIEWED: Final = frozenset({"rules"})
 
 #: §7.2 universal snapshot fields, restricted to what each family's §14 payload schema declares
 #: (`additionalProperties: false`). `source` always travels in `meta.source` (snapMeta); binary
@@ -879,6 +883,13 @@ def _refuse_bodyless(ch: str, body: Mapping[str, Any] | None) -> None:
         raise ValueError(f"a {family} publish needs its structured body")
 
 
+def _refuse_unviewed(ch: str, viewer: object) -> None:
+    """A `rules` publish names who may receive it (`_VIEWED`; 23 §15.6, #3488). One without a
+    `viewer` is refused before the fan-out, so no producer can leave the check out."""
+    if viewer is None and (family := ch.split(".", 1)[0]) in _VIEWED:
+        raise ValueError(f"a {family} publish needs its viewer")
+
+
 def causal_sort(items: Iterable[tuple[str, Any]]) -> list[tuple[str, Any]]:
     """Stable sort of one account event's private frames into executions -> orders -> positions ->
     trade_groups (§16.1 S5); other topics keep their relative order after them."""
@@ -996,6 +1007,7 @@ class SequencingHub:
         ts_ms: int | None = None,
         meta: Mapping[str, Any] | None = None,
         select: Callable[[Subscription], bool] | None = None,
+        viewer: Callable[[PrincipalSnapshot], bool] | None = None,
         wake: bool = False,
     ) -> int:
         """One delta for `ch` (live, or one replay session) to every subscription in its scope:
@@ -1006,14 +1018,20 @@ class SequencingHub:
         pending its `snap` gets that `snap` instead of the `d`: the publish wakes it. A paced
         family (any but `orders` and `executions`, S4) needs `body`, a CVWB `part` only beside it:
         a window merges structured bodies (§8.2), so one without is refused before the fan-out,
-        whatever the flag (`ValueError`, #3268)."""
+        whatever the flag (`ValueError`, #3268). `viewer` is asked of each connection's principal as
+        it is now (§9.5 swaps it in first), after the scope check: a connection it refuses is sent
+        nothing and spends no sequence number. A `rules` publish needs one (`_VIEWED`, `ValueError`;
+        23 §15.6, #3488). Pure and total, like `select`."""
         _refuse_bodyless(ch, body)
+        _refuse_unviewed(ch, viewer)
         sent = 0
         for authz, emitter in list(self._conns.values()):
             sub = authz.find(ch, replay_session_id)
             if sub is None or not in_scope(authz, sub, account, user):
                 continue
             if select is not None and not select(sub):
+                continue
+            if viewer is not None and not viewer(authz.principal):
                 continue
             if wake and sub.snapshot_pending:
                 try:
@@ -1062,11 +1080,13 @@ class SequencingHub:
 
     def publish_private(self, account: uuid.UUID, frames: Iterable[tuple[str, Any]]) -> int:
         """One account event spanning several private topics, in §16.1 S5 causal order. The
-        whole event is checked first: a paced frame without its body refuses it before any of its
-        frames is published (`ValueError`, #3268)."""
+        whole event is checked first: a paced frame without its body, or a `rules` frame (an event
+        names no viewer), refuses it before any of its frames is published (`ValueError`, #3268,
+        #3488)."""
         ordered = causal_sort(frames)
         for ch, body in ordered:
             _refuse_bodyless(ch, body)
+            _refuse_unviewed(ch, None)
         sent = 0
         for ch, body in ordered:
             sent += self.publish(ch, body, account=account)

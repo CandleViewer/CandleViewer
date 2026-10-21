@@ -309,6 +309,7 @@ def publish(
     # By value: a test that reloads `generated_permissions` (test_rbac_generator) leaves two
     # `Scope` classes behind, so an identity check would depend on the test order.
     owner = user if user is not None or FAMILIES[family].scope != Scope.SELF else USER
+    viewer = (lambda _p: True) if family == "rules" else None  # #3488: judged in test_ws_rules_*
     sent: int = world.call(
         lambda: world.hub.publish(
             ch,
@@ -319,6 +320,7 @@ def publish(
             replay_session_id=replay,
             ts_ms=ts_ms,
             coalesced_count=coalesced_count,
+            viewer=viewer,
         )
     )
     return sent

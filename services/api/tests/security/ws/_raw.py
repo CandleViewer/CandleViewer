@@ -323,7 +323,8 @@ def publish(world: RawWorld, family: str, account: uuid.UUID) -> int:
     """One delta of `family` naming `account`, through the real hub on the app's loop: the number of
     subscriptions it reached."""
     body = delta_naming(family, account)
-    return int(world.call(lambda: world.hub.publish(family, body, account=account)))
+    viewer = (lambda _p: True) if family == "rules" else None  # #3488: judged in test_ws_rules_*
+    return int(world.call(lambda: world.hub.publish(family, body, account=account, viewer=viewer)))
 
 
 def drained(c: Client) -> list[dict[str, Any]]:
