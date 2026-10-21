@@ -2,11 +2,12 @@
 `require_active` or a refused `refresh()` (#3331) revoked the session.
 
 `SessionService` hands this port each session it revoked as `user_disabled`, after the revoke, the
-count, the log and the publish. `auth` may not import `audit` (`forbidden-M18`), so the composition
-root attaches it (`AuthService.attach_backstop_audit`). The record names the session, its user as
-the actor and the status read; no IP (the service has no request), token or hash. The revocation
-never depends on it: C-2.9 asks for one transaction where possible, `auth` cannot reach the audit
-store, and refusing to revoke because the sink is down would leave the session alive.
+count, the log and the publish, from a unit a cancelled request cannot cut short (#3332). `auth`
+may not import `audit` (`forbidden-M18`), so the composition root attaches it
+(`AuthService.attach_backstop_audit`). The record names the session, its user as the actor and the
+status read; no IP (the service has no request), token or hash. The revocation never depends on
+it: C-2.9 asks for one transaction where possible, `auth` cannot reach the audit store, and
+refusing to revoke because the sink is down would leave the session alive.
 
 The write is bounded as the CSRF refusal audits are (`api/csrf.py`, C-2.18): a tracked task under
 `asyncio.shield` in the app's shared `RefusalAuditTracker` (capped in flight, drained at shutdown),

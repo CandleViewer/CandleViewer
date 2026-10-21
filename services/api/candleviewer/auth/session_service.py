@@ -26,6 +26,7 @@ Audit emission is the router's job, exactly like `LoginService`/
 raises typed errors and returns typed results only. The one exception is the backstop of
 `require_active`, which no router wraps (any route and the WS `auth` reach it), and of a refused
 `refresh()` (#3331): it hands each revocation to an injected `BackstopAuditSink` (C-2.9, #3120).
+The backstop runs as one owned unit that a cancelled request cannot cut short (#3332).
 
 Revocation propagation (#2272, `23-ws-protocol.md` §9.5) is this module's:
 every path that revokes a session publishes its id to the injected
@@ -37,6 +38,7 @@ in place (§4.1).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import secrets
@@ -79,6 +81,7 @@ from candleviewer.auth.models import (
 )
 from candleviewer.auth.session_repository import SessionRepository
 from candleviewer.auth.view_as import ViewAsState
+from candleviewer.observability.context import spawn
 
 #: Ticket "Scope / Deliverables": "12 h absolute lifetime".
 ABSOLUTE_LIFETIME = timedelta(hours=12)
@@ -148,8 +151,9 @@ class BackstopRevocation:
 #: `AuthService.attach_backstop_audit`.
 BackstopAuditSink = Callable[[BackstopRevocation], Awaitable[None]]
 
-#: Longest `require_active` or `refresh()` waits for that port before it answers. The record may
-#: still land (the real port shields its write), and the revocation never depends on it.
+#: Longest the backstop waits for that port before `require_active` or `refresh()` answers, and
+#: longest a cancelled one still waits for its backstop to finish (#3332). The record may still
+#: land (the real port shields its write), and the revocation never depends on it.
 BACKSTOP_AUDIT_TIMEOUT_S = 2.0
 
 
@@ -335,6 +339,10 @@ class SessionService:
         self._publish_revocation = publish_revocation
         self._backstop_audit = backstop_audit
         self._backstop_audit_timeout_s = backstop_audit_timeout_s
+        #: The backstop units in flight (#3332): one per request that is revoking a stray session,
+        #: each ended by the store's statement timeout, the hub's close bound and the audit bound,
+        #: so the set needs no cap of its own (C-2.18). `drain` waits for them at shutdown.
+        self._backstop_units: set[asyncio.Task[None]] = set()
         #: Review finding (PR #1628, low): bounded, in-process counter of
         #: consecutive failed `unlock()` attempts per session id. Not
         #: persisted (a restart resets it, same trade-off as
@@ -505,7 +513,7 @@ class SessionService:
             raise SessionRevoked("expired")
 
         if presented.user_status in (UserStatus.DISABLED, None):
-            await self._revoke_stray_session(presented)  # as `require_active` does (#3331)
+            await self._end_stray_session(presented)  # as `require_active` does (#3331)
             raise UserDisabled(presented.user_status)  # read with the row (#2911)
 
         if presented.is_idle_locked(now=now):
@@ -611,7 +619,7 @@ class SessionService:
             raise SessionRevoked(session.revoked_reason or "revoked")
 
         if session.user_status in (UserStatus.DISABLED, None):
-            await self._revoke_stray_session(session)
+            await self._end_stray_session(session)
             raise SessionRevoked("user_disabled")
 
         if session.is_idle_locked(now=now) and not allow_locked:
@@ -622,17 +630,59 @@ class SessionService:
 
         return session
 
+    async def _end_stray_session(self, session: SessionRecord) -> None:
+        """Run `_revoke_stray_session` as one unit that a cancel of the request cannot cut short
+        (#3332): an owned task under `asyncio.shield`, started before the row update. A request
+        cancelled anywhere in it (the commit, the publish, the record) still leaves the row
+        revoked, counted, logged, published and recorded once, as an uncancelled one does; a
+        retry would find the row revoked and add nothing, so a step lost there is lost for good.
+        The cancelled request still waits for the unit up to the audit bound, then lets the
+        cancel through; a unit that runs on is drained at shutdown (`drain`). Finishing the
+        revocation after the request left is the safe direction: the row update is conditional.
+        An error of the unit reaches a request that still waits, unchanged."""
+        unit = spawn(self._revoke_stray_session(session), name="session-backstop-revoke")
+        self._backstop_units.add(unit)
+        ids = {"session_id": str(session.id), "user_id": str(session.user_id)}
+        unit.add_done_callback(lambda done: self._backstop_unit_done(done, ids))
+        try:
+            await asyncio.shield(unit)
+        except asyncio.CancelledError:
+            if not unit.done():
+                await asyncio.wait({unit}, timeout=self._backstop_audit_timeout_s)
+            raise
+
+    def _backstop_unit_done(self, unit: asyncio.Task[None], ids: dict[str, str]) -> None:
+        """Untrack a finished unit. A raise is logged here, by class name only: once its request
+        has left, nobody awaits the unit, and the shield has marked the error retrieved, so this
+        line is its only trace."""
+        self._backstop_units.discard(unit)
+        if not unit.cancelled() and (exc := unit.exception()) is not None:
+            with contextlib.suppress(Exception):  # a log sink must not raise out of a callback
+                _log().error(
+                    "auth.disabled_user_session_revoke_failed", error=type(exc).__name__, **ids
+                )
+
+    async def drain(self, timeout_s: float) -> int:
+        """Shutdown: wait up to *timeout_s* for the backstop units in flight (#3332). Each ends by
+        its own bounds, but a hung one must not hold the shutdown (C-2.18). Returns how many are
+        still running, logged: they are never cancelled here."""
+        if not self._backstop_units:
+            return 0
+        _, pending = await asyncio.wait(set(self._backstop_units), timeout=timeout_s)
+        if pending:
+            _log().warning("auth.backstop_units_in_flight_at_shutdown", units=len(pending))
+        return len(pending)
+
     async def _revoke_stray_session(self, session: SessionRecord) -> None:
         """Revoke *session*, a live session of a disabled or deleted user that no disable revoked
-        (SR-029 breach signal), as `user_disabled`. `require_active` and a refused `refresh()` call
-        it (#3331), so both revoke, count, log, publish and record the same way; each then raises
-        its own refusal. Counted, logged and audited only when this call revoked the row (#3029):
-        a request that read it live while another revoked it is refused all the same, but adds
-        nothing, so the counter and the log line move once per row, as the revocation counted
-        under `user_disabled` does, and the record is written once. Count and log come before the
-        publish, which suspends: a request cancelled there leaves the row revoked, and its retry
-        would find it so and count nothing. The record goes last, bounded and isolated (C-2.9,
-        #3120): a port that fails or hangs can hide neither the revocation nor the signal."""
+        (SR-029 breach signal), as `user_disabled`. `require_active` and a refused `refresh()` run
+        it (#3331), as one unit (`_end_stray_session`, #3332), so both revoke, count, log, publish
+        and record the same way; each then raises its own refusal. Counted, logged and audited
+        only when this call revoked the row (#3029): a request that read it live while another
+        revoked it is refused all the same, but adds nothing, so the counter and the log line move
+        once per row, as the revocation counted under `user_disabled` does, and the record is
+        written once. The record goes last, bounded and isolated (C-2.9, #3120): a port that fails
+        or hangs can hide neither the revocation nor the signal."""
         session_id = str(session.id)
         revoked = await self._revoke_row(session_id, reason="user_disabled")
         if revoked is not None:
@@ -651,7 +701,8 @@ class SessionService:
         """Hand the revocation just made to the audit port. The revocation stands whatever the
         port does: a failure is logged and dropped (never queued, C-2.18; the exception EX-08,
         `04-security-program.md` section 16.2), a wait past the bound is logged as slow (the record
-        may still land), and neither changes the refusal. A cancel is no failure: it propagates."""
+        may still land), and neither changes the refusal. A cancel is no failure: it propagates
+        (only the loop's teardown cancels the unit this runs in, #3332)."""
         if self._backstop_audit is None:
             return
         revocation = BackstopRevocation(session.id, session.user_id, session.user_status)

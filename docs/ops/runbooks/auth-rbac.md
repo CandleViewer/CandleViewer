@@ -659,38 +659,36 @@ it (login refuses `disabled` only):
   writer (#3120). The record comes last, after the revocation: an audit sink that is down never
   undoes the revocation, and never holds the `401` for more than 2 seconds. Any increase means a
   session outlived a disable (SR-029): escalate with the log line and the record.
-- One loss the count has. The count, the log and the publish follow the revoking `UPDATE`, so a
-  request cancelled after that `UPDATE` committed but before the repository's `revoke` returned
-  (in the unit of work's commit or exit: a cancel within one local `COMMIT` round trip, such as a
-  client that disconnects or a server that shuts down) leaves the row revoked as `user_disabled`
-  with no count, no `WARNING`, no publish (its sockets end at their token deadline instead of at
-  once) and no `auth_session_revocations_total` increment. The retry finds the row revoked and
-  adds nothing, and nothing the backstop emits shows the loss: the `sessions` row with
-  `revoked_reason = 'user_disabled'` is the only trace, so compare those rows in a window with the
-  counter's increase over it (a disable's own transaction and sweep add rows of their own).
-  Before #3029 the count came first, so a cancel there over-counted instead of losing the signal.
-  Shielding the bookkeeping after the `UPDATE` is not built: it is the follow-up #3332 (P2), filed
-  with the ruling of 2026-10-18 ([comment](https://github.com/CandleViewer/CandleViewer/issues/3120#issuecomment-6243898535)).
+- A cancelled request loses none of it (#3332). The revoking `UPDATE`, the count, the `WARNING`,
+  the publish and the record run as one unit the service owns, under `asyncio.shield`: a request
+  cancelled anywhere in it (a client that disconnects, a route timeout) still leaves the row
+  revoked, counted, logged, published and recorded once. The cancelled request waits for the
+  unit up to the same 2 seconds, then ends; a unit that runs on finishes by itself, and auth's
+  shutdown waits for it before audit and storage stop (a `WARNING`
+  `auth.backstop_units_in_flight_at_shutdown` gives the count of any still running). A unit that
+  fails once its request has left logs `auth.disabled_user_session_revoke_failed` (ERROR, with
+  `session_id`, `user_id` and `error`, the failure's class). What remains is the process dying
+  after the `UPDATE` committed: the row is revoked as `user_disabled` with no count, no `WARNING`,
+  no publish (its sockets end at their token deadline instead of at once) and no record, and the
+  retry finds the row revoked and adds nothing. The `sessions` row with
+  `revoked_reason = 'user_disabled'` is then the only trace, so compare those rows in a window
+  with the counter's increase over it (a disable's own transaction and sweep add rows of their
+  own).
 - When the audit sink is down the record is dropped, not queued (C-2.18; exception EX-08,
   `04-security-program.md` section 16.2), and the log says so:
   `auth.disabled_user_session_audit_failed` (ERROR, with `session_id`, `user_id` and `error`, the
   failure's class: `BackstopAuditSaturated` at the in-flight cap, `BackstopAuditNotAttached` for a
   wiring fault). A write still running after the 2 seconds logs
   `auth.disabled_user_session_audit_slow` (with the ids; the record may still land), and if it
-  then fails, or fails after its request was cancelled while waiting for it,
-  `auth.disabled_user_session_audit_failed_late` follows with `error` only and no session, so count
-  those lines. Six losses leave no log line that names the session and says its record is missing
-  (the `WARNING`, logged as soon as `revoke` returns, names it in five of them but cannot say the
-  record failed): the process dies between the revoke and the write; it shuts down while the write
-  is still running (the drain waits 2 seconds, then logs only a count); the request is cancelled
-  after the revoking `UPDATE` committed but before `revoke` returned (the bullet above: the count,
-  the log and the publish go with the record); the request is cancelled while the revocation is
-  published to the sockets, before the record is handed over; the write outlives the 2-second
-  bound and then fails (its `_audit_slow` line names the session but says the record may still
-  land, and the `_audit_failed_late` line that follows names none); or the request is cancelled
-  while it waits for the write and the write then fails (an `_audit_failed_late` line says so,
-  with no session). Only the reconcile step finds all six, and what each `_audit_failed_late`
-  line lost. To reconcile, after an outage or any restart, list the sessions revoked as
+  then fails, `auth.disabled_user_session_audit_failed_late` follows with `error` only and no
+  session, so count those lines. Three losses leave no log line that names the session and says
+  its record is missing (the `WARNING`, logged as soon as `revoke` returns, names it in the last
+  two but cannot say the record failed): the process dies between the revoke and the write (the
+  bullet above); it shuts down while a unit or its write is still running (each drain waits, then
+  logs only a count); or the write outlives the 2-second bound and then fails (its `_audit_slow`
+  line names the session but says the record may still land, and the `_audit_failed_late` line
+  that follows names none). A cancelled request is no longer one of them (#3332). Only the
+  reconcile step finds all three, and what each `_audit_failed_late` line lost. To reconcile, after an outage or any restart, list the sessions revoked as
   `user_disabled` in that window (UTC; `psql` runs inside the `postgres` container, as the user
   and database it was started with, in a read-only session):
 
@@ -748,7 +746,7 @@ it (login refuses `disabled` only):
   is routed, closes sockets within 5 s. A client that never refreshes or calls REST again leaves
   its row live until its absolute expiry, 12 hours after the login that started the session chain,
   but unused: its old token is refused as expired before `require_active` runs, and any later use
-  of the row revokes it. #3332 (P2), which shields the bookkeeping (above), is still open.
+  of the row revokes it.
 
 **The bootstrap Owner (O5, #3246).** The permission readers and the owner floor count only `active`
 users. The first Owner that `0002_rbac_seed` creates (`docs/plan/21-database-schema.md` §10.2) is
@@ -1336,7 +1334,6 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 | `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747          |
 | No durable retry of a lost audit outcome record                           | EX-07, #3009   |
 | No durable retry of a lost backstop audit record                          | EX-08, #3009   |
-| A cancel after the revoking `UPDATE` loses count, log, publish and record | #3332          |
 | Compose runs the fake backend (no lane); the lane's alerts are tickets    | #3009, #2701   |
 
 ## Execution record

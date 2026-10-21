@@ -1,5 +1,5 @@
-"""In-memory `SessionRepository` and `ViewAsSessionStore` fakes for auth unit tests, and the two
-calls that meet a stray session. No database."""
+"""In-memory `SessionRepository` and `ViewAsSessionStore` fakes for auth unit tests, the two calls
+that meet a stray session, and a loop clock a test advances. No database."""
 
 from __future__ import annotations
 
@@ -310,6 +310,38 @@ class LostRaceRepository(FakeSessionRepository):
 
     async def revoke(self, session_id: str, *, reason: str, now: datetime) -> SessionRecord | None:
         return None
+
+
+class CommitParkedRepository(FakeSessionRepository):
+    """The revoke commits, then parks until the test sets `release`: a cancel that lands after the
+    `UPDATE` committed but before its answer came back (#3332). With *fail_with* the revoke raises
+    it after the commit instead of answering, as a dropped connection would."""
+
+    def __init__(self, fail_with: Exception | None = None) -> None:
+        super().__init__()
+        self.parked, self.release = asyncio.Event(), asyncio.Event()
+        self.fail_with = fail_with
+
+    async def revoke(self, session_id: str, *, reason: str, now: datetime) -> SessionRecord | None:
+        updated = await super().revoke(session_id, reason=reason, now=now)
+        self.parked.set()
+        await self.release.wait()
+        if self.fail_with is not None:
+            raise self.fail_with
+        return updated
+
+
+class LoopClock:
+    """The running loop's clock plus a skew the test advances: an `asyncio.timeout` fires when the
+    test says so and nothing waits; other timers keep real time, so a hang still fails."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        loop = asyncio.get_running_loop()
+        real, self._skew = loop.time, 0.0
+        monkeypatch.setattr(loop, "time", lambda: real() + self._skew)
+
+    def advance(self, seconds: float) -> None:
+        self._skew += seconds
 
 
 #: A call that meets a stray session, a live session of a disabled or deleted user that no disable

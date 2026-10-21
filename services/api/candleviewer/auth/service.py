@@ -317,7 +317,10 @@ class AuthService:
         self._started = True
 
     async def stop(self, grace_s: float) -> None:
-        """Stop the module within `grace_s` seconds. No-op scaffold."""
+        """Stop the module within `grace_s` seconds. The backstop units still in flight are waited
+        for first (#3332): auth stops before audit and storage, so their records still land."""
+        if self._sessions is not None:
+            await self._sessions.drain(grace_s)
         self._login = None
         self._mfa = None
         self._invites = None
