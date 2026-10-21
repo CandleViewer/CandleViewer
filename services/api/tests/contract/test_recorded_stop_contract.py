@@ -278,8 +278,8 @@ def test_the_table_is_registered_where_21_registers_one() -> None:
     retention = _DOC.split("\n## 7. ", 1)[1].split("\n## 8. ", 1)[0]
     assert re.search(r"^\| `recorded_stops` \(PG\) +\| ∞ +\| — +\| ∞ +\|", retention, re.M)
     plan = _DOC.split("### 9.4 ", 1)[1].split("### 9.5 ", 1)[0]
-    [planned] = [row for row in plan.splitlines() if row.startswith("| `NNNN_recorded_stops`")]
-    assert "**E29-T04 #913**, planned: with the slice that first writes a record" in planned
+    [revision] = [row for row in plan.splitlines() if row.startswith("| `0043_order_submission`")]
+    assert "`recorded_stops` (§3.3.11)" in revision and "**E29-T04 #913**" in revision
     classes = _DOC.split("\n## 12. ", 1)[1]
     assert re.search(r"^\| `recorded_stops` +\| monetary columns +\| P1 +\|", classes, re.M)
     [actor] = re.findall(r"^\| `recorded_stops` +\| `actor_user_id` +\| P0 +\|.*$", classes, re.M)

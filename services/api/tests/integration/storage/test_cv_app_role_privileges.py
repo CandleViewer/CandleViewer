@@ -288,3 +288,24 @@ def test_account_and_key_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
     for table in tables:
         assert held[("cv_app", table)] == ("INSERT SELECT UPDATE",), table
         assert held[("cv_ro", table)] == ("SELECT",), table
+
+
+def test_order_submission_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
+    """The replay anchor and the recorded stops are permanent (21 Sec.3.3.10, Sec.3.3.11, revision
+    0043_order_submission): `cv_app` inserts, reads and updates them and holds no DELETE or
+    TRUNCATE; `cv_ro` reads them."""
+    probe = (
+        "SELECT string_agg(p, ' ' ORDER BY p) FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', "
+        "'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p "
+        "WHERE has_table_privilege(%s, %s, p)"
+    )
+    tables = ("idempotency_anchors", "recorded_stops")
+    with psycopg.connect(cv_app_dsn) as conn:
+        held = {
+            (role, table): conn.execute(probe, (role, table)).fetchone()
+            for role in ("cv_app", "cv_ro")
+            for table in tables
+        }
+    for table in tables:
+        assert held[("cv_app", table)] == ("INSERT SELECT UPDATE",), table
+        assert held[("cv_ro", table)] == ("SELECT",), table

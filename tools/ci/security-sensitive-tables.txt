@@ -27,3 +27,5 @@ machine_events
 risk_lockouts
 risk_policy
 kill_switch_state
+idempotency_anchors
+recorded_stops

@@ -73,6 +73,10 @@ TimeInForce = Literal["GTC", "IOC", "FOK", "PostOnly"]
 TriggerBy = Literal["LastPrice", "MarkPrice", "IndexPrice"]
 TpslMode = Literal["Full", "Partial"]
 IdempotencyState = Literal["unsent", "in_flight", "acked", "failed"]
+#: How the row came to exist (21 Sec.3.3.4 `ord_provenance`, 22 `OrderProvenance`), set at insert
+#: and never changed: the OMS's own submission, a reconciliation adoption, or a recorded stop's
+#: TP/SL order (24 Sec.8.3 rule 7).
+OrderProvenance = Literal["placed", "reconciliation", "recorded_stop"]
 
 #: 24-internal-schemas.md Sec.8.2: the `order_state` value that persists each chart state. One to
 #: one; six names differ, and `submitted` names a different state on each side, so a reader of
@@ -197,6 +201,7 @@ class NewOrder:
     exchange_updated_ts: datetime | None = None
     is_paper: bool = False
     lifecycle_state: LifecycleState | None = None
+    provenance: OrderProvenance = "placed"
 
     def __post_init__(self) -> None:
         check_fields(self, _NEW_ORDER_MONEY, _NEW_ORDER_STAMPS)
@@ -350,6 +355,7 @@ class OrderRow:
     last_reconciled_at: datetime | None
     is_paper: bool
     lifecycle_state: LifecycleState | None
+    provenance: OrderProvenance
 
 
 @dataclass(frozen=True, slots=True)

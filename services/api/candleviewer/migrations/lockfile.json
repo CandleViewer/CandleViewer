@@ -221,6 +221,11 @@
       "path": "services/api/candleviewer/migrations/versions/0046_audit_signing_keys.py",
       "sha256": "ba63ddd61ae205190b280a1eeec434e1abc0c2be9a9d34881f3b89f5b37bcdb6",
       "down_revision": "0045_audit_chain_hardening"
+    },
+    "0043_order_submission": {
+      "path": "services/api/candleviewer/migrations/versions/0043_order_submission.py",
+      "sha256": "92ce0e6d3060e3dc33809431043ac9c908913c6937a8e7c3a44fa45b154b69fa",
+      "down_revision": "0044_account_no_hard_delete"
     }
   }
 }

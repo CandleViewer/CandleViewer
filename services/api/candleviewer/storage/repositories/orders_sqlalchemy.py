@@ -33,8 +33,9 @@ connection the store cannot get or loses (an `OSError` from the driver, connect 
 included, the pool's checkout `TimeoutError`, or a `DBAPIError` that is `connection_invalidated`,
 of SQLSTATE class 08, as asyncpg reports a connection lost mid-statement, or of a server that
 does not serve, `_NOT_SERVING`) as `StorageTierUnavailable` (24 Sec.8.2 S7: Postgres is
-unavailable). Cancellation passes through unchanged. So a caller meets `OrderStoreError` or
-`StorageError`, never a driver or pool exception.
+unavailable). A write-ahead hook's `WriteAheadTimeout` (E29-T04's first persist) passes as it is:
+the unit of work rolled back, so it is no outcome in doubt. Cancellation passes through unchanged.
+So a caller meets `OrderStoreError` or `StorageError`, never a driver or pool exception.
 """
 
 from __future__ import annotations
@@ -49,7 +50,11 @@ import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 
 from candleviewer.db.models import order_events, orders
-from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
+from candleviewer.storage.errors import (
+    StorageQueryFailed,
+    StorageTierUnavailable,
+    WriteAheadTimeout,
+)
 from candleviewer.storage.repositories.exchange_payload import (
     MAX_CODE_CHARS,
     redact_exchange_payload,
@@ -267,6 +272,8 @@ def _constraints() -> Iterator[None]:
         if name is None:
             raise StorageQueryFailed(_sqlstate(exc)) from None
         raise OrderConstraintError(name) from None
+    except WriteAheadTimeout:
+        raise  # a write-ahead hook's bound, not the database's, although it is a `TimeoutError` too
     except (OSError, sa.exc.TimeoutError) as exc:
         raise StorageTierUnavailable(f"postgres unreachable ({type(exc).__name__})") from None
 

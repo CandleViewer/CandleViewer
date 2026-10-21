@@ -394,7 +394,7 @@ def _opt_uuid(value: object) -> UUID | None:
     return None if value is None else UUID(str(value))
 
 
-def _group_row(m: Mapping[Any, Any]) -> TradeGroupRow:
+def group_row(m: Mapping[Any, Any]) -> TradeGroupRow:
     values: dict[str, Any] = {name: m[name] for name in GROUP_FIELDS}
     for name in _GROUP_UUIDS:
         values[name] = _opt_uuid(values[name])
@@ -403,14 +403,14 @@ def _group_row(m: Mapping[Any, Any]) -> TradeGroupRow:
     return TradeGroupRow(**values)
 
 
-def _leg_row(m: Mapping[Any, Any]) -> TradeGroupLegRow:
+def leg_row(m: Mapping[Any, Any]) -> TradeGroupLegRow:
     values: dict[str, Any] = {name: m[name] for name in LEG_FIELDS}
     for name in _LEG_UUIDS:
         values[name] = _opt_uuid(values[name])
     return TradeGroupLegRow(**values)
 
 
-def _in_order(legs: Iterable[TradeGroupLegRow]) -> tuple[TradeGroupLegRow, ...]:
+def in_order(legs: Iterable[TradeGroupLegRow]) -> tuple[TradeGroupLegRow, ...]:
     return tuple(sorted(legs, key=lambda leg: (leg.sequence_no, leg.id)))
 
 
@@ -420,14 +420,43 @@ def _records(
     """Each group with its legs, in the groups' order."""
     by_group: dict[UUID, list[TradeGroupLegRow]] = {}
     for m in legs:
-        leg = _leg_row(m)
+        leg = leg_row(m)
         by_group.setdefault(leg.trade_group_id, []).append(leg)
-    rows = (_group_row(m) for m in groups)
-    return tuple(TradeGroupRecord(row, _in_order(by_group.get(row.id, ()))) for row in rows)
+    rows = (group_row(m) for m in groups)
+    return tuple(TradeGroupRecord(row, in_order(by_group.get(row.id, ()))) for row in rows)
 
 
 def _anchor(m: Mapping[Any, Any]) -> GroupAnchor:
     return GroupAnchor(group_id=_uuid(m["id"]), body_matches=bool(m["body_matches"]))
+
+
+# -- the share-locked re-check ---------------------------------------------------------------------
+
+
+async def require_live(
+    uow: SqlAlchemyUnitOfWork, group: NewTradeGroup, legs: Sequence[NewTradeGroupLeg]
+) -> None:
+    """Lock, in order, the definition, the leg accounts and the leg profiles `FOR SHARE`, and
+    refuse the create unless each is live (a profile at its leg's account and version). Also the
+    first persist of an entry's one-leg group (E29-T04, `submissions_sqlalchemy.py`)."""
+    if group.definition_id is not None:
+        found = await uow.session.execute(lock_definition_statement(group.definition_id))
+        if found.mappings().first() is None:
+            raise TradeGroupStoreRefusedError(DEFINITION_NOT_LIVE)
+    accounts = {leg.exchange_account_id for leg in legs}
+    locked = await uow.session.execute(lock_accounts_statement(accounts))
+    if {_uuid(m["id"]) for m in locked.mappings()} != accounts:
+        raise TradeGroupStoreRefusedError(ACCOUNT_NOT_LIVE)
+    profiles = await uow.session.execute(
+        lock_profiles_statement(leg.account_profile_id for leg in legs)
+    )
+    live = {
+        _uuid(m["id"]): (_uuid(m["exchange_account_id"]), int(m["version"]))
+        for m in profiles.mappings()
+    }
+    for leg in legs:
+        if live.get(leg.account_profile_id) != (leg.exchange_account_id, leg.profile_version):
+            raise TradeGroupStoreRefusedError(PROFILE_CHANGED)
 
 
 # -- failures ------------------------------------------------------------------------------------
@@ -546,39 +575,14 @@ class SqlAlchemyTradeGroupStore:
                 if found is None:  # the conflicting row is gone again: not ours to answer
                     raise TradeGroupStoreConflictError("ux_tg_creator_ref")
                 return GroupExists(_anchor(found))
-            await self._require_live(uow, group, legs)
+            await require_live(uow, group, legs)
             stmt = insert_legs_statement(_uuid(inserted["id"]), legs)
             rows = list((await uow.session.execute(stmt)).mappings())
-            record = TradeGroupRecord(_group_row(inserted), _in_order(_leg_row(m) for m in rows))
+            record = TradeGroupRecord(group_row(inserted), in_order(leg_row(m) for m in rows))
             if write_ahead is not None:
                 await bounded_write_ahead(write_ahead(record), self._audit_timeout_s)
             await uow.commit()
         return GroupCreated(record)
-
-    @staticmethod
-    async def _require_live(
-        uow: SqlAlchemyUnitOfWork, group: NewTradeGroup, legs: Sequence[NewTradeGroupLeg]
-    ) -> None:
-        """Lock, in order, the definition, the leg accounts and the leg profiles `FOR SHARE`, and
-        refuse the create unless each is live (a profile at its leg's account and version)."""
-        if group.definition_id is not None:
-            found = await uow.session.execute(lock_definition_statement(group.definition_id))
-            if found.mappings().first() is None:
-                raise TradeGroupStoreRefusedError(DEFINITION_NOT_LIVE)
-        accounts = {leg.exchange_account_id for leg in legs}
-        locked = await uow.session.execute(lock_accounts_statement(accounts))
-        if {_uuid(m["id"]) for m in locked.mappings()} != accounts:
-            raise TradeGroupStoreRefusedError(ACCOUNT_NOT_LIVE)
-        profiles = await uow.session.execute(
-            lock_profiles_statement(leg.account_profile_id for leg in legs)
-        )
-        live = {
-            _uuid(m["id"]): (_uuid(m["exchange_account_id"]), int(m["version"]))
-            for m in profiles.mappings()
-        }
-        for leg in legs:
-            if live.get(leg.account_profile_id) != (leg.exchange_account_id, leg.profile_version):
-                raise TradeGroupStoreRefusedError(PROFILE_CHANGED)
 
     async def update_leg(
         self,
@@ -598,7 +602,7 @@ class SqlAlchemyTradeGroupStore:
             stmt = update_leg_statement(group_id, leg_id, patch)
             m = (await uow.session.execute(stmt)).mappings().one()
             await uow.commit()
-        return _leg_row(m)
+        return leg_row(m)
 
     async def update_group(
         self,
@@ -617,7 +621,7 @@ class SqlAlchemyTradeGroupStore:
             stmt = update_group_statement(group_id, patch)
             m = (await uow.session.execute(stmt)).mappings().one()
             await uow.commit()
-        return _group_row(m)
+        return group_row(m)
 
     async def load_group(self, group_id: UUID) -> TradeGroupRecord | None:
         async with self._unit_of_work() as uow:
@@ -632,7 +636,7 @@ class SqlAlchemyTradeGroupStore:
             m = (await uow.session.execute(leg_statement(leg_id))).mappings().first()
         if m is None:
             return None
-        return LegSnapshotRow(_leg_row(m), parse_json(str(m["profile_snapshot"])))
+        return LegSnapshotRow(leg_row(m), parse_json(str(m["profile_snapshot"])))
 
     async def list_open_groups(self) -> tuple[TradeGroupRecord, ...]:
         async with self._unit_of_work() as uow:
@@ -648,7 +652,7 @@ class SqlAlchemyTradeGroupStore:
             rows = list((await uow.session.execute(unprotected_legs_statement())).mappings())
         return tuple(
             UnprotectedLegRow(
-                leg=_leg_row(m),
+                leg=leg_row(m),
                 symbol=str(m["symbol"]),
                 side=m["side"],
                 env=m["env"],
@@ -676,9 +680,10 @@ __all__ = [
     "GROUP_COLUMNS", "GROUP_FIELDS", "LEG_COLUMNS", "LEG_FIELDS", "SCOPED_STATEMENTS",
     "SET_ONCE_GROUP_COLUMNS", "SET_ONCE_LEG_COLUMNS", "SYSTEM_STATEMENTS",
     "UNPROTECTED_GROUP_COLUMNS", "SqlAlchemyTradeGroupStore", "anchor_statement",
-    "group_statement", "group_visible", "insert_group_statement", "insert_legs_statement",
-    "leg_statement", "legs_statement", "lock_accounts_statement", "lock_definition_statement",
-    "lock_group_statement", "lock_leg_statement", "lock_profiles_statement",
-    "open_groups_statement", "scoped_group_statement", "scoped_legs_statement",
-    "unprotected_legs_statement", "update_group_statement", "update_leg_statement",
+    "group_row", "group_statement", "group_visible", "in_order", "insert_group_statement",
+    "insert_legs_statement", "leg_row", "leg_statement", "legs_statement",
+    "lock_accounts_statement", "lock_definition_statement", "lock_group_statement",
+    "lock_leg_statement", "lock_profiles_statement", "open_groups_statement", "require_live",
+    "scoped_group_statement", "scoped_legs_statement", "unprotected_legs_statement",
+    "update_group_statement", "update_leg_statement",
 ]  # fmt: skip

@@ -189,7 +189,8 @@ def test_the_models_mirror_the_types_the_column_and_the_index() -> None:
     column = models.orders.c.lifecycle_state
     assert column.type is models.order_lifecycle_state and column.nullable
     assert (column.server_default, column.comment) == (None, None)
-    assert list(models.orders.c)[-1] is column  # added last, as the ALTER TABLE adds it
+    names = [c.name for c in models.orders.c]  # added after `is_paper`, as its ALTER TABLE adds it
+    assert names[names.index("is_paper") + 1] == column.name
     index = next(ix for ix in models.orders.indexes if ix.name == "ix_orders_open")
     where = index.dialect_options["postgresql"]["where"]
     assert f"ON orders (exchange_account_id, symbol) WHERE {where};" in _up()

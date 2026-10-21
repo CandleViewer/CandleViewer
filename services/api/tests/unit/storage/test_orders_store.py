@@ -96,6 +96,7 @@ def test_enum_literals_mirror_the_database_types(literal: Any, enum: Any) -> Non
         (port.TriggerBy, models.orders, "ord_trigby"),
         (port.TpslMode, models.orders, "ord_tpslmode"),
         (port.IdempotencyState, models.orders, "ord_idem"),
+        (port.OrderProvenance, models.orders, "ord_provenance"),
         (port.OrderEventSource, models.order_events, "oe_source"),
     ],
 )

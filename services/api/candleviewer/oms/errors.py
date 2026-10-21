@@ -153,6 +153,37 @@ class DuplicateOrderLinkId(OmsError):
         self.order_link_id = order_link_id
 
 
+class AnchorTaken(OmsError):
+    """The request's key is held already (E29-T04 #913): by an earlier request of the principal,
+    or by a concurrent first persist that committed first, on the anchor (`ux_ia_principal_ref`)
+    or an entry's group (`ux_tg_creator_ref`). Nothing was written; the caller answers the request
+    as a repeat (21 Sec.3.3.10). Names the constraint only."""
+
+    def __init__(self, constraint: str) -> None:
+        super().__init__(f"the request's key is held already ({constraint})")
+        self.constraint = constraint
+
+
+class StopRequestInFlight(OmsError):
+    """A stop request for the position is in flight (`ux_rs_in_flight`, 21 Sec.3.3.11), so this
+    one was not recorded and nothing was written or sent."""
+
+
+class SubmissionRefused(OmsError):
+    """The first persist found, under its share locks, the order's account not live
+    (`account_not_live`) or the leg's profile past the version it was sized from
+    (`profile_changed`, SR-E28-15): nothing was written. `reason` names which."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"the order was not stored: {reason}")
+        self.reason = reason
+
+
+class AuditNotDurable(OmsError):
+    """A write's write-ahead audit record did not land within its bound, so the write rolled back
+    and nothing was written (C-2.9). Never a `TimeoutError`: no outcome is in doubt."""
+
+
 # --- The order path's refusals and their answers (E29-T04, #913) --------------------------------
 
 #: The `errors[]` rules of `validation_failed` that 22-api-openapi.yaml `placeOrder` names.

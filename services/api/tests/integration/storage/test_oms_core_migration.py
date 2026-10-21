@@ -178,12 +178,15 @@ _CATALOG = (
 
 
 def _doc_ddl() -> str:
-    """Sec.3.3.4-3.3.7's ```sql blocks, to their fences, then Sec.3.3.4's second block
-    (`0034_order_vocabulary`), so the doc is compared with the head. The leg FKs resolve to
-    `public.trade_group_legs` through the search path, under the names the live ones carry."""
+    """Sec.3.3.4-3.3.7's ```sql blocks, to their fences, then Sec.3.3.4's second and third blocks
+    (`0034_order_vocabulary`, `0043_order_submission`), so the doc is compared with the head. The
+    leg FKs resolve to `public.trade_group_legs` through the search path, under the names the live
+    ones carry."""
     sections = [_DOC.read_text(encoding="utf-8").split(f"#### {h}", 1)[1] for h in _BLOCKS]
     blocks = [s.split("```sql", 1)[1].split("```", 1)[0] for s in sections]
-    blocks.append(sections[0].split("```sql", 2)[2].split("```", 1)[0])
+    later = sections[0].split("#### ", 1)[0].split("```sql")[2:]
+    assert len(later) == 2, "Sec.3.3.4 holds 0029's, 0034's and 0043's blocks"
+    blocks += [block.split("```", 1)[0] for block in later]
     return "\n".join(blocks)
 
 
