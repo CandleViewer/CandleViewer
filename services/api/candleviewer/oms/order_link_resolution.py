@@ -70,7 +70,11 @@ class PlacementPort(Protocol):
     async def place_order(self, req: PlaceOrderRequest) -> OrderAck: ...
 
     async def open_orders(
-        self, account: AccountRef, symbol: Symbol | None = None
+        self,
+        account: AccountRef,
+        symbol: Symbol | None = None,
+        *,
+        order_link_id: OrderLinkId | None = None,
     ) -> Sequence[Order]: ...
 
     async def order_history(
@@ -78,6 +82,7 @@ class PlacementPort(Protocol):
         account: AccountRef,
         *,
         order_link_id: OrderLinkId | None = None,
+        exchange_order_id: str | None = None,
         start: TsUs | None = None,
         end: TsUs | None = None,
     ) -> Sequence[Order]: ...
@@ -227,11 +232,11 @@ async def _find(
 ) -> tuple[Order, Literal["realtime", "history"]] | None:
     """One lookup round: the id in open orders, then in history.
 
-    Open orders are filtered here until `open_orders` takes an id filter (#846
-    Q5); history results are filtered again so no other order is ever adopted.
+    Both lookups pass the id filter (#846 Q5) and filter the results again, so
+    no other order is ever adopted whatever a port returns.
     """
     link = request.order_link_id
-    for order in await port.open_orders(request.account, request.symbol):
+    for order in await port.open_orders(request.account, request.symbol, order_link_id=link):
         if order.order_link_id == link:
             return order, "realtime"
     for order in await port.order_history(request.account, order_link_id=link):

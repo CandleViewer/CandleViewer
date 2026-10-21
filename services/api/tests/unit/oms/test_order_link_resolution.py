@@ -2,9 +2,9 @@
 
 Ruling B4: no recorded exchange payloads here. The fake below speaks domain
 `Order`/`OrderAck` models only; the fixture-driven integration test belongs to
-E29-T04. Ruling Q5: `open_orders` has no id filter yet, so the OMS filters
-locally, and the fake's `order_history` ignores its filter to prove the OMS
-re-checks it.
+E29-T04. Ruling Q5: the OMS passes the id filter to both lookups and filters
+the results again, and the fake ignores the filters to prove the OMS re-checks
+them.
 """
 
 from __future__ import annotations
@@ -139,6 +139,7 @@ class _FakeExchange:
         self.ambiguous_after_send = False
         self.failing_lookup: str | None = None
         self.lookup_error: ExchangeError = TransportError("lookup timed out")
+        self.filters: list[OrderLinkId | None] = []
 
     async def place_order(self, req: PlaceOrderRequest) -> OrderAck:
         self.calls.append(("place_order", req.account.account_id, req.order_link_id))
@@ -156,9 +157,14 @@ class _FakeExchange:
         return _ack(ok=True)
 
     async def open_orders(
-        self, account: AccountRef, symbol: Symbol | None = None
+        self,
+        account: AccountRef,
+        symbol: Symbol | None = None,
+        *,
+        order_link_id: OrderLinkId | None = None,
     ) -> Sequence[Order]:
         self.calls.append(("open_orders", account.account_id, symbol))
+        self.filters.append(order_link_id)
         self._fail("open_orders")
         return list(self.open)
 
@@ -167,6 +173,7 @@ class _FakeExchange:
         account: AccountRef,
         *,
         order_link_id: OrderLinkId | None = None,
+        exchange_order_id: str | None = None,
         start: TsUs | None = None,
         end: TsUs | None = None,
     ) -> Sequence[Order]:
@@ -209,6 +216,7 @@ async def test_duplicate_rejection_is_adopted_not_failed() -> None:
 
     assert outcome == Adopted(order=live, source="realtime")
     assert exchange.calls == [("place_order", ACCOUNT, LINK), ("open_orders", ACCOUNT, SYMBOL)]
+    assert exchange.filters == [LINK]  # #846 Q5: the id filter reaches the port, then re-checked
     assert logs == [
         {
             "event": "order_link_id_duplicate_adopted",
