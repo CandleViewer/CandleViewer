@@ -4804,7 +4804,7 @@ class SetFeatureFlagRequest(BaseModel):
     reason: Annotated[
         str | None,
         Field(
-            description="Why the flag changed; recorded in the `flags.change` audit entry (E42-T03). The server refuses a write without it (`422 validation_failed`). It stays optional in the schema because C-6.3 classes a newly required field as breaking.\n",
+            description="Why the flag changed; recorded in the `flags.change` audit entry (E42-T03). The server refuses a write without it (`422 validation_failed`). It stays optional in the schema because C-6.3 classes a newly required field as breaking. A reason that carries a credential is refused as `422 validation_failed` (rule `credential_in_reason`) and recorded as `<redacted:credential>`; `setFeatureFlag` lists what counts.\n",
             max_length=280,
         ),
     ] = None

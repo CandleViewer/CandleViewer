@@ -58,10 +58,25 @@ def test_a_url_that_is_not_printable_https_with_a_host_is_refused(url: str) -> N
         "https://github.com/x?a=1?sig=secret",  # a second `?`
         "https://h.example/app;jsessionid=secret?x=1",  # a path-matrix parameter (Java)
         "http" + "://user:secret@github.com/" + "a" * 3000,  # before the scheme and the length
+        "https" + "://cv:ab/cd@db.local/x",  # a password urlsplit cuts at `/` ...
+        "https" + "://cv:ab?cd@db.local/x",  # ... at `?`
+        "https" + "://cv:ab#cd@db.local/x",  # ... and at `#`
     ],
 )
 def test_a_credential_is_refused_and_recorded_redacted(url: str) -> None:
     assert check_evidence_url(url) == ("credential_in_url", REDACTED_CREDENTIAL)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://h.example:8443/@scope/pkg",
+        "https://h.example:8443/x?a=1@b",
+        "https://[::1]:8443/x@y",
+    ],
+)
+def test_a_port_before_a_path_at_is_no_password(url: str) -> None:
+    assert check_evidence_url(url) == (None, url)
 
 
 def test_a_path_parameter_that_names_no_credential_is_accepted_as_is() -> None:
@@ -127,6 +142,7 @@ def test_a_refused_url_is_never_recorded_with_an_at_and_an_accepted_one_is_kept(
 
 
 _DENIED = ["sig", "code", "auth", "pass", "pwd", "passwd", "pw", "pswd", "sas", "x_amz_credential"]
+_DENIED += ["mfa", "2fa"]
 _SPELLED = ["X-Amz-Credential", "X-Goog-Credential", "AWSAccessKeyId", "tempauth", "rlkey"]
 _SPELLED += ["JSESSIONID", "PHPSESSID", "SAMLResponse", "assertion"]
 
@@ -136,6 +152,19 @@ _SPELLED += ["JSESSIONID", "PHPSESSID", "SAMLResponse", "assertion"]
 def test_every_deny_listed_parameter_name_is_a_credential(name: str) -> None:
     assert re.sub(r"[^a-z0-9]", "", name.lower()) in TOKEN_PARAMS
     assert check_evidence_url(f"https://h.example/x?{name}=secret")[0] == "credential_in_url"
+
+
+@pytest.mark.parametrize(
+    "name", ["DB_PASS", "smtpPass", "MAIL_PW", "db.pwd", "mysql-pwd", "db_passwd", "x_pswd"]
+)
+def test_a_password_suffix_names_a_credential(name: str) -> None:
+    assert check_evidence_url(f"https://h.example/x?{name}=secret")[0] == "credential_in_url"
+
+
+@pytest.mark.parametrize("name", ["bypass", "compass", "passage", "pwdx"])
+def test_a_word_ending_in_pass_names_no_credential(name: str) -> None:
+    url = f"https://h.example/x?{name}=1"
+    assert check_evidence_url(url) == (None, url)
 
 
 @pytest.mark.parametrize(

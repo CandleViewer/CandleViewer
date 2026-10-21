@@ -245,6 +245,25 @@ async def test_two_writes_from_one_read_commit_once_and_conflict_once() -> None:
     ("key", "value", "extra", "rule", "field"),
     [
         (_K, True, {"reason": " "}, "required", "reason"),
+        (_K, True, {"reason": "rotating, password=hunter2"}, "credential_in_reason", "reason"),
+        # the reason is judged first, so a caller never fixes the value and resends the credential
+        (_K, 1, {"reason": "password=hunter2"}, "credential_in_reason", "reason"),
+        (
+            LIVE_ENABLED,
+            False,
+            {"reason": "password=hunter2", "user_overrides": {_B: True}},
+            "credential_in_reason",
+            "reason",
+        ),
+        (LIVE_ENABLED, True, {"reason": "password=hunter2"}, "credential_in_reason", "reason"),
+        # the reason is judged before `expected_updated_at`, whose refusal would record it
+        (
+            _K,
+            True,
+            {"reason": "api_key: hunter2", "expected_updated_at": None},
+            "credential_in_reason",
+            "reason",
+        ),
         (_K, True, {"expected_updated_at": None}, "required", "expected_updated_at"),
         (_K, 1, {}, "kind_mismatch", "value"),
         (_K, "true", {}, "kind_mismatch", "value"),
@@ -294,6 +313,30 @@ async def test_a_refused_evidence_url_never_reaches_the_record_raw(url: str, aud
         await _set(writer, LIVE_ENABLED, True, evidence_url=url)
     ((_, record),) = audit.records
     assert record["after_state"]["evidence_url"] == audited and "secret" not in str(record)
+
+
+@pytest.mark.parametrize("key", [_K, "ui.nonexistent"], ids=["known", "unknown"])
+async def test_a_credential_shaped_reason_never_reaches_the_record_raw(key: str) -> None:
+    """AD-I02: the refused reason is recorded redacted, and so is one sent for an unknown flag,
+    whose `not_found` record is written before any rule runs."""
+    writer, store, audit = await _writer(_Hook())
+    with pytest.raises((FlagValidationError, UnknownFlagError)):
+        await _set(writer, key, False, reason="see https" + "://u:hunter2@h.example/x")
+    ((_, record),) = audit.records
+    assert record["after_state"]["reason"] == REDACTED_CREDENTIAL and "hunter2" not in str(record)
+    assert store.writes == []
+
+
+async def test_an_honest_reason_is_recorded_as_given() -> None:
+    """A colon, a time, a ticket link and the word `token` in prose are not credentials."""
+    reason = (
+        "rollout 10:30: token budget raised, see "
+        "https://github.com/CandleViewer/CandleViewer/issues/412"
+    )
+    writer, _, audit = await _writer(_Hook())
+    await _set(writer, _K, False, reason=reason)
+    (_, intent), _outcome = audit.records
+    assert (intent["reason"], intent["after_state"]["reason"]) == (reason, reason)
 
 
 async def test_an_unknown_flag_is_audited_but_never_reaches_a_series_or_the_gate() -> None:
