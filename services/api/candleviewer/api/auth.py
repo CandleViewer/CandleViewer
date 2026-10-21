@@ -434,14 +434,20 @@ def make_auth_router(
         return audit_service.writer, identity
 
     def _signed_in(
-        minted: MintedSession, user: dict[str, Any], *, lifetime_s: int, **extra: Any
+        request: Request,
+        minted: MintedSession,
+        user: dict[str, Any],
+        *,
+        lifetime_s: int,
+        **extra: Any,
     ) -> JSONResponse:
         """`AuthenticatedResponse` (plus *extra*) with the `cv_refresh` and SR-041 cookies of
-        the session just minted, each living *lifetime_s* seconds."""
+        the session just minted, each living *lifetime_s* seconds, and the token header that
+        *request* may get (ADR-0038 3b)."""
         tokens = _tokens(minted, include_refresh=False, refresh_expires_in=lifetime_s)
         response = JSONResponse({"status": "authenticated", "tokens": tokens, "user": user} | extra)
         _set_refresh_cookie(response, minted.refresh_token, max_age=lifetime_s)
-        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=lifetime_s)
+        set_csrf_cookie(request, response, csrf.issue(str(minted.session_id)), max_age=lifetime_s)
         return response
 
     async def _enrolment_only_sign_in(
@@ -498,7 +504,9 @@ def make_auth_router(
         # U34 (RR-15): an Owner's password-only session is to page; no rule yet (#2746).
         role = normalise_role(user.get("roles") or ())
         auth_enrolment_only_sessions_total.labels(role=role).inc()
-        return _signed_in(minted, user, lifetime_s=refresh_lifetime_s(minted, password_only=True))
+        return _signed_in(
+            request, minted, user, lifetime_s=refresh_lifetime_s(minted, password_only=True)
+        )
 
     async def _enrolling_caller(
         request: Request,
@@ -680,7 +688,9 @@ def make_auth_router(
         )
         _set_refresh_cookie(response, minted.refresh_token, max_age=REFRESH_EXPIRES_IN_S)
         # SR-041: the new session gets its own CSRF token
-        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=REFRESH_EXPIRES_IN_S)
+        set_csrf_cookie(
+            request, response, csrf.issue(str(minted.session_id)), max_age=REFRESH_EXPIRES_IN_S
+        )
         return response
 
     @router.post("/auth/mfa/recovery")
@@ -849,7 +859,9 @@ def make_auth_router(
         ).inc()
         # Read before the commit, which revoked every method: the client opens enrolment.
         shown = {**profile, "mfa_required": user.mfa_required, "mfa_enabled": False}
-        return _signed_in(minted, shown, lifetime_s=refresh_lifetime_s(minted, password_only=True))
+        return _signed_in(
+            request, minted, shown, lifetime_s=refresh_lifetime_s(minted, password_only=True)
+        )
 
     @router.post("/auth/mfa/enroll", status_code=201)
     async def mfa_enroll(request: Request, body: MfaEnrollRequest) -> JSONResponse:
@@ -1002,6 +1014,7 @@ def make_auth_router(
             return _problem(503, "Service unavailable", _UNROTATED)
         activated = MfaMethodView(active=True, **method.model_dump(include=_METHOD_FIELDS))
         return _signed_in(
+            request,
             minted,
             {**profile, "mfa_enabled": True},  # read before the commit, which enabled MFA
             lifetime_s=REFRESH_EXPIRES_IN_S,

@@ -191,9 +191,18 @@ class Stack:
 
 
 @contextlib.contextmanager
-def open_stack(monkeypatch: pytest.MonkeyPatch, **create_app_kwargs: Any) -> Iterator[Stack]:
+def open_stack(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    listed: tuple[str, ...] = (),
+    backend_connection: bool = False,
+    **create_app_kwargs: Any,
+) -> Iterator[Stack]:
+    """*listed* origins join `ORIGIN` in the SR-042 allow-list (the shell's `app://candleviewer`,
+    say), and `desktop.backend_connection` answers *backend_connection*: its reader is never
+    started here, so it keeps the value it is given (S3's seam, ADR-0038 2e)."""
     clock = Clock()
-    monkeypatch.setenv("CV_ALLOWED_ORIGINS", ORIGIN)
+    monkeypatch.setenv("CV_ALLOWED_ORIGINS", ",".join((ORIGIN, *listed)))
     users = FakeUserRepository()
     auth = AuthService(
         users,
@@ -213,6 +222,7 @@ def open_stack(monkeypatch: pytest.MonkeyPatch, **create_app_kwargs: Any) -> Ite
     resolver = Resolver()
     create_app_kwargs.setdefault("principal_resolver", resolver)
     app = appmod.create_app(auth_clock=clock, **create_app_kwargs)
+    app.state.feature_flags.backend_connection.value = backend_connection
     client = TestClient(
         app, base_url=ORIGIN, client=("127.0.0.1", 50000), raise_server_exceptions=False
     )
