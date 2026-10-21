@@ -103,6 +103,14 @@ class StorageWalNotApplied(StorageError):
         self.waited_s = waited_s
 
 
+class StorageDdlNotFound(StorageError):
+    """The QuestDB DDL directory holds no `.sql` file (an image built without it, or a wrong path):
+    the runner would find nothing to apply and report success, so the migrate step refuses (#3897).
+    """
+
+    code = "STORAGE_DDL_NOT_FOUND"
+
+
 class StorageRetentionBlockedByPin(StorageError):
     """`RetentionRepository.apply` refused to roll off or delete a pinned range."""
 
@@ -307,6 +315,7 @@ ERROR_CODES: dict[type[StorageError], str] = {
     StoragePartitionDropNotApplied: StoragePartitionDropNotApplied.code,
     StorageSchemaDrift: StorageSchemaDrift.code,
     StorageWalNotApplied: StorageWalNotApplied.code,
+    StorageDdlNotFound: StorageDdlNotFound.code,
     StorageRetentionBlockedByPin: StorageRetentionBlockedByPin.code,
     StorageRetentionBlockedUnverified: StorageRetentionBlockedUnverified.code,
     StorageRetentionBlockedByReplay: StorageRetentionBlockedByReplay.code,

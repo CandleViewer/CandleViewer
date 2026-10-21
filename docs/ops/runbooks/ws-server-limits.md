@@ -191,7 +191,9 @@ that raises ends the start. Check, in this order:
    waits for. `pg_isready -h <host> -p <port>` checks Postgres alone.
 2. **The schema is at head.** From `services/api`, with `CV_PG_DSN` set to the same database,
    `alembic current` should print the revision that `alembic heads` prints, and
-   `alembic upgrade head` applies the rest (AGENTS.md section 4). An older schema makes the first
+   `alembic upgrade head` applies the rest (AGENTS.md section 4). On a deployed stack run the storage
+   migrate step instead (`docs/ops/runbooks/storage-migrate.md`): it applies these revisions and the
+   QuestDB DDL together, and nothing else creates the QuestDB tables. An older schema makes the first
    query that needs a newer table or column fail.
 3. **The KEK settings are accepted.** `CV_KEK_SOURCE`, `CV_KEK_HANDLE`, `CV_KEK_ACK_PATH` and
    `CV_KEK_VERSION`: the start refuses a live read-once FIFO handle with no `CV_KEK_ACK_PATH`

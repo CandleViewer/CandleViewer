@@ -68,6 +68,13 @@ COPY --from=builder --chown=10001:10001 /build/candleviewer /app/candleviewer
 # packages/fixtures/README.md.
 COPY --chown=10001:10001 packages/fixtures/raw/synthetic_sample.jsonl \
     /app/packages/fixtures/raw/synthetic_sample.jsonl
+# #3897: the QuestDB DDL for the explicit migrate step (`python -m candleviewer.storage.migrate`,
+# docs/ops/runbooks/storage-migrate.md), never applied at API boot. Root-owned (no --chown) and not
+# writable: the runtime user reads it and cannot change it, whatever mode the build host's checkout
+# gave the files (a permissive umask, DrvFs). The step reads this fixed path (QUESTDB_DDL_DIR in
+# candleviewer/storage/migrate.py); test_migrate_image_content.py pins the two together.
+COPY backend/db/questdb /app/backend/db/questdb
+RUN chmod -R a+rX,go-w /app/backend/db/questdb
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

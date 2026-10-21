@@ -360,6 +360,7 @@ exports, added in #3189) needs that package built: `turbo run test` builds the d
 | Protocol-model staleness gate (what CI runs)   | `python scripts/generate_protocol_models.py --check`                     |
 | New migration                                  | `alembic revision -m "<summary>"` (autogenerate then **review by hand**) |
 | Apply / roll back migration                    | `alembic upgrade head` / `alembic downgrade -1`                          |
+| Deploy: apply Postgres and QuestDB schemas     | `python -m candleviewer.storage.migrate` (runbook: storage-migrate.md)   |
 | Run API locally                                | `python -m candleviewer.server --reload`                                 |
 
 ### Stack, E2E, load, security
