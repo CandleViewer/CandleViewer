@@ -1254,6 +1254,61 @@ async def test_a_bring_up_that_raises_a_cancellation_stops_the_machine_and_passe
     assert [e.send_id for e in await journal.list_unreplayed(KEY)] == env.snapshot["cv_drained"]
 
 
+async def test_every_plugin_is_brought_up_and_any_failure_still_fails_the_restore_safely(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The factory contains each `cv_bring_up` (#3988): a failure is logged by its type and the
+    next plugin is still brought up. A restore that then returned would be the unsafe outcome
+    (E50-T63, as ruled): it is stopped, one P1 page names each failure's type, nothing is
+    replayed and the first failure is raised."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    _spy_replay(monkeypatch, journal, steps)
+    _record_start(monkeypatch, steps, settles=True)
+    first = RuntimeError("the owner's registry is gone")
+    plugins = [_BringUp(steps, first), _BringUp(steps), _BringUp(steps, OSError("gone too"))]
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    with capture_logs() as logs, pytest.raises(RuntimeError) as raised:
+        await restorer.restore(KEY, env, extra_plugins=plugins)
+    assert raised.value is first and raised.value.__suppress_context__
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start", *["bring_up"] * 3]
+    failed = [e["error"] for e in logs if e["event"] == "statechart_plugin_hook_failed"]
+    assert failed == ["RuntimeError", "OSError"]
+    [(severity, text)] = pager.pages
+    assert severity == "P1" and text.startswith("restore bring-up failed (RuntimeError, OSError)")
+    interp = plugins[1].interp
+    assert interp is not None and interp.status == "stopped"
+    assert [e.send_id for e in await journal.list_unreplayed(KEY)] == env.snapshot["cv_drained"]
+    assert steps.outcomes == [("restore", "error")]
+
+
+async def test_a_bring_up_step_that_raises_itself_still_fails_the_restore_safely(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Should the factory's step raise before it returns its failures (a logger that raises, say),
+    the restore fails safely all the same: stopped, one P1 page, no replay, that error raised."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    _spy_replay(monkeypatch, journal, steps)
+    stops = _record_stops(monkeypatch)
+    failure = LookupError("the step itself")
+
+    def step(interp: Interpreter[Any]) -> tuple[Exception, ...]:
+        raise failure
+
+    monkeypatch.setattr(cv_factory, "cv_bring_up_restored", step)
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    with pytest.raises(LookupError) as raised:
+        await restorer.restore(KEY, env)
+    [interp] = stops
+    assert raised.value is failure and interp.status == "stopped"
+    [(severity, text)] = pager.pages
+    assert severity == "P1" and text.startswith("restore bring-up failed (LookupError)")
+    assert "replay" not in steps.steps and steps.outcomes == [("restore", "error")]
+
+
 async def test_a_hanging_pager_is_cut_by_its_deadline(
     registry: Registry, journal: JournalSubject, monkeypatch: pytest.MonkeyPatch
 ) -> None:
