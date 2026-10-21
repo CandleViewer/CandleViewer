@@ -862,7 +862,7 @@ Payload: [`AlertUpdate`](#157-alertupdate); `message` is the delivery `body`, fa
 | `positions`                                                                                      | `positions:read`    | granted accounts            |
 | `executions`                                                                                     | `executions:read`   | granted accounts            |
 | `wallet`                                                                                         | `accounts:read`     | granted accounts            |
-| `rules`                                                                                          | `rules:read`        | granted accounts (bindings) |
+| `rules`                                                                                          | `rules:read`        | own rules, granted accounts |
 | `alerts`                                                                                         | `alerts:read`       | own alerts only             |
 | `recorder`                                                                                       | `recording:read`    | none                        |
 | `system`                                                                                         | — (implicit)        | by role and grant (§15.9)   |
@@ -3907,6 +3907,8 @@ in a list cut to the connection's grants (an `account_notice`, a kill switch, §
   "additionalProperties": false
 }
 ```
+
+**Who receives a rule (#3488).** A `rules` frame, a `snap` or a `d`, reaches a connection only for a rule its principal may read over REST at that moment (`24-internal-schemas.md` §15.2, `04-security-program.md` §7.2.2 rows 24 and 25): the Owner role reads every rule; anyone else only a rule they own whose every version's accounts are all still among their view grants; a deleted rule is no one's. Another user's rule, whether it names accounts or none, is not theirs whatever their grants (C-12.4). One predicate decides it for both transports, `RulesManager._visible`, the check behind `GET /rules` and `GET /rules/{ruleId}`, applied per rule at send time to the principal as it is then (§9.5 swaps it in first), so a revoked grant ends the delivery of every rule that named it with no frame of its own. The family's account scope and the `exchange_account_ids` and `rule_ids` options only narrow it further, never widen it. The topic name holds no rule id (§6), so no `sub` is refused for the rules it names: its `sub_ok` is the same for a rule the caller may read, one they may not and one that does not exist, and `effective` echoes `rule_ids` as sent. The hub refuses a `rules` publish that names no such check (`SequencingHub.publish(viewer=)`), so a producer cannot send one on grants alone.
 
 ### 15.7 `AlertUpdate`
 

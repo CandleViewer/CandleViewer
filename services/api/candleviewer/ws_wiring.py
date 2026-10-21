@@ -42,11 +42,12 @@ import structlog
 from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.alerts.ws_topic import AlertsTopic
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot, scoped_account_ids
 from candleviewer.book.resync import BookEngine
 from candleviewer.book.snapshot_source import BookSnapshotSource, Record
 from candleviewer.observability.context import spawn
 from candleviewer.orderbook_wiring import BookStream
+from candleviewer.rules.manager import Actor, RuleRow, rule_visible
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws import permissions as ws_permissions
 from candleviewer.ws.binary import BOOK_SNAPSHOT, Frame
@@ -242,6 +243,20 @@ def alerts_topic(hub: SequencingHub) -> AlertsTopic[SnapshotBody]:
     or resyncs an owner's subscriptions through it. The composition root attaches the deliveries
     reader; before, `build` gives `None`."""
     return AlertsTopic(hub.publish, hub.flush_pending, hub.resnapshot, SnapshotBody)
+
+
+def rule_frame_visible(row: RuleRow, principal: PrincipalSnapshot) -> bool:
+    """#3488: whether a frame about `row` may reach `principal` on the `rules` topic: the rules
+    module's reading rule (`rule_visible`) on what `/rules` reads of a session: the user, the owner
+    role and the view grants not frozen (`api/rules_actor.py`). `rules` imports no `auth`, so the
+    two meet here: `publish(.., viewer=lambda p: rule_frame_visible(row, p))`."""
+    actor = Actor(
+        str(principal.user_id),
+        "",  # the session id: no part of who may read a rule
+        granted_accounts=frozenset(str(a) for a in scoped_account_ids(principal)),
+        is_owner=principal.is_owner,
+    )
+    return rule_visible(row, actor)
 
 
 class _Identity(Protocol):

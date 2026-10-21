@@ -645,7 +645,7 @@ PRIVATE_6_2: Final = ("### 6.2 Private topics", "#### 6.2.1 ")
 _SCOPE_TEXT: Final = {
     "none": "NONE",
     "granted accounts": "GRANTED_ACCOUNTS",
-    "granted accounts (bindings)": "GRANTED_ACCOUNTS",
+    "own rules, granted accounts": "GRANTED_ACCOUNTS",
     "own alerts only": "SELF",
 }
 #: The words with which 6.1 marks a family contract only, in a bullet under the family's own.

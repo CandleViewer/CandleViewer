@@ -293,16 +293,20 @@ class RulesManager:
         """Every account referenced anywhere in the IR (scope, metric refs, action params)."""
         return collect_account_ids(ir)
 
-    def _visible(self, row: RuleRow, actor: Actor) -> bool:
+    @staticmethod
+    def _visible(row: RuleRow, actor: Actor) -> bool:
         """The Owner role reaches every rule; anyone else only a rule they own, and only while
         every account any of its versions names is granted to them (24 §15.2, 04 §7.2.2 rows 24
         and 25). Grants alone never reach another user's rule, and a rule naming no account is no
         one's but its owner's: an empty set of accounts is not a grant. Every version counts: the
-        active one may differ from the latest (IDOR, C-12.4)."""
+        active one may differ from the latest (IDOR, C-12.4). A deleted rule is no one's. It needs
+        no manager: the `rules` WS topic asks it too (`rule_visible`, #3488)."""
+        if row.deleted:
+            return False
         if actor.is_owner:
             return True
         return row.owner == actor.user_id and all(
-            a in actor.granted_accounts for ver in row.versions for a in self._accounts(ver.ir)
+            a in actor.granted_accounts for ver in row.versions for a in collect_account_ids(ver.ir)
         )
 
     async def _refuse_scope(self, rule_id: str, op: str, reason: str, actor: Actor) -> None:
@@ -1028,3 +1032,6 @@ class RulesManager:
         if override_reason:
             out["owner_override_reason"] = override_reason
         return out
+
+
+rule_visible = RulesManager._visible
