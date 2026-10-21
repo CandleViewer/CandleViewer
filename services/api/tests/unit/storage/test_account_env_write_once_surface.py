@@ -5,7 +5,7 @@ database. These tests hold the same premise in code, as `tests/unit/credentials_
 test_write_once_surface.py` does for `api_keys`: after the INSERT that creates an account, no SQL
 string under `candleviewer/` assigns `env` in an UPDATE or upsert of `exchange_accounts`, and none
 MERGEs into it; the `exchange_accounts` Table is named in code only where it is defined and, to
-read it, by the modules in `_READERS` (today the profiles store); and the PATCH body of
+read it, by the modules in `_READERS` (the profiles and trade-group stores); and the PATCH body of
 `/exchange-accounts/{accountId}` carries no environment. The store's own patch and its typed error
 for a refusal are pinned in `test_accounts_store_sqlalchemy.py`. They stop an honest regression,
 not a deliberate bypass: the trigger is the enforcement.
@@ -40,9 +40,15 @@ _TABLE = "exchange_accounts"
 _SQL_WRITE = re.compile(r"\b(?:update|insert\s+into|merge\s+into)\b", re.IGNORECASE)
 #: Where the Table is defined; and the modules that name it in code, to read it only (each one
 #: added here with its reason): the profiles store scopes a profile to a live account with
-#: `exchange_accounts.c` and `select_from`.
+#: `exchange_accounts.c` and `select_from`; the trade-group store selects a group's accounts
+#: FOR SHARE (`exchange_accounts.c`) to require them live while it inserts the legs (#905).
 _DEFINITION = Path("db/models.py")
-_READERS = frozenset({Path("storage/repositories/account_profiles_sqlalchemy.py")})
+_READERS = frozenset(
+    {
+        Path("storage/repositories/account_profiles_sqlalchemy.py"),
+        Path("storage/repositories/trade_groups_sqlalchemy.py"),
+    }
+)
 _READS = frozenset({"import", "columns", "select_from"})
 _ENVIRONMENT = ("env", "environment")
 
@@ -243,7 +249,7 @@ def _table_writers(root: Path = _PKG) -> list[str]:
     ]
 
 
-def test_only_the_definition_and_the_profiles_reader_name_the_accounts_table() -> None:
+def test_only_the_definition_and_the_listed_readers_name_the_accounts_table() -> None:
     assert {rel for rel, _, _ in _table_uses()} == {_DEFINITION, *_READERS}  # the scan sees all
     assert _table_writers() == []
 
