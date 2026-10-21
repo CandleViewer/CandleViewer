@@ -2065,13 +2065,15 @@ Drag preview                Drop zones
 
 ### SCR-103 — Symbol info / instrument detail
 
-- **Type:** Drawer. Contract specs (tick size, lot size, min/max qty, min notional, max leverage, funding interval, settlement asset), current funding and next settlement, open interest, 24 h stats, risk-limit tiers, maintenance windows, and CandleViewer-side facts: recording status, recorded coverage start, disk used, retention and pin state.
-- **Data:** `GET /api/v1/instruments/{symbol}`, `GET /api/v1/market/data-coverage?symbol`.
+- **Type:** Drawer (modal, right side, below the TopBar and the SCR-152 slot; E08-D06). Three labelled bands in a fixed order: contract rules set by the exchange (status, tick size, lot size, min/max qty, min notional, max leverage, funding interval, settlement asset, risk-limit tiers; maintenance windows once the contract carries them, E08-D06 Q3), the live market (current funding and next settlement, open interest, 24 h stats), and CandleViewer-side facts (recording status, recorded coverage start and gaps; disk used, retention and pin state for the owner).
+- **Data:** `GET /api/v1/instruments/{symbol}`, `GET /api/v1/market/data-coverage?symbol`; `ticker.{symbol}` while open; recording status from the app's `recorder` store, with no subscription of its own (E08-D06 §11).
+- **Interactions:** opened by "View symbol info" (SCR-102, SCR-041), "Open symbol info" and "Show coverage" (SCR-047), the watchlist row menu and the palette; actions Open in new chart, Open DOM ladder (Trading only), Recorder settings and Record this symbol (owner); `Esc` closes and restores focus.
+- **States:** populated · not recorded · live stale (5 s) and escalated (15 s) · reconnecting / disconnected · awaiting the first tick · live unavailable (40-symbol limit) · not trading (pre-launch, delivering, closed) · catalogue loading · catalogue overdue · rules changed while open · contract load failed, with order entry blocked until the rules load · no longer listed · coverage failed · risk-limit tiers unavailable · recording restricted · clock skew (E08-D06 §6).
 - **Components:** CMP-021 Link, CMP-036 KeyValueRow, CMP-046 Drawer, CMP-125 SymbolInfoPopover, CMP-126 FundingCountdown, CMP-177 RecorderStatusRow.
 - **Stories:** US-MKT-001, US-MKT-004, US-REC-006.
 - **A11y:** Instrument facts are a description list with units; the contract-rules section uses plain sentences; external references are clearly labelled as leaving the app.
 - **Performance:** Static instrument metadata is cached; live fields subscribe to `ticker.{symbol}` only while the drawer is open.
-- **Analytics/audit:** `symbol.info_viewed` (analytics).
+- **Analytics/audit:** `symbol.info_viewed`, `symbol.info_load_failed {dependency}`, `symbol.info_rules_changed`, `symbol.info_value_malformed` (analytics; payloads in E08-D06 §12).
 - **Design sign-off acceptance checklist:** [ ] tick size, lot size, min/max qty, max leverage, risk-limit tiers, funding interval, settlement and status drawn [ ] live ticker block [ ] recording status with a link to SCR-140 (owner) [ ] delisted/suspended state [ ] 'these rules are enforced by the exchange' note
 
 ### SCR-104 — Scanner / screener panel
