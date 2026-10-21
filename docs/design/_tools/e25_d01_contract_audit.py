@@ -10,10 +10,12 @@ the `- **Analytics/audit:**` lines of SCR-055..059 (only those lines, so a point
 mentions an event name never counts), (6) the Poisson noise floor of a trades-per-second window at
 1 / 5 / 30 s (the arithmetic the report's window recommendation quotes; a lower bound, since real
 tape is overdispersed), (6b) the deterministic-mean step response of those windows and of three
-rolling-baseline lengths to a sustained burst (detection latency, re-normalisation, warm-up — the
-baseline trade-off of F4c / Q13) and (7) the Sprint 10 and 13 dates from `calendar_cv.py`. A row
+rolling-baseline lengths to a sustained burst — detection latency, re-normalisation, the dip after
+the burst, warm-up — under two sd models printed side by side, the Poisson sd and the baseline
+window's sample sd (the baseline trade-off of F4c / Q13), (7) the `22` `MetricCode` members against
+the shipped vocabulary's codes (G11) and (8) the Sprint 10 and 13 dates from `calendar_cv.py`. A row
 reads NOT FOUND when the anchor text moved; the tool never guesses a value and never raises on a
-moved anchor.
+moved anchor. Results are TypedDicts, so `mypy --strict` is clean (round-3 lens item 8).
 
 Usage: python3 -I docs/design/_tools/e25_d01_contract_audit.py          (Markdown)
        python3 -I docs/design/_tools/e25_d01_contract_audit.py --json   (the boards' numbers)
@@ -22,19 +24,20 @@ Usage: python3 -I docs/design/_tools/e25_d01_contract_audit.py          (Markdow
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import math
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypedDict
 
 ROOT = Path(__file__).resolve().parents[3]
 PLAN = "docs/plan/"
 SHIPPED = "services/api/candleviewer/rules/vocabulary/metrics.py"
-RATES = (
-    5,
-    50,
-)  # prints/s; 5 is the order of the one recorded BTCUSDT window (E22-D01 §3.0), shape only
+# prints/s; 5 is the order of the one recorded BTCUSDT window (E22-D01 §3.0), shape only
+RATES = (5, 50)
 WINDOWS_S = (1, 5, 30)  # the windows 11 / 14 / 22 name
 Z, PUSH_HZ, COOLDOWN_S = 3.0, 4, 60  # US-DET-002 z > 3; SCR-055 4 Hz; US-DET-002 cooldown 60 s
 SCAN_PER_S = 4.0  # one-token scan, E22-D01 F5 (heuristic)
@@ -45,6 +48,56 @@ BASELINES_S = {  # the three rolling-baseline lengths the sources name (F5, C3, 
     3600: "14 SCR-055 A11y readout 'above the 1-hour mean'",
 }
 HEDGE = "or by a backend detector service"  # CMP-134's placement hedge (15-component-catalogue.md)
+ZONE_CODES = (  # the imbalance-zone codes F13's layout reads (shipped metrics.py; F13, F14, G11)
+    "nearest_imbalance_zone_distance",
+    "imbalance_zone_side",
+    "imbalance_zone_strength",
+    "imbalance_zone_mitigated",
+    "imbalance_zone_retest_count",
+    "imbalance_hold_rate",
+)
+
+
+class Regime(TypedDict):  # the result shapes, so `mypy --strict` passes (round-3 lens item 8)
+    raw: dict[str, str | None]
+    sets: dict[str, list[str]]
+    sources: int
+    distinct: int
+
+
+class Params(TypedDict):
+    by_source: dict[str, list[str]]
+    distinct_name_sets: int
+
+
+class Placement(TypedDict):
+    components_saying_client_side: int
+    hedged: str
+    phrases: dict[str, str]
+    screens_saying_backend_side: int
+
+
+class Noise(TypedDict):
+    rows: dict[str, dict[str, float]]
+    cooldown_cap_per_h: int
+    digit_swaps_vs_scan: float
+
+
+class Step(TypedDict):
+    rate_per_s: int
+    burst_multiple: float
+    display_window_s: int
+    detect_latency_s: dict[str, float]
+    baselines: dict[str, dict[str, str | int]]
+
+
+class Codes(TypedDict):
+    contract_members: int
+    shipped_metric_codes: int
+    shipped_indicator_series: int
+    shared: list[str]
+    unmatched_contract_members: list[str]
+    zone_codes_missing: list[str]
 
 
 def text(rel: str) -> str:
@@ -67,7 +120,7 @@ def block(rel: str, start: str, end: str) -> str:
     return t[i : j if j > 0 else len(t)]
 
 
-def regime_vocabularies() -> dict[str, object]:
+def regime_vocabularies() -> Regime:
     found = {
         "11 US-DET-008": grab(PLAN + "11-user-stories.md", r"classified as ([a-z, ]+ or calm)"),
         "14 SCR-057": grab(PLAN + "14-screens-catalogue.md", r"Classification badge \(([^)]*)\)"),
@@ -132,7 +185,7 @@ def tape_windows() -> dict[str, str | None]:
     }
 
 
-def detector_params() -> dict[str, object]:
+def detector_params() -> dict[str, Params | str | None]:
     s22, s24, s14 = (
         PLAN + "22-api-openapi.yaml",
         PLAN + "24-internal-schemas.md",
@@ -140,7 +193,7 @@ def detector_params() -> dict[str, object]:
     )
     cfg = block(s22, "    DetectorConfig:", "    DetectorMethodology:")
     names24 = {"iceberg": "iceberg_present_at_level", "stop_run": "stop_run_detected"}
-    out: dict[str, object] = {}
+    out: dict[str, Params | str | None] = {}
     for det in ("iceberg", "stop_run", "absorption"):
         desc = grab(s22, r"`" + det + r"` \(([^)]*)\)") or ""
         desc_pairs = [p.strip() for p in desc.split(",") if "estimated" not in p and p.strip()]
@@ -172,7 +225,7 @@ def detector_params() -> dict[str, object]:
     return out
 
 
-def placement() -> dict[str, object]:
+def placement() -> Placement:
     """Per component the clause saying client-side (hedges visible); per screen, backend-side."""
     s14, s15 = PLAN + "14-screens-catalogue.md", PLAN + "15-component-catalogue.md"
     cmps = (
@@ -212,6 +265,27 @@ def analytics() -> dict[str, int]:
     }
 
 
+def metric_codes() -> Codes:
+    """`22` `MetricCode` vs the shipped vocabulary, matched by name (G11): the `_ROWS` metric
+    descriptors (10-tuples — name, title, unit, input, params, warm-up, …) and the `_KERNEL_BOUND`
+    indicator series (7-tuples — metric, indicator, output, title, tape flag, …) of `metrics.py`."""
+    enum = block(PLAN + "22-api-openapi.yaml", "    MetricCode:\n", "\n    # ===")
+    contract = re.findall(r"^\s+- ([a-z_]+)\s*$", enum, re.MULTILINE)
+    src = text(SHIPPED)
+    row = r'^\s*\("([a-z0-9_]+)", "[^"]*", "[^"]*", '  # name, title, unit — then the input field
+    metric = re.findall(row + r'(?:_[A-Z]|"[a-z]+"), "[^"]*", \d+, ', src, re.MULTILINE)
+    series = re.findall(row + r'"[^"]*", _(?:NO_)?TAPE, ', src, re.MULTILINE)
+    shipped = set(metric) | set(series)
+    return {
+        "contract_members": len(contract),
+        "shipped_metric_codes": len(metric),
+        "shipped_indicator_series": len(series),
+        "shared": sorted(shipped & set(contract)),
+        "unmatched_contract_members": [c for c in contract if c not in shipped],
+        "zone_codes_missing": [c for c in ZONE_CODES if c not in contract],
+    }
+
+
 def poisson_tail(n: float, k: int) -> float:
     """P(X >= k) for X ~ Poisson(n): the CDF summed in log space, so exp(-n) never underflows."""
     log_cdf = -math.inf
@@ -231,8 +305,8 @@ def z3_threshold(n: float) -> int:
     return math.floor(n + Z * math.sqrt(n)) + 1
 
 
-def noise_floor() -> dict[str, object]:
-    rows = {}
+def noise_floor() -> Noise:
+    rows: dict[str, dict[str, float]] = {}
     for lam in RATES:
         for w in WINDOWS_S:
             n = lam * w
@@ -255,7 +329,29 @@ def noise_floor() -> dict[str, object]:
     }
 
 
-def step_response() -> dict[str, object]:
+def _z_sample_sd(f: float, n: float, k: float, into: bool) -> float:
+    """z with the baseline window's sample sd when a fraction f of its buckets is burst (into=True:
+    the burst rate against a baseline filling with burst; False: the usual rate against one emptying
+    of it): Poisson within-bucket variance plus the between-bucket variance of the two-level mix."""
+    burst = f if into else 1 - f
+    mean = n * (1 + burst * (k - 1))
+    var = mean + burst * (1 - burst) * ((k - 1) * n) ** 2
+    return ((k * n if into else n) - mean) / math.sqrt(var)
+
+
+def _root(fn: Callable[[float], float]) -> float:
+    """Bisection on (0, 1) for the single sign change of a monotonic fn."""
+    lo, hi, sign = 0.0, 1.0, fn(0.0) > 0
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if (fn(mid) > 0) == sign:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def step_response() -> Step:
     """Deterministic-mean step response at RATES[0] prints/s to a BURST_K x burst (shape only).
 
     (a) Detection latency per fast window: after a step to BURST_K x the usual rate the window's
@@ -264,26 +360,33 @@ def step_response() -> dict[str, object]:
     WINDOWS_S[1]: inside a sustained burst the baseline mean rises linearly to the burst rate over
     B, so the burst reads z <= 3 ("no longer extreme") at some t < B and z = 0 ("usual") at t = B;
     after a burst at least B long ends, the baseline decays over B and the usual rate reads z < -1
-    ("below usual") for most of B. The baseline sd is the Poisson sqrt of its mean; warm-up is B
-    itself (SCR-055's "Warming up" state lasts one baseline).
+    ("below usual") for part of B. Two sd models side by side (round-3 lens item 1): `*_s` takes
+    the baseline sd as the Poisson sqrt of its mean; `*_sample_sd_s` takes the sample sd of the
+    baseline window's bucket counts — US-DET-002's "z-score against the configured baseline
+    window" read conventionally — which the burst's own buckets inflate. Warm-up is B itself.
     """
     lam, k, w_disp = RATES[0], BURST_K, WINDOWS_S[1]
-    detect = {}
+    detect: dict[str, float] = {}
     for w in WINDOWS_S:
         n = lam * w
         detect[f"{w} s"] = round(w * (z3_threshold(n) - n) / ((k - 1) * n), 1)
     n = lam * w_disp
-    # z(r) = sqrt(n) * (k - r) / sqrt(r), r = baseline mean / usual rate; solve z = Z and z = -1
+    # Poisson sd: z(r) = sqrt(n) * (k - r) / sqrt(r), r = baseline mean / usual rate; z = Z, z = -1
     s_hi = (-Z / math.sqrt(n) + math.sqrt((Z / math.sqrt(n)) ** 2 + 4 * k)) / 2
     s_lo = (1 / math.sqrt(n) + math.sqrt(1 / n + 4)) / 2
     r_extreme, r_quiet = s_hi**2, s_lo**2
-    baselines = {
+    # sample sd: the burst fraction of B at which z = Z, and the usual fraction at which z = -1
+    f_extreme = _root(lambda f: _z_sample_sd(f, n, k, True) - Z)
+    g_quiet = _root(lambda g: _z_sample_sd(g, n, k, False) + 1)
+    baselines: dict[str, dict[str, str | int]] = {
         f"{b} s": {
             "source": src,
             "warmup_s": b,
             "extreme_until_s": round(b * (r_extreme - 1) / (k - 1)),
+            "extreme_until_sample_sd_s": round(b * f_extreme),
             "usual_at_s": b,
             "below_usual_for_s": round(b * (k - r_quiet) / (k - 1)),
+            "below_usual_for_sample_sd_s": round(b * g_quiet),
         }
         for b, src in BASELINES_S.items()
     }
@@ -313,37 +416,40 @@ def sprints() -> dict[str, str]:
 def main(argv: list[str]) -> int:
     # `python -I` ignores PYTHONIOENCODING / PYTHONUTF8, so a non-UTF-8 locale would otherwise
     # encode the section signs and multiplication signs below in locale bytes (round-2 item 7).
-    sys.stdout.reconfigure(encoding="utf-8")
-    data = {
-        "regime": regime_vocabularies(),
-        "tape": tape_windows(),
-        "params": detector_params(),
-        "placement": placement(),
-        "analytics": analytics(),
-        "noise": noise_floor(),
-        "step": step_response(),
-        "sprints": sprints(),
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
+    reg, tape, params, pl = regime_vocabularies(), tape_windows(), detector_params(), placement()
+    events, noise, st = analytics(), noise_floor(), step_response()
+    codes, spr = metric_codes(), sprints()
+    data: dict[str, object] = {
+        "regime": reg,
+        "tape": tape,
+        "params": params,
+        "placement": pl,
+        "analytics": events,
+        "noise": noise,
+        "step": st,
+        "codes": codes,
+        "sprints": spr,
     }
     if "--json" in argv:
         print(json.dumps(data, indent=2, ensure_ascii=False))
         return 0
-    reg = data["regime"]
     print(f"## Regime vocabularies ({reg['sources']} sources, {reg['distinct']} distinct sets)\n")
     for src, toks in reg["sets"].items():
         print(f"- {src}: {', '.join(toks)}")
     print("\n## Speed-of-tape windows, baselines and cadences\n")
-    for k, v in data["tape"].items():
+    for k, v in tape.items():
         print(f"- {k}: {v if v is not None else 'NOT FOUND'}")
     print("\n## Detector parameters per source\n")
-    for det, d in data["params"].items():
-        if not isinstance(d, dict):
+    for det, d in params.items():
+        if isinstance(d, str) or d is None:
             print(f"- {det}: {d}")
             continue
         print(f"- {det} ({d['distinct_name_sets']} distinct parameter-name sets):")
         for src, pairs in d["by_source"].items():
             print(f"  - {src}: {', '.join(pairs) if pairs else 'NOT FOUND'}")
     print("\n## Placement and analytics\n")
-    pl = data["placement"]
     print(
         f"- components saying client-side: {pl['components_saying_client_side']} "
         f"(hedged: {pl['hedged']})"
@@ -351,44 +457,60 @@ def main(argv: list[str]) -> int:
     for cmp_id, phrase in pl["phrases"].items():
         print(f"  - {cmp_id}: {phrase}")
     print(f"- screens saying backend-side: {pl['screens_saying_backend_side']}")
-    print(f"- events on the SCR-055..059 Analytics/audit lines: {data['analytics']}")
+    print(f"- events on the SCR-055..059 Analytics/audit lines: {events}")
     print("\n## Poisson noise floor of a prints/s window (lower bound; z > 3 at 4 Hz pushes)\n")
     print(
         "| Rate x window | E[prints] | CV % | z>3 at | P(cross) % | indep./h | false/h "
         "| overlap % |"
     )
     print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-    for k, r in data["noise"]["rows"].items():
+    for k, r in noise["rows"].items():
         print(
-            f"| {k} | {r['expected_prints']} | {r['cv_pct']} | {r['z3_threshold_prints']} | "
-            f"{r['p_cross_pct']} | {r['independent_windows_per_h']} | "
+            f"| {k} | {r['expected_prints']:g} | {r['cv_pct']} | {r['z3_threshold_prints']:g} | "
+            f"{r['p_cross_pct']} | {r['independent_windows_per_h']:g} | "
             f"{r['false_crossings_per_h']} | "
             f"{r['overlap_pct_at_push']} |"
         )
     print(
-        f"\ncooldown caps alerts at {data['noise']['cooldown_cap_per_h']}/h; a 4 Hz digit swap is "
-        f"{data['noise']['digit_swaps_vs_scan']:g}x the one-token scan rate"
+        f"\ncooldown caps alerts at {noise['cooldown_cap_per_h']}/h; a 4 Hz digit swap is "
+        f"{noise['digit_swaps_vs_scan']:g}x the one-token scan rate"
     )
-    st = data["step"]
     print(
         f"\n## Step response (deterministic mean, {st['rate_per_s']} prints/s, "
-        f"a {st['burst_multiple']:g}x sustained burst; shape only)\n"
+        f"a {st['burst_multiple']:g}x sustained burst; shape only; Poisson sd / sample sd)\n"
     )
     print(
-        "- detection latency to z > 3 per fast window: "
+        "- detection latency to z > 3 per fast window (the same under both sd models): "
         + ", ".join(f"{w}: {t} s" for w, t in st["detect_latency_s"].items())
     )
     print(
-        f"- rolling baseline vs the {st['display_window_s']} s display window "
-        "(warm-up | stops reading extreme | reads usual | reads below usual after it ends):"
+        f"- rolling baseline vs the {st['display_window_s']} s display window (warm-up | stops "
+        "reading extreme, Poisson sd / sample sd | reads usual | reads below usual after it ends, "
+        "Poisson sd / sample sd):"
     )
-    for b, r in st["baselines"].items():
+    for b, row in st["baselines"].items():
         print(
-            f"  - {b} ({r['source']}): {r['warmup_s']} s | {r['extreme_until_s']} s | "
-            f"{r['usual_at_s']} s | {r['below_usual_for_s']} s"
+            f"  - {b} ({row['source']}): {row['warmup_s']} s | {row['extreme_until_s']} / "
+            f"{row['extreme_until_sample_sd_s']} s | {row['usual_at_s']} s | "
+            f"{row['below_usual_for_s']} / {row['below_usual_for_sample_sd_s']} s"
         )
+    print("\n## 22 MetricCode vs the shipped vocabulary (G11)\n")
+    print(
+        f"- MetricCode members: {codes['contract_members']}; shipped metric descriptors: "
+        f"{codes['shipped_metric_codes']}; shipped indicator series: "
+        f"{codes['shipped_indicator_series']}"
+    )
+    print(f"- shared names: {', '.join(codes['shared']) or 'none'}")
+    print(
+        "- MetricCode members with no shipped code of that name: "
+        + (", ".join(codes["unmatched_contract_members"]) or "none")
+    )
+    print(
+        "- imbalance-zone codes F13 reads that MetricCode lacks: "
+        + (", ".join(codes["zone_codes_missing"]) or "none")
+    )
     print("\n## Sprints (calendar_cv.py)\n")
-    for k, v in data["sprints"].items():
+    for k, v in spr.items():
         print(f"- {k}: {v}")
     return 0
 
