@@ -32,7 +32,7 @@
 | `hcl-worker-2`      | Anvil   | HCL (WSL)     | —                      |
 
 Sign GitHub comments and PR records with your **RelayRoom part name**. Coordination happens on
-RelayRoom (hub `https://relay.candleviewer.com`, project `candleviewer`, alias `candleviewer-relayroom`);
+RelayRoom (hub URL in the owner's private notes, project `candleviewer`, alias `candleviewer-relayroom`);
 GitHub #1778 remains the durable ledger for owner decisions and lane announcements.
 
 ## 1. Project background

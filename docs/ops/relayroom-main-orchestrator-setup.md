@@ -3,20 +3,20 @@
 Nonsecret setup report per the owner's "main-orchestrator Claude Desktop setup" handoff. No token,
 connect code, secret-bearing URL or password appears in this file or in any commit.
 
-| Item                            | Value                                                                                                                                                               |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Date                            | 2026-10-14 (setup); status and files reconciled 2026-10-16 (PR #2439 review round 1)                                                                                |
-| Runtime (actual)                | **Native Windows** Claude Code 2.0.65, Git Bash (MINGW64). Not WSL. Owner chose "proceed on Windows" when the §3.3 mismatch was raised.                             |
-| CONFIG_ROOT = INSTRUCTIONS_ROOT | `C:\Users\basil\Desktop\Projects\FullStackProjects\CandleViewer` (main checkout, branch `main`; worktrees under `%TEMP%` are agent scratch and load this CLAUDE.md) |
-| Hub                             | `https://relay.candleviewer.com` — `/health` → `ok: true, busDegraded: false` (normal TLS, no `-k`)                                                                 |
-| Project                         | `candleviewer`                                                                                                                                                      |
-| Registered agent / part         | `main-orchestrator` (existing; not created, renamed or duplicated)                                                                                                  |
-| Persona / role                  | Atlas / orchestrator                                                                                                                                                |
-| MCP alias                       | `candleviewer-relayroom` (git-ignored `.mcp.json` from `docs/ops/relayroom-mcp.template.json`; user scope has no same-name entry, only `github`, `penpot`)          |
-| Machine alias / label           | `l01` / `cv-main-desktop-win-l01`                                                                                                                                   |
-| Client-instance UUID            | `d93a5eee-dc36-43c6-b5b4-98f21e94a7b0` (binding; preserve on resume)                                                                                                |
-| Run UUID (this conversation)    | `8236a4ad-2682-4f72-9750-ed79a5f129d3` (run8 `8236a4ad`)                                                                                                            |
-| Suggested session title         | `CandleViewer \| Atlas \| main-orchestrator \| l01 \| 8236a4ad`                                                                                                     |
+| Item                            | Value                                                                                                                                                          |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Date                            | 2026-10-14 (setup); status and files reconciled 2026-10-16 (PR #2439 review round 1)                                                                           |
+| Runtime (actual)                | **Native Windows** Claude Code 2.0.65, Git Bash (MINGW64). Not WSL. Owner chose "proceed on Windows" when the §3.3 mismatch was raised.                        |
+| CONFIG_ROOT = INSTRUCTIONS_ROOT | the main checkout (path in the private notes), branch `main`; worktrees under `%TEMP%` are agent scratch and load this CLAUDE.md                               |
+| Hub                             | the project hub URL (in the owner's private notes; never written in this public repository) — `/health` → `ok: true, busDegraded: false` (normal TLS, no `-k`) |
+| Project                         | `candleviewer`                                                                                                                                                 |
+| Registered agent / part         | `main-orchestrator` (existing; not created, renamed or duplicated)                                                                                             |
+| Persona / role                  | Atlas / orchestrator                                                                                                                                           |
+| MCP alias                       | `candleviewer-relayroom` (git-ignored `.mcp.json` from `docs/ops/relayroom-mcp.template.json`; user scope has no same-name entry, only `github`, `penpot`)     |
+| Machine alias / label           | `l01` / `cv-main-desktop-win-l01`                                                                                                                              |
+| Client-instance UUID            | `d93a5eee-dc36-43c6-b5b4-98f21e94a7b0` (binding; preserve on resume)                                                                                           |
+| Run UUID (this conversation)    | `8236a4ad-2682-4f72-9750-ed79a5f129d3` (run8 `8236a4ad`)                                                                                                       |
+| Suggested session title         | `CandleViewer \| Atlas \| main-orchestrator \| l01 \| 8236a4ad`                                                                                                |
 
 The three identifiers above are distinct: **agent** (server-registered part), **client binding**
 (this checkout + its private files), **run** (one conversation). They are not interchangeable.
