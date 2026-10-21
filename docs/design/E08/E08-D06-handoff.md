@@ -28,14 +28,14 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Table 1 — Variants × States
 
-| Variant                | State                                   | Penpot variant | Story name                                   | Notes                                                                       |
-| ---------------------- | --------------------------------------- | -------------- | -------------------------------------------- | --------------------------------------------------------------------------- |
-| label, value, unit     | rest                                    | B19 / row      | `Default` (catalogued)                       | one value per row (spec F8), right-aligned, tabular; unit in its own column |
-| rule row               | rest, with a sentence and an example    | B19 / rule-row | `WithRuleExample` (new)                      | second line `type.ui.caption`, `color.text.tertiary`                        |
-| live row in a band     | live, stale T1, stale T2, disconnected  | B3, B4         | `LiveFreshness` (catalogued, now band-level) | rows inherit the band's state; no per-row CMP-239                           |
-| changed                | "Changed · was 0.01"                    | B9             | `Changed` (new)                              | a static tag until the drawer closes                                        |
-| unavailable, malformed | "not available yet", "—"                | B1, B14        | `Unavailable` (new)                          | name "not available"                                                        |
-| stacked                | label over value, under 400 px of width | B20            | `Stacked` (new)                              | no value is cut or scrolled sideways                                        |
+| Variant                | State                                                                                  | Penpot variant | Story name                                   | Notes                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------- | -------------- | -------------------------------------------- | --------------------------------------------------------------------------- |
+| label, value, unit     | rest                                                                                   | B19 / row      | `Default` (catalogued)                       | one value per row (spec F8), right-aligned, tabular; unit in its own column |
+| rule row               | rest, with a sentence and an example                                                   | B19 / rule-row | `WithRuleExample` (new)                      | second line `type.ui.caption`, `color.text.tertiary`                        |
+| live row in a band     | live, stale T1, stale T2, disconnected                                                 | B3, B4         | `LiveFreshness` (catalogued, now band-level) | rows inherit the band's state; no per-row CMP-239                           |
+| changed                | "Changed · was 0.01"                                                                   | B9             | `Changed` (new)                              | a static tag until the drawer closes                                        |
+| unavailable, malformed | "not available yet", "—"                                                               | B1, B14        | `Unavailable` (new)                          | name "not available"                                                        |
+| stacked                | label over value, under 400 px of width or for a value wider than its column (spec F8) | B18, B20       | `Stacked` (new)                              | no value is cut or scrolled sideways                                        |
 
 ### Table 3 — Accessible name / role
 
@@ -156,6 +156,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 | any                                 | < 5 min                                            | B15 / under-5-min | `UnderFiveMinutes` (replaces `UnderOneMinute`)    | glyph and words; no charge line in SCR-103                                   |
 | any                                 | settlement restart; elapsed, waiting for an update | B15 / settlement  | `Settlement`, `Elapsed` (new)                     | never negative, never a frozen 00:00:00                                      |
 | any                                 | clock skew on, or offset unknown                   | B15 / clock       | `ClockSkew` (new)                                 | the absolute UTC time; no seconds                                            |
+| any                                 | next funding time unknown                          | B15 / unknown     | `Unknown` (new)                                   | "Next funding time not available"; no countdown (spec §7)                    |
 | any                                 | stale or disconnected; not trading                 | B15 / band, B6    | `InBandState`, `Suppressed` (new)                 | counts on inside the band; suppressed with reason                            |
 
 ### Table 3 — Accessible name / role
