@@ -22,7 +22,10 @@ column default of ``fallback_sl_offset_pct``) resolved from the ladder's far end
 so the stop clears every level by the full offset, rounded away from the entry. The linear
 weight formula is PROPOSED too: 24 §10.6 defines ``geometric`` as ``skew^i`` but its ``linear``
 rule ("weight i scaled by skew") is degenerate under normalisation (report G2). Risk figures are
-gross: the fixture carries no fee schedule (report R4).
+gross: the fixture carries no fee schedule (report R4). ``queued_split`` also counts the requests:
+the resting levels go out now in batches, each queued level is one single placement later
+(report R2). ``--md`` writes UTF-8 whatever the console encoding, so its Σ row never crashes a
+cp1252 console.
 
 Usage: python3 -I docs/design/_tools/e32_d01_ladder_math.py [--md | --json]
 Exit 0 always: a refused ladder is a result, not an error.
@@ -30,6 +33,7 @@ Exit 0 always: a refused ladder is a result, not an error.
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 from dataclasses import asdict, dataclass
@@ -218,17 +222,25 @@ def per_child_offset_stop(prices: list[Decimal], offset_ticks: int) -> dict[str,
     }
 
 
-def queued_split(levels: int, max_concurrent_orders: int) -> dict[str, str]:
+def queued_split(
+    levels: int, max_concurrent_orders: int, batch_cap: int = BATCH_CAP
+) -> dict[str, str]:
     """US-ALGO-009 sc. 3: only ``max_concurrent_orders`` (24 §9.2) levels rest at Bybit at once.
 
     The rest are queued in CandleViewer and placed as earlier ones fill; a queued level is not at
-    the exchange and carries no stop because it carries no order (report R2, R3)."""
+    the exchange and carries no stop because it carries no order (report R2, R3). The request
+    estimate counts both halves (report R2): the resting levels go out now in batches of
+    ``batch_cap``; each queued level is one single placement later, when a level fills, spending
+    the per-UID budget (C-12.7's reserve for stop and cancel paths is never spent on them)."""
     resting = min(levels, max_concurrent_orders)
+    queued = levels - resting
     return {
         "levels": str(levels),
         "max_concurrent_orders": str(max_concurrent_orders),
         "resting": str(resting),
-        "queued": str(levels - resting),
+        "queued": str(queued),
+        "requests_now": str(-(-resting // batch_cap)),
+        "requests_later": str(queued),
     }
 
 
@@ -368,6 +380,8 @@ def build() -> dict[str, object]:
 
 
 def main(argv: list[str]) -> int:
+    if isinstance(sys.stdout, io.TextIOWrapper):  # a cp1252 console cannot encode the Σ row
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     data = build()
     if "--json" in argv:
         print(json.dumps(data, indent=2))
