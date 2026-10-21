@@ -45,6 +45,9 @@ ticket only moves to **Done** when the owner has approved it. Concretely:
 - **Screenshots**: one PNG per frame/state exported with `docs/design/_tools/penpot_export.py`, committed under
   `docs/design/<epic>/img/`, and **embedded** in the PR body (`![SCR-nnn/state](../docs/design/<epic>/img/<name>.png)`
   or the raw GitHub URL) so the owner can review without opening Penpot.
+- **Long scripts** (board, relayout and dedupe scripts): send the file with `docs/design/_tools/penpot_exec.py`
+  (the exporter's entry flags) instead of pasting it into `execute_code`; the rule below on which file
+  `execute_code` may touch still applies.
 - UX-research tickets still design in Penpot: the artefact is a research board (personas/journey/findings cards,
   comparison matrices, annotated wireframes) on the ticket's page — not a markdown file alone. Journey maps and
   flows are drawn as frames; Mermaid may be _additional_, never the only deliverable.
