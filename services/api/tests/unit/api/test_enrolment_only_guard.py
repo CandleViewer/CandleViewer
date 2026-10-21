@@ -807,17 +807,18 @@ def _middleware_name(middleware: Any) -> str:
 
 
 def test_guard_sits_between_the_idle_lock_gate_and_the_read_only_guard() -> None:
-    """Inside MeshOnly and CSRF (SR-041/SR-042: off-mesh traffic never reaches its session and
-    user reads) and inside #2300's idle-lock gate (a locked session meets the lock first, and a
-    store failure under the gate keeps the gate's own answer), outside the read-only/step-up
-    guard (a refusal records no step-up challenge)."""
+    """Inside MeshOnly, CSRF and the CORS layer (SR-041/SR-042: off-mesh traffic never reaches its
+    session and user reads) and inside #2300's idle-lock gate (a locked session meets the lock
+    first, and a store failure under the gate keeps the gate's own answer), outside the
+    read-only/step-up guard (a refusal records no step-up challenge)."""
     from candleviewer import app as appmod
 
     order = [_middleware_name(m) for m in appmod.create_app().user_middleware]  # outermost first
     at = order.index("CsrfMiddleware")
 
-    assert order[at : at + 4] == [
+    assert order[at : at + 5] == [
         "CsrfMiddleware",
+        "CorsGateMiddleware",
         "IdleLockMiddleware",
         "make_enrolment_only_guard",
         "make_read_only_guard",

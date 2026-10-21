@@ -53,7 +53,10 @@ cancelled mid-append (see `RefusalAuditTracker`); one that outlasts the wait
 (`audit_slow`) or fails (`audit_unavailable`) still refuses the request. Each counts
 beside the refusal's own reason (`auth.metrics.CSRF_AUDIT_REASONS`), and the
 `CsrfRefusalAuditUnavailable` / `CsrfRefusalAuditDegraded` alerts read them.
-There is no bearer exemption, no flag and no test bypass (C-4.14).
+There is no bearer exemption and no test bypass, and no flag changes a check (C-4.14): with
+`desktop.backend_connection` on, a token refusal whose `Origin` is listed also carries the CORS
+headers of a simple response, from the CORS layer's own policy (`api/cors.py`, ADR-0038 2c); a
+`cross_origin` refusal never does.
 """
 
 from __future__ import annotations
@@ -72,6 +75,7 @@ from starlette.requests import cookie_parser
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from candleviewer.api.cors import CorsPolicy, Enabled, cors_app, cors_on
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerdict, tokens_equal
 from candleviewer.auth.metrics import auth_csrf_refused_total
@@ -410,6 +414,8 @@ class CsrfMiddleware:
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         tracker: RefusalAuditTracker | None = None,
         session_throttle: PerIpLoginThrottle | None = None,
+        cors: CorsPolicy | None = None,
+        cors_enabled: Enabled | None = None,
     ) -> None:
         self._app = app
         self._codec = codec
@@ -427,6 +433,8 @@ class CsrfMiddleware:
         self._per_session = session_throttle or PerIpLoginThrottle(
             max_attempts=SESSION_REFUSALS_PER_WINDOW, window_s=ANON_REFUSAL_WINDOW_S
         )
+        self._cors = cors
+        self._cors_enabled = cors_enabled
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or not is_unsafe(scope["method"]):
@@ -550,7 +558,7 @@ class CsrfMiddleware:
             log.warning(
                 "auth.csrf_refused.unaudited", reason=reason.value, path=path, cause=skipped
             )
-            await response(scope, receive, send)
+            await self._with_cors(scope, reason, response)(scope, receive, send)
             return
         log.warning("auth.csrf_refused", reason=reason.value, method=method, path=path)
         await self._emit_audit(
@@ -564,7 +572,18 @@ class CsrfMiddleware:
             reason=reason.value,
             after_state={"method": method, "path": path},
         )
-        await response(scope, receive, send)
+        await self._with_cors(scope, reason, response)(scope, receive, send)
+
+    def _with_cors(self, scope: Scope, reason: CsrfRefusal, response: Response) -> ASGIApp:
+        """`response`, behind `cors_app` when the CORS layer would have answered this request but
+        this guard answers first: a token refusal whose `Origin` is listed with the flag on
+        (`cors_on`, read only after the match; never for `cross_origin`). Called after the audit
+        write, and it adds headers only: status, body, audit and metrics are the same (C-4.14)."""
+        if self._cors is None or self._cors_enabled is None or reason is CsrfRefusal.CROSS_ORIGIN:
+            return response
+        if not cors_on(scope, self._cors, self._cors_enabled):
+            return response
+        return cors_app(self._cors, response)
 
     async def _emit_audit(self, why: str, **fields: Any) -> None:
         """Write the refusal record without ever cancelling the writer mid-append: a tracked

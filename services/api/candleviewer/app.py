@@ -107,6 +107,7 @@ from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.audit_verify_runner import ChainVerifyRunner
 from candleviewer.api.auth_perf import auth_perf_enabled, make_auth_perf_router
 from candleviewer.api.contract_conformance import load_contract_subset
+from candleviewer.api.cors import CorsGateMiddleware, CorsPolicy
 from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
 from candleviewer.api.deny_by_default import (
     assert_app_routes_declared,
@@ -1666,8 +1667,8 @@ def create_app(
         )
     )
     # #2300: an idle-locked session gets `401 session_idle_locked` from every route but the
-    # three allowed while locked. Added after the read-only guard and before `CsrfMiddleware`,
-    # so it runs inside the CSRF guard and outside every route-level guard.
+    # three allowed while locked. Added after the read-only guard and before the CORS layer and
+    # `CsrfMiddleware`, so it runs inside both and outside every route-level guard.
     app.add_middleware(
         IdleLockMiddleware,
         sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
@@ -2474,10 +2475,15 @@ def create_app(
         make_orderbook_router(lambda: ctx.ingestion.books, principal_resolver=audit_resolver)
     )
     # Middleware order, outermost first (Starlette: last added = outermost):
-    #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> IdleLock (#2300)
+    #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> Cors (ADR-0038) -> IdleLock (#2300)
     #   -> enrolment-only guard (#2295) -> read-only/step-up guard -> routes.
     # Outside all of it, Starlette's error middleware included, `_StampedApp` wraps the stack
     # in BK-11's `NoStoreNoReferrer` (the backup fetch's path only).
+    # ADR-0038 2c (#3519): the CORS layer sits inside MeshOnly (an off-mesh peer gets no CORS
+    # answer) and the CSRF guard, outside idle-lock. It and the guard's token refusals take this one
+    # policy and one flag reader; an empty allow-list (the default) or the flag off changes nothing.
+    cors = CorsPolicy(resolved.allowed_origin_set)
+    app.add_middleware(CorsGateMiddleware, policy=cors, enabled=feature_flags.backend_connection)
     # #2090 (SR-041/SR-042): CSRF runs inside MeshOnly, so off-mesh traffic never
     # reaches a session lookup or an audit write, and outside every route-level
     # guard (read-only/step-up, RBAC): no write reaches them without a valid token.
@@ -2486,10 +2492,12 @@ def create_app(
         codec=csrf_codec,
         sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
         audit=_LazyAuditEmitter(ctx.audit),
-        allowed_origins=resolved.allowed_origin_set,
+        allowed_origins=cors.origins,
         operations=frozenset(declared_operations(spec)),
         clock=auth_clock or (lambda: datetime.now(UTC)),
         tracker=csrf_audits,
+        cors=cors,
+        cors_enabled=feature_flags.backend_connection,
     )
     # E09-T04: rejects off-mesh requests before any credential is evaluated.
     app.add_middleware(
