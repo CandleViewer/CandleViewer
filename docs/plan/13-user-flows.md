@@ -753,10 +753,12 @@ flowchart TD
   H1 --> I1{"First data"}
   I1 -->|covers the visible window, or reaches a known boundary inside it, budget 600 ms| J1["Swap in one frame, centre kept, a boundary inside the window drawn as such: recording start, start of the built range, a coverage hole"]
   J1 --> V1
-  J1 --> K1["Progressive backfill: older windows load leftward behind the frontier tag, each request within the per-request caps"]
-  K1 --> L1{"Older page fails?"}
-  L1 -->|yes| M1["Frontier reads Could not load older bars, Retry, painted bars stay"]
-  L1 -->|no| N1["Backfill ends at recording start, the start of the built range or the lookback: F-BAR-5"]
+  J1 --> K1["Progressive backfill: older windows load leftward behind the frontier tag, each request about one page at the density of the bars held, within the per-request caps"]
+  K1 --> L1{"Next older page"}
+  L1 -->|fails, after halving any refused or failing window wider than one page| M1["Frontier reads Could not load older bars, Retry, painted bars stay"]
+  L1 -->|reaches recording start| P1
+  L1 -->|reaches the start of the built range, also where it meets the lookback on a non-time series| X1["SCR-030/built-from with Build earlier bars, never an automatic build"]
+  L1 -->|reaches the lookback| N1["SCR-030/lookback-boundary with Load more: the US-CHART-010 lookback, E11-S15 maxBars and memory budget"]
   I1 -->|retryable failure| O1["1m kept, toolbar reverts to 1m, strip offers Retry 5m and Dismiss"]
   I1 -->|refused, not retryable| W1["1m kept, the cause inline with no Retry: a bound, or a setting not available"]
   I1 -->|no bars in the window, or 422 no_data_recorded| P1["F-BAR-5"]
@@ -771,9 +773,11 @@ flowchart TD
   interval button, `Enter`, `↓` to the Time group, `Enter`. Committing returns focus to the trigger when the menu
   was opened from it, and to the chart region when it was opened by hotkey; never to the page body. The result is
   announced once, politely.
-- **Paging:** older windows stay within the per-request caps (non-time 31 days; time 400 days and 250 000 bars), and
-  on `bar_window_too_large` the client halves the window and retries without telling the user. Backfill runs to
-  recording start, the built range's start or the lookback (US-CHART-010; E11-S15 `maxBars`, memory budget).
+- **Paging:** each older request stays within the per-request caps (time 400 days and 250 000 bars; non-time 31 days
+  and about 250 000 bars estimated from the window's prints, about 6 hours of a 1 M-print day for range and Renko)
+  and is sized from the density of the bars already held, about one page (≤5 000 bars), as E12-D02 §3 does for a
+  historical centre. On `bar_window_too_large`, or a 503 on a window wider than one page's span, the client halves
+  the window and retries, without telling the user, before the frontier offers Retry.
 - **Events:** `chart.interval_changed {from, to, source, cache, first_paint_ms}`; `chart.error_shown` on a failure.
 
 ### 22.2 F-BAR-2 — Switch to a non-time bar mode and enter its parameter
@@ -787,8 +791,8 @@ flowchart TD
   E2 --> F2["Esc closes with no change, or pick a time interval: F-BAR-1"]
   D2 -->|yes| G2{"Commit as shown, or edit the parameter?"}
   G2 -->|Enter on Volume, 50 BTC per bar| H2["Commit volume:50"]
-  G2 -->|Right arrow| I2["Inline editor: Volume per bar in BTC, recent values, the G-2 build estimate, Estimating until it arrives"]
-  G2 -->|Enter on a row that reads Needs a build, after G-2| I2
+  G2 -->|Right arrow| I2["Inline editor: Volume per bar in BTC, recent values, the G-2 build estimate, Estimating until it arrives, Size not known yet if it fails, and the commit still proceeds"]
+  G2 -->|after G-2, Enter on a row that reads Needs a build or has no status yet| I2
   I2 --> J2{"Within the server bounds?"}
   J2 -->|no| K2["Message below the field names the bound, nothing is sent, focus stays"]
   K2 --> I2
@@ -806,8 +810,8 @@ flowchart TD
 ```
 
 - **Keyboard:** `Alt+I` (new, OQ-4) or the toolbar path; `↓` into the bar-mode group; `Enter` commits the mode with
-  its shown parameter (on a row that reads "Needs a build" it opens the editor with the estimate), or `→` opens the
-  editor, then type and `Enter`. `Esc` in the editor returns to the row.
+  its shown parameter (on a row that reads "Needs a build" or has no status yet, it opens the editor with the
+  estimate), or `→` opens the editor, then type and `Enter`. `Esc` in the editor returns to the row.
 - **Events:** `chart.bar_mode_changed {from, to, source, cache}` when the new mode paints.
 
 ### 22.3 F-BAR-3 — Change a parameter: rebuild, progress, cancel, revert
@@ -880,7 +884,7 @@ conflict, choice}`, both proposed in E12-D02 §10.
 
 ```mermaid
 flowchart TD
-  A5["Series requested or painted: the recording start and /market/data-coverage compared with the window"] --> Z5{"Instrument trading?"}
+  A5["Series requested or painted: the recording start and /market/data-coverage compared with the window. Coverage counts only inside the span it reports, the last 90 days as built, so an older window is unknown and takes the /market/bars answer: rows, 422 no_data_recorded or not built"] --> Z5{"Instrument trading?"}
   Z5 -->|no| L5["SCR-047 instrument not trading, history still viewable"]
   Z5 -->|yes| B5{"Bar family"}
   B5 -->|time, 1m and longer| C5{"Window before recording start?"}
@@ -888,17 +892,17 @@ flowchart TD
   C5 -->|partly| E5["Dashed boundary with a tag: order flow from the recording start, earlier bars from exchange klines"]
   C5 -->|entirely| F5["Kline bars shown, the strip says this window predates recording and has no order flow"]
   C5 -->|exchange returned no bars| M5["SCR-047 names the first available timestamp"]
-  B5 -->|non-time, or sub-minute after OQ-1| G5{"Recorded prints in the window, per data coverage?"}
+  B5 -->|non-time, or sub-minute after OQ-1| G5{"Recorded prints in the window, per data coverage inside its span, else per /market/bars?"}
   G5 -->|all| D5
   G5 -->|part| H5["Requested from the recording start: bars from the boundary on, the region left of it says no recorded prints before that time"]
-  G5 -->|none, 422 no_data_recorded or no trades in data coverage| I5["SCR-047 no data in this range, before recording start or inside a recording gap: Go to recorded data, Switch to time bars"]
-  G5 -->|prints but zero rows, not built| Q5["Never SCR-047: build the window, F-BAR-3. Before G-2: the live series from its first bar, with the built-from boundary"]
+  G5 -->|none, 422 no_data_recorded or no trades in data coverage inside its span| I5["SCR-047 no data in this range, before recording start or inside a recording gap: Go to recorded data, Switch to time bars"]
+  G5 -->|first load with no bars in the window, not built| Q5["Never SCR-047: build the window, F-BAR-3. Before G-2: the live series from its first bar, with the built-from boundary. A backfill page past the built range's start takes the built-from boundary, F-BAR-1"]
   G5 -->|symbol never recorded| J5["SCR-047 not recorded: copy and CTA follow autorecord_enabled and the recorder status refusal, E12-D02 §8"]
   J5 --> K5["Bars build from the live stream either way: the first live bar replaces SCR-047 with the built-from boundary"]
-  D5 --> R5{"Recording gaps or generation changes inside the window?"}
+  D5 --> R5{"Reported recording gaps or generation changes inside the window?"}
   E5 --> R5
   H5 --> R5
-  R5 -->|yes| S5["Time axis: a hatched, labelled band per gap over its empty time slots, a seam where none exist. Non-time: a seam between the bars that straddle it. A builder cold start adds a seam, a rebuild swap the built-from boundary"]
+  R5 -->|yes| S5["Time axis: a hatched, labelled band per gap over its time slots, its kline bars where kline rows fill it, otherwise empty slots, or a seam where no slots exist. Non-time: a seam between the bars that straddle it. A builder cold start adds a seam, a rebuild swap the built-from boundary"]
   I5 --> N5["chart.empty_state_shown, reason no_data_in_range"]
   M5 --> N5
   J5 --> O5["chart.empty_state_shown, reason not_recorded"]
