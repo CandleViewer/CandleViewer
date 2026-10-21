@@ -97,6 +97,9 @@ def run_semgrep(tmpdir: Path) -> ToolResult:
             "--config",
             ".semgrep",
             "--verbose",  # the report then lists the targets Semgrep skipped (#3549)
+            # CI-SEC-005, #4048: the 1 MB default skips 22-api-openapi.yaml; same bound as CI.
+            "--max-target-bytes",
+            "5000000",
             "--sarif",
             "--output",
             str(sarif),

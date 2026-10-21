@@ -526,6 +526,7 @@ def test_plan_has_every_family_of_steps_and_each_tool_gets_its_argv(
     assert _argv(calls, steps["import-linter"]) == ["uv", "run", "--frozen", "lint-imports"]
     semgrep = _argv(calls, steps["semgrep"])
     assert semgrep[:2] == ["semgrep", "scan"] and "--error" in semgrep
+    assert semgrep[semgrep.index("--max-target-bytes") + 1] == "5000000"  # #4048: CI's size bound
     assert semgrep[semgrep.index("--config") + 1] == ".semgrep/cv-x.yml"
     assert semgrep[-1] == "."  # the root, as CI scans it: `.semgrepignore` applies (#3936)
     assert {f"--include=/{BARS}", f"--include=/{extra}"} <= set(semgrep)

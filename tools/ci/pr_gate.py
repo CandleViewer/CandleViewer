@@ -85,7 +85,15 @@ CODEQL_NOTE = (
 LOG_METHODS = frozenset("debug info warning warn error exception critical log".split())
 GEN_CHECK = "tools/ci/check_gen_freshness.py"
 CODE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".yml", ".yaml")
-SEMGREP_FLAGS = ("--error", "--metrics=off", "--disable-version-check", "--quiet")
+# CI-SEC-005, #4048: the 1 MB default skips 22-api-openapi.yaml; same bound as CI.
+SEMGREP_FLAGS = (
+    "--error",
+    "--metrics=off",
+    "--disable-version-check",
+    "--quiet",
+    "--max-target-bytes",
+    "5000000",
+)
 #: What a gitignore pattern reads as syntax in a path: escaped in `semgrep_include`.
 GLOB_SPECIAL = re.compile(r"[\\*?\[\]]")
 #: Results that are no failure but no pass either: the verdict line counts them.
