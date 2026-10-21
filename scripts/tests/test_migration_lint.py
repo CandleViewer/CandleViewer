@@ -6,6 +6,11 @@ additive, ambiguous batch operations) per the ticket's test plan.
 
 from __future__ import annotations
 
+import ast
+import codecs
+import hashlib
+import importlib.util
+import itertools
 import sys
 import tracemalloc
 from pathlib import Path
@@ -15,6 +20,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.ci.migration_lint import (
+    _CHAIN_HARDENING_SHA256,
+    _read_revision,
+    _reads_as_utf8,
     check_audit_table_integrity,
     check_destructive_annotations,
     check_if_not_exists,
@@ -1135,6 +1143,556 @@ def test_no_other_revision_can_claim_the_owner_exemption(
     """The owner is the file the migrations lockfile pins by name and bytes, with the
     id Alembic reads: the last module-level `revision`, a string constant."""
     assert _audit_hits(tmp_path, source, name)
+
+
+def _chain_texts() -> tuple[str, str]:
+    """0003's `audit_chain()` with the two changes #889 S3 makes (its own `search_path`,
+    its row id drawn under the chain lock), and 0003's text as `CREATE OR REPLACE`."""
+    source = (_VERSIONS_DIR / "0003_audit_log.py").read_text(encoding="utf-8")
+    start = source.index("CREATE FUNCTION audit_chain()")
+    end = source.index("END $BODY$;", start) + len("END $BODY$;")
+    restored = source[start:end].replace("CREATE", "CREATE OR REPLACE", 1)
+    lock = "  PERFORM pg_advisory_xact_lock(hashtext('audit_log'));\n"
+    hardened = restored.replace(
+        " AS $BODY$", "\n  SET search_path = pg_catalog, public, pg_temp AS $BODY$", 1
+    ).replace(lock, lock + "  NEW.id := nextval('audit_log_id_seq');\n", 1)
+    return hardened, restored
+
+
+_HARDENED, _RESTORED = _chain_texts()
+_HARDENING = "0045_audit_chain_hardening.py"
+_DEVIATES = "0045_audit_chain_hardening may hold nothing but"
+
+
+def _hardening_source(hardened: str = _HARDENED, restored: str = _RESTORED) -> str:
+    return (
+        '"""Harden audit_chain() (#889 S3)."""\n\n'
+        "from __future__ import annotations\n\n"
+        "from collections.abc import Sequence\n\n"
+        "from alembic import op\n\n"
+        'revision: str = "0045_audit_chain_hardening"\n'
+        'down_revision: str | None = "0044_account_no_hard_delete"\n'
+        "branch_labels: str | Sequence[str] | None = None\n"
+        "depends_on: str | Sequence[str] | None = None\n\n\n"
+        "def upgrade() -> None:\n"
+        f'    op.execute(\n        """\n{hardened}\n"""\n    )\n\n\n'
+        "def downgrade() -> None:\n"
+        f'    op.execute(\n        """\n{restored}\n"""\n    )\n'
+    )
+
+
+def test_the_chain_hardening_pins_are_0003s_function_with_the_agreed_changes() -> None:
+    assert {
+        "upgrade": hashlib.sha256(_HARDENED.encode()).hexdigest(),
+        "downgrade": hashlib.sha256(_RESTORED.encode()).hexdigest(),
+    } == _CHAIN_HARDENING_SHA256
+    assert _HARDENED.count("\n") == _RESTORED.count("\n") + 2
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(_hardening_source(), id="as-agreed"),
+        pytest.param(
+            _hardening_source()
+            .replace("-> None:\n", '-> None:\n    """Replace audit_chain()."""\n')
+            .replace("revision: str =", "revision =")
+            .replace("down_revision: str | None =", "down_revision ="),
+            id="with-function-docstrings-and-bare-identifiers",
+        ),
+    ],
+)
+def test_the_chain_hardening_revision_holding_only_its_pins_is_exempt(
+    tmp_path: Path, source: str
+) -> None:
+    assert _audit_hits(tmp_path, source, _HARDENING) == []
+
+
+_UP = "def upgrade() -> None:\n"
+_CALL = "    op.execute(\n"
+_DOWN_DEF = "\n\ndef downgrade() -> None:\n"
+_END_UP = '"""\n    )\n' + _DOWN_DEF
+_REVISION = 'revision: str = "0045_audit_chain_hardening"'
+_DEPENDS = "depends_on: str | Sequence[str] | None = None\n"
+_SET = "\n  SET search_path = pg_catalog, public, pg_temp"
+_ID = "  NEW.id := nextval('audit_log_id_seq');\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            _hardening_source(hardened=_HARDENED.replace(_SET, "")), id="no-search-path"
+        ),
+        pytest.param(
+            _hardening_source(hardened=_HARDENED.replace(_ID, "")),
+            id="no-id-under-lock",
+        ),
+        pytest.param(
+            _hardening_source(
+                hardened=_HARDENED.replace("pg_catalog, public", "public, pg_catalog")
+            ),
+            id="another-path-order",
+        ),
+        pytest.param(
+            _hardening_source(
+                hardened=_HARDENED + "\nDROP TRIGGER trg_audit_append ON audit_log;"
+            ),
+            id="a-second-statement-in-the-literal",
+        ),
+        pytest.param(
+            _hardening_source(
+                restored="ALTER FUNCTION audit_chain() RESET search_path;"
+            ),
+            id="an-alter-for-the-restore",
+        ),
+        pytest.param(
+            _hardening_source(
+                restored=_RESTORED.replace("audit_chain()", "forbid_mutation()", 1)
+            ),
+            id="another-guard-function",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                _UP, _UP + "    op.execute(\"SET LOCAL lock_timeout = '5s'\")\n", 1
+            ),
+            id="a-lock-timeout-line",
+        ),
+        pytest.param(
+            _hardening_source()
+            .replace(
+                _UP + '    op.execute(\n        """',
+                '_SQL = """',
+                1,
+            )
+            .replace(
+                '"""\n    )\n\n\ndef downgrade',
+                '"""\n\n\n' + _UP + "    op.execute(_SQL)\n\n\ndef downgrade",
+                1,
+            ),
+            id="a-named-constant",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                "from alembic import op\n",
+                "from alembic import op\nimport sqlalchemy\n",
+            ),
+            id="another-import",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                "from alembic import op\n",
+                "from alembic import op\nfrom os import system\n",
+            ),
+            id="another-from-import",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                "from alembic import op\n", "from alembic import op as op\n"
+            ),
+            id="an-aliased-import",
+        ),
+        pytest.param(
+            _hardening_source().replace(_UP, "@print\n" + _UP), id="a-decorator"
+        ),
+        pytest.param(
+            _hardening_source().replace(_UP, "def upgrade(x: int = 0) -> None:\n"),
+            id="an-argument",
+        ),
+        pytest.param(
+            _hardening_source().replace(_UP, "def upgrade() -> int:\n"),
+            id="a-return-annotation",
+        ),
+        pytest.param(
+            _hardening_source().replace(_UP, "async " + _UP), id="an-async-upgrade"
+        ),
+        pytest.param(
+            _hardening_source()[: _hardening_source().index("\n\ndef downgrade")]
+            + "\n",
+            id="no-downgrade",
+        ),
+        pytest.param(
+            _hardening_source()
+            + "\n\n"
+            + _UP
+            + '    op.execute("DROP TRIGGER trg_audit_append ON audit_log")\n',
+            id="a-second-upgrade",
+        ),
+        pytest.param(
+            _hardening_source()
+            + "\n\n"
+            + _hardening_source()[_hardening_source().index(_UP) :].split("\n\n\n")[0]
+            + "\n",
+            id="a-repeated-upgrade",
+        ),
+        pytest.param(
+            _hardening_source() + '\nop.execute("SELECT 1")\n', id="a-module-level-call"
+        ),
+        pytest.param(
+            _hardening_source().replace("revision: str =", 'revision: print("x") =', 1),
+            id="an-annotation-that-runs",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                '    op.execute(\n        """', '    op.execute(\n        f"""', 1
+            ),
+            id="an-f-string",
+        ),
+        pytest.param(
+            _hardening_source().replace(_UP, "def upgrade(x: int = 0, /) -> None:\n"),
+            id="a-positional-only-parameter",
+        ),
+        pytest.param(
+            _hardening_source().replace(_UP, "def upgrade(*args: int) -> None:\n"),
+            id="a-star-args-parameter",
+        ),
+        pytest.param(
+            _hardening_source().replace(_UP, "def upgrade(*, x: int = 0) -> None:\n"),
+            id="a-keyword-only-parameter",
+        ),
+        pytest.param(
+            _hardening_source().replace(_UP, "def upgrade(**kwargs: int) -> None:\n"),
+            id="a-star-star-kwargs-parameter",
+        ),
+        pytest.param(
+            _hardening_source().replace(_UP, "def upgrade[T]() -> None:\n"),
+            id="a-type-parameter",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                _DEPENDS, _DEPENDS.replace("= None", '= print("x")')
+            ),
+            id="a-call-as-an-identifiers-value",
+        ),
+        pytest.param(
+            _hardening_source().replace(_DEPENDS, _DEPENDS.replace("= None", "= 5")),
+            id="a-number-as-an-identifiers-value",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                _REVISION, 'revision = alias = "0045_audit_chain_hardening"'
+            ),
+            id="a-chained-assignment",
+        ),
+        pytest.param(
+            _hardening_source().replace(_DEPENDS, _DEPENDS + "op.revision = None\n"),
+            id="an-attribute-assignment",
+        ),
+        pytest.param(
+            _hardening_source().replace(_DEPENDS, _DEPENDS + "EXTRA = None\n"),
+            id="another-module-level-name",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                "from alembic import op\n", "from .alembic import op\n"
+            ),
+            id="a-relative-import",
+        ),
+        pytest.param(
+            _hardening_source() + '\n"a stray string"\n', id="a-second-module-string"
+        ),
+        pytest.param(
+            _hardening_source().replace(_CALL, "    op.run(\n", 1), id="another-method"
+        ),
+        pytest.param(
+            _hardening_source().replace(_CALL, "    connection.execute(\n", 1),
+            id="another-receiver",
+        ),
+        pytest.param(
+            _hardening_source().replace(_CALL, "    alembic.op.execute(\n", 1),
+            id="a-qualified-receiver",
+        ),
+        pytest.param(
+            _hardening_source().replace(_CALL, "    return op.execute(\n", 1),
+            id="a-returned-call",
+        ),
+        pytest.param(
+            _hardening_source().replace(_CALL, "    _ = op.execute(\n", 1),
+            id="an-assigned-call",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                _CALL + '        """', _CALL + '        b"""', 1
+            ),
+            id="a-bytes-literal",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                _END_UP, '""",\n        "x",\n    )\n' + _DOWN_DEF, 1
+            ),
+            id="an-extra-argument",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                _END_UP, '""",\n        execution_options=None,\n    )\n' + _DOWN_DEF, 1
+            ),
+            id="a-keyword-argument",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                _END_UP,
+                '"""\n    )\n    op.execute("DROP TRIGGER trg_audit_append ON audit_log")\n'
+                + _DOWN_DEF,
+                1,
+            ),
+            id="a-statement-after-the-pin",
+        ),
+        pytest.param(
+            _hardening_source().replace(_UP, 'def upgrade() -> "None":\n', 1),
+            id="a-string-return-annotation",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                "from alembic import op\n", "from alembic import op, context\n"
+            ),
+            id="a-second-imported-name",
+        ),
+        pytest.param(
+            _hardening_source().replace(
+                _CALL + '        """\n' + _HARDENED + "\n" + _END_UP,
+                "    5\n" + _DOWN_DEF,
+                1,
+            ),
+            id="a-bare-constant-body",
+        ),
+        pytest.param(
+            _hardening_source().replace(_CALL, "    execute(\n", 1), id="a-bare-execute"
+        ),
+    ],
+)
+def test_a_chain_hardening_revision_holding_anything_else_is_refused(
+    tmp_path: Path, source: str
+) -> None:
+    # Each case is Python: refused for what it holds, never as unreadable.
+    ast.parse(source)
+    assert any(_DEVIATES in hit for hit in _audit_hits(tmp_path, source, _HARDENING))
+
+
+def test_an_unparsable_chain_hardening_revision_is_read_as_any_revision(
+    tmp_path: Path,
+) -> None:
+    source = _hardening_source() + "\ndef broken(:\n"
+    with pytest.raises(SyntaxError):
+        ast.parse(source)
+    hits = _audit_hits(tmp_path, source, _HARDENING)
+    assert hits == _audit_hits(tmp_path, source, "0050_audit.py")
+    assert not any(_DEVIATES in hit for hit in hits)
+
+
+def test_a_refused_chain_hardening_revision_is_read_as_any_revision(
+    tmp_path: Path,
+) -> None:
+    """Once it deviates, its guard function DDL is a finding as any revision's is."""
+    hits = _audit_hits(
+        tmp_path, _hardening_source(hardened=_HARDENED.replace(_SET, "")), _HARDENING
+    )
+    assert any(_DEVIATES in hit for hit in hits)
+    assert any("guard function 'audit_chain'" in hit for hit in hits)
+
+
+_NOT_UTF8 = "does not read as UTF-8 source"
+_ASCII_REVISION = _raw_sql_revision("SELECT 1").encode()
+_ENDINGS = {"lf": b"\n", "crlf": b"\r\n", "cr": b"\r"}
+
+
+def _messages(tmp_path: Path, source: bytes, name: str = "0050_audit.py") -> list[str]:
+    path = tmp_path / name
+    path.write_bytes(source)
+    return [finding.message for finding in check_audit_table_integrity([path])]
+
+
+def test_the_gate_and_the_rules_read_one_text(tmp_path: Path) -> None:
+    body = _raw_sql_revision("SELECT 'caf\u00e9'").encode().replace(b"\n", b"\r")
+    path = tmp_path / "0050_audit.py"
+    path.write_bytes(b"# one\r# two\r# -*- coding: latin-1 -*-\r" + body)
+    compiled = ast.dump(ast.parse(path.read_bytes()))  # line 3 declares nothing
+    assert (
+        _reads_as_utf8(path) and ast.dump(ast.parse(_read_revision(path))) == compiled
+    )
+
+
+def test_the_audit_rule_reads_the_text_the_gate_read(tmp_path: Path) -> None:
+    shape = b"\t\r\r\n# coding: utf-16\n"
+    source = shape + _raw_sql_revision("DELETE FROM audit_log").encode()
+    (hit,) = _messages(tmp_path, source)
+    assert "append-only table 'audit_log'" in hit
+
+
+@pytest.mark.parametrize("name", [_HARDENING, "0050_audit.py", "0003_audit_log.py"])
+@pytest.mark.parametrize(
+    ("declared", "refused"),
+    [
+        ("latin-1", True),
+        ("utf-7", True),
+        ("utf-16", True),
+        ("utf-32", True),
+        ("no-such-codec", True),
+        ("utf-8", False),
+        ("UTF-8", False),
+        ("utf8", False),
+        ("u8", False),
+    ],
+)
+def test_a_revision_declaring_another_source_encoding_is_refused(
+    tmp_path: Path, name: str, declared: str, refused: bool
+) -> None:
+    """Another declared encoding gives one refusal; UTF-8 under any name is read."""
+    source = f"# -*- coding: {declared} -*-\n" + _hardening_source()
+    hits = _messages(tmp_path, source.encode(), name)
+    if refused:
+        (hit,) = hits
+        assert _NOT_UTF8 in hit
+    else:
+        assert not any(_NOT_UTF8 in hit for hit in hits)
+        assert (hits == []) is (name == _HARDENING)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(b"# \xff\n" + _ASCII_REVISION, id="an-invalid-byte-on-line-1"),
+        pytest.param(_ASCII_REVISION + b"# \xff\n", id="an-invalid-byte-later"),
+        pytest.param(
+            codecs.BOM_UTF8 + b"# -*- coding: latin-1 -*-\n" + _ASCII_REVISION,
+            id="a-byte-order-mark-and-another-declaration",
+        ),
+        pytest.param(
+            b"# -*- coding: latin-1 -*-\n"
+            + _raw_sql_revision("DELETE FROM audit_log").encode(),
+            id="a-refused-revision-that-mutates-an-audit-table",
+        ),
+    ],
+)
+def test_a_revision_that_is_not_utf8_source_gets_one_refusal(
+    tmp_path: Path, source: bytes
+) -> None:
+    (hit,) = _messages(tmp_path, source)
+    assert _NOT_UTF8 in hit
+
+
+@pytest.mark.parametrize("first", sorted(_ENDINGS))
+@pytest.mark.parametrize("second", sorted(_ENDINGS))
+@pytest.mark.parametrize(
+    "lead",
+    [None, b"", b"#!/usr/bin/env python"],
+    ids=["on-line-1", "after-a-blank-line", "after-a-comment"],
+)
+@pytest.mark.parametrize(
+    ("declared", "refused"), [(b"latin-1", True), (b"utf-8", False), (None, False)]
+)
+def test_a_declaration_is_read_whatever_the_line_endings(
+    tmp_path: Path,
+    first: str,
+    second: str,
+    lead: bytes | None,
+    declared: bytes | None,
+    refused: bool,
+) -> None:
+    line = b"# a revision" if declared is None else b"# -*- coding: %s -*-" % declared
+    one, two = (line, b"# a revision") if lead is None else (lead, line)
+    source = one + _ENDINGS[first] + two + _ENDINGS[second] + _ASCII_REVISION
+    hits = _messages(tmp_path, source)
+    assert hits == ([hits[0]] if refused else [])
+    assert all(_NOT_UTF8 in hit for hit in hits)
+
+
+def test_a_revision_the_lint_reads_as_utf8_is_one_python_compiles_as_utf8(
+    tmp_path: Path,
+) -> None:
+    """Whatever two-line head the lint reads as UTF-8, Python compiles as UTF-8."""
+    names = [b"utf-8", b"utf8", b"latin-1", b"cp1252", b"utf-7", b"no-such-codec"]
+    kinds = [b"", b"# a comment", b"x = 1", *(b"# coding: %s" % n for n in names)]
+    endings = list(_ENDINGS.values())
+    path = tmp_path / "0050_probe.py"
+    read = 0
+    for bom, one, end_one, two, end_two in itertools.product(
+        [b"", codecs.BOM_UTF8], kinds, endings, kinds, endings
+    ):
+        source = (
+            bom + one + end_one + two + end_two + "PROBE = '\u00e9\u20ac'\n".encode()
+        )
+        path.write_bytes(source)
+        if not _reads_as_utf8(path):
+            continue
+        read += 1
+        (probe,) = [
+            node.value
+            for node in ast.parse(source).body
+            if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "PROBE"
+        ]
+        assert isinstance(probe, ast.Constant) and probe.value == "\u00e9\u20ac", source
+    assert 0 < read < 2 * len(kinds) ** 2 * len(endings) ** 2
+
+
+def test_a_revision_whose_text_is_not_the_code_python_compiles_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(importlib.util, "decode_source", lambda source: "x = 1\n")
+    (hit,) = _messages(tmp_path, _ASCII_REVISION)
+    assert _NOT_UTF8 in hit
+
+
+def test_the_other_readers_read_a_revision_in_the_encoding_it_declares(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "0050_latin.py"
+    path.write_bytes(b"# -*- coding: latin-1 -*-\n# caf\xe9\n" + _ASCII_REVISION)
+    assert check_if_not_exists([path]) == []
+    assert check_destructive_annotations([path]) == []
+
+
+def test_the_cli_reports_a_revision_that_is_not_utf8_source_once_and_reads_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    versions = tmp_path / "versions"
+    versions.mkdir()
+    (versions / "0050_codec.py").write_bytes(b"# coding: nope\n" + _ASCII_REVISION)
+    (versions / "0051_bytes.py").write_bytes(_ASCII_REVISION + b"# \xff\n")
+    _write(versions, "0052_destructive.py", _DESTRUCTIVE_UNANNOTATED)
+    assert main(["--versions-dir", str(versions)]) == 1
+    lines = [
+        [*line.split(": ")[:2], _NOT_UTF8 in line]
+        for line in capsys.readouterr().err.splitlines()
+        if not line.startswith("WARN ")
+    ]
+    assert lines == [
+        ["CI-MIG-003", str(versions / "0052_destructive.py"), False],
+        ["CI-MIG-003", str(versions / "0050_codec.py"), True],
+        ["CI-MIG-003", str(versions / "0051_bytes.py"), True],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        pytest.param(
+            "0046_audit_chain_hardening.py", _hardening_source(), id="another-file-name"
+        ),
+        pytest.param(
+            _HARDENING,
+            _hardening_source().replace(
+                '"0045_audit_chain_hardening"', '"0046_other"', 1
+            ),
+            id="another-revision-id",
+        ),
+        pytest.param(
+            _HARDENING,
+            _hardening_source().replace(
+                "depends_on: str | Sequence[str] | None = None\n",
+                "depends_on: str | Sequence[str] | None = None\n"
+                'revision = "0046_other"\n',
+                1,
+            ),
+            id="a-later-module-level-revision",
+        ),
+    ],
+)
+def test_no_other_revision_can_claim_the_chain_hardening_exemption(
+    tmp_path: Path, name: str, source: str
+) -> None:
+    hits = _audit_hits(tmp_path, source, name)
+    assert any("guard function 'audit_chain'" in hit for hit in hits)
+    assert not any(_DEVIATES in hit for hit in hits)
 
 
 def test_the_shipped_migrations_have_no_audit_mutation() -> None:

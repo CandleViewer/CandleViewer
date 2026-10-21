@@ -30,9 +30,14 @@ from __future__ import annotations
 
 import argparse
 import ast
+import codecs
+import hashlib
+import importlib.util
+import io
 import itertools
 import re
 import sys
+import tokenize
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -312,6 +317,39 @@ _AUDIT_FUNCTIONS = frozenset(
     {"forbid_mutation", "audit_refuse_truncate", "audit_chain", "audit_field"}
 )
 _FUNCTION_DDL = (["CREATE", "FUNCTION"], ["DROP", "FUNCTION"], ["ALTER", "FUNCTION"])
+#: The revision that replaces `audit_chain()` (#889 S3, SR-E42-10): its row id drawn
+#: under the chain's lock, and its own `search_path`. It is exempt only while it holds
+#: nothing but a docstring, its imports (`_CHAIN_HARDENING_IMPORTS`), its identifiers
+#: and an `upgrade()` and a `downgrade()` that each run one `op.execute` of a string
+#: literal whose text, stripped, hashes to its pin: the reviewed function text and its
+#: exact restore, nothing else (`_chain_hardening_deviations`). Anything else makes it
+#: an ordinary revision. The migrations lockfile pins its bytes once it is merged.
+_CHAIN_HARDENING_REVISION = "0045_audit_chain_hardening"
+_CHAIN_HARDENING_SHA256 = {
+    # 0003's `audit_chain()`, as `CREATE OR REPLACE`, with `SET search_path =
+    # pg_catalog, public, pg_temp` and `NEW.id := nextval('audit_log_id_seq')` after
+    # the lock.
+    "upgrade": "bd698deea45af9e443d9baeabd238b9bdb87d374744da7e836e394318fa4d411",
+    # 0003's `audit_chain()` byte for byte, as `CREATE OR REPLACE`.
+    "downgrade": "356bec08de239a8c97b7727c5dd50658c419991e71bf6f9b2c6a17eb137b3b20",
+}
+_CHAIN_HARDENING_IMPORTS = frozenset(
+    {("__future__", "annotations"), ("collections.abc", "Sequence"), ("alembic", "op")}
+)
+_REVISION_IDENTIFIERS = frozenset(
+    {"revision", "down_revision", "branch_labels", "depends_on"}
+)
+# What an annotation of a revision identifier may hold (`str | Sequence[str] | None`):
+# names, subscripts, unions and constants, nothing that runs code on import.
+_ANNOTATION_NODES = (
+    ast.Name,
+    ast.Subscript,
+    ast.BinOp,
+    ast.BitOr,
+    ast.Constant,
+    ast.Tuple,
+    ast.Load,
+)
 
 
 def _mutates(words: list[str]) -> bool:
@@ -443,6 +481,111 @@ def _revision_id(tree: ast.Module) -> str | None:
     return revision
 
 
+def _is_docstring(node: ast.stmt) -> bool:
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    )
+
+
+def _is_revision_identifier(node: ast.stmt) -> bool:
+    """`revision = "..."`, `down_revision: str | None = None` and their kin: a constant
+    given to one of Alembic's identifiers, under an annotation that runs no code."""
+    targets: list[ast.expr]
+    if isinstance(node, ast.AnnAssign):
+        targets, value = [node.target], node.value
+        if not all(isinstance(n, _ANNOTATION_NODES) for n in ast.walk(node.annotation)):
+            return False
+    elif isinstance(node, ast.Assign):
+        targets, value = node.targets, node.value
+    else:
+        return False
+    return (
+        len(targets) == 1
+        and isinstance(targets[0], ast.Name)
+        and targets[0].id in _REVISION_IDENTIFIERS
+        and isinstance(value, ast.Constant)
+        and (value.value is None or isinstance(value.value, str))
+    )
+
+
+def _executed_literal(statement: ast.stmt) -> str | None:
+    """The string literal of `op.execute("<literal>")`, else None."""
+    if not (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call)):
+        return None
+    call = statement.value
+    if not (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "execute"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "op"
+        and len(call.args) == 1
+        and not call.keywords
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
+    ):
+        return None
+    return call.args[0].value
+
+
+def _chain_hardening_deviations(tree: ast.Module) -> list[int]:
+    """The lines of whatever `_CHAIN_HARDENING_REVISION` holds besides a docstring, its
+    imports, its identifiers and an `upgrade()` and a `downgrade()` that each run
+    nothing but `op.execute` of the literal its pin (`_CHAIN_HARDENING_SHA256`) hashes;
+    none when it holds nothing else. A function it lacks deviates at line 1."""
+    lines: list[int] = []
+    seen: set[str] = set()
+    for index, node in enumerate(tree.body):
+        if (
+            isinstance(node, ast.FunctionDef)
+            and node.name in _CHAIN_HARDENING_SHA256
+            and node.name not in seen
+        ):
+            seen.add(node.name)
+            arguments = node.args
+            body = node.body[1:] if _is_docstring(node.body[0]) else node.body
+            sql = _executed_literal(body[0]) if len(body) == 1 else None
+            text = b"" if sql is None else sql.strip().encode("utf-8", "surrogatepass")
+            pin = _CHAIN_HARDENING_SHA256[node.name]
+            if (
+                sql is None
+                or hashlib.sha256(text).hexdigest() != pin
+                or node.decorator_list
+                or getattr(node, "type_params", [])
+                or arguments.posonlyargs
+                or arguments.args
+                or arguments.vararg
+                or arguments.kwonlyargs
+                or arguments.kwarg
+                or not (
+                    node.returns is None
+                    or (
+                        isinstance(node.returns, ast.Constant)
+                        and node.returns.value is None
+                    )
+                )
+            ):
+                lines.append(node.lineno)
+        elif not (
+            (index == 0 and _is_docstring(node))
+            or _is_revision_identifier(node)
+            or (
+                isinstance(node, ast.ImportFrom)
+                and node.level == 0
+                and all(
+                    alias.asname is None
+                    and (node.module, alias.name) in _CHAIN_HARDENING_IMPORTS
+                    for alias in node.names
+                )
+            )
+        ):
+            lines.append(node.lineno)
+    if seen != _CHAIN_HARDENING_SHA256.keys():
+        lines.append(1)
+    return sorted(lines)
+
+
 def _op_targets(
     tree: ast.AST, ops: frozenset[str], tables: frozenset[str]
 ) -> dict[int, str]:
@@ -540,9 +683,38 @@ class LintFinding:
         return f"{self.code}: {self.path}: {self.message}"
 
 
+def _source_bytes(path: Path) -> bytes:
+    """A revision's bytes with every line ending as LF, as the compiler reads them."""
+    return path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def _read_revision(path: Path) -> str:
-    """A revision's text as Python reads it: a byte-order mark is not code."""
-    return path.read_text(encoding="utf-8-sig")
+    """A revision's text as the import system reads it: its declared encoding, a byte-order
+    mark that is not code, its line endings as LF."""
+    return importlib.util.decode_source(_source_bytes(path))
+
+
+def _tree_of(source: str | bytes) -> str | None:
+    """The dump of the tree Python compiles from `source`, None where it compiles none."""
+    try:
+        return ast.dump(ast.parse(source))
+    except (SyntaxError, RecursionError):
+        return None
+
+
+def _reads_as_utf8(path: Path) -> bool:
+    """Whether the revision is UTF-8 source the lint reads as Python compiles it: the import
+    system reads it as UTF-8 (no declaration, a byte-order mark, or UTF-8 declared under any
+    of its names), all of it decodes, and the tree Python compiles from its bytes is the one
+    parsed from the lint's text. An encoding Python cannot name reads as not."""
+    try:
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(_source_bytes(path)).readline)
+        if codecs.lookup(encoding).name not in {"utf-8", "utf-8-sig"}:
+            return False
+        text = _read_revision(path)  # the rules' own reader: one text for both
+    except (SyntaxError, UnicodeDecodeError):
+        return False
+    return _tree_of(path.read_bytes()) == _tree_of(text)
 
 
 def _read_sensitive_tables(path: Path) -> frozenset[str]:
@@ -620,9 +792,28 @@ def check_audit_table_integrity(
     exempt for exactly two statement kinds: its downgrade's `DROP TABLE` and
     `DROP TRIGGER` on the audit tables, and the definition and drop of the functions.
     It is the file of that name whose module-level `revision` says so, the file the
-    migrations lockfile pins. Every other statement in it is checked."""
+    migrations lockfile pins. Every other statement in it is checked. The revision that
+    replaces `audit_chain()`, `_CHAIN_HARDENING_REVISION`, named as the owner is, is
+    exempt while it holds nothing but the function text and the restore its pins hash
+    (`_chain_hardening_deviations`); otherwise each line that deviates is a finding and
+    the revision is read as any other. A revision is read as the import system reads it,
+    and one that is not UTF-8 source read as Python compiles it (`_reads_as_utf8`) is
+    refused."""
     findings: list[LintFinding] = []
     for path in paths:
+        if not _reads_as_utf8(path):
+            findings.append(
+                LintFinding(
+                    code="CI-MIG-003",
+                    path=path,
+                    message=(
+                        "the revision does not read as UTF-8 source: refused, the "
+                        "audit-table rule reads revisions as UTF-8 only "
+                        "(C-5.7, ADR-0013 rule 9)"
+                    ),
+                )
+            )
+            continue
         source = _read_revision(path)
         try:
             tree: ast.Module | None = ast.parse(source, filename=str(path))
@@ -635,6 +826,26 @@ def check_audit_table_integrity(
             and path.stem == _AUDIT_OWNER_REVISION
             and _revision_id(tree) == _AUDIT_OWNER_REVISION
         )
+        if (
+            tree is not None
+            and path.stem == _CHAIN_HARDENING_REVISION
+            and _revision_id(tree) == _CHAIN_HARDENING_REVISION
+        ):
+            deviations = _chain_hardening_deviations(tree)
+            if not deviations:
+                continue
+            findings.extend(
+                LintFinding(
+                    code="CI-MIG-003",
+                    path=path,
+                    message=(
+                        f"line {line}: {_CHAIN_HARDENING_REVISION} may hold nothing but "
+                        "its two pinned audit_chain() statements, so it is read as any "
+                        "revision (C-5.7, ADR-0013 rule 9)"
+                    ),
+                )
+                for line in deviations
+            )
 
         for lineno, literal, unresolved in _iter_string_literals(path, source):
             statements = [_normalise_sql(s) for s in _sql_split(literal)]
@@ -821,11 +1032,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     paths = _iter_migration_files(versions_dir)
+    # A revision that is not UTF-8 source gets the audit rule's one refusal; no other
+    # reader opens it.
+    readable = [path for path in paths if _reads_as_utf8(path)]
     findings: list[LintFinding] = []
-    findings.extend(check_if_not_exists(paths))
-    findings.extend(check_destructive_annotations(paths))
+    findings.extend(check_if_not_exists(readable))
+    findings.extend(check_destructive_annotations(readable))
     findings.extend(check_audit_table_integrity(paths))
-    security_findings = check_security_sensitive(paths)
+    security_findings = check_security_sensitive(readable)
 
     for finding in findings:
         print(finding.render(), file=sys.stderr)

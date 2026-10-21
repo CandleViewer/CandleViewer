@@ -730,10 +730,21 @@ index alone, removing nothing.
   the previous `;`, so an `IF`, `FOR` or `WITH` header that reads an audit
   table counts with the statement it opens: read the condition into a
   variable first. A string literal that opens with an SQL command word is
-  read as SQL. Only `0003_audit_log`, which creates the
+  read as SQL. A revision is read as the import system reads it, and one
+  that declares another source encoding, holds an undecodable byte, or
+  parses to a different tree than its decoded text is refused ("the
+  revision does not read as UTF-8 source: refused"). Only `0003_audit_log`, which creates the
   tables and the functions, drops them, in its own downgrade: the exemption
   holds for that file alone, which the migrations lockfile pins by name and
-  content.
+  content. One more file is exempt, for one statement each way:
+  `0045_audit_chain_hardening` (#889, SR-E42-10) may replace `audit_chain()`
+  with the text the lint pins by SHA-256 (0003's function with its own
+  `search_path` and its row id drawn under the chain lock) and restore 0003's
+  text in its downgrade, each as one `op.execute` of a string literal, and
+  hold nothing else beyond the docstring, the three imports and the four
+  identifiers. Any other statement, an `ALTER` or a `DROP`, another
+  guard function or a changed text makes it an ordinary revision, and each
+  line that deviates is a finding.
 - **CI-MIG-004** (upgrade-path failure): running the migration chain up
   from the previous release tag's schema failed. Reproduce locally
   (`alembic upgrade head` from a DB seeded at the previous tag) and fix the
