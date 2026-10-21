@@ -406,6 +406,6 @@ def test_a_replay_session_created_on_the_deployed_app_is_snapped_and_updated_ove
     for frame in deltas:
         validate(frame)
     assert (snap["t"], snap["meta"]["reason"], snap["p"]["state"]) == ("snap", "initial", "created")
-    assert {f["t"] for f in deltas} == {"d"} and snap["s"] == 1
-    assert [f["s"] for f in deltas] == list(range(2, 2 + len(deltas)))
+    assert snap["s"] == 1 and [f["p"]["state"] for f in deltas][:-1] in ([], ["buffering"])
+    assert [(f["t"], f["s"]) for f in deltas] == [("d", s) for s in range(2, 2 + len(deltas))]
     assert scope_missing_total() == missing  # the entry was bound to its user

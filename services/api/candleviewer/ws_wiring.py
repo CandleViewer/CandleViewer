@@ -429,10 +429,10 @@ class MachineRevocationAudit:
     def _ended(self, task: asyncio.Task[None]) -> None:
         """A done callback, so it runs even for a task cancelled before its first step (C-2.9)."""
         error = None if task.cancelled() else task.exception()
+        if task is self._task and self._pending:  # counted before any log; else a later writer's
+            self._abandon(len(self._pending), "cancelled" if task.cancelled() else "writer_stopped")
         if error is not None:
             logger().error("ws machine revocation audit writer failed", error=type(error).__name__)
-        if task is self._task and self._pending:  # else a later writer owns the queue
-            self._abandon(len(self._pending), "cancelled" if task.cancelled() else "writer_stopped")
 
     async def drain(self) -> None:
         """Wait until no writer runs (`WsRuntime.stop`): one started as the last ended too."""

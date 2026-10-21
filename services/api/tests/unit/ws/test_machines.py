@@ -951,7 +951,7 @@ async def test_a_writer_that_ends_early_counts_and_logs_what_it_left(
     with capture_logs() as logs, pytest.raises(end or asyncio.CancelledError):
         await task
     assert _abandoned() - before == (2 if end is None else 1)
-    assert (writer._waiting, len(writer._pending), logs[-1]["cause"]) == (0, 0, cause)
+    assert (writer._waiting, len(writer._pending), logs[0]["cause"]) == (0, 0, cause)  # 1st line
 
 
 async def test_drain_waits_for_a_writer_started_as_the_last_one_ended(
