@@ -364,6 +364,10 @@ def step_response() -> Step:
     the baseline sd as the Poisson sqrt of its mean; `*_sample_sd_s` takes the sample sd of the
     baseline window's bucket counts — US-DET-002's "z-score against the configured baseline
     window" read conventionally — which the burst's own buckets inflate. Warm-up is B itself.
+    (c) A median/MAD baseline (one of the burst-robust levers of F4c / Q13) keeps the usual level
+    as its median while fewer than half of its buckets are burst buckets, then jumps to the burst
+    level, so z falls to 0 at once at `median_cliff_s` = B / 2 — a cliff, not the mean's slope
+    (deterministic mean; any burst multiple above 1; round-4 lens item 2).
     """
     lam, k, w_disp = RATES[0], BURST_K, WINDOWS_S[1]
     detect: dict[str, float] = {}
@@ -387,6 +391,7 @@ def step_response() -> Step:
             "usual_at_s": b,
             "below_usual_for_s": round(b * (k - r_quiet) / (k - 1)),
             "below_usual_for_sample_sd_s": round(b * g_quiet),
+            "median_cliff_s": b // 2,
         }
         for b, src in BASELINES_S.items()
     }
@@ -486,13 +491,14 @@ def main(argv: list[str]) -> int:
     print(
         f"- rolling baseline vs the {st['display_window_s']} s display window (warm-up | stops "
         "reading extreme, Poisson sd / sample sd | reads usual | reads below usual after it ends, "
-        "Poisson sd / sample sd):"
+        "Poisson sd / sample sd | a median/MAD baseline's cliff at B / 2):"
     )
     for b, row in st["baselines"].items():
         print(
             f"  - {b} ({row['source']}): {row['warmup_s']} s | {row['extreme_until_s']} / "
             f"{row['extreme_until_sample_sd_s']} s | {row['usual_at_s']} s | "
-            f"{row['below_usual_for_s']} / {row['below_usual_for_sample_sd_s']} s"
+            f"{row['below_usual_for_s']} / {row['below_usual_for_sample_sd_s']} s | "
+            f"{row['median_cliff_s']} s"
         )
     print("\n## 22 MetricCode vs the shipped vocabulary (G11)\n")
     print(
