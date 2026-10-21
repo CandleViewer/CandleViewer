@@ -12,9 +12,14 @@ every row:
    `docs/design/E25/E25-D05.md` render (CMP-227, CMP-131, CMP-187, CMP-132, CMP-133, CMP-134),
    in dark / light / high-contrast, against the role's bar (text 4.5:1, non-text 3:1, hc-text
    7:1 in the high-contrast theme only; `05-accessibility-standard.md` section 5 items 1, 2 and
-   6) with PASS or FAIL; `rejected-*` rows are pairs the spec considered and designed around and
-   `decorative` rows carry no meaning (`16-design-system-brief.md` section 6 rule 7): both are
-   reported, never gated;
+   6) with PASS or FAIL. The UNROUNDED ratio is compared against the bar, as the CI gate does
+   (`tools/contrast/generate.mjs`: `ratio >= threshold`); the display rounds to the hundredth,
+   and a value that would round onto a bar is printed to four decimals so the display never
+   implies a verdict it did not measure (the pre-PR lens round 1: `color.status.warning.default`
+   on `color.surface.raised` is 2.9992 in light, below 3:1, and is now a `decorative` row).
+   `rejected-*` rows are pairs the spec considered and designed around and `decorative` rows
+   carry no meaning (`16-design-system-brief.md` section 6 rule 7): both are reported, never
+   gated;
 2. every token name the six `15-component-catalogue.md` entries and the spec bind, resolved in
    all three themes or MISSING (`font.mono`, `color.chip.*`, `pattern.hatch`, `color.marker.*`
    and `color.callout.*` are expected MISSING: catalogue drift, E25-D01 G1 / G2); a pattern
@@ -54,14 +59,16 @@ THEMES: dict[str, tuple[str, ...]] = {
     "high-contrast": (PRIM, DARK, HC),
 }
 THEME_ORDER = ("dark", "light", "high-contrast")
+NON_TEXT_BAR = 3.0
 BAR: dict[str, float | None] = {
     "text": 4.5,
-    "non-text": 3.0,
+    "non-text": NON_TEXT_BAR,
     "hc-text": 7.0,
     "decorative": None,
     "rejected-text": 4.5,
-    "rejected-non-text": 3.0,
+    "rejected-non-text": NON_TEXT_BAR,
 }
+BARS = (NON_TEXT_BAR, 4.5, 7.0)
 GATED = ("text", "non-text", "hc-text")
 HEX6 = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -126,8 +133,9 @@ CMP-132 cross-highlight outline (the SCR-056 row selected)
   | color.border.selected | color.surface.canvas | non-text | spec 6
 CMP-187 extreme band segment on the pane (canvas)
   | color.status.warning.default | color.surface.canvas | non-text | spec 5
-CMP-131 extreme band segment and the extreme chip outline on the panel
-  | color.status.warning.default | color.surface.raised | non-text | spec 5
+CMP-131 extreme band segment and chip outline on the panel: 2.9992 in light, below 3:1, so
+  decorative -- the word 'extreme' and the 2 px thicker segment carry the band (lens round 1)
+  | color.status.warning.default | color.surface.raised | decorative | spec 5, 12
 CMP-131 needle
   | color.text.primary | color.surface.canvas | non-text | spec 5
 CMP-131 strip line (CMP-024)
@@ -194,7 +202,13 @@ color.callout.info | CMP-028 `color.callout.*`: expected MISSING, G1
 elevation.1 | CMP-050: a primitive; the semantic alias is elevation.card
 """
 PRIMITIVE_ONLY = ("elevation.1",)
-PATTERN_IDS = ("pattern.hatch.estimated", "pattern.dashed.estimated", "pattern.hatch.gap")
+PATTERN_IDS = (
+    "pattern.hatch.estimated",
+    "pattern.dashed.estimated",
+    "pattern.dashed.tested",
+    "pattern.hatch.absent",
+    "pattern.hatch.gap",
+)
 
 # component | comma-separated variants   /   component | states   /   story group | stories
 VARIANTS_TABLE = """
@@ -222,7 +236,7 @@ Atoms/EstimatedBadge | Inline, Marker, Section, SizeSm, SizeMd, Hover, FocusVisi
   LongDetectorName, HighContrast, Greyscale, ReducedMotion, OutsideProviderThrows
 Trading/SpeedOfTapeGauge | Gauge, Strip, Number, Composite, WindowOneSec, WindowFiveSec,
   WindowThirtySec, SideSplit, BandCalm, BandElevated, BandExtreme, WarmingUp, IdleZero, Loading,
-  Stale, Disconnected, DetectorError, LongReadout, HighContrast, ReducedMotion
+  Stale, Disconnected, DetectorError, LongReadout, HighContrast, ReducedMotion, BandFlapGuard
 ChartEngine/SpeedOfTapePane | Default, LegendRow, TableAlternative, WarmingUp, Stale, HighContrast
 ChartEngine/ImbalanceStackIndicator | ActiveBuy, ActiveSell, TestedBuy, TestedSell, BrokenBuy,
   BrokenSell, Selected, InheritedEstimated, FocusVisible, HighContrast, Greyscale
@@ -368,13 +382,15 @@ def measure(themes: dict[str, Tokens], reg: set[tuple[str, str]]) -> list[PairRo
         fails: list[str] = []
         for theme in THEME_ORDER:
             a, b = hex_of(fg, themes[theme]), hex_of(bg, themes[theme])
-            ratio = round(contrast(a, b), 2) if a and b else None
-            ratios[theme] = ratio
+            exact = contrast(a, b) if a and b else None  # compared unrounded, as generate.mjs
+            ratios[theme] = None if exact is None else round(exact, 4)
             gated_here = role in GATED and (role != "hc-text" or theme == "high-contrast")
-            if gated_here and bar is not None and (ratio is None or ratio < bar):
+            if gated_here and bar is not None and (exact is None or exact < bar):
                 fails.append(theme)
         if role == "decorative":
-            verdict = "decorative (reported)"
+            low = [t for t in THEME_ORDER if (ratios[t] or 0) < NON_TEXT_BAR]
+            below = "; below 3:1 in " + ", ".join(low) if low else ""
+            verdict = f"decorative (reported{below})"
         elif role.startswith("rejected"):
             low = [t for t in THEME_ORDER if bar is not None and (ratios[t] or 0) < bar]
             verdict = "rejected: fails " + ", ".join(low) if low else "rejected: passes, not used"
@@ -424,7 +440,12 @@ def dimension(name: str, tokens: Tokens) -> str:
 
 
 def fmt(ratio: float | None) -> str:
-    return "n/a" if ratio is None else f"{ratio:.2f}"
+    """Two decimals; four when the two-decimal form would land exactly on a bar."""
+    if ratio is None:
+        return "n/a"
+    if round(ratio, 2) in BARS and round(ratio, 2) != round(ratio, 4):
+        return f"{ratio:.4f}"
+    return f"{ratio:.2f}"
 
 
 def counts(pairs: list[PairRow], tokens: list[TokenRow]) -> dict[str, int]:
@@ -447,6 +468,7 @@ def counts(pairs: list[PairRow], tokens: list[TokenRow]) -> dict[str, int]:
         "pairs_registered": len(distinct) - len(proposed),
         "pairs_proposed": len(proposed),
         "pairs_failing": sum(1 for p in gated if p["verdict"] != "PASS"),
+        "pairs_decorative": sum(1 for p in pairs if p["role"] == "decorative"),
         "tokens_bound": sum(1 for t in tokens if t["status"] == "resolved"),
         "tokens_missing": sum(1 for t in tokens if t["status"] == "MISSING"),
         "themes": len(THEME_ORDER),
@@ -544,7 +566,11 @@ def main(argv: list[str]) -> int:
         print("FAIL: " + "; ".join(f"{p['fg']} on {p['bg']} ({p['verdict']})" for p in failing))
         return 1
     gated, themes_n, missing = nums["pairs_gated"], nums["themes"], nums["tokens_missing"]
-    print(f"OK: {gated} gated rows over {themes_n} themes pass; {missing} names MISSING (expected)")
+    deco = nums["pairs_decorative"]
+    print(
+        f"OK: {gated} gated rows over {themes_n} themes pass (unrounded compare); "
+        f"{missing} names MISSING (expected); {deco} decorative rows reported"
+    )
     return 0
 
 
