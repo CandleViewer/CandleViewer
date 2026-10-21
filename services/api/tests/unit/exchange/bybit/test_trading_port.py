@@ -359,6 +359,64 @@ async def test_a_call_site_naming_a_lane_the_table_fixes_is_refused_unsent() -> 
     assert (venue.sent, governor.acquired) == ([], [])
 
 
+# -- the port's own wiring: what its factory and its caller give it -------------------------------
+
+
+async def test_the_entry_wait_given_to_the_port_bounds_a_creates_token() -> None:
+    """T04's rate step: the factory-set bound, not the default, is the create's token deadline."""
+    venue = Venue().on("/v5/order/create", with_result(rest("rest/trading-create-reply.json"),
+                                                       orderLinkId=link()))  # fmt: skip
+    governor = RecordingGovernor()
+    await make_port(venue, governor=governor, entry_wait_s=0.25).place_order(place())
+    assert [deadline for _, _, _, deadline in governor.acquired] == [0.25]
+
+
+async def test_the_retries_given_to_the_port_bound_an_exits_attempts() -> None:
+    """One retry given, two attempts made: the port's client takes its caller's count."""
+    venue = Venue().on("/v5/order/cancel", rest("rest/error_503.json"), status=503)
+    with pytest.raises(ExchangeError):
+        await make_port(venue, max_retries=1).cancel_order(_cancel())
+    assert len(venue.sent) == 2
+
+
+async def test_the_clock_offset_given_to_the_port_stamps_every_signed_call() -> None:
+    """E08-S07: a drifted host clock is corrected by the measured offset, or every signed call
+    meets `10002`."""
+    venue = Venue().on("/v5/order/cancel", CANCEL)
+    before_ms = int(time.time() * 1000)
+    await make_port(venue, clock_offset_ms=lambda: 600_000).cancel_order(_cancel())
+    after_ms = int(time.time() * 1000)
+    [request] = venue.sent
+    assert before_ms + 600_000 <= int(request.headers["X-BAPI-TIMESTAMP"]) <= after_ms + 600_000
+
+
+async def test_each_account_draws_its_own_uids_budget() -> None:
+    """C-12.7: the rate budget is per UID; a constant one would pool every account's."""
+    venue = Venue().on("/v5/order/cancel", CANCEL)
+    governor = RecordingGovernor()
+    await make_port(venue, governor=governor).cancel_order(_cancel(account(uid="200002")))
+    assert [uid for uid, _, _, _ in governor.acquired] == ["200002"]
+
+
+async def test_the_service_factory_hands_the_port_its_clock_offset_and_entry_wait() -> None:
+    """The composition root's values reach the port: the entry lane's bound, and the offset
+    that stamps a signed call about 4 s ahead of the host's clock."""
+    venue = Venue().on("/v5/order/cancel", CANCEL)
+    svc = ExchangeBybitService(
+        credentials=fake_capability(SIGNER_ID),
+        environment="demo",
+        rest_transport=httpx.MockTransport(venue.handler),
+    )
+    port = svc.trading_port("demo", clock_offset_ms=lambda: 4_000, entry_wait_s=0.2)
+    before_ms = int(time.time() * 1000)
+    await port.cancel_order(_cancel())
+    after_ms = int(time.time() * 1000)
+    [request] = venue.sent
+    assert before_ms + 4_000 <= int(request.headers["X-BAPI-TIMESTAMP"]) <= after_ms + 4_000
+    assert port._waits["entry"] == 0.2
+    await port.aclose()
+
+
 # -- 3. one governor per process (OM-D08, R5) ---------------------------------------------------
 
 

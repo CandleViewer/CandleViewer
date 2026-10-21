@@ -226,6 +226,16 @@ async def test_an_amend_of_an_attached_stop_sends_that_stop_alone_by_order_id() 
     assert (ack.ok, ack.exchange_order_id) == (True, order_id)
 
 
+async def test_a_take_profit_alone_goes_with_its_mode_and_no_stop_fields() -> None:
+    """A take-profit-only create (a reduce-only exit, say) still says how its TP/SL applies."""
+    venue = Venue().on("/v5/order/create", with_result(CREATED, orderLinkId=link()))
+    request = place(stop_loss=None, take_profit=Decimal("65000"), reduce_only=True)
+    await make_port(venue).place_order(request)
+    [body] = venue.bodies()
+    assert (body["takeProfit"], body["tpslMode"]) == ("65000", "Full")
+    assert not {"stopLoss", "slTriggerBy"} & set(body)
+
+
 async def test_a_market_create_sends_no_price_and_no_unset_stop_fields() -> None:
     venue = Venue().on("/v5/order/create", with_result(CREATED, orderLinkId=link()))
     request = place(order_type="market", price=Decimal("1"), stop_loss=None, reduce_only=True)
@@ -265,6 +275,7 @@ OPEN_ITEM_CODES = frozenset({"TRANSPORT_ERROR", "UNKNOWN_STATE"})
         (110079, "", "UNKNOWN_STATE", False),
         (999999, "", "UNKNOWN_STATE", False),
         (110007, "", "INSUFFICIENT_MARGIN", False),
+        (110007, "e-2", "INSUFFICIENT_MARGIN", False),
         (10006, "", "RATE_LIMITED", True),
         (0, "", "TRANSPORT_ERROR", False),
     ],
@@ -275,6 +286,7 @@ OPEN_ITEM_CODES = frozenset({"TRANSPORT_ERROR", "UNKNOWN_STATE"})
         "110079-open",
         "unmapped-open",
         "margin",
+        "margin-naming-an-order",
         "rate-limited",
         "accepted-without-id",
     ],
@@ -392,6 +404,36 @@ async def test_a_batch_answer_whose_counts_are_not_the_requests_leaves_every_out
         await make_port(venue).place_batch([place(order_link_id=lk) for lk in links])
     assert caught.value.order_link_ids == tuple(links) and caught.value.__cause__ is None
     assert len(venue.sent) == 1
+
+
+def _items_under(*seqs: int | None) -> dict[str, Any]:
+    """A batch answer of one accepted item per entry: under our id of that `seq`, or under the
+    documentation's own id for `None` (test inputs)."""
+    item = BATCH["result"]["list"][0]
+    rows = [
+        {**item, "orderLinkId": item["orderLinkId"] if seq is None else link(seq=seq),
+         "orderId": f"e-{n}"}
+        for n, seq in enumerate(seqs)
+    ]  # fmt: skip
+    codes = [{"code": 0, "msg": "OK"}] * len(seqs)
+    return {**with_result(BATCH, list=rows), "retExtInfo": {"list": codes}}
+
+
+@pytest.mark.parametrize(
+    ("answer", "requests"),
+    [(_items_under(0, None), 2), (_items_under(0, 2, 1), 3)],
+    ids=["one-under-another-id", "two-swapped"],
+)
+async def test_a_batch_answer_with_one_item_under_another_id_leaves_every_outcome_open(
+    answer: dict[str, Any], requests: int
+) -> None:
+    """24 §14.4: one item that pairs with no request (or with another request's id) makes the
+    whole answer unpairable; pairing by position would bind an exchange id to the wrong leg."""
+    links = [link(seq=n) for n in range(requests)]
+    venue = Venue().on("/v5/order/create-batch", answer)
+    with pytest.raises(AmbiguousResultError) as caught:
+        await make_port(venue).place_batch([place(order_link_id=lk) for lk in links])
+    assert caught.value.order_link_ids == tuple(links) and len(venue.sent) == 1
 
 
 #: An error envelope of the whole batch, the transcribed duplicate's with its code set (a test

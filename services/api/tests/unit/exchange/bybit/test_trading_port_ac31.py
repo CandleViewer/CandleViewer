@@ -26,7 +26,9 @@ from tests.unit.exchange.bybit._trading import (
     RecordingGovernor,
     Venue,
     account,
+    link,
     make_port,
+    with_result,
 )
 
 CANCEL_ALL = "rest/trading-cancel-all-reply.json"
@@ -48,6 +50,23 @@ async def test_cancel_all_goes_on_the_order_class_in_the_critical_lane_without_a
     assert "orderLinkId" not in body and body["orderFilter"] == "Order"
     assert [a.exchange_order_id for a in acks] == ["1616024329462743808", "1616024287544869632"]
     assert all(a.ok and a.transport == "rest" for a in acks)
+
+
+async def test_cancel_all_acks_name_each_cancelled_order_as_the_reads_would() -> None:
+    """24 §14.2 rule 11: an order under a foreign id (the transcription's numeric links) is named
+    by its `ext-` key, one under our own id by that id (a test input on the second row): the
+    kill switch binds the cancelled rows by these names."""
+    reply = rest(CANCEL_ALL)
+    cancelled = reply["result"]["list"]
+    ours = {**cancelled[1], "orderLinkId": link()}
+    venue = Venue().on("/v5/order/cancel-all", with_result(reply, list=[cancelled[0], ours]))
+
+    acks = await make_port(venue).cancel_all(account(), "BTCUSDT")
+
+    assert [(a.order_link_id, a.exchange_order_id) for a in acks] == [
+        (ext_key(cancelled[0]["orderId"]), cancelled[0]["orderId"]),
+        (link(), cancelled[1]["orderId"]),
+    ]
 
 
 async def test_a_cancel_by_order_id_of_an_ext_order_goes_critical_without_an_id() -> None:

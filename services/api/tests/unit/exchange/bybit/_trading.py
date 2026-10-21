@@ -192,6 +192,7 @@ def make_port(
     entry_wait_s: float = 0.75,
     now_us: Callable[[], TsUs] = lambda: NOW_US,
     clock: FakeClock | None = None,
+    clock_offset_ms: Callable[[], int] | None = None,
 ) -> BybitTradingPort:
     """The port over `venue`, signed by the M2 double, on `governor` (a recording one). With
     `clock`, the port sleeps on it and measures its lanes' waits by it."""
@@ -206,6 +207,7 @@ def make_port(
         max_retries=max_retries,
         entry_wait_s=entry_wait_s,
         now_us=now_us,
+        clock_offset_ms=clock_offset_ms,
         **timing,
     )
 

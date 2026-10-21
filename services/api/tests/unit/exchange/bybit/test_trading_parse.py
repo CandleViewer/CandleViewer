@@ -786,6 +786,32 @@ def test_a_page_past_the_venues_limit_fails_the_reply(
         tp.parse(model, data, "page")
 
 
+#: The other bounded replies, each built with `n` items (unit inputs), and their bound.
+FEE_ROW: dict[str, Any] = {"symbol": "BTCUSDT", "takerFeeRate": "0.00055", "makerFeeRate": "0.0002"}
+BOUNDS: list[tuple[type[Any], Callable[[int], object], int]] = [
+    (tp.CancelAllResult, lambda n: {"list": [{"orderId": "e-1", "orderLinkId": ""}] * n}, 10_000),
+    (tp.WalletPage, lambda n: {"list": _wallet(_coin())["list"] * n}, 4),
+    (tp.WalletPage, lambda n: _wallet(*[_coin(coin=f"C{k}") for k in range(n)]), 200),
+    (tp.FeeRatePage, lambda n: {"list": [FEE_ROW] * n}, 1),
+    (tp.OrderReply, lambda n: {"orderId": "e" * n, "orderLinkId": ""}, 64),
+]
+
+
+@pytest.mark.parametrize(
+    ("model", "reply", "bound"),
+    BOUNDS,
+    ids=["cancel-all-rows", "wallet-accounts", "wallet-coins", "fee-rate-rows", "venue-id-length"],
+)
+def test_a_reply_on_its_bound_is_read_and_one_past_it_fails(
+    model: type[Any], reply: Callable[[int], object], bound: int
+) -> None:
+    """Each bound sits where the venue's answer can reach and no further: one more item, or
+    one more character of an id, fails the reply (E8-8)."""
+    assert tp.parse(model, reply(bound), "bound") is not None
+    with pytest.raises(UnknownStateError):
+        tp.parse(model, reply(bound + 1), "bound")
+
+
 @pytest.mark.parametrize(
     ("model", "row"),
     [(tp.OrderRow, _row()), (tp.PositionRow, POSITION_ROW)],

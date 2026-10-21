@@ -33,7 +33,11 @@ from candleviewer.exchange.base.errors import (
     TransportError,
     UnknownStateError,
 )
-from candleviewer.exchange.base.models import AmendOrderRequest, CancelOrderRequest
+from candleviewer.exchange.base.models import (
+    AmendOrderRequest,
+    CancelOrderRequest,
+    TradingStopRequest,
+)
 from candleviewer.exchange.bybit import trading
 from candleviewer.exchange.bybit.config import EndpointClass
 from candleviewer.exchange.bybit.trading import BybitTradingPort
@@ -106,6 +110,36 @@ async def test_an_amend_answered_with_a_duplicate_code_is_a_rejection_too() -> N
     )
     ack = await make_port(Venue().on("/v5/order/amend", DUPLICATE)).amend_order(request)
     assert (ack.ok, ack.error_code, ack.order_link_id) == (False, "UNKNOWN_STATE", link())
+
+
+async def test_a_create_the_venue_refuses_is_a_rejection_naming_its_order() -> None:
+    """B1 binds the rejection to its row by this id (24 §14.4: `order_link_id` is `None` only
+    where no order is named)."""
+    request = place()
+    venue = Venue().on("/v5/order/create", _answered(110007))
+    ack = await make_port(venue).place_order(request)
+    assert (ack.ok, ack.error_code, ack.order_link_id) == (
+        False,
+        "INSUFFICIENT_MARGIN",
+        request.order_link_id,
+    )
+
+
+@pytest.mark.parametrize("code", [110079, 999999], ids=["110079", "unmapped"])
+@pytest.mark.parametrize("write", ["cancel_all", "set_trading_stop"])
+async def test_an_open_create_code_on_a_cancel_all_or_a_stop_write_is_an_unknown_ack(
+    write: str, code: int
+) -> None:
+    """Ruling 11: only a create's outcome is left open by these codes; on these calls the venue
+    answered, so each is an `UNKNOWN_STATE` ack that B1 records, never raised."""
+    path = trading.ENDPOINTS[write].path
+    port = make_port(Venue().on(path, _answered(code)))
+    if write == "cancel_all":
+        [ack] = await port.cancel_all(account(), "BTCUSDT")
+    else:
+        stop = TradingStopRequest(account=account(), symbol="BTCUSDT", stop_loss=Decimal("58000"))
+        ack = await port.set_trading_stop(stop)
+    assert (ack.ok, ack.error_code, ack.exchange_ret_code) == (False, "UNKNOWN_STATE", code)
 
 
 async def test_a_rate_limited_cancel_is_a_retryable_rejection() -> None:
@@ -457,12 +491,36 @@ async def test_a_cancel_naming_no_order_at_all_is_refused_unsent() -> None:
 ANSWERS = {"cancel": ("/v5/order/cancel", CANCEL), "amend": ("/v5/order/amend", AMENDED)}
 
 
-@pytest.mark.parametrize("exit_", sorted(EXITS))
-async def test_an_exit_answer_naming_another_exchange_order_is_unknown(exit_: str) -> None:
+@pytest.mark.parametrize(
+    ("exit_", "key", "echoed"),
+    [
+        ("cancel", ext_key(ORDER_ID), None),
+        ("amend", ext_key(ORDER_ID), None),
+        ("cancel", link(), link()),
+        ("amend", link(), link()),
+    ],
+    ids=["cancel-ext-key", "amend-ext-key", "cancel-both-ids", "amend-both-ids"],
+)
+async def test_an_exit_answer_naming_another_exchange_order_is_unknown(
+    exit_: str, key: str, echoed: str | None
+) -> None:
+    """An exit named by its exchange id is answered for that order or it is unread: an answer
+    under another exchange id is another order's, whatever link it echoes, the exit's own
+    included (a test input on the transcribed answer)."""
     path, reply = ANSWERS[exit_]
-    port = make_port(Venue().on(path, with_result(reply, orderId="another-order")))
+    answer = with_result(
+        reply, orderId="another-order", **({} if echoed is None else {"orderLinkId": echoed})
+    )
+    port = make_port(Venue().on(path, answer))
     with pytest.raises(UnknownStateError, match="another order"):
-        await EXITS[exit_](port, ext_key(ORDER_ID), ORDER_ID)
+        await EXITS[exit_](port, key, ORDER_ID)
+
+
+async def test_a_cancel_by_exchange_id_alone_answered_for_another_order_is_unknown() -> None:
+    """AC-31's path for an `ext-` order named by no link: the exchange id is the only check."""
+    port = make_port(Venue().on("/v5/order/cancel", with_result(CANCEL, orderId="another-order")))
+    with pytest.raises(UnknownStateError, match="another order"):
+        await port.cancel_order(_cancel())
 
 
 @pytest.mark.parametrize("exit_", sorted(EXITS))
