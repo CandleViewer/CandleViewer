@@ -139,7 +139,7 @@ the atlas generator's first step reads and asserts that hash before generating g
   `bench/scenes/report-*.json/.md` are all `.gitignore`d (see `.gitignore` lines 66-72) — generated
   run artefacts are **never committed**, so there is nothing to scan them for; the only committed
   artefact-adjacent files are the `.mjs`/`.ts` source and `README.md`s, which contain no absolute
-  paths, hostnames, or credentials (confirmed by `grep -riE "basil|C:\\\\Users|/home/[a-z]+|localhost:[0-9]|127\.0\.0\.1"`
+  paths, hostnames, or credentials (confirmed by `grep -riE "<local-user>|C:\\\\Users|/home/[a-z]+|localhost:[0-9]|127\.0\.0\.1"`
   across `bench/results.json` and `bench/scenes/*.md` — zero matches).
 - `gitleaks` (repo-wide, `_job-security.yml`) already covers `packages/chart-engine/**` on every PR
   and on `main`; no path exclusion for this package exists.
