@@ -826,11 +826,12 @@ def test_guard_sits_between_the_idle_lock_gate_and_the_read_only_guard() -> None
     order = [_middleware_name(m) for m in appmod.create_app().user_middleware]  # outermost first
     at = order.index("CsrfMiddleware")
 
-    assert order[at : at + 5] == [
+    assert order[at : at + 6] == [
         "CsrfMiddleware",
         "CorsGateMiddleware",
         "IdleLockMiddleware",
         "make_enrolment_only_guard",
+        "make_view_as_guard",  # #3085: between the session-state guards
         "make_read_only_guard",
     ]
     assert order.index("MeshOnlyMiddleware") < at

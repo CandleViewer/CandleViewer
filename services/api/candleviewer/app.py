@@ -169,6 +169,8 @@ from candleviewer.api.users import (
     make_user_admin_router,
     make_users_router,
 )
+from candleviewer.api.view_as_guard import make_view_as_guard
+from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
 from candleviewer.audit_lane_wiring import lane_key_loader
@@ -1731,6 +1733,24 @@ def create_app(
     # B16 audit actions write through the M19 emitter (PR #1674 finding 3).
     set_b16_audit_sink(_LazyAuditEmitter(ctx.audit))
     app.middleware("http")(make_read_only_guard(ctx.auth, _LazyAuditEmitter(ctx.audit)))
+    # #3085: the view-as guard, added after (so outside) the read-only/step-up guard, so a refused
+    # write is never a step-up challenge and binds no key, and before the enrolment-only guard,
+    # so CSRF, the idle lock and the enrolment check come first. It reads the view-as service
+    # (`None` on the fake backend) and the refusal recorder per request; both are set below, so a
+    # missing one fails loudly. The protective writes' handlers register on
+    # `app.state.protective_writes` as they are mounted.
+    protective_writes = ProtectiveWrites(declared_operations(spec))
+    app.state.protective_writes = protective_writes
+    app.middleware("http")(
+        make_view_as_guard(
+            ctx.auth,
+            views=lambda: app.state.view_as,
+            refusals=lambda: app.state.view_as_refusals,
+            protective=protective_writes,
+            operations=declared_operations(spec),
+            clock=auth_clock or (lambda: datetime.now(UTC)),
+        )
+    )
     # #2295: the enrolment-only session reaches five operations; added after (so outside) the
     # read-only/step-up guard, so a refused request never records a step-up challenge, and
     # before the idle-lock gate, so a locked session meets the lock first.
@@ -2607,7 +2627,8 @@ def create_app(
     )
     # Middleware order, outermost first (Starlette: last added = outermost):
     #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> Cors (ADR-0038) -> IdleLock (#2300)
-    #   -> enrolment-only guard (#2295) -> read-only/step-up guard -> routes.
+    #   -> enrolment-only guard (#2295) -> view-as guard (#3085) -> read-only/step-up guard
+    #   -> routes.
     # Outside all of it, Starlette's error middleware included, `_StampedApp` wraps the stack in
     # BK-11's `NoStoreNoReferrer` (the backup fetch's path) and, outermost, #3990's `NoSniff`.
     # ADR-0038 2c (#3519): the CORS layer sits inside MeshOnly (an off-mesh peer gets no CORS

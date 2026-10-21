@@ -108,8 +108,9 @@ _CHALLENGE_REFUSED = {
     "format": "challenge_id must be a UUID.",
 }
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-#: Writes that must keep working in the downgrade (ending the session).
-_WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up"})
+#: Writes that must keep working in the downgrade (ending the session). `DELETE
+#: /auth/session/view-as` too (#3085, Q5): leaving view-as is one call that nothing refuses.
+_WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up", "/auth/session/view-as"})
 
 
 class AuditRefused(Exception):
