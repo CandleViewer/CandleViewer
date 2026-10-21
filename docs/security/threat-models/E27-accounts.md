@@ -429,7 +429,7 @@ E17, by this agent-written model, two independent reviews and the Owner's accept
 
 C-2.8 is the epic's safety core: a stored key must not be able to move funds, and the system must refuse trading
 mode if one can. On `main` the M2 gate refuses a key in two lines, run inside `store()` by `project_snapshot`
-(`secrets/_permissions.py`): the SR-030 allow-list first (`require_allow_listed`, L59-78, #2270), then the substring
+(`secrets/_permissions.py`): the SR-030 allow-list first (`require_allow_listed`, L54-73, #2270), then the substring
 deny-list `reject_withdraw`, which refuses any group or right whose name contains `withdraw` or `transfer` (any case,
 any depth). The M13 model `PermissionSnapshot` and the 0019 CHECK `ak_snapshot_shape`, with `ak_no_withdraw` and
 `ak_no_transfer`, keep only the deny-list, as backstops: C-3.2 bars M13 from importing M2, and an allow-list CHECK

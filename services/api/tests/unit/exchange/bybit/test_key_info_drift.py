@@ -221,11 +221,15 @@ def _is_refused_by_every_layer(raw: dict[str, Any]) -> None:
         )
 
 
-def test_the_capture_checks_hold_on_the_documented_replies() -> None:
-    """The checks a capture will meet run now, on the documented reply (its Wallet rights are
-    refused everywhere) and on its trade-only variant (admitted everywhere), so they are proved
-    before any capture lands."""
+def test_the_documented_reply_is_refused_by_every_layer_a_capture_meets() -> None:
+    """The checks a fund-rights capture will meet run now, on the documented reply: its Wallet
+    rights are refused everywhere, so the check is proved before any capture lands."""
     _is_refused_by_every_layer(DOCS_REPLY)
+
+
+def test_its_trade_only_variant_passes_every_layer_a_capture_meets() -> None:
+    """The checks a trade capture will meet run now, on the documented reply with trade rights
+    only and write access: every layer admits it."""
     _passes_every_layer(_docs_trade_reply())
 
 

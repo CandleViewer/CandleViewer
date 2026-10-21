@@ -61,6 +61,10 @@ _UNREADABLE: list[tuple[str, Any]] = [
     ("cycle", _cycle()),
     # Not a Mapping, so mypy refuses it, but dict() of these pairs is the collision itself.
     ("pairs_hiding_a_collision", [(None, ["Withdraw"]), ("null", [])]),
+    # Nothing dict() can convert: the fixed refusal, never dict()'s own TypeError or ValueError.
+    ("not_pairs", [1, 2]),
+    ("a_triple", [("Wallet", ["Withdraw"], "x")]),
+    ("not_a_container", 5),
 ]
 
 

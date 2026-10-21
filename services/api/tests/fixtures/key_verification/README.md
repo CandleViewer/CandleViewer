@@ -10,10 +10,9 @@ via demo key").
 
 Shapes follow the exchange's v5 reference pages "Get API Key Information" and "Get Wallet
 Balance" and its error-code table. Every file in the table has date 2026-10-15, env demo and no
-symbol. The
-six REST files have `time` 1792054800000 and host `api-demo.bybit.com`; the two `ws_auth_*`
-files below have no `time`, and their host is `stream-demo.bybit.com`. Redaction: no key id,
-secret, signature or real identifier. The UID is the synthetic `1000001` of
+symbol. The six REST files have `time` 1792054800000 and host `api-demo.bybit.com`; the two
+`ws_auth_*` files below have no `time`, and their host is `stream-demo.bybit.com`. Redaction: no key
+id, secret, signature or real identifier. The UID is the synthetic `1000001` of
 `packages/fixtures/accounts/accounts.json`, `apiKey` is `***`, and the whitelist uses the
 documentation address 203.0.113.7 (RFC 5737).
 
