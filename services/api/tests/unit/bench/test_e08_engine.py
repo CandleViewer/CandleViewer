@@ -251,12 +251,17 @@ async def test_run_soak_takes_the_flatness_base_from_the_window_not_the_warmup()
 async def test_run_soak_reports_a_forced_full_collection_first_and_leaves_no_gc_callback() -> None:
     """#3641: every soak report carries a timed `gc.collect(2)` of the warm heap, labelled the
     forced worst case, beside the natural full collections (often none on a short run)."""
-    before = gc.callbacks[:]
+    before, enabled = gc.callbacks[:], gc.isenabled()
     over = {"duration_s": 2.0, "sample_every_s": 1.0, "warmup_s": 0.0, "warmup_wall_s": 0.0}
-    v = await run_soak(load("soak_steady"), ScriptedSampler(), **over)
+    gc.disable()  # no natural collection, so the forced one is the run's only full collection
+    try:
+        v = await run_soak(load("soak_steady"), ScriptedSampler(), **over)
+    finally:
+        if enabled:
+            gc.enable()
     forced = v.metrics["gc_full_pause_ms (forced, worst case)"]
     assert forced["count"] == 1 and forced["max"] > 0
-    assert v.metrics["gc_full_pause_ms (natural)"]["max"] >= 0
+    assert v.metrics["gc_full_pause_ms (natural)"]["count"] == 0  # the forced one is apart
     assert v.metrics["gc_blocks_in_use"]["max"] > 10_000
     assert gc.callbacks == before  # the run's timer left with it
 
