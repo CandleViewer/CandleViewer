@@ -5455,7 +5455,7 @@ paths:
                 accepted:
                   value:
                     id: "0c000000-0000-4000-8000-000000000001"
-                    client_group_ref: "cv-0c000000"
+                    client_group_ref: "7d3e9b1a-5c2f-4a8e-9b6d-0e1f2a3b4c5d"
                     symbol: BTCUSDT
                     side: buy
                     intent: entry
