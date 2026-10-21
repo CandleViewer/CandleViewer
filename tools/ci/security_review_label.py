@@ -53,7 +53,7 @@ WEB_AUTH_PATHS = (
     "apps/web/src/features/auth/",  # login, password change, the auth REST client
     "apps/web/src/features/invites/",  # invite redemption: password and TOTP enrolment
     "apps/web/src/lib/auth/",  # the session claims cache
-    "apps/web/src/lib/http/csrfFetch.ts",  # CSRF double submit, the session cookie's re-issue
+    "apps/web/src/lib/http/",  # CSRF double submit and its cookie; the bearer's same-origin rule
     "apps/web/src/lib/ws/client/createWsClient.ts",  # the tab asks its TokenSource, posts the token
     "apps/web/src/lib/ws/core/connection.ts",  # the WS `auth` and re-`auth`, the token's lifetime
     "apps/web/src/lib/ws/policy/closePolicy.ts",  # 4401: drop the refused token, refresh first
@@ -66,7 +66,8 @@ WEB_AUTH_PATHS = (
     "apps/web/src/routes/StepUpGate.tsx",  # step-up re-authentication
     "apps/web/src/routes/tree.tsx",  # wires the guards to every route; no session -> /login
     "apps/web/src/shell/bootstrap/bootstrap.ts",  # `/me` -> the session claims the guards read
-    "apps/web/src/shell/startShell.ts",  # gives the client its TokenSource (none until #2712)
+    "apps/web/src/shell/bootstrap/httpClient.ts",  # the bootstrap's calls carry the holder's bearer
+    "apps/web/src/shell/startShell.ts",  # gives the client its TokenSource, the token holder
 )
 MANIFESTS: tuple[str, ...] = ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc")
 MANIFESTS += (".pnpmfile.cjs", "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock")

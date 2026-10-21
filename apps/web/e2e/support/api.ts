@@ -15,6 +15,22 @@ export interface MeOptions {
 
 /** Stub the session bootstrap calls the shell makes for an authenticated user. */
 export async function stubSession(page: Page, opts: MeOptions): Promise<void> {
+  // #2712: a page load re-derives the in-memory access token from `cv_refresh` before the shell's
+  // first authenticated call, so a signed-in server answers the refresh with a token bundle. Without
+  // it every call waits out the holder's guard for a refresh that may have spent the cookie.
+  await page.route("**/api/v1/auth/refresh", (r: Route) =>
+    r.fulfill(
+      json({
+        status: "authenticated",
+        tokens: {
+          access_token: ["e2e", "stub", "bearer"].join("."), // opaque, like the server's
+          token_type: "Bearer",
+          expires_in: 600,
+          refresh_expires_in: 2_592_000,
+        },
+      }),
+    ),
+  );
   await page.route("**/api/v1/me", (r: Route) =>
     r.fulfill(
       json({

@@ -20,7 +20,7 @@ schema documents (`docs/plan/spikes/E09-K01-session-model.md`).
 
 - Revocation must be effective within 5 s (US-ONB-009) — checked per request/frame, not just at issue.
 - WS re-auth must not storm the connection: at most once per 10 minutes, no reconnect-on-refresh.
-- No JWT in `localStorage`; the WS first frame still needs *something* bearer-shaped to present.
+- No JWT in `localStorage`; the WS first frame still needs _something_ bearer-shaped to present.
 - Idle-lock must freeze order entry without dropping the socket or its subscriptions (US-ONB-004).
 - Rotation-family revocation (reused refresh token) must kill the whole family, not just one hop.
 - Decision criterion agreed in the ticket: opaque handles win outright if p99 lookup < 2 ms; only
@@ -43,7 +43,8 @@ schema documents (`docs/plan/spikes/E09-K01-session-model.md`).
    hashed at rest (`sessions.refresh_token_hash`, unchanged from `21-database-schema.md` §3.1.4). The
    **access token is a second opaque, server-issued handle**, returned in the `POST /auth/login` /
    `POST /auth/refresh` JSON body, held **only in an in-memory JS variable** (never `localStorage`,
-   never a second cookie) and passed as the WS `auth` frame's bearer value per `23-ws-protocol.md` §4.3.
+   never a second cookie) and passed as the WS `auth` frame's bearer value per `23-ws-protocol.md` §4.3
+   _(same-origin tabs share it memory to memory: Amendment 1)_.
    Losing it (tab reload) means re-deriving it from the refresh cookie — an acceptable UX cost that
    keeps it out of any persistent, XSS-exfiltratable store. **At rest, the access-token handle is
    stored the same way as the existing refresh-token handle: hashed (never plaintext) in the
@@ -66,7 +67,7 @@ schema documents (`docs/plan/spikes/E09-K01-session-model.md`).
    see `CLOCK_SKEW_BUDGET_S` in the harness.) Verified for 20 concurrent connections over a simulated
    hour in `test_ws_reauth_cadence_at_most_once_per_ten_minutes`, which now drives an explicit
    per-connection virtual clock instead of only checking the interval arithmetic. Refresh is **in
-   place**: the server returns a new access token over the *existing* connection; no reconnect is
+   place**: the server returns a new access token over the _existing_ connection; no reconnect is
    triggered.
 4. **Idle-lock semantics.** Idle timeout (30 min, `sessions.last_seen_at`) blocks **order-entry-class**
    REST routes and WS actions server-side (RBAC/risk layer, consistent with C-2.21 "statecharts record,
@@ -83,10 +84,10 @@ schema documents (`docs/plan/spikes/E09-K01-session-model.md`).
    `critical` plus an **append-only audit record** (C-2.9) identifying which session was replayed and
    how many family members were killed (`test_rotated_token_reuse_kills_entire_family`). A row's first
    revocation reason/timestamp is preserved even if a later family-wide revoke also covers it, so
-   incident forensics can see *why* each row was first killed.
+   incident forensics can see _why_ each row was first killed.
 6. **Step-up field: `mfa_satisfied_at` (timestamp), not `elevated_until`.** A single boundary-owned field
    models "the last moment step-up was proven"; `elevated_until = mfa_satisfied_at + step_up_window`
-   (15 min, per `21-database-schema.md`) is *derived*, never stored, matching the B16 statechart's
+   (15 min, per `21-database-schema.md`) is _derived_, never stored, matching the B16 statechart's
    note that `elevated_until` is derived from the elevation region rather than stored independently
    (`24-internal-schemas.md` §15.1 statechart-contract callout). `24-internal-schemas.md`'s `Session`
    Pydantic model must drop its own `elevated_until` field and compute it as a property.
@@ -94,11 +95,13 @@ schema documents (`docs/plan/spikes/E09-K01-session-model.md`).
 ### Consequences
 
 Positive:
+
 - Revocation stays instant and centralised (ADR-0010's core guarantee is preserved, not reopened).
 - WS re-auth cadence is bounded and provable rather than assumed; no reconnect storms under refresh.
 - One step-up field removes an entire class of "which one is authoritative" bugs before E09-T01 freezes.
 
 Negative / risks:
+
 - The access token must be re-derived from the refresh cookie on every fresh page load / tab, costing one
   extra round-trip at startup versus a persisted (but XSS-exposed) token. Accepted per ADR-0010's rationale.
 - 12-minute TTL is deliberately tight to the WS cadence budget; if the API latency budget in
@@ -113,7 +116,7 @@ Negative / risks:
   a way that lets the client construct the required `auth` first frame; the browser does send cookies on
   the handshake request itself, but `23-ws-protocol.md` §4.3 specifies an explicit bearer `auth` frame
   (not implicit cookie auth) so the server can reject the connection cleanly with `4401` rather than
-  relying on handshake-time cookie presence, and so the *same* mechanism re-authenticates in place without
+  relying on handshake-time cookie presence, and so the _same_ mechanism re-authenticates in place without
   a new handshake.
 
 ## Validation
@@ -132,3 +135,15 @@ Negative / risks:
   environment) — re-run `test_lookup_p50_p99_under_budget`'s scenario against a seeded Postgres instance
   under E09-T01/S03 before the schema is load-tested for real, per `06-performance-and-load-standard.md`.
 - WebAuthn / device trust and any second access channel: explicitly out of scope (ticket "Out of scope").
+
+## Amendment 1 (2026-10-21, #2712)
+
+Refines decision 1; does not reverse it. The access token is still held in memory only, never in
+storage. Same-origin tabs of one browser share it memory to memory: a tab posts each token it
+receives (`{accessToken, expiresAtMs}`), or a `cleared` signal when its session ends, on the
+BroadcastChannel `cv.auth.token`. They share it because each rotation revokes the previous access
+token, so tabs that each kept their own would revoke one another at every refresh. A
+BroadcastChannel reaches only same-origin contexts of that browser (tabs, workers, iframes), so the
+channel gives no reader outside the origin. The only thing the token client writes to storage is
+the send time of its last refresh (`cv.auth.refresh_sent_at`), kept until an answer shows what
+became of the cookie; never the token.

@@ -5,6 +5,7 @@
  * connection state is mapped onto the shell's own. Exposed separately from `runBootstrap` so route guards can `await`
  * just the REST half without needing a live WS in tests.
  */
+import { accessToken } from "../lib/auth/accessToken.js";
 import type { TokenSource } from "../lib/ws/api.js";
 import { setActiveClient } from "../lib/ws/client/activeClient.js";
 import { createWsClient } from "../lib/ws/client/createWsClient.js";
@@ -17,17 +18,9 @@ import { applySystemUpdate, setShellState, type ConnectionState } from "./bootst
 /** The version `hello` names (`apps/web/package.json`); nothing injects it at build time yet. */
 const CLIENT_VERSION = "0.1.0";
 
-/**
- * #2712 holds the access token in memory and refreshes it; until it lands there is none to give. The connection then reads
- * offline and asks again on the backoff table (23 9.2), never in a loop.
- */
-export const unavailableTokens: TokenSource = {
-  getToken: () => Promise.resolve({ kind: "unavailable" }),
-  invalidate: () => undefined,
-};
-
 export interface StartShellOptions extends BootstrapDeps {
   readonly wsUrl: string;
+  /** The WS client's token source: the tab's access-token holder (#2712) unless a test gives one. */
   readonly tokens?: TokenSource | undefined;
   /** The tab's end of the port to the worker: the shared worker the browser gives (a dedicated one without), or a test's fake. */
   readonly port?: PortLike | undefined;
@@ -56,6 +49,9 @@ let stopActive: (() => void) | null = null;
 /** Starts the bootstrap fetch and the WS client. Returns a `stop()` to tear down the client (used by tests and by logout). */
 export function startShell(options: StartShellOptions): { stop(): void; ready: Promise<void> } {
   stopActive?.();
+  // ADR-0020: a page load re-derives the access token from the refresh cookie, once, before the bootstrap's first call.
+  // `refresh` stops waiting after REFRESH_WAIT_MS (another tab may hold the lock), so the first paint does too.
+  const ready = accessToken.refresh().then(() => runBootstrap(options));
 
   let port: PortLike;
   try {
@@ -65,12 +61,12 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     // half still runs, so the app loads without a live feed instead of with a shell that never started.
     console.error("startShell: the worker's port could not be opened", error);
     setShellState({ connection: { kind: "offline", cause: "backend_unreachable" } });
-    return { ready: runBootstrap(options), stop: () => undefined };
+    return { ready, stop: () => undefined };
   }
   const opened = options.port === undefined;
   const client = createWsClient({
     wsUrl: options.wsUrl,
-    tokens: options.tokens ?? unavailableTokens,
+    tokens: options.tokens ?? accessToken,
     shell: typeof window !== "undefined" && window.cv ? "electron" : "browser",
     locale: (typeof navigator === "undefined" ? "" : navigator.language).slice(0, 16) || "en",
     clientVersion: CLIENT_VERSION,
@@ -81,8 +77,6 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
   client.subscribe(forward); // `client.stop()` drops it
   forward();
   setActiveClient(client);
-
-  const ready = runBootstrap(options);
 
   const stop = (): void => {
     client.stop();

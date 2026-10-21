@@ -18,42 +18,17 @@
  */
 
 import { ERROR_META } from "@candleviewer/protocol";
+import { accessToken } from "../auth/accessToken";
+import { CSRF_HEADER, readCsrfCookie } from "./csrfCookie";
+import { isSameOrigin } from "./sameOrigin";
 
-export const CSRF_COOKIE = "__Host-cv_csrf";
-export const CSRF_HEADER = "X-CSRF-Token";
+export { CSRF_COOKIE, CSRF_HEADER, readCsrfCookie } from "./csrfCookie";
+export { isSameOrigin } from "./sameOrigin";
 export const CSRF_ERROR_CODE: keyof typeof ERROR_META = "csrf_token_invalid";
 const SESSION_PATH = "/api/v1/auth/session";
 
 /** The contract's safe set ("Exempt"); everything else, TRACE included, is guarded. */
 const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
-
-/** Current `__Host-cv_csrf` value, or `null` when absent. */
-export function readCsrfCookie(cookieSource: string = document.cookie): string | null {
-  for (const part of cookieSource.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === CSRF_COOKIE) {
-      const value = part.slice(eq + 1).trim();
-      return value === "" ? null : value;
-    }
-  }
-  return null;
-}
-
-function urlOf(input: RequestInfo | URL): string {
-  if (typeof input === "string") return input;
-  if (input instanceof URL) return input.href;
-  return input.url;
-}
-
-/** True only for URLs on this page's own origin (relative URLs included). */
-export function isSameOrigin(input: RequestInfo | URL): boolean {
-  try {
-    return new URL(urlOf(input), window.location.href).origin === window.location.origin;
-  } catch {
-    return false;
-  }
-}
 
 function withToken(init: RequestInit, token: string | null): RequestInit {
   const headers = new Headers(init.headers);
@@ -78,11 +53,20 @@ async function isCsrfRefusal(res: Response): Promise<boolean> {
   }
 }
 
-/** `fetch` with the SR-041 header and the multi-tab recover-and-retry-once rule. */
-export async function apiFetch(
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-): Promise<Response> {
+/**
+ * `fetch` with the tab's bearer on same-origin API calls (#2712: a 401, or a CSRF refusal of a bearer
+ * another tab rotated away, renews the token once and repeats the call once; a returned token bundle is
+ * held), the SR-041 header and the multi-tab recover-and-retry-once rule. A call may be repeated, so its
+ * body goes in `init`: a `Request` with a body is refused, because a body is read once.
+ */
+export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  if (input instanceof Request && input.body !== null) {
+    return Promise.reject(new TypeError("apiFetch: pass the body in init, not in a Request"));
+  }
+  return accessToken.send(input, init, (sent) => csrfFetch(input, sent));
+}
+
+async function csrfFetch(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
   const method = (init.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
   if (SAFE.has(method) || !isSameOrigin(input)) return fetch(input, init);
   if (typeof ReadableStream !== "undefined" && init.body instanceof ReadableStream) {
