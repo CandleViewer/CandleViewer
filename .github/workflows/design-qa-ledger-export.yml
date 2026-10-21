@@ -2,7 +2,8 @@ name: design-qa-ledger-export
 
 # E49-T02: push design_qa_findings_open{severity} to the pushgateway when the ledger changes
 # on main, and hourly. Reads one repo file; the only secret is the (tailnet) pushgateway URL.
-# Until E49-D01 (#1330) commits the ledger, a run only notes its absence and succeeds.
+# A scheduled or dispatched run whose ledger is absent (E49-D01, #1330, has not committed it yet)
+# only notes that and succeeds; a push run, which only a change to the ledger triggers, still fails.
 on:
   push:
     branches: [main]
@@ -34,7 +35,7 @@ jobs:
           PUSHGATEWAY_URL: ${{ secrets.PUSHGATEWAY_URL }}
           LEDGER: docs/plan/backlog/artifacts/e49-design-qa-ledger.csv
         run: |
-          if [ ! -f "$LEDGER" ]; then
+          if [ ! -f "$LEDGER" ] && [ "$GITHUB_EVENT_NAME" != push ]; then
             echo "::notice::$LEDGER not found (E49-D01, #1330, opens it); nothing pushed"
             exit 0
           fi
