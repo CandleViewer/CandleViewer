@@ -9,7 +9,8 @@ owner's recorded, redacted capture that replaces them is queued on #2701 ("#2240
 via demo key").
 
 Shapes follow the exchange's v5 reference pages "Get API Key Information" and "Get Wallet
-Balance" and its error-code table. Every file has date 2026-10-15, env demo and no symbol. The
+Balance" and its error-code table. Every file in the table has date 2026-10-15, env demo and no
+symbol. The
 six REST files have `time` 1792054800000 and host `api-demo.bybit.com`; the two `ws_auth_*`
 files below have no `time`, and their host is `stream-demo.bybit.com`. Redaction: no key id,
 secret, signature or real identifier. The UID is the synthetic `1000001` of
@@ -69,7 +70,7 @@ Recorded capture: owed (owner, #2701).
 
 Each line: file; source; date; symbol; env; redaction.
 
-- `key_info_docs_example.json`: source: docs-transcribed, `user/apikey-info` (`bybit-exchange/docs` commit `19518b90fb36`, `docs/v5/user/apikey-info.mdx`); 2026-10-21; symbol none; env none (a documentation example; its `note` says testnet); redaction: `id` to `1000`, `apiKey` to `***`, `userID` to 1000001, the three `ips` to 203.0.113.7, 203.0.113.8 and 203.0.113.9 (RFC 5737); `userIDInt64` prints "0", no id, and is kept.
+- `key_info_docs_example.json`: source: docs-transcribed, `user/apikey-info` (`bybit-exchange/docs` commit `19518b90fb36`, `docs/v5/user/apikey-info.mdx`); 2026-10-21; symbol none; env none (a documentation example; its `note` says testnet); redaction: `id` to `1000`, `apiKey` to `***`, `userID` to 1000001, the three `ips` to 203.0.113.7, 203.0.113.8 and 203.0.113.9 (RFC 5737); `userIDInt64` prints "0", no id, and is kept; every other value, `isFixApi` included, is as printed.
 
 ### Drift triage
 

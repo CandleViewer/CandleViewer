@@ -59,6 +59,8 @@ _UNREADABLE: list[tuple[str, Any]] = [
     ("too_deep_lists", _nested(MAX_DEPTH + 1, "Order")),
     ("too_deep_objects", _nested(MAX_DEPTH + 1, [], wrap="object")),
     ("cycle", _cycle()),
+    # Not a Mapping, so mypy refuses it, but dict() of these pairs is the collision itself.
+    ("pairs_hiding_a_collision", [(None, ["Withdraw"]), ("null", [])]),
 ]
 
 
@@ -93,8 +95,10 @@ def test_nesting_at_the_bound_is_judged_and_one_deeper_is_refused(
         grants_fund_right(_nested(MAX_DEPTH + 1, right))
 
 
-def _verdict(outcome: bool | None) -> Callable[[object], bool]:
-    """A stand-in kernel predicate: `True`/`False` as its verdict, `None` as unreadable."""
+def _verdict(outcome: bool | None) -> tuple[Callable[[object], bool], list[object]]:
+    """A stand-in kernel predicate (`True`/`False` as its verdict, `None` as unreadable) and the
+    list of what it was handed."""
+    seen: list[object] = []
 
     def grants(permissions: object) -> bool:
         seen.append(permissions)
@@ -102,8 +106,7 @@ def _verdict(outcome: bool | None) -> Callable[[object], bool]:
             raise PermissionsUnreadable
         return outcome
 
-    seen: list[object] = []
-    return grants
+    return grants, seen
 
 
 @pytest.mark.parametrize(
@@ -123,7 +126,8 @@ def test_m2_and_m13_follow_the_one_kernel(
 ) -> None:
     """Neither module keeps a copy of the rule: with the kernel's predicate replaced, both
     wrappers follow it, each mapping its verdict to its own error."""
-    monkeypatch.setattr(kernel, "grants_fund_right", _verdict(outcome))
+    grants, seen = _verdict(outcome)
+    monkeypatch.setattr(kernel, "grants_fund_right", grants)
     for wrapper, refusal, code in (
         (m13.reject_withdraw, WithdrawPermissionError, m13_error),
         (m2.reject_withdraw, WithdrawPermissionRejected, m2_error),
@@ -134,6 +138,7 @@ def test_m2_and_m13_follow_the_one_kernel(
         with pytest.raises(refusal) as refused:
             wrapper({"ContractTrade": ["Order"]})
         assert str(refused.value) == code
+    assert seen == [{"ContractTrade": ["Order"]}] * 2  # each wrapper hands on the caller's map
     assert m13.FORBIDDEN_TOKENS is kernel.FORBIDDEN_TOKENS
 
 

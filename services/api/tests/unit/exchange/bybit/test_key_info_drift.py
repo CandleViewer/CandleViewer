@@ -184,19 +184,21 @@ def test_a_planted_disagreement_fails_naming_each_difference() -> None:
     ]
 
 
-def test_a_trade_key_reply_with_empty_groups_agrees() -> None:
-    """An empty group shows none of its rights, and values are never compared."""
+def _docs_trade_reply() -> dict[str, Any]:
+    """The documented reply as a compliant trade key would answer: trade rights only, writable."""
     trade = copy.deepcopy(DOCS_REPLY)
     trade["result"].update(permissions=DOCS_TRADE_ONLY, readOnly=0, note="trade", id="2000")
-    assert disagreements(DOCS_REPLY, trade) == []
+    return trade
 
 
-@_each("trade")
-def test_every_recorded_trade_capture_passes_every_layer(capture: dict[str, Any] | None) -> None:
-    if capture is None:
-        _owed()
-        return
-    facts = parse_key_info(reply(capture))
+def test_a_trade_key_reply_with_empty_groups_agrees() -> None:
+    """An empty group shows none of its rights, and values are never compared."""
+    assert disagreements(DOCS_REPLY, _docs_trade_reply()) == []
+
+
+def _passes_every_layer(raw: dict[str, Any]) -> None:
+    """A trade key's reply: every gate admits it, and M2 derives `can_trade` from it."""
+    facts = parse_key_info(raw)
     permissions = dict(facts.permissions)
     snapshot = {"fetched_at": NOW, "uid": facts.uid, "readOnly": 0, "permissions": permissions}
     assert not facts.read_only
@@ -205,14 +207,9 @@ def test_every_recorded_trade_capture_passes_every_layer(capture: dict[str, Any]
     PermissionSnapshot.model_validate(snapshot)
 
 
-@_each("fund_rights")
-def test_every_recorded_fund_rights_capture_is_refused_by_every_layer(
-    capture: dict[str, Any] | None,
-) -> None:
-    if capture is None:
-        _owed()
-        return
-    permissions = dict(parse_key_info(reply(capture)).permissions)
+def _is_refused_by_every_layer(raw: dict[str, Any]) -> None:
+    """A reply holding a transfer or withdrawal right: every gate refuses it."""
+    permissions = dict(parse_key_info(raw).permissions)
     for m2_line in (m2.require_allow_listed, m2.reject_withdraw):
         with pytest.raises(WithdrawPermissionRejected, match="key_withdraw_permission"):
             m2_line(permissions)
@@ -222,3 +219,29 @@ def test_every_recorded_fund_rights_capture_is_refused_by_every_layer(
         PermissionSnapshot.model_validate(
             {"fetched_at": NOW, "uid": "1", "permissions": permissions}
         )
+
+
+def test_the_capture_checks_hold_on_the_documented_replies() -> None:
+    """The checks a capture will meet run now, on the documented reply (its Wallet rights are
+    refused everywhere) and on its trade-only variant (admitted everywhere), so they are proved
+    before any capture lands."""
+    _is_refused_by_every_layer(DOCS_REPLY)
+    _passes_every_layer(_docs_trade_reply())
+
+
+@_each("trade")
+def test_every_recorded_trade_capture_passes_every_layer(capture: dict[str, Any] | None) -> None:
+    if capture is None:
+        _owed()
+        return
+    _passes_every_layer(reply(capture))
+
+
+@_each("fund_rights")
+def test_every_recorded_fund_rights_capture_is_refused_by_every_layer(
+    capture: dict[str, Any] | None,
+) -> None:
+    if capture is None:
+        _owed()
+        return
+    _is_refused_by_every_layer(reply(capture))

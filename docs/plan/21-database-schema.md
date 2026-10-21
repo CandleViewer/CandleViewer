@@ -981,7 +981,7 @@ Envelope encryption: a per-key **DEK** (AES-256-GCM) encrypts the credential; th
 | `kek_version`               | integer     | no   | `1`             | Bumped on KEK rotation; drives re-wrap job                  |
 | `permission_snapshot`       | jsonb       | no   | —               | As reported by Bybit `/v5/user/query-api` at import/refresh |
 | `permission_snapshot_at`    | timestamptz | no   | `now()`         | Freshness for admin UI ("checked 3 min ago")                |
-| `can_trade`                 | boolean     | no   | `false`         | Snapshot-derived at insert (#2240); each key check rewrites |
+| `can_trade`                 | boolean     | no   | `false`         | Snapshot-derived at insert (#2240); passing checks rewrite  |
 | `can_withdraw`              | boolean     | no   | `false`         | **CHECK (can_withdraw = false)** — hard invariant           |
 | `can_transfer`              | boolean     | no   | `false`         | **CHECK (can_transfer = false)** (0019) — transfer refused  |
 | `read_only`                 | boolean     | no   | `false`         |                                                             |

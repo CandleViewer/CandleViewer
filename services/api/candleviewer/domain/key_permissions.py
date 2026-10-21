@@ -48,9 +48,13 @@ class PermissionsUnreadable(ValueError):
 def grants_fund_right(permissions: Mapping[str, object]) -> bool:
     """Whether `permissions` grants a withdraw or transfer right (C-2.8, SR-030a); raises
     `PermissionsUnreadable` when they cannot be judged exactly."""
-    _require_plain(permissions, 0)
     try:
-        normalised: dict[str, object] = json.loads(json.dumps(dict(permissions), allow_nan=False))
+        plain = dict(permissions)  # what is judged is what the round trip sees
+    except (TypeError, ValueError):
+        raise PermissionsUnreadable from None
+    _require_plain(plain, 0)
+    try:
+        normalised: dict[str, object] = json.loads(json.dumps(plain, allow_nan=False))
     except (TypeError, ValueError):
         raise PermissionsUnreadable from None
     return any(
