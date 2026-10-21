@@ -40,6 +40,7 @@ import platform
 import re
 import select
 import shutil
+import stat
 import statistics
 import subprocess
 import sys
@@ -117,9 +118,12 @@ def k6_binary() -> str:
         raise SystemExit(
             f"K6_BIN={path!r} is not an absolute path: k6 is never found through PATH or the cwd"
         )
-    try:  # a parent that cannot be searched, or a name too long, is a refusal, not a traceback
-        is_file, runnable = binary.is_file(), os.access(binary, os.X_OK)
-    except OSError as exc:
+    try:  # stat, not Path.is_file(): from Python 3.13 that is False for every OSError
+        st = binary.stat()
+        is_file, runnable = stat.S_ISREG(st.st_mode), os.access(binary, os.X_OK)
+    except (FileNotFoundError, NotADirectoryError):
+        is_file = runnable = False  # nothing there, or a file where a directory should be
+    except OSError as exc:  # a parent that cannot be searched, a name too long, a link loop
         raise SystemExit(f"K6_BIN={path!r} cannot be checked: {exc.strerror or exc}") from None
     if not is_file:
         raise SystemExit(f"K6_BIN={path!r} is not a regular file")
@@ -130,15 +134,18 @@ def k6_binary() -> str:
     # absolute, executable regular file by now, never found on PATH, run with a fixed argv and then
     # held to the pinned version (the perf workflow installs it by sha256 first): the marker below
     # records that, as Semgrep cannot see any of it.
-    out = subprocess.run(  # noqa: S603 - the operator's own binary, fixed argv
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args reason=bench-only-operator-env-k6-path-fixed-argv owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
-        [argv0, "version"],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=30,
-        env=_env(),
-    ).stdout
+    try:
+        out = subprocess.run(  # noqa: S603 - the operator's own binary, fixed argv
+            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args reason=bench-only-operator-env-k6-path-fixed-argv owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
+            [argv0, "version"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+            env=_env(),
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as exc:  # cannot start, exits non-zero, too slow
+        raise SystemExit(f"K6_BIN={path!r} cannot be run: {exc}") from None
     if f"k6 {K6_VERSION} " not in out:
         raise SystemExit(f"{out.strip()!r}: this harness is pinned to k6 {K6_VERSION}")
     return argv0
@@ -261,10 +268,10 @@ def _fresh(out: Path) -> None:
         )
     for name in (*STALE, "bars"):
         path = out / name
-        if path.is_dir() and not path.is_symlink():
+        if name == "bars" and path.is_dir() and not path.is_symlink():
             shutil.rmtree(path, ignore_errors=True)  # the next backend would restore its state
         else:
-            path.unlink(missing_ok=True)
+            path.unlink(missing_ok=True)  # a directory named like a run file fails here, as before
     marker.write_text(f"{HARNESS_VERSION}\n", encoding="utf-8")
 
 
