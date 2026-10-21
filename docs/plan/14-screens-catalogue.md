@@ -1391,7 +1391,7 @@ Drag preview                Drop zones
 - **Components:** CMP-001 Button, CMP-043 Dialog, CMP-100 PriceInput, CMP-119 BracketEditor, CMP-120 TrailingStopEditor, CMP-130 SlippageEstimateChip, CMP-158 SafetyInvariantNotice.
 - **Stories:** US-ALGO-008, US-POS-004, US-ORD-008.
 - **Design sign-off acceptance checklist:** [ ] price / ticks / % / R-multiple entry modes with the others recomputed live [ ] resulting risk in account currency and R shown before confirm [ ] 'SL cannot be removed, only moved' rule stated and enforced in the UI [ ] invalid-side and beyond-liquidation validation messages drawn [ ] partial-quantity TP ladder variant drawn [ ] keyboard path equivalent to chart drag-to-modify
-- **UX research (E32-D01):** [e32-brackets-ladders.md](../design/research/e32-brackets-ladders.md) §4 R3–R5, §5 (E32-D01; heuristic research, recommendations PROPOSED pending the owner's sessions: the non-removable stop as hard-lock with the explanation at the point of refusal and its copy deck, currency-first risk with R on exits, the three-class exchange-held / app-managed wording, the `sl.naked` frame; DCR-9, DCR-10 against E32-D02).
+- **UX research (E32-D01):** [e32-brackets-ladders.md](../design/research/e32-brackets-ladders.md) §4 R3–R5, §5 (E32-D01; heuristic research, recommendations PROPOSED pending the owner's sessions: the non-removable stop as hard-lock with the explanation at the point of refusal and its copy deck, currency-first risk with R on exits, the three-class exchange-held / app-managed wording with the fixed / % trail exchange-held, the `sl.naked` frame; DCR-9–DCR-11 against E32-D02).
 
 ### SCR-065 — Scaled / ladder order builder
 

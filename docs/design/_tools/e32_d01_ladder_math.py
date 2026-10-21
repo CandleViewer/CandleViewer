@@ -6,12 +6,15 @@ Standalone, offline, no network, ``Decimal`` only. Every number the research rep
 from the recorded instrument fixture (BTCUSDT tick 0.10, step 0.001, min 0.001;
 ``packages/fixtures/bybit/2026-10-05/rest/instruments_after.json``) under the plan's rules:
 24 §9.3.1 (a stop rounds away from the entry), 24 §1.3 rule 1 (a buy limit rounds down, a sell
-limit up), 24 §9.3.3 (a TP ladder floors each leg and the last leg absorbs the remainder),
-24 §10.6 (a scaled ladder: evenly spaced prices, each rounded conservatively, floored quantities,
-the remainder on the level nearest ``price_start``, levels below the minimum dropped and
-redistributed), US-ALGO-003 sc. 3 (a ladder that cannot be split is refused) and US-ALGO-009
-(risk is projected for the fully-filled ladder, never the first leg). The linear / geometric
-weight formula is PROPOSED: 24 §10.6 names none (report G2).
+limit up — the rule for a take-profit, which on a long is a sell limit), 24 §9.3.3 (a TP ladder
+floors each leg and the last leg absorbs the remainder), 24 §10.6 (a scaled ladder: evenly spaced
+prices, each rounded conservatively, floored quantities, the remainder on the level nearest
+``price_start``, levels below the minimum dropped and redistributed; the batch cap is a parameter,
+default 10 per 24 §10.6 — Bybit's batch-place page states 20 for linear, report C11), US-ALGO-003
+sc. 3 (a ladder that cannot be split is refused), US-ALGO-009 (risk is projected for the
+fully-filled ladder, never the first leg) and report F7 (22's per-child offset stop: level 1's
+stop sits above level 2's price, so the position is stopped out before level 2 fills). The
+linear / geometric weight formula is PROPOSED: 24 §10.6 names none (report G2).
 
 Usage: python3 -I docs/design/_tools/e32_d01_ladder_math.py [--md | --json]
 Exit 0 always: a refused ladder is a result, not an error.
@@ -25,6 +28,7 @@ from dataclasses import asdict, dataclass
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
 TICK, STEP, MIN_QTY = Decimal("0.10"), Decimal("0.001"), Decimal("0.001")
+BATCH_CAP = 10  # per batch request (24 §10.6); Bybit's batch-place page: 20 for linear (C11)
 ENTRY, STOP, QTY, EQUITY = (
     Decimal("64010.0"),
     Decimal("63900.0"),
@@ -81,7 +85,13 @@ def weights(n: int, distribution: str, skew: Decimal) -> list[Decimal]:
 
 
 def scaled_ladder(
-    total: Decimal, p_start: Decimal, p_end: Decimal, n: int, distribution: str, skew: Decimal
+    total: Decimal,
+    p_start: Decimal,
+    p_end: Decimal,
+    n: int,
+    distribution: str,
+    skew: Decimal,
+    batch_cap: int = BATCH_CAP,
 ) -> tuple[list[Level], dict[str, str]]:
     """A buy ladder from ``p_start`` to ``p_end`` (24 §10.6); buy limits round down (24 §1.3)."""
     prices = [
@@ -117,16 +127,31 @@ def scaled_ladder(
         "total_notional": f"{cum_n:,.2f}",
         "avg_entry": f"{cum_n / cum_q:,.1f}",
     }
-    totals["batches"] = str(
-        -(-len(rows) // 10)
-    )  # Bybit batch create: 10 orders per request (24 §10.6)
+    totals["batches"] = str(-(-len(rows) // batch_cap))  # requests at the cap (24 §10.6: 10)
+    totals["batch_cap"] = str(batch_cap)
     return rows, totals
+
+
+def per_child_offset_stop(prices: list[Decimal], offset_ticks: int) -> dict[str, str | bool]:
+    """Report F7: the per-child offset stop of 22's ``scaledEntry`` example.
+
+    22 puts one ``stop_loss: {ticks: 150}`` on the group, resolved per child. On a buy ladder
+    level 1's own stop then sits ``offset_ticks`` under level 1; when that is above level 2's
+    price, the position-level stop (tpslMode=Full) fires before level 2 can fill."""
+    level_1_stop = away_from_entry(prices[0] - offset_ticks * TICK, prices[0])
+    return {
+        "offset_ticks": str(offset_ticks),
+        "level_1_stop": f"{level_1_stop:,.1f}",
+        "level_2_price": f"{prices[1]:,.1f}",
+        "stopped_out_before_level_2_fills": level_1_stop > prices[1],
+    }
 
 
 def tp_ladder(filled: Decimal, rungs: list[tuple[Decimal, Decimal]]) -> dict[str, object]:
     """24 §9.3.3 on a long: leg = floor(filled x pct), the last leg takes the remainder.
 
-    TP price = entry + r x R, rounded away from the entry."""
+    TP price = entry + r x R, rounded away from the entry: a long's take-profit is a sell limit, so
+    24 §1.3 rule 1 rounds it up (the stop's own rule is 24 §9.3.1)."""
     one_r = ENTRY - STOP
     legs = [floor_qty(filled * pct) for pct, _ in rungs]
     legs[-1] += filled - sum(legs, Decimal(0))
@@ -204,7 +229,13 @@ def build() -> dict[str, object]:
             "long_tp": f"{away_from_entry(Decimal('64299.94'), ENTRY):,.1f}",
             "nearest_would_be": f"{_snap(Decimal('63899.96'), TICK, ROUND_HALF_UP):,.1f}",
         },
-        "scaled": {"rows": [asdict(r) for r in rows], "totals": totals},
+        "scaled": {
+            "rows": [asdict(r) for r in rows],
+            "totals": totals,
+            "per_child_offset_stop": per_child_offset_stop(
+                [Decimal(r.price.replace(",", "")) for r in rows], 150
+            ),
+        },
         "scaled_mock_check": {"mock_total": f"{mock_notional:,.2f}", "mock_claims": "63,790"},
         "tp_ladder": tp_ladder(
             QTY,
