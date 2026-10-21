@@ -69,7 +69,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   anything still queued is dropped, `bye` next.
 - **Fan-out span** (the gateway segment of budget #6, from the subscription's hub turn, not bus
   receipt): `TopicEmitter` queues one data frame (`snap` / `d`) of a subscription in
-  `SAMPLE_EVERY` with the clock reading at which the hub took it, and the writer observes
+  `SAMPLE_EVERY` with the clock reading at which the hub took it (a `snap`: on entry to
+  `TopicEmitter.snapshot`, so its build is inside the span), and the writer observes
   `cv_ws_fanout_seconds` for it, weighted, once the send has returned. Unsampled frames
   carry no stamp and read no clock. Control frames and dropped frames are not observed; a
   client's drain wait, a slow consumer's backlog and replay frames are inside the span. The

@@ -73,12 +73,22 @@ COUNTER_LINES = {
 #: Policy: sampled frames the p95 alert needs in its 5 m window before it judges (rule comment).
 FANOUT_MIN_SAMPLES = 40
 WS_ROW = "WS gateway (client sockets)"
-#: The four series the row plots, in panel order: connections, fan-out, resyncs, closes.
+#: The four series the row plots first, in panel order: connections, fan-out, resyncs, closes.
 WS_SERIES = (
     "cv_ws_connections_in_use",
     "cv_ws_fanout_seconds",
     "cv_ws_resync_total",
     "cv_ws_closes_total",
+)
+#: The rest of the ticket's row (class, overflow, bandwidth) and the gap alert's view; their
+#: lines are pinned in `test_ws_dashboard_panels.py`.
+WS_ROW_ADDED = frozenset(
+    {
+        "cv_ws_connection_class",
+        "cv_ws_overflow_total",
+        "cv_ws_frame_bytes",
+        "cv_ws_sequence_gaps_detected_total",
+    }
 )
 #: Closed values of the `reason` label each alert may name, from the code that increments it.
 _REASONS = {
@@ -286,15 +296,15 @@ def _steps(panel: Mapping[str, Any]) -> set[float]:
     return {s["value"] for s in steps if s["value"] is not None}
 
 
-def test_the_ws_row_plots_the_four_series_live_and_groups_by_reason_only() -> None:
+def test_the_ws_row_plots_its_series_live_and_groups_by_closed_labels_only() -> None:
     exprs = [t["expr"] for panel in _ws_row() for t in panel["targets"]]
     # Every catalogued name the queries mention, whatever its prefix: a planned one would be an
     # empty panel that reads healthy.
     plotted = {_base(i) for e in exprs for i in _IDENT.findall(e) if _base(i) in _BY_NAME}
-    assert plotted == set(WS_SERIES)
+    assert plotted == set(WS_SERIES) | WS_ROW_ADDED
     assert [n for n in sorted(plotted) if _BY_NAME[n].status != "live"] == []
     grouped = {x.strip() for e in exprs for g in _GROUPING.findall(e) for x in g.split(",")}
-    assert grouped <= {"reason", "le"}
+    assert grouped <= {"reason", "state", "le"}
 
 
 def test_the_ws_row_queries_keep_their_shape() -> None:
@@ -330,6 +340,8 @@ def test_the_ws_row_draws_the_budget_and_resync_lines() -> None:
 def test_the_ws_row_says_what_its_panels_do_not_show() -> None:
     _, fanout, resync, closes = (_plotting(s) for s in WS_SERIES)
     assert "sampled 1 in 32" in fanout["description"]
-    assert "Only client_resync and reconfigure have a trigger today" in resync["description"]
-    assert "flat zero here is not coverage" in resync["description"]
+    # The resync reasons with no caller read zero whatever happens (`SequencingHub`'s triggers).
+    said = resync["description"]
+    assert "upstream_reconnect, instrument_revision and replay_seek have no caller" in said
+    assert "flat zero for those is not coverage" in said
     assert "zero whatever happens" in closes["description"]
