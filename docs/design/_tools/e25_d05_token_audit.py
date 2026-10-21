@@ -83,7 +83,8 @@ CMP-227 word in the high-contrast theme (05 section 5 item 6 stretch)
   | color.text.primary | color.status.info.subtle | hc-text | spec 4
 CMP-134 title, detector name, observed / inferred copy; CMP-133 evidence number
   | color.text.primary | color.surface.raised | text | spec 7, 8
-CMP-134 parameter-snapshot labels; CMP-187 legend label; CMP-133 evidence labels
+CMP-134 parameter-snapshot labels; CMP-187 legend label; CMP-133 evidence labels; CMP-131 peak
+  caption and tick, Delayed tag
   | color.text.secondary | color.surface.raised | text | spec 5, 7, 8
 CMP-134 time and the unknown-size line; CMP-032 empty-dot caption
   | color.text.tertiary | color.surface.raised | text | spec 8; E24-D01 matrix
@@ -107,7 +108,8 @@ CMP-227 outline (border.hairline) on a card or panel; CMP-032 filled dots
   | color.status.info.default | color.surface.raised | non-text | spec 4, 7; E24-D01 matrix
 CMP-227 outline on the app surface (rows, headers, alert rows)
   | color.status.info.default | color.surface.app | non-text | spec 4
-CMP-227 marker variant: the hollow / dashed mark on the chart
+CMP-227 marker variant: the hollow / dashed mark on the chart (and its 1 px pane-colour halo's
+  adjacent pair, E06-D03 D10)
   | color.status.info.default | color.surface.canvas | non-text | spec 4, 6
 CMP-227 section variant inside the SCR-058 drawer (overlay surface)
   | color.status.info.default | color.surface.overlay | non-text | spec 4
@@ -138,7 +140,7 @@ CMP-131 extreme band segment and chip outline on the panel: 2.9992 in light, bel
   | color.status.warning.default | color.surface.raised | decorative | spec 5, 12
 CMP-131 needle
   | color.text.primary | color.surface.canvas | non-text | spec 5
-CMP-131 strip line (CMP-024)
+CMP-131 strip line (CMP-024) and the peak dot on it
   | color.text.secondary | color.surface.canvas | non-text | spec 5
 CMP-239 stale indicator beside the chip
   | color.data-confidence.stale.indicator | color.data-confidence.stale.surface | non-text | 15
@@ -222,9 +224,9 @@ CMP-134 | iceberg, stop_run, absorption, exhaustion, unfinished_auction
 STATES_TABLE = """
 CMP-227 | default, hover, focus-visible, active, tooltip-open, with-freshness, with-confidence,
   hc, greyscale
-CMP-131 | loading, warming, live, idle-zero, stale, disconnected, error, calm, elevated, extreme,
-  hc, reduced-motion
-CMP-187 | default, warming, stale, table-alternative, hc
+CMP-131 | loading, warming, live, delayed, idle-zero, stale, disconnected, error, calm, elevated,
+  extreme, focus-visible, hc, reduced-motion
+CMP-187 | default, warming, delayed, idle-zero, stale, table-alternative, hc, reduced-motion
 CMP-132 | active, tested, broken, selected, inherited-estimated, focus-visible, hc, greyscale
 CMP-133 | default, hover, focus-visible, confidence-absent, insufficient-data, hc, greyscale
 CMP-134 | static, flat, stale, selected, focus-visible, detector-off-flag, detector-off-user,
@@ -236,8 +238,10 @@ Atoms/EstimatedBadge | Inline, Marker, Section, SizeSm, SizeMd, Hover, FocusVisi
   LongDetectorName, HighContrast, Greyscale, ReducedMotion, OutsideProviderThrows
 Trading/SpeedOfTapeGauge | Gauge, Strip, Number, Composite, WindowOneSec, WindowFiveSec,
   WindowThirtySec, SideSplit, BandCalm, BandElevated, BandExtreme, WarmingUp, IdleZero, Loading,
-  Stale, Disconnected, DetectorError, LongReadout, HighContrast, ReducedMotion, BandFlapGuard
-ChartEngine/SpeedOfTapePane | Default, LegendRow, TableAlternative, WarmingUp, Stale, HighContrast
+  Stale, Delayed, Disconnected, DetectorError, HighWaterMarker, FocusVisible,
+  AlertAffordanceDisabled, LongReadout, HighContrast, ReducedMotion, BandFlapGuard
+ChartEngine/SpeedOfTapePane | Default, LegendRow, TableAlternative, WarmingUp, Delayed, IdleZero,
+  Stale, HighContrast, ReducedMotion
 ChartEngine/ImbalanceStackIndicator | ActiveBuy, ActiveSell, TestedBuy, TestedSell, BrokenBuy,
   BrokenSell, Selected, InheritedEstimated, FocusVisible, HighContrast, Greyscale
 Trading/RegimeIndicatorChip | TrendingUp, TrendingDown, Ranging, Volatile, Calm, LowConfidence,
