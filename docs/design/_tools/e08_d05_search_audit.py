@@ -107,7 +107,7 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ("primary button fill vs the surface", "color.action.primary.default", OV, "non-text"),
     ("tone step matched vs unmatched (weight 600 / 400 carries it)", "color.text.primary", "color.text.secondary", "decorative"),
     ("active option fill vs the surface (the bar carries it)", SEL, OV, "decorative"),
-    ("hover fill vs the surface (pointer cue only)", HOV, OV, "decorative"),
+    ("hover fill vs the surface (1.00 in light: CR, section D)", HOV, OV, "decorative"),
     ("skeleton bar (CR color.surface.skeleton) vs the surface", SEL, OV, "decorative"),
     ("chip fill vs the surface (the word carries it)", "color.surface.raised", OV, "decorative"),
 ]
@@ -131,6 +131,7 @@ MISSING = [
     ("color.border.input", "E30-D02 CR-1 (shared)", "measured above as CR:color.border.input = color.text.tertiary"),
     ("space.emptystate.*", "CMP-026 Tokens field", "space.inset.md padding, space.stack.sm gaps"),
     ("font.mono", "CMP-022 / CMP-219 / CMP-220 Tokens", "the token is font.family.mono (a naming fix)"),
+    ("color.surface.hover (light value)", "the hover; equals color.surface.overlay in light", "color.surface.selected, no bar"),
 ]
 
 
