@@ -38,8 +38,9 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 from uuid import UUID
 
 import httpx
+import structlog
 
-from candleviewer.domain.order_link import EXT_ID
+from candleviewer.domain.order_link import EXT_ID, ext_key
 from candleviewer.domain.primitives import AccountId, Environment, OrderLinkId, Symbol, TsUs
 from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.errors import (
@@ -106,10 +107,13 @@ from candleviewer.exchange.bybit.trading_parse import (
     to_order,
     to_position,
     to_wallet,
+    unknown_reply,
+    validated,
 )
 from candleviewer.secrets import KekUnavailable, SecretsError
 
 if TYPE_CHECKING:
+    from candleviewer.exchange.base.ports import RateHeadroomPort, TradingPort
     from candleviewer.secrets import SigningCapability
 
 __all__ = [
@@ -121,6 +125,11 @@ __all__ = [
     "BybitTradingPort",
     "Endpoint",
 ]
+
+
+def logger() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,9 +427,9 @@ class BybitTradingPort:
             if not cursor:
                 return rows
             if cursor in seen:
-                raise UnknownStateError(f"malformed {name} reply: the cursor repeats")
+                raise unknown_reply(name, f"malformed {name} reply: the cursor repeats")
             seen.add(cursor)
-        raise UnknownStateError(f"{name} answered more pages than the port reads")
+        raise unknown_reply(name, f"{name} answered more pages than the port reads")
 
     # -- acks -----------------------------------------------------------------------------------
 
@@ -531,20 +540,15 @@ class BybitTradingPort:
     ) -> list[OrderAck]:
         """Pairs each request with its item and code (24 §14.4's item contract); a reply that
         cannot be paired leaves every create's outcome open (24 §8.6 "Order creates")."""
-        try:
-            reply: BatchReply | None = parse(BatchReply, answer.reply, "create-batch")
-        except UnknownStateError:
-            reply = None
+        reply = validated(BatchReply, answer.reply)
         items = [] if reply is None else reply.result.items
         codes = [] if reply is None else reply.retExtInfo.codes
         if not (len(items) == len(codes) == len(reqs)) or any(
             item.orderLinkId != req.order_link_id for item, req in zip(items, reqs, strict=True)
         ):
-            raise _bare(
-                AmbiguousResultError(
-                    "the batch answer pairs with no request; outcomes open",
-                    order_link_ids=[r.order_link_id for r in reqs],
-                )
+            raise _open_outcome(
+                "the batch answer pairs with no request; outcomes open",
+                order_link_ids=[r.order_link_id for r in reqs],
             )
         acks: list[OrderAck] = []
         for req, fields, item, code in zip(reqs, requests, items, codes, strict=True):
@@ -586,10 +590,11 @@ class BybitTradingPort:
         body = _cancel_body(req)
         answer = await self._trade("cancel_order", req.account, lane="critical", body=body)
         fields = rec.request_fields(body)
-        if answer.refusal is not None:
-            return self._refused(
-                req.order_link_id, answer.refusal, answer.latency_ms, "cancel_order", fields
-            )
+        if answer.refusal is not None:  # named as an accepted cancel names it (rule 11)
+            named = req.order_link_id
+            if named is None and req.exchange_order_id:
+                named = ext_key(req.exchange_order_id)
+            return self._refused(named, answer.refusal, answer.latency_ms, "cancel_order", fields)
         reply = _exit_reply(answer, req.order_link_id, req.exchange_order_id, "cancel")
         link = normalised_link(reply.orderLinkId, reply.orderId)
         response = rec.reply_fields(reply.orderLinkId, reply.orderId)
@@ -606,7 +611,7 @@ class BybitTradingPort:
             return [self._refused(None, answer.refusal, answer.latency_ms, "cancel_all", fields)]
         result = parse(CancelAllResult, answer.reply.get("result"), "cancel-all")
         if result.success == "0":
-            raise UnknownStateError("the exchange reported the cancel-all as failed")
+            raise unknown_reply("cancel-all", "the exchange reported the cancel-all as failed")
         rows = kept(
             [(normalised_link(r.orderLinkId, r.orderId), r) for r in result.cancelled],
             lambda pair: pair[0],
@@ -636,7 +641,7 @@ class BybitTradingPort:
                 None, answer.refusal, answer.latency_ms, "set_trading_stop", fields
             )
         if not isinstance(answer.reply.get("result"), dict):
-            raise UnknownStateError("malformed trading-stop reply")
+            raise unknown_reply("trading-stop", "malformed trading-stop reply")
         return self._accepted(None, None, answer, "set_trading_stop", fields, None)
 
     async def set_leverage(self, account: AccountRef, symbol: Symbol, leverage: Decimal) -> None:
@@ -653,7 +658,7 @@ class BybitTradingPort:
         if answer.refusal is not None:
             raise answer.refusal  # no ack carries it: the venue's answer leaves as raised
         if not isinstance(answer.reply.get("result"), dict):
-            raise UnknownStateError("malformed set-leverage reply")
+            raise unknown_reply("set-leverage", "malformed set-leverage reply")
 
     # -- reads ----------------------------------------------------------------------------------
 
@@ -774,7 +779,7 @@ class BybitTradingPort:
         reply = await self._read("wallet", account, {"accountType": "UNIFIED", "coin": _SETTLE})
         at_ms = reply.get("time")
         if type(at_ms) is not int:
-            raise UnknownStateError("malformed wallet reply: no server time")
+            raise unknown_reply("wallet", "malformed wallet reply: no server time")
         page = parse(WalletPage, reply.get("result"), "wallet")
         return to_wallet(page, account, _SETTLE, at_ms)
 
@@ -921,18 +926,29 @@ def _item_error(code: int, msg: str) -> ExchangeError:
 def _create_reply(result: object, link: OrderLinkId) -> OrderReply:
     """A create's accepted answer must name the order it created; anything else leaves the
     create's outcome open (24 §8.6 "Order creates")."""
-    try:
-        reply = parse(OrderReply, result, "create")
-    except UnknownStateError:
-        reply = None
+    reply = validated(OrderReply, result)
     if reply is None or normalised_link(reply.orderLinkId, reply.orderId) != link:
-        raise _bare(
-            AmbiguousResultError(
-                "the create's answer names no order of this id; its outcome is open",
-                order_link_id=link,
-            )
+        raise _open_outcome(
+            "the create's answer names no order of this id; its outcome is open",
+            order_link_id=link,
         )
     return reply
+
+
+def _open_outcome(
+    message: str, *, order_link_id: str | None = None, order_link_ids: Sequence[str] = ()
+) -> AmbiguousResultError:
+    """A create whose answer leaves its outcome open (24 §8.6 "Order creates"), bare: counted and
+    logged with its ids only, as the REST client counts the open outcomes it raises."""
+    exchange_errors_total.labels(**{"class": AmbiguousResultError.code.value}).inc()
+    logger().warning(
+        "bybit_create_answer_ambiguous",
+        order_link_id=order_link_id,
+        order_link_ids=list(order_link_ids),
+    )
+    return _bare(
+        AmbiguousResultError(message, order_link_id=order_link_id, order_link_ids=order_link_ids)
+    )
 
 
 def _exit_reply(
@@ -944,7 +960,7 @@ def _exit_reply(
     if (exchange_order_id and reply.orderId != exchange_order_id) or (
         link is not None and named != link
     ):
-        raise UnknownStateError(f"the {what} answer names another order")
+        raise unknown_reply(what, f"the {what} answer names another order")
     return reply
 
 
@@ -969,3 +985,8 @@ def _unique[T](items: Sequence[T], key: Callable[[T], str]) -> list[T]:
             seen.add(k)
             out.append(item)
     return out
+
+
+if TYPE_CHECKING:  # CI's mypy checks the signatures, which the runtime protocol check cannot
+    _TRADING: type[TradingPort] = BybitTradingPort
+    _HEADROOM: type[RateHeadroomPort] = BybitTradingPort

@@ -45,6 +45,7 @@ BATCH = rest("rest/trading-create-batch-reply.json")
 CANCEL_ALL = rest("rest/trading-cancel-all-reply.json")
 REALTIME = rest("rest/trading-order-realtime.json")
 DUPLICATE = rest("rest/trading-error-110072.json")
+MISSING = rest("rest/trading-error-110001.json")
 #: The fake's cancel-all cap in these cases: one call takes two orders, as the venue takes 500.
 FAKE_CANCEL_ALL_LIMIT = 2
 #: The calls that answer with acks; every one but the stop write names an order.
@@ -71,6 +72,7 @@ class Harness:
     prime_batch_duplicate: Callable[[str, str], None]
     prime_capped_book: Callable[[], None]
     prime_amend: Callable[[str], None]
+    prime_missing_cancel: Callable[[], None]
     acks: list[tuple[str, OrderAck]] = field(default_factory=list)
 
 
@@ -135,6 +137,9 @@ def _exchange() -> Harness:
     def prime_amend(order_link_id: str) -> None:
         venue.on("/v5/order/amend", with_result(AMENDED, orderLinkId=order_link_id))
 
+    def prime_missing_cancel() -> None:
+        venue.on("/v5/order/cancel", MISSING)
+
     harness = Harness(
         port=make_port(venue, governor=governor),
         sent=lambda: len(venue.sent) + len(governor.acquired),
@@ -145,6 +150,7 @@ def _exchange() -> Harness:
         prime_batch_duplicate=prime_batch_duplicate,
         prime_capped_book=prime_capped_book,
         prime_amend=prime_amend,
+        prime_missing_cancel=prime_missing_cancel,
     )
     _watch(harness.port, harness.acks)
     return harness
@@ -180,6 +186,7 @@ def _fake() -> Harness:
         prime_batch_duplicate=seed_taken,
         prime_capped_book=seed_three,
         prime_amend=lambda _link: None,  # the fake amends the order a create landed
+        prime_missing_cancel=lambda: None,  # the fake holds no order under the id
     )
     _watch(harness.port, harness.acks)
     return harness
@@ -290,6 +297,22 @@ async def test_both_cancel_an_ext_order_by_its_exchange_id(harness: Harness) -> 
     ack = await harness.port.cancel_order(request)
     assert (ack.ok, ack.order_link_id, ack.exchange_order_id) == (True, ext_key(ORDER_ID), ORDER_ID)
     assert harness.lanes() == ["critical"]
+
+
+async def test_both_name_the_order_of_a_refused_cancel_as_an_accepted_one_names_it(
+    harness: Harness,
+) -> None:
+    """A cancel named by its exchange id alone and refused (the order is gone) names the order
+    by its `ext-` key, as the accepted cancel does (24 §14.4: `order_link_id` is `None` only
+    where no order is named)."""
+    harness.prime_missing_cancel()
+    request = CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id=ORDER_ID)
+    ack = await harness.port.cancel_order(request)
+    assert (ack.ok, ack.error_code, ack.order_link_id) == (
+        False,
+        "ORDER_NOT_FOUND",
+        ext_key(ORDER_ID),
+    )
 
 
 async def test_both_cancel_all_in_the_critical_lane(harness: Harness) -> None:

@@ -160,3 +160,38 @@ async def test_a_transport_fault_leaves_none_of_its_httpx_text_in_the_error() ->
 
     assert any("(ReadTimeout)" in text for text in texts)
     assert all(_FIGURE not in text for text in texts)
+
+
+@pytest.mark.parametrize("failure", ["5xx", "unreadable", "venue-code"])
+async def test_no_frame_of_a_raised_error_holds_the_signed_request(failure: str) -> None:
+    """SR-E29-08: the port strips the traceback too. The REST client's frames, whose locals
+    hold the signed headers, never travel with an error the port raises: no frame is the
+    client's or the port's attempt, and no frame of the product holds the key id or a MAC."""
+    sent: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        if failure == "5xx":
+            return httpx.Response(503, json=rest("rest/error_503.json"))
+        if failure == "unreadable":
+            return httpx.Response(200, content=b'{"retCode":0,"result":')
+        return httpx.Response(200, json={"retCode": 10001, "retMsg": "params error"})
+
+    port = _port(answer)
+    with pytest.raises(ExchangeError) as caught:
+        if failure == "venue-code":
+            await port.account_info(account())
+        else:
+            request = CancelOrderRequest(account=account(), symbol="BTCUSDT", order_link_id=link())
+            await port.cancel_order(request)
+
+    frames = []
+    tb = caught.value.__traceback__
+    while tb is not None:
+        frames.append(tb.tb_frame)
+        tb = tb.tb_next
+    names = {frame.f_code.co_name for frame in frames}
+    assert sent and not names & {"_request", "signed_request", "_attempt"}
+    secrets = {"fixture-signer-id", *(request.headers["X-BAPI-SIGN"] for request in sent)}
+    product = [f for f in frames if "/candleviewer/" in f.f_code.co_filename.replace("\\", "/")]
+    assert product and not any(s in repr(f.f_locals) for f in product for s in secrets)

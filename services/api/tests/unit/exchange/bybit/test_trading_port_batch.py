@@ -304,3 +304,42 @@ def test_an_exit_with_no_way_to_name_its_order_is_refused_by_the_wire_mapping() 
 
 def test_the_default_clock_reads_the_wall_in_microseconds() -> None:
     assert abs(_wall_us() - time.time() * 1_000_000) < 60_000_000
+
+
+@pytest.mark.parametrize(
+    ("value", "wire"),
+    [
+        (Decimal("1E+2"), "100"),
+        (Decimal("1E-7"), "0.0000001"),
+        (Decimal("0E-8"), "0.00000000"),
+    ],
+    ids=["positive-exponent", "negative-exponent", "zero-exponent"],
+)
+async def test_a_decimal_goes_on_the_wire_as_plain_text_never_in_exponent_form(
+    value: Decimal, wire: str
+) -> None:
+    """Sizing code can hand over `Decimal("1E+2")`; the venue refuses exponent text, and a
+    refused stop write is the costly case. Every money field of a create and a stop write goes
+    out as plain decimal text."""
+    venue = (
+        Venue()
+        .on("/v5/order/create", with_result(CREATED, orderLinkId=link()))
+        .on("/v5/position/trading-stop", rest("rest/trading-trading-stop-reply.json"))
+    )
+    port = make_port(venue)
+    await port.place_order(place(qty=value, price=value, stop_loss=value, take_profit=value))
+    await port.set_trading_stop(
+        TradingStopRequest(
+            account=account(),
+            symbol="BTCUSDT",
+            stop_loss=value,
+            take_profit=value,
+            trailing_distance=value,
+            active_price=value,
+        )
+    )
+    create, stop = venue.bodies()
+    assert [create[k] for k in ("qty", "price", "stopLoss", "takeProfit")] == [wire] * 4
+    assert [stop[k] for k in ("stopLoss", "takeProfit", "trailingStop", "activePrice")] == [
+        wire
+    ] * 4

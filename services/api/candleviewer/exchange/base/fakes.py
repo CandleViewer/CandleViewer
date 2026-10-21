@@ -13,9 +13,10 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Final, Literal, get_args
+from typing import TYPE_CHECKING, Final, Literal, get_args
 
 from candleviewer.domain.events import Instrument
+from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import (
     AccountId,
     Environment,
@@ -55,6 +56,9 @@ from .models import (
     TradingStopRequest,
     Wallet,
 )
+
+if TYPE_CHECKING:
+    from .ports import RateHeadroomPort, TradingPort
 
 __all__ = [
     "CANCEL_ALL_LIMIT",
@@ -434,12 +438,15 @@ class FakeTradingPort:
     async def cancel_order(self, req: CancelOrderRequest) -> OrderAck:
         check_exit_ids(req.order_link_id, req.exchange_order_id)
         self._enter("cancel_order", req.account, req, "critical")
+        named = req.order_link_id  # as the exchange adapter names a refused cancel
+        if named is None and req.exchange_order_id:
+            named = ext_key(req.exchange_order_id)
         outcome = self._outcome("cancel_order")
         if isinstance(outcome, FakeReject):
-            return _rejected(req.order_link_id, outcome)
+            return _rejected(named, outcome)
         key = self._find_open(req.account, req.order_link_id, req.exchange_order_id)
         if key is None:
-            return _rejected(req.order_link_id, FakeReject(OmsErrorCode.ORDER_NOT_FOUND))
+            return _rejected(named, FakeReject(OmsErrorCode.ORDER_NOT_FOUND))
         order = self._close(key, "cancelled")
         return _ack(order.order_link_id, order.exchange_order_id)
 
@@ -746,3 +753,8 @@ def _seeded[K, V](table: dict[K, V], key: K, what: str) -> V:
         return table[key]
     except KeyError:
         raise NotFoundError(f"no fake {what} seeded for this account") from None
+
+
+if TYPE_CHECKING:  # CI's mypy checks the signatures, which the runtime protocol check cannot
+    _TRADING: type[TradingPort] = FakeTradingPort
+    _HEADROOM: type[RateHeadroomPort] = FakeTradingPort

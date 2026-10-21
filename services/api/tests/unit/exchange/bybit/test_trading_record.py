@@ -169,6 +169,24 @@ def test_a_create_record_holds_the_request_as_it_went_on_the_wire() -> None:
     }
 
 
+@pytest.mark.parametrize(("direction", "wire"), [("rise", 1), ("fall", 2)])
+def test_a_conditional_create_records_its_trigger_direction_by_name(
+    direction: str, wire: int
+) -> None:
+    """Literal expectations, not ones derived from the map under test: `1` is rise and `2` is
+    fall on the wire (24 §8.9), and the record names them so."""
+    request = place(trigger_price=Decimal("59000"), trigger_direction=direction)
+    body = {"category": "linear", **_create_item(request)}
+    assert body["triggerDirection"] == wire
+    assert rec.request_fields(body)["trigger_direction"] == direction
+
+
+def test_a_cancel_all_record_holds_its_order_filter() -> None:
+    """SR-E29-06: the filter that keeps a position's TP/SL orders is in the record, by name."""
+    fields = rec.request_fields(_cancel_all_body(None))
+    assert fields == {"category": "linear", "order_filter": "Order"}
+
+
 async def test_a_market_create_records_no_price_and_no_stop_it_never_sent() -> None:
     venue = Venue().on("/v5/order/create", with_result(CREATED, orderLinkId=link()))
     request = place(order_type="market", price=Decimal("1"), stop_loss=None)

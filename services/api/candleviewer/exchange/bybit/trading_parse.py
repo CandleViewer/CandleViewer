@@ -32,6 +32,7 @@ from pydantic import (
 
 from candleviewer.domain.order_link import ENV_LETTER, OUR_ID, account_tag, ext_key, link_owner
 from candleviewer.domain.primitives import OrderLinkId, Symbol, TsUs
+from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.errors import UnknownStateError
 from candleviewer.exchange.base.frame_guard import MAX_PRICE, MAX_QTY, MAX_TS_MS
 from candleviewer.exchange.base.models import (
@@ -79,6 +80,8 @@ __all__ = [
     "to_order",
     "to_position",
     "to_wallet",
+    "unknown_reply",
+    "validated",
 ]
 
 
@@ -511,14 +514,30 @@ class FeeRatePage(_Venue):
     rows: Annotated[list[FeeRateRow], Field(max_length=1)] = Field(alias="list")
 
 
-def parse[M: BaseModel](model: type[M], data: object, what: str) -> M:
-    """`data` as `model`, or `UnknownStateError` with no cause or context (no reply content)."""
+def unknown_reply(reply: str, message: str) -> UnknownStateError:
+    """A reply the port cannot read, or one whose outcome it cannot tell: counted in
+    `exchange_errors_total{class="UNKNOWN_STATE"}` and logged with the reply's name only, never
+    its content (DoD C-11.2 item 9; ruling R7's drift made visible), as `UnknownStateError`."""
+    exchange_errors_total.labels(**{"class": UnknownStateError.code.value}).inc()
+    logger().warning("bybit_reply_unknown", reply=reply)
+    return UnknownStateError(message)
+
+
+def validated[M: BaseModel](model: type[M], data: object) -> M | None:
+    """`data` as `model`, or `None`, uncounted: for a caller that gives a failure its own
+    meaning (a create's answer that cannot be read leaves its outcome open)."""
     try:
-        parsed: M | None = model.model_validate(data)
+        return model.model_validate(data)
     except (ValidationError, TypeError, ValueError, RecursionError):
-        parsed = None
+        return None
+
+
+def parse[M: BaseModel](model: type[M], data: object, what: str) -> M:
+    """`data` as `model`, or `UnknownStateError` with no cause or context (no reply content),
+    counted and logged (`unknown_reply`)."""
+    parsed = validated(model, data)
     if parsed is None:
-        raise UnknownStateError(f"malformed {what} reply")
+        raise unknown_reply(what, f"malformed {what} reply")
     return parsed
 
 
@@ -641,7 +660,7 @@ def kept[T](rows: Sequence[T], link_of: Callable[[T], str], account: AccountRef)
 
 def to_order(row: OrderRow, account: AccountRef) -> Order:
     if row.orderType == "Limit" and row.price <= 0:
-        raise UnknownStateError("malformed order row: a limit order without a price")
+        raise unknown_reply("order", "malformed order row: a limit order without a price")
     return Order(
         order_link_id=normalised_link(row.orderLinkId, row.orderId),
         exchange_order_id=row.orderId,
@@ -742,7 +761,7 @@ def to_wallet(page: WalletPage, account: AccountRef, coin: str, at_ms: int) -> W
     accounts = [a for a in page.accounts if a.accountType == "UNIFIED"]
     rows = [c for a in accounts for c in a.coins if c.coin == coin]
     if len(accounts) != 1 or len(rows) != 1:
-        raise UnknownStateError(f"malformed wallet reply: no single unified {coin} row")
+        raise unknown_reply("wallet", f"malformed wallet reply: no single unified {coin} row")
     unified, row = accounts[0], rows[0]
     return Wallet(
         account_id=account.account_id,
@@ -763,7 +782,7 @@ def to_wallet(page: WalletPage, account: AccountRef, coin: str, at_ms: int) -> W
 def to_fee_rate(page: FeeRatePage, symbol: Symbol, fetched_at: TsUs) -> FeeRate:
     rows = [r for r in page.rows if r.symbol == symbol]
     if len(rows) != 1:
-        raise UnknownStateError("malformed fee-rate reply: not the one symbol asked")
+        raise unknown_reply("fee-rate", "malformed fee-rate reply: not the one symbol asked")
     return FeeRate(
         symbol=symbol,
         maker=rows[0].makerFeeRate,

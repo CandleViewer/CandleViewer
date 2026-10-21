@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import json
 import time
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
@@ -74,6 +75,10 @@ def _calls() -> dict[str, tuple[Call_, str, EndpointClass, str, Any]]:
         "place_batch": (
             lambda p: p.place_batch([place()]), "/v5/order/create-batch", ORDER, "entry",
             rest("rest/trading-create-batch-reply.json"),
+        ),
+        "place_batch_critical": (
+            lambda p: p.place_batch([place(lane="critical")]), "/v5/order/create-batch", ORDER,
+            "critical", rest("rest/trading-create-batch-reply.json"),
         ),
         "amend_order": (
             lambda p: p.amend_order(
@@ -371,7 +376,7 @@ async def test_an_account_of_another_environment_is_refused_before_anything(name
     with pytest.raises(ValueError, match="another environment"):
         if name.startswith("place_order"):
             await port.place_order(place(live))
-        elif name == "place_batch":
+        elif name.startswith("place_batch"):
             await port.place_batch([place(live)])
         elif name in {"amend_order", "cancel_order", "set_trading_stop"}:
             await _swapped(port, name, swap)
@@ -579,3 +584,130 @@ async def test_a_new_key_retires_the_old_keys_client() -> None:
     ]
     await port.aclose()
     assert port._clients == {} and second._client.is_closed
+
+
+# -- cancellation propagates (24 §14.2 rule 8) ---------------------------------------------------
+
+
+def _echoing_create(
+    sent: list[httpx.Request], received: asyncio.Event, hang_first: asyncio.Event
+) -> Any:
+    """A venue that holds the first create until `hang_first` is set, then answers every create
+    with the transcribed reply under the id it was sent; `received` is set by the first one."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        received.set()
+        if len(sent) == 1:
+            await hang_first.wait()
+        own = json.loads(request.content)  # our own request body, already bounded
+        created = with_result(
+            rest("rest/trading-create-reply.json"), orderLinkId=own["orderLinkId"]
+        )
+        return httpx.Response(200, json=created)
+
+    return handler
+
+
+async def _until(event: asyncio.Event) -> None:
+    async with asyncio.timeout(5.0):  # a guard: each event is set as soon as the task reaches it
+        await event.wait()
+
+
+async def test_a_create_cancelled_in_flight_propagates_and_the_port_stays_usable() -> None:
+    sent: list[httpx.Request] = []
+    received = asyncio.Event()
+    port = BybitTradingPort(
+        environment="demo",
+        credentials=fake_capability(SIGNER_ID),
+        governor=RecordingGovernor(),
+        transport=httpx.MockTransport(_echoing_create(sent, received, asyncio.Event())),
+        max_retries=0,
+    )
+    task = asyncio.create_task(port.place_order(place()))
+    await _until(received)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
+    ack = await port.place_order(place(order_link_id=link(seq=1)))
+    assert (ack.ok, ack.order_link_id, len(sent)) == (True, link(seq=1), 2)
+
+
+async def test_an_exit_cancelled_while_it_waits_for_its_token_leaves_the_bucket_free() -> None:
+    """The cancel waits for a token on a sleeper that never returns; cancelled, it sends nothing,
+    and the bucket's lock is free for the next taker, which is refused at once, not stuck."""
+    sleeping = asyncio.Event()
+
+    async def never(_seconds: float) -> None:
+        sleeping.set()
+        await asyncio.Event().wait()
+
+    governor = RecordingGovernor(default_capacity=1.0, default_refill_per_s=0.5, sleep=never)
+    governor.drain("100001", ORDER, 1.0)
+    venue = Venue()
+    port = make_port(venue, governor=governor)
+    task = asyncio.create_task(
+        port.cancel_order(
+            CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id=ORDER_ID)
+        )
+    )
+    await _until(sleeping)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert venue.sent == []
+    with pytest.raises(RateBudgetExceededError):
+        async with asyncio.timeout(1.0):
+            await governor.acquire("100001", ORDER, lane="critical", deadline_s=0.05)
+
+
+async def test_an_exit_cancelled_in_its_retry_backoff_propagates() -> None:
+    backing_off = asyncio.Event()
+
+    async def never(_seconds: float) -> None:
+        backing_off.set()
+        await asyncio.Event().wait()
+
+    venue = Venue().on("/v5/order/cancel", rest("rest/error_503.json"), status=503)
+    port = BybitTradingPort(
+        environment="demo",
+        credentials=fake_capability(SIGNER_ID),
+        governor=RecordingGovernor(),
+        transport=httpx.MockTransport(venue.handler),
+        max_retries=3,
+        sleep=never,
+    )
+    task = asyncio.create_task(
+        port.cancel_order(
+            CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id=ORDER_ID)
+        )
+    )
+    await _until(backing_off)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled() and len(venue.sent) == 1
+
+
+async def test_the_factorys_port_waits_its_default_entry_bound() -> None:
+    """`ExchangeBybitService.trading_port` with its defaults: an entry waits 0.75 s at most,
+    an exit 5 s (T04's rate step, 24 §8.7)."""
+    created = with_result(rest("rest/trading-create-reply.json"), orderLinkId=link())
+    venue = Venue().on("/v5/order/create", created).on("/v5/order/cancel", CANCEL)
+    svc = ExchangeBybitService(
+        credentials=fake_capability(SIGNER_ID),
+        environment="demo",
+        rest_transport=httpx.MockTransport(venue.handler),
+    )
+    governor = RecordingGovernor()
+    svc._governor = governor
+    port = svc.trading_port("demo")
+    await port.place_order(place())
+    await port.cancel_order(
+        CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id=ORDER_ID)
+    )
+    assert [(lane, deadline) for *_, lane, deadline in governor.acquired] == [
+        ("entry", 0.75),
+        ("critical", CRITICAL_WAIT_S),
+    ]

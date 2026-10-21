@@ -17,21 +17,25 @@ from uuid import UUID
 
 import httpx
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId
+from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.errors import (
     AmbiguousResultError,
     AuthError,
     DuplicateClientIdError,
     ExchangeError,
     InstrumentFilterError,
+    RateBudgetExceededError,
     RateLimitError,
     TransportError,
     UnknownStateError,
 )
 from candleviewer.exchange.base.models import AmendOrderRequest, CancelOrderRequest
 from candleviewer.exchange.bybit import trading
+from candleviewer.exchange.bybit.config import EndpointClass
 from candleviewer.exchange.bybit.trading import BybitTradingPort
 from candleviewer.oms.order_link_resolution import Adopted, place_or_adopt
 from candleviewer.secrets import (
@@ -46,6 +50,8 @@ from candleviewer.secrets.errors import SnapshotInvalid
 from tests._corpus import rest
 from tests._signing import Call, fake_capability
 from tests.unit.exchange.bybit._trading import (
+    NOW_US,
+    FakeClock,
     RecordingGovernor,
     Venue,
     account,
@@ -386,3 +392,50 @@ async def test_a_create_without_a_generated_id_of_its_account_is_refused_unsent(
     with pytest.raises(ValueError, match="order_link_id"):
         await make_port(venue).place_order(place(order_link_id=key))
     assert venue.sent == []
+
+
+def _errors(cls: str) -> float:
+    value: float = exchange_errors_total.labels(**{"class": cls})._value.get()
+    return value
+
+
+async def test_a_token_the_lane_does_not_get_is_counted_and_logged() -> None:
+    """DoD C-11.2 item 9: a refused token is an adapter signal too, though nothing was sent."""
+    clock = FakeClock()
+    governor = RecordingGovernor(
+        default_capacity=1.0, default_refill_per_s=0.1, clock=clock.now, sleep=clock.sleep
+    )
+    governor.drain("100001", EndpointClass.ORDER, 1.0)
+    venue = Venue()
+    before = _errors("RATE_BUDGET_EXCEEDED")
+    with capture_logs() as logs, pytest.raises(RateBudgetExceededError):
+        await make_port(venue, governor=governor, clock=clock).place_order(place())
+    assert _errors("RATE_BUDGET_EXCEEDED") == before + 1 and venue.sent == []
+    [line] = [e for e in logs if e["event"] == "bybit_rate_budget_exceeded"]
+    assert (line["path"], line["lane"]) == ("/v5/order/create", "entry")
+
+
+async def test_a_reply_the_port_cannot_read_is_counted_and_logged_without_its_content() -> None:
+    """Ruling R7's drift made visible: a strict-model failure counts `UNKNOWN_STATE` and logs the
+    reply's name only, never a value of the reply."""
+    executions = rest("rest/trading-execution-list.json")
+    row = {**executions["result"]["list"][0], "execQty": "not-a-quantity"}
+    venue = Venue().on("/v5/execution/list", with_result(executions, list=[row], nextPageCursor=""))
+    before = _errors("UNKNOWN_STATE")
+    with capture_logs() as logs, pytest.raises(UnknownStateError, match="malformed executions"):
+        await make_port(venue).executions(account(), NOW_US - 1, NOW_US)
+    assert _errors("UNKNOWN_STATE") == before + 1
+    [line] = [e for e in logs if e["event"] == "bybit_reply_unknown"]
+    assert line == {"event": "bybit_reply_unknown", "reply": "executions", "log_level": "warning"}
+
+
+async def test_an_open_outcome_the_port_finds_in_a_create_answer_is_counted_once() -> None:
+    """The create's answer names another order: one `TRANSPORT_ERROR` (the ambiguity raised),
+    and no `UNKNOWN_STATE` beside it, logged with the create's id only."""
+    venue = Venue().on("/v5/order/create", with_result(CREATED, orderLinkId=link(seq=9)))
+    before = (_errors("TRANSPORT_ERROR"), _errors("UNKNOWN_STATE"))
+    with capture_logs() as logs, pytest.raises(AmbiguousResultError):
+        await make_port(venue).place_order(place())
+    assert (_errors("TRANSPORT_ERROR"), _errors("UNKNOWN_STATE")) == (before[0] + 1, before[1])
+    [line] = [e for e in logs if e["event"] == "bybit_create_answer_ambiguous"]
+    assert (line["order_link_id"], line["order_link_ids"]) == (link(), [])

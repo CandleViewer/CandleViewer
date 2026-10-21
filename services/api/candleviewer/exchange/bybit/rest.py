@@ -445,10 +445,20 @@ class BybitRestClient:
                 await self._governor.acquire(
                     self._uid, endpoint_class, lane=lane, deadline_s=budget.left
                 )
-            except RateBudgetExceededError:
-                if reached is None:
-                    raise
-                raise reached from None
+            except RateBudgetExceededError as refused:
+                if reached is not None:
+                    raise reached from None
+                # The local refusal of a token, nothing sent: counted and logged here, where the
+                # client counts its other errors (DoD C-11.2 item 9).
+                exchange_errors_total.labels(**{"class": refused.code.value}).inc()
+                logger().warning(
+                    "bybit_rate_budget_exceeded",
+                    path=path,
+                    endpoint_class=str(endpoint_class),
+                    lane=lane,
+                    attempt=attempt,
+                )
+                raise
             headers: dict[str, str] = {}
             masked: tuple[str, ...] = ()
             query = self._query_params(params)
