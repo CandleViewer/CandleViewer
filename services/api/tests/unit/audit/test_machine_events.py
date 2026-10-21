@@ -28,7 +28,7 @@ from candleviewer.audit.machine_events import (
     MachineEventWalSink,
     SinkMetrics,
 )
-from candleviewer.audit.wal import AuditWal, encode_frame
+from candleviewer.audit.wal import AuditWal, AuditWalCorrupt, encode_frame
 from candleviewer.statechart.plugins.audit import GENESIS_HASH, MachineEventRow, row_digest
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 
@@ -568,3 +568,54 @@ async def test_the_admin_wiring_builder_takes_the_wal_path_and_cap_from_the_sett
     await settle(lambda: len(store.rows) == 1)
     await sink.stop()
     assert seen.flushed == ["ok"]
+
+
+# --- start edge cases ----------------------------------------------------------------------------
+
+
+@virtual
+async def test_a_corrupt_wal_at_start_fails_closed_and_releases_its_lock(tmp_path: Path) -> None:
+    """A frame corrupt before the acknowledged end stops the boot (`AuditWalCorrupt`, never
+    skipped); the lock is dropped, so the fixed WAL can be opened again."""
+    path = tmp_path / "machine_events.wal"
+    good = [encode_frame(f) for f in frames(chain(3))]
+    bad = bytearray(good[1])
+    bad[4] ^= 0x01
+    path.write_bytes(good[0] + bytes(bad) + good[2])
+    sink = sink_for(tmp_path, FakeStore())
+    with pytest.raises(AuditWalCorrupt):
+        await sink.start()
+    path.write_bytes(b"".join(good))
+    store = FakeStore()
+    fixed = sink_for(tmp_path, store)
+    await fixed.start()
+    await settle(lambda: len(store.rows) == 3)
+    await fixed.stop()
+
+
+@virtual
+async def test_a_restart_after_a_flusher_death_reuses_the_open_wal(tmp_path: Path) -> None:
+    store = FakeStore()
+    store.poison = StorageQueryFailed("23514")
+    sink = sink_for(tmp_path, store)
+    await sink.start()
+    sink.append(row(0))
+    await settle(lambda: sink.failure is not None)
+    store.poison = None
+    await sink.start()  # the operator's restart: the lock and the open WAL are kept
+    await settle(lambda: len(store.rows) == 1)
+    await sink.start()  # running: a no-op
+    assert sink.failure is None
+    await sink.stop()
+
+
+@pytest.mark.parametrize("bad", ["not a row", {"row": 1}], ids=["str", "dict"])
+@virtual
+async def test_something_that_is_no_row_is_rejected(tmp_path: Path, bad: Any) -> None:
+    sink = sink_for(tmp_path, FakeStore())
+    await sink.start()
+    with pytest.raises(MachineEventRejected, match="MachineEventRow"):
+        sink.append(bad)
+    with pytest.raises(MachineEventRejected, match="occurred_at"):
+        sink.append(row(0, occurred_at=1_700_000_000))
+    await sink.stop()
