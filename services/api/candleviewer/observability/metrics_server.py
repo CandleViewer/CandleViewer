@@ -25,6 +25,7 @@ from candleviewer.observability.metrics import (
 )
 from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.observability.metrics_runtime import (
+    GcPauseTimer,
     run_cardinality_check,
     run_fallback_snapshots,
     run_loop_lag_sampler,
@@ -72,12 +73,13 @@ def _task_ended(task: asyncio.Task[None]) -> None:
 
 
 class MetricsRuntime:
-    """Owns the private listener and the three background metric tasks."""
+    """Owns the private listener, the three background metric tasks and the GC pause timer."""
 
     def __init__(self, metrics: Metrics, bind: str) -> None:
         self._host, self._port = parse_private_bind(bind)
         self.metrics = metrics
         self._r0 = register_r0(metrics)
+        self.gc_timer = GcPauseTimer(self._r0["cv_gc_pause_seconds"], self._r0["cv_gc_heap_blocks"])
         self._server: uvicorn.Server | None = None
         self._tasks: list[asyncio.Task[None]] = []
 
@@ -103,11 +105,13 @@ class MetricsRuntime:
         ]
         for task in self._tasks:
             task.add_done_callback(_task_ended)
+        self.gc_timer.install()
 
     async def stop(self) -> None:
         """Ask the listener to exit, cancel the samplers, await all four: a dead task never keeps
         another from being awaited (its failure was logged when it happened), and a cancellation
         of the caller of `stop()` propagates."""
+        self.gc_timer.remove()
         tasks, self._tasks = self._tasks, []
         if self._server is not None:
             self._server.should_exit = True

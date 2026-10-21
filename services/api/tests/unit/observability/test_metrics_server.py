@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import re
 import socket
 import time
@@ -146,6 +147,16 @@ async def test_stop_awaits_every_task_after_one_died_and_logs_only_the_dead_one(
     assert all(t.done() for t in tasks)
     assert [e["task"] for e in logs] == ["metrics-listener"]  # the cancelled three are no failure
     assert unhandled == []
+
+
+async def test_start_joins_the_gc_pause_timer_and_stop_takes_it_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(monkeypatch, "none")
+    runtime.start()
+    assert gc.callbacks.count(runtime.gc_timer) == 1
+    await runtime.stop()
+    assert runtime.gc_timer not in gc.callbacks
 
 
 async def test_stop_does_not_swallow_a_cancellation_of_its_caller(

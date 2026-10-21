@@ -1380,6 +1380,7 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Domain | Metric | Type | Purpose / alert |
 |---|---|---|---|
 | Runtime | `event_loop_lag_seconds` | histogram | p99 ≤ 50 ms; alert > 100 ms for 5 min |
+| Runtime | `cv_gc_pause_seconds{generation}` / `cv_gc_heap_blocks` | histogram / gauge | The pause of each garbage collection, timed through `gc.callbacks` by generation (`0`, `1`, `2`). A full collection (`2`) runs on the thread that triggers it, so one over 50 ms on the loop thread is a C-2.17 block; buckets as `event_loop_lag_seconds`. The gauge is the allocated pymalloc blocks after the latest full collection (`sys.getallocatedblocks()`, about 55 µs; counting `gc.get_objects()` would itself block). The evidence for #3641's `gc.freeze()` decision |
 | Runtime | `cv_http_request_duration_seconds{route,method,status_class}` | histogram | HTTP request duration per route template (`unmatched` for no-route, wrong-method and pre-routing refusals); read p95 ≤ 150 ms, write p95 ≤ 300 ms (#2421). Buckets 0.05/0.15/0.3/1.0 s (edges on the two budgets); capped at 300 series so the max-cardinality scrape stays < 50 ms, overflow dropped and counted in `metric_cardinality_breach_total` |
 | Ingestion | `ws_connection_state{socket}` | gauge | alert on `down` > 10 s |
 | Ingestion | `ingest_dispatch_overflow_total{stream}` | counter | frames dropped by a full per-topic dispatch lane (§4.2); each drop run resyncs that symbol. Sustained growth = a stuck consumer on one topic |
