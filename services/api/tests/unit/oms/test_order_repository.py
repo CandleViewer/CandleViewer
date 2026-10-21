@@ -65,7 +65,11 @@ from candleviewer.storage.repositories.orders import (
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
 from candleviewer.storage.repositories.positions import NewPositionSnapshot, PositionState
-from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, RecordedStopRow
+from candleviewer.storage.repositories.recorded_stops import (
+    NewRecordedStop,
+    RecordedStopRow,
+    SweptStop,
+)
 from candleviewer.storage.repositories.submissions import (
     AnchorTakenError,
     FirstPersist,
@@ -476,3 +480,30 @@ async def test_the_anchor_and_stop_lines_carry_no_key_fingerprint_or_price() -> 
     text = repr(logs)
     assert REF not in text and SHA not in text and "62000" not in text
     assert logs[1]["record_id"] == str(STOP.id) and logs[1]["kind"] == "stop_loss"
+
+
+async def _no_audit(swept: tuple[SweptStop, ...]) -> None:
+    return None
+
+
+async def test_the_sweep_logs_each_voided_row_by_its_ids() -> None:
+    swept = (SweptStop(STOP.id, ACCOUNT, ORDER, "take_profit"),)
+    store = _AnyStore(swept)
+    with capture_logs() as logs:
+        got = await RecordedStopRepository(cast(Any, store)).void_orphans(
+            None, at=T0, write_ahead=_no_audit
+        )
+    assert got == swept and store.calls == [("void_orphans", (None,))]
+    assert logs == [
+        {"event": "oms_stop_orphan_swept", "log_level": "warning", "record_id": str(STOP.id),
+         "account_id": str(ACCOUNT), "order_id": str(ORDER), "kind": "take_profit"}
+    ]  # fmt: skip
+
+
+async def test_a_sweep_whose_audit_did_not_land_voided_nothing() -> None:
+    error = WriteAheadTimeout("write-ahead audit exceeded 5.0 s")
+    with pytest.raises(AuditNotDurable) as err:
+        await RecordedStopRepository(cast(Any, _AnyStore(error=error))).void_orphans(
+            ACCOUNT, at=T0, write_ahead=_no_audit
+        )
+    assert err.value.__cause__ is None and not isinstance(err.value, TimeoutError)

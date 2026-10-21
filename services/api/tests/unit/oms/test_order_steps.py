@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -23,12 +23,17 @@ from candleviewer.oms import order_steps as steps
 from candleviewer.oms.errors import HolderNotRead
 from candleviewer.oms.execution import apply_fields
 from candleviewer.oms.fakes import InMemoryExecutionStore, InMemoryOrderStore
+from candleviewer.oms.order_machine import Legality
 from candleviewer.oms.order_steps import OrderStepWriter
+from candleviewer.oms.repository import SubmissionRepository
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.bindings.b01_order import Step
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
+from candleviewer.statechart.registry import Registry
 from candleviewer.storage.repositories import orders as port
-from candleviewer.storage.repositories.executions import NewExecution
+from candleviewer.storage.repositories.executions import NewExecution, OrderFill
+from candleviewer.storage.repositories.idempotency_anchors import NewAnchor
+from candleviewer.storage.repositories.submissions import FirstPersist, FirstPersisted
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 ACCOUNT, ORDER_ID = UUID(int=0xA1), UUID(int=0x01)
@@ -145,6 +150,7 @@ async def test_an_untracked_order_is_created_as_reconciliation_found_it(
     assert await writer(step) == 0
     row = await db.get(ACCOUNT, UUID(int=7))
     assert row is not None and (row.state, row.exchange_order_id) == ("untracked", "x7")
+    assert row.provenance == "reconciliation"  # E29-T04: how the row came to exist
     events = await db.list_for_order(ACCOUNT, UUID(int=7))
     assert [(e.kind, e.source) for e in events] == [("adopt", "reconcile")]
 
@@ -504,3 +510,163 @@ def test_each_trigger_is_recorded_with_the_kind_and_source_24_names() -> None:
     assert set(table) == set(steps._KINDS) and len(table) == 23
     for trigger, want in table.items():
         assert steps.event_kind(_step("submitted", "submitted", trigger)) == want, trigger
+
+
+# -- E29-T04: the first persist, the create's idempotency and the entry's recorded stops ----------
+
+_FIRST = FirstPersist(
+    anchor=NewAnchor(id=UUID(int=0xF1), created_by=UUID(int=0xB1), operation="placeOrder",
+                     client_ref="9b2f7c1e-4d3a-4f6b-8a0c-5e1d2c3b4a59", request_sha256="ab" * 32,
+                     order_id=ORDER_ID),
+)  # fmt: skip
+
+
+class _Submissions:
+    """A `SubmissionStore` that records each first persist and stores its order on `db`."""
+
+    def __init__(self, db: InMemoryOrderStore) -> None:
+        self.db, self.calls = db, list[tuple[FirstPersist, port.NewOrder, port.NewOrderEvent]]()
+
+    async def create_first(
+        self, first: FirstPersist, order: port.NewOrder, event: port.NewOrderEvent
+    ) -> FirstPersisted:
+        self.calls.append((first, order, event))
+        row = await self.db.create(order, event)
+        return FirstPersisted(order=row, anchor_id=first.anchor.id, group=None, recorded_stops=())
+
+
+async def test_a_registered_first_persist_writes_the_validated_row_through_its_store(
+    db: InMemoryOrderStore,
+) -> None:
+    store = _Submissions(db)
+    executions = ExecutionRepository(InMemoryExecutionStore(db))
+    writer = OrderStepWriter(
+        OrderRepository(db), executions, clock=lambda: T0, submissions=SubmissionRepository(store)
+    )
+    writer.expect(_order(), first=_FIRST)
+    assert await writer(_step(None, "validated", "VALIDATE")) == 0
+    [(first, stored, event)] = store.calls
+    assert first is _FIRST and (stored.state, stored.lifecycle_state) == (
+        "pending_submit",
+        "validated",
+    )
+    assert (stored.provenance, event.kind, event.source) == ("placed", "local_create", "local")
+    assert await db.get(ACCOUNT, ORDER_ID) is not None
+
+
+@pytest.mark.parametrize("to", ["validated", "untracked"])
+async def test_a_first_persist_needs_its_store_and_a_validated_row(
+    writer: OrderStepWriter, db: InMemoryOrderStore, to: str
+) -> None:
+    """Without a store (or for an `untracked` row) nothing is written: the persist is refused."""
+    writer.expect(_order(), first=_FIRST)
+    with pytest.raises(ValueError, match="through its store"):
+        await writer(_step(None, to, "VALIDATE" if to == "validated" else "DISCOVERED"))
+    assert await db.get(ACCOUNT, ORDER_ID) is None
+
+
+@pytest.mark.parametrize(
+    ("frm", "to", "state"),
+    [("validated", "submitting", "in_flight"), ("submitting", "submitted", "acked"),
+     ("submitting", "rejected", "failed"), ("submitting", "held", "failed"),
+     ("submitting", "unknown", None), ("unknown", "unknown", None),
+     ("unknown", "partially_filled", "acked"), ("unknown", "filled", "acked"),
+     ("unknown", "cancelled", "acked"), ("unknown", "rejected", "failed"),
+     ("submitted", "partially_filled", None), ("validated", "killed", None)],
+)  # fmt: skip
+def test_a_step_says_what_became_of_the_create(frm: Any, to: Any, state: str | None) -> None:
+    """24 Sec.8.4: in flight from the send, acked or failed by its answer, unchanged otherwise."""
+    assert steps.idempotency_of(frm, to) == state
+
+
+class _Moves(OrderRepository):
+    """Records each step's transition, a fill's included, as the write-ahead store gets it."""
+
+    moves: list[port.OrderTransition]
+
+    async def transition(self, step: port.OrderTransition) -> port.CommittedStep:
+        self.moves.append(step)
+        return await super().transition(step)
+
+
+async def test_each_step_counts_answers_and_settles_as_e29_t04_says(db: InMemoryOrderStore) -> None:
+    orders = _Moves(db)
+    orders.moves = []
+    fills = InMemoryExecutionStore(db)
+
+    async def commit_fill(fill: OrderFill) -> port.CommittedStep | None:
+        orders.moves.append(fill.step)
+        return await fills.commit_fill(fill)
+
+    executions = ExecutionRepository(fills)
+    executions.commit_fill = commit_fill  # type: ignore[method-assign]  # records the fill's step
+    writer = OrderStepWriter(orders, executions, clock=lambda: T0)
+    writer.expect(_order())
+    await _submitted(writer)
+    await writer(_step("submitted", "partially_filled", "EXEC", EXECUTION, **FILLED))
+    await writer(_step("partially_filled", "cancel_pending", "CANCEL", {}, **FILLED))
+    cancelled = {"ok": True, "status": "cancelled"}
+    await writer(_step("cancel_pending", "cancelled", "done.invoke.cancel", cancelled, **FILLED))
+    got = [(m.idempotency_state, m.bump_submit_attempts, m.entry_stops) for m in orders.moves]
+    assert got == [
+        ("in_flight", True, None),  # the send
+        ("acked", False, "answered"),  # the ack answers the entry's stop request
+        (None, False, None),  # a fill of an accepted entry settles nothing more
+        (None, False, None),
+        (None, False, "answered"),  # an end with a fill: the stop is its position's
+    ]
+    row = await db.get(ACCOUNT, ORDER_ID)
+    assert row is not None and (row.submit_attempts, row.idempotency_state) == (1, "acked")
+
+
+@pytest.mark.parametrize("reduce_only", [False, True])
+async def test_an_entry_refused_unfilled_voids_its_stops_and_a_reduce_only_order_has_none(
+    db: InMemoryOrderStore, reduce_only: bool
+) -> None:
+    orders = _Moves(db)
+    orders.moves = []
+    writer = OrderStepWriter(
+        orders, ExecutionRepository(InMemoryExecutionStore(db)), clock=lambda: T0
+    )
+    writer.expect(_order(reduce_only=reduce_only))
+    ctx = {"reduce_only": reduce_only}
+    await writer(_step(None, "validated", "VALIDATE", **ctx))
+    await writer(_step("validated", "submitting", "SEND", **ctx))
+    said = {"ok": False, "error_code": "RATE_LIMITED"}
+    code = {"reject_code": "RATE_LIMITED"}
+    await writer(_step("submitting", "rejected", "done.invoke.place", said, **ctx, **code))
+    assert [m.entry_stops for m in orders.moves] == [None, None if reduce_only else "void"]
+
+
+_LIFECYCLE = Legality.of(Registry().get("order"))
+_FILLS = frozenset({"partially_filled", "filled"})
+
+
+@settings(max_examples=400, deadline=None)
+@given(picks=st.lists(st.integers(min_value=0, max_value=1_000), min_size=1, max_size=30))
+@example(picks=[0])  # validated -> killed: never sent
+def test_no_entry_stop_stays_in_flight_once_its_order_ends(picks: list[int]) -> None:
+    """R10 over B1's lifecycle edges from `validated`, each step settled as the store's
+    `settle_entry_stops_statement` does: once the order is final, no row is pending and
+    unanswered; the rows of an order that filled stay its stop, and a row is voided only when its
+    order never fills after it."""
+    rows = [{"status": "pending", "answered": False} for _ in ("stop_loss", "take_profit")]
+    state, filled, voided = "validated", Decimal(0), False
+    for pick in picks:
+        targets = sorted(t for s, t in _LIFECYCLE.edges if s == state)
+        if state in _LIFECYCLE.finals or not targets:
+            break
+        target = targets[pick % len(targets)]
+        if target in _FILLS:
+            assert not voided, "a stop was voided for an order that then filled"
+            filled += 1
+        settle = steps.entry_stop_settle(cast(Any, state), cast(Any, target), filled)
+        for row in (r for r in rows if r["status"] == "pending"):
+            if settle == "answered":
+                row["answered"] = True
+            elif settle == "void":
+                row["status"], voided = "void", True
+        state = target
+    if state in _LIFECYCLE.finals:
+        assert not [r for r in rows if r["status"] == "pending" and not r["answered"]]
+        assert {r["status"] for r in rows} == {"pending" if filled else "void"}

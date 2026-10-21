@@ -226,6 +226,28 @@ _UNSTORABLE: dict[str, dict[str, Any]] = {
 
 
 class WriteAheadContract:
+    async def test_the_send_counts_an_attempt_and_the_answer_settles_idempotency(
+        self, h: Harness
+    ) -> None:
+        """24 Sec.8.4 (E29-T04): the send's step marks the create in flight and counts it, and
+        the step that answers it marks it `acked` or `failed`; later steps keep that."""
+        acked = await b1_order(h, rejected=False)
+        failed = await b1_order(h, rejected=True)
+        assert (acked.submit_attempts, acked.idempotency_state) == (1, "acked")
+        assert (failed.submit_attempts, failed.idempotency_state) == (1, "failed")
+
+    async def test_an_eleventh_attempt_is_refused_with_nothing_written(self, h: Harness) -> None:
+        """`ord_attempts`: at most 10 sends of one order, counted from the stored row."""
+        row = await h.order("pending_submit")
+        for _ in range(10):
+            sent = step(row, "submitted", bump_submit_attempts=True)
+            row = (await h.orders.transition(sent)).order
+        assert row.submit_attempts == 10
+        with pytest.raises(port.OrderConstraintError) as err:
+            await h.orders.transition(step(row, "submitted", bump_submit_attempts=True))
+        assert err.value.constraint == "ord_attempts"
+        assert await h.stored(row) == (row, list(range(11)))
+
     async def test_a_step_commits_its_state_with_its_event(self, h: Harness) -> None:
         """S8: the state and its event (both states, the source, the exchange's message redacted,
         OM-R02) commit together, before the step returns."""

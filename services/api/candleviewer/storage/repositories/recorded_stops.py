@@ -20,7 +20,7 @@ numeric(38,18)), and no error names a value: the prices and sizes are class P1 (
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -29,6 +29,7 @@ from uuid import UUID
 
 from candleviewer.storage.repositories.orders import (
     OrderSide,
+    OrderState,
     OrderStoreError,
     TpslMode,
     check_fields,
@@ -36,9 +37,9 @@ from candleviewer.storage.repositories.orders import (
 )
 
 __all__ = [
-    "MAX_MARKER_CHARS", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE", "NewRecordedStop",
-    "RecordedStopRow", "RecordedStopStore", "StaleRecordedStop", "StopKind", "StopOutcome",
-    "StopSource", "StopStatus",
+    "MAX_MARKER_CHARS", "ORPHANING_STATES", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE",
+    "NewRecordedStop", "RecordedStopRow", "RecordedStopStore", "StaleRecordedStop", "StopKind",
+    "StopOutcome", "StopSource", "StopStatus", "SweepWriteAhead", "SweptStop",
 ]  # fmt: skip
 
 StopKind = Literal["stop_loss", "take_profit"]
@@ -55,6 +56,12 @@ UX_RS_IN_FLIGHT: Final = "ux_rs_in_flight"
 UX_RS_IN_FORCE: Final = "ux_rs_in_force"
 #: `rs_marker`: the position's instance marker, 1 to 64 characters (`[O-4]`, E29-K01).
 MAX_MARKER_CHARS: Final = 64
+#: The order states in which an entry's pending stop rows are orphans once its order holds no
+#: fill (`void_orphans`): never sent (`pending_submit`, which no live request owns after a
+#: restart), or ended unfilled, so its attached stop never reached a position.
+ORPHANING_STATES: Final[frozenset[OrderState]] = frozenset(
+    {"pending_submit", "rejected", "held", "killed", "cancelled", "expired"}
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -139,6 +146,23 @@ class RecordedStopRow:
     position_marker: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class SweptStop:
+    """A row `void_orphans` voided, by its ids and kind only: its audit record (`sl.modified`, or
+    `tp.modified` for a take-profit side, reason `orphan_swept`) names nothing else."""
+
+    id: UUID
+    exchange_account_id: UUID
+    order_id: UUID
+    kind: StopKind
+
+
+#: Awaited once in the sweep's transaction, before its commit, with the rows it voided: the
+#: caller's write-ahead audit (C-2.9). A hook that raises, or outlasts the store's audit bound
+#: (`WriteAheadTimeout`), leaves every row as it was.
+SweepWriteAhead = Callable[[tuple[SweptStop, ...]], Awaitable[None]]
+
+
 class StaleRecordedStop(OrderStoreError):
     """A settle met a row that is not in flight any more (another writer answered it first) or not
     in the account: nothing was written. Names no value."""
@@ -169,4 +193,14 @@ class RecordedStopStore(Protocol):
 
     async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:
         """An entry's attach rows, oldest first; empty outside the account."""
+        ...
+
+    async def void_orphans(
+        self, account_id: UUID | None, *, at: datetime, write_ahead: SweepWriteAhead
+    ) -> tuple[SweptStop, ...]:
+        """The startup sweep (R10): every pending entry-attach row, of `account_id` or of every
+        account, whose order holds no fill and is in `ORPHANING_STATES`, or is not an order of the
+        row's account, becomes `void` (`closed_at` = `at`), the hook awaited before the commit.
+        Only at startup, before the order machines hydrate and order entry opens: a
+        `pending_submit` order is an orphan only while no request can still send it."""
         ...

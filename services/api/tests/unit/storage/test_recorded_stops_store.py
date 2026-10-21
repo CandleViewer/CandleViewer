@@ -5,6 +5,7 @@ and the 0043 migration suite (CI only)."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -19,11 +20,14 @@ from sqlalchemy.engine import Dialect, make_url
 from sqlalchemy.sql.elements import TextClause
 
 from candleviewer.db import models
+from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
 from candleviewer.storage.repositories import recorded_stops_sqlalchemy as mod
 from candleviewer.storage.repositories.recorded_stops import (
+    ORPHANING_STATES,
     NewRecordedStop,
     RecordedStopRow,
     StaleRecordedStop,
+    SweptStop,
 )
 
 _ASYNCPG: Dialect = make_url("postgresql+asyncpg://").get_dialect()()
@@ -98,6 +102,7 @@ def _built() -> dict[str, Any]:
         "lock_stops_statement": mod.lock_stops_statement(_ACCOUNT, [_SL, _TP]),
         "settle_statement": mod.settle_statement(_ACCOUNT, [_SL, _TP], "answered", _T),
         "for_order_statement": mod.for_order_statement(_ACCOUNT, _ORDER),
+        "void_orphans_statement": mod.void_orphans_statement(_ACCOUNT, _T),
     }
 
 
@@ -206,3 +211,74 @@ async def test_for_order_reads_the_entry_rows_oldest_first() -> None:
     rows = await _store(rel).for_order(_ACCOUNT, _ORDER)
     assert [row.kind for row in rows] == ["stop_loss", "take_profit"] and rel.commits == 0
     assert _sql(rel.statements[0]).endswith("ORDER BY recorded_stops.created_at, recorded_stops.id")
+
+
+# -- R10: the startup sweep ----------------------------------------------------------------------
+
+
+def test_the_sweep_voids_the_pending_entry_rows_no_order_of_their_account_owns() -> None:
+    sql = _sql(mod.void_orphans_statement(_ACCOUNT, _T))
+    assert sql.startswith("UPDATE recorded_stops SET status=$1::VARCHAR, closed_at=$2::")
+    where = sql.split(" WHERE ", 1)[1]
+    assert "recorded_stops.source = $" in where and "recorded_stops.status = $" in where
+    assert "NOT (EXISTS (SELECT " in where
+    owner = where.split("EXISTS (SELECT ", 1)[1]
+    assert "orders.id = recorded_stops.order_id" in owner
+    assert "orders.exchange_account_id = recorded_stops.exchange_account_id" in owner
+    states = ", ".join(f"'{state}'" for state in sorted(ORPHANING_STATES))
+    assert f"NOT (orders.state IN ({states}) AND orders.cum_exec_qty = $" in owner
+    assert "answered_at" not in where  # an answered row of an entry that never filled goes too
+    assert sql.endswith(
+        "RETURNING recorded_stops.id, recorded_stops.exchange_account_id, "
+        "recorded_stops.order_id, recorded_stops.kind"
+    )
+
+
+def test_the_startup_sweep_over_every_account_names_none() -> None:
+    every = _sql(mod.void_orphans_statement(None, _T))
+    assert "recorded_stops.exchange_account_id = $" not in every
+    assert "recorded_stops.exchange_account_id = $" in _sql(
+        mod.void_orphans_statement(_ACCOUNT, _T)
+    )
+
+
+def test_an_order_that_filled_or_lives_never_orphans_its_stops() -> None:
+    """A filled entry's stop is its position's; a live order still answers its own."""
+    assert {"filled", "partially_filled", "submitted", "accepted", "unknown"}.isdisjoint(
+        ORPHANING_STATES
+    )
+
+
+_SWEPT = [{"id": str(_SL), "exchange_account_id": str(_ACCOUNT), "order_id": str(_ORDER),
+           "kind": "stop_loss"}]  # fmt: skip
+
+
+async def test_the_sweep_audits_what_it_voided_before_its_commit() -> None:
+    seen: list[tuple[tuple[SweptStop, ...], int]] = []
+    rel = _Rel(_SWEPT)
+
+    async def audit(swept: tuple[SweptStop, ...]) -> None:
+        seen.append((swept, rel.commits))
+
+    got = await _store(rel).void_orphans(None, at=_T, write_ahead=audit)
+    assert got == (SweptStop(_SL, _ACCOUNT, _ORDER, "stop_loss"),)
+    assert seen == [(got, 0)] and rel.commits == 1
+
+
+async def test_a_sweep_that_voids_nothing_audits_nothing() -> None:
+    async def audit(swept: tuple[SweptStop, ...]) -> None:
+        raise AssertionError("nothing to audit")
+
+    assert await _store(_Rel([])).void_orphans(_ACCOUNT, at=_T, write_ahead=audit) == ()
+
+
+async def test_an_audit_past_its_bound_leaves_every_row_as_it_was() -> None:
+    rel = _Rel(_SWEPT)
+
+    async def hangs(swept: tuple[SweptStop, ...]) -> None:
+        await asyncio.Event().wait()
+
+    store = mod.SqlAlchemyRecordedStopStore(cast(Any, rel), audit_timeout_s=0.01)
+    with pytest.raises(WriteAheadTimeout) as exc:
+        await store.void_orphans(None, at=_T, write_ahead=hangs)
+    assert not isinstance(exc.value, StorageTierUnavailable) and rel.commits == 0

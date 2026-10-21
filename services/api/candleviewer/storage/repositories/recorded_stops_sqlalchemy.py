@@ -4,7 +4,8 @@ SQLAlchemy Core over `db.models.recorded_stops` (revision `0043_order_submission
 21-database-schema.md Sec.3.3.11): every value is a bound parameter, and reads select the
 allow-list `STOP_COLUMNS`, every column in table order. Every statement filters on
 `recorded_stops.exchange_account_id` (C-12.4) but the one in `UNSCOPED`, the insert, which writes
-the account each row names (a unit test pins the set, as `orders_sqlalchemy.UNSCOPED` is pinned).
+the account each row names (a unit test pins the set, as `orders_sqlalchemy.UNSCOPED` is pinned),
+and the startup sweep when it is asked to cover every account.
 
 `insert_stops_statement` writes one request's rows in one statement; the first persist of an entry
 (`submissions_sqlalchemy.py`) runs it in its own transaction, with the order. `settle` locks the
@@ -12,6 +13,11 @@ request's rows `FOR UPDATE` in id order, so two writers of one request never dea
 the compare-and-set: each row must still be in flight (`pending`, `answered_at` NULL), or nothing
 is written (`StaleRecordedStop`). An answer sets `answered_at`; a refusal or a read that does not
 show the stop makes the row `void` and stamps `closed_at` (`rs_times`).
+
+`void_orphans_statement` is R10's startup sweep (`RecordedStopStore.void_orphans`): one UPDATE that
+voids the pending entry-attach rows no order of their account still owns (an order never sent, or
+ended with nothing filled), returning ids and kinds for the caller's write-ahead audit, which is
+awaited, bounded, before the commit.
 
 The store is a `CappedStore`: each unit of work caps its statements at `statement_timeout`, and
 a failure leaves as `OrderConstraintError(name)` (`ux_rs_in_flight` among them),
@@ -28,20 +34,33 @@ from uuid import UUID
 
 import sqlalchemy as sa
 
-from candleviewer.db.models import recorded_stops
+from candleviewer.db.models import orders, recorded_stops
 from candleviewer.storage.repositories.orders import require_aware, typed_fields
-from candleviewer.storage.repositories.orders_sqlalchemy import CappedStore
+from candleviewer.storage.repositories.orders_sqlalchemy import (
+    OMS_STATEMENT_TIMEOUT_MS,
+    CappedStore,
+)
 from candleviewer.storage.repositories.recorded_stops import (
+    ORPHANING_STATES,
     NewRecordedStop,
     RecordedStopRow,
     StaleRecordedStop,
     StopOutcome,
+    SweepWriteAhead,
+    SweptStop,
+)
+from candleviewer.storage.repositories.relational_sqlalchemy import (
+    SqlAlchemyRelationalRepository,
+)
+from candleviewer.storage.repositories.user_roles_sqlalchemy import (
+    WRITE_AHEAD_TIMEOUT_S,
+    bounded_write_ahead,
 )
 
 __all__ = [
     "STOP_COLUMNS", "STOP_FIELDS", "UNSCOPED", "SqlAlchemyRecordedStopStore",
     "for_order_statement", "in_given_order", "insert_stops_statement", "lock_stops_statement",
-    "settle_statement", "stop_row",
+    "settle_statement", "stop_row", "void_orphans_statement",
 ]  # fmt: skip
 
 _S = recorded_stops.c
@@ -95,6 +114,27 @@ def for_order_statement(account_id: UUID, order_id: UUID) -> sa.Select[Any]:
     return stmt.order_by(_S.created_at, _S.id)
 
 
+def void_orphans_statement(account_id: UUID | None, at: datetime) -> sa.Update:
+    """Pending entry-attach rows that no order of their account owns any more (module docstring):
+    the account's, or with `account_id` None every account's, the sweep at startup."""
+    o, rs = orders.c, recorded_stops.c
+    orphaned: sa.BindParameter[Any] = sa.bindparam(
+        "orphaning", sorted(ORPHANING_STATES), expanding=True, literal_execute=True
+    )
+    owner = sa.select(sa.literal(1)).where(
+        o.id == rs.order_id,
+        o.exchange_account_id == rs.exchange_account_id,
+        sa.not_(sa.and_(o.state.in_(orphaned), o.cum_exec_qty == 0)),
+    )
+    stmt = sa.update(recorded_stops).where(
+        rs.source == "entry_attach", rs.status == "pending", ~sa.exists(owner)
+    )
+    if account_id is not None:
+        stmt = stmt.where(rs.exchange_account_id == account_id)
+    stmt = stmt.values(status="void", closed_at=at)
+    return stmt.returning(rs.id, rs.exchange_account_id, rs.order_id, rs.kind)
+
+
 def stop_row(m: Mapping[Any, Any]) -> RecordedStopRow:
     values: dict[str, Any] = {name: m[name] for name in STOP_FIELDS}
     for name in _UUIDS:
@@ -112,6 +152,16 @@ def in_given_order(
 
 class SqlAlchemyRecordedStopStore(CappedStore):
     """`RecordedStopStore` over one relational repository (asyncpg)."""
+
+    def __init__(
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        *,
+        statement_timeout_ms: int = OMS_STATEMENT_TIMEOUT_MS,
+        audit_timeout_s: float = WRITE_AHEAD_TIMEOUT_S,
+    ) -> None:
+        super().__init__(relational, statement_timeout_ms=statement_timeout_ms)
+        self._audit_timeout_s = audit_timeout_s
 
     async def insert(self, stops: Sequence[NewRecordedStop]) -> tuple[RecordedStopRow, ...]:
         stmt = insert_stops_statement(stops)
@@ -145,3 +195,23 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(for_order_statement(account_id, order_id))
             return tuple(stop_row(m) for m in result.mappings())
+
+    async def void_orphans(
+        self, account_id: UUID | None, *, at: datetime, write_ahead: SweepWriteAhead
+    ) -> tuple[SweptStop, ...]:
+        require_aware("at", at)
+        async with self._unit_of_work() as uow:
+            result = await uow.session.execute(void_orphans_statement(account_id, at))
+            swept = tuple(
+                SweptStop(
+                    id=UUID(str(m["id"])),
+                    exchange_account_id=UUID(str(m["exchange_account_id"])),
+                    order_id=UUID(str(m["order_id"])),
+                    kind=m["kind"],
+                )
+                for m in result.mappings()
+            )
+            if swept:
+                await bounded_write_ahead(write_ahead(swept), self._audit_timeout_s)
+            await uow.commit()
+        return swept

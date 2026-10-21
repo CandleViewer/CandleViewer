@@ -177,8 +177,8 @@ class TestInMemoryStore(WriteAheadContract):
 #: column's `Literal`, or a column only the store writes (`oe_seq`).
 _LEFT_TO_TYPES: Final = {
     "orders": {
-        "ord_attempts", "ord_idem", "ord_posidx", "ord_provenance", "ord_side", "ord_tif",
-        "ord_tpslmode", "ord_trigby", "ord_trigdir", "ord_type",
+        "ord_idem", "ord_posidx", "ord_provenance", "ord_side", "ord_tif", "ord_tpslmode",
+        "ord_trigby", "ord_trigdir", "ord_type",
     },
     "executions": {"ex_posidx", "ex_side", "ex_type"},
     "order_events": {"oe_seq", "oe_source"},

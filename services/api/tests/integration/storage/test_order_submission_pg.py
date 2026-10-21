@@ -41,8 +41,14 @@ from candleviewer.storage.repositories.orders import (
     NewOrder,
     NewOrderEvent,
     OrderConstraintError,
+    OrderTransition,
 )
-from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, StaleRecordedStop
+from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
+from candleviewer.storage.repositories.recorded_stops import (
+    NewRecordedStop,
+    StaleRecordedStop,
+    SweptStop,
+)
 from candleviewer.storage.repositories.recorded_stops_sqlalchemy import (
     SqlAlchemyRecordedStopStore,
 )
@@ -395,3 +401,106 @@ async def test_a_stop_request_is_settled_once_and_only_in_its_account(
     assert (voided.status, voided.answered_at, voided.closed_at) == ("void", None, _T0)
     assert [row.id for row in await stops.for_order(account, order.id)] == [record]
     assert await stops.for_order(uuid.uuid4(), order.id) == ()
+
+
+# -- E29-T04 commit 4: the order step's settle and the startup sweep -------------------------------
+
+
+def _stops_of(dsn: str, first: FirstPersist) -> list[tuple[str, bool, bool]]:
+    """(status, answered, closed) of the persist's recorded stops."""
+    rows = _sql(
+        dsn,
+        "SELECT status, answered_at IS NOT NULL, closed_at IS NOT NULL FROM recorded_stops "
+        "WHERE id = ANY(%s) ORDER BY id",
+        [stop.id for stop in first.recorded_stops],
+    )
+    return [(str(status), bool(answered), bool(closed)) for status, answered, closed in rows]
+
+
+def _move(order: NewOrder, frm: Any, to: Any, chart: Any, **over: Any) -> OrderTransition:
+    said = {"retCode": 0} if to != "rejected" else {"retCode": 10006}
+    event = NewOrderEvent(
+        kind=over.pop("kind", "ack"), source="rest", event_ts=_T0, payload=said,
+        ret_code=over.get("reject_code"),
+    )  # fmt: skip
+    return OrderTransition(
+        account_id=order.exchange_account_id, order_id=order.id, from_state=frm, to_state=to,
+        event=event, lifecycle_state=chart, **over,
+    )  # fmt: skip
+
+
+async def test_the_order_step_settles_its_entry_stops_in_its_own_transaction(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    """R10: the ack answers the entry's stop request; a refused entry voids it. The send's step
+    counts its attempt and marks the create in flight."""
+    user, store = _user(pg_dsn), SqlAlchemyOrderStore(rel)
+    answered, refused = _entry(user, *_account(pg_dsn)), _entry(user, *_account(pg_dsn))
+    for first, order in (answered, refused):
+        await SqlAlchemySubmissionStore(rel).create_first(first, order, _EVENT)
+        send = _move(order, "pending_submit", "submitted", "submitting", kind="submit_attempt",
+                     bump_submit_attempts=True, idempotency_state="in_flight")  # fmt: skip
+        sent = (await store.transition(send)).order
+        assert (sent.submit_attempts, sent.idempotency_state) == (1, "in_flight")
+    order = answered[1]
+    ack = _move(order, "submitted", "accepted", "submitted", idempotency_state="acked",
+                entry_stops="answered")  # fmt: skip
+    assert (await store.transition(ack)).order.idempotency_state == "acked"
+    assert _stops_of(pg_dsn, answered[0]) == [("pending", True, False)]
+    order = refused[1]
+    nack = _move(order, "submitted", "rejected", "rejected", kind="reject",
+                 reject_code="10006", idempotency_state="failed", entry_stops="void")  # fmt: skip
+    assert (await store.transition(nack)).order.idempotency_state == "failed"
+    assert _stops_of(pg_dsn, refused[0]) == [("void", False, True)]
+
+
+def _end(dsn: str, order: NewOrder, state: str, filled: str = "0") -> None:
+    """The row as a writer that bypassed the step's settle would leave it (superuser)."""
+    _sql(
+        dsn,
+        "UPDATE orders SET state = %s::order_state, lifecycle_state = %s::order_lifecycle_state, "
+        "cum_exec_qty = %s::numeric WHERE id = %s",
+        state, state, filled, order.id,
+    )  # fmt: skip
+
+
+async def test_the_startup_sweep_voids_only_the_stops_no_live_order_owns(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    """Never sent and ended-unfilled entries are orphans; a live or a filled one is not. Each
+    voided row is audited before the commit, and a refused audit voids nothing."""
+    user = _user(pg_dsn)
+    cases = {name: _entry(user, *_account(pg_dsn)) for name in ("never_sent", "cancelled_unfilled",
+             "live", "filled")}  # fmt: skip
+    for first, order in cases.values():
+        await SqlAlchemySubmissionStore(rel).create_first(first, order, _EVENT)
+    _end(pg_dsn, cases["cancelled_unfilled"][1], "cancelled")
+    _sql(pg_dsn, "UPDATE orders SET state = 'accepted', lifecycle_state = 'submitted' "
+         "WHERE id = %s", cases["live"][1].id)  # fmt: skip
+    _end(pg_dsn, cases["filled"][1], "filled", "0.010")
+    stops = SqlAlchemyRecordedStopStore(rel)
+
+    async def refuse(swept: tuple[SweptStop, ...]) -> None:
+        raise RuntimeError("the audit trail refused the record")
+
+    with pytest.raises(RuntimeError):
+        await stops.void_orphans(None, at=_T0, write_ahead=refuse)
+    assert all(
+        _stops_of(pg_dsn, first) == [("pending", False, False)] for first, _ in cases.values()
+    )
+    audited: list[SweptStop] = []
+
+    async def audit(swept: tuple[SweptStop, ...]) -> None:
+        audited.extend(swept)
+
+    swept = await stops.void_orphans(None, at=_T0, write_ahead=audit)
+    ids = {stop.id for stop in swept}
+    orphans = {
+        s.id for n in ("never_sent", "cancelled_unfilled") for s in cases[n][0].recorded_stops
+    }
+    owned = {s.id for n in ("live", "filled") for s in cases[n][0].recorded_stops}
+    assert orphans <= ids and not owned & ids and list(swept) == audited
+    for name in ("never_sent", "cancelled_unfilled"):
+        assert _stops_of(pg_dsn, cases[name][0]) == [("void", False, True)]
+    for name in ("live", "filled"):
+        assert _stops_of(pg_dsn, cases[name][0]) == [("pending", False, False)]

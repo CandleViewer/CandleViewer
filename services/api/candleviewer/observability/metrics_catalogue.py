@@ -2539,10 +2539,22 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "gauge",
         "orders",
         (),
-        "Orders on the exchange unknown to the OMS.",
+        "Live orders whose B1 machine is in unknown: the outcome of their last create or step is "
+        "not known, so nothing is sent for them until reconciliation decides (E29-T04).",
         "> 0 for 60s (page)",
         _P,
-        "E45",
+        "E29",
+    ),
+    _s(
+        "oms_native_stop_backstop_total",
+        "counter",
+        "orders",
+        (),
+        "Entries that reached the order facade without a native stop, refused at VALIDATE by "
+        "the start() backstop (C-2.6): a caller defect, logged at ERROR (E29-T04).",
+        "> 0 (page)",
+        _P,
+        "E29",
     ),
     _s(
         "oms_interim_ports",

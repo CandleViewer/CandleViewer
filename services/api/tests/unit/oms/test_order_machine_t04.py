@@ -1,0 +1,190 @@
+"""The OMS facade's E29-T04 edits (#913, slice 2a), on the real B1 binding over the in-memory
+stores: `start(first=...)` reaches the step writer's first persist, a refused step's `__cause__`
+is a typed OMS error and never a foreign one, the native-stop backstop is logged and counted, the
+`oms_unknown_orders` gauge follows the live machines, and `abandon` ends a never-sent order."""
+
+from __future__ import annotations
+
+from collections import OrderedDict
+from collections.abc import AsyncIterator, Mapping
+from typing import Any
+from uuid import UUID
+
+import pytest
+from structlog.testing import capture_logs
+
+from candleviewer.oms.errors import (
+    AnchorTaken,
+    IllegalTransition,
+    OrderNotLoaded,
+    OrderStepRefused,
+)
+from candleviewer.oms.fakes import InMemoryOrderStore
+from candleviewer.oms.repository import SubmissionRepository
+from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.storage.repositories.idempotency_anchors import NewAnchor
+from candleviewer.storage.repositories.orders import NewOrder, NewOrderEvent
+from candleviewer.storage.repositories.submissions import (
+    AnchorTakenError,
+    FirstPersist,
+    FirstPersisted,
+)
+from tests.unit.oms.order_rig import ACCOUNT, GATES, OTHER, T0, Rig, build_rig, order_of
+
+_FIRST = FirstPersist(
+    anchor=NewAnchor(id=UUID(int=0xF1), created_by=UUID(int=0xB1), operation="placeOrder",
+                     client_ref="9b2f7c1e-4d3a-4f6b-8a0c-5e1d2c3b4a59", request_sha256="ab" * 32,
+                     order_id=UUID(int=1)),
+)  # fmt: skip
+
+
+class _Submissions:
+    """A `SubmissionStore` that stores the order on the rig's store, or raises `error`."""
+
+    def __init__(self, store: InMemoryOrderStore, error: Exception | None = None) -> None:
+        self.store, self.error = store, error
+        self.firsts: list[FirstPersist] = []
+
+    async def create_first(
+        self, first: FirstPersist, order: NewOrder, event: NewOrderEvent
+    ) -> FirstPersisted:
+        self.firsts.append(first)
+        if self.error is not None:
+            raise self.error
+        row = await self.store.create(order, event)
+        return FirstPersisted(order=row, anchor_id=first.anchor.id, group=None, recorded_stops=())
+
+
+@pytest.fixture
+async def rig(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Rig]:
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    out = build_rig()
+    yield out
+    await out.facade.stop()
+
+
+async def _rigged(monkeypatch: pytest.MonkeyPatch, error: Exception | None = None) -> tuple[
+    Rig, _Submissions
+]:  # fmt: skip
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    store = InMemoryOrderStore(clock=lambda: T0)
+    submissions = _Submissions(store, error)
+    return build_rig(store, submissions=SubmissionRepository(submissions)), submissions
+
+
+async def test_start_hands_its_first_persist_to_the_step_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_first` registers the order itself, so a caller's own `expect` would be overwritten:
+    `start(first=...)` is the one way in (R7)."""
+    rig, submissions = await _rigged(monkeypatch)
+    try:
+        state = await rig.facade.start(order_of(), environment="demo", gates=GATES, first=_FIRST)
+        assert state == "validated" and submissions.firsts == [_FIRST]
+        assert await rig.orders.get(ACCOUNT, UUID(int=1)) is not None
+    finally:
+        await rig.facade.stop()
+
+
+async def test_a_refused_step_names_a_typed_oms_error_as_its_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pipeline reads `AnchorTaken` (and `DuplicateOrderLinkId`) off `__cause__`; they name
+    no value (C-12.6)."""
+    rig, _ = await _rigged(monkeypatch, AnchorTakenError("ux_ia_principal_ref"))
+    try:
+        with pytest.raises(OrderStepRefused) as err:
+            await rig.facade.start(order_of(), environment="demo", gates=GATES, first=_FIRST)
+        assert isinstance(err.value.__cause__, AnchorTaken)
+        assert err.value.__cause__.constraint == "ux_ia_principal_ref"
+        assert await rig.orders.get(ACCOUNT, UUID(int=1)) is None
+    finally:
+        await rig.facade.stop()
+
+
+async def test_a_foreign_error_is_never_chained(rig: Rig) -> None:
+    """A driver's or a store's own error could carry values: the refusal names its class only."""
+    rig.store.fail_next(RuntimeError("Postgres is down"))
+    with pytest.raises(OrderStepRefused) as err:
+        await rig.start()
+    assert err.value.__cause__ is None and err.value.failure == "RuntimeError"
+
+
+async def test_the_native_stop_backstop_is_logged_and_counted_once(rig: Rig) -> None:
+    """C-2.6: an entry with no stop is refused at `VALIDATE` whatever its gates said; the caller
+    that sent it has a defect, so it pages. A reduce-only order is no entry."""
+    with capture_logs() as logs:
+        state = await rig.start(order_of(stop_loss=None))
+    assert state == "rejected" and rig.count("oms_native_stop_backstop_total") == 1
+    [line] = [line for line in logs if line["event"] == "oms_native_stop_backstop"]
+    link = order_of().order_link_id
+    assert line == {"event": "oms_native_stop_backstop", "log_level": "error",
+                    "order_link_id": link, "symbol": "BTCUSDT"}  # fmt: skip
+    await rig.start(order_of(2, stop_loss=None, reduce_only=True, intent="flatten"))
+    assert rig.count("oms_native_stop_backstop_total") == 1
+
+
+async def _unknown(rig: Rig) -> NewOrder:
+    async def ambiguous(_command: b01.Command) -> Mapping[str, Any]:
+        raise TimeoutError
+
+    rig.commands.on_place = ambiguous
+    order = order_of()
+    await rig.start(order)
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("unknown", "not_required")
+    return order
+
+
+async def test_the_unknown_gauge_follows_the_live_machines(rig: Rig) -> None:
+    """R13: an order in `unknown` counts while its machine lives, and stops counting when it
+    leaves the state or its machine is evicted."""
+    order = await _unknown(rig)
+    assert rig.count("oms_unknown_orders") == 1
+    found = {"exchange_order_id": "x1"}
+    await rig.facade.command(ACCOUNT, order.id, "RECON_FOUND_LIVE", found, actor="system")
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+    assert rig.count("oms_unknown_orders") == 0
+    await _unknown_again(rig)
+    assert rig.count("oms_unknown_orders") == 1
+    await rig.facade.stop()
+    assert rig.count("oms_unknown_orders") == 0
+
+
+async def _unknown_again(rig: Rig) -> None:
+    order = order_of(2)
+    await rig.start(order)
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("unknown", "not_required")
+
+
+async def test_abandon_kills_a_never_sent_order_and_sends_nothing(rig: Rig) -> None:
+    """S2-Q5: B1's KILL from `validated` cancels nothing, as nothing was sent, and is audited."""
+    order = order_of()
+    await rig.start(order)
+    assert await rig.facade.abandon(ACCOUNT, order.id, "submitting row refused") == "killed"
+    assert rig.commands.sent == [] and rig.facade.state(order.id) is None
+    assert "kill_no_cancel_unsubmitted" in rig.audit.reasons("orders.cancel")
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and (row.state, row.submit_attempts) == ("killed", 0)
+
+
+async def test_abandon_refuses_an_order_that_left_validated(rig: Rig) -> None:
+    order = order_of()
+    await rig.start(order)
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    await rig.quiet()
+    sent = list(rig.commands.sent)
+    with pytest.raises(IllegalTransition):
+        await rig.facade.abandon(ACCOUNT, order.id, "late")
+    assert rig.commands.sent == sent and rig.facade.state(order.id) == ("submitted", "not_required")
+
+
+async def test_abandon_never_reaches_another_accounts_order(rig: Rig) -> None:
+    order = order_of()
+    await rig.start(order)
+    with pytest.raises(OrderNotLoaded):
+        await rig.facade.abandon(OTHER, order.id, "not mine")
+    assert rig.facade.state(order.id) == ("validated", "not_required")

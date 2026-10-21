@@ -68,6 +68,8 @@ from candleviewer.storage.repositories.recorded_stops import (
     RecordedStopRow,
     RecordedStopStore,
     StopOutcome,
+    SweepWriteAhead,
+    SweptStop,
 )
 from candleviewer.storage.repositories.submissions import (
     AnchorTakenError,
@@ -406,6 +408,31 @@ class RecordedStopRepository:
 
     async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:
         return await self._store.for_order(account_id, order_id)
+
+    async def void_orphans(
+        self, account_id: UUID | None, *, at: datetime, write_ahead: SweepWriteAhead
+    ) -> tuple[SweptStop, ...]:
+        """R10's startup sweep (21 Sec.3.3.11): an entry's pending stop rows that no order of
+        their account owns any more (one never sent, or ended with nothing filled) become `void`,
+        each audited write-ahead by `write_ahead` (`sl.modified`, or `tp.modified`, reason
+        `orphan_swept`, ids only). Slice 3's startup wiring (`oms_wiring.py`) calls it once per
+        process, with `account_id` None, before the order machines hydrate and before order entry
+        opens: a never-sent order is an orphan only while no request can still send it.
+        `AuditNotDurable` when the audit outlasts its bound, with nothing voided."""
+        try:
+            with self._timer.measure("recorded_stops"):
+                swept = await self._store.void_orphans(account_id, at=at, write_ahead=write_ahead)
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the sweep's write-ahead audit did not land in time") from None
+        for stop in swept:
+            _log().warning(
+                "oms_stop_orphan_swept",
+                record_id=str(stop.id),
+                account_id=str(stop.exchange_account_id),
+                order_id=str(stop.order_id),
+                kind=stop.kind,
+            )
+        return swept
 
 
 def _log_stops(name: str, rows: Sequence[RecordedStopRow], **extra: str) -> None:

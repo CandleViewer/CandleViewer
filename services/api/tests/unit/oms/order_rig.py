@@ -24,6 +24,7 @@ from candleviewer.oms.order_machine import (
     OrderNotice,
 )
 from candleviewer.oms.order_steps import OrderStepWriter
+from candleviewer.oms.repository import SubmissionRepository
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
 from candleviewer.statechart.registry import Registry
@@ -187,12 +188,19 @@ class Rig:
         return build_rig(self.store)
 
 
-def build_rig(store: InMemoryOrderStore | None = None, registry: Registry | None = None) -> Rig:
-    """A facade over *store* (a new one by default), the place and attach answered at once."""
+def build_rig(
+    store: InMemoryOrderStore | None = None,
+    registry: Registry | None = None,
+    submissions: SubmissionRepository | None = None,
+) -> Rig:
+    """A facade over *store* (a new one by default), the place and attach answered at once; the
+    step writer takes E29-T04's first persists through *submissions* when given."""
     store = store or InMemoryOrderStore(clock=lambda: T0)
     orders, events = OrderRepository(store), OrderEventRepository(store)
     fills = InMemoryExecutionStore(store)
-    writer = OrderStepWriter(orders, ExecutionRepository(fills), clock=lambda: T0)
+    writer = OrderStepWriter(
+        orders, ExecutionRepository(fills), clock=lambda: T0, submissions=submissions
+    )
     commands = Commands(on_place=placed, on_attach=read_back)
     audit, publish, notices, pager = Audit(), Publish(), Notices(), Pager()
     sink = InMemoryMachineEventSink()

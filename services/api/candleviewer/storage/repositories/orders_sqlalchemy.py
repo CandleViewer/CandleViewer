@@ -2,9 +2,10 @@
 
 SQLAlchemy Core over `db.models.orders` and `db.models.order_events`: every value is a bound
 parameter and nothing is built from strings. Reads select the explicit allow-lists `ORDER_COLUMNS`
-and `EVENT_COLUMNS`, never `*`. Every statement filters on `orders.exchange_account_id` (C-12.4)
-except the two in `UNSCOPED`: the insert, which writes the account it is given, and the 24 Sec.8.3
-rule 5 yes/no over the global `ux_orders_link`. A unit test pins that set.
+and `EVENT_COLUMNS`, never `*`. Every statement filters on `orders.exchange_account_id` (C-12.4),
+or for the entry-stop settle on `recorded_stops.exchange_account_id`, except the two in
+`UNSCOPED`: the insert, which writes the account it is given, and the 24 Sec.8.3 rule 5 yes/no
+over the global `ux_orders_link`. A unit test pins that set.
 
 `create` writes the order and its first event (`seq` 0) in one statement, a data-modifying CTE:
 one round trip in one transaction (#845 performance notes). `append` first locks the order row
@@ -16,7 +17,10 @@ anything is bound, `payload` passes `redact_exchange_payload()` and `ret_msg` an
 
 A write-ahead step (E29-T03: `transition`; `commit_fill` in `executions_sqlalchemy.py`) locks its
 order row in the account, runs the compare-and-set UPDATE, appends the event with both states and
-commits; a missed compare-and-set raises `StaleOrderState` and rolls back (24 Sec.8.2 S7, S8).
+commits; a missed compare-and-set raises `StaleOrderState` and rolls back (24 Sec.8.2 S7, S8). The
+send's step counts `submit_attempts` up in SQL, and a step that names `entry_stops` settles its
+entry's recorded stops (`settle_entry_stops_statement`, scoped by `recorded_stops`' account and the
+order) before that commit, in the same transaction (E29-T04, 21 Sec.3.3.11).
 Before any statement, `transition` refuses a fill's event and `filled`, `append` a fill's event
 (`require_no_fill`): a fill comes with its execution.
 
@@ -43,13 +47,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, fields
+from datetime import datetime
 from typing import Any, Final
 from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 
-from candleviewer.db.models import order_events, orders
+from candleviewer.db.models import order_events, orders, recorded_stops
 from candleviewer.storage.errors import (
     StorageQueryFailed,
     StorageTierUnavailable,
@@ -66,6 +71,7 @@ from candleviewer.storage.repositories.orders import (
     MAX_EVENT_PAGE,
     OPEN_STATES,
     CommittedStep,
+    EntryStopSettle,
     NewOrder,
     NewOrderEvent,
     OrderConstraintError,
@@ -179,9 +185,13 @@ def append_statement(account_id: UUID, order_id: UUID, event: NewOrderEvent) -> 
 
 
 def transition_statement(step: OrderTransition) -> sa.Update:
-    """The compare-and-set: the row moves only while it holds `step.from_state`."""
+    """The compare-and-set: the row moves only while it holds `step.from_state`. The send's step
+    counts an attempt in SQL, from the stored count."""
     held = (_O.exchange_account_id == step.account_id, _O.id == step.order_id)
-    stmt = sa.update(orders).where(*held, _O.state == step.from_state).values(step.changes())
+    values: dict[str, Any] = step.changes()
+    if step.bump_submit_attempts:
+        values["submit_attempts"] = _O.submit_attempts + 1
+    stmt = sa.update(orders).where(*held, _O.state == step.from_state).values(values)
     return stmt.returning(*ORDER_COLUMNS)
 
 
@@ -190,6 +200,23 @@ def fill_statement(fill: OrderFill) -> sa.Update:
     plus this fill's `exec_qty` is the new one: totals computed from an older row write nothing."""
     held = _O.cum_exec_qty + fill.execution.exec_qty == fill.totals.cum_exec_qty
     return transition_statement(fill.step).values(asdict(fill.totals)).where(held)
+
+
+def settle_entry_stops_statement(
+    account_id: UUID, order_id: UUID, settle: EntryStopSettle, at: datetime
+) -> sa.Update:
+    """The entry's attach rows still pending (21 Sec.3.3.11): `answered` stamps the ones in flight,
+    `void` ends every one; a row in force or ended is left as it is."""
+    rs = recorded_stops.c
+    stmt = sa.update(recorded_stops).where(
+        rs.exchange_account_id == account_id,
+        rs.order_id == order_id,
+        rs.source == "entry_attach",
+        rs.status == "pending",
+    )
+    if settle == "answered":
+        return stmt.where(rs.answered_at.is_(None)).values(answered_at=at)
+    return stmt.values(status="void", closed_at=at)
 
 
 def list_events_statement(
@@ -228,6 +255,11 @@ async def commit_step(
     stmt = append_statement(step.account_id, step.order_id, step.event)
     states = {"from_state": step.from_state, "to_state": step.to_state}
     event = (await uow.session.execute(stmt.values(states))).mappings().one()
+    if step.entry_stops is not None:
+        settle = settle_entry_stops_statement(
+            step.account_id, step.order_id, step.entry_stops, step.event.event_ts
+        )
+        await uow.session.execute(settle)
     await uow.commit()
     return CommittedStep(_order(row), _event(event, row["order_link_id"]))
 
@@ -376,5 +408,5 @@ __all__ = [
     "SqlAlchemyOrderStore", "append_statement", "commit_step", "create_statement",
     "fill_statement", "get_by_link_statement", "get_statement", "link_taken_statement",
     "list_events_statement", "list_open_statement", "lock_order", "lock_statement",
-    "transition_statement",
+    "settle_entry_stops_statement", "transition_statement",
 ]  # fmt: skip

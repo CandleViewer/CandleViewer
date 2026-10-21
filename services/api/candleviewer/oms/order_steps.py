@@ -6,7 +6,11 @@
 * the first step creates the row (`OrderRepository.create`), at `validated` (24 Sec.8.4), at
   `untracked`, or at `submitted` for a recorded stop's TP/SL order (Sec.8.3 rule 7), from the
   order the OMS registered with `expect` before it sent `VALIDATE`, `DISCOVERED` or
-  `MATERIALISED`; the registered order must be the one the machine stamped;
+  `MATERIALISED`; the registered order must be the one the machine stamped. An `untracked` row's
+  provenance is `reconciliation` and a `submitted` one's `recorded_stop`. E29-T04's pipeline
+  registers a `validated` order with its `FirstPersist`, and the row is then written with its
+  group, recorded stops and anchor in one transaction (`SubmissionRepository.create_first`,
+  21 Sec.3.3.10);
 * a step that applies a fill (an `EXEC`, or a reconciliation finding that carries the execution)
   commits the execution, the totals the machine computed, the state and the fill event together
   (`ExecutionRepository.commit_fill`). An `exec_id` stored already refuses it, as the machine has
@@ -25,6 +29,13 @@ the exchange accepts them), the event's kind and source (an exchange source carr
 OM-R02) and the result's code on the event. A step into `rejected` stores its reject code as the
 event's `ret_code` and as `reject_code` alike (`OrderTransition`), so a fold of the events rebuilds
 the reject columns (`oms.recovery`).
+
+E29-T04 (24 Sec.8.4): the send's step (`validated` -> `submitting`) sets `idempotency_state` to
+`in_flight` and counts `submit_attempts` up; a step out of `submitting` or `unknown` that answers
+the create sets `acked` or `failed`, and `unknown` keeps `in_flight` (`idempotency_of`). Each step
+also settles the entry's recorded stops in its own transaction (`entry_stop_settle`, 21
+Sec.3.3.11): `answered` once the order is accepted or fills, `void` once it ends unfilled, so no
+stop request of an entry stays in flight past its order's end. A reduce-only order records none.
 """
 
 from __future__ import annotations
@@ -50,19 +61,26 @@ from candleviewer.storage.repositories.orders import (
     AMENDABLE,
     FILL_KINDS,
     ORDER_STATE_OF,
+    EntryStopSettle,
+    IdempotencyState,
     LifecycleState,
     NewOrder,
     NewOrderEvent,
     OrderEventKind,
     OrderEventSource,
+    OrderProvenance,
     OrderTransition,
     StaleOrderState,
 )
+from candleviewer.storage.repositories.submissions import FirstPersist
 
 from .errors import HolderNotRead
-from .repository import ExecutionRepository, OrderRepository
+from .repository import ExecutionRepository, OrderRepository, SubmissionRepository
 
-__all__ = ["HOLDER_READ_TIMEOUT", "MAX_EXPECTED", "OrderStepWriter", "event_kind"]
+__all__ = [
+    "HOLDER_READ_TIMEOUT", "MAX_EXPECTED", "OrderStepWriter", "entry_stop_settle", "event_kind",
+    "idempotency_of",
+]  # fmt: skip
 
 #: Orders registered for their first step and not yet written, the oldest dropped first (C-2.18).
 MAX_EXPECTED: Final = 1024
@@ -111,6 +129,45 @@ _KINDS: Final[dict[str, tuple[OrderEventKind, OrderEventSource]]] = {
     "done.invoke.cancel": ("cancel_ack", "rest"),
     "done.invoke.amend": ("amend_ack", "rest"),
 }
+#: 24 Sec.8.4: the states the create is in flight in, and what a step out of them says of it.
+_SENT: Final = frozenset({"submitting", "unknown"})
+_ACKED: Final = frozenset(
+    {"submitted", "triggered", "partially_filled", "filled", "cancelled", "expired"}
+)
+_FAILED: Final = frozenset({"rejected", "held"})
+#: 21 Sec.3.3.11: an entry is accepted (or fills) in these, and ends in those.
+_ANSWERS_STOPS: Final = frozenset({"submitted", "triggered", "partially_filled", "filled"})
+_ENDS_ENTRY: Final = frozenset({"rejected", "held", "killed", "cancelled", "expired"})
+#: A first row's provenance where its state fixes it (21 Sec.3.3.4): reconciliation records an
+#: `untracked` row, and E29-T05 materialises a recorded stop's TP/SL order at `submitted`.
+_FIRST_PROVENANCE: Final[Mapping[LifecycleState, OrderProvenance]] = {
+    "untracked": "reconciliation",
+    "submitted": "recorded_stop",
+}
+
+
+def idempotency_of(from_state: LifecycleState, to_state: LifecycleState) -> IdempotencyState | None:
+    """What the step says of the order's create: sent (`in_flight`), answered (`acked`,
+    `failed`), or nothing new (`None`)."""
+    if (from_state, to_state) == ("validated", "submitting"):
+        return "in_flight"
+    if from_state in _SENT and to_state in _ACKED:
+        return "acked"
+    if from_state in _SENT and to_state in _FAILED:
+        return "failed"
+    return None
+
+
+def entry_stop_settle(
+    from_state: LifecycleState, to_state: LifecycleState, filled_qty: Decimal
+) -> EntryStopSettle | None:
+    """How the step settles the entry's recorded stops: an end voids them unless the order filled,
+    whose stop is its position's; the first step into acceptance answers them."""
+    if to_state in _ENDS_ENTRY:
+        return "answered" if filled_qty > 0 else "void"
+    if to_state in _ANSWERS_STOPS and from_state not in _ANSWERS_STOPS:
+        return "answered"
+    return None
 
 
 class OrderStepWriter:
@@ -122,17 +179,20 @@ class OrderStepWriter:
         executions: ExecutionRepository,
         *,
         clock: Callable[[], datetime],
+        submissions: SubmissionRepository | None = None,
     ) -> None:
         self._orders = orders
         self._executions = executions
         self._clock = clock
-        self._expected: OrderedDict[UUID, NewOrder] = OrderedDict()
+        self._submissions = submissions
+        self._expected: OrderedDict[UUID, tuple[NewOrder, FirstPersist | None]] = OrderedDict()
 
-    def expect(self, order: NewOrder) -> None:
+    def expect(self, order: NewOrder, *, first: FirstPersist | None = None) -> None:
         """Register the order the OMS built (E29-T04's pipeline; E29-T06 for one it discovered;
         E29-T05 or E29-T06 for a recorded stop's TP/SL order) before it sends `VALIDATE`,
-        `DISCOVERED` or `MATERIALISED`: that step creates the row from it."""
-        self._expected[order.id] = order
+        `DISCOVERED` or `MATERIALISED`: that step creates the row from it, with `first`'s rows
+        when given (a `validated` row only)."""
+        self._expected[order.id] = (order, first)
         self._expected.move_to_end(order.id)
         while len(self._expected) > MAX_EXPECTED:
             self._expected.popitem(last=False)
@@ -143,13 +203,18 @@ class OrderStepWriter:
         to_state = _chart_state(step.to_state)
         if step.from_state is None:
             return await self._create(step, account, order_id, to_state)
+        from_state = _chart_state(step.from_state)
         kind, source = event_kind(step)
         rejected = to_state == "rejected"
         reject = _text(step.context.get("reject_code")) if rejected else None
+        settle = None
+        if step.context.get("reduce_only") is not True:  # a reduce-only order records no stop
+            filled = _decimal(step.context.get("filled_qty", "0"))
+            settle = entry_stop_settle(from_state, to_state, filled)
         move = OrderTransition(
             account_id=account,
             order_id=order_id,
-            from_state=ORDER_STATE_OF[_chart_state(step.from_state)],
+            from_state=ORDER_STATE_OF[from_state],
             to_state=ORDER_STATE_OF[to_state],
             event=NewOrderEvent(
                 kind=kind,
@@ -162,6 +227,9 @@ class OrderStepWriter:
             lifecycle_state=to_state,
             exchange_order_id=_text(step.context.get("exchange_order_id")),
             terms=_amended(step),
+            idempotency_state=idempotency_of(from_state, to_state),
+            bump_submit_attempts=(from_state, to_state) == ("validated", "submitting"),
+            entry_stops=settle,
         )
         if kind not in FILL_KINDS:
             return (await self._orders.transition(move)).event.seq
@@ -191,16 +259,28 @@ class OrderStepWriter:
     async def _create(
         self, step: Step, account: UUID, order_id: UUID, to_state: LifecycleState
     ) -> int:
-        order = self._expected.get(order_id)
-        if order is None or FIRST_ROWS.get(to_state) != step.event:
+        expected = self._expected.get(order_id)
+        if expected is None or FIRST_ROWS.get(to_state) != step.event:
             raise ValueError("no registered order for this order's first row")
+        order, first = expected
         _agrees(order, step, account)
         kind, source = event_kind(step)
-        first = NewOrderEvent(
+        event = NewOrderEvent(
             kind=kind, source=source, event_ts=self._clock(), payload=step.payload
         )
-        stored = replace(order, state=ORDER_STATE_OF[to_state], lifecycle_state=to_state)
-        await self._orders.create(stored, first)
+        provenance = _FIRST_PROVENANCE.get(to_state, order.provenance)
+        stored = replace(
+            order,
+            state=ORDER_STATE_OF[to_state],
+            lifecycle_state=to_state,
+            provenance=provenance,
+        )
+        if first is None:
+            await self._orders.create(stored, event)
+        elif to_state != "validated" or self._submissions is None:
+            raise ValueError("a first persist writes a validated row, through its store")
+        else:
+            await self._submissions.create_first(first, stored, event)
         del self._expected[order_id]
         return 0  # an order's first event (`OrderStore.create`)
 
