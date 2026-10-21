@@ -55,25 +55,56 @@ the owner run; **open** = needs sessions or an owner decision; **deviation** = r
 | DoD: 3 sessions, one keyboard-only with a screen reader                                    | protocol; OQ-8                                                       | deviation                             |
 | DoD: findings presented, Architect review of engine implications, CDO sign-off             | §13 list; the owner's `approved` comment on #204 replaces both roles | open                                  |
 | DoD: recordings redacted, retention noted                                                  | protocol §1 (rules; nothing recorded yet)                            | done (rules)                          |
-| Adaptation: owner walkthrough checklist on the issue                                       | drafted with this PR, to be posted on #204; protocol last paragraph  | open (not yet posted)                 |
-| Penpot boards and PNGs (`docs/design/README.md` "Approval rule")                           | "Research boards" below                                              | open (boards pass follows the text)   |
+| Adaptation: owner walkthrough checklist on the issue                                       | posted on #204 (issuecomment-6321126982); protocol last paragraph    | done (posted)                         |
+| Penpot boards and PNGs (`docs/design/README.md` "Approval rule")                           | "Research boards" below                                              | done (seven boards)                   |
 
 ## Research boards (Penpot)
 
-Page **`E14-D01 Drawing UX research`** in the project's Penpot file; its link, page id and board ids are recorded here when the
-boards are built. Greyscale research boards (neutral semantic tokens only, no hue): a low-fidelity research artefact, not visual
-design. One frame per board, named `E14-D01 / 0n <slug>`, exported with `docs/design/_tools/penpot_export.py` to
-`docs/design/E14/img/` and embedded here and in the PR body once it exists. Boards 03 to 06 double as probe stimulus.
+Page **`E14-D01 Drawing UX research`** · page id `64a77b07-6b78-80c8-8008-d3583b8dc090` in the project's self-hosted Penpot file
+(referenced by page name and id only). The seven boards were drawn on 2026-10-21 from the board script `r1` (local tooling,
+posted on PR #4047 as `<details>` comments with its sha256; not part of this diff): one board per call, relaid out (measure, then
+restack), exported with `docs/design/_tools/penpot_export.py` to `docs/design/E14/img/`, and laid out as one row on the page; the
+dedupe pass keeps seven boards with no copies. Greyscale research boards (neutral semantic tokens only, no hue): a low-fidelity
+research artefact, not visual design. Boards 03 to 06 double as probe stimulus and carry the corner tag "Probe stimulus — not a
+design".
 
-| #   | Board and planned PNG                                                       | Illustrates                                                         |
-| --- | --------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 01  | `E14-D01 / 01 journey` · `E14-D01-01-journey.png`                           | pick → place → adjust → recover → curate → plan, P1 / P2 / SR lanes |
-| 02  | `E14-D01 / 02 hotkeys-and-gestures` · `E14-D01-02-hotkeys-and-gestures.png` | §2 tables, collisions flagged                                       |
-| 03  | `E14-D01 / 03 magnet-and-handles` · `E14-D01-03-magnet-and-handles.png`     | §3 Q1 and Q3: modes, pixel numbers, occlusion arithmetic            |
-| 04  | `E14-D01 / 04 object-management` · `E14-D01-04-object-management.png`       | §4, §5, §3 Q4: recovery paths, bulk actions, the sync marker        |
-| 05  | `E14-D01 / 05 position-tool` · `E14-D01-05-position-tool.png`               | §3 Q5: two drag orders step by step, read-out hierarchy, states     |
-| 06  | `E14-D01 / 06 keyboard-sr-flow` · `E14-D01-06-keyboard-sr-flow.png`         | §6: the CMP-191 walk with focus and announcement per step           |
-| 07  | `E14-D01 / 07 findings-decisions` · `E14-D01-07-findings-decisions.png`     | §1, §9, §10: friction list, decisions, amendments                   |
+| #   | Board · board id                                                             | Illustrates                                                         |
+| --- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 01  | `E14-D01 / 01 journey` · `64a77b07-6b78-80c8-8008-d3583c731bb9`              | pick → place → adjust → recover → curate → plan, P1 / P2 / SR lanes |
+| 02  | `E14-D01 / 02 hotkeys-and-gestures` · `64a77b07-6b78-80c8-8008-d358d3674f4d` | §2 tables, collisions flagged                                       |
+| 03  | `E14-D01 / 03 magnet-and-handles` · `64a77b07-6b78-80c8-8008-d3593590722e`   | §3 Q1 and Q3: modes, pixel numbers, occlusion arithmetic            |
+| 04  | `E14-D01 / 04 object-management` · `64a77b07-6b78-80c8-8008-d359906a41f1`    | §4, §5, §3 Q4: recovery paths, bulk actions, the sync marker        |
+| 05  | `E14-D01 / 05 position-tool` · `64a77b07-6b78-80c8-8008-d359e568deae`        | §3 Q5: two drag orders step by step, read-out hierarchy, states     |
+| 06  | `E14-D01 / 06 keyboard-sr-flow` · `64a77b07-6b78-80c8-8008-d35a3f293e44`     | §6: the CMP-191 walk with focus and announcement per step           |
+| 07  | `E14-D01 / 07 findings-decisions` · `64a77b07-6b78-80c8-8008-d35a9d50417b`   | §1, §9, §10: friction list, decisions, amendments                   |
+
+**01 journey** — ![E14-D01 01 journey](../E14/img/E14-D01-01-journey.png)
+
+**02 hotkeys-and-gestures** — ![E14-D01 02 hotkeys-and-gestures](../E14/img/E14-D01-02-hotkeys-and-gestures.png)
+
+**03 magnet-and-handles** — ![E14-D01 03 magnet-and-handles](../E14/img/E14-D01-03-magnet-and-handles.png)
+
+**04 object-management** — ![E14-D01 04 object-management](../E14/img/E14-D01-04-object-management.png)
+
+**05 position-tool** — ![E14-D01 05 position-tool](../E14/img/E14-D01-05-position-tool.png)
+
+**06 keyboard-sr-flow** — ![E14-D01 06 keyboard-sr-flow](../E14/img/E14-D01-06-keyboard-sr-flow.png)
+
+**07 findings-decisions** — ![E14-D01 07 findings-decisions](../E14/img/E14-D01-07-findings-decisions.png)
+
+**Contrast of the token pairs the boards use** (`docs/design/_tools/contrast_check.py` `contrast_ratio`, dark theme, values
+resolved from `packages/ui/tokens` on `main`):
+
+| Foreground       | on `surface.canvas` | on `surface.raised` | on `surface.sunken` | Use on the boards                               |
+| ---------------- | ------------------- | ------------------- | ------------------- | ----------------------------------------------- |
+| `text.primary`   | 15.20               | 14.35               | 17.42               | titles, cell text                               |
+| `text.secondary` | 9.33                | 8.81                | 10.69               | labels, subtitles                               |
+| `text.tertiary`  | 5.96                | 5.62                | 6.83                | footnotes only (the Source line and the footer) |
+| `border.default` | 1.50                | 1.41                | 1.71                | card outlines (structure only)                  |
+| `border.strong`  | 1.91                | 1.80                | 2.19                | chip and key outlines, always with text inside  |
+
+Every text pair passes 4.5:1. The two border pairs are under 3:1, so no meaning on the boards rests on an outline alone: every
+outlined chip, key or tag carries its meaning in text.
 
 ## Method note (Agent-delivery adaptation, owner decision 2026-09-25)
 
