@@ -119,9 +119,16 @@ def _load_base_lockfile(base_ref: str, lockfile_path: Path) -> dict[str, dict[st
     return revisions
 
 
+#: What an id that is not a string constant (or None) reads as: never a lockfile key, so the
+#: comparison fails, as it must; Alembic reads the runtime value, which this tool cannot (#4032).
+NON_CONSTANT = "<not a string constant>"
+
+
 def _extract_revision_ids(path: Path) -> tuple[str | None, str | None]:
     """Return (revision, down_revision) string literals from an Alembic
-    version file's module-level assignments, without importing it."""
+    version file's module-level assignments, without importing it. The
+    last assignment wins, as at import; one whose value is not a string
+    constant or None reads as `NON_CONSTANT`."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     revision: str | None = None
     down_revision: str | None = None
@@ -139,7 +146,7 @@ def _extract_revision_ids(path: Path) -> tuple[str | None, str | None]:
             elif isinstance(value, ast.Constant) and value.value is None:
                 literal = None
             else:
-                continue
+                literal = NON_CONSTANT
             if target.id == "revision":
                 revision = literal
             elif target.id == "down_revision":
@@ -209,7 +216,7 @@ def verify(
             )
 
         actual_revision, actual_down = _extract_revision_ids(file_path)
-        if actual_revision is not None and actual_revision != rev_id:
+        if actual_revision != rev_id:
             violations.append(
                 Violation(
                     code="CI-MIG-LOCK-004",

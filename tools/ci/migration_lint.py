@@ -13,7 +13,9 @@ the security-sensitive-table carve-out from `02-definition-of-ready-done.md`
 Error codes (ticket "Technical notes / design"):
     CI-MIG-001  multiple Alembic heads
     CI-MIG-002  schema drift between `models.py` and the migration chain
-    CI-MIG-003  destructive operation without a `# cv:contract-phase:` annotation
+    CI-MIG-003  destructive operation without a `# cv:contract-phase:` annotation,
+                or any statement or operation that mutates an append-only audit
+                table or neuters its guards (C-5.7; `check_audit_table_integrity`)
     CI-MIG-004  upgrade-path (previous release) failure
     CI-MIG-005  `IF NOT EXISTS` used in a migration file
     CI-MIG-006  security-sensitive table touched (a `WARN` for the reviewer; never
@@ -31,6 +33,7 @@ from __future__ import annotations
 import argparse
 import ast
 import codecs
+import functools
 import hashlib
 import importlib.util
 import io
@@ -287,11 +290,22 @@ def _nested_sql(statement: str) -> list[str]:
     return nested
 
 
+def _unicode_escaped(statement: str) -> bool:
+    """Whether `statement` spells a name or a string with Unicode escapes (`U&"..."`,
+    `U&'...'`), which the rule cannot read (#4032)."""
+    return any(
+        token["word"] in {"U", "u"}
+        and statement[token.end() : token.end() + 2] in {'&"', "&'"}
+        for token in _SQL_TOKEN_RE.finditer(statement)
+    )
+
+
 # A statement mutates when its first word does, or when a `GRANT` hands out a
 # mutating privilege; fail-closed for the forms that hide the verb further in: a
 # data-modifying `WITH`, an `EXPLAIN ANALYZE`, which runs its statement, a prepared
-# statement, a `COPY` of a `RETURNING` query, a rule's action, and an upsert's
-# `DO UPDATE`.
+# statement, a `COPY` of a `RETURNING` query, and an upsert's `DO UPDATE`. A trigger
+# or a rule mutates the table it is on: it can drop or rewrite each row written
+# after it, and `TRIGGER` is the privilege to add one.
 _MUTATING = frozenset({"DELETE", "UPDATE", "TRUNCATE", "DROP", "ALTER", "MERGE"})
 _CARRIERS = frozenset({"WITH", "EXPLAIN", "PREPARE", "COPY"})
 # A plpgsql or SQL-standard body, or a rule, starts a statement after these words
@@ -301,14 +315,15 @@ _CARRIERS = frozenset({"WITH", "EXPLAIN", "PREPARE", "COPY"})
 _BLOCK_OPENERS = frozenset(
     {"BEGIN", "THEN", "ELSE", "LOOP", "IN", "QUERY", "ATOMIC", "ALSO", "INSTEAD"}
 )
-_MUTATING_GRANTS = frozenset({"UPDATE", "DELETE", "TRUNCATE", "ALL"})
+_MUTATING_GRANTS = frozenset({"UPDATE", "DELETE", "TRUNCATE", "ALL", "TRIGGER"})
 # A placeholder in dynamic SQL: its target is an argument, read where it is passed.
 _PLACEHOLDER_RE = re.compile(r"%[IsL]|\$\d+")
 #: The revision that creates the audit tables and their guard functions (21 §3.10).
-#: It is exempt for exactly two statement kinds: its downgrade's `DROP TABLE` and
-#: `DROP TRIGGER` on the audit tables, behind its refusal to drop a table that holds a
-#: row, and the definition and drop of the guard functions. No other revision may do
-#: either. It is merged and pinned by the migrations lockfile (C-5.4).
+#: It is exempt for three statement kinds, wherever they stand in it: `CREATE TRIGGER`
+#: on the audit tables; `DROP TABLE` and `DROP TRIGGER` on them, which its downgrade
+#: runs behind its refusal to drop a table that holds a row; and the guard functions'
+#: DDL. No other revision may do any of them. It is merged and pinned by the
+#: migrations lockfile (C-5.4).
 _AUDIT_OWNER_REVISION = "0003_audit_log"
 #: The functions the audit tables' append-only triggers and hash chain run: replacing,
 #: altering or dropping one neuters them without naming a table. `audit_field` encodes
@@ -316,7 +331,28 @@ _AUDIT_OWNER_REVISION = "0003_audit_log"
 _AUDIT_FUNCTIONS = frozenset(
     {"forbid_mutation", "audit_refuse_truncate", "audit_chain", "audit_field"}
 )
-_FUNCTION_DDL = (["CREATE", "FUNCTION"], ["DROP", "FUNCTION"], ["ALTER", "FUNCTION"])
+#: What `audit_chain` and `audit_field` call by an unqualified name, resolved through
+#: the inserting session's `search_path`: another routine of that name, in a schema
+#: searched first or with a closer signature, forges or breaks the chain.
+_CHAIN_CALLEES = frozenset(
+    {
+        "digest",
+        "encode",
+        "hashtext",
+        "length",
+        "pg_advisory_xact_lock",
+        "repeat",
+        "to_char",
+    }
+)
+_ROUTINE_KINDS = frozenset({"FUNCTION", "PROCEDURE", "ROUTINE", "AGGREGATE"})
+# The name a `CREATE FUNCTION` (or procedure, or aggregate) gives its routine: the
+# last part of a possibly qualified name, before its arguments, in `_code_text`.
+_ROUTINE_NAME_RE = re.compile(
+    r"\b(?:FUNCTION|PROCEDURE|AGGREGATE)\s+"
+    r'(?:(?:"(?:[^"]|"")+"|\w+)\s*\.\s*)*("(?:[^"]|"")+"|\w+)\s*\(',
+    re.IGNORECASE,
+)
 #: The revision that replaces `audit_chain()` (#889 S3, SR-E42-10): its row id drawn
 #: under the chain's lock, and its own `search_path`. It is exempt only while it holds
 #: nothing but a docstring, its imports (`_CHAIN_HARDENING_IMPORTS`), its identifiers
@@ -352,22 +388,27 @@ _ANNOTATION_NODES = (
 )
 
 
+def _creates(words: list[str]) -> str | None:
+    """The kind of object the clause `words` creates (`CREATE [OR REPLACE]
+    [CONSTRAINT] <kind>`: `TRIGGER`, `RULE`, `FUNCTION`, ...), or None."""
+    if words[:1] != ["CREATE"]:
+        return None
+    kind = words[3:] if words[1:3] == ["OR", "REPLACE"] else words[1:]
+    if kind[:1] == ["CONSTRAINT"]:
+        kind = kind[1:]
+    return kind[0] if kind else None
+
+
 def _mutates(words: list[str]) -> bool:
     if not words:
         return False
     first = words[0]
-    if first in _MUTATING:
+    if first in _MUTATING or _creates(words) in {"TRIGGER", "RULE"}:
         return True
     if first == "GRANT":
         privileges = words[1 : words.index("ON")] if "ON" in words else words[1:]
         return bool(_MUTATING_GRANTS & set(privileges))
-    rule = words[:2] == ["CREATE", "RULE"] or words[:4] == [
-        "CREATE",
-        "OR",
-        "REPLACE",
-        "RULE",
-    ]
-    if first in _CARRIERS or rule:
+    if first in _CARRIERS:
         return bool({"DELETE", "UPDATE", "MERGE", "TRUNCATE"} & set(words))
     if first == "INSERT":
         return ("DO", "UPDATE") in itertools.pairwise(words)
@@ -401,33 +442,103 @@ def _head_identifiers(statement: str) -> set[str]:
     return names
 
 
-def _redefined_functions(words: list[str], statement: str) -> set[str]:
-    """The guard functions the clause `words` of `statement` defines, replaces, alters
-    or drops."""
-    if words[:2] in _FUNCTION_DDL or words[:4] == [
-        "CREATE",
-        "OR",
-        "REPLACE",
-        "FUNCTION",
-    ]:
-        return _head_identifiers(statement) & _AUDIT_FUNCTIONS
-    return set()
+def _routine_ddl(words: list[str]) -> str | None:
+    """`CREATE`, `ALTER` or `DROP` when the clause `words` defines, replaces, alters or
+    drops a routine (a function, a procedure or an aggregate), else None."""
+    if _creates(words) in _ROUTINE_KINDS:
+        return "CREATE"
+    if words[:1] in (["ALTER"], ["DROP"]) and words[1:2] and words[1] in _ROUTINE_KINDS:
+        return words[0]
+    return None
+
+
+def _code_text(statement: str) -> str:
+    """`statement` with its comments, `'...'` literals and `$$` bodies blanked: its
+    keywords, names and punctuation."""
+    return _SQL_TOKEN_RE.sub(
+        lambda token: token[0] if token["word"] or token["quoted"] else " ", statement
+    )
+
+
+@functools.lru_cache(maxsize=1)  # each clause of one statement asks again
+def _routine_names(statement: str) -> frozenset[str]:
+    """The names the routines `statement` creates are given (`_ROUTINE_NAME_RE`)."""
+    names: set[str] = set()
+    for match in _ROUTINE_NAME_RE.finditer(_code_text(statement)):
+        name = match[1]
+        names.add(name[1:-1].replace('""', '"') if name[0] == '"' else name.lower())
+    return frozenset(names)
+
+
+def _redefined_functions(words: list[str], names: set[str]) -> set[str]:
+    """The guard functions the clause `words` defines, replaces, alters or drops, of
+    the names its statement uses (`_head_identifiers`)."""
+    return names & _AUDIT_FUNCTIONS if _routine_ddl(words) else set()
+
+
+def _shadowed_callees(words: list[str], statement: str, names: set[str]) -> set[str]:
+    """The chain's callees (`_CHAIN_CALLEES`) the clause `words` of `statement` names a
+    routine it creates (by the routine's own name: a parameter may share a callee's),
+    or alters or drops (by any name it uses: `RENAME TO`, a list of routines)."""
+    verb = _routine_ddl(words)
+    if verb is None:
+        return set()
+    return (
+        set(_routine_names(statement) if verb == "CREATE" else names) & _CHAIN_CALLEES
+    )
+
+
+def _reach(words: list[str], names: set[str]) -> str | None:
+    """What the clause `words` (its statement uses `names`) hands over, drops or
+    redirects that holds the audit tables or what their guards run on, without naming
+    a table, or None: a role's membership (`role`; whoever owns the audit tables can
+    drop their triggers), a schema with everything in it, or its owner (`schema`),
+    every object a role owns (`owned`), the extension `audit_chain` hashes with
+    (`pgcrypto`), or the `search_path` a role or a database resolves the chain's calls
+    through (`search_path`)."""
+    head = words[:2]
+    if (
+        head[:1] == ["GRANT"]
+        and "TO" in words
+        and "ON" not in words[: words.index("TO")]
+    ):
+        return "role"
+    if head == ["ALTER", "SCHEMA"] or (
+        head == ["DROP", "SCHEMA"] and "CASCADE" in words
+    ):
+        return "schema"
+    if head in (["DROP", "OWNED"], ["REASSIGN", "OWNED"]):
+        return "owned"
+    if head in (["DROP", "EXTENSION"], ["ALTER", "EXTENSION"]) and "pgcrypto" in names:
+        return "pgcrypto"
+    settings = (["ALTER", "ROLE"], ["ALTER", "USER"], ["ALTER", "DATABASE"])
+    if head in settings and (
+        "search_path" in names or ("RESET", "ALL") in itertools.pairwise(words)
+    ):
+        return "search_path"
+    return None
 
 
 def _audit_mutations(sql: str, tables: frozenset[str], *, owner: bool) -> set[str]:
     """The audit tables a statement in `sql` mutates (or `*`: every table, by a
-    schema-wide grant; `fn:<name>`: a guard function it redefines or drops). A
+    schema-wide grant; `fn:<name>`: a guard function it redefines or drops;
+    `callee:<name>`: a routine the hash chain calls, redefined, altered or dropped;
+    `reach:<what>`: what `_reach` names; `unicode`: a name or a string spelled with
+    Unicode escapes). A
     statement counts when a clause of it mutates (`_clauses`, `_mutates`: a body or
     a rule starts one mid-statement) and it names an audit table as an identifier
     (`_sql_identifiers`, fail-closed: a subquery's table counts too), or
     when SQL nested in it mutates a placeholder's target and the statement names an
     audit table (`EXECUTE format('DELETE FROM %I', ...)`). Nested SQL is read the
-    same way. In the owner revision, its downgrade's drops of the audit tables and
-    their triggers, and the guard functions' definitions, are not findings."""
+    same way. In the owner revision, its triggers on the audit tables, its drops of the
+    tables and of their triggers, and the guard functions' DDL are not findings."""
     hits: set[str] = set()
     for statement in _sql_split(sql):
         words = _code_words(statement)
+        names = _head_identifiers(statement)
         dynamic = False
+        if _unicode_escaped(statement):
+            hits.add("unicode")
         for nested in _nested_sql(statement):
             found = _audit_mutations(nested, tables, owner=owner)
             hits |= found
@@ -437,12 +548,13 @@ def _audit_mutations(sql: str, tables: frozenset[str], *, owner: bool) -> set[st
                 and _PLACEHOLDER_RE.search(nested)
             ):
                 dynamic = True
-        if not owner:
-            hits |= {
-                f"fn:{name}"
-                for clause in _clauses(words)
-                for name in _redefined_functions(clause, statement)
-            }
+        for clause in _clauses(words):
+            if not owner:
+                hits |= {f"fn:{name}" for name in _redefined_functions(clause, names)}
+            callees = _shadowed_callees(clause, statement, names)
+            hits |= {f"callee:{name}" for name in callees}
+            if (reach := _reach(clause, names)) is not None:
+                hits.add(f"reach:{reach}")
         clauses = [clause for clause in _clauses(words) if _mutates(clause)]
         if any(clause[:1] == ["GRANT"] and _schema_wide(clause) for clause in clauses):
             hits.add("*")
@@ -454,6 +566,7 @@ def _audit_mutations(sql: str, tables: frozenset[str], *, owner: bool) -> set[st
                 if not (
                     clause[:1] == ["DROP"] and clause[1:2] in (["TABLE"], ["TRIGGER"])
                 )
+                and clause[:2] != ["CREATE", "TRIGGER"]
             ]
         if clauses or dynamic:
             hits |= _sql_identifiers(statement) & tables
@@ -786,123 +899,147 @@ def check_audit_table_integrity(
     There is no escape hatch: a genuine `CREATE TABLE`/`CREATE INDEX` on an
     audit table never mutates existing rows, so it is no mutation, but any
     mutation is always forbidden — no comment, marker or annotation of any kind
-    suppresses a finding here. Defining, replacing, altering or dropping one of the
-    guard functions (`_AUDIT_FUNCTIONS`) is a finding too. The one revision that creates
-    the audit tables and those functions, `_AUDIT_OWNER_REVISION` (`0003_audit_log`), is
-    exempt for exactly two statement kinds: its downgrade's `DROP TABLE` and
-    `DROP TRIGGER` on the audit tables, and the definition and drop of the functions.
-    It is the file of that name whose module-level `revision` says so, the file the
-    migrations lockfile pins. Every other statement in it is checked. The revision that
-    replaces `audit_chain()`, `_CHAIN_HARDENING_REVISION`, named as the owner is, is
-    exempt while it holds nothing but the function text and the restore its pins hash
-    (`_chain_hardening_deviations`); otherwise each line that deviates is a finding and
-    the revision is read as any other. A revision is read as the import system reads it,
-    and one that is not UTF-8 source read as Python compiles it (`_reads_as_utf8`) is
-    refused."""
+    suppresses a finding here. A trigger or a rule on an audit table is a mutation of
+    it. Defining, replacing, altering or dropping one of the guard functions
+    (`_AUDIT_FUNCTIONS`), or a routine named as a function the hash chain calls
+    (`_CHAIN_CALLEES`), is a finding too, and so is a statement that reaches the
+    tables or their guards without naming them (`_reach`). The one revision that
+    creates the audit tables and those functions, `_AUDIT_OWNER_REVISION`
+    (`0003_audit_log`), is exempt for three statement kinds, wherever they stand in
+    it: `CREATE TRIGGER` on the audit tables, `DROP TABLE` and `DROP TRIGGER` on
+    them, and the guard functions' DDL. It is the file of that
+    name whose module-level `revision` says so, the file the migrations lockfile
+    pins. Every other statement in it is checked. The revision that replaces
+    `audit_chain()`, `_CHAIN_HARDENING_REVISION`, named as the owner is, is exempt
+    while it holds nothing but the function text and the restore its pins hash
+    (`_chain_hardening_deviations`); otherwise each line that deviates is a finding
+    and the revision is read as any other. A revision is read as the import system
+    reads it, and one the rule cannot read is refused (`_unreadable`): one that is not
+    UTF-8 source read as Python compiles it (`_reads_as_utf8`), does not parse or nests
+    too deeply."""
     findings: list[LintFinding] = []
     for path in paths:
-        if not _reads_as_utf8(path):
-            findings.append(
-                LintFinding(
-                    code="CI-MIG-003",
-                    path=path,
-                    message=(
-                        "the revision does not read as UTF-8 source: refused, the "
-                        "audit-table rule reads revisions as UTF-8 only "
-                        "(C-5.7, ADR-0013 rule 9)"
-                    ),
-                )
-            )
-            continue
-        source = _read_revision(path)
         try:
-            tree: ast.Module | None = ast.parse(source, filename=str(path))
-        except SyntaxError:
-            tree = None
-        # The owner is the file the migrations lockfile pins by name and bytes, and
-        # it says so as Alembic reads it: another revision cannot claim its exemption.
-        owner = (
-            tree is not None
-            and path.stem == _AUDIT_OWNER_REVISION
-            and _revision_id(tree) == _AUDIT_OWNER_REVISION
-        )
-        if (
-            tree is not None
-            and path.stem == _CHAIN_HARDENING_REVISION
-            and _revision_id(tree) == _CHAIN_HARDENING_REVISION
-        ):
-            deviations = _chain_hardening_deviations(tree)
-            if not deviations:
-                continue
-            findings.extend(
-                LintFinding(
-                    code="CI-MIG-003",
-                    path=path,
-                    message=(
-                        f"line {line}: {_CHAIN_HARDENING_REVISION} may hold nothing but "
-                        "its two pinned audit_chain() statements, so it is read as any "
-                        "revision (C-5.7, ADR-0013 rule 9)"
-                    ),
-                )
-                for line in deviations
+            findings.extend(_audit_findings(path, forbidden_tables))
+        except RecursionError:  # refused alone: the other files' findings still print
+            findings.append(_unreadable(path, "nests too deeply to read"))
+    return findings
+
+
+#: What a finding of `_audit_mutations` that names no table targets.
+_REACHES = {
+    "*": "every table of a schema, the append-only ones too",
+    "reach:role": "a role's membership, which hands over its privileges on the "
+    "append-only tables",
+    "reach:schema": "a schema, its owner or its objects, the append-only tables too",
+    "reach:owned": "every object a role owns, the append-only tables too",
+    "reach:pgcrypto": "the extension the audit hash chain hashes with",
+    "reach:search_path": "the search_path a role or a database resolves the audit "
+    "hash chain's calls through",
+    "unicode": "a name or a string spelled with Unicode escapes (U&), which the rule "
+    "cannot read: spell it plainly",
+}
+
+
+def _unreadable(path: Path, why: str) -> LintFinding:
+    """A revision the rule cannot read is refused (#4032): any statement in it could
+    mutate an append-only table, and nothing else reads it in CI before Alembic."""
+    return LintFinding(
+        code="CI-MIG-003",
+        path=path,
+        message=(
+            f"the revision {why}: refused, the audit-table rule cannot read it "
+            "(C-5.7, ADR-0013 rule 9)"
+        ),
+    )
+
+
+def _audit_findings(path: Path, forbidden_tables: frozenset[str]) -> list[LintFinding]:
+    """CI-MIG-003's findings for one revision (`check_audit_table_integrity`)."""
+    if not _reads_as_utf8(path):
+        return [_unreadable(path, "does not read as UTF-8 source")]
+    source = _read_revision(path)
+    try:
+        tree = ast.parse(source, filename=str(path))
+    except SyntaxError:
+        return [_unreadable(path, "is not Python the rule can parse")]
+    # The owner and the chain's hardening revision are the files the migrations
+    # lockfile pins by name and bytes, and each says so as Alembic reads it: another
+    # revision cannot claim their exemptions.
+    revision = _revision_id(tree)
+    owner = path.stem == _AUDIT_OWNER_REVISION and revision == _AUDIT_OWNER_REVISION
+    findings: list[LintFinding] = []
+    if path.stem == _CHAIN_HARDENING_REVISION == revision:
+        deviations = _chain_hardening_deviations(tree)
+        if not deviations:
+            return []
+        findings += [
+            LintFinding(
+                code="CI-MIG-003",
+                path=path,
+                message=(
+                    f"line {line}: {_CHAIN_HARDENING_REVISION} may hold nothing but its "
+                    "two pinned audit_chain() statements, so it is read as any revision "
+                    "(C-5.7, ADR-0013 rule 9)"
+                ),
             )
+            for line in deviations
+        ]
 
-        for lineno, literal, unresolved in _iter_string_literals(path, source):
-            statements = [_normalise_sql(s) for s in _sql_split(literal)]
-            if unresolved and any(_DYNAMIC_MUTATION_RE.search(s) for s in statements):
-                findings.append(
-                    LintFinding(
-                        code="CI-MIG-003",
-                        path=path,
-                        message=(
-                            f"line {lineno}: dynamic table name in an "
-                            "audit-sensitive statement (mutation keyword "
-                            "with an unresolved interpolated target) — "
-                            "forbidden, resolve to a literal table name "
-                            "or refactor (C-5.7, ADR-0013 rule 9)"
-                        ),
-                    )
-                )
-                continue
-            for table in sorted(
-                _audit_mutations(literal, forbidden_tables, owner=owner)
-            ):
-                if table == "*":
-                    target = "every table of a schema, the append-only ones too"
-                elif table.startswith("fn:"):
-                    target = f"the append-only guard function '{table[3:]}'"
-                else:
-                    target = f"append-only table '{table}'"
-                findings.append(
-                    LintFinding(
-                        code="CI-MIG-003",
-                        path=path,
-                        message=(
-                            f"line {lineno}: raw-SQL statement targets {target} — "
-                            "forbidden regardless of annotation (C-5.7, ADR-0013 rule 9)"
-                        ),
-                    )
-                )
-
-        if tree is None:
-            continue
-        reshapes = _op_targets(
-            tree, frozenset({"rename_table", "alter_column"}), forbidden_tables
-        )
-        for line, table in sorted(
-            {**reshapes, **_core_mutations(tree, forbidden_tables)}.items()
-        ):
+    for lineno, literal, unresolved in _iter_string_literals(path, source):
+        statements = [_normalise_sql(s) for s in _sql_split(literal)]
+        if unresolved and any(_DYNAMIC_MUTATION_RE.search(s) for s in statements):
             findings.append(
                 LintFinding(
                     code="CI-MIG-003",
                     path=path,
                     message=(
-                        f"line {line}: operation targets append-only "
-                        f"table '{table}' — forbidden regardless of "
-                        "annotation (C-5.7, ADR-0013 rule 9)"
+                        f"line {lineno}: dynamic table name in an "
+                        "audit-sensitive statement (mutation keyword "
+                        "with an unresolved interpolated target) — "
+                        "forbidden, resolve to a literal table name "
+                        "or refactor (C-5.7, ADR-0013 rule 9)"
                     ),
                 )
             )
+            continue
+        for table in sorted(_audit_mutations(literal, forbidden_tables, owner=owner)):
+            if table in _REACHES:
+                target = _REACHES[table]
+            elif table.startswith("fn:"):
+                target = f"the append-only guard function '{table[3:]}'"
+            elif table.startswith("callee:"):
+                target = f"the function '{table[7:]}' the audit hash chain calls"
+            else:
+                target = f"append-only table '{table}'"
+            findings.append(
+                LintFinding(
+                    code="CI-MIG-003",
+                    path=path,
+                    message=(
+                        f"line {lineno}: raw-SQL statement targets {target} — "
+                        "forbidden regardless of annotation (C-5.7, ADR-0013 rule 9)"
+                    ),
+                )
+            )
+
+    reshapes = _op_targets(
+        tree, frozenset({"rename_table", "alter_column"}), forbidden_tables
+    )
+    for line, table in sorted(
+        {**reshapes, **_core_mutations(tree, forbidden_tables)}.items()
+    ):
+        findings.append(
+            LintFinding(
+                code="CI-MIG-003",
+                path=path,
+                message=(
+                    f"line {line}: operation targets append-only "
+                    f"table '{table}' — forbidden regardless of "
+                    "annotation (C-5.7, ADR-0013 rule 9)"
+                ),
+            )
+        )
     return findings
 
 
@@ -979,8 +1116,10 @@ def check_security_sensitive(
     comment, and a name that only the text of a `'...'` literal mentions are
     prose, not a touch, unless the literal opens with an SQL command: then it
     is read as SQL, so such prose can add a flag, never hide one; `$$` text is
-    always read as code. A revision Python cannot parse has every word read as
-    a name (fail-closed). One finding per table per file, ordered by table."""
+    always read as code. A revision Python cannot parse, or one nested too deeply
+    to read, has every word read as a name (fail-closed). One finding per table
+    per file, ordered by table.
+    """
     tables = sensitive_tables
     if tables is None:
         tables = _read_sensitive_tables(_DEFAULT_SECURITY_SENSITIVE_TABLES_PATH)
@@ -991,13 +1130,17 @@ def check_security_sensitive(
         source = _read_revision(path)
         try:
             ast.parse(source, filename=str(path))
-        except SyntaxError:  # not Python: every word is a name, fail-closed
-            names = {word.lower() for word in _WORD_RE.findall(source)}
-        else:
             names = set()
             literals = _iter_string_literals(path, source, skip_docstrings=True)
             for _, literal, _ in literals:
                 names |= _sql_identifiers(literal)
+        except (
+            SyntaxError,
+            RecursionError,
+        ):  # not Python, or nested too deeply to read:
+            names = {
+                word.lower() for word in _WORD_RE.findall(source)
+            }  # every word, fail-closed
         for table in sorted(names & tables):
             findings.append(
                 LintFinding(
