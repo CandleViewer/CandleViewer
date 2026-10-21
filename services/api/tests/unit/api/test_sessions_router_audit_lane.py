@@ -255,11 +255,12 @@ async def _race(w: _World, accept: int | None) -> Answer:
 
 
 async def _disabled(w: _World, accept: int | None) -> Answer:
-    """A live token of a user disabled since (#2911): nothing is minted, rotated or ended."""
+    """A live token of a user disabled since (#2911): nothing is minted or rotated, and the session
+    is revoked before its outcome row (#3331)."""
     m = await w.mint()
     w.sessions.user_statuses[str(USER)] = UserStatus.DISABLED
     before, w.writer.accept = await w.live(), accept
-    return await w.refresh(m), before, set()
+    return await w.refresh(m), before, before
 
 
 @dataclass(frozen=True)

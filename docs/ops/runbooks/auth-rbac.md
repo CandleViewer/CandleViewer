@@ -614,11 +614,19 @@ it (login refuses `disabled` only):
   session. The refusal is audited as `auth.login_failed` (`denied`, reason `user_disabled`) and
   counted in `auth_login_failures_total` on the method the request named (#3054).
 - `POST /auth/refresh` with a disabled (or deleted) user's refresh token answers `401`
-  `refresh_token_invalid`, before the session is claimed: it is neither rotated nor revoked. The
-  refusal is audited as `auth.session_refreshed` (`denied`, reason `user_disabled`), after the
-  write-ahead record of the attempt. A disable that commits after the claim leaves no live
-  successor either: the mint reads the status under a lock on the user row, and the disable's own
-  lock queues behind it.
+  `refresh_token_invalid`, before the session is claimed: nothing is rotated or minted, and the
+  session is revoked as on a strict-path use (the next two bullets; #3331): reason
+  `user_disabled`, counted, logged, published and recorded. Three records follow, in order: the
+  write-ahead `auth.session_refreshed` of the attempt, the backstop's
+  `auth.disabled_user_session_revoked` and the refusal, `auth.session_refreshed` (`denied`, reason
+  `user_disabled`). While the audit sink refuses the write-ahead record the refresh answers `503`
+  and revokes nothing; the first refresh after it recovers, or any strict-path use, revokes the
+  session. A refresh revokes nothing before its write-ahead record is written (C-2.9), and no
+  refresh issues a token while the sink refuses, so the user gains nothing; the outage shows as
+  `cv_audit_writer_refused_total{domain="auth"}` (alert `AuditSinkRefusing`) and as
+  `auth.session_audit.writer_refused` log lines naming the action. A disable that commits after
+  the claim leaves no live successor either: the mint reads the status under a lock on the user
+  row, and the disable's own lock queues behind it.
 - A session that survives is revoked on its next strict-path use, with reason `user_disabled`: the
   first REST request that authenticates it (every route but `POST /auth/logout`, which accepts it
   so the user can still sign out) or the first socket `auth` that presents its token. The request
@@ -725,31 +733,22 @@ it (login refuses `disabled` only):
   `session_id` of a record with reason `user_disabled` is covered by the disable's own record. A
   session in neither lookup is unaudited.
 
-- A client that only holds a socket meets the backstop only when a REST call or a socket `auth`
-  presents a token that is still valid, or when it calls `GET /auth/session`, which finds the
-  session by its `cv_refresh` cookie once the token has ended and still checks the user's status
-  (#3214: `require_active` with `allow_locked=True`). A client that only refreshes, as the
-  protocol's client flow does, meets none of these. It refreshes over REST at `expires_at` − 60 s
-  (`docs/plan/23-ws-protocol.md` §4.1, §4.3), and
-  `POST /auth/refresh` refuses a disabled user before the claim (above): nothing is revoked or
-  counted and no new token is minted. The socket ends at its token deadline (12 minutes at most),
-  and its old token is then refused as expired before `require_active` runs. So for this client
-  the counter, the `WARNING`, the publish and the `AuthDisabledUserSessionRevoked` ticket stay
-  silent and the row stays un-revoked until its absolute expiry, 12 hours after the login that
-  started the session chain: a quiet counter does not prove that no disabled user's session is
-  live. The only trace that names the cause is the refusal's audit pair, the write-ahead
-  `auth.session_refreshed` record and the denied one with reason `user_disabled`, read as an Owner
-  (`curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.session_refreshed&outcome=denied"`).
-  If the denied one could not be written, the loss is in
-  `auth_audit_outcome_lost_total{action="auth.session_refreshed"}`, the
-  `auth.session_audit.outcome_lost` log line and the `AuthAuditOutcomeLost` ticket (section 10).
-  The streaming window is an accepted risk, dated 2026-10-17
+- A client that only holds a socket meets the backstop when a REST call or a socket `auth`
+  presents a token that is still valid, when it calls `GET /auth/session`, which finds the session
+  by its `cv_refresh` cookie once the token has ended and still checks the user's status (#3214:
+  `require_active` with `allow_locked=True`), or when it refreshes. The protocol's client flow
+  refreshes over REST at `expires_at` − 60 s (`docs/plan/23-ws-protocol.md` §4.1, §4.3), and the
+  refused refresh revokes the session, counts it, logs the `WARNING`, publishes it and records it
+  as above (#3331): its sockets end then with `bye` `user_disabled` and `4403`, and the
+  `AuthDisabledUserSessionRevoked` ticket fires. Only the streaming window remains: until that
+  refresh, or the token's deadline at the latest (12 minutes), the socket keeps receiving what it
+  could already read. It is an accepted risk, dated 2026-10-17
   (`docs/security/threat-models/e09-auth-rbac.md`, U45; it is UL1-E2's in `e42-user-lifecycle.md`):
   a socket has no write path, since orders are REST only, and #965's disable cascade, now that it
-  is routed, closes sockets within 5 s. The live row and the silent counter are accepted too: the
-  main-orchestrator confirmed them on 2026-10-18 ([ruling](https://github.com/CandleViewer/CandleViewer/issues/3120#issuecomment-6243898535)).
-  A refused refresh that revokes the row and counts it is not built: it is the follow-up #3331
-  (P1), filed with that ruling, next to #3332 (P2), which shields the bookkeeping (above).
+  is routed, closes sockets within 5 s. A client that never refreshes or calls REST again leaves
+  its row live until its absolute expiry, 12 hours after the login that started the session chain,
+  but unused: its old token is refused as expired before `require_active` runs, and any later use
+  of the row revokes it. #3332 (P2), which shields the bookkeeping (above), is still open.
 
 **The bootstrap Owner (O5, #3246).** The permission readers and the owner floor count only `active`
 users. The first Owner that `0002_rbac_seed` creates (`docs/plan/21-database-schema.md` §10.2) is
@@ -953,6 +952,29 @@ them yet (#2746), so read them when investigating:
 | `auth_session_revoke_denied_total`       | `DELETE /me/sessions/{id}` named an id that is not one of the caller's live sessions: a foreign or unknown id (the probe) or the caller's own ended session; the answer is the same 404     | `auth.session_revoke_denied` (denied, warning, reason `not_live_own_session`; object: the id named). Rows are budgeted at 10 a minute per user and 30 overall; every probe is counted.   |
 | `users_invites_rejected_total{reason}`   | invite requests refused: unknown, expired, redeemed, revoked, enrollment_invalid, role_tamper (a `role` or `roles` claim) or identity_tamper (`username`, `user_id` or `email` in the body) | `users.invite_rejected` (warning for redeemed, role_tamper and identity_tamper). Tamper requests count against the per-address invite budget: the 11th in a minute gets `429` and no row |
 
+A lone `auth_refresh_reuse_total` hit seconds after a rotation, from the address of the rotation it
+follows (compare its `auth.refresh_reuse_detected` row with that rotation's
+`auth.session_refreshed` row), is most likely a refresh response the user's own client lost: the
+client presented the old token again, the family was revoked, and the user signs in again. That is
+by design. Any re-presentation revokes the family, and there is no server grace window
+(ADR-0020 decision 5, contract `authRefresh`). The SPA's token client (`apps/web/src/lib/auth`,
+#2712) coalesces its refreshes, one at a time across its tabs, so that one client does not present a
+token twice. Treat a hit from another address, or more than one, as a stolen token.
+
+An `auth.refresh_reuse_detected` row at `warning`, with `after_state.family_revoked` `false`, is a
+different event, and `auth_refresh_reuse_total` does not count it: a rotated-out `cv_refresh` cookie
+was presented outside `/auth/refresh`, for example to `GET /auth/session`. Nothing is revoked, the
+answer is the uniform `401`, and `auth_session_fixation_attempts_total{reason="rotated"}` counts it.
+Rows are written within a per-address and a global budget and the refusal-audit tracker's in-flight
+cap, and
+`reason="audit_throttled"` counts the attempts past them. The SPA's token client (#2712) writes such
+rows on purpose: after a refresh whose answer it lost, it asks `GET /auth/session` before it
+presents the possibly spent cookie, and it asks again on each page load until the user signs in
+again. A few of these rows from the user's
+own address, after that user's last `auth.session_refreshed` row, are expected. Rows from another
+address, or across many users' sessions, mean someone holds rotated-out cookies: treat them as
+stolen.
+
 A lone `auth_session_revoke_denied_total` hit is as likely a stale Sessions row (the caller's own
 session ended, for example by rotation) as a probe, and the series cannot tell them apart: look the
 audit row's `object_id` up in `sessions`; another user's row means a probe. A probe past the row
@@ -1117,7 +1139,8 @@ and the rows after it were not tried; a sign-out cancelled while it revoked has 
 for each session it targeted and no row for any, so read each `sessions` row (`revoked_at`) to see
 which it ended; a refresh of a live token cancelled while the service ran has one `cancelled`
 line for `auth.refresh_reuse_detected` whether or not the service found a reuse, so read the
-family's `sessions` rows (`revoked_reason` `rotation_reuse`) before treating it as one); it
+family's `sessions` rows (`revoked_reason` `rotation_reuse`, or `user_disabled` for a disabled
+user's refused refresh) before treating it as one); it
 carries no token, address or user. Restore the audit sink first, then list
 the gap from those lines. For a lost `auth.session_revoked`, the `auth.logout` row
 already names the session (above 50 targets it names only the first 50: the rest are that user's
@@ -1134,7 +1157,13 @@ exception EX-07 (section 16.2), which ends when the journal-first lane (#3009) e
 
 While the sink refuses records, sign-out, session revocation and refresh answer `503` and change
 nothing (C-2.9): an access token lapses within 12 minutes and a longer refusal ends every session
-and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). The break-glass
+and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). A refresh of an
+idle-locked session is answered `401 session_idle_locked` before its record, whether or not the
+sink accepts it, and changes nothing either (#3331). A lock that engages between the route's check
+and the service's own leaves the attempt's intent record with no outcome record and no
+`outcome_lost` line, and nothing is
+rotated. The unlock that follows writes its own record first, so it answers `503` until the sink
+recovers. The break-glass
 reset (section 3, E09-S11 #2119) is the Owner's emergency path: it runs only with cv-api stopped
 and journals to its own host file, never the sink. `AuthAuditOutcomeLost` is a
 `ticket`, muted 22:00-07:00 UTC by default (`CV_ALERT_QUIET_HOURS`) and active 15 minutes after the
@@ -1303,7 +1332,6 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 | `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747          |
 | No durable retry of a lost audit outcome record                           | EX-07, #3009   |
 | No durable retry of a lost backstop audit record                          | EX-08, #3009   |
-| A refused refresh of a disabled user neither revokes nor counts           | #3331          |
 | A cancel after the revoking `UPDATE` loses count, log, publish and record | #3332          |
 | Compose runs the fake backend (no lane); the lane's alerts are tickets    | #3009, #2701   |
 

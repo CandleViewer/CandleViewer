@@ -78,6 +78,8 @@ serve a locked session, identified by an access token inside its lifetime or els
 the current `cv_refresh` cookie (a cookie-identified write gets the SR-042 Origin
 and SR-041 checks here); every other operation of a locked session is refused by
 `api.idle_lock`, and a locked or cookie-identified logout ends only its own session.
+`POST /auth/refresh` answers a locked session `401 session_idle_locked` itself, before its
+write-ahead record (#3331).
 """
 
 from __future__ import annotations
@@ -126,6 +128,7 @@ from candleviewer.auth.metrics import (
     auth_audit_outcome_lost_total,
     auth_csrf_refused_total,
     auth_enrolment_refused_total,
+    auth_idle_locks_total,
     auth_session_fixation_attempts_total,
     auth_session_revoke_denied_total,
     normalise_outcome_action,
@@ -143,6 +146,7 @@ from candleviewer.auth.session_service import (
     SessionClass,
     UnlockOutcome,
     UnlockWriteAhead,
+    refresh_refused_as_locked,
 )
 from candleviewer.auth.step_up import PasswordVerdict, grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
@@ -1032,6 +1036,11 @@ def make_session_router(
             refused = await _refresh_refusal(presented_record)
             if refused is not None:
                 return refused
+            if refresh_refused_as_locked(presented_record, now=now()):
+                # Contract "Idle lock" (#3331): before the write-ahead record, so nothing is
+                # audited, rotated or revoked, and the token refreshes after `POST /auth/unlock`.
+                auth_idle_locks_total.inc()  # as `require_active` counts its lock refusal
+                return idle_lock.idle_locked_problem(presented_record.idle_deadline())
         # C-2.9 write-ahead: the audit record is written before `refresh()`
         # rotates or revokes anything; if the sink is down we refuse (503)
         # with no state change.
@@ -1073,9 +1082,13 @@ def make_session_router(
             # The service already closed every family member's sockets (#2272).
             return _unauthorized("refresh_token_invalid")
         except UserDisabled:
-            # #2911: the user is disabled (or deleted); nothing was minted. The intent record
-            # above is followed by the refusal, an outcome record like the reuse one: a lost
-            # record is counted and logged and the 401 stands.
+            # #2911: the user is disabled (or deleted); nothing was minted. Read with the row
+            # before the claim, the status made the service revoke the session as
+            # `user_disabled`, count and publish it, and hand its record to the backstop's port
+            # (#3331). Committed after the claim, the disable left the claimed row `rotated`,
+            # with no successor and nothing published. Either way the intent record above is
+            # followed by the refusal, an outcome record like the reuse one: a lost record is
+            # counted and logged and the 401 stands.
             await _audit_outcomes(
                 "auth.session_refreshed",
                 record=presented_record,
@@ -1086,15 +1099,22 @@ def make_session_router(
                 session_ids=(presented_record.id,),
             )
             return _unauthorized("refresh_token_invalid")
-        except (SessionNotFound, SessionRevoked, SessionIdleLocked):
+        except SessionIdleLocked as exc:
+            # A lock that engaged after the check above: the intent record is written, and nothing
+            # was rotated or revoked.
+            auth_idle_locks_total.inc()
+            return idle_lock.idle_locked_problem(exc.idle_locked_at)
+        except (SessionNotFound, SessionRevoked):
             return _unauthorized("refresh_token_invalid")
         except asyncio.CancelledError:
             # The service commits a family's revocation before it publishes it to the sockets, so
             # a request cancelled in there (a shutdown) may have ended the family of a token the
-            # lookup saw live, and its critical outcome record can no longer be written. The
-            # route cannot tell that from a cancellation elsewhere in `refresh()`: counted as
-            # lost either way, a false loss being the safe direction. A spent token wrote its
-            # record ahead (above), so it loses none.
+            # lookup saw live, and its critical outcome record can no longer be written. So may a
+            # disabled user's session revoked as `user_disabled` (#3331), which may lose the
+            # denial and the backstop's record (runbook sections 4 and 10). The route cannot tell
+            # these from a cancellation elsewhere in `refresh()`: counted as lost either way, a
+            # false loss being the safe direction. A spent token wrote its record ahead (above), so
+            # it loses none.
             if not reuse:
                 _outcome_lost("auth.refresh_reuse_detected", presented_record.id, "cancelled")
             raise

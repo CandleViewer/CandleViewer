@@ -27,7 +27,12 @@ from structlog.testing import capture_logs
 
 import candleviewer
 from candleviewer.auth.envelope import TotpEncryptor
-from candleviewer.auth.errors import RefreshReuseDetected, SessionRevoked, UnlockPasswordInvalid
+from candleviewer.auth.errors import (
+    RefreshReuseDetected,
+    SessionRevoked,
+    UnlockPasswordInvalid,
+    UserDisabled,
+)
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import UserStatus
 from candleviewer.auth.service import AuthService
@@ -172,11 +177,27 @@ async def _require_active_user_disabled(w: _World) -> Calls:
     return {(sid, "user_disabled")}
 
 
+async def _refresh_user_disabled(w: _World) -> Calls:
+    user = str(uuid.uuid4())
+    minted = await w.sessions.mint(user)
+    w.repo.user_statuses[user] = UserStatus.DISABLED  # a disable that no sweep followed
+    with pytest.raises(UserDisabled):
+        await w.sessions.refresh(minted.refresh_token)
+    return {(str(minted.session_id), "user_disabled")}
+
+
+async def _stray_session(w: _World) -> Calls:
+    """`_revoke_stray_session` revokes a disabled user's session for `require_active` and for a
+    refused `refresh()` (#3331): both publish it."""
+    return await _require_active_user_disabled(w) | await _refresh_user_disabled(w)
+
+
 async def _revoke_row(w: _World) -> Calls:
-    """`_revoke_row` is the one place `revoke` and the `require_active` backstop of #2911 revoke a
-    row, and each publishes after it: the backstop counts between the two (#3029), so the publish
-    is its own call there. Its callers are call sites too, with a driver each."""
-    return await _revoke(w) | await _require_active_user_disabled(w)
+    """`_revoke_row` is the one place `revoke` and the stray-session revocation of #2911 (for
+    `require_active` and a refused `refresh()`, #3331) revoke a row, and each publishes after it:
+    the latter counts between the two (#3029), so the publish is its own call there. Its callers
+    are call sites too, with a driver each."""
+    return await _revoke(w) | await _stray_session(w)
 
 
 async def _revoke_all(w: _World) -> Calls:
@@ -205,7 +226,7 @@ _PATHS: dict[tuple[str, str], Callable[[_World], Awaitable[Calls]]] = {
     ("SessionService.refresh", "expired"): _refresh_expired,
     ("SessionService.refresh", "rotated"): _refresh_rotation,
     ("SessionService.require_active", "expired"): _require_active_expired,
-    ("SessionService.require_active", "user_disabled"): _require_active_user_disabled,
+    ("SessionService._revoke_stray_session", "user_disabled"): _stray_session,
     ("SessionService.unlock", "unlock_attempts_exceeded"): _unlock_attempts_exceeded,
     ("SessionService.revoke", _CALLER): _revoke,
     ("SessionService._revoke_row", _CALLER): _revoke_row,

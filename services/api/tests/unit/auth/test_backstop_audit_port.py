@@ -1,6 +1,7 @@
 """#3120: `require_active` hands each revocation of a disabled user's session to an injected audit
-port (C-2.9; `auth` may not import `audit`). The order is revoke, count and log, publish, then the
-port, only for the call whose conditional revoke changed the row (#3029). The port never
+port (C-2.9; `auth` may not import `audit`), and so does a refused refresh (#3331). The order is
+revoke, count and log, publish, then the port, only for the call whose conditional revoke changed
+the row (#3029). The port never
 decides the revocation: one that fails, hangs or is cancelled leaves the revocation, the signal and
 the refusal as they were. Its writer side is `tests/unit/api/test_session_backstop_audit.py`, its
 wiring through `create_app()` `tests/security/auth/test_backstop_audit_wiring.py`."""
@@ -23,11 +24,17 @@ from structlog.testing import capture_logs
 from candleviewer.api.csrf import AUDIT_TIMEOUT_S
 from candleviewer.auth.errors import SessionRevoked
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.models import UserStatus
+from candleviewer.auth.models import MintedSession, UserStatus
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import BackstopRevocation, SessionService
 
-from .session_fakes import FakeSessionRepository, LostRaceRepository, YieldingFindRepository
+from .session_fakes import (
+    STRAY_ENTRIES,
+    FakeSessionRepository,
+    LostRaceRepository,
+    StrayEntry,
+    YieldingFindRepository,
+)
 
 _NOW = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
 _RUNBOOK = Path(__file__).resolve().parents[5] / "docs" / "ops" / "runbooks" / "auth-rbac.md"
@@ -73,12 +80,12 @@ class _Rig:
             backstop_audit_timeout_s=timeout_s,
         )
 
-    async def stray(self, status: UserStatus | None = _DISABLED) -> str:
-        """The id of a live session whose user's status is *status*, with no sweep run."""
+    async def stray(self, status: UserStatus | None = _DISABLED) -> MintedSession:
+        """A live session whose user's status is *status*, with no sweep run."""
         user = str(uuid.uuid4())
-        sid = str((await self.service.mint(user)).session_id)
+        minted = await self.service.mint(user)
         self.repo.user_statuses[user] = status
-        return sid
+        return minted
 
 
 def _sample() -> float:
@@ -89,11 +96,15 @@ def _events(logs: list[Any], event: str) -> list[dict[str, Any]]:
     return [entry for entry in logs if entry["event"] == event]
 
 
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
 @pytest.mark.parametrize("status", [_DISABLED, None], ids=["disabled", "gone"])
-async def test_the_port_gets_the_revocation_after_the_signal(status: UserStatus | None) -> None:
+async def test_the_port_gets_the_revocation_after_the_signal(
+    status: UserStatus | None, entry: StrayEntry, refusal: type[Exception], match: str
+) -> None:
     """The record is the last step, so a port that fails or hangs cannot hide the signal."""
     rig, seen = _Rig(), []
-    sid = await rig.stray(status)
+    minted = await rig.stray(status)
+    sid = str(minted.session_id)
     before = _sample()
 
     async def look(revocation: BackstopRevocation) -> None:
@@ -103,8 +114,8 @@ async def test_the_port_gets_the_revocation_after_the_signal(status: UserStatus 
         )
 
     rig.on_audit = look
-    with capture_logs() as logs, pytest.raises(SessionRevoked):
-        await rig.service.require_active(sid)
+    with capture_logs() as logs, pytest.raises(refusal, match=match):
+        await entry(rig.service, minted)
 
     row = rig.repo.sessions[sid]
     assert rig.received == [BackstopRevocation(row.id, row.user_id, status)]
@@ -113,15 +124,18 @@ async def test_the_port_gets_the_revocation_after_the_signal(status: UserStatus 
     ]
 
 
-async def test_three_racing_requests_write_one_record() -> None:
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
+async def test_three_racing_requests_write_one_record(
+    entry: StrayEntry, refusal: type[Exception], match: str
+) -> None:
     rig = _Rig(YieldingFindRepository())
-    sid = await rig.stray()
+    minted = await rig.stray()
 
     outcomes = await asyncio.gather(
-        *(rig.service.require_active(sid) for _ in range(3)), return_exceptions=True
+        *(entry(rig.service, minted) for _ in range(3)), return_exceptions=True
     )
 
-    assert [o.reason for o in outcomes if isinstance(o, SessionRevoked)] == ["user_disabled"] * 3
+    assert [(type(o), match in str(o)) for o in outcomes] == [(refusal, True)] * 3
     assert len(rig.received) == 1
 
 
@@ -139,7 +153,7 @@ async def test_a_call_that_revoked_nothing_writes_no_record(
     repo_type: type[FakeSessionRepository], status: UserStatus, swept: bool
 ) -> None:
     rig = _Rig(repo_type())
-    sid = await rig.stray(status)
+    sid = str((await rig.stray(status)).session_id)
     if swept:
         await rig.service.revoke(sid, reason="user_disabled")  # the disable's own sweep
 
@@ -149,25 +163,29 @@ async def test_a_call_that_revoked_nothing_writes_no_record(
     assert rig.received == []
 
 
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
 @pytest.mark.parametrize(
     "failure", [RuntimeError("down: canary-text"), TimeoutError()], ids=["raises", "times_out"]
 )
-async def test_a_failing_port_changes_nothing_but_an_error_log(failure: Exception) -> None:
+async def test_a_failing_port_changes_nothing_but_an_error_log(
+    failure: Exception, entry: StrayEntry, refusal: type[Exception], match: str
+) -> None:
     """Sink down: the revocation, publish, count, WARNING and refusal stand, the record is dropped
     (never queued), and the log names the ids and the error class, never its text."""
     rig = _Rig()
-    sid = await rig.stray()
+    minted = await rig.stray()
+    sid = str(minted.session_id)
     before = _sample()
 
     async def down(revocation: BackstopRevocation) -> None:
         raise failure
 
     rig.on_audit = down
-    with capture_logs() as logs, pytest.raises(SessionRevoked) as refused:
-        await rig.service.require_active(sid)
+    with capture_logs() as logs, pytest.raises(refusal, match=match):
+        await entry(rig.service, minted)
 
     row = rig.repo.sessions[sid]
-    assert (refused.value.reason, row.revoked_reason) == ("user_disabled", "user_disabled")
+    assert row.revoked_reason == "user_disabled"
     assert rig.published == [(sid, "user_disabled")] and _sample() == before + 1
     assert len(_events(logs, "auth.disabled_user_session_revoked")) == 1
     (failed,) = _events(logs, _FAILED)
@@ -184,7 +202,7 @@ async def test_a_port_that_never_completes_does_not_hold_the_refusal() -> None:
     """The wait is bounded: the refusal comes back at the bound, the port is cancelled (the real
     one shields its write), and the log says the record may still land."""
     rig = _Rig(timeout_s=0.05)
-    sid = await rig.stray()
+    sid = str((await rig.stray()).session_id)
     cancelled: list[bool] = []
 
     async def hangs(revocation: BackstopRevocation) -> None:
@@ -209,7 +227,7 @@ async def test_a_port_that_never_completes_does_not_hold_the_refusal() -> None:
 async def test_cancelling_the_request_while_the_port_waits_propagates() -> None:
     """A cancel is honoured, not swallowed as a sink failure; the revocation already stands."""
     rig = _Rig()
-    sid = await rig.stray()
+    sid = str((await rig.stray()).session_id)
     entered = asyncio.Event()
 
     async def waits(revocation: BackstopRevocation) -> None:
@@ -233,7 +251,7 @@ async def test_cancelling_the_request_while_the_revocation_is_published_drops_th
     it, so that record is lost, and the runbook's reconcile step is what finds it. The revocation
     and the signal stand, since the count and the log come before the publish (#3029)."""
     rig = _Rig()
-    sid = await rig.stray()
+    sid = str((await rig.stray()).session_id)
     before = _sample()
     entered = asyncio.Event()
 
@@ -323,12 +341,15 @@ async def test_auth_service_bounds_the_port_by_the_two_seconds_the_runbook_promi
     assert bounds == [2.0] and bounds == [AUDIT_TIMEOUT_S]
 
 
-async def test_the_bound_a_caller_injects_is_the_one_the_port_waits() -> None:
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
+async def test_the_bound_a_caller_injects_is_the_one_the_port_waits(
+    entry: StrayEntry, refusal: type[Exception], match: str
+) -> None:
     rig = _Rig(timeout_s=0.25)
-    sid = await rig.stray()
+    minted = await rig.stray()
 
-    with _recorded_timeouts() as bounds, pytest.raises(SessionRevoked):
-        await rig.service.require_active(sid)
+    with _recorded_timeouts() as bounds, pytest.raises(refusal, match=match):
+        await entry(rig.service, minted)
 
     assert bounds == [0.25]
 
