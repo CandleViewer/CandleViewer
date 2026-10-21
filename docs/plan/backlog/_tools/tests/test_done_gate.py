@@ -22,8 +22,14 @@ PENPOT = "https://design.penpot.app/#/workspace?team-id=t&file-id=f&page-id=p"
 PAGE_ID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 # Literals on purpose: they pin the arguments done_gate passes to `gh`.
 GH_REPO = "CandleViewer/CandleViewer"
+GH_ISSUE_FIELDS = "body,comments,labels,state"
 GH_LIST_FIELDS = "number,body,mergedAt"
 GH_VIEW_FIELDS = "number,body,files,reviews,comments,mergedAt"
+
+
+@pytest.mark.parametrize("name, value", [("PR_SEARCH_LIMIT", 100), ("GH_TIMEOUT", 60)])
+def test_the_search_limit_and_the_gh_timeout_are_pinned(name: str, value: int) -> None:
+    assert getattr(dg, name) == value
 
 
 def owner(body: str) -> dict[str, Any]:
@@ -402,35 +408,42 @@ def crowd(n: int) -> list[dict[str, Any]]:
 def search_gh(
     answers: dict[str, Any], calls: list[list[str]], views: dict[int, Any] | None = None
 ) -> Any:
-    """A `gh` stub that pins every argument. The issue view is empty; PR searches
-    answer from `answers` (no entry: nothing found; an exception: raised) and PR views
-    from `views` (default: the PR as a search returned it). PR calls go to `calls`."""
+    """A `gh` stub that pins the arguments of every call it answers. The issue view
+    returns a QA PASS comment; PR searches answer from `answers` (no entry: nothing
+    found; an exception: raised), at most `--limit` of them; PR views answer from
+    `views` (default: the PR as a search returned it; an exception: raised). PR calls
+    go to `calls`."""
     found = {p["number"]: p for r in answers.values() if isinstance(r, list) for p in r}
 
     def fake_gh(args: list[str]) -> Any:
         if args[0] == "issue":
+            tail = ["-R", GH_REPO, "--json", GH_ISSUE_FIELDS]
+            assert args == ["issue", "view", args[2], *tail]
             return issue([QA_PASS])
         calls.append(args)
         if args[1] == "view":
             n = args[2]
             assert args == ["pr", "view", n, "-R", GH_REPO, "--json", GH_VIEW_FIELDS]
-            return (views or found)[int(n)]
-        query = search_of(args)
-        assert args == [
-            "pr",
-            "list",
-            "-R",
-            GH_REPO,
-            "--state",
-            "all",
-            "--search",
-            query,
-            "--limit",
-            str(dg.PR_SEARCH_LIMIT),
-            "--json",
-            GH_LIST_FIELDS,
-        ]
-        result = answers.get(query, [])
+            result = (views or found)[int(n)]
+        else:
+            query, limit = search_of(args), args[args.index("--limit") + 1]
+            assert args == [
+                "pr",
+                "list",
+                "-R",
+                GH_REPO,
+                "--state",
+                "all",
+                "--search",
+                query,
+                "--limit",
+                str(dg.PR_SEARCH_LIMIT),
+                "--json",
+                GH_LIST_FIELDS,
+            ]
+            result = answers.get(query, [])
+            if isinstance(result, list):
+                result = result[: int(limit)]
         if isinstance(result, Exception):
             raise result
         return result
@@ -547,13 +560,55 @@ def test_fetch_adds_no_fallback_search_below_the_limit(found: Any) -> None:
     assert queries(calls) == ["#5 in:body"]
 
 
-def test_fetch_propagates_a_failing_fallback_search() -> None:
-    answers = {
-        "#5 in:body": crowd(dg.PR_SEARCH_LIMIT),
-        '"fixes #5" in:body': RuntimeError("gh pr list failed: HTTP 502"),
-    }
+@pytest.mark.parametrize(
+    "limit, numbers", [(20, []), (None, [7])], ids=["limit-20", "head"]
+)
+def test_fetch_links_a_closing_pr_that_is_24th_of_28_matches(
+    monkeypatch: Any, limit: int | None, numbers: list[int]
+) -> None:
+    """The reported case: 28 PRs cite the issue and the closing PR is the 24th, so a
+    read of the first 20 never sees it. The stub honours `--limit`."""
+    matches = crowd(28)
+    matches[23] = {"number": 7, "body": "Closes #5", "mergedAt": "2026-10-20"}
+    if limit is not None:
+        monkeypatch.setattr(dg, "PR_SEARCH_LIMIT", limit)
+    _, linked = dg.fetch("5", search_gh({"#5 in:body": matches}, []))
+    assert [p["number"] for p in linked] == numbers
+
+
+@pytest.mark.parametrize(
+    "body", ["Closes #123", "Fixes #123", "Resolves #123", "Refs #123", "Ref #123"]
+)
+def test_fetch_does_not_link_a_pr_citing_a_longer_issue_number(body: str) -> None:
+    """`#123` is not `#12`, for the closing keywords and for a merged `Refs` alike."""
+    pr = {"number": 1, "body": body, "mergedAt": "2026-10-20"}
+    _, linked = dg.fetch("12", search_gh({"#12 in:body": [pr]}, []))
+    assert linked == []
+
+
+@pytest.mark.parametrize(
+    "answers, views",
+    [
+        ({"#5 in:body": RuntimeError("gh pr list failed: HTTP 502")}, None),
+        (
+            {
+                "#5 in:body": crowd(dg.PR_SEARCH_LIMIT),
+                '"fixes #5" in:body': RuntimeError("gh pr list failed: HTTP 502"),
+            },
+            None,
+        ),
+        (
+            {"#5 in:body": [{"number": 1, "body": "Closes #5", "mergedAt": None}]},
+            {1: RuntimeError("gh pr view failed: HTTP 502")},
+        ),
+    ],
+    ids=["first-search", "fallback-search", "pr-view"],
+)
+def test_fetch_propagates_a_failing_gh_call(
+    answers: dict[str, Any], views: dict[int, Any] | None
+) -> None:
     with pytest.raises(RuntimeError, match="HTTP 502"):
-        dg.fetch("5", search_gh(answers, []))
+        dg.fetch("5", search_gh(answers, [], views))
 
 
 TIMEOUT = subprocess.TimeoutExpired("gh", dg.GH_TIMEOUT)
