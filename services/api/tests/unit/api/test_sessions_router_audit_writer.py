@@ -56,7 +56,7 @@ from tests.unit.api._fakes import (
 from tests.unit.api._fakes import USER as _USER
 from tests.unit.api._fakes import RacedSessionService as _RacedSessionService
 from tests.unit.api._fakes import throttle as _throttle
-from tests.unit.auth.session_fakes import FakeSessionRepository
+from tests.unit.auth.session_fakes import FakeSessionRepository, LoopClock
 
 _OTHER = uuid.UUID("00000000-0000-4000-8000-0000000000c2")
 _UNKNOWN_SESSION = uuid.UUID("00000000-0000-4000-8000-0000000000d1")
@@ -129,19 +129,6 @@ class _ConcurrentlyRevokedService(SessionService):
     async def revoke(self, session_id: str, *, reason: str) -> SessionRecord | None:
         await super().revoke(session_id, reason="admin")
         return await super().revoke(session_id, reason=reason)
-
-
-class _LoopClock:
-    """The running loop's clock plus a skew the test advances: an `asyncio.timeout` fires when the
-    test says so and nothing waits; other timers keep real time, so a hang still fails."""
-
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        loop = asyncio.get_running_loop()
-        real, self._skew = loop.time, 0.0
-        monkeypatch.setattr(loop, "time", lambda: real() + self._skew)
-
-    def advance(self, seconds: float) -> None:
-        self._skew += seconds
 
 
 class _World:
@@ -723,7 +710,7 @@ async def test_logout_outcome_record_that_never_returns_is_bounded_and_counted_a
         return set()
 
     w.writer.probe = never_answers
-    clock, lost_before = _LoopClock(monkeypatch), _outcome_lost("auth.session_revoked")
+    clock, lost_before = LoopClock(monkeypatch), _outcome_lost("auth.session_revoked")
     transport = httpx.ASGITransport(app=w.client.app)
     async with httpx.AsyncClient(transport=transport, base_url=BASE) as http:
         request = asyncio.create_task(

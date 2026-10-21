@@ -1,10 +1,11 @@
 """#3120: `require_active` hands each revocation of a disabled user's session to an injected audit
 port (C-2.9; `auth` may not import `audit`), and so does a refused refresh (#3331). The order is
 revoke, count and log, publish, then the port, only for the call whose conditional revoke changed
-the row (#3029). The port never
-decides the revocation: one that fails, hangs or is cancelled leaves the revocation, the signal and
-the refusal as they were. Its writer side is `tests/unit/api/test_session_backstop_audit.py`, its
-wiring through `create_app()` `tests/security/auth/test_backstop_audit_wiring.py`."""
+the row (#3029). The port never decides the revocation: one that fails or hangs leaves the
+revocation, the signal and the refusal as they were. The steps run as one unit that a cancelled
+request cannot cut short, drained at shutdown (#3332). Its writer side is
+`tests/unit/api/test_session_backstop_audit.py`, its wiring through `create_app()`
+`tests/security/auth/test_backstop_audit_wiring.py`."""
 
 from __future__ import annotations
 
@@ -21,7 +22,8 @@ import pytest
 from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
-from candleviewer.api.csrf import AUDIT_TIMEOUT_S
+from candleviewer.api.csrf import AUDIT_TIMEOUT_S, RefusalAuditTracker
+from candleviewer.api.session_backstop_audit import LATE_FAILURE_EVENT, SessionBackstopAudit
 from candleviewer.auth.errors import SessionRevoked
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MintedSession, UserStatus
@@ -30,10 +32,13 @@ from candleviewer.auth.session_service import BackstopRevocation, SessionService
 
 from .session_fakes import (
     STRAY_ENTRIES,
+    CommitParkedRepository,
     FakeSessionRepository,
+    LoopClock,
     LostRaceRepository,
     StrayEntry,
     YieldingFindRepository,
+    require_active_by_id,
 )
 
 _NOW = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
@@ -90,6 +95,11 @@ class _Rig:
 
 def _sample() -> float:
     return REGISTRY.get_sample_value(_BREACH) or 0.0
+
+
+def _revocations() -> float:
+    labels = {"reason": "user_disabled"}
+    return REGISTRY.get_sample_value("auth_session_revocations_total", labels) or 0.0
 
 
 def _events(logs: list[Any], event: str) -> list[dict[str, Any]]:
@@ -224,52 +234,226 @@ async def test_a_port_that_never_completes_does_not_hold_the_refusal() -> None:
     assert _events(logs, _FAILED) == []
 
 
-async def test_cancelling_the_request_while_the_port_waits_propagates() -> None:
-    """A cancel is honoured, not swallowed as a sink failure; the revocation already stands."""
-    rig = _Rig()
-    sid = str((await rig.stray()).session_id)
-    entered = asyncio.Event()
+class _Parked:
+    """A step the test holds open: `parked` once the step is entered, then it waits for `release`
+    and records that it finished (a cancelled step never does)."""
 
-    async def waits(revocation: BackstopRevocation) -> None:
-        entered.set()
-        await asyncio.Event().wait()
+    def __init__(self) -> None:
+        self.parked, self.release, self.finished = asyncio.Event(), asyncio.Event(), 0
 
-    rig.on_audit = waits
+    async def __call__(self, *_: object) -> None:
+        self.parked.set()
+        await self.release.wait()
+        self.finished += 1
+
+
+async def _cancel_inside(request: asyncio.Future[Any], parked: asyncio.Event) -> None:
+    """Cancel *request* once it is parked in a step; the cancel lands before the step goes on."""
+    await asyncio.wait_for(parked.wait(), 5.0)
+    request.cancel()
+    await asyncio.sleep(0)
+
+
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
+@pytest.mark.parametrize("step", ["commit", "publish", "audit_hand_off"])
+async def test_a_cancel_inside_a_step_still_completes_it_once(
+    step: str, entry: StrayEntry, refusal: type[Exception], match: str
+) -> None:
+    """#3332: each step suspends, and a request cancelled in one (a client that disconnects, a
+    route timeout) still leaves every step done once: the row revoked, both counters and the
+    WARNING moved, the revocation published and its record handed over. Before, a cancel in the
+    commit lost the count, the log, the publish and the record, and one in the publish lost the
+    record; a retry finds the row revoked and adds nothing, so they were lost for good."""
+    held = _Parked()
+    if step == "commit":
+        repo = CommitParkedRepository()
+        rig, gate = _Rig(repo), (repo.parked, repo.release)
+    else:
+        rig, gate = _Rig(), (held.parked, held.release)
+        if step == "publish":
+            rig.on_publish = held
+        else:
+            rig.on_audit = held
+    minted = await rig.stray()
+    sid = str(minted.session_id)
+    breach, revocations = _sample(), _revocations()
+
     with capture_logs() as logs:
-        request = asyncio.create_task(rig.service.require_active(sid))
-        await asyncio.wait_for(entered.wait(), 5.0)
-        request.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await request
-
-    assert rig.repo.sessions[sid].revoked_reason == "user_disabled" and len(rig.published) == 1
-    assert _events(logs, _FAILED) == [] and _events(logs, _SLOW) == []
-
-
-async def test_cancelling_the_request_while_the_revocation_is_published_drops_the_record() -> None:
-    """The port comes after the publish, which suspends: a request cancelled there never reaches
-    it, so that record is lost, and the runbook's reconcile step is what finds it. The revocation
-    and the signal stand, since the count and the log come before the publish (#3029)."""
-    rig = _Rig()
-    sid = str((await rig.stray()).session_id)
-    before = _sample()
-    entered = asyncio.Event()
-
-    async def parked(session_id: str, reason: str) -> None:
-        entered.set()
-        await asyncio.Event().wait()
-
-    rig.on_publish = parked
-    with capture_logs() as logs:
-        request = asyncio.create_task(rig.service.require_active(sid))
-        await asyncio.wait_for(entered.wait(), 5.0)
-        request.cancel()
+        request = asyncio.ensure_future(entry(rig.service, minted))
+        await _cancel_inside(request, gate[0])
+        gate[1].set()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(request, 5.0)
 
-    assert rig.repo.sessions[sid].revoked_reason == "user_disabled"
-    assert _sample() == before + 1 and len(_events(logs, "auth.disabled_user_session_revoked")) == 1
-    assert rig.received == []
+    row = rig.repo.sessions[sid]
+    assert row.revoked_reason == "user_disabled"
+    assert (_sample(), _revocations()) == (breach + 1, revocations + 1)
+    assert len(_events(logs, "auth.disabled_user_session_revoked")) == 1
+    assert rig.published == [(sid, "user_disabled")]
+    assert rig.received == [BackstopRevocation(row.id, row.user_id, _DISABLED)]
+    assert held.finished == (0 if step == "commit" else 1)  # the held step itself ran to its end
+    assert _events(logs, _FAILED) == [] and _events(logs, _SLOW) == []
+    assert rig.service._backstop_units == set()  # a finished unit is untracked
+
+
+async def test_a_cancel_while_the_record_is_written_writes_it_once() -> None:
+    """With the real port: the unit and the port's own shielded write together give one record,
+    neither a second one nor a late-failure line."""
+
+    class _HeldEmitter:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.started, self.gate = asyncio.Event(), asyncio.Event()
+
+        async def emit(self, action: str, **kwargs: Any) -> None:
+            self.started.set()
+            await self.gate.wait()
+            self.calls.append(action)
+
+    emitter, tracker, rig = _HeldEmitter(), RefusalAuditTracker(), _Rig()
+    rig.on_audit = SessionBackstopAudit(emitter, tracker=tracker)
+    minted = await rig.stray()
+
+    with capture_logs() as logs:
+        request = asyncio.create_task(require_active_by_id(rig.service, minted))
+        await _cancel_inside(request, emitter.started)
+        emitter.gate.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(request, 5.0)
+        assert await tracker.drain() == 0
+
+    assert emitter.calls == ["auth.disabled_user_session_revoked"]
+    assert _events(logs, LATE_FAILURE_EVENT) == [] and _events(logs, _FAILED) == []
+
+
+async def test_a_cancelled_caller_waits_no_longer_than_the_audit_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cancel goes through once the bound is up: the port's own bound, the one wait in the
+    path (`asyncio.wait` is not `asyncio.timeout`, so the runbook's 2 seconds still hold), ends
+    the unit with the usual slow line, and the request ends with it."""
+    rig, clock, entered = _Rig(), LoopClock(monkeypatch), asyncio.Event()
+    sid = str((await rig.stray()).session_id)
+
+    async def never_answers(revocation: BackstopRevocation) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    rig.on_audit = never_answers
+    with _recorded_timeouts() as bounds, capture_logs() as logs:
+        request = asyncio.create_task(rig.service.require_active(sid))
+        await _cancel_inside(request, entered)
+        clock.advance(2.0)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(request, 5.0)
+        assert await rig.service.drain(5.0) == 0
+
+    (slow,) = _events(logs, _SLOW)
+    assert (slow["session_id"], bounds) == (sid, [2.0])
+    assert _events(logs, _FAILED) == []
+
+
+async def test_a_unit_past_the_bound_outlives_its_caller_and_drains_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A publish that outlasts the bound: the cancelled request ends at the bound while its unit
+    runs on, and the unit then finishes every step once; `drain` waits for it."""
+    rig, clock, held = _Rig(), LoopClock(monkeypatch), _Parked()
+    rig.on_publish = held
+    minted = await rig.stray()
+    sid = str(minted.session_id)
+    breach = _sample()
+
+    with capture_logs() as logs:
+        request = asyncio.create_task(require_active_by_id(rig.service, minted))
+        await _cancel_inside(request, held.parked)
+        clock.advance(2.0)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(request, 5.0)
+        assert rig.received == []  # the unit is still in the publish
+        held.release.set()
+        assert await rig.service.drain(5.0) == 0
+
+    assert rig.published == [(sid, "user_disabled")]
+    assert (len(rig.received), _sample()) == (1, breach + 1)
+    assert len(_events(logs, "auth.disabled_user_session_revoked")) == 1
+
+
+async def test_a_unit_that_fails_after_its_caller_left_is_logged_by_class_name() -> None:
+    """Nobody awaits a unit whose request left, so its error is logged when it ends: the ids and
+    the class only, never the text."""
+    repo = CommitParkedRepository(fail_with=RuntimeError("down: canary-text"))
+    rig = _Rig(repo)
+    minted = await rig.stray()
+    sid = str(minted.session_id)
+
+    with capture_logs() as logs:
+        request = asyncio.create_task(require_active_by_id(rig.service, minted))
+        await _cancel_inside(request, repo.parked)
+        repo.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(request, 5.0)
+        assert await rig.service.drain(5.0) == 0
+
+    (failed,) = _events(logs, "auth.disabled_user_session_revoke_failed")
+    user = str(rig.repo.sessions[sid].user_id)
+    assert (failed["log_level"], failed["error"], failed["session_id"], failed["user_id"]) == (
+        "error",
+        "RuntimeError",
+        sid,
+        user,
+    )
+    assert "canary-text" not in str(logs) and rig.received == []
+
+
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
+async def test_a_unit_error_reaches_a_waiting_request_unchanged_and_is_logged(
+    entry: StrayEntry, refusal: type[Exception], match: str
+) -> None:
+    """A store that fails under a request that still waits: the request gets the unit's own error
+    (the boundary refuses it 503 or 500, as before #3332), and the unit's line is logged as well."""
+    repo = CommitParkedRepository(fail_with=RuntimeError("down: canary-text"))
+    rig = _Rig(repo)
+    minted = await rig.stray()
+
+    with capture_logs() as logs:
+        request = asyncio.ensure_future(entry(rig.service, minted))
+        await asyncio.wait_for(repo.parked.wait(), 5.0)
+        repo.release.set()
+        with pytest.raises(RuntimeError, match="canary-text"):
+            await asyncio.wait_for(request, 5.0)
+
+    failed = _events(logs, "auth.disabled_user_session_revoke_failed")
+    assert [e["error"] for e in failed] == ["RuntimeError"] and "canary-text" not in str(logs)
+    assert rig.service._backstop_units == set()
+
+
+async def test_drain_waits_no_longer_than_its_bound_and_never_cancels_a_unit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shutdown with a unit still in its publish: `drain` gives up at its bound, says how many are
+    left, and leaves the unit running; the unit then finishes every step once."""
+    rig, clock, held = _Rig(), LoopClock(monkeypatch), _Parked()
+    rig.on_publish = held
+    minted = await rig.stray()
+
+    with capture_logs() as logs:
+        request = asyncio.create_task(require_active_by_id(rig.service, minted))
+        await _cancel_inside(request, held.parked)
+        clock.advance(2.0)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(request, 5.0)
+        draining = asyncio.create_task(rig.service.drain(1.0))
+        await asyncio.sleep(0)  # the drain is waiting on its bound
+        clock.advance(1.0)
+        assert await asyncio.wait_for(draining, 5.0) == 1
+        held.release.set()
+        assert await rig.service.drain(5.0) == 0
+
+    (left,) = _events(logs, "auth.backstop_units_in_flight_at_shutdown")
+    assert (left["log_level"], left["units"]) == ("warning", 1)
+    assert (held.finished, len(rig.received)) == (1, 1)  # never cancelled: it ran to its end
+    assert rig.service._backstop_units == set()
 
 
 async def _auth_service_with_a_stray_session() -> tuple[AuthService, FakeSessionRepository, str]:
@@ -309,6 +493,30 @@ async def test_auth_service_with_no_port_attached_still_refuses_and_says_so() ->
 
     assert repo.sessions[sid].revoked_reason == "user_disabled"
     assert [e["error"] for e in _events(logs, _FAILED)] == ["BackstopAuditNotAttached"]
+
+
+async def test_auth_service_stop_waits_for_a_revocation_in_flight() -> None:
+    """Auth stops before audit and storage, and waits first for the units its requests left, so a
+    record still in the port reaches the writer."""
+    auth, _repo, sid = await _auth_service_with_a_stray_session()
+    held, received = _Parked(), []
+
+    async def port(revocation: BackstopRevocation) -> None:
+        received.append(revocation)
+        await held()
+
+    auth.attach_backstop_audit(port)
+    request = asyncio.create_task(auth.sessions.require_active(sid))
+    await _cancel_inside(request, held.parked)
+    stopping = asyncio.create_task(auth.stop(grace_s=5.0))
+    await asyncio.sleep(0)
+    assert not stopping.done()
+    held.release.set()
+    await asyncio.wait_for(stopping, 5.0)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(request, 5.0)
+
+    assert ([str(r.session_id) for r in received], held.finished) == ([sid], 1)
 
 
 @contextlib.contextmanager

@@ -309,16 +309,19 @@ async def test_the_revoked_stray_session_leaves_the_active_gauge(
     assert _sample("auth_sessions_active") == live - 1
 
 
-async def test_require_active_counts_the_stray_session_before_a_cancel_in_the_publish() -> None:
-    """The publish is a suspension point, and a request cancelled in it leaves the row revoked
-    and `auth_session_revocations_total{reason="user_disabled"}` moved. The breach counter and the
-    WARNING have to move with them, before the publish: the retry finds the row revoked, refuses
-    it with its stored reason and counts nothing, so a signal lost here is lost for good."""
-    repo, parked, never = FakeSessionRepository(), asyncio.Event(), asyncio.Event()
+async def test_require_active_counts_the_stray_session_once_through_a_publish_cancel() -> None:
+    """The publish is a suspension point. A request cancelled in it still leaves the row revoked,
+    `auth_session_revocations_total{reason="user_disabled"}`, the breach counter and the WARNING
+    moved and the publish done, each once: the backstop runs as one unit the cancel cannot cut
+    short (#3332). The retry finds the row revoked, refuses it with its stored reason and counts
+    nothing, so a step lost here would be lost for good."""
+    repo, parked, release = FakeSessionRepository(), asyncio.Event(), asyncio.Event()
+    published: list[str] = []
 
     async def publish(session_id: str, reason: str) -> None:
         parked.set()
-        await never.wait()
+        await release.wait()
+        published.append(session_id)
 
     service = SessionService(
         repo, Hasher(pepper=os.urandom(16).hex()), clock=lambda: _NOW, publish_revocation=publish
@@ -333,10 +336,12 @@ async def test_require_active_counts_the_stray_session_before_a_cancel_in_the_pu
         request = asyncio.create_task(service.require_active(sid))
         await asyncio.wait_for(parked.wait(), _WAIT_S)
         request.cancel()
+        await asyncio.sleep(0)  # the cancel lands while the publish is held
+        release.set()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(request, _WAIT_S)
 
-    assert repo.sessions[sid].revoked_reason == "user_disabled"
+    assert repo.sessions[sid].revoked_reason == "user_disabled" and published == [sid]
     assert _sample("auth_session_revocations_total", reason="user_disabled") == revocations + 1
     assert _sample("auth_disabled_user_sessions_revoked_total") == signals + 1
     assert [
