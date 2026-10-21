@@ -1695,6 +1695,7 @@ Drag preview                Drop zones
 - **Audit:** `rule.saved`, `rule.validated`, `rule.roundtrip_verified` `{result: 'identical'|'graph_only_construct'|'mismatch'|'unverified'}`, `rule.roundtrip_mismatch_resolved` `{choice}` (**audited** — a mismatch resolution can silently change what an armed rule does). **Stories:** US-RULE-004..008.
 - **Stories:** US-RULE-001, US-RULE-002, US-RULE-003, US-RULE-004, US-RULE-006, US-RULE-007.
 - **Design sign-off acceptance checklist:** [ ] condition rows, logic grouping, action rows and scope selector drawn [ ] full metric and action vocabulary reachable via a searchable picker with descriptions [ ] validation error presentation (summary + row highlight) drawn [ ] estimated-detector warning banner drawn [ ] the graph-authored read-only summary state drawn [ ] round-trip indicator drawn (see Round-trip verification) [ ] keyboard-only authoring verified [ ] arming path with its confirmation
+- **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) (E36-D01; heuristic, pending owner approval; the sentence grammar G1–G12, the seven PROPOSED picker categories with "(estimated)" as a tag, the two-level grouping model DECIDED by the shipped form subset with its graph-only list, the twelve badge surfaces; design change requests DCR-1..DCR-11 against E36-D02).
 
 ### SCR-082 — Rule editor — node-graph mode
 
@@ -1745,6 +1746,7 @@ Drag preview                Drop zones
 - **Performance:** Templates are static bundled definitions plus their IR; instantiating a template creates a draft rule in <=300 ms with no evaluation until armed.
 - **Analytics/audit:** `rule.template_previewed`, `rule.template_instantiated` with `{templateId}` (analytics); the resulting draft emits the audited `rule.created`.
 - **Design sign-off acceptance checklist:** [ ] all listed templates drawn as cards with plain-language behaviour text [ ] the metrics each needs and its recorded-history requirement stated [ ] estimated-detector dependency badged [ ] which editor it opens in is stated [ ] search/filter [ ] preview-before-instantiate
+- **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) §2 (E36-D01; heuristic, pending owner approval; the twelve templates read back in the PROPOSED grammar; the liquidity-cluster template's direction is its C11, an owner decision under C-2.6 — tightening is the only direction a manager can express).
 
 ### SCR-084 — Rule simulation / backtest panel
 
@@ -1797,6 +1799,7 @@ Drag preview                Drop zones
 - **Components:** CMP-043 Dialog, CMP-044 ConfirmDialog, CMP-093 AuditActionTrigger, CMP-158 SafetyInvariantNotice, CMP-159 RuleConflictWarning, CMP-233 RuleOptions.
 - **Stories:** US-RULE-008, US-RULE-013.
 - **Design sign-off acceptance checklist:** [ ] plain-language restatement of what the rule will do [ ] environment choice with DEMO default [ ] scope (accounts, symbols) restated [ ] typed confirmation for LIVE arming plus step-up [ ] estimated-detector dependency warning [ ] conflict warning if another armed rule targets the same scope (links to SCR-086) [ ] disarm path
+- **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) §5.4–§5.5 (E36-D01; heuristic, pending owner approval; the restatement is the same string as the editor header, with the standing limits read out; "Uses estimated detectors?" names each detector with E25-D01 R4's inline callout, its C16).
 
 ### SCR-086 — Rule conflict resolver
 

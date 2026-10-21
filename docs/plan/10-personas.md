@@ -277,6 +277,8 @@ graph TD
 5. A rule references an unavailable metric → save is blocked with an explicit, actionable error and a link to start recording that symbol.
 6. Two rules target the same position → the conflict resolver shows precedence and requires an explicit ordering decision before arming.
 
+**UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) (E36-D01; heuristic, pending owner approval; proposes amending G1's "combinators (AND/OR/NOT, grouping)" to the form editor's AND/OR with one any-of level, with NOT and n-of in the graph editor — its C15; the plain-language summary grammar is its G1–G12).
+
 ---
 
 ## 7. Permission matrix (authoritative for `11-user-stories.md`)
