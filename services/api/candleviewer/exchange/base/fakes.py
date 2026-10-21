@@ -47,6 +47,7 @@ from .models import (
     PlaceOrderRequest,
     Position,
     PrivateEvent,
+    RateHeadroom,
     RateLane,
     RiskLimitTier,
     TickerEvent,
@@ -57,6 +58,7 @@ from .models import (
 
 __all__ = [
     "CANCEL_ALL_LIMIT",
+    "FRESH_HEADROOM_TOKENS",
     "FakeCall",
     "FakeExchange",
     "FakeReject",
@@ -190,6 +192,9 @@ CANCEL_ALL_SCOPE: Final = "order"
 #: rule 12): one call is no proof of a flat book.
 CANCEL_ALL_LIMIT: Final = 500
 _TERMINAL: Final = frozenset({"rejected", "filled", "cancelled", "deactivated"})
+#: What an unscripted `headroom` reads: a fresh per-UID bucket (the exchange adapter's governor
+#: starts each one at 10 tokens, 24 §8.7's default of 10 requests a second), with no wait.
+FRESH_HEADROOM_TOKENS: Final = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +318,7 @@ class FakeTradingPort:
         self._queue_size = queue_size
         self._pushed: dict[AccountId, asyncio.Queue[PrivateEvent | None]] = {}
         self._ended = False
+        self._headroom: dict[tuple[AccountId, RateLane], RateHeadroom] = {}
 
     # -- seeding and scripting ------------------------------------------------------------
 
@@ -354,6 +360,10 @@ class FakeTradingPort:
 
     def set_account_info(self, info: AccountInfo) -> None:
         self._infos[info.account_id] = info
+
+    def set_headroom(self, account_id: AccountId, reading: RateHeadroom) -> None:
+        """What `headroom` reads for the account's lane (`reading.lane`) until set again."""
+        self._headroom[(account_id, reading.lane)] = reading
 
     def push(self, event: PrivateEvent) -> None:
         """Queue one private event for its account's `subscribe_private` (bounded per account:
@@ -572,6 +582,15 @@ class FakeTradingPort:
     async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]:
         self._check_environment(account)
         return self._stream(account.account_id)
+
+    def headroom(self, account: AccountRef, lane: RateLane) -> RateHeadroom:
+        """What `set_headroom` scripted for the account's lane, else a fresh budget. Like the
+        exchange adapter's, it sends nothing and takes no token, so it records no call."""
+        self._check_environment(account)
+        scripted = self._headroom.get((account.account_id, lane))
+        if scripted is not None:
+            return scripted
+        return RateHeadroom(lane=lane, tokens=FRESH_HEADROOM_TOKENS, wait_s=0.0)
 
     async def _stream(self, account_id: AccountId) -> AsyncIterator[PrivateEvent]:
         for seeded in self._events:

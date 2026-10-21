@@ -70,6 +70,7 @@ from candleviewer.exchange.base.models import (
     PlaceOrderRequest,
     Position,
     PrivateEvent,
+    RateHeadroom,
     RateLane,
     TradingStopRequest,
     Wallet,
@@ -790,6 +791,19 @@ class BybitTradingPort:
     async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]:
         """The private stream is G-8b's (#3963, ruling R1): until it lands this refuses."""
         raise NotImplementedError("G-8b")
+
+    # -- the rate budget, read (RateHeadroomPort) -------------------------------------------------
+
+    def headroom(self, account: AccountRef, lane: RateLane) -> RateHeadroom:
+        """The local rate budget the account's next request in `lane` would meet, read without
+        taking a token or sending anything (#2877 ruling 4; 24 §14.1 `RateHeadroomPort`): the
+        order class for `critical` and `entry`, which creates and exits draw, the account-reads
+        class for `poll` (24 §14.2 rule 12). A request whose `wait_s` passes its lane's wait is
+        refused with nothing sent (24 §8.7)."""
+        self._check_environment(account)
+        endpoint_class = _READS if lane == "poll" else _ORDER
+        tokens, wait_s = self._governor.headroom(account.uid, endpoint_class, lane=lane)
+        return RateHeadroom(lane=lane, tokens=tokens, wait_s=wait_s)
 
 
 def _create_item(req: PlaceOrderRequest) -> dict[str, Any]:

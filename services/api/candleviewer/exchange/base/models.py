@@ -77,6 +77,7 @@ __all__ = [
     "PlaceOrderRequest",
     "Position",
     "PrivateEvent",
+    "RateHeadroom",
     "RateLane",
     "RiskLimitTier",
     "Ticker",
@@ -711,6 +712,21 @@ class AccountInfo(BaseModel):
     margin_mode: Literal["regular", "portfolio", "isolated"]
     position_mode: Literal["one_way", "hedge"] | None
     unified_margin: bool
+
+
+class RateHeadroom(BaseModel):
+    """§14.1 `RateHeadroomPort`: the local rate budget the next request of one account's lane
+    would meet, read without taking a token or sending anything (#2877 ruling 4: B1's `rate`
+    verdict reads it until E34-T02's `reserve()`). `tokens` is what the buckets the lane draws
+    hold spare now, the fewest of them; `wait_s` is how long that request would wait for its
+    token, an IP hold included, 0 when one is spare now. A request whose wait passes its lane's
+    wait is refused with nothing sent (24 §8.7). Until E34-T02 every lane is served alike."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    lane: RateLane
+    tokens: Annotated[float, Field(ge=0)]
+    wait_s: Annotated[float, Field(ge=0)]
 
 
 class PrivateEvent(BaseModel):

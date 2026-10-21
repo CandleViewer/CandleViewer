@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from candleviewer.domain.order_link import ext_key
-from candleviewer.exchange.base import FakeTradingPort, TradingPort
+from candleviewer.exchange.base import FakeTradingPort, RateHeadroomPort, TradingPort
 from candleviewer.exchange.base.errors import DuplicateClientIdError
 from candleviewer.exchange.base.fakes import FakeCall
 from candleviewer.exchange.base.models import (
@@ -217,6 +217,19 @@ def test_both_satisfy_the_port(harness: Harness) -> None:
     assert isinstance(port, TradingPort)
     assert port.capabilities.environment == "demo"
     assert port.capabilities.supports_ws_order_entry is False
+
+
+def test_both_read_a_lanes_headroom_without_sending_anything(harness: Harness) -> None:
+    """#2877 ruling 4: the small protocol beside `TradingPort`, which B1's `rate` verdict reads
+    until E34-T02's `reserve()`; a fresh budget has a spare token and no wait in every lane."""
+    port = harness.port
+    assert isinstance(port, RateHeadroomPort)
+    readings = [port.headroom(account(), lane) for lane in ("critical", "entry", "poll")]
+    assert [r.lane for r in readings] == ["critical", "entry", "poll"]
+    assert all(r.tokens >= 1 and r.wait_s == 0.0 for r in readings)
+    with pytest.raises(ValueError, match="another environment"):
+        port.headroom(account(environment="live"), "entry")
+    assert harness.sent() == 0
 
 
 async def test_both_accept_a_create_then_refuse_its_id_again(harness: Harness) -> None:

@@ -1094,6 +1094,9 @@ class TradingPort(Protocol):  # normative: 24-internal-schemas.md §14.1 (G-8, #
     async def account_info(self, account: AccountRef) -> AccountInfo: ...
     async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]: ...
 
+class RateHeadroomPort(Protocol):  # 24 §14.1: the lane's local rate budget, read without a token
+    def headroom(self, account: AccountRef, lane: str) -> RateHeadroom: ...
+
 class ExchangeCapabilities(Protocol):
     supports_ws_order_entry: bool        # Bybit: True on live, False on demo
     supports_native_oco: bool            # Bybit: False (UI-only, spot)

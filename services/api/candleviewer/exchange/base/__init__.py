@@ -32,7 +32,7 @@ from .errors import (
 )
 from .fakes import FakeExchange, FakeTradingPort
 from .models import ExchangeCapabilities, Ticker, Trade, TradeSide
-from .ports import MarketDataPort, TradingPort
+from .ports import MarketDataPort, RateHeadroomPort, TradingPort
 
 __all__ = [
     "AmbiguousResultError",
@@ -49,6 +49,7 @@ __all__ = [
     "NotFoundError",
     "OmsErrorCode",
     "RateBudgetExceededError",
+    "RateHeadroomPort",
     "RateLimitError",
     "Ticker",
     "Trade",

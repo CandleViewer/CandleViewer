@@ -27,6 +27,7 @@ from candleviewer.exchange.base.errors import (
 from candleviewer.exchange.base.fakes import (
     CANCEL_ALL_LIMIT,
     CANCEL_ALL_SCOPE,
+    FRESH_HEADROOM_TOKENS,
     FakeCall,
     FakeOutcome,
     FakeReject,
@@ -45,6 +46,7 @@ from candleviewer.exchange.base.models import (
     PlaceOrderRequest,
     Position,
     PrivateEvent,
+    RateHeadroom,
     TradingStopRequest,
     Wallet,
 )
@@ -413,6 +415,22 @@ async def test_the_private_stream_is_bounded_and_refuses_another_environment() -
     live = _ref().model_copy(update={"environment": "live"})
     with pytest.raises(ValueError, match="another environment"):
         await port.subscribe_private(live)
+
+
+def test_the_headroom_reads_what_was_scripted_else_a_fresh_budget_and_records_no_call() -> None:
+    """#2877 ruling 4: `headroom` is scriptable per account and lane, and like the exchange
+    adapter's it sends nothing and takes no token, so no call is recorded."""
+    port = _port()
+    fresh = RateHeadroom(lane="entry", tokens=FRESH_HEADROOM_TOKENS, wait_s=0.0)
+    assert port.headroom(_ref(), "entry") == fresh
+    starved = RateHeadroom(lane="entry", tokens=0.0, wait_s=2.5)
+    port.set_headroom(ACCOUNT, starved)
+    assert port.headroom(_ref(), "entry") == starved
+    assert port.headroom(_ref(), "critical").wait_s == 0.0  # another lane: unscripted
+    assert port.headroom(_ref(OTHER), "entry") == fresh  # another account: unscripted
+    assert port.calls == []
+    with pytest.raises(ValueError, match="another environment"):
+        port.headroom(_ref().model_copy(update={"environment": "live"}), "entry")
 
 
 async def test_success_after_lookup_runs_over_the_fake_as_over_the_exchange() -> None:

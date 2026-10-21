@@ -18,6 +18,7 @@ alike until E34-T02 builds the reserve behind it (#2877 ruling R3).
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from collections.abc import Awaitable, Callable
 
@@ -57,6 +58,19 @@ class _Bucket:
         bucket never refills, so only a header or a drain can change it)."""
         deficit = 1.0 - self.tokens
         return deficit / self.refill_per_s if self.refill_per_s > 0 else _NO_REFILL_POLL_S
+
+    def level(self, now: float) -> float:
+        """The tokens it holds at `now`, refilled, read without changing it."""
+        elapsed = max(0.0, now - self.updated_at)
+        return min(self.capacity, self.tokens + elapsed * self.refill_per_s)
+
+    def wait_at(self, now: float) -> float:
+        """Seconds from `now` until one token is spare, read without changing it (never, for a
+        bucket that does not refill: only a header or a drain can change it)."""
+        deficit = 1.0 - self.level(now)
+        if deficit <= 0.0:
+            return 0.0
+        return deficit / self.refill_per_s if self.refill_per_s > 0 else math.inf
 
 
 class _IpGate:
@@ -199,6 +213,24 @@ class TokenBucketGovernor:
         if self._ip.hold_until > 0.0:
             self._ip.hold_until = 0.0
             bybit_ip_hold_remaining_seconds.set(0.0)
+
+    def headroom(
+        self, uid: str, endpoint_class: EndpointClass, *, lane: RateLane
+    ) -> tuple[float, float]:
+        """`(tokens, wait_s)` for the next acquisition of `uid` on `endpoint_class` in `lane`:
+        the spare tokens of the buckets it draws (the view's cap, the per-UID class bucket, the
+        IP bucket), the fewest of them, and the seconds until it would hold a token of each, an
+        IP hold included; `acquire` refuses it when that wait passes its deadline. Read without
+        taking a token or changing a bucket (#2877 ruling 4); `lane` is served like any other
+        until E34-T02, as in `acquire`."""
+        now = self._now()
+        bucket = self._buckets.get((uid, endpoint_class))
+        if bucket is None:  # its first acquisition makes it, full
+            bucket = _Bucket(self._default_capacity, self._default_refill_per_s, now=now)
+        draws = [b for b in (self._cap, bucket, self._ip.bucket) if b is not None]
+        tokens = min(b.level(now) for b in draws)
+        wait_s = max(self.ip_hold_remaining_s(), *(b.wait_at(now) for b in draws))
+        return tokens, wait_s
 
     def remaining(self, uid: str, endpoint_class: EndpointClass) -> float:
         bucket = self._get_bucket(uid, endpoint_class)

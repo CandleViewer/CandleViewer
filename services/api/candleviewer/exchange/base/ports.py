@@ -43,6 +43,8 @@ from .models import (
     PlaceOrderRequest,
     Position,
     PrivateEvent,
+    RateHeadroom,
+    RateLane,
     RiskLimitTier,
     TickerEvent,
     TradeEvent,
@@ -50,7 +52,7 @@ from .models import (
     Wallet,
 )
 
-__all__ = ["MarketDataPort", "TradingPort"]
+__all__ = ["MarketDataPort", "RateHeadroomPort", "TradingPort"]
 
 
 @runtime_checkable
@@ -178,3 +180,13 @@ class TradingPort(Protocol):
     async def account_info(self, account: AccountRef) -> AccountInfo: ...
 
     async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]: ...
+
+
+@runtime_checkable
+class RateHeadroomPort(Protocol):
+    """§14.1, beside `TradingPort` and not part of it: the local rate budget of an account's lane,
+    read without taking a token or sending anything (#2877 ruling 4). It reads no exchange, so
+    it is no `TradingPort` call; the OMS's own `RateHeadroom` port binds to it (E29-T04), so B1's
+    `rate` verdict needs no governor of its own (C-2.2), until E34-T02's `reserve()`."""
+
+    def headroom(self, account: AccountRef, lane: RateLane) -> RateHeadroom: ...

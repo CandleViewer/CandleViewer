@@ -2045,7 +2045,7 @@ class RateBudget(BaseModel):
 
 Queued items age with a **2 s priority boost** so no request starves behind a busier class; within a class, ties break by descending order notional.
 
-**Lanes (G-8, #2877 rulings R3 and T04's rate step).** A request names its lane, the per-account bucket of `20-architecture.md` §4.3, which is this table's class: `critical` is `critical`, `entry` is `normal` and `poll` is `background` (`RateLane`, §14.4). The adapter's governor takes the lane on every acquisition and, until E34-T02 builds the reserve behind it, serves every lane alike. The adapter takes the tokens (the OMS takes none, C-2.2): each attempt of a request takes its own, a retry included. The lane's wait bounds the whole request, every attempt's token wait and every pause before a retry: `entry` up to a bound its factory sets, `critical` up to the 5 s below and `poll` up to 5 s. A token wait past it (an IP hold included) before anything has been sent fails with `RATE_BUDGET_EXCEEDED`, nothing sent. A retry whose pause (a backoff, the venue's reset time or a `10018` hold) or token wait would end past it is not made, and the last attempt's own outcome is returned instead, so a rate-limit answer is a retryable `RATE_LIMITED` rejection whatever the retry count. Until E34-T02's `reserve()`, B1's `rate` verdict reads a headroom figure that takes no token.
+**Lanes (G-8, #2877 rulings R3 and T04's rate step).** A request names its lane, the per-account bucket of `20-architecture.md` §4.3, which is this table's class: `critical` is `critical`, `entry` is `normal` and `poll` is `background` (`RateLane`, §14.4). The adapter's governor takes the lane on every acquisition and, until E34-T02 builds the reserve behind it, serves every lane alike. The adapter takes the tokens (the OMS takes none, C-2.2): each attempt of a request takes its own, a retry included. The lane's wait bounds the whole request, every attempt's token wait and every pause before a retry: `entry` up to a bound its factory sets, `critical` up to the 5 s below and `poll` up to 5 s. A token wait past it (an IP hold included) before anything has been sent fails with `RATE_BUDGET_EXCEEDED`, nothing sent. A retry whose pause (a backoff, the venue's reset time or a `10018` hold) or token wait would end past it is not made, and the last attempt's own outcome is returned instead, so a rate-limit answer is a retryable `RATE_LIMITED` rejection whatever the retry count. Until E34-T02's `reserve()`, B1's `rate` verdict reads a headroom figure that takes no token: `RateHeadroomPort.headroom(account, lane)` (§14.1), on the order class for `critical` and `entry` and the account-reads class for `poll`, whose `wait_s` the lane's next request meets, refused with nothing sent once it passes the lane's wait.
 
 - Defaults: `order.create` 10/s, `order.amend` 10/s, `order.cancel` 10/s, `order.cancel_all` 1/s (linear), reads 50/s, global IP 600 req/5 s.
 - The bucket is **corrected from response headers** `X-Bapi-Limit`, `X-Bapi-Limit-Status`, `X-Bapi-Limit-Reset-Timestamp` on every call — self-throttling proactively rather than discovering 10006.
@@ -3867,6 +3867,10 @@ class TradingPort(Protocol):
     async def account_info(self, account: AccountRef) -> AccountInfo: ...
     async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]: ...
 
+@runtime_checkable
+class RateHeadroomPort(Protocol):          # beside TradingPort, not in it: no exchange call
+    def headroom(self, account: AccountRef, lane: RateLane) -> RateHeadroom: ...
+
 class ExchangeCapabilities(BaseModel):
     exchange: Exchange
     environment: Environment
@@ -3900,6 +3904,8 @@ class ExchangeCapabilities(BaseModel):
 ```
 
 The id filters are keyword-only (#846 ruling Q5, §8.5): an implementation sends them, filters the rows again itself, and refuses an `ext-` key as a filter. The exchange's implementation is `exchange/bybit/trading.py` (G-8, #2877), with capability records for live and demo and none for testnet; `FakeTradingPort` (`exchange/base/fakes.py`) is the in-memory one, and one conformance suite runs against both. `subscribe_private` raises until G-8b (#3963).
+
+`RateHeadroomPort` is a separate small protocol, not a `TradingPort` method: it reads the adapter's local rate budget for an account's lane, takes no token and sends nothing (§8.7; #2877 ruling 4), so the venue-call surface and its conformance suite stay as they are, and E34-T02's `reserve()` can replace it without touching `TradingPort`. The exchange's port and `FakeTradingPort` both satisfy it (the fake answers what a test scripts, else a fresh budget), and the OMS's own `RateHeadroom` port binds to it (E29-T04).
 
 ### 14.2 Adapter rules (binding)
 
@@ -4195,6 +4201,12 @@ class ExchangeRecord(BaseModel):           # 22's ExchangeCallRecord without eve
     latency_ms: int | None = None
     request_redacted: ExchangeRecordFields | None = None   # 22's ExchangeRecordFields,
     response_redacted: ExchangeRecordFields | None = None  # field for field
+
+class RateHeadroom(BaseModel):             # §14.1 RateHeadroomPort; read without a token
+    lane: RateLane
+    tokens: float                          # spare now in the buckets the lane draws, the fewest
+    wait_s: float                          # the next request's wait for its token, an IP hold
+                                           # included; 0 when one is spare now
 
 class PrivateEvent(BaseModel):
     kind: Literal["order","execution","position","wallet"]
