@@ -12,13 +12,18 @@ Also performs the column-drift guard: compares the live `tables()`/
 
 `_cv_migrations` is a WAL table, so `applied_migrations` waits for QuestDB's apply job
 (`wait_for_wal_apply`) before it reads: a stale read re-ran the newest file's DDL (#3064).
+
+A run that dies between a file's statements and its record (QuestDB has no transactional DDL)
+leaves effects with no record: `run_migrations` skips each `ADD COLUMN` (on a table with its DDL
+upsert keys) and each re-created table's `DROP TABLE` whose effect is already live (#3093).
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -29,7 +34,13 @@ from candleviewer.storage.errors import (
     StorageWalNotApplied,
     WalNotAppliedReason,
 )
-from candleviewer.storage.questdb.ddl import TableDef, parse_ddl_dir
+from candleviewer.storage.questdb.ddl import (
+    TableDef,
+    add_column_target,
+    drop_target,
+    parse_ddl_dir,
+    parse_ddl_file,
+)
 from candleviewer.storage.sql_identifiers import checked_identifier
 
 
@@ -171,6 +182,88 @@ async def applied_migrations(
     return {str(row["filename"]) for row in rows}
 
 
+# A fixed literal: the table name is a bind value, never interpolated into the statement.
+_SELECT_TABLE = "SELECT table_name FROM tables() WHERE table_name = $1"
+
+
+@dataclass(frozen=True, slots=True)
+class _LiveTable:
+    """A table as `table_columns()` shows it once its WAL apply has caught up."""
+
+    columns: Mapping[str, str]  # lower-case column name -> TYPE
+    upsert_keys: frozenset[str]
+
+
+async def _live_table(
+    executor: QuestDbExecutor, table: str, sleep: Callable[[float], Awaitable[None]]
+) -> _LiveTable | None:
+    """The live shape of `table`; `None` when it does not exist.
+
+    The WAL apply is awaited first: `table_columns()` lags an accepted `ALTER` until the apply
+    job ran (32 of 80 immediate reads on 8.1.1). It raises for a missing table, so `tables()`
+    is asked before it.
+    """
+    await wait_for_wal_apply(executor, table, sleep=sleep)
+    if not await executor.fetch(_SELECT_TABLE, table):
+        return None
+    # `checked_identifier` admits a plain identifier only, and `table` is parsed from our own DDL.
+    query = f"SELECT \"column\", type, upsertKey FROM table_columns('{checked_identifier(table)}')"  # noqa: S608  # nosec B608 - checked identifier from trusted DDL files (#3093)
+    rows = await executor.fetch(query)
+    return _LiveTable(
+        columns={str(row["column"]).lower(): str(row["type"]).upper() for row in rows},
+        upsert_keys=frozenset(
+            str(row["column"]).lower() for row in rows if str(row["upsertKey"]).lower() in _TRUTHY
+        ),
+    )
+
+
+async def _effect_present(
+    executor: QuestDbExecutor,
+    stmt: str,
+    recreated: Mapping[str, TableDef],
+    first_keys: Mapping[str, frozenset[str]],
+    sleep: Callable[[float], Awaitable[None]],
+) -> dict[str, str] | None:
+    """The log fields of `stmt` when a crashed earlier pass already applied its effect, else `None`.
+
+    - `ADD COLUMN t.c TYPE` (8.1.1 rejects `IF NOT EXISTS`): skipped when `c` is on `t` with that
+      type and `t` has the upsert keys its first `CREATE` declares (ILP sets none); a column of
+      another type, or a table without those keys, is `StorageSchemaDrift`, never a skip.
+    - `DROP TABLE t` of a table the same file re-creates (0004): skipped when `t` already has every
+      column and upsert key of that re-creation, so the rows written since survive. A superset, not
+      an equality: a later additive file must not make a lost record wipe the table. An old-shape
+      table is still dropped and re-created (owner decision, path B, #1778 item R).
+
+    `CREATE TABLE IF NOT EXISTS` and `DEDUP ENABLE UPSERT KEYS` can be repeated on 8.1.1, and every
+    other statement runs as written (`test_runner_resume.py` fails for a statement with no rule).
+    """
+    if (add := add_column_target(stmt)) is not None:
+        table, column, column_type = add
+        live = await _live_table(executor, table, sleep)
+        if live is None or column not in live.columns:
+            return None
+        if live.columns[column] != column_type:
+            raise StorageSchemaDrift(
+                f"questdb column {table}.{column} is {live.columns[column]}, "
+                f"the DDL adds {column_type}"
+            )
+        if not first_keys.get(table, frozenset()) <= live.upsert_keys:
+            raise StorageSchemaDrift(
+                f"questdb table {table} lacks its DDL upsert keys (storage-migrate runbook, Run it)"
+            )
+        return {"kind": "add_column", "table": table, "column": column}
+    if (dropped := drop_target(stmt)) is not None and dropped in recreated:
+        live = await _live_table(executor, dropped, sleep)
+        want = recreated[dropped]
+        if (
+            live is not None
+            and set(want.columns) <= set(live.columns)
+            and set(want.dedup_keys) <= live.upsert_keys
+        ):
+            return {"kind": "drop_table", "table": dropped}
+    return None
+
+
 async def run_migrations(
     executor: QuestDbExecutor,
     ddl_dir: Path,
@@ -184,6 +277,9 @@ async def run_migrations(
     statements are executed individually (`CREATE TABLE IF NOT EXISTS` makes
     per-statement idempotency redundant but harmless) and the file is
     recorded in `_cv_migrations` only after every statement in it succeeds.
+    A file a crash cut short is finished: a statement whose effect is already live is skipped
+    and logged (`_effect_present`, after a WAL-apply wait that `sleep` also paces), and the
+    file logs one `questdb_migration_resumed` warning (#3093).
     `sleep` is the backoff between WAL-apply polls of the record read (injectable for tests).
     """
     already = await applied_migrations(executor, sleep=sleep)
@@ -192,11 +288,24 @@ async def run_migrations(
     # not a hot-path blocking call in the C-2.18 sense; kept sync for
     # simplicity, run once per process start.
     sql_paths = sorted(ddl_dir.glob("*.sql"))  # noqa: ASYNC240
+    tables = [table for path in sql_paths for table in parse_ddl_file(path)]  # once per run
+    first_keys = {t.name: frozenset(t.dedup_keys) for t in reversed(tables)}  # earliest wins
     for sql_path in sql_paths:
         if sql_path.name in already:
             continue
-        for table in parse_ddl_file_statements(sql_path):
-            await executor.execute(table)
+        recreated = {t.name: t for t in tables if t.source_file == sql_path.name}
+        skipped = 0
+        for stmt in parse_ddl_file_statements(sql_path):
+            effect = await _effect_present(executor, stmt, recreated, first_keys, sleep)
+            if effect is not None:
+                skipped += 1
+                logger().info("questdb_statement_skipped", filename=sql_path.name, **effect)
+                continue
+            await executor.execute(stmt)
+        if skipped:
+            logger().warning(
+                "questdb_migration_resumed", filename=sql_path.name, statements_skipped=skipped
+            )
         await executor.execute(
             # `_MIGRATIONS_TABLE` is a module constant; `$1` binds the value.
             f"INSERT INTO {_MIGRATIONS_TABLE} (ts, filename, applied_at) "  # noqa: S608  # nosec B608 - module constant identifier, not user input

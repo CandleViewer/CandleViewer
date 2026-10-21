@@ -217,6 +217,7 @@ class _LaggingMigrationsExecutor:
     applied (`applied`). Time passes between statements, so each INSERT first applies everything
     earlier: only the newest record is ever behind, and needs `_APPLY_LAG_POLLS` status polls. Like
     the server, it rejects a plain `ADD COLUMN` of an existing column.
+    Only `_cv_migrations` is a WAL table here, so the resume guard (#3093) skips no statement.
     """
 
     def __init__(self, *, suspended: bool = False) -> None:
@@ -243,12 +244,16 @@ class _LaggingMigrationsExecutor:
 
     async def fetch(self, sql: str, *args: object) -> list[dict[str, object]]:
         if "wal_tables" in sql:
+            if args != ("_cv_migrations",):
+                return []  # not a WAL table: nothing to wait for
             self.wal_polls += 1
             if self._polls_to_apply and not self.suspended:
                 self._polls_to_apply -= 1
                 if not self._polls_to_apply:
                     self.applied = len(self.recorded)
             return [_wal(self.applied, len(self.recorded), suspended=self.suspended)]
+        if "FROM tables()" in sql:
+            return []  # no data table exists: the resume guard runs every ADD COLUMN
         assert "_cv_migrations" in sql, sql
         return [{"filename": name} for name in sorted(self.recorded[: self.applied])]
 
@@ -263,12 +268,13 @@ async def test_second_pass_waits_for_the_newest_migration_record_to_be_applied()
     # the stale read the old second pass acted on.
     stale = await executor.fetch("SELECT filename FROM _cv_migrations")
     assert [row["filename"] for row in stale] == first[:-1]
+    polls_after_the_first_pass = executor.wal_polls
 
     second = await run_migrations(executor, DDL_DIR, sleep=clock.sleep)
 
     assert second == []
     assert clock.slept == [0.02]  # one backoff: the second status poll saw the apply caught up
-    assert executor.wal_polls == 3  # one on the fresh table, two before the second read
+    assert (polls_after_the_first_pass, executor.wal_polls) == (1, 3)  # both before the 2nd read
 
 
 async def test_suspended_migrations_table_raises_instead_of_re_running_ddl() -> None:
