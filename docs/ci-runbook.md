@@ -712,28 +712,48 @@ index alone, removing nothing.
   hand-edit an already-applied migration (C-5.4).
 - **CI-MIG-003** (destructive operation without a `# cv:contract-phase:`
   annotation): the expand/contract linter found a drop/rename/narrowing
-  operation with no phase annotation. Split the change into
-  expand → migrate → contract across separate releases (C-5.1), and
-  annotate the destructive statement with the phase comment the linter
-  expects once you are genuinely in the contract phase. The same code also
-  refuses, with no annotation or exemption, any statement or Alembic call
-  that mutates an append-only audit table (C-5.7): a `DELETE`, `UPDATE`,
-  `TRUNCATE`, `DROP`, `ALTER`, `MERGE` or mutating `GRANT` that names one,
-  however it is spelled or nested (a plpgsql or SQL-standard body, a rule, a
-  prepared statement, `EXECUTE`), a mutating grant on every table of a
-  schema, and any statement that defines, replaces, alters or drops one of
-  the tables' guard functions. It is fail-closed: a mutating statement that
-  names an audit table anywhere counts, so a foreign key onto one or a
-  backfill that reads one is refused as well. Declare such a key in
-  `CREATE TABLE` or with `op.create_foreign_key`, and stage what a backfill
-  reads in a temporary table first. In a plpgsql body a statement runs from
-  the previous `;`, so an `IF`, `FOR` or `WITH` header that reads an audit
-  table counts with the statement it opens: read the condition into a
-  variable first. A string literal that opens with an SQL command word is
-  read as SQL. Only `0003_audit_log`, which creates the
-  tables and the functions, drops them, in its own downgrade: the exemption
-  holds for that file alone, which the migrations lockfile pins by name and
-  content.
+  operation with no phase annotation. Split the change into expand →
+  migrate → contract across separate releases (C-5.1), and annotate the
+  destructive statement with the phase comment the linter expects once you
+  are genuinely in the contract phase. The same code also refuses, with no
+  annotation or exemption, any statement or Alembic call that mutates an
+  append-only audit table (C-5.7): a `DELETE`, `UPDATE`, `TRUNCATE`,
+  `DROP`, `ALTER`, `MERGE` or mutating `GRANT` that names one, however it
+  is spelled or nested (a plpgsql or SQL-standard body, a rule, a prepared
+  statement, `EXECUTE`), a trigger, a rule or a `TRIGGER` grant on one, a
+  mutating grant on every table of a schema, any statement that defines,
+  replaces, alters or drops one of the tables' guard functions (as a
+  function, a procedure or a routine) or a routine named as a function the
+  hash chain calls, and the statements that reach the tables without
+  naming them: a role grant, a dropped or altered schema, a dropped or
+  reassigned role's objects, the `pgcrypto` extension dropped or altered,
+  and a role's or a database's `search_path`. It is fail-closed: a
+  mutating statement that names an audit table anywhere counts, so these
+  are refused as well, each with its rewrite: a foreign key onto one
+  (declare it in `CREATE TABLE` or with `op.create_foreign_key`), a
+  backfill that reads one (stage what it reads in a temporary table
+  first), a statement on another table that names one as a string value
+  (pass the name as a bind parameter), a docstring or a message that opens
+  with a mutating verb and names one (reword it), and a `WITH` or
+  `EXPLAIN` over a read of one `FOR UPDATE`. In a plpgsql body a statement
+  runs from the previous `;`, so an `IF`, `FOR` or `WITH` header that
+  reads an audit table counts with the statement it opens: read the
+  condition into a variable first. A string literal that opens with an SQL
+  command word is read as SQL. A revision the rule cannot read (it does
+  not parse, or it nests too deeply) is refused, and so is a name or a
+  string spelled with Unicode escapes (`U&`). Only `0003_audit_log`, which
+  creates the tables, their triggers and the functions, may create those
+  triggers and drop the tables, their triggers and the functions (its
+  downgrade does): the exemption holds for that file alone, which the
+  migrations lockfile pins by name and content. One more revision,
+  `0045_audit_search_path`, may pin the guard functions' `search_path`: it
+  is exempt only while it holds nothing but
+  `ALTER FUNCTION <guard>(...) SET search_path = pg_catalog, public, pg_temp`
+  in its upgrade and `... RESET search_path` in its downgrade, and is
+  refused otherwise. Keep that order: `pg_catalog` first, so no function
+  or operator in another schema shadows a built-in the chain calls, and
+  `pg_temp` last, because `audit_chain` reads `audit_log` unqualified and
+  the temporary schema would otherwise be searched first for it.
 - **CI-MIG-004** (upgrade-path failure): running the migration chain up
   from the previous release tag's schema failed. Reproduce locally
   (`alembic upgrade head` from a DB seeded at the previous tag) and fix the

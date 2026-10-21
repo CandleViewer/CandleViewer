@@ -821,6 +821,14 @@ def test_security_sensitive_revision_that_does_not_parse_has_every_word_read(
     assert _flagged(tmp_path, "def upgrade(:\n" + body, "orders") == ["orders"]
 
 
+def test_security_sensitive_revision_nested_too_deeply_has_every_word_read(
+    tmp_path: Path,
+) -> None:
+    """#4032: a revision too deep to read is read as words, as one that does not parse."""
+    source = _raw_sql_revision(_deep()) + "# then ALTER TABLE orders\n"
+    assert _flagged(tmp_path, source, "orders") == ["orders"]
+
+
 def test_security_sensitive_table_named_only_in_docstring_or_comment_is_not_flagged(
     tmp_path: Path,
 ) -> None:
@@ -962,11 +970,15 @@ def _audit_hits(tmp_path: Path, source: str, name: str = "0050_audit.py") -> lis
         "EXPLAIN ANALYZE DELETE FROM audit_log",
         "INSERT INTO audit_log (record_id) VALUES ('x')"
         " ON CONFLICT (record_id) DO UPDATE SET outcome = 'x'",
+        "MERGE INTO audit_log a USING x ON a.id = x.id"
+        " WHEN NOT MATCHED THEN INSERT (id) VALUES (x.id)",
+        "WITH gone AS (UPDATE audit_log SET note = 'x' RETURNING id) SELECT 1",
+        "DO $$ BEGIN EXECUTE format('DELETE FROM %s', 'audit_log'); END $$",
+        "DO $$ BEGIN EXECUTE format('DELETE FROM %L', 'audit_log'); END $$",
+        "DO $$ BEGIN EXECUTE 'DELETE FROM $1' USING 'audit_log'; END $$",
     ],
 )
-def test_audit_mutation_spelled_any_valid_way_is_flagged(
-    tmp_path: Path, sql: str
-) -> None:
+def test_audit_mutation_spelled_these_ways_is_flagged(tmp_path: Path, sql: str) -> None:
     """Each statement mutates an audit table, which C-5.7 forbids however it is spelled."""
     (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
     assert "append-only table 'audit_" in message
@@ -1044,8 +1056,6 @@ def test_a_drop_whose_table_name_is_on_the_next_line_is_flagged(tmp_path: Path) 
 @pytest.mark.parametrize(
     "sql",
     [
-        "CREATE TRIGGER trg BEFORE UPDATE OR DELETE ON audit_log"
-        " FOR EACH ROW EXECUTE FUNCTION forbid_mutation()",
         "REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM cv_app",
         "DO $$ BEGIN EXECUTE 'REVOKE UPDATE, DELETE ON audit_log FROM cv_ro'; END $$",
         "COMMENT ON COLUMN audit_log.note IS 'Update and delete are refused'",
@@ -1057,13 +1067,29 @@ def test_a_drop_whose_table_name_is_on_the_next_line_is_flagged(tmp_path: Path) 
         "SELECT count(*) FROM audit_log",
         "LOCK TABLE audit_log IN SHARE MODE",
         "GRANT SELECT ON ALL TABLES IN SCHEMA public TO cv_ro",
+        "GRANT SELECT, INSERT ON audit_log TO cv_app",
         "DELETE FROM orders WHERE note = 'audit_log rows are kept'",
+        "CREATE TRIGGER trg_oe_append BEFORE UPDATE OR DELETE ON order_events"
+        " FOR EACH ROW EXECUTE FUNCTION forbid_mutation()",
+        "CREATE CONSTRAINT TRIGGER trg_owner_floor AFTER DELETE ON user_roles"
+        " DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION owner_floor()",
+        "COMMENT ON TRIGGER trg_audit_append ON audit_log IS 'refuses updates'",
+        "CREATE FUNCTION pad(s text, length int) RETURNS text"
+        " LANGUAGE sql AS $$ SELECT rpad(s, length) $$",
+        "CREATE FUNCTION fingerprint(v text) RETURNS text LANGUAGE sql"
+        " AS $$ SELECT encode(digest(v, 'sha256'), 'hex') $$",
+        "ALTER FUNCTION touch_updated_at() SET search_path = pg_catalog, pg_temp",
+        "ALTER ROLE cv_app SET statement_timeout = '5s'",
+        "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+        "DROP SCHEMA staging",
     ],
 )
 def test_a_statement_that_mutates_no_audit_table_is_not_flagged(
     tmp_path: Path, sql: str
 ) -> None:
-    """The append-only guards themselves, reads, inserts and another table's rows."""
+    """Reads, inserts, another table's rows and triggers, a parameter or a body that
+    shares a name with a function the hash chain calls, and another function's or
+    role's settings."""
     assert _audit_hits(tmp_path, _raw_sql_revision(sql)) == []
 
 
@@ -1108,7 +1134,7 @@ _UPGRADE = f"\n\ndef upgrade() -> None:\n    op.execute({_OWNER_DROPS!r})\n"
             id="the-owner-file-name-with-another-id",
         ),
         pytest.param(
-            "0099_other.py",
+            "0003_audit_log.py",
             'from alembic import op\n\nREV = "0099_other"\nrevision = REV\n'
             + _UPGRADE.replace(
                 "-> None:\n", '-> None:\n    revision = "0003_audit_log"\n'
@@ -1116,13 +1142,13 @@ _UPGRADE = f"\n\ndef upgrade() -> None:\n    op.execute({_OWNER_DROPS!r})\n"
             id="a-function-scope-claim",
         ),
         pytest.param(
-            "0099_other.py",
+            "0003_audit_log.py",
             'from alembic import op\n\nrevision = "0003_audit_log"\n'
             'revision = "0099_other"\n' + _UPGRADE,
             id="an-earlier-module-level-claim",
         ),
         pytest.param(
-            "0099_other.py",
+            "0003_audit_log.py",
             'from alembic import op\n\nREV = "0099_other"\nrevision = REV\n\n\n'
             'class _Meta:\n    revision = "0003_audit_log"\n' + _UPGRADE,
             id="a-class-body-claim",
@@ -1135,6 +1161,34 @@ def test_no_other_revision_can_claim_the_owner_exemption(
     """The owner is the file the migrations lockfile pins by name and bytes, with the
     id Alembic reads: the last module-level `revision`, a string constant."""
     assert _audit_hits(tmp_path, source, name)
+
+
+def test_a_revision_the_rule_cannot_parse_is_refused(tmp_path: Path) -> None:
+    """#4032: a file the audit rule cannot read is a finding, never a skip."""
+    (message,) = _audit_hits(
+        tmp_path, "def upgrade(:\n    op.execute('DELETE FROM audit_log')\n"
+    )
+    assert "is not Python the rule can parse" in message
+
+
+def _deep(levels: int = 1500) -> str:
+    """SQL nested past the interpreter's recursion limit: `DO $t0$ DO $t1$ ... $t1$ $t0$`."""
+    opening = "".join(f"DO $t{i}$ " for i in range(levels))
+    return opening + "SELECT 1" + "".join(f" $t{i}$" for i in reversed(range(levels)))
+
+
+def test_a_revision_nested_too_deeply_is_refused_and_the_others_still_report(
+    tmp_path: Path,
+) -> None:
+    deep = _write(tmp_path, "0050_deep.py", _raw_sql_revision(_deep()))
+    other = _write(
+        tmp_path, "0051_other.py", _raw_sql_revision("DELETE FROM audit_log")
+    )
+    findings = check_audit_table_integrity([deep, other])
+    assert [(f.path.name, "nests too deeply" in f.message) for f in findings] == [
+        ("0050_deep.py", True),
+        ("0051_other.py", False),
+    ]
 
 
 def test_the_shipped_migrations_have_no_audit_mutation() -> None:
@@ -1161,6 +1215,9 @@ def test_the_shipped_migrations_have_no_audit_mutation() -> None:
         "DO $$ BEGIN ALTER FUNCTION audit_field(text) RENAME TO x; END $$",
         "DO $o$ BEGIN CREATE OR REPLACE FUNCTION audit_refuse_truncate()"
         " RETURNS trigger LANGUAGE plpgsql AS $i$ BEGIN RETURN NULL; END $i$; END $o$",
+        "ALTER ROUTINE audit_chain() SECURITY DEFINER",
+        "DROP ROUTINE forbid_mutation() CASCADE",
+        "DROP PROCEDURE IF EXISTS audit_refuse_truncate()",
     ],
 )
 def test_redefining_or_dropping_an_audit_guard_function_is_flagged(
@@ -1199,3 +1256,337 @@ def test_only_the_revision_that_defines_the_guard_functions_may_drop_them(
     sql = "DROP FUNCTION IF EXISTS forbid_mutation()"
     source = f'revision: str = "{revision}"\n' + _raw_sql_revision(sql)
     assert bool(_audit_hits(tmp_path, source, f"{revision}.py")) is flagged
+
+
+@pytest.mark.parametrize(
+    ("sql", "table"),
+    [
+        (
+            "CREATE OR REPLACE TRIGGER trg_audit_append BEFORE UPDATE OR DELETE"
+            " ON audit_log FOR EACH ROW WHEN (false) EXECUTE FUNCTION forbid_mutation()",
+            "audit_log",
+        ),
+        (
+            "CREATE TRIGGER trg_skip BEFORE INSERT ON audit_log"
+            " FOR EACH ROW EXECUTE FUNCTION skip_row()",
+            "audit_log",
+        ),
+        (
+            "CREATE CONSTRAINT TRIGGER trg_late AFTER INSERT ON audit_checkpoints"
+            " FOR EACH ROW EXECUTE FUNCTION refuse()",
+            "audit_checkpoints",
+        ),
+        ("CREATE RULE r AS ON INSERT TO audit_log DO INSTEAD NOTHING", "audit_log"),
+        (
+            "CREATE OR REPLACE RULE r AS ON INSERT TO audit_checkpoints"
+            " DO INSTEAD NOTHING",
+            "audit_checkpoints",
+        ),
+        ("GRANT TRIGGER ON audit_log TO cv_app", "audit_log"),
+        (
+            "DO $$ BEGIN EXECUTE 'CREATE TRIGGER t BEFORE INSERT ON audit_log"
+            " FOR EACH ROW EXECUTE FUNCTION skip_row()'; END $$",
+            "audit_log",
+        ),
+    ],
+)
+def test_a_trigger_or_rule_on_an_audit_table_is_flagged(
+    tmp_path: Path, sql: str, table: str
+) -> None:
+    """A trigger or a rule can discard or rewrite each row written after it, and the
+    `TRIGGER` privilege lets its grantee add one (#4032)."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert f"append-only table '{table}'" in message
+
+
+def test_a_trigger_grant_on_every_table_of_a_schema_is_flagged(tmp_path: Path) -> None:
+    sql = "GRANT TRIGGER ON ALL TABLES IN SCHEMA public TO cv_app"
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "every table of a schema" in message
+
+
+@pytest.mark.parametrize(
+    ("sql", "callee"),
+    [
+        (
+            "CREATE FUNCTION digest(bytea, text) RETURNS bytea"
+            " LANGUAGE sql AS $$ SELECT $1 $$",
+            "digest",
+        ),
+        (
+            "CREATE OR REPLACE FUNCTION public.encode(bytea, text) RETURNS text"
+            " LANGUAGE sql AS $$ SELECT 'x' $$",
+            "encode",
+        ),
+        (
+            'CREATE FUNCTION cv_app . "length" /* x */ (text) RETURNS int'
+            " LANGUAGE sql AS $$ SELECT 1 $$",
+            "length",
+        ),
+        ("CREATE AGGREGATE to_char(text) (SFUNC = textcat, STYPE = text)", "to_char"),
+        ("ALTER FUNCTION my_hash(bytea, text) RENAME TO digest", "digest"),
+        ("DROP FUNCTION IF EXISTS public.hashtext(text)", "hashtext"),
+        (
+            "DO $o$ BEGIN CREATE FUNCTION pg_advisory_xact_lock(bigint) RETURNS void"
+            " LANGUAGE sql AS $i$ SELECT $i$; END $o$",
+            "pg_advisory_xact_lock",
+        ),
+        (
+            "CREATE PROCEDURE repeat(text, int) LANGUAGE sql AS $$ SELECT 1 $$",
+            "repeat",
+        ),
+    ],
+)
+def test_a_routine_named_as_a_function_the_hash_chain_calls_is_flagged(
+    tmp_path: Path, sql: str, callee: str
+) -> None:
+    """`audit_chain` resolves these through the inserting session's `search_path`:
+    another routine of the name, in a schema searched first or with a closer
+    signature, forges or breaks the chain (#4032)."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert f"the function '{callee}' the audit hash chain calls" in message
+
+
+@pytest.mark.parametrize(
+    ("sql", "target"),
+    [
+        ("GRANT cv_owner TO cv_app", "a role's membership"),
+        ("GRANT pg_write_all_data TO cv_app WITH ADMIN OPTION", "a role's membership"),
+        (
+            "DO $$ BEGIN IF true THEN GRANT cv_owner TO cv_app; END IF; END $$",
+            "a role's membership",
+        ),
+        ("DROP SCHEMA public CASCADE", "a schema"),
+        ("DROP SCHEMA IF EXISTS staging, public CASCADE", "a schema"),
+        ("ALTER SCHEMA public OWNER TO cv_app", "a schema"),
+        ("ALTER SCHEMA public RENAME TO old_public", "a schema"),
+        ("DROP OWNED BY cv_owner", "every object a role owns"),
+        ("REASSIGN OWNED BY cv_owner TO cv_app", "every object a role owns"),
+        ("DROP EXTENSION pgcrypto CASCADE", "the extension"),
+        ('DROP EXTENSION IF EXISTS "pgcrypto"', "the extension"),
+        ("ALTER EXTENSION pgcrypto SET SCHEMA archive", "the extension"),
+        ("ALTER ROLE cv_app SET search_path = shadow, public", "the search_path"),
+        (
+            "ALTER DATABASE candleviewer SET search_path TO shadow, public",
+            "the search_path",
+        ),
+        (
+            'ALTER USER cv_app IN DATABASE candleviewer SET "search_path" = shadow',
+            "the search_path",
+        ),
+        ("ALTER ROLE cv_app RESET search_path", "the search_path"),
+        ("ALTER ROLE cv_app RESET ALL", "the search_path"),
+    ],
+)
+def test_a_statement_that_reaches_the_audit_tables_without_naming_one_is_flagged(
+    tmp_path: Path, sql: str, target: str
+) -> None:
+    """A role's privileges, a schema, a role's objects, the extension the chain hashes
+    with and the path it resolves its calls through each hold or reach the audit
+    tables or their guards without naming them (#4032)."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert f"targets {target}" in message
+
+
+@pytest.mark.parametrize(
+    ("revision", "flagged"), [("0003_audit_log", False), ("0099_other", True)]
+)
+def test_only_the_revision_that_creates_the_audit_tables_may_add_their_triggers(
+    tmp_path: Path, revision: str, flagged: bool
+) -> None:
+    sql = (
+        "CREATE TRIGGER trg_audit_append BEFORE UPDATE OR DELETE ON audit_log"
+        " FOR EACH ROW EXECUTE FUNCTION forbid_mutation()"
+    )
+    source = f'revision: str = "{revision}"\n' + _raw_sql_revision(sql)
+    assert bool(_audit_hits(tmp_path, source, f"{revision}.py")) is flagged
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE OR REPLACE TRIGGER trg_audit_append BEFORE UPDATE OR DELETE"
+        " ON audit_log FOR EACH ROW WHEN (false) EXECUTE FUNCTION forbid_mutation()",
+        "CREATE CONSTRAINT TRIGGER trg_late AFTER INSERT ON audit_log"
+        " FOR EACH ROW EXECUTE FUNCTION refuse()",
+        "CREATE RULE r AS ON INSERT TO audit_log DO INSTEAD NOTHING",
+        "GRANT cv_owner TO cv_app",
+        "CREATE FUNCTION digest(bytea, text) RETURNS bytea"
+        " LANGUAGE sql AS $$ SELECT $1 $$",
+    ],
+)
+def test_the_owner_revision_may_add_no_other_trigger_rule_or_reach(
+    tmp_path: Path, sql: str
+) -> None:
+    """Its exemption covers the `CREATE TRIGGER`s it holds, nothing more."""
+    source = 'revision = "0003_audit_log"\n' + _raw_sql_revision(sql)
+    assert len(_audit_hits(tmp_path, source, "0003_audit_log.py")) == 1
+
+
+_PIN = "0045_audit_search_path"
+_PIN_SOURCE = f'''"""Pin the audit guard functions' search_path (#4032)."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+from alembic import op
+
+revision: str = "{_PIN}"
+down_revision: str | None = "0044_account_no_hard_delete"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    """Each guard function resolves its calls through the pinned path."""
+    op.execute("ALTER FUNCTION audit_chain() SET search_path = pg_catalog, public, pg_temp")
+    op.execute(
+        "ALTER FUNCTION audit_field(text) SET search_path = pg_catalog,public,pg_temp;"
+        " ALTER FUNCTION forbid_mutation() SET search_path TO pg_catalog, public, pg_temp;"
+        " ALTER FUNCTION public.audit_refuse_truncate()"
+        "   SET search_path = pg_catalog, public, pg_temp;"
+    )
+
+
+def downgrade() -> None:
+    op.execute("ALTER FUNCTION audit_chain() RESET search_path")
+    op.execute(
+        "ALTER FUNCTION audit_field(text) RESET search_path;"
+        " ALTER FUNCTION forbid_mutation() RESET search_path;"
+        " ALTER FUNCTION audit_refuse_truncate() RESET search_path"
+    )
+'''
+_PIN_SET = (
+    'op.execute("ALTER FUNCTION audit_chain() SET search_path = pg_catalog, public, '
+    'pg_temp")'
+)
+_PIN_RESET = 'op.execute("ALTER FUNCTION audit_chain() RESET search_path")'
+
+
+def test_the_search_path_pin_revision_holding_only_its_pin_is_exempt(
+    tmp_path: Path,
+) -> None:
+    assert _PIN_SET in _PIN_SOURCE and _PIN_RESET in _PIN_SOURCE
+    assert _audit_hits(tmp_path, _PIN_SOURCE, f"{_PIN}.py") == []
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        pytest.param(
+            "0099_other.py",
+            _PIN_SOURCE.replace(_PIN, "0099_other"),
+            id="the-pin-in-another-revision",
+        ),
+        pytest.param(
+            f"{_PIN}.py",
+            _PIN_SOURCE.replace(f'revision: str = "{_PIN}"', 'revision = "0099_other"'),
+            id="the-pin-file-name-with-another-id",
+        ),
+    ],
+)
+def test_no_other_revision_can_claim_the_pin_exemption(
+    tmp_path: Path, name: str, source: str
+) -> None:
+    """Its statements are then read as any revision's: each pins a guard function."""
+    hits = _audit_hits(tmp_path, source, name)
+    assert len(hits) == 8
+    assert all("append-only guard function '" in hit for hit in hits)
+
+
+_PIN_DEVIATIONS = {
+    "another-statement": (
+        _PIN_SET,
+        _PIN_SET.replace(
+            'pg_temp")', 'pg_temp; DROP TRIGGER trg_audit_append ON audit_log")'
+        ),
+    ),
+    "another-path": (
+        _PIN_SET,
+        _PIN_SET.replace("pg_catalog, public", "public, pg_catalog"),
+    ),
+    "no-pg_temp": (_PIN_SET, _PIN_SET.replace(", pg_temp", "")),
+    "another-function": (_PIN_SET, _PIN_SET.replace("audit_chain", "touch_updated_at")),
+    "a-quoted-name": (_PIN_SET, _PIN_SET.replace("audit_chain", '\\"audit_chain\\"')),
+    "a-comment": (_PIN_SET, _PIN_SET.replace("() SET", "() /* x */ SET")),
+    "reset-in-the-upgrade": (_PIN_SET, _PIN_RESET),
+    "set-in-the-downgrade": (_PIN_RESET, _PIN_SET),
+    "another-call": (_PIN_SET, _PIN_SET + '\n    op.drop_table("audit_log")'),
+    "a-name-not-a-constant": (
+        _PIN_SET,
+        "op.execute(_SQL)",
+    ),
+    "an-f-string": (_PIN_SET, _PIN_SET.replace('op.execute("', 'op.execute(f"')),
+    "another-import": ("from alembic import op", "from alembic import op, context"),
+    "an-annotation-that-runs-code": (
+        "down_revision: str | None",
+        "down_revision: print() or str",
+    ),
+    "a-decorator": ("def upgrade()", "@print\ndef upgrade()"),
+    "a-default-argument": ("def upgrade()", "def upgrade(x=print())"),
+    "a-module-statement": ("\n\ndef upgrade()", "\nprint()\n\n\ndef upgrade()"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_PIN_DEVIATIONS))
+def test_a_pin_revision_holding_anything_else_is_refused(
+    tmp_path: Path, case: str
+) -> None:
+    """It may hold only its pin: anything else is refused, and its statements are
+    read as any revision's (#4032)."""
+    old, new = _PIN_DEVIATIONS[case]
+    assert _PIN_SOURCE.count(old) == 1
+    hits = _audit_hits(tmp_path, _PIN_SOURCE.replace(old, new), f"{_PIN}.py")
+    assert any("the search_path pin revision may hold only" in hit for hit in hits)
+    assert any("append-only guard function 'audit_field'" in hit for hit in hits)
+
+
+def test_a_pin_revision_refusal_names_the_line_that_deviates(tmp_path: Path) -> None:
+    source = _PIN_SOURCE.replace(_PIN_RESET, _PIN_SET)
+    line = source.splitlines().index("def downgrade() -> None:") + 2  # its first call
+    refusals = [
+        hit
+        for hit in _audit_hits(tmp_path, source, f"{_PIN}.py")
+        if "the search_path pin revision" in hit
+    ]
+    assert [hit.split(":")[0] for hit in refusals] == [f"line {line}"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import sqlalchemy as sa\nfrom alembic import op\n\n\ndef upgrade() -> None:\n"
+        '    op.execute(sa.delete(sa.Table("audit_log", sa.MetaData())))\n',
+        'import sqlalchemy as sa\nfrom alembic import op\n\nT = "audit_log"\n\n\n'
+        "def upgrade() -> None:\n    op.execute(sa.table(T).delete())\n",
+        'from alembic import op\n\nT = "audit_log"\n\n\n'
+        'def upgrade() -> None:\n    op.alter_column(T, "note", nullable=True)\n',
+    ],
+    ids=[
+        "a-core-Table",
+        "a-core-table-through-a-name",
+        "an-alembic-table-through-a-name",
+    ],
+)
+def test_an_audit_table_given_through_a_name_or_a_core_table_is_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    (message,) = _audit_hits(tmp_path, source)
+    assert "append-only table 'audit_log'" in message
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        'DROP TABLE U&"audit\\005flog"',
+        "DROP TABLE U&\"audit!005flog\" UESCAPE '!'",
+        "DO $$ BEGIN EXECUTE U&'\\0044ELETE FROM audit_log'; END $$",
+    ],
+)
+def test_a_name_or_string_spelled_with_unicode_escapes_is_refused(
+    tmp_path: Path, sql: str
+) -> None:
+    """The rule cannot read them, and they can name an audit table (#4032)."""
+    hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert any("spelled with Unicode escapes" in hit for hit in hits)
