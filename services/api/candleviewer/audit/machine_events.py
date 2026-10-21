@@ -59,9 +59,11 @@ lossy; fail closed) and reuses `AuditWal` (24-internal-schemas.md §17.6):
   adopt `plugins_for` keep their long-lived machines' keys resident until the keys that have a
   live plugin are pinned (review round 2, a follow-up).
 
-`append`, `head` and `seed` run on the loop that started the sink, and a machine on another loop
-(the order lane's own loop) hops there first with `call_soon_threadsafe` (for the coroutine `seed`,
-`run_coroutine_threadsafe`).
+`append`, `head` and `seed` run on the loop that started the sink. A machine on another loop (the
+order lane's own loop) must wait for the result of each call it makes there, so that a refusal and
+the fsync are seen on its own thread: `asyncio.run_coroutine_threadsafe(<a coroutine that calls
+it>, <the sink's loop>).result(timeout)`. A fire-and-forget hop would lose a refusal. The other
+choice is a sink of the lane's own, on its own loop and WAL file; which one is E29-T03/T04's call.
 
 Rows are dataclass instances and frames the dicts `dataclasses.asdict` gives. `MachineEventRow`
 lives in `statechart/plugins/audit.py` and is named here for annotations only: a run-time import
@@ -400,7 +402,8 @@ class MachineEventWalSink:
         or the chain a seed was for, is lost and nothing else pages it, so the first refusal of
         each `APPEND_FAILURE_COOLDOWN_S` window, `append`'s or `seed`'s, logs one CRITICAL
         `cv_page` line by the operation (review round 2), on the injected clock (a clock stepped
-        back reads as expired). `append_failure_active` stays the WAL's, as `AuditWriter`'s."""
+        back reads as expired). The window spans restarts: `start()` does not reset it.
+        `append_failure_active` stays the WAL's, as `AuditWriter`'s."""
         now, paged = self._clock(), self._not_running_paged_at
         cooldown = timedelta(seconds=APPEND_FAILURE_COOLDOWN_S)
         if paged is None or not timedelta(0) <= now - paged < cooldown:
