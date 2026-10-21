@@ -751,17 +751,16 @@ flowchart TD
   G1 --> H1["Visible window requested first: one REST page of at most 5 000 bars, or the WS snapshot at the live edge"]
   U1 --> H1
   H1 --> I1{"First data"}
-  I1 -->|covers the visible window, budget 600 ms| J1["Swap in one frame, centre kept"]
+  I1 -->|covers the visible window, or reaches a known boundary inside it, budget 600 ms| J1["Swap in one frame, centre kept, a boundary inside the window drawn as such: recording start, start of the built range, a coverage hole"]
   J1 --> V1
-  J1 --> K1["Progressive backfill: older windows load leftward behind the frontier tag"]
+  J1 --> K1["Progressive backfill: older windows load leftward behind the frontier tag, each request within the per-request caps"]
   K1 --> L1{"Older page fails?"}
   L1 -->|yes| M1["Frontier reads Could not load older bars, Retry, painted bars stay"]
-  L1 -->|no| N1["Backfill ends, or reaches recording start: F-BAR-5"]
+  L1 -->|no| N1["Backfill ends at recording start, the start of the built range or the lookback: F-BAR-5"]
   I1 -->|retryable failure| O1["1m kept, toolbar reverts to 1m, strip offers Retry 5m and Dismiss"]
-  I1 -->|refused, not retryable| W1["1m kept, the cause inline with no Retry: a bound, a cap, or no_data_recorded to F-BAR-5"]
-  I1 -->|no bars in the window| P1["F-BAR-5"]
+  I1 -->|refused, not retryable| W1["1m kept, the cause inline with no Retry: a bound, or a setting not available"]
+  I1 -->|no bars in the window, or 422 no_data_recorded| P1["F-BAR-5"]
   I1 -->|user picks another interval first| Q1["Latest intent wins, this request is dropped"]
-  H1 -->|sub-minute after OQ-1, over about 250 000 bars| X1["Newest part the cap allows, window-limit boundary as in F-BAR-2"]
   F1 --> R1["chart.interval_changed, cache hit"]
   J1 --> S1["chart.interval_changed, cache miss, first_paint_ms"]
   O1 --> T1["chart.error_shown, surface inline"]
@@ -772,6 +771,9 @@ flowchart TD
   interval button, `Enter`, `↓` to the Time group, `Enter`. Committing returns focus to the trigger when the menu
   was opened from it, and to the chart region when it was opened by hotkey; never to the page body. The result is
   announced once, politely.
+- **Paging:** older windows stay within the per-request caps (non-time 31 days; time 400 days and 250 000 bars), and
+  on `bar_window_too_large` the client halves the window and retries without telling the user. Backfill runs to
+  recording start, the built range's start or the lookback (US-CHART-010; E11-S15 `maxBars`, memory budget).
 - **Events:** `chart.interval_changed {from, to, source, cache, first_paint_ms}`; `chart.error_shown` on a failure.
 
 ### 22.2 F-BAR-2 — Switch to a non-time bar mode and enter its parameter
@@ -785,18 +787,16 @@ flowchart TD
   E2 --> F2["Esc closes with no change, or pick a time interval: F-BAR-1"]
   D2 -->|yes| G2{"Commit as shown, or edit the parameter?"}
   G2 -->|Enter on Volume, 50 BTC per bar| H2["Commit volume:50"]
-  G2 -->|Right arrow| I2["Inline editor: Volume per bar in BTC, recent values, the build estimate"]
+  G2 -->|Right arrow| I2["Inline editor: Volume per bar in BTC, recent values, the G-2 build estimate, Estimating until it arrives"]
+  G2 -->|Enter on a row that reads Needs a build, after G-2| I2
   I2 --> J2{"Within the server bounds?"}
   J2 -->|no| K2["Message below the field names the bound, nothing is sent, focus stays"]
   K2 --> I2
   J2 -->|yes, Enter| H2
   H2 --> L2["Menu closes, focus back where the menu was opened from, pill reads Vol 50 BTC with a pending mark"]
-  L2 --> Y2{"Loaded window within the non-time cap: 31 days, about 250 000 bars?"}
-  Y2 -->|no| W2["Clamp to the newest part the cap allows. Window-limit boundary: Volume 50 BTC bars cover the last 31 days, the strip names the cap once"]
-  Y2 -->|yes| M2{"Where is the volume:50 series?"}
-  W2 --> M2
+  L2 --> M2{"Where is the volume:50 series?"}
   M2 -->|client cache| N2["Swap within 200 ms, axis caption Bar order, not time, drawings keep their timestamps"]
-  M2 -->|stored rows cover the window| O2["Load as in the F-BAR-1 miss branch, previous frame held, drawings keep their timestamps"]
+  M2 -->|stored rows cover the window| O2["Load and page older windows as in the F-BAR-1 miss branch, previous frame held, drawings keep their timestamps"]
   M2 -->|zero rows over recorded prints, not built| P2["Build the loaded window: F-BAR-3, never SCR-047. Before G-2: the live series from its first bar, built-from boundary"]
   N2 --> Q2["chart.bar_mode_changed"]
   O2 --> Q2
@@ -806,15 +806,16 @@ flowchart TD
 ```
 
 - **Keyboard:** `Alt+I` (new, OQ-4) or the toolbar path; `↓` into the bar-mode group; `Enter` commits the mode with
-  its shown parameter, or `→` opens the editor, then type and `Enter`. `Esc` in the editor returns to the row.
+  its shown parameter (on a row that reads "Needs a build" it opens the editor with the estimate), or `→` opens the
+  editor, then type and `Enter`. `Esc` in the editor returns to the row.
 - **Events:** `chart.bar_mode_changed {from, to, source, cache}` when the new mode paints.
 
 ### 22.3 F-BAR-3 — Change a parameter: rebuild, progress, cancel, revert
 
 ```mermaid
 flowchart TD
-  A3["Chart on Volume 50 BTC, the user commits 75 in SCR-042, SCR-031 or a favourite after seeing the estimate: about 3.1 M prints, about 30 s"] --> B3["Pill reads Vol 75 BTC with a pending mark, Volume 50 stays drawn and live, labelled as shown"]
-  B3 --> C3["Server builds volume:75 over the chart's loaded window, at most 31 days and 250 000 bars, from recorded prints: chunked, cancellable, published by generation swap, contract G-2"]
+  A3["Chart on Volume 50 BTC, the user commits 75 in SCR-042, SCR-031 or a favourite after seeing the G-2 estimate: about 3.1 M prints, about 30 s"] --> B3["Pill reads Vol 75 BTC with a pending mark, Volume 50 stays drawn and live, labelled as shown"]
+  B3 --> C3["Server builds volume:75 over the chart's loaded window from recorded prints, at most 250 000 staged bars, a 31-day bound proposed for G-2: chunked, cancellable, published by generation swap, contract G-2"]
   C3 --> V3["chart.bar_rebuild_started"]
   C3 --> D3{"Elapsed time"}
   D3 -->|under 600 ms| E3["No progress UI"]
@@ -826,7 +827,7 @@ flowchart TD
   H3 -->|done| I3["One-frame swap to the new generation, every bar redrawn, drawings keep their timestamps, focus unchanged"]
   H3 -->|cancel at 40 percent, button or Esc| J3["Cancel sent, Volume 50 is already on screen: no refetch, no empty chart"]
   J3 --> K3["Pill and field revert to 50, strip: Build cancelled at 40 percent, still showing Volume 50, Retry Volume 75, Dismiss"]
-  H3 -->|refused or failed| N3["Restore as on cancel. The strip names the cause and the next step: too many bars, choose a larger size or a shorter window, the service is busy, or no memory to stage the build"]
+  H3 -->|refused or failed| N3["Restore as on cancel. The strip names the cause and the next step: too many bars, choose a larger size or a shorter window, the service is busy, or, for another setting, no memory to stage the build"]
   H3 -->|connection lost| O3["The disconnect cancels the build, Volume 50 frozen with its last-good time, Retry after reconnect"]
   H3 -->|user picks another setting| P3["Superseded: this build is cancelled, the new intent proceeds"]
   I3 --> Q3["chart.bar_rebuild_completed and chart.bar_mode_changed"]
@@ -841,8 +842,12 @@ flowchart TD
   popover or drawing is open. Completion never moves focus, except from a `Cancel` button that disappears, and then
   to the chart region. Announced politely at start and end only.
 - **Build earlier bars:** the built-from boundary's action runs this flow over a wider window with the same setting;
-  the strip says every bar is redrawn. The staged generation lives in worker memory until the swap; under memory
-  pressure the build fails with its cause and never touches the visible window.
+  the strip says every bar is redrawn. D-1 holds only until the server's swap, when the old generation stops: from
+  then the client stages only the visible window of the new generation, labels the held frame "Updating..." after
+  600 ms, and on a staging failure loads the new generation through the F-BAR-1 miss branch with the frame held
+  (`chart.error_shown`, not `_failed`: the server's build succeeded). Restore as on cancel applies only before that
+  swap, or to another setting, whose staged generation lives in worker memory until the swap: under memory pressure
+  that build fails with its cause and never touches the visible window.
 - **Events:** `chart.bar_rebuild_started` / `_completed` / `_cancelled {reason, progress_pct, elapsed_ms}` /
   `_failed`; duration is measured against the 10 s per 1 M prints budget (US-CHART-003).
 - **Rejected:** an instant Renko repaint with no intermediate state (E12-D02 §9, R-1).
@@ -886,23 +891,24 @@ flowchart TD
   B5 -->|non-time, or sub-minute after OQ-1| G5{"Recorded prints in the window, per data coverage?"}
   G5 -->|all| D5
   G5 -->|part| H5["Requested from the recording start: bars from the boundary on, the region left of it says no recorded prints before that time"]
-  G5 -->|none, 422 no_data_recorded or no trades in data coverage| I5["SCR-047 no data in this range: Go to recorded data, Switch to time bars"]
-  G5 -->|prints but zero rows, not built| Q5["Never SCR-047: build the window, F-BAR-3"]
-  G5 -->|symbol never recorded| J5["SCR-047 not recorded: copy and CTA follow autorecord_enabled, E12-D02 §8"]
+  G5 -->|none, 422 no_data_recorded or no trades in data coverage| I5["SCR-047 no data in this range, before recording start or inside a recording gap: Go to recorded data, Switch to time bars"]
+  G5 -->|prints but zero rows, not built| Q5["Never SCR-047: build the window, F-BAR-3. Before G-2: the live series from its first bar, with the built-from boundary"]
+  G5 -->|symbol never recorded| J5["SCR-047 not recorded: copy and CTA follow autorecord_enabled and the recorder status refusal, E12-D02 §8"]
   J5 --> K5["Bars build from the live stream either way: the first live bar replaces SCR-047 with the built-from boundary"]
   D5 --> R5{"Recording gaps or generation changes inside the window?"}
   E5 --> R5
   H5 --> R5
-  R5 -->|yes| S5["Time axis: a hatched, labelled band per gap. Non-time: a seam between the bars that straddle it, and one per generation change"]
+  R5 -->|yes| S5["Time axis: a hatched, labelled band per gap over its empty time slots, a seam where none exist. Non-time: a seam between the bars that straddle it. A builder cold start adds a seam, a rebuild swap the built-from boundary"]
   I5 --> N5["chart.empty_state_shown, reason no_data_in_range"]
   M5 --> N5
   J5 --> O5["chart.empty_state_shown, reason not_recorded"]
   L5 --> P5["chart.empty_state_shown, reason symbol_delisted"]
 ```
 
-- **Keyboard:** the data cursor (`←`/`→`) announces "first bar with recorded prints" at the boundary and names a
-  gap at the bar after it; `Alt+T` opens SCR-045, where the boundary and each gap are separator rows; SCR-047's
-  heading, text and buttons are in the `Tab` order.
+- **Keyboard:** the data cursor (`←`/`→`) names the boundary at its first bar ("first bar with recorded prints",
+  "first built bar; earlier prints are not built yet" or "first loaded bar") and a gap at the bar after it; `Alt+T`
+  opens SCR-045, where the boundary and each gap are separator rows; SCR-047's heading, text and buttons are in the
+  `Tab` order.
 - **Events:** `chart.empty_state_shown {reason}`; the boundary and the gaps are not announced, they are part of the
   chart's accessible description (C-2.14: the true available range is always stated).
 
