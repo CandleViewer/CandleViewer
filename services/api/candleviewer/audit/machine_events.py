@@ -26,8 +26,12 @@ lossy; fail closed) and reuses `AuditWal` (24-internal-schemas.md §17.6):
   keeps every accepted row for the next start. An insert that keeps failing without a commit for
   `FLUSH_STALL_PAGE_S` pages once per such window (the WAL has room, so `append` would not page
   until it fills). A frame declared larger than `MAX_FRAME_BYTES` is corruption, refused unread.
-- `append` raises `MachineEventUnavailable` when the WAL is full or unwritable, or the flusher has
-  died; the plugin counts it (`sink_failures`), logs and re-raises, and the machine keeps running.
+- `append` raises `MachineEventUnavailable` when the WAL is full or unwritable, the flusher has
+  died or the sink is not running; the plugin counts it (`sink_failures`), logs and re-raises, and
+  the machine keeps running. A full or unwritable WAL pages once per `APPEND_FAILURE_COOLDOWN_S`
+  window (`machine_events.append_failed`), and so does a sink that is not running, before `start()`
+  or after `stop()` (`machine_events.append_refused_not_running`, a refused `seed` included): its
+  rows are lost audit rows that nothing else pages. A dead flusher paged once, as it died.
   A known bound, the ticket's policy: compaction runs only between batches, so a WAL whose
   committed prefix is reclaimable but whose remainder stays above `COMPACT_COPY_MAX_BYTES` (Postgres
   up but slower than the appends) still reaches its cap and fails closed until a batch compacts.
@@ -300,6 +304,8 @@ class MachineEventWalSink:
         self._accepting = False
         self._failure: BaseException | None = None
         self._append_failed_at: datetime | None = None
+        #: When a refusal by a sink that is not running last paged (`_not_running`).
+        self._not_running_paged_at: datetime | None = None
         #: The logical end (`_base` + offset) of each frame this process appended that Postgres
         #: does not hold yet, oldest first; one per frame, so the WAL's cap bounds it (C-2.18).
         self._uncommitted: deque[int] = deque()
@@ -349,7 +355,7 @@ class MachineEventWalSink:
                 f"the machine-event flusher died ({type(self._failure).__name__})"
             )
         if not self._accepting:
-            raise MachineEventUnavailable("the machine-event sink is not running")
+            raise self._not_running("seed")
         try:
             async with asyncio.timeout(SEED_DRAIN_S):
                 await self._idle.wait()
@@ -380,6 +386,21 @@ class MachineEventWalSink:
             return False
         cooldown = timedelta(seconds=APPEND_FAILURE_COOLDOWN_S)
         return timedelta(0) <= self._clock() - failed < cooldown
+
+    def _not_running(self, operation: str) -> MachineEventUnavailable:
+        """The refusal of a sink that is not running (before `start()`, after `stop()`): the row,
+        or the chain a seed was for, is lost and nothing else pages it, so the first refusal of
+        each `APPEND_FAILURE_COOLDOWN_S` window, `append`'s or `seed`'s, logs one CRITICAL
+        `cv_page` line by the operation (review round 2), on the injected clock (a clock stepped
+        back reads as expired). `append_failure_active` stays the WAL's, as `AuditWriter`'s."""
+        now, paged = self._clock(), self._not_running_paged_at
+        cooldown = timedelta(seconds=APPEND_FAILURE_COOLDOWN_S)
+        if paged is None or not timedelta(0) <= now - paged < cooldown:
+            self._not_running_paged_at = now
+            logger().critical(
+                "machine_events.append_refused_not_running", cv_page=True, operation=operation
+            )
+        return MachineEventUnavailable("the machine-event sink is not running")
 
     async def start(self) -> None:
         """Lock and open the WAL off the loop, then start the flusher, which replays the leftover
@@ -434,7 +455,7 @@ class MachineEventWalSink:
             )
         wal = self._wal
         if not self._accepting or wal is None:
-            raise MachineEventUnavailable("the machine-event sink is not running")
+            raise self._not_running("append")
         try:
             frame = _frame(row)
         except MachineEventRejected:
