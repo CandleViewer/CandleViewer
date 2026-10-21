@@ -19,6 +19,7 @@ import pytest
 
 from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
 from candleviewer.alerts.outbox import TOPIC_ALERT_DELIVER, alert_deliver_dedup_key
+from candleviewer.alerts.owners import OwnerGate
 from candleviewer.alerts.ws_topic import AlertsTopic
 from candleviewer.storage.repositories.alert_deliveries_sqlalchemy import (
     SqlAlchemyAlertDeliveryRepository,
@@ -26,6 +27,7 @@ from candleviewer.storage.repositories.alert_deliveries_sqlalchemy import (
 from candleviewer.storage.repositories.alert_dispatch_sqlalchemy import (
     SqlAlchemyAlertDispatchStore,
 )
+from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -77,6 +79,7 @@ async def rig(pg_dsn: str) -> AsyncIterator[dict[str, Any]]:
     disp = AlertDispatcher(
         SqlAlchemyAlertDispatchStore(rel), default_adapters(None), worker="topic-it",
         now=lambda: datetime.now(UTC), on_change=topic.deliveries_changed,
+        owners=OwnerGate(SqlAlchemyIdentityProvider(rel)),
     )  # fmt: skip
     conn = Conn(hub, topic, principal(UUID(user)))
     yield {"alert": alert, "user": user, "repo": repo, "topic": topic, "disp": disp,

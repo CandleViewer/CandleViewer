@@ -15,9 +15,11 @@ import pytest
 
 from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
 from candleviewer.alerts.outbox import TOPIC_ALERT_DELIVER, alert_deliver_dedup_key
+from candleviewer.alerts.owners import OwnerGate
 from candleviewer.storage.repositories.alert_dispatch_sqlalchemy import (
     SqlAlchemyAlertDispatchStore,
 )
+from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -61,7 +63,8 @@ def _seed(dsn: str, n: int) -> list[int]:
 
 def _disp(repo: SqlAlchemyRelationalRepository, relay: Any, worker: str) -> AlertDispatcher:
     return AlertDispatcher(SqlAlchemyAlertDispatchStore(repo), default_adapters(relay),
-                           worker=worker, now=lambda: datetime.now(UTC), batch=8)  # fmt: skip
+                           worker=worker, now=lambda: datetime.now(UTC), batch=8,
+                           owners=OwnerGate(SqlAlchemyIdentityProvider(repo)))  # fmt: skip
 
 
 async def test_two_pollers_skip_locked_send_each_row_once(pg_dsn: str) -> None:
@@ -85,8 +88,9 @@ async def test_crash_mid_send_then_restart_sends_once_more_and_settles(pg_dsn: s
         raise ConnectionError("died before commit")
 
     store.settle_sent = crash  # type: ignore[method-assign]  # fault injection
-    await AlertDispatcher(store, default_adapters(relay), worker="dead",
-                          now=lambda: datetime.now(UTC), lease_s=0.0).run_once()  # fmt: skip
+    owners = OwnerGate(SqlAlchemyIdentityProvider(repo))
+    await AlertDispatcher(store, default_adapters(relay), worker="dead", lease_s=0.0,
+                          now=lambda: datetime.now(UTC), owners=owners).run_once()  # fmt: skip
     await _disp(repo, relay, "restart").run_once()
     with _mig._conn(pg_dsn) as c:
         row = c.execute("SELECT status::text FROM alert_deliveries WHERE id = %s", (did,))

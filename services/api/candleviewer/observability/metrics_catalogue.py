@@ -1745,6 +1745,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=4,
     ),
     _s(
+        "cv_alert_owner_skipped_total",
+        "counter",
+        "skips",
+        ("stage", "reason"),
+        "Alert firings and deliveries skipped: the owner is not active or unreadable (#3349).",
+        "dashboard only; unreadable > 0 is an identity-store fault (no rule yet)",
+        _P,
+        "E40",
+        max_series=4,
+    ),
+    _s(
         "cv_alert_eval_queue_depth",
         "gauge",
         "ticks",

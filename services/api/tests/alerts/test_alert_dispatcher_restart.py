@@ -16,6 +16,7 @@ from candleviewer.alerts.dispatcher import (
     Outcome,
     default_adapters,
 )
+from tests.alerts._owners_env import allow
 
 
 async def test_restart_with_pending_outbox_delivers_exactly_once() -> None:
@@ -34,7 +35,7 @@ async def test_restart_with_pending_outbox_delivers_exactly_once() -> None:
     await _disp(store, clock, relay).run_once()
     assert {r.status for r in store.rows.values()} == {"queued"}
     store.settle_sent = real  # type: ignore[method-assign]  # "restart"
-    d2 = AlertDispatcher(store, default_adapters(relay), worker="w2", now=clock)
+    d2 = AlertDispatcher(store, default_adapters(relay), worker="w2", now=clock, owners=allow())
     await d2.run_once()  # lease still held by the dead worker
     assert {r.status for r in store.rows.values()} == {"queued"}
     clock.advance(61)
@@ -68,7 +69,7 @@ async def test_webhook_and_push_registered_but_disabled_suppressed() -> None:
 def test_unregistered_channel_refused_at_construction() -> None:
     clock = Clock()
     with pytest.raises(ValueError, match="unregistered"):
-        AlertDispatcher(MemStore(clock), {}, worker="w", now=clock)
+        AlertDispatcher(MemStore(clock), {}, worker="w", now=clock, owners=allow())
 
 
 async def test_one_bad_row_does_not_stall_the_batch() -> None:

@@ -33,6 +33,7 @@ from candleviewer.alerts.gating import (
     to_ms,
 )
 from candleviewer.alerts.models import AlertCondition
+from candleviewer.alerts.owners import OwnerGate
 from candleviewer.alerts.ports import AlertRecord, AuditSink, FiringStore, MetricChildLike
 from candleviewer.observability import spawn
 from candleviewer.rules.evaluator import MetricSource, SnapshotBuilder
@@ -184,6 +185,7 @@ class AlertEvaluator:
         store: FiringStore,
         source: MetricSource,
         *,
+        owners: OwnerGate,
         charts: ChartRecorder | None = None,
         audit: AuditSink | None = None,
         metrics: AlertMetrics | None = None,
@@ -194,7 +196,7 @@ class AlertEvaluator:
         perf: Callable[[], float] = time.perf_counter,
         queue_bound: int = QUEUE_BOUND,
     ) -> None:
-        self._store, self._charts, self._audit = store, charts, audit
+        self._store, self._charts, self._audit, self._owners = store, charts, audit, owners
         self._snapshots = SnapshotBuilder(source)
         self.metrics = metrics or AlertMetrics()
         self.storm = storm or StormSuppressor()
@@ -336,8 +338,19 @@ class AlertEvaluator:
             if not evaluate(sub.condition.conditions, ctx):
                 continue
             values = {k: _jsonable(v) for k, v in ctx.metric_values.items()}
-            for a in members:
+            for a in await self._active(members):
                 await self._candidate(a, tick, now, values, start)
+
+    async def _active(self, members: list[AlertState]) -> list[AlertState]:
+        """The members whose owner is active (#3349, UL-F8), asked once the condition holds, before
+        any gate and outside the firing lock. A skipped alert is left as it was (armed; no firing,
+        cooldown, `once` or bar memory used), so enabling the user again fires it. Each skip is
+        counted; an owner whose status cannot be read is skipped too (fail closed)."""
+        skipped = await self._owners.skipped({a.owner_user_id for a in members})
+        for a in members:
+            if (why := skipped.get(a.owner_user_id)) is not None:
+                self.metrics.inc("cv_alert_owner_skipped_total", "evaluate", why)
+        return [a for a in members if a.owner_user_id not in skipped]
 
     async def _candidate(
         self, a: AlertState, tick: AlertTick, now: int, values: dict[str, Any], start: float

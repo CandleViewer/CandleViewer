@@ -96,6 +96,9 @@ rules:
       # builtin (E13-T03, indicator_presets_total): whether the live presets counted are the
       #   seeded built-ins, {true, false}; max_series=2. reason, also
       #   (indicator_preset_denied_total): {not_owner, builtin_immutable}; max_series=2.
+      # stage, reason also (E40, #3349, cv_alert_owner_skipped_total): `stage` {evaluate, dispatch}
+      #   and `reason` {inactive, unreadable}, closed sets in code (`alerts/owners.SkipReason`);
+      #   no identifier; max_series=4 together.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|bucket|builtin|cap|cause|class|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|indicator|kind|method|operation|outcome|permission|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger_mode|version|where|wire)$).*$"

@@ -27,6 +27,10 @@ adapter, and settles delivery + outbox row in one store call:
   (infra/prometheus/alerts);
 - `suppressed` rows carry a bounded reason code (`SUPPRESSION_REASONS`) in
   `error_message` and `context.suppression_reason`;
+- the owner gate (#3349, UL-F8) runs before any adapter, on a fresh read: a delivery whose owner is
+  not active is settled `suppressed` / `owner_inactive` (`recipient_deleted` once the owner row is
+  gone), final and not announced on the `alerts` topic; an owner whose status cannot be read leaves
+  the row leased (read again after the lease, never dead-lettered). Both are counted;
 - `webhook` (flag `alerts_webhook_enabled`, E40-S03) and `push` (out of scope) are
   registered but disabled -> `suppressed`. `desktop` awaits the Electron shell's outcome
   (report-back lands with the `alerts` WS topic, PR 2) and stays `queued` until then.
@@ -46,6 +50,7 @@ from typing import Any, Protocol
 import structlog
 
 from candleviewer.alerts.outbox import TOPIC_ALERT_DELIVER
+from candleviewer.alerts.owners import OwnerGate, SkipReason
 from candleviewer.observability import spawn
 from candleviewer.observability.redaction import redact_text
 
@@ -70,7 +75,7 @@ DEPTH_TIMEOUT_S = 5.0
 #: Bounded `suppressed` reason codes (stored in `error_message` and `context`).
 SUPPRESSION_REASONS: frozenset[str] = frozenset(
     {"email_relay_off", "webhook_disabled", "push_unavailable", "recipient_deleted",
-     "unknown_channel"}
+     "unknown_channel", "owner_inactive"}
 )  # fmt: skip
 
 
@@ -294,6 +299,7 @@ class AlertDispatcher:
         *,
         worker: str,
         now: Now,
+        owners: OwnerGate,
         rng: Callable[[], float] = random.random,
         metric: Metric = _no_metric,
         on_change: Callable[[Sequence[int]], Awaitable[None]] | None = None,
@@ -307,7 +313,7 @@ class AlertDispatcher:
         missing = set(CHANNELS) - adapters.keys()
         if missing:
             raise ValueError(f"unregistered channels: {sorted(missing)}")
-        self._store, self._adapters, self._worker = store, adapters, worker
+        self._store, self._adapters, self._worker, self._owners = store, adapters, worker, owners
         self._now, self._rng, self._metric, self._on_change = now, rng, metric, on_change
         self._batch, self._lease, self._interval = batch, lease_s, interval_s
         self._depth_every, self._monotonic = depth_every_s, monotonic
@@ -341,6 +347,13 @@ class AlertDispatcher:
         if d is None or d.status != "queued":  # replay after restart: already settled
             await self._store.settle_processed(job)
             return False
+        if (why := await self._owner_skip(d)) is not None:
+            self._metric("cv_alert_owner_skipped_total", ("dispatch", why)).inc()
+            if why == "inactive":  # `unreadable`: fail closed, the lease runs out and it is re-read
+                reason = "recipient_deleted" if d.user_id is None else "owner_inactive"
+                if await self._store.settle_suppressed(job, reason=reason):
+                    self._count(d.channel, "suppressed")
+            return False  # final, and not announced on the `alerts` topic
         adapter = self._adapters.get(d.channel)
         out = await self._deliver(adapter, d)
         attempt = min(job.attempts + 1, MAX_ATTEMPT_COLUMN)
@@ -362,6 +375,13 @@ class AlertDispatcher:
                 self._count(d.channel, "suppressed")
             return won
         return await self._retry_or_fail(job, d, out, attempt)
+
+    async def _owner_skip(self, d: Delivery) -> SkipReason | None:
+        """Why the delivery's owner is skipped, if it is, asked fresh: nothing leaves on a channel
+        for a user disabled before this read. No owner row (`user_id IS NULL`) is no active one."""
+        if d.user_id is None:
+            return "inactive"
+        return (await self._owners.skipped({d.user_id}, fresh=True)).get(d.user_id)
 
     async def _deliver(self, adapter: ChannelAdapter | None, d: Delivery) -> Outcome:
         if adapter is None:

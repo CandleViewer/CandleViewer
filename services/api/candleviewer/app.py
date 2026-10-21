@@ -72,6 +72,7 @@ from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
 from candleviewer.alerts.evaluator import AlertEvaluator, AlertMetrics
 from candleviewer.alerts.lifecycle import AlertCharts
 from candleviewer.alerts.outbox import TOPIC_ALERT_DELIVER, alert_deliver_dedup_key
+from candleviewer.alerts.owners import OwnerGate
 from candleviewer.alerts.ports import FiringStore, WakingFiringStore
 from candleviewer.alerts.service import AlertsService
 from candleviewer.api import (
@@ -2626,13 +2627,28 @@ def _alert_dispatcher(
     # the gauge reads 0 until the first sample (AlertOutboxBacklog).
     for name in ("cv_outbox_dead_total", "cv_outbox_depth"):
         sink(name, (TOPIC_ALERT_DELIVER,))
+    for stage in ("evaluate", "dispatch"):  # #3349: the four owner-skip series, at 0 until a skip
+        for reason in ("inactive", "unreadable"):
+            sink("cv_alert_owner_skipped_total", (stage, reason))
     return AlertDispatcher(
         SqlAlchemyAlertDispatchStore(pg),
         adapters,
         worker=f"api-{os.getpid()}-{uuid.uuid4().hex[:8]}",
         now=lambda: datetime.now(UTC),
+        owners=OwnerGate(SqlAlchemyIdentityProvider(pg)),
         metric=sink,
         on_change=on_change,
+    )
+
+
+def _alert_owner_skipped(facade: Metrics) -> Any:
+    """`cv_alert_owner_skipped_total` (#3349): the evaluator and the dispatcher each count their own
+    `stage`; identical re-registration returns the one metric."""
+    return facade.counter(
+        "cv_alert_owner_skipped_total",
+        "Alert firings and deliveries skipped: the owner is not active or unreadable.",
+        ("stage", "reason"),
+        max_series=4,
     )
 
 
@@ -2654,6 +2670,7 @@ def _alert_delivery_sink(facade: Metrics) -> Callable[[str, tuple[str, ...]], An
         "cv_outbox_depth": facade.gauge(
             "cv_outbox_depth", "Unprocessed, not-dead outbox rows by topic.", ("topic",),
             max_series=8),
+        "cv_alert_owner_skipped_total": _alert_owner_skipped(facade),
     }  # fmt: skip
 
     def _sink(name: str, labels: tuple[str, ...]) -> Any:
@@ -2685,8 +2702,9 @@ def _alert_evaluator_factory(
         )
         store = firing if wake is None else WakingFiringStore(firing, wake)
         return AlertEvaluator(
-            store, source, charts=AlertCharts(feed=feed), audit=audit, metrics=AlertMetrics(metric)
-        )
+            store, source, owners=OwnerGate(SqlAlchemyIdentityProvider(pg)),
+            charts=AlertCharts(feed=feed), audit=audit, metrics=AlertMetrics(metric),
+        )  # fmt: skip
 
     return _make
 
@@ -2710,6 +2728,7 @@ def _alert_metric_sink(facade: Metrics) -> Callable[[str, tuple[str, ...]], Any]
             "cv_alert_eval_queue_depth", "Alert evaluation queue depth."),
         "cv_alert_eval_dropped_total": facade.counter(
             "cv_alert_eval_dropped_total", "Alert ticks shed by the bounded queue."),
+        "cv_alert_owner_skipped_total": _alert_owner_skipped(facade),
     }  # fmt: skip
 
     def _sink(name: str, labels: tuple[str, ...]) -> Any:

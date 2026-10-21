@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Collection, Iterable
 
+from candleviewer.alerts.owners import OwnerGate
+
 
 class Directory:
     """`OwnerDirectory` fake: the `active` owners (`everyone`: all of them), what each read raises
@@ -31,3 +33,8 @@ class Time:
 
     def __call__(self) -> float:
         return self.now
+
+
+def allow() -> OwnerGate:
+    """A gate that finds every owner active, for the tests that are not about the owner."""
+    return OwnerGate(Directory(everyone=True))
