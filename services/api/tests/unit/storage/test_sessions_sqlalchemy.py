@@ -3,6 +3,7 @@ real-Postgres round trip is an integration test, not run locally: no docker)."""
 
 from __future__ import annotations
 
+import functools
 import re
 import traceback
 import uuid
@@ -626,3 +627,124 @@ _CLAUSES = {
 def test_a_statement_states_the_clauses_only_the_postgres_table_proves(name: str) -> None:
     sql = str(getattr(sessions_sqlalchemy, name))
     assert [clause for clause in _CLAUSES[name] if clause not in sql] == []
+
+
+# -- #3085 S13a: the start's unit of work (`start_view_as_unit`), offline: the statements in order,
+# where the write-ahead hooks run, and each branch (Postgres: the store scenarios, in CI).
+
+_FRESH = ViewAsState.start(uuid.UUID(int=3), uuid.UUID(int=2), now=_T0)
+_NOTICE = SimpleNamespace(target_user_id=_FRESH.target_user_id, message="m", correlation_id=None)
+
+
+class _Scripted(_Session):
+    """Each statement answers the rows `script` gives the module statement of that name."""
+
+    def __init__(self, script: dict[str, list[SimpleNamespace]], log: list[str]) -> None:
+        super().__init__([])
+        self.script, self.log = script, log
+
+    async def execute(self, stmt: Any, params: dict[str, Any]) -> _Result:
+        await super().execute(stmt, params)
+        name = next(
+            n
+            for n, v in vars(sessions_sqlalchemy).items()
+            if isinstance(v, sa.TextClause) and str(v) == str(stmt)
+        )
+        self.log.append(name)
+        return _Result(self.script.get(name, []))
+
+
+def _unit(
+    held: ViewAsState | None, **row: Any
+) -> tuple[SqlAlchemySessionRepository, _Relational, list[str], Call]:
+    """A store whose locked row holds `held`, the order of its statements and hooks (`log`), and
+    the start call with hooks that log themselves."""
+    log: list[str] = []
+    rel = _Relational([])
+    started = _row(**_view_as_columns(_FRESH))
+    script = {
+        "_VIEW_AS_START_LOCK_SQL": [_row(**_view_as_columns(held), **row)],
+        "_VIEW_AS_START_SQL": [started],
+    }
+    rel.session = _Scripted(script, log)
+    repo = SqlAlchemySessionRepository(
+        rel,  # type: ignore[arg-type]  # fake relational stub, structurally compatible
+        lambda **f: SessionRecord.model_validate(f),
+    )
+
+    async def hook(name: str, _record: Any) -> None:
+        log.append(name)
+
+    def call(r: SqlAlchemySessionRepository) -> Awaitable[Any]:
+        return r.start_view_as_unit(
+            "sid",
+            _FRESH,
+            now=_T0,
+            notice=_NOTICE,
+            flush_pending_end=functools.partial(hook, "flush"),
+            write_ahead=functools.partial(hook, "ahead"),
+            audit_timeout_s=1.0,
+        )
+
+    return repo, rel, log, call
+
+
+async def test_the_start_unit_locks_then_writes_the_notice_the_record_ahead_and_the_start() -> None:
+    repo, rel, log, call = _unit(None)
+    started, held = await call(repo)
+    assert log == ["_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL", "ahead", "_VIEW_AS_START_SQL"]
+    assert held is None and started.view_as == _FRESH and (rel.units, rel.commits) == (1, 1)
+    lock, notice, start = rel.session.calls
+    assert lock[1] == {"id": "sid", "now": _T0} and "FOR NO KEY UPDATE" in lock[0]
+    assert notice[1] == {
+        "message": "m",
+        "correlation_id": None,
+        "recipient": str(_FRESH.target_user_id),
+    }
+    assert _binds(sessions_sqlalchemy._VIEW_AS_NOTICE_SQL) == set(notice[1])
+    assert start[1] == _VIEW_AS_CALLS["start_view_as"][2] | {"context_id": str(_FRESH.context_id)}
+
+
+async def test_the_start_unit_writes_a_pending_ends_record_late_and_marks_it_first() -> None:
+    repo, rel, log, call = _unit(_STATES["pending-end"])
+    started, _held = await call(repo)
+    assert log == [
+        "_VIEW_AS_START_LOCK_SQL", "flush", "_VIEW_AS_RECORDED_SQL", "_VIEW_AS_NOTICE_SQL",
+        "ahead", "_VIEW_AS_START_SQL",
+    ]  # fmt: skip
+    assert started is not None and rel.commits == 1
+
+
+@pytest.mark.parametrize("state", ["live", "held"])
+async def test_the_start_unit_answers_a_context_it_cannot_replace_as_held(state: str) -> None:
+    repo, rel, log, call = _unit(_STATES[state])
+    started, held = await call(repo)
+    assert started is None and held.view_as == _STATES[state]
+    assert log == ["_VIEW_AS_START_LOCK_SQL"] and rel.commits == 0
+
+
+async def test_the_start_unit_of_a_gone_or_revoked_row_writes_nothing() -> None:
+    repo, rel, log, call = _unit(None)
+    rel.session.script["_VIEW_AS_START_LOCK_SQL"] = []  # the lock reads no row
+    assert await call(repo) == (None, None) and log == ["_VIEW_AS_START_LOCK_SQL"]
+
+
+async def test_the_start_unit_refuses_a_self_targeting_state_before_any_write() -> None:
+    repo, rel, log, call = _unit(None, user_id=str(_FRESH.target_user_id))
+    with pytest.raises(ValueError, match="its own user"):
+        await call(repo)
+    assert log == ["_VIEW_AS_START_LOCK_SQL"] and rel.commits == 0
+
+
+async def test_a_failing_write_ahead_commits_nothing() -> None:
+    repo, rel, log, _call = _unit(None)
+
+    async def fails(_record: Any) -> None:
+        raise ConnectionError("audit down")
+
+    with pytest.raises(ConnectionError):
+        await repo.start_view_as_unit(
+            "sid", _FRESH, now=_T0, notice=_NOTICE, flush_pending_end=fails,
+            write_ahead=fails, audit_timeout_s=1.0,
+        )  # fmt: skip
+    assert log == ["_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL"] and rel.commits == 0

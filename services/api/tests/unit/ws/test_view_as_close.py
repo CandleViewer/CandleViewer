@@ -56,6 +56,22 @@ async def test_close_context_closes_only_the_sockets_bound_to_that_context() -> 
     assert {s: len(c) for s, c in hub._sockets.items()} == {"s1": 3, "s2": 1}
 
 
+async def test_close_context_with_no_context_closes_the_unbound_sockets_only() -> None:
+    """A start's close (#3085 S13a): every socket the session had before it holds no context."""
+    hub = RevocationHub()
+    bound, unbound, elsewhere = _Socket(), _Socket(), _Socket()
+    for session_id, socket, context in [
+        ("s1", bound, "x"),
+        ("s1", unbound, None),
+        ("s2", elsewhere, None),
+    ]:
+        hub.register(session_id, socket)
+        hub.bind(session_id, socket, context)
+    assert await hub.close_context("s1", None, "view_as_changed") == 1
+    assert unbound.closes == [("view_as_changed", 4401)]
+    assert (bound.closes, elsewhere.closes) == ([], []) and not hub.was_revoked("s1")
+
+
 async def test_close_context_never_remembers_the_session() -> None:
     hub, socket = RevocationHub(), _Socket()
     hub.register("s1", socket)

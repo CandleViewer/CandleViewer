@@ -23,7 +23,7 @@ from collections.abc import Callable, Collection, Coroutine, Mapping
 from datetime import datetime, timedelta
 from functools import partial
 from typing import Any, Final, Literal, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -33,12 +33,17 @@ from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import (
     ViewAsBinding,
     ViewAsEndReason,
+    ViewAsNotice,
     ViewAsPhase,
     ViewAsSessionStore,
+    ViewAsStartResult,
+    ViewAsState,
 )
 from candleviewer.observability.context import current_request_uuid
+from candleviewer.storage.errors import WriteAheadTimeout
 
 _ENDED_ACTION: Final = "admin.view_as_ended"
+_STARTED_ACTION: Final = "admin.view_as_started"
 RECORD_TIMEOUT_S: Final = 2.0  # bounds a record's read, write and mark; past it the end is pending
 CLOSE_TIMEOUT_S: Final = 2.0  # bounds the socket close; the record follows whatever it did
 
@@ -69,6 +74,22 @@ class ViewAsAudit(Protocol):  # `AuditWriter.emit_keyed` (Q3), with `emit()`'s k
         request_id: UUID | None,
     ) -> None: ...
 
+    async def emit(
+        self,
+        action: str,
+        *,
+        actor_label: str,
+        actor_user_id: UUID,
+        session_id: UUID,
+        object_kind: str,
+        object_id: str,
+        object_label: str | None,
+        outcome: AuditOutcome,
+        severity: Severity,
+        after_state: dict[str, Any],
+        request_id: UUID | None,
+    ) -> None: ...
+
 
 class EndRecordRunner(Protocol):  # `api.csrf.RefusalAuditTracker`, which admin may not import
     @property
@@ -89,12 +110,34 @@ class ViewAsEligibility(Protocol):  # a read it cannot make raises: 503, never a
 
 class ViewAsSocketCloser(Protocol):  # the session's rotation family's sockets on the context
     async def close_family(
-        self, session_id: str, *, context_id: UUID, reason: CloseReason
-    ) -> None: ...
+        self, session_id: str, *, context_id: UUID | None, reason: CloseReason
+    ) -> None: ...  # `context_id` None: the sockets bound to no context (a start's)
 
 
 class ViewAsLabels(Protocol):  # a user whose row is gone is absent
     async def usernames(self, user_ids: Collection[UUID]) -> Mapping[UUID, str]: ...
+
+
+class ViewAsStartUnavailable(Exception):
+    """A start whose records could not be written: nothing started (22 `startViewAs`), answered
+    503 with `code`, `audit_unavailable` or `store_unavailable`."""
+
+    def __init__(self, code: Literal["audit_unavailable", "store_unavailable"]) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class _AuditDown(Exception):
+    """A start's write-ahead hook could not write its record; the unit of work rolls back."""
+
+
+def notice_message(viewer: str, state: ViewAsState) -> str:
+    """The target's notice of a start: the viewer by username and the window, never the reason
+    (22 `startViewAs`)."""
+    return (
+        f"'{viewer}' is viewing your account, read-only, from {state.started_at.isoformat()} "
+        f"to {state.expires_at.isoformat()}."
+    )
 
 
 def _log() -> Any:
@@ -215,30 +258,9 @@ class ViewAsService:
         state = record.view_as
         if state is None or state.ended_at is None or state.end_reason is None:
             raise ValueError("only an ended view-as context has an end record")
-        after: dict[str, Any] = {"ended_at": state.ended_at.isoformat()}
         try:
             async with asyncio.timeout(self._record_timeout_s):
-                names = await self._labels.usernames((record.user_id, state.target_user_id))
-                await self._audit.emit_keyed(
-                    _ENDED_ACTION,
-                    str(state.context_id),  # its key: one record per context
-                    actor_label=names.get(record.user_id) or str(record.user_id),
-                    actor_user_id=record.user_id,
-                    session_id=record.id,
-                    object_kind="user",
-                    object_id=str(state.target_user_id),
-                    object_label=names.get(state.target_user_id),
-                    outcome=AuditOutcome.SUCCESS,
-                    severity=Severity.WARNING,
-                    reason=state.end_reason.value,
-                    before_state={
-                        "target_user_id": str(state.target_user_id),
-                        "started_at": state.started_at.isoformat(),
-                        "expires_at": state.expires_at.isoformat(),
-                    },
-                    after_state=(after | {"recorded_late": True}) if late else after,
-                    request_id=current_request_uuid(),  # the ending request; none from the sweeper
-                )
+                await self._emit_end_record(record, late=late)
                 await self._store.mark_view_as_recorded(
                     str(record.id), state.context_id, now=self._clock()
                 )
@@ -246,6 +268,123 @@ class ViewAsService:
             _pending(state.context_id, type(exc).__name__, late=late)
             return False
         return True
+
+    async def _emit_end_record(self, record: SessionRecord, *, late: bool) -> None:
+        """The keyed `admin.view_as_ended` of `record`'s ended context (`write_end_record`, and a
+        start's late flush under the row's lock); raises what the read or the write raises."""
+        state = record.view_as
+        if state is None or state.ended_at is None or state.end_reason is None:
+            raise ValueError("only an ended view-as context has an end record")
+        after: dict[str, Any] = {"ended_at": state.ended_at.isoformat()}
+        names = await self._labels.usernames((record.user_id, state.target_user_id))
+        await self._audit.emit_keyed(
+            _ENDED_ACTION,
+            str(state.context_id),  # its key: one record per context
+            actor_label=names.get(record.user_id) or str(record.user_id),
+            actor_user_id=record.user_id,
+            session_id=record.id,
+            object_kind="user",
+            object_id=str(state.target_user_id),
+            object_label=names.get(state.target_user_id),
+            outcome=AuditOutcome.SUCCESS,
+            severity=Severity.WARNING,
+            reason=state.end_reason.value,
+            before_state={
+                "target_user_id": str(state.target_user_id),
+                "started_at": state.started_at.isoformat(),
+                "expires_at": state.expires_at.isoformat(),
+            },
+            after_state=(after | {"recorded_late": True}) if late else after,
+            request_id=current_request_uuid(),  # the ending request; none from the sweeper
+        )
+
+    @audited("admin.view_as_started")
+    async def start(
+        self, record: SessionRecord, target_user_id: UUID, *, reason: str, now: datetime
+    ) -> ViewAsStartResult:
+        """The start request's own write (22 `startViewAs`; plan section 1.6), after its refusals:
+        a fresh context (`uuid4`, so no two starts share one) on `record`'s session, the target's
+        notice and `admin.view_as_started` written ahead, in one unit of work under the row's lock
+        (`ViewAsSessionStore.start_view_as_unit`); a cleared context whose end is unrecorded gets
+        its record late, first. Answers `started` (every socket of the session then closes
+        `view_as_changed` and re-`auth`s into the target's scope), `held` (409 `view_as_active`)
+        or neither (the session is gone). Nothing starts when a record cannot be written:
+        `ViewAsStartUnavailable`, `audit_unavailable` or `store_unavailable`. A self-targeting
+        start is a caller error (`ValueError`): the route refuses it first."""
+        state = ViewAsState.start(uuid4(), target_user_id, now=now)
+        try:
+            async with asyncio.timeout(self._record_timeout_s):
+                names = await self._labels.usernames((record.user_id, target_user_id))
+        except Exception as exc:  # a timeout too
+            raise ViewAsStartUnavailable("store_unavailable") from exc
+        viewer = names.get(record.user_id) or str(record.user_id)
+        request = current_request_uuid()
+        notice = ViewAsNotice(target_user_id, notice_message(viewer, state), request)
+
+        async def started_ahead(row: SessionRecord) -> None:
+            try:
+                await self._audit.emit(
+                    _STARTED_ACTION,
+                    actor_label=viewer,
+                    actor_user_id=row.user_id,
+                    session_id=row.id,
+                    object_kind="user",
+                    object_id=str(target_user_id),
+                    object_label=names.get(target_user_id),
+                    outcome=AuditOutcome.SUCCESS,
+                    severity=Severity.WARNING,
+                    after_state={
+                        "target_user_id": str(target_user_id),
+                        "started_at": state.started_at.isoformat(),
+                        "expires_at": state.expires_at.isoformat(),
+                        "reason": reason,
+                    },
+                    request_id=request,
+                )
+            except Exception as exc:
+                raise _AuditDown from exc
+
+        async def pending_end(row: SessionRecord) -> None:
+            try:
+                await self._emit_end_record(row, late=True)
+            except Exception as exc:
+                raise _AuditDown from exc
+
+        try:
+            started, held = await self._store.start_view_as_unit(
+                str(record.id),
+                state,
+                now=now,
+                notice=notice,
+                flush_pending_end=pending_end,
+                write_ahead=started_ahead,
+                audit_timeout_s=self._record_timeout_s,
+            )
+        except (_AuditDown, WriteAheadTimeout) as exc:
+            raise ViewAsStartUnavailable("audit_unavailable") from exc
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ViewAsStartUnavailable("store_unavailable") from exc
+        if started is not None:
+            await self._close_unbound(started)
+        return ViewAsStartResult(started=started, held=held)
+
+    async def _close_unbound(self, row: SessionRecord) -> None:
+        """After a start, every socket of the session closes `view_as_changed` and re-`auth`s into
+        the target's scope: before a start the session holds no context, so they are its sockets
+        bound to none. Bounded; a failed close is logged, never raised: the start stands, and an
+        open socket closes at its next `auth`, which reads the context (S10)."""
+        try:
+            async with asyncio.timeout(self._close_timeout_s):
+                await self._sockets.close_family(
+                    str(row.id), context_id=None, reason="view_as_changed"
+                )
+        except Exception as exc:  # a timeout too
+            _log().error(
+                "admin.view_as.close_failed", context_id=None, reason="view_as_changed",
+                error=type(exc).__name__,
+            )  # fmt: skip
 
     @audited("admin.view_as_ended")
     async def on_roles_changed(self, user_id: UUID) -> None:

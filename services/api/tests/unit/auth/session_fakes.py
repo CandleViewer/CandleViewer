@@ -14,7 +14,8 @@ from candleviewer.auth.errors import SessionRevoked, UserDisabled
 from candleviewer.auth.models import MintedSession, SessionRecord, UserStatus
 from candleviewer.auth.session_repository import StepUpChange
 from candleviewer.auth.session_service import SessionService
-from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
+from candleviewer.auth.view_as import ViewAsEndReason, ViewAsNotice, ViewAsStartHook, ViewAsState
+from candleviewer.storage.errors import WriteAheadTimeout
 
 
 def _due(session: SessionRecord, held: ViewAsState, now: datetime) -> bool:
@@ -34,6 +35,10 @@ class FakeSessionRepository:
         self.rotation_prev: dict[str, str] = {}
         #: #2911: `users.status` by user id (`None`: the user row is gone). Unset is `active`.
         self.user_statuses: dict[str, UserStatus | None] = {}
+        #: #3085: the starts' notices as committed, and a failure the next notice insert raises.
+        self.notices: list[ViewAsNotice] = []
+        self.notice_fails: Exception | None = None
+        self._start_lock = asyncio.Lock()  # the row lock a start takes, for every row at once
 
     def _user_status(self, user_id: object) -> UserStatus | None:
         return self.user_statuses.get(str(user_id), UserStatus.ACTIVE)
@@ -214,6 +219,37 @@ class FakeSessionRepository:
             raise ValueError("a session must never view as its own user")
         return self._put_view_as(session_id, state)
 
+    async def start_view_as_unit(
+        self,
+        session_id: str,
+        state: ViewAsState,
+        *,
+        now: datetime,
+        notice: ViewAsNotice,
+        flush_pending_end: ViewAsStartHook,
+        write_ahead: ViewAsStartHook,
+        audit_timeout_s: float,
+    ) -> tuple[SessionRecord | None, SessionRecord | None]:
+        """As the SQL store's: every write lands at the end, together, or none does."""
+        if state.ended_at is not None:
+            raise ValueError("a start puts a fresh context on the row, never an ended one")
+        async with self._start_lock:
+            session = self.sessions.get(session_id)
+            if session is None or session.is_revoked or session.is_absolute_expired(now=now):
+                return None, None
+            held = session.view_as
+            if held is not None and held.cleared_at is None:
+                return None, session
+            if state.target_user_id == session.user_id:
+                raise ValueError("a session must never view as its own user")
+            if held is not None and held.end_recorded_at is None:
+                await _bounded(flush_pending_end(session), audit_timeout_s)
+            if self.notice_fails is not None:
+                raise self.notice_fails
+            await _bounded(write_ahead(session), audit_timeout_s)
+            self.notices.append(notice)
+            return self._put_view_as(session_id, state), None
+
     async def end_view_as(
         self, session_id: str, context_id: UUID, *, ended_at: datetime, reason: ViewAsEndReason
     ) -> SessionRecord | None:
@@ -290,6 +326,15 @@ class FakeSessionRepository:
 
     async def list_live_view_as_by_viewer(self, viewer_user_id: UUID) -> tuple[SessionRecord, ...]:
         return tuple(s for s, _ in self._unended() if s.user_id == viewer_user_id)
+
+
+async def _bounded(hook: Awaitable[None], timeout_s: float) -> None:
+    """`bounded_write_ahead`'s contract, without its storage import."""
+    try:
+        async with asyncio.timeout(timeout_s):
+            await hook
+    except TimeoutError as exc:
+        raise WriteAheadTimeout(f"write-ahead audit exceeded {timeout_s} s") from exc
 
 
 class YieldingFindRepository(FakeSessionRepository):
