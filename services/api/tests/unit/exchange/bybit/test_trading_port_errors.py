@@ -8,8 +8,11 @@ hold the signed request (SR-E29-08). Replies are transcribed shapes (ruling R2) 
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from decimal import Decimal
+from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -158,6 +161,31 @@ async def test_a_create_answered_zero_without_its_order_id_is_never_an_ok_ack(
         await make_port(venue).place_order(place())
     assert (caught.value.order_link_id, caught.value.retryable) == (link(), False)
     assert _bare(caught.value) and len(venue.sent) == 1
+
+
+#: The v5 error table's expired-key answer, as the key-verification fixtures hold it (E27-T03).
+EXPIRED: dict[str, Any] = json.loads(
+    (Path(__file__).parents[3] / "fixtures" / "key_verification" / "error_33004.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+async def test_a_create_meeting_an_expired_key_is_an_auth_rejection_not_unknown() -> None:
+    """33004 maps to `AUTH_ERROR` (#2877): the venue answered, so the create is a rejection B1
+    records, never an open outcome that sends the order to `unknown`."""
+    venue = Venue().on("/v5/order/create", EXPIRED)
+    ack = await make_port(venue).place_order(place())
+    assert (ack.ok, ack.error_code, ack.retryable) == (False, "AUTH_ERROR", False)
+    assert (ack.exchange_ret_code, ack.exchange_ret_msg) == (33004, EXPIRED["retMsg"])
+    assert len(venue.sent) == 1
+
+
+async def test_a_read_meeting_an_expired_key_raises_an_auth_error() -> None:
+    venue = Venue().on("/v5/position/list", EXPIRED)
+    with pytest.raises(AuthError) as caught:
+        await make_port(venue).positions(account())
+    assert caught.value.exchange_ret_code == 33004 and _bare(caught.value)
 
 
 async def test_a_transport_fault_on_a_read_raises_without_its_httpx_cause() -> None:

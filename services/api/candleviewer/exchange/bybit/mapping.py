@@ -47,6 +47,9 @@ _RET_CODE_MAP: dict[int, tuple[type[ExchangeError], dict[str, str]]] = {
     10403: (RateLimitError, {}),
     10404: (InstrumentFilterError, {"filter_name": "unknown_op_or_category"}),
     10429: (RateLimitError, {}),
+    # The UTA table of the v5 error page (bybit-exchange/docs@19518b90fb36, docs/v5/error.mdx):
+    # "(Derivatives) Your api key has expired" (#2877; E27's `key_expired` verdict reads it).
+    33004: (AuthError, {}),
     110001: (NotFoundError, {}),
     110003: (InstrumentFilterError, {"filter_name": "price_out_of_bounds"}),
     110004: (InsufficientMarginError, {}),

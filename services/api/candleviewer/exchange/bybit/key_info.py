@@ -31,14 +31,14 @@ KEY_INFO_PATH: Final = "/v5/user/query-api"
 PROBE_PATH: Final = "/v5/account/wallet-balance"
 
 #: Refusals that are a verdict about the key: code -> (M13 `Refusal` value, the error classes the
-#: REST client's taxonomy may give that code). 33004 (key expired) is not in `mapping.py` yet, so
-#: it arrives as `UnknownStateError`. Everything else, a refused signature (10004) and clock
-#: drift (10002) included, is inconclusive (SR-E27-18).
+#: REST client's taxonomy may give that code). `mapping.py` maps 33004 (key expired) to an auth
+#: error since G-8 (#2877). Everything else, a refused signature (10004) and clock drift (10002)
+#: included, is inconclusive (SR-E27-18).
 _VERDICTS: Final[Mapping[int, tuple[str, tuple[type[ExchangeError], ...]]]] = {
     10003: ("unknown_key", (AuthError,)),
     10005: ("permission_denied", (AuthError,)),
     10010: ("ip_not_allowed", (AuthError,)),
-    33004: ("key_expired", (AuthError, UnknownStateError)),
+    33004: ("key_expired", (AuthError,)),
 }
 #: The verdict vocabulary. M13's `Refusal` holds exactly these values (a parity test pins it).
 VERDICT_REASONS: Final = frozenset(reason for reason, _ in _VERDICTS.values())

@@ -6,6 +6,10 @@ table changed or added, fed through the corpus error envelope (C-13.5).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from candleviewer.exchange.base.errors import (
@@ -81,6 +85,7 @@ OFFICIAL_V5: dict[int, tuple[str, type[ExchangeError], str | None]] = {
         (10404, InstrumentFilterError),
         (10429, RateLimitError),
         (20006, DuplicateClientIdError),
+        (33004, AuthError),
         (110001, NotFoundError),
         (110003, InstrumentFilterError),
         (110004, InsufficientMarginError),
@@ -135,6 +140,23 @@ def test_a_duplicate_code_on_any_call_but_a_create_is_no_duplicate(
     `create` is false unless the caller says so."""
     assert type(map_ret_code(ret_code, text)) is expected_type
     assert type(map_ret_code(ret_code, text, create=False)) is expected_type
+
+
+#: The key-verification fixtures (E27-T03): documented-shape stand-ins from the v5 error table.
+KEY_FIXTURES = Path(__file__).parents[3] / "fixtures" / "key_verification"
+
+
+def test_an_expired_key_is_an_auth_error_never_retried() -> None:
+    """33004, the v5 error table's "(Derivatives) Your api key has expired" (UTA section,
+    bybit-exchange/docs@19518b90fb36): a typed `AuthError`, which gates trading, not an
+    unmapped `UnknownStateError` that leaves a create's outcome open (#2877)."""
+    body: dict[str, Any] = json.loads(
+        (KEY_FIXTURES / "error_33004.json").read_text(encoding="utf-8")
+    )
+    for create in (True, False):
+        error = map_ret_code(body["retCode"], body["retMsg"], create=create)
+        assert type(error) is AuthError and error.retryable is False
+        assert (error.exchange_ret_code, error.exchange_ret_msg) == (33004, body["retMsg"])
 
 
 @pytest.mark.parametrize("ret_code", [170001, 999999, -1, 42])
