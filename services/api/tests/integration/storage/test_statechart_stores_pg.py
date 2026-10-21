@@ -624,7 +624,10 @@ async def test_rows_of_a_persist_whose_snapshot_write_failed_are_skipped_at_rest
         assert restored.replayed == 1
         await asyncio.wait_for(restored.interpreter.send("PING", wait=True, n="end"), 5)
         assert restored.interpreter.context["seen"] == ["kept", "end"]
-        assert stores.doubles.pages == ["P1"] and stale.send_id in stores.doubles.texts[0]
+        # E50-T63: the failed persist pages P1 by its error type, then the restore pages the row.
+        assert stores.doubles.pages == ["P1", "P1"]
+        assert stores.doubles.texts[0] == "persist failed (ConnectionError); see the log"
+        assert stale.send_id in stores.doubles.texts[1]
     finally:
         await restored.interpreter.stop()
     assert _stamps(pg_dsn, key)[stale.send_id] is False

@@ -10,6 +10,7 @@ one gate: the OMS facade's own latch (its gateway is built with `ALWAYS_ADMIT`).
 from __future__ import annotations
 
 import concurrent.futures
+import inspect
 import json
 from collections import OrderedDict
 from collections.abc import Awaitable
@@ -173,7 +174,8 @@ async def test_the_api_edge_answers_a_degraded_refusal_503_problem() -> None:
     app = create_app()
     handler = app.exception_handlers[GatewayDegradedError]
     request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
-    response = await handler(request, GatewayDegradedError(NAME, "control"))
+    result = handler(request, GatewayDegradedError(NAME, "control"))
+    response = await result if inspect.isawaitable(result) else result
     body = json.loads(bytes(response.body))
     assert response.status_code == 503 and response.media_type == "application/problem+json"
     assert body["status"] == 503 and "degraded" in body["detail"]

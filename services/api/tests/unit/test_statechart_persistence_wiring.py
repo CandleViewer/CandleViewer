@@ -19,6 +19,7 @@ from prometheus_client import generate_latest
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 
+import candleviewer.admin_wiring as admin_wiring
 import candleviewer.app as app_module
 from candleviewer.app import create_app
 from candleviewer.settings import Settings
@@ -69,7 +70,7 @@ class _Inspectors:
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.calls: list[dict[str, Any]] = []
-        real = app_module.build_statechart_inspector
+        real = admin_wiring.build_statechart_inspector
 
         def spy(**kwargs: Any) -> Any:
             self.calls.append(kwargs)

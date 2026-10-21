@@ -44,10 +44,10 @@ def test_production_code_never_passes_or_sets_the_epoch_source() -> None:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Call) and any(k.arg == "epoch_source" for k in node.keywords):
                 passed.append(f"{rel}:{node.lineno}")
-            targets = node.targets if isinstance(node, ast.Assign) else []
-            for target in targets:
-                if isinstance(target, ast.Attribute) and target.attr == "epoch_source":
-                    assigned.append(f"{rel}:{node.lineno}")
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Attribute) and t.attr == "epoch_source" for t in node.targets
+            ):
+                assigned.append(f"{rel}:{node.lineno}")
     assert passed == [] and assigned == []
     assert _calls("Persister"), "the composition root builds the process-wide Persister"
 
