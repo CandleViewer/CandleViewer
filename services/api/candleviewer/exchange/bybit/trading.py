@@ -374,7 +374,7 @@ class BybitTradingPort:
         endpoint = ENDPOINTS[name]
         use = _lane(endpoint, lane)
         client = await self._client(account)
-        client.preflight(endpoint.path, params=params, body=body)
+        client.preflight(endpoint.method, endpoint.path, params=params, body=body)
         started = self._monotonic()
         failure: Exception | None = None
         reply: Mapping[str, Any] = {}

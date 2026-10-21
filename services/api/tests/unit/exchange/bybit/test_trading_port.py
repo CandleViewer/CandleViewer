@@ -537,8 +537,17 @@ async def test_the_account_endpoints_send_no_category(name: str) -> None:
         ("POST", "/v5/order/cancel", None, {"symbol": "BTCUSDT", "orderId": "x-1"}),
         ("POST", "/v5/position/trading-stop", None, {"category": "inverse"}),
         ("GET", "/v5/account/fee-rate", {"symbol": "BTCUSDT"}, None),
+        # SR-054 reads what goes on the wire: a POST sends its body, a GET its query.
+        ("POST", "/v5/order/cancel", {"category": "linear"}, {"category": "spot", "orderId": "x"}),
+        ("POST", "/v5/order/cancel", {"category": "linear"}, {"orderId": "x-1"}),
+        ("GET", "/v5/order/realtime", None, {"category": "linear"}),
+        ("GET", "/v5/order/realtime", {"category": "linear"}, {"category": "spot"}),
     ],
-)
+    ids=[
+        "no-category", "spot", "no-category-post", "inverse", "fee-rate", "post-other-body",
+        "post-category-in-the-query", "get-category-in-the-body", "get-other-in-the-body",
+    ],
+)  # fmt: skip
 async def test_the_client_refuses_a_missing_or_other_category_unsigned(
     method: str, path: str, params: dict[str, str] | None, body: dict[str, str] | None
 ) -> None:
@@ -554,6 +563,32 @@ async def test_the_client_refuses_a_missing_or_other_category_unsigned(
         with pytest.raises(ValueError, match="SR-054"):
             await client.signed_request(method, path, params=params, body=body, lane="poll")
     assert (venue.sent, governor.acquired, calls) == ([], [], [])
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "params", "body"),
+    [
+        ("POST", "/v5/order/cancel", {"category": "linear"}, {"category": "linear"}),
+        ("GET", "/v5/order/realtime", {"category": "linear"}, {"category": "linear"}),
+    ],
+    ids=["post", "get"],
+)
+async def test_the_client_sends_linear_stated_on_the_wire_whatever_the_other_mapping_repeats(
+    method: str, path: str, params: dict[str, str], body: dict[str, str]
+) -> None:
+    """The mapping left behind may repeat `linear`: only another category is refused."""
+    ok = {"retCode": 0, "retMsg": "OK", "result": {}}  # a test input: no shape is parsed here
+    venue = Venue().on(path, ok)
+    client = BybitRestClient(
+        RestClientConfig(base_url="https://api-demo.bybit.com"),
+        uid="100001",
+        signer=BybitSigner(fake_capability(SIGNER_ID), CREDENTIAL_ID),
+        governor=RecordingGovernor(),
+        transport=httpx.MockTransport(venue.handler),
+    )
+    async with client:
+        await client.signed_request(method, path, params=params, body=body, lane="poll")
+    assert [sent["category"] for sent in venue.payloads()] == ["linear"]
 
 
 # -- 8. the id filters (Q5) ---------------------------------------------------------------------

@@ -73,14 +73,18 @@ _SIGNATURE_RESYNC_TIMEOUT_S = 5.0
 #: characters only. No scheme, authority, backslash, whitespace/control char,
 #: query/fragment or percent-escape can match, so httpx can never be steered
 #: to another host (it honours an absolute/scheme-relative URL over base_url).
-_SAFE_PATH = re.compile(r"/v5/[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)*\Z")
-#: C-2.8: the paths that move money or edit a key's rights, refused before any token or signature
-#: whatever builds the path at run time; the set `cv-withdrawal-endpoint-ban` flags in source
-#: (#2877 ruling R14). Assembled from their segments, so that rule finds no call site here: this
-#: is the list that refuses them. SR-E27-12's other families are E27-X02's.
-_BANNED_ROOTS: Final = tuple(f"/v5/asset/{family}" for family in ("withdraw", "transfer"))
-_BANNED_PATHS: Final = frozenset(
-    f"/v5/user/{op}" for op in ("update-api", "update-sub-api", "create-sub-api")
+#: Lower case only: every v5 path is, so a case variant of a banned, create or
+#: category-taking path below is refused rather than read as another path (#2877).
+_SAFE_PATH = re.compile(r"/v5/[a-z0-9_\-]+(?:/[a-z0-9_\-]+)*\Z")
+#: C-2.8: the paths that move money or edit a key's rights, each refused with every path under
+#: it, before any token or signature, whatever builds the path at run time (#2877 ruling R14).
+#: A superset of what `cv-withdrawal-endpoint-ban` flags in source: only this list refuses the
+#: two bare asset roots (a test ties the two lists). Assembled from their segments, so that rule
+#: finds no call site here: this is the list that refuses them. SR-E27-12's other families are
+#: E27-X02's.
+_BANNED_ROOTS: Final = (
+    *(f"/v5/asset/{family}" for family in ("withdraw", "transfer")),
+    *(f"/v5/user/{op}" for op in ("update-api", "update-sub-api", "create-sub-api")),
 )
 
 #: 24 §8.6 "Order creates" (SR-E29-15): a create that has left is never sent again; amend,
@@ -115,9 +119,7 @@ def validate_rest_path(path: str) -> str:
     edits no key, else raise."""
     if not isinstance(path, str) or not _SAFE_PATH.match(path):
         raise RestPathRejected("REST path must be a relative /v5/ path (SR-040a)")
-    if path in _BANNED_PATHS or any(
-        path == root or path.startswith(f"{root}/") for root in _BANNED_ROOTS
-    ):
+    if any(path == root or path.startswith(f"{root}/") for root in _BANNED_ROOTS):
         raise RestPathRejected("this path moves money or edits a key; it is never called (C-2.8)")
     return path
 
@@ -351,14 +353,15 @@ class BybitRestClient:
         lets a duplicate read as "already accepted" rather than a second order (C-2.10). Every
         other call passes this guard: a cancel, `cancel-all` or amend by `orderId` is an exit
         that must reach the order class (OM-D09, AC-31). A path that takes a `category` must
-        state `linear` (SR-054): it is refused, never filled in. All three refusals happen
-        before a token is taken or anything is signed. `lane` is the caller's rate lane (20
-        §4.3). `budget_wait_s` is the lane's wait, which bounds the whole call (24 §8.7): each
-        attempt takes its own token within what is left of it, and a retry whose pause (a
-        backoff, the venue's reset time or an IP hold) would end past it is not made, so the
-        last attempt's own failure, a venue rate-limit answer included, is raised at once. A
-        token refused before anything has been sent is `RateBudgetExceededError`."""
-        self.preflight(path, params=params, body=body)
+        state `linear` in what goes on the wire, the query of a GET or the body of a POST, and
+        the other mapping may name no other (SR-054): it is refused, never filled in. All three
+        refusals happen before a token is taken or anything is signed. `lane` is the caller's
+        rate lane (20 §4.3). `budget_wait_s` is the lane's wait, which bounds the whole call (24
+        §8.7): each attempt takes its own token within what is left of it, and a retry whose
+        pause (a backoff, the venue's reset time or an IP hold) would end past it is not made,
+        so the last attempt's own failure, a venue rate-limit answer included, is raised at
+        once. A token refused before anything has been sent is `RateBudgetExceededError`."""
+        self.preflight(method, path, params=params, body=body)
         return await self._request(
             method,
             path,
@@ -372,6 +375,7 @@ class BybitRestClient:
 
     def preflight(
         self,
+        method: str,
         path: str,
         *,
         params: Mapping[str, Any] | None = None,
@@ -380,14 +384,14 @@ class BybitRestClient:
         """The refusals a signed call meets before a token is taken or anything is signed, each
         a local one: no signer (`TypeError`), a path that is not a plain `/v5/` one or that moves
         money or edits a key (`RestPathRejected`, C-2.8), a create without its ids (C-2.10) and a
-        category other than `linear` (SR-054, `ValueError`). `signed_request` runs it first; a
-        caller that maps failures runs it before its handler, so a refusal never reads as an
-        open outcome (24 §14.4)."""
+        category other than `linear` in what `method` sends (SR-054, `ValueError`).
+        `signed_request` runs it first; a caller that maps failures runs it before its handler,
+        so a refusal never reads as an open outcome (24 §14.4)."""
         if self._signer is None:
             raise TypeError("signed_request called without a configured BybitSigner")
         validate_rest_path(path)
         _require_create_ids(path, body)
-        _require_linear_category(path, params, body)
+        _require_linear_category(method, path, params, body)
 
     def _query_params(self, params: Mapping[str, Any] | None) -> httpx.QueryParams | None:
         if not params:
@@ -798,13 +802,17 @@ def _require_create_ids(path: str, body: Mapping[str, Any] | None) -> None:
 
 
 def _require_linear_category(
-    path: str, params: Mapping[str, Any] | None, body: Mapping[str, Any] | None
+    method: str, path: str, params: Mapping[str, Any] | None, body: Mapping[str, Any] | None
 ) -> None:
-    """SR-054: a category-taking path states `category=linear` itself; never filled in."""
+    """SR-054: a category-taking path states `category=linear` itself, never filled in, in the
+    mapping that goes on the wire (`_request` sends the query of a GET or DELETE and the body of
+    a POST or PUT); the mapping left behind may name no other category."""
     if not (path.startswith(_CATEGORY_PREFIXES) or path in _CATEGORY_PATHS):
         return
-    stated = (params or {}).get("category", (body or {}).get("category"))
-    if stated != "linear":
+    query = method.upper() in ("GET", "DELETE")
+    sent, unsent = (params, body) if query else (body, params)
+    stated = (sent or {}).get("category")
+    if stated != "linear" or (unsent or {}).get("category", stated) != stated:
         raise ValueError("signed_request: this path takes category, and only 'linear' (SR-054)")
 
 

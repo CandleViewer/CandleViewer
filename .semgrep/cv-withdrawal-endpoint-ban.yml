@@ -28,5 +28,6 @@ rules:
           - pattern: $CLIENT.universal_transfer(...)
           - pattern-regex: '["'']/v5/asset/withdraw/.*["'']'
           - pattern-regex: '["'']/v5/asset/transfer/.*["'']'
-          # #2877 R14: key creation and key-permission changes, master and sub account.
-          - pattern-regex: '["'']/v5/user/(update-api|update-sub-api|create-sub-api)["'']'
+          # #2877 R14: key creation and key-permission changes, master and sub account, in
+          # any literal that holds the path (a host before it, a sub-path or query after it).
+          - pattern-regex: '["''][^"''\n]*/v5/user/(update-api|update-sub-api|create-sub-api)(?![\w-])'

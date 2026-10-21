@@ -5,9 +5,12 @@ built, before a token is taken or anything is signed."""
 from __future__ import annotations
 
 import asyncio
+import re
+from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -81,9 +84,8 @@ async def test_happy_path_unchanged() -> None:
     assert hosts == ["api.bybit.com", "api.bybit.com"]
 
 
-_SEG = st.text(
-    alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-", min_size=1
-)
+#: Every v5 path is lower case, and the guard admits nothing else (#2877).
+_SEG = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789_-", min_size=1)
 _SAFE = st.lists(_SEG, min_size=1, max_size=4).map(lambda segs: "/v5/" + "/".join(segs))
 _MUTATIONS = [
     "//",
@@ -103,6 +105,7 @@ _MUTATIONS = [
     "..",
     "https://evil.example",
     "//evil.example",
+    "A",  # any upper-case letter: no v5 path has one (#2877)
 ]
 
 
@@ -146,15 +149,22 @@ def _path(*segments: str) -> str:
     return "/" + "/".join(("v5", *segments))
 
 
-#: C-2.8 (#2877 ruling R14): the withdrawal and transfer families and the key-permission writes.
+#: C-2.8 (#2877 ruling R14): the withdrawal and transfer families and the key-permission writes,
+#: each with every path under it.
 BANNED = [
     _path("user", "update-api"),
     _path("user", "update-sub-api"),
     _path("user", "create-sub-api"),
+    _path("user", "update-api", "x"),
+    _path("user", "update-sub-api", "x"),
+    _path("user", "create-sub-api", "x"),
     _path("asset", "withdraw", "create"),
     _path("asset", "transfer", "inter-transfer"),
     _path("asset", "withdraw"),
+    _path("asset", "transfer"),
 ]
+#: The bare asset roots: refused at run time only, as no v5 call is one (`rest.py` says so).
+BARE_ROOTS = [_path("asset", "withdraw"), _path("asset", "transfer")]
 
 
 @pytest.mark.parametrize("path", BANNED)
@@ -187,3 +197,69 @@ async def test_a_path_that_moves_money_or_edits_a_key_is_refused_before_any_toke
 def test_the_key_verification_read_is_no_key_edit() -> None:
     """Key verification reads its key's facts (E27-T03); that read stays callable."""
     assert validate_rest_path(_path("user", "query-api")) == _path("user", "query-api")
+
+
+#: Case variants of a banned, a create and a category-taking path: never another path's twin.
+CASE_VARIANTS = [
+    _path("User", "update-api"),
+    _path("user", "Update-Api"),
+    _path("ASSET", "withdraw", "create"),
+    _path("asset", "Withdraw", "create"),
+    _path("asset", "TRANSFER", "inter-transfer"),
+    _path("order", "Create"),
+    _path("Order", "cancel"),
+]
+
+
+@pytest.mark.parametrize("path", CASE_VARIANTS)
+async def test_a_case_variant_of_a_v5_path_is_refused_before_any_token(path: str) -> None:
+    """Every v5 path is lower case: a variant is refused, never read as a path the C-2.8 list,
+    the create guard (C-2.10) or the category check (SR-054) does not know (#2877)."""
+    hosts: list[str] = []
+    governor = RecordingGovernor()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        hosts.append(req.url.host)
+        return httpx.Response(200, json={"retCode": 0, "retMsg": "OK", "result": {}})
+
+    client = BybitRestClient(
+        RestClientConfig(base_url=BASE),
+        signer=BybitSigner(fake_capability("DUMMYKEY" + "q" * 10), CREDENTIAL_ID),
+        governor=governor,
+        transport=httpx.MockTransport(handler),
+    )
+    async with client:
+        for method in ("POST", "GET"):
+            with pytest.raises(RestPathRejected, match="SR-040a"):
+                await client.signed_request(method, path, body={}, lane="critical")
+    assert (hosts, governor.acquired) == ([], [])
+
+
+_RULE = Path(__file__).resolve().parents[6] / ".semgrep" / "cv-withdrawal-endpoint-ban.yml"
+
+
+def _rule_regexes() -> list[re.Pattern[str]]:
+    """The `pattern-regex` entries of `cv-withdrawal-endpoint-ban`, the source half of C-2.8."""
+    (rule,) = yaml.safe_load(_RULE.read_text(encoding="utf-8"))["rules"]
+    assert rule["id"] == _RULE.stem
+    either = [entry for block in rule["patterns"] for entry in block.get("pattern-either", [])]
+    regexes = [re.compile(entry["pattern-regex"]) for entry in either if "pattern-regex" in entry]
+    assert regexes, "cv-withdrawal-endpoint-ban no longer declares a pattern-regex"
+    return regexes
+
+
+@pytest.mark.parametrize("path", [p for p in BANNED if p not in BARE_ROOTS])
+@pytest.mark.parametrize("quote", ['"', "'"])
+def test_the_source_rule_flags_every_path_the_run_time_list_refuses(path: str, quote: str) -> None:
+    """R14 lives in two lists, the Semgrep rule and `rest.py`'s: a path one refuses, written as a
+    literal, the other flags, so neither can drift alone. Only the bare roots are run time's."""
+    literal = quote + path + quote
+    assert any(regex.search(literal) for regex in _rule_regexes()), literal
+
+
+@pytest.mark.parametrize(
+    "path", [_path("user", "query-api"), _path("user", "update-api-key")], ids=["read", "longer"]
+)
+def test_the_source_rule_leaves_a_read_and_a_longer_name_alone(path: str) -> None:
+    literal = '"' + path + '"'
+    assert not any(regex.search(literal) for regex in _rule_regexes())
