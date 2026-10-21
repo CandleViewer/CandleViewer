@@ -5,8 +5,10 @@ document (named per constant); none is market evidence or came from a recorded t
 cell height in CSS px (pane height / visible price rows); the `LOD_PROFILE_M0` rung it reaches when
 zooming in (E06-D01 §2: L0 >= 12, L1 >= 10, L2 >= 6 px, else L3; down-switch 10.2 / 8.5 / 5.1 px);
 the bar width (plot width / visible bars); the cell-width floor per mode from E06-D01 §4's widest
-strings (7 glyphs per full number, 6 per signed delta) at 0.62 em, so the memo can say where width
-binds before height. Displays: E18-D02's artboards; chrome: E11-D02 §2 compact; scale: §6 rule 6.
+strings (7 glyphs per full number, 6 per signed delta) at 0.62 em plus E06-D01 §2's gutters, read
+per side-cell, so the memo can say where width binds before height. Densities: E11-D02 D6's three
+(comfortable / compact / dense; dense shares compact's glyph size and LOD bias). Displays: E18-D02's
+artboards; chrome: E11-D02 §2 compact; scale: §6 rule 6.
 
 Usage: python3 -I docs/design/_tools/e18_d01_cell_geometry.py [--json]
 """
@@ -25,8 +27,14 @@ CHROME_H, CHROME_W = 24 + 24 + 24, 48 + 24  # E11-D02 §2 compact: rows + strip;
 LOD = {"L0": D(12), "L1": D(10), "L2": D(6)}  # E06-D01 §2, LOD_PROFILE_M0 (up-switch heights)
 DOWN = {"L0": D("10.2"), "L1": D("8.5"), "L2": D("5.1")}  # E06-D01 §2; E06-K03 for the L2 step
 GLYPHS = {"bid_ask": 7 + 1 + 7, "delta": 6, "volume": 7, "delta_total": 6 + 1 + 7}  # E06-D01 §4
-GUTTER = {"bid_ask": 8, "delta": 3, "volume": 4, "delta_total": 8}  # E06-D01 §2 (+4 / +3 px)
-FONT_PX = {"compact": D(10), "comfortable": D(11)}  # E11-D02 D6 fontSizeClass 0 / 1; lodBias 0 / +1
+# E06-D01 §2: "+4px gutter" on the two-number string, "+3px" on the one-number string. Read per
+# side-cell (4 px per number of a two-number cell, the conservative reading, memo Q3); one-number
+# modes take the 3 px. E06-D01 states the gutters once, without a density, so dense keeps them.
+GUTTER = {"bid_ask": 8, "delta": 3, "volume": 3, "delta_total": 8}
+# E11-D02 D6: comfortable {cellPadPx 4, fontSizeClass 1 (11 px), lodBias +1}, compact {2, 0 (10 px),
+# 0}, dense {1, 0 (10 px), 0}: dense shares compact's glyph size and rungs (26 §5 rule 5's third).
+FONT_PX = {"compact": D(10), "comfortable": D(11), "dense": D(10)}
+LOD_BIAS = {"compact": ZERO, "comfortable": ONE, "dense": ZERO}  # px added to every LOD height
 TEXT_SCALES = (ONE, D("1.12"), D("1.25"), D("1.5"))  # 16 §4 --cv-text-scale
 RUNGS = (D(4), D(6), D(8), D(10), D("10.2"), D(12))  # the protocol's stimuli (ticket + E06-D01)
 SCENES = {  # name: (visible bars, visible price rows, source)
@@ -87,7 +95,7 @@ def floors() -> list[dict[str, str]]:
 
 
 def ladder() -> list[dict[str, str]]:
-    return [{"rung_px": q(r), "compact": rung(r), "comfortable": rung(r, ONE),
+    return [{"rung_px": q(r), **{d: rung(r, LOD_BIAS[d]) for d in FONT_PX},
              **{f"x{s}": rung(r, scale=s) for s in TEXT_SCALES[1:]}} for r in RUNGS]  # fmt: skip
 
 
@@ -111,7 +119,7 @@ def main(argv: list[str]) -> int:
         return 0
     table(sc, "| display | scene | rows | bars | cell_h | rung | bar_w | src |")
     table(fl, "| density | mode | glyphs | width_floor | bars_2560 | bars_1280 |")
-    table(ld, "| rung_px | compact | comfortable | x1.12 | x1.25 | x1.5 |")
+    table(ld, "| rung_px | compact | comfortable | dense | x1.12 | x1.25 | x1.5 |")
     print(f"\nDown-switch px {data['down_switch_px']}; {data['provenance']}; --json has the rest.")
     return 0
 
