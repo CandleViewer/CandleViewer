@@ -240,6 +240,9 @@ def test_postgres_inhibits_db_dependent_tickets() -> None:
 
 
 def test_postgres_does_not_inhibit_security_tickets() -> None:
+    """SR-125: security signals stay visible during a DB outage. The `alerts` matcher of the rule
+    never reaches the alerts module's own security tickets (webhook egress refusals, key or
+    credential checks): those carry component `network` or `auth`, never `alerts`."""
     for c in ("auth", "secrets", "network", "clock", "audit_lane", "audit_sink"):  # #3009 S4a
         assert not _inhibited(c), c
 
