@@ -379,7 +379,7 @@ def test_terminal_payload_is_the_entitys_last() -> None:
     conn, registry, _ = _world()
     order = MachineEntity("order", OID, ON_A)
     assert registry.terminal(order, _payload(state="filled"))
-    assert not registry.publish(order, _payload()) and not registry.terminal(order, _payload())
+    assert not registry.publish(order, _payload())
     conn.sub(order.ch)
     assert conn.take()[0]["p"]["state"] == "filled"
 
@@ -862,6 +862,24 @@ def test_a_payload_after_the_terminal_one_is_refused_and_logged() -> None:
     with capture_logs() as logs:
         assert not registry.publish(order, _payload())
     assert logs == [_line("machine state after terminal ignored", "warning")]
+
+
+def test_a_further_terminal_payload_replaces_the_last_one_and_keeps_its_retention() -> None:
+    """A parallel chart's later step that still holds `terminal` (B16 `elevation` on a revocation)
+    reaches a subscriber. The 60 s and the place in the retention order are the first one's."""
+    loop = _Loop()
+    conn, registry, _ = _world(**loop.kw)
+    one, two = (MachineEntity("order", str(uuid.UUID(int=n)), ON_A) for n in (1, 2))
+    registry.terminal(one, _payload(state="filled"))
+    conn.sub(one.ch)
+    loop.advance(10.0)
+    registry.terminal(two, _payload(state="filled"))
+    loop.advance(30.0)
+    assert registry.terminal(one, _payload(state="settled"))
+    assert _states(conn) == [("snap", "filled"), ("d", "settled")]
+    loop.advance(60.0)  # `one` ends 60 s after its first payload, and before `two`
+    assert [registry.scope(o.ch) for o in (one, two)] == [None, ON_A]
+    assert _states(conn) == [("revoked", None)]
 
 
 def test_the_registry_bounds_are_pinned() -> None:

@@ -14,9 +14,10 @@ Coalescing (§6.4), whatever the backpressure flag: with `call_later`, the first
 quiet window of `coalesce_s` (100 ms) goes out at once; a later one is recorded at once, so a `snap`
 reads it, and goes out in the call of the one timer that closes the window, the latest only.
 
-Retention (§6.4): a terminal entry stays `retention_s`, at most `terminal_max` of them (oldest
-first); `remove` ends a live one when its machine stops. A removal sends what waits for its window
-(flag on, §8.6 drops it with the queue), revokes each subscription, hands `on_revoked` the frames.
+Retention (§6.4): a terminal entry stays `retention_s` from its first terminal payload (a later one
+replaces the payload, a parallel chart's next step), at most `terminal_max` of them (oldest first);
+`remove` ends a live one when its machine stops. A removal sends what waits for its window (flag
+on, §8.6 drops it with the queue), revokes each subscription, hands `on_revoked` the frames.
 
 Bound (C-2.18): `MACHINE_ENTRIES_MAX` entries; a payload for a new entity past it is refused and
 counted (no live state is evicted), so a `sub` to that entity gets the refusal a foreign one gets.
@@ -172,7 +173,8 @@ class MachineStateRegistry:
     def terminal(
         self, entity: MachineEntity, payload: Mapping[str, Any], *, owner: object = None
     ) -> bool:
-        """Record the entity's last payload (its `tags` hold `terminal`); later ones are refused."""
+        """Record the entity's last payload (its `tags` hold `terminal`): a `publish` after it is
+        refused, a further `terminal` (a parallel chart's later step) replaces it."""
         return self._record(entity, payload, owner, terminal=True)
 
     def remove(self, entity: MachineEntity, *, owner: object = None) -> bool:
@@ -210,7 +212,8 @@ class MachineStateRegistry:
         self, entity: MachineEntity, payload: Mapping[str, Any], owner: object, *, terminal: bool
     ) -> bool:
         kind, entry = entity.kind, self._entries.get(entity.ch)
-        if entry is not None and entry.terminal:
+        ended = entry is not None and entry.terminal
+        if ended and not terminal:
             self._note("warning", "machine state after terminal ignored", kind)
             return False
         if entry is None and len(self._entries) >= self.max_entries:
@@ -232,7 +235,7 @@ class MachineStateRegistry:
         if kind in _SCOPE_MISSING and entry.scope == _UNSCOPED:  # a binding defect (§6.4)
             _SCOPE_MISSING[kind].inc()
             self._note("warning", "machine state without a scope: refused to every role", kind)
-        if terminal:  # indexed and timed first: a fan-out that raises cannot keep the entry forever
+        if terminal and not ended:  # indexed and timed first: a fan-out that raises cannot keep it
             entry.expires = self._clock() + self.retention_s
             self._terminal.pop(entity.ch, None)  # a stale index entry: this one goes last
             self._terminal[entity.ch] = entry

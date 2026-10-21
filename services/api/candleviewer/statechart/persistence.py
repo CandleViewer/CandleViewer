@@ -24,8 +24,9 @@ Restore (E50-T49, 29 §1.3) is `Restorer.restore`: `open_sealed` (HMAC-SHA256
 over chart bytes + blob + machine key, CV-C53) -> the three `cv_` keys checked and removed ->
 `from_snapshot(minimum_version=3, expected_machine_hash=, plugins=)` (CV-C52, MUST-12, R13-W1)
 -> pre-start asserts (C45'', C60, C27', C54) -> `_cv_bring_up` -> bounded `start()` ->
-`journal.replay_once` (only the rows the seal names, verified; one P1 page for the rest; a
-failure stops the machine) -> `chain_trips` latch (C63). Any refusal writes a
+`cv_bring_up_restored` (a restored `start()` enters no state) -> `journal.replay_once` (only the
+rows the seal names, verified; one P1 page for the rest; a failure stops the machine) ->
+`chain_trips` latch (C63). Any refusal writes a
 quarantine row and fires a P1 alert; a tampered blob is never loaded. A machine that starts
 without a verified snapshot calls `Restorer.page_unclaimed` instead: no sealed set can claim its
 key's unreplayed rows. `from_snapshot(` appears only in this module (CV-LINT-RESTORE).
@@ -817,7 +818,10 @@ class Restorer:
             await self._page(key, "drain journal rows unclaimed", _skipped_page(unclaimed))
         return len(rows)
 
-    async def restore(self, key: MachineKey, envelope: SealedSnapshot) -> RestoreResult:
+    async def restore(
+        self, key: MachineKey, envelope: SealedSnapshot, *, extra_plugins: Sequence[Any] = ()
+    ) -> RestoreResult:
+        """`extra_plugins` (an owner's, e.g. the machines feed) follow `self.plugins(key)`."""
         chart = self.registry.get(key.machine_kind)
         expected = self.registry.hash(key.machine_kind)
         try:
@@ -836,7 +840,7 @@ class Restorer:
                 clock=self.clock,
                 minimum_version=SNAPSHOT_V,
                 expected_machine_hash=machine.structure_hash,
-                plugins=list(self.plugins(key)),
+                plugins=[*self.plugins(key), *extra_plugins],
             )
             factory.apply_lane_config(interp, self.lane)
             _pre_start_checks(blob, interp)
@@ -852,6 +856,7 @@ class Restorer:
                 f"restore({key.machine_kind}) start() did not settle within "
                 f"{CV_START_TIMEOUT}s (CV-C56)"
             ) from exc
+        factory.cv_bring_up_restored(interp)  # CV-C66': a restored start() enters no state
         report = await self._replay(key, interp, drain)
         if report.skipped or report.missing:
             await self._page(key, "drain journal rows skipped or missing", _skipped_page(report))
