@@ -20,14 +20,16 @@ numeric(38,18)), and no error names a value: the prices and sizes are class P1 (
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Final, Literal, Protocol
 from uuid import UUID
 
 from candleviewer.storage.repositories.orders import (
+    ORDER_STATE_OF,
     OrderSide,
     OrderState,
     OrderStoreError,
@@ -37,9 +39,10 @@ from candleviewer.storage.repositories.orders import (
 )
 
 __all__ = [
-    "MAX_MARKER_CHARS", "ORPHANING_STATES", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE",
-    "NewRecordedStop", "RecordedStopRow", "RecordedStopStore", "StaleRecordedStop", "StopKind",
-    "StopOutcome", "StopSource", "StopStatus", "SweepWriteAhead", "SweptStop",
+    "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY", "UNSENT_ENTRY", "UX_RS_IN_FLIGHT",
+    "UX_RS_IN_FORCE", "NewRecordedStop", "RecordedStopRow", "RecordedStopStore",
+    "StaleRecordedStop", "StopKind", "StopOutcome", "StopSource", "StopStatus", "SweepWriteAhead",
+    "SweptStop",
 ]  # fmt: skip
 
 StopKind = Literal["stop_loss", "take_profit"]
@@ -56,11 +59,32 @@ UX_RS_IN_FLIGHT: Final = "ux_rs_in_flight"
 UX_RS_IN_FORCE: Final = "ux_rs_in_force"
 #: `rs_marker`: the position's instance marker, 1 to 64 characters (`[O-4]`, E29-K01).
 MAX_MARKER_CHARS: Final = 64
-#: The order states in which an entry's pending stop rows are orphans once its order holds no
-#: fill (`void_orphans`): never sent (`pending_submit`, which no live request owns after a
-#: restart), or ended unfilled, so its attached stop never reached a position.
-ORPHANING_STATES: Final[frozenset[OrderState]] = frozenset(
-    {"pending_submit", "rejected", "held", "killed", "cancelled", "expired"}
+#: The startup sweep's whole scope (`void_orphans`, 21 Sec.3.3.11) is an entry never placed: one
+#: never sent, or one the create's own answer refused. `UNSENT_ENTRY` holds the `orders` columns,
+#: and the values, that prove the first: the send's own step marks the create in flight and counts
+#: its attempt before anything leaves (24 Sec.8.4), so an order still `pending_submit`, its create
+#: `unsent`, no attempt counted and nothing filled had no exchange interaction.
+UNSENT_ENTRY: Final[Mapping[str, object]] = MappingProxyType(
+    {
+        "state": "pending_submit",
+        "idempotency_state": "unsent",
+        "submit_attempts": 0,
+        "cum_exec_qty": Decimal(0),
+    }
+)
+#: The second: `rejected` with nothing filled, and its own `order_events` row into `rejected`
+#: (`REFUSED_BY`, the persisted states) came out of `submitting`, which only the create's answer
+#: leaves for `rejected`. A rejection out of `unknown` or `held` (reconciliation's, the operator's)
+#: is no such proof. No other order's rows are swept: its own steps settle them, voiding them only
+#: on an end the exchange confirmed unfilled, or leave them waiting for the complete read (24
+#: Sec.8.8 rule 6), a killed order's (one never sent included) and one's that ended out of
+#: `unknown` among them, so the sweep never voids a row blind (C-2.6).
+REFUSED_ENTRY: Final[Mapping[str, object]] = MappingProxyType(
+    {"state": "rejected", "cum_exec_qty": Decimal(0)}
+)
+REFUSED_BY: Final[tuple[OrderState, OrderState]] = (
+    ORDER_STATE_OF["submitting"],
+    ORDER_STATE_OF["rejected"],
 )
 
 
@@ -149,7 +173,7 @@ class RecordedStopRow:
 @dataclass(frozen=True, slots=True)
 class SweptStop:
     """A row `void_orphans` voided, by its ids and kind only: its audit record (`sl.modified`, or
-    `tp.modified` for a take-profit side, reason `orphan_swept`) names nothing else."""
+    `tp.modified` for a take-profit side, reason `unplaced_entry_swept`) names nothing else."""
 
     id: UUID
     exchange_account_id: UUID
@@ -199,8 +223,11 @@ class RecordedStopStore(Protocol):
         self, account_id: UUID | None, *, at: datetime, write_ahead: SweepWriteAhead
     ) -> tuple[SweptStop, ...]:
         """The startup sweep (R10): every pending entry-attach row, of `account_id` or of every
-        account, whose order holds no fill and is in `ORPHANING_STATES`, or is not an order of the
-        row's account, becomes `void` (`closed_at` = `at`), the hook awaited before the commit.
-        Only at startup, before the order machines hydrate and order entry opens: a
-        `pending_submit` order is an orphan only while no request can still send it."""
+        account, whose order is of the row's account and was never placed (`UNSENT_ENTRY`, or
+        `REFUSED_ENTRY` with its `REFUSED_BY` event), becomes `void` (`closed_at` = `at`), the
+        hook awaited before the commit. A row of any other order is left as it is: a killed
+        order's, one's that ended out of `unknown` and one's whose end the exchange did not
+        confirm unfilled wait for the complete read, never voided blind. Only at startup, before
+        the order machines hydrate and order entry opens: a `pending_submit` order is an orphan
+        only while no request can still send it."""
         ...

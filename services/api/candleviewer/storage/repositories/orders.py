@@ -77,8 +77,9 @@ IdempotencyState = Literal["unsent", "in_flight", "acked", "failed"]
 #: and never changed: the OMS's own submission, a reconciliation adoption, or a recorded stop's
 #: TP/SL order (24 Sec.8.3 rule 7).
 OrderProvenance = Literal["placed", "reconciliation", "recorded_stop"]
-#: How a step settles its entry's recorded stops (21 Sec.3.3.11, E29-T04): `answered` once the
-#: entry is accepted or fills, `void` once it ends unfilled.
+#: How a step settles its entry's recorded stops (21 Sec.3.3.11's table, E29-T04): `answered` once
+#: the entry is accepted or fills, `void` only once the exchange confirms it ended unfilled; a step
+#: that leaves them waiting for the complete read (24 Sec.8.8 rule 6) names neither.
 EntryStopSettle = Literal["answered", "void"]
 
 #: 24-internal-schemas.md Sec.8.2: the `order_state` value that persists each chart state. One to
@@ -276,7 +277,8 @@ class OrderTransition:
     rebuilds them (OM-T03). E29-T04: `idempotency_state` when given; `bump_submit_attempts`, the
     send's step only (into `submitted`), counts `submit_attempts` up by one in SQL (`ord_attempts`
     refuses an eleventh); and `entry_stops` settles the entry's recorded stops in the step's own
-    transaction (21 Sec.3.3.11)."""
+    transaction (21 Sec.3.3.11's table), a step that leaves them waiting for the complete read
+    naming none."""
 
     account_id: UUID
     order_id: UUID

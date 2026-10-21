@@ -33,9 +33,14 @@ the reject columns (`oms.recovery`).
 E29-T04 (24 Sec.8.4): the send's step (`validated` -> `submitting`) sets `idempotency_state` to
 `in_flight` and counts `submit_attempts` up; a step out of `submitting` or `unknown` that answers
 the create sets `acked` or `failed`, and `unknown` keeps `in_flight` (`idempotency_of`). Each step
-also settles the entry's recorded stops in its own transaction (`entry_stop_settle`, 21
-Sec.3.3.11): `answered` once the order is accepted or fills, `void` once it ends unfilled, so no
-stop request of an entry stays in flight past its order's end. A reduce-only order records none.
+also settles the entry's recorded stops in its own transaction, as 21 Sec.3.3.11's table says
+(`entry_stop_settle`, R10): `answered` once the order is accepted or fills; `void` only on an end
+the exchange confirmed unfilled (the create's own refusal, or the order's end push reporting a
+zero cumulative fill); and every other end, a KILL, an expiry and any end out of `unknown` among
+them, leaves them `pending`, waiting for the complete read (24 Sec.8.8 rule 6), which settles them
+from what the exchange shows. An attach row is never voided blind (C-2.6): B1's own `filled_qty`
+can lag a fill the exchange holds back, and that fill is a position whose attach stop the read
+must find. A reduce-only order records none.
 """
 
 from __future__ import annotations
@@ -45,8 +50,9 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from decimal import Context, Decimal
-from typing import Any, Final, cast, get_args
+from decimal import Context, Decimal, InvalidOperation
+from types import MappingProxyType
+from typing import Any, Final, Literal, cast, get_args
 from uuid import UUID
 
 from candleviewer.statechart.bindings.b01_order import FIRST_ROWS, Step
@@ -78,9 +84,15 @@ from .errors import HolderNotRead
 from .repository import ExecutionRepository, OrderRepository, SubmissionRepository
 
 __all__ = [
-    "HOLDER_READ_TIMEOUT", "MAX_EXPECTED", "OrderStepWriter", "entry_stop_settle", "event_kind",
-    "idempotency_of",
+    "HOLDER_READ_TIMEOUT", "MAX_EXPECTED", "EntryStopEffect", "OrderStepWriter",
+    "entry_stop_settle", "event_kind", "idempotency_of",
 ]  # fmt: skip
+
+#: What a step does to its entry's recorded stops (21 Sec.3.3.11's table, R10): `answered` and
+#: `void` name the settle statement it runs in its own transaction; `waiting` runs none and leaves
+#: them `pending`, waiting for the complete read (24 Sec.8.8 rule 6), which alone settles them
+#: from what the exchange shows.
+EntryStopEffect = Literal["answered", "void", "waiting"]
 
 #: Orders registered for their first step and not yet written, the oldest dropped first (C-2.18).
 MAX_EXPECTED: Final = 1024
@@ -135,7 +147,7 @@ _ACKED: Final = frozenset(
     {"submitted", "triggered", "partially_filled", "filled", "cancelled", "expired"}
 )
 _FAILED: Final = frozenset({"rejected", "held"})
-#: 21 Sec.3.3.11: an entry is accepted (or fills) in these, and ends in those.
+#: 21 Sec.3.3.11: an entry is accepted (or fills) in these, and ends (or is held) in those.
 _ANSWERS_STOPS: Final = frozenset({"submitted", "triggered", "partially_filled", "filled"})
 _ENDS_ENTRY: Final = frozenset({"rejected", "held", "killed", "cancelled", "expired"})
 #: A first row's provenance where its state fixes it (21 Sec.3.3.4): reconciliation records an
@@ -144,6 +156,17 @@ _FIRST_PROVENANCE: Final[Mapping[LifecycleState, OrderProvenance]] = {
     "untracked": "reconciliation",
     "submitted": "recorded_stop",
 }
+#: The states the exchange's end push confirms an unfilled cancel out of: the exchange took the
+#: create, and B1 follows the order's pushes (never `unknown`, `quarantined` or `untracked`).
+_ON_THE_BOOK: Final = frozenset(
+    {"submitted", "triggered", "partially_filled", "cancel_pending", "amend_pending"}
+)
+#: The exchange's own order pushes (B1's `_PUSH` payload): `cum_exec_qty` is its cumulative fill.
+_PUSHES: Final = frozenset({"TRIGGERED", "EXPIRE", "REMOTE_CANCELLED"})
+#: The settle statement each effect runs in the step's transaction: `waiting` runs none.
+_STATEMENTS: Final[Mapping[EntryStopEffect | None, EntryStopSettle]] = MappingProxyType(
+    {"answered": "answered", "void": "void"}
+)
 
 
 def idempotency_of(from_state: LifecycleState, to_state: LifecycleState) -> IdempotencyState | None:
@@ -159,15 +182,47 @@ def idempotency_of(from_state: LifecycleState, to_state: LifecycleState) -> Idem
 
 
 def entry_stop_settle(
-    from_state: LifecycleState, to_state: LifecycleState, filled_qty: Decimal
-) -> EntryStopSettle | None:
-    """How the step settles the entry's recorded stops: an end voids them unless the order filled,
-    whose stop is its position's; the first step into acceptance answers them."""
-    if to_state in _ENDS_ENTRY:
-        return "answered" if filled_qty > 0 else "void"
-    if to_state in _ANSWERS_STOPS and from_state not in _ANSWERS_STOPS:
-        return "answered"
-    return None
+    from_state: LifecycleState,
+    to_state: LifecycleState,
+    filled_qty: Decimal,
+    *,
+    trigger: str,
+    reported_fill: Decimal | None = None,
+) -> EntryStopEffect | None:
+    """What the step does to the entry's recorded stops, as 21 Sec.3.3.11's table says (R10): the
+    first step into acceptance or a fill answers them; an end voids them only when the exchange
+    confirmed it unfilled and B1 holds no fill; every other end (a KILL, an expiry, any end out of
+    `unknown`, a cancel's ack, an end reconciliation or the operator decided, a hold) leaves them
+    `pending`, waiting for the complete read; anything else changes nothing (None). `filled_qty`
+    is B1's count, which can lag a fill the exchange holds back, so its zero never voids a row on
+    its own (C-2.6); `reported_fill` is the exchange's own cumulative fill, which the push that
+    `trigger` names reported (`cum_exec_qty`), else None."""
+    if to_state in _ANSWERS_STOPS:
+        return None if from_state in _ANSWERS_STOPS else "answered"
+    if to_state not in _ENDS_ENTRY:
+        return None
+    if filled_qty == 0 and _confirms_unfilled(from_state, to_state, trigger, reported_fill):
+        return "void"
+    return "waiting"
+
+
+def _confirms_unfilled(
+    from_state: LifecycleState, to_state: LifecycleState, trigger: str, reported: Decimal | None
+) -> bool:
+    """An exchange-confirmed end with nothing filled: the create's own answer refused it
+    (`submitting` -> `rejected` on `done.invoke.place`), or the exchange's end push
+    (`REMOTE_CANCELLED`, which the facade holds until B1 holds every fill it reports, INV-B1-k)
+    reported a zero cumulative fill for an order on its book. A cancel's ack reports no fill, and
+    nothing out of `unknown` is a confirmation: the rows of those wait for the complete read."""
+    if to_state == "rejected":
+        return from_state == "submitting" and trigger == "done.invoke.place"
+    return (
+        to_state == "cancelled"
+        and trigger == "REMOTE_CANCELLED"
+        and from_state in _ON_THE_BOOK
+        and reported is not None
+        and reported == 0
+    )
 
 
 class OrderStepWriter:
@@ -210,7 +265,10 @@ class OrderStepWriter:
         settle = None
         if step.context.get("reduce_only") is not True:  # a reduce-only order records no stop
             filled = _decimal(step.context.get("filled_qty", "0"))
-            settle = entry_stop_settle(from_state, to_state, filled)
+            effect = entry_stop_settle(
+                from_state, to_state, filled, trigger=step.event, reported_fill=_reported(step)
+            )
+            settle = _STATEMENTS.get(effect)  # `waiting`: no statement, the rows stay pending
         move = OrderTransition(
             account_id=account,
             order_id=order_id,
@@ -306,6 +364,20 @@ def _decimal(raw: object) -> Decimal:
     if not isinstance(raw, str):
         raise ValueError("a money value is not decimal text")
     return Decimal(raw)
+
+
+def _reported(step: Step) -> Decimal | None:
+    """The cumulative fill the exchange's own order push reports (`cum_exec_qty`), else None: a
+    command's answer, a finding and B1's count report none, and text that is not a finite decimal
+    reports none either, so it never voids a row (`entry_stop_settle`)."""
+    raw = step.payload.get("cum_exec_qty") if step.event in _PUSHES else None
+    if not isinstance(raw, str):
+        return None
+    try:
+        reported = Decimal(raw)
+    except InvalidOperation:
+        return None
+    return reported if reported.is_finite() else None
 
 
 def _execution(step: Step) -> Mapping[str, Any] | None:

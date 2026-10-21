@@ -495,8 +495,9 @@ async def test_the_sweep_logs_each_voided_row_by_its_ids() -> None:
         )
     assert got == swept and store.calls == [("void_orphans", (None,))]
     assert logs == [
-        {"event": "oms_stop_orphan_swept", "log_level": "warning", "record_id": str(STOP.id),
-         "account_id": str(ACCOUNT), "order_id": str(ORDER), "kind": "take_profit"}
+        {"event": "oms_stop_unplaced_entry_swept", "log_level": "warning",
+         "record_id": str(STOP.id), "account_id": str(ACCOUNT), "order_id": str(ORDER),
+         "kind": "take_profit"}
     ]  # fmt: skip
 
 

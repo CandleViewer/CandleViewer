@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import psycopg
 import pytest
@@ -464,16 +464,61 @@ def _end(dsn: str, order: NewOrder, state: str, filled: str = "0") -> None:
     )  # fmt: skip
 
 
-async def test_the_startup_sweep_voids_only_the_stops_no_live_order_owns(
+async def _sent(store: SqlAlchemyOrderStore, order: NewOrder) -> None:
+    """The send's step as the step writer commits it: the create in flight, one attempt."""
+    send = _move(order, "pending_submit", "submitted", "submitting", kind="submit_attempt",
+                 bump_submit_attempts=True, idempotency_state="in_flight")  # fmt: skip
+    await store.transition(send)
+
+
+async def test_a_void_never_meets_a_fill_the_store_holds(
     rel: SqlAlchemyRelationalRepository, pg_dsn: str
 ) -> None:
-    """Never sent and ended-unfilled entries are orphans; a live or a filled one is not. Each
-    voided row is audited before the commit, and a refused audit voids nothing."""
-    user = _user(pg_dsn)
-    cases = {name: _entry(user, *_account(pg_dsn)) for name in ("never_sent", "cancelled_unfilled",
-             "live", "filled")}  # fmt: skip
+    """SEC-2A-01: whatever the step decided, its void leaves the rows of an order that holds a
+    recorded fill pending, the store's own check run after the step's update, in its transaction."""
+    store = SqlAlchemyOrderStore(rel)
+    first, order = _entry(_user(pg_dsn), *_account(pg_dsn))
+    await SqlAlchemySubmissionStore(rel).create_first(first, order, _EVENT)
+    await _sent(store, order)
+    _end(pg_dsn, order, "partially_filled", "0.004")
+    end = _move(order, "partially_filled", "cancelled", "cancelled", kind="exchange_push",
+                entry_stops="void")  # fmt: skip
+    assert (await store.transition(end)).order.state == "cancelled"
+    assert _stops_of(pg_dsn, first) == [("pending", False, False)]
+
+
+#: The sweep's cases (the 2026-10-21 ruling): the first two were never placed and are swept; the
+#: rest wait for the complete read, or stay an order's that lives or filled.
+_SWEPT_CASES: Final = ("never_sent", "refused")
+_KEPT_CASES: Final = (
+    "killed_unsent", "killed_sent", "unknown_rejected", "cancelled_unfilled", "live", "filled",
+)  # fmt: skip
+
+
+async def test_the_startup_sweep_voids_only_the_stops_of_an_entry_never_placed(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    """Never sent, or refused by its create's own answer (its event into `rejected` out of
+    `submitting`, the step's settle bypassed here): swept. A KILL's, sent or not, a rejection out
+    of `unknown`, an end the sweep cannot see confirmed unfilled, a live and a filled entry's: left
+    as they are, never voided blind (C-2.6). Each voided row is audited before the commit, and a
+    refused audit voids nothing."""
+    user, store = _user(pg_dsn), SqlAlchemyOrderStore(rel)
+    cases = {name: _entry(user, *_account(pg_dsn)) for name in _SWEPT_CASES + _KEPT_CASES}
     for first, order in cases.values():
         await SqlAlchemySubmissionStore(rel).create_first(first, order, _EVENT)
+    for name in ("refused", "killed_sent", "unknown_rejected", "cancelled_unfilled", "live",
+                 "filled"):  # fmt: skip
+        await _sent(store, cases[name][1])
+    order = cases["refused"][1]
+    await store.transition(_move(order, "submitted", "rejected", "rejected", kind="reject",
+                                 reject_code="10006", idempotency_state="failed"))  # fmt: skip
+    _end(pg_dsn, cases["killed_unsent"][1], "killed")
+    _end(pg_dsn, cases["killed_sent"][1], "killed")
+    order = cases["unknown_rejected"][1]
+    _end(pg_dsn, order, "unknown")
+    await store.transition(_move(order, "unknown", "rejected", "rejected", kind="reject",
+                                 reject_code="UNRESOLVED", idempotency_state="failed"))  # fmt: skip
     _end(pg_dsn, cases["cancelled_unfilled"][1], "cancelled")
     _sql(pg_dsn, "UPDATE orders SET state = 'accepted', lifecycle_state = 'submitted' "
          "WHERE id = %s", cases["live"][1].id)  # fmt: skip
@@ -495,12 +540,10 @@ async def test_the_startup_sweep_voids_only_the_stops_no_live_order_owns(
 
     swept = await stops.void_orphans(None, at=_T0, write_ahead=audit)
     ids = {stop.id for stop in swept}
-    orphans = {
-        s.id for n in ("never_sent", "cancelled_unfilled") for s in cases[n][0].recorded_stops
-    }
-    owned = {s.id for n in ("live", "filled") for s in cases[n][0].recorded_stops}
-    assert orphans <= ids and not owned & ids and list(swept) == audited
-    for name in ("never_sent", "cancelled_unfilled"):
-        assert _stops_of(pg_dsn, cases[name][0]) == [("void", False, True)]
-    for name in ("live", "filled"):
-        assert _stops_of(pg_dsn, cases[name][0]) == [("pending", False, False)]
+    unplaced = {s.id for n in _SWEPT_CASES for s in cases[n][0].recorded_stops}
+    kept = {s.id for n in _KEPT_CASES for s in cases[n][0].recorded_stops}
+    assert unplaced <= ids and not kept & ids and list(swept) == audited
+    for name in _SWEPT_CASES:
+        assert _stops_of(pg_dsn, cases[name][0]) == [("void", False, True)], name
+    for name in _KEPT_CASES:
+        assert _stops_of(pg_dsn, cases[name][0]) == [("pending", False, False)], name

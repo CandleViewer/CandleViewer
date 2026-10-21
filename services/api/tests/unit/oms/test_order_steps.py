@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -33,6 +34,11 @@ from candleviewer.statechart.registry import Registry
 from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories.executions import NewExecution, OrderFill
 from candleviewer.storage.repositories.idempotency_anchors import NewAnchor
+from candleviewer.storage.repositories.recorded_stops import (
+    REFUSED_BY,
+    REFUSED_ENTRY,
+    UNSENT_ENTRY,
+)
 from candleviewer.storage.repositories.submissions import FirstPersist, FirstPersisted
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
@@ -613,7 +619,7 @@ async def test_each_step_counts_answers_and_settles_as_e29_t04_says(db: InMemory
         ("acked", False, "answered"),  # the ack answers the entry's stop request
         (None, False, None),  # a fill of an accepted entry settles nothing more
         (None, False, None),
-        (None, False, "answered"),  # an end with a fill: the stop is its position's
+        (None, False, None),  # a cancel's ack reports no fill: waiting for the complete read
     ]
     row = await db.get(ACCOUNT, ORDER_ID)
     assert row is not None and (row.submit_attempts, row.idempotency_state) == (1, "acked")
@@ -640,33 +646,301 @@ async def test_an_entry_refused_unfilled_voids_its_stops_and_a_reduce_only_order
 
 _LIFECYCLE = Legality.of(Registry().get("order"))
 _FILLS = frozenset({"partially_filled", "filled"})
+#: The exchange's end pushes: the facade holds each until B1 holds every fill it reports
+#: (INV-B1-k), and each reports the exchange's own cumulative fill, or omits it.
+_END_PUSHES = frozenset({"REMOTE_CANCELLED", "EXPIRE"})
+#: Where an entry ends, or is held (B1's final states and `held`).
+_ENDS = _LIFECYCLE.finals | {"held"}
+#: 21 Sec.3.3.11's table as a (from_state, to_state) matrix (R10, the 2026-10-21 ruling): every B1
+#: `lifecycle` edge out of a persisted state, by each of its triggers (a first step settles
+#: nothing: `_create`), and what the step does to the entry's pending attach rows (`-`: nothing).
+#: The counts are the ones INV-B1-k leaves: B1 holds a fill out of or into a fill state, and an
+#: end push reports what B1 holds. `_COUNTS` holds the counts that change an answer.
+_MATRIX = """
+amend_pending     cancelled         REMOTE_CANCELLED        void
+amend_pending     killed            KILL                    waiting
+amend_pending     partially_filled  AMEND_REJECTED          answered
+amend_pending     partially_filled  done.invoke.amend       answered
+amend_pending     submitted         AMEND_REJECTED          answered
+amend_pending     submitted         done.invoke.amend       answered
+amend_pending     unknown           error.platform.amend    -
+cancel_pending    cancelled         REMOTE_CANCELLED        void
+cancel_pending    cancelled         done.invoke.cancel      waiting
+cancel_pending    filled            EXEC                    answered
+cancel_pending    partially_filled  EXEC                    answered
+cancel_pending    partially_filled  done.invoke.cancel      answered
+cancel_pending    submitted         done.invoke.cancel      answered
+cancel_pending    unknown           error.platform.cancel   -
+held              rejected          OPERATOR_RESOLVED       waiting
+partially_filled  amend_pending     AMEND                   -
+partially_filled  cancel_pending    CANCEL                  -
+partially_filled  cancelled         REMOTE_CANCELLED        waiting
+partially_filled  expired           EXPIRE                  waiting
+partially_filled  filled            EXEC                    -
+partially_filled  killed            KILL                    waiting
+partially_filled  partially_filled  EXEC                    -
+partially_filled  quarantined       FAULT                   -
+quarantined       cancelled         RECON_FOUND_CANCELLED   waiting
+quarantined       filled            RECON_FOUND_FILLED      answered
+quarantined       held              MISMATCH                waiting
+quarantined       killed            KILL                    waiting
+quarantined       partially_filled  RECON_FOUND_PARTIAL     answered
+quarantined       submitted         RECON_FOUND_LIVE        answered
+submitted         amend_pending     AMEND                   -
+submitted         cancel_pending    CANCEL                  -
+submitted         cancelled         REMOTE_CANCELLED        void
+submitted         expired           EXPIRE                  waiting
+submitted         filled            EXEC                    -
+submitted         held              MISMATCH                waiting
+submitted         killed            KILL                    waiting
+submitted         partially_filled  EXEC                    -
+submitted         quarantined       FAULT                   -
+submitted         triggered         TRIGGERED               -
+submitted         unknown           TRANSPORT_FAULT         -
+submitting        held              done.invoke.place       waiting
+submitting        killed            KILL                    waiting
+submitting        rejected          done.invoke.place       void
+submitting        submitted         done.invoke.place       answered
+submitting        unknown           done.invoke.place       -
+submitting        unknown           error.platform.place    -
+triggered         cancel_pending    CANCEL                  -
+triggered         cancelled         REMOTE_CANCELLED        void
+triggered         expired           EXPIRE                  waiting
+triggered         filled            EXEC                    -
+triggered         killed            KILL                    waiting
+triggered         partially_filled  EXEC                    -
+unknown           cancelled         RECON_FOUND_CANCELLED   waiting
+unknown           filled            RECON_FOUND_FILLED      answered
+unknown           held              MISMATCH                waiting
+unknown           killed            KILL                    waiting
+unknown           partially_filled  RECON_FOUND_PARTIAL     answered
+unknown           rejected          RECON_MISS              waiting
+unknown           submitted         RECON_FOUND_LIVE        answered
+unknown           unknown           RECON_MISS              -
+untracked         cancelled         RECON_FOUND_CANCELLED   waiting
+untracked         cancelled         RECON_MISS              waiting
+untracked         filled            RECON_FOUND_FILLED      answered
+untracked         submitted         ADOPT                   answered
+untracked         untracked         RECON_MISS              -
+validated         killed            KILL                    waiting
+validated         submitting        SEND                    -
+"""
+_ROWS = [tuple(line.split()) for line in _MATRIX.strip().splitlines()]
 
 
-@settings(max_examples=400, deadline=None)
-@given(picks=st.lists(st.integers(min_value=0, max_value=1_000), min_size=1, max_size=30))
-@example(picks=[0])  # validated -> killed: never sent
-def test_no_entry_stop_stays_in_flight_once_its_order_ends(picks: list[int]) -> None:
-    """R10 over B1's lifecycle edges from `validated`, each step settled as the store's
-    `settle_entry_stops_statement` does: once the order is final, no row is pending and
-    unanswered; the rows of an order that filled stay its stop, and a row is voided only when its
-    order never fills after it."""
-    rows = [{"status": "pending", "answered": False} for _ in ("stop_loss", "take_profit")]
-    state, filled, voided = "validated", Decimal(0), False
-    for pick in picks:
+def test_the_matrix_is_every_step_b1_takes_out_of_a_persisted_state() -> None:
+    """A chart edge or trigger the matrix does not name fails here first."""
+    edges = {
+        (frm, to, trigger)
+        for (frm, to), triggers in _LIFECYCLE.triggers.items()
+        for trigger in triggers
+        if frm != "draft"
+    }
+    assert sorted(row[:3] for row in _ROWS) == sorted(edges)
+
+
+@pytest.mark.parametrize(("frm", "to", "trigger", "effect"), _ROWS)
+def test_each_step_does_to_the_entry_stops_what_the_matrix_says(
+    frm: Any, to: Any, trigger: str, effect: str
+) -> None:
+    """Never void an attach row blind (C-2.6): only the exchange confirms an entry unfilled."""
+    held = Decimal("0.4") if _FILLS & {frm, to} else Decimal(0)
+    pushed = held if trigger in _END_PUSHES else None
+    got = steps.entry_stop_settle(frm, to, held, trigger=trigger, reported_fill=pushed)
+    assert got == (None if effect == "-" else effect)
+
+
+#: The matrix's steps whose counts decide, with the counts that change the answer: an end push
+#: that reports none, one B1 has not caught up with, a zero that a fill B1 holds contradicts, an
+#: answer that is no push, a fill B1 holds; and the states no cancel or refusal is confirmed out of.
+_COUNTS: list[tuple[str, str, str, str, str | None, str]] = [
+    ("submitted", "cancelled", "REMOTE_CANCELLED", "0", None, "waiting"),
+    ("submitted", "cancelled", "REMOTE_CANCELLED", "0", "0.4", "waiting"),
+    ("partially_filled", "cancelled", "REMOTE_CANCELLED", "0.4", "0", "waiting"),
+    ("amend_pending", "cancelled", "REMOTE_CANCELLED", "0", "0.000", "void"),
+    ("cancel_pending", "cancelled", "done.invoke.cancel", "0", "0", "waiting"),
+    ("submitted", "expired", "EXPIRE", "0", "0", "waiting"),
+    ("unknown", "cancelled", "RECON_FOUND_CANCELLED", "0.4", None, "waiting"),
+    ("unknown", "killed", "KILL", "0.4", None, "waiting"),
+    ("submitting", "rejected", "done.invoke.place", "0.4", None, "waiting"),
+    ("unknown", "cancelled", "REMOTE_CANCELLED", "0", "0", "waiting"),
+    ("quarantined", "cancelled", "REMOTE_CANCELLED", "0", "0", "waiting"),
+    ("untracked", "cancelled", "REMOTE_CANCELLED", "0", "0", "waiting"),
+    ("unknown", "rejected", "done.invoke.place", "0", None, "waiting"),
+]
+
+
+@pytest.mark.parametrize(("frm", "to", "trigger", "filled", "reported", "effect"), _COUNTS)
+def test_b1s_own_count_never_confirms_an_entry_unfilled(
+    frm: Any, to: Any, trigger: str, filled: str, reported: str | None, effect: str
+) -> None:
+    """B1's `filled_qty` can lag a fill the exchange holds back, so its zero voids nothing unless
+    the exchange's own answer confirms it, out of a state in which the exchange took the create."""
+    told = None if reported is None else Decimal(reported)
+    got = steps.entry_stop_settle(frm, to, Decimal(filled), trigger=trigger, reported_fill=told)
+    assert got == effect
+
+
+@pytest.mark.parametrize(
+    ("event", "said", "settles"),
+    [
+        ("REMOTE_CANCELLED", {"cum_exec_qty": "0", "source": "ws_private"}, "void"),
+        ("REMOTE_CANCELLED", {"cum_exec_qty": "0.000", "source": "rest"}, "void"),
+        ("REMOTE_CANCELLED", {"source": "ws_private"}, None),  # no count reported: waiting
+        ("REMOTE_CANCELLED", {"cum_exec_qty": "NaN", "source": "ws_private"}, None),
+        ("REMOTE_CANCELLED", {"cum_exec_qty": 0, "source": "ws_private"}, None),  # not text
+        ("done.invoke.cancel", {"ok": True, "cum_exec_qty": "0"}, None),  # an ack is no push
+    ],
+)
+async def test_only_the_exchanges_end_push_confirms_an_unfilled_cancel(
+    db: InMemoryOrderStore, event: str, said: dict[str, Any], settles: str | None
+) -> None:
+    """The writer reads the push's own `cum_exec_qty`, and a step that leaves the rows waiting
+    for the complete read names no settle."""
+    orders = _Moves(db)
+    orders.moves = []
+    executions = ExecutionRepository(InMemoryExecutionStore(db))
+    writer = OrderStepWriter(orders, executions, clock=lambda: T0)
+    writer.expect(_order())
+    await _submitted(writer)
+    await writer(_step("submitted", "cancel_pending", "CANCEL", {}, exchange_order_id="x1"))
+    await writer(_step("cancel_pending", "cancelled", event, said, exchange_order_id="x1"))
+    assert orders.moves[-1].entry_stops == settles
+
+
+@pytest.mark.parametrize("sent", [False, True])
+async def test_a_kill_leaves_the_entry_stops_waiting_for_the_complete_read(
+    db: InMemoryOrderStore, sent: bool
+) -> None:
+    """The ruling: on a KILL, never sent (`abandon`) or not, the step voids nothing."""
+    orders = _Moves(db)
+    orders.moves = []
+    executions = ExecutionRepository(InMemoryExecutionStore(db))
+    writer = OrderStepWriter(orders, executions, clock=lambda: T0)
+    writer.expect(_order())
+    if sent:
+        await _submitted(writer)
+    else:
+        await writer(_step(None, "validated", "VALIDATE"))
+    frm = "submitted" if sent else "validated"
+    await writer(_step(frm, "killed", "KILL", {"reason": "kill switch"}))
+    assert orders.moves[-1].entry_stops is None
+    row = await db.get(ACCOUNT, ORDER_ID)
+    assert row is not None and row.state == "killed"
+
+
+#: One draw: the edge and the trigger to take, whether the exchange fills the sent order unseen
+#: before the step, and whether an end push reports its count.
+Move = tuple[int, int, bool, bool]
+
+
+def _moves(*path: tuple[str, str, bool, bool]) -> list[Move]:
+    """The draws that walk *path* from `validated`: (target, trigger, held-back fill, reports)."""
+    out, state = list[Move](), "validated"
+    for target, trigger, hold, reports in path:
+        targets = sorted(t for s, t in _LIFECYCLE.edges if s == state)
+        triggers = sorted(_LIFECYCLE.triggers[(state, target)])
+        out.append((targets.index(target), triggers.index(trigger), hold, reports))
+        state = target
+    return out
+
+
+def _swept(
+    state: str, attempts: int, idempotency: str, filled: Decimal, events: set[tuple[str, str]]
+) -> bool:
+    """Whether the startup sweep would void the order's rows now: its statement's EXISTS over the
+    order row and the events the steps left (`UNSENT_ENTRY`, or `REFUSED_ENTRY`, `REFUSED_BY`)."""
+    row: dict[str, object] = {
+        "state": port.ORDER_STATE_OF[cast(Any, state)], "idempotency_state": idempotency,
+        "submit_attempts": attempts, "cum_exec_qty": filled,
+    }  # fmt: skip
+
+    def holds(proof: Mapping[str, object]) -> bool:
+        return all(row[name] == value for name, value in proof.items())
+
+    return holds(UNSENT_ENTRY) or (holds(REFUSED_ENTRY) and REFUSED_BY in events)
+
+
+_SENT = ("submitting", "SEND", False, False)
+_ACK = ("submitted", "done.invoke.place", False, False)
+
+
+@settings(max_examples=500, deadline=None)
+@given(
+    moves=st.lists(
+        st.tuples(st.integers(0, 1_000), st.integers(0, 1_000), st.booleans(), st.booleans()),
+        min_size=1,
+        max_size=30,
+    )
+)
+@example(moves=_moves(("killed", "KILL", False, False)))  # never sent, then killed
+@example(moves=_moves(_SENT, ("unknown", "error.platform.place", False, False),
+                      ("cancelled", "RECON_FOUND_CANCELLED", False, False)))  # fmt: skip
+@example(moves=_moves(_SENT, _ACK, ("cancel_pending", "CANCEL", True, False),
+                      ("cancelled", "done.invoke.cancel", False, False)))  # fmt: skip
+@example(moves=_moves(_SENT, _ACK, ("cancelled", "REMOTE_CANCELLED", False, True)))
+@example(moves=_moves(_SENT, ("rejected", "done.invoke.place", False, False)))
+def test_no_entry_stop_is_voided_blind_and_none_outlives_its_order_unsettled(
+    moves: list[Move],
+) -> None:
+    """R10 over B1's lifecycle edges from `validated`: each step's effect is applied as the
+    store's `settle_entry_stops_statement` runs it, and the startup sweep's predicate is tried
+    after every step, as a restart may come at any point. The claims: a row is voided, by the step
+    or the sweep, only while the exchange holds no fill of its entry; a KILL, or any end out of
+    `unknown`, leaves every row `pending`, waiting for the complete read, and neither the step
+    nor the sweep voids it (the 2026-10-21 ruling); and once the order is final, a row is still
+    in flight only if its end left it for the complete read.
+
+    What the claims rest on is modelled here, no more: B1's count (`applied`) lags the
+    exchange's (`truth`) by the fills the exchange makes unseen once the create is sent; an end
+    push reports `truth`, and the facade delivers it only once `applied` has caught up
+    (INV-B1-k); a cancel's ack, a KILL and reconciliation's findings report no count. An exchange
+    count that is itself wrong is not modelled, nor is the store's own check that a void never
+    meets a recorded fill (SEC-2A-01), which the order-store tests pin."""
+    rows: list[dict[str, Any]] = [
+        {"status": "pending", "answered": False} for _ in ("stop_loss", "take_profit")
+    ]
+    state, applied, truth, attempts, idempotency = "validated", Decimal(0), Decimal(0), 0, "unsent"
+    events: set[tuple[str, str]] = set()
+    effect: str | None = None
+    waits = False
+    for pick, how, hold_back, reports in moves:
         targets = sorted(t for s, t in _LIFECYCLE.edges if s == state)
         if state in _LIFECYCLE.finals or not targets:
             break
+        if hold_back and attempts:  # the exchange fills the sent order; B1 has not heard of it
+            truth += 1
         target = targets[pick % len(targets)]
+        triggers = sorted(_LIFECYCLE.triggers[(state, target)])
+        trigger = triggers[how % len(triggers)]
+        if trigger in _END_PUSHES and truth > applied:
+            continue  # INV-B1-k: the facade holds the end until B1 holds every fill it reports
+        if (state, target) == ("submitting", "rejected") and truth:
+            continue  # the exchange took the create, so its answer refused nothing
         if target in _FILLS:
-            assert not voided, "a stop was voided for an order that then filled"
-            filled += 1
-        settle = steps.entry_stop_settle(cast(Any, state), cast(Any, target), filled)
+            applied += 1
+            truth = max(truth, applied)
+        reported = truth if trigger in _END_PUSHES and reports else None
+        effect = steps.entry_stop_settle(
+            cast(Any, state), cast(Any, target), applied, trigger=trigger, reported_fill=reported
+        )
+        assert effect != "void" or truth == 0, "a stop was voided while its entry held a fill"
         for row in (r for r in rows if r["status"] == "pending"):
-            if settle == "answered":
+            if effect == "answered":
                 row["answered"] = True
-            elif settle == "void":
-                row["status"], voided = "void", True
+            elif effect == "void":
+                row["status"] = "void"
+        waits = waits or target == "killed" or (state == "unknown" and target in _ENDS)
+        if (state, target) == ("validated", "submitting"):
+            attempts += 1
+        idempotency = steps.idempotency_of(cast(Any, state), cast(Any, target)) or idempotency
+        events.add((port.ORDER_STATE_OF[cast(Any, state)], port.ORDER_STATE_OF[cast(Any, target)]))
         state = target
+        if waits or truth:  # the ruling's branch, and a fill's: every row is still pending
+            assert all(r["status"] == "pending" for r in rows), "a stop was voided blind"
+        swept = _swept(state, attempts, idempotency, applied, events)
+        assert not (swept and waits), "the sweep would void a stop left for the complete read"
+        assert not swept or truth == 0, "the sweep would void the stop of an entry that filled"
     if state in _LIFECYCLE.finals:
-        assert not [r for r in rows if r["status"] == "pending" and not r["answered"]]
-        assert {r["status"] for r in rows} == {"pending" if filled else "void"}
+        in_flight = [r for r in rows if r["status"] == "pending" and not r["answered"]]
+        assert not in_flight or effect == "waiting", "a stop in flight outlived its order"

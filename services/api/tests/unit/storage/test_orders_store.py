@@ -1007,8 +1007,28 @@ def test_the_settle_touches_only_the_orders_pending_entry_rows(
     assert (only is not None and f"recorded_stops.{only}" in where) or "answered_at" not in where
 
 
+#: SEC-2A-01: the void's own check that its order holds no recorded fill.
+_NO_FILL = (
+    "NOT (EXISTS (SELECT $7::INTEGER AS anon_1 FROM orders WHERE orders.id = "
+    "recorded_stops.order_id AND orders.cum_exec_qty > $8::INTEGER))"
+)
+
+
+@pytest.mark.parametrize("settle", ["answered", "void"])
+def test_a_void_never_meets_a_fill_its_order_holds(settle: Any) -> None:
+    """Belt and braces under the step's rule (SEC-2A-01): only the void needs it, the answer may
+    meet a fill, and the bound is zero."""
+    stmt = mod.settle_entry_stops_statement(ACCOUNT, ORDER, settle, T0)
+    sql = " ".join(_sql(stmt).split())
+    assert sql.endswith(f" AND {_NO_FILL}") is (settle == "void")
+    assert ("EXISTS" in sql) is (settle == "void")
+    if settle == "void":
+        assert _bound(stmt)[-2:] == [1, 0]  # SELECT 1 ... cum_exec_qty > 0
+
+
 async def test_a_step_settles_its_entry_stops_in_its_own_transaction() -> None:
-    """R10: after the compare-and-set and the event, before the one commit."""
+    """R10: after the compare-and-set and the event, before the one commit, so the void's own
+    check (SEC-2A-01) reads the totals this step wrote."""
     rel = _Rel(_LOCKED, _CAS, _EVENT, _Result())
     move = step(_HELD, "cancelled", entry_stops="void")
     await _store(rel).transition(move)
@@ -1017,3 +1037,4 @@ async def test_a_step_settles_its_entry_stops_in_its_own_transaction() -> None:
                      ["INSERT", "INTO"], ["UPDATE", "recorded_stops"]]  # fmt: skip
     assert rel.commits == 1
     assert move.event.event_ts in _bound(rel.statements[-1])  # the step's own time
+    assert _NO_FILL in " ".join(_sql(rel.statements[-1]).split())

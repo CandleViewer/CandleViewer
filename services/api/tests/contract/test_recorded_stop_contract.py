@@ -121,7 +121,56 @@ def test_a_row_is_written_ahead_by_a_request_and_never_by_a_read() -> None:
         "a refusal makes the row `void` and leaves the row in force as it was",
         "A pending row, answered or not, stays matchable for the push that follows its request "
         "(24 §8.5 step 3c) and displaces nothing until a read shows its stop",
-        "An entry's row that its entry leaves unfilled becomes `void`",
+        "An entry's row is never voided blind (C-2.6)",
+    )
+
+
+#: The table of what each step of an entry order does to its rows (R10, the 2026-10-21 ruling).
+_STEPS = _SECTION.split("**An entry's rows at each step of its order", 1)[1].split(
+    "**Ends with its position.**", 1
+)[0]
+
+
+def test_an_entry_row_is_voided_only_once_the_exchange_confirms_its_entry_unfilled() -> None:
+    """A KILL or an end out of `unknown` leaves the rows waiting for the complete read, which
+    settles them from what the exchange shows; the sweep voids only an entry never placed
+    (CR-2A-01), and a void never meets a recorded fill (SEC-2A-01)."""
+    cells = [
+        [cell.strip() for cell in line.strip("|").split(" | ")]
+        for line in _STEPS.splitlines()
+        if line.startswith("| ") and not line.startswith("| ---")
+    ]
+    effects = {row[0]: row[1] for row in cells[1:]}  # the header row first
+    waits = (
+        "Any other step into `killed`, `expired`, `cancelled`, `rejected` or `held`: a KILL (from "
+        "`validated` too), an expiry, any end out of `unknown`, a cancel's own answer, an end "
+        "reconciliation or the operator decided"
+    )
+    assert effects[waits] == "none: `pending`, **waiting for the complete read**"
+    assert effects["`submitting` → `rejected`: the create's own answer refused it"] == "`void`"
+    confirmed = [step for step, rows in effects.items() if rows == "`void`"]
+    assert len(confirmed) == 2 and confirmed[1].startswith(
+        "→ `cancelled` on `REMOTE_CANCELLED` reporting a zero cumulative fill"
+    )
+    assert not _missing(
+        _words(_SECTION),
+        "it becomes `void` only once the exchange confirms that its entry ended unfilled, or once "
+        "its entry is known never to have been sent",
+        "a step that cannot know whether the entry filled leaves them `pending`, waiting for the "
+        "complete read: B1's own fill count can lag a fill the exchange holds back",
+        "voids the pending rows of an entry never placed, audited `sl.modified` (`tp.modified` "
+        "for a take-profit side) with reason `unplaced_entry_swept`",
+        "It never voids a row waiting for the complete read, a killed order's included",
+        "A row waiting for the complete read is resolved by that read too",
+        "The statement that voids them also needs the order to hold no recorded fill",
+    )
+    rule = _words(_INTERNAL_DOC.split("6. **The recorded stop (SR-E29-06", 1)[1].split("\n", 1)[0])
+    assert not _missing(
+        rule,
+        "or an entry the exchange confirms ended unfilled, leaves the prior record in force",
+        "or an entry that ended with no such confirmation (a KILL, an expiry, any end out of "
+        "`unknown`, or a cancel's own answer, which reports no fill: the record is then waiting "
+        "for the complete read",
     )
 
 

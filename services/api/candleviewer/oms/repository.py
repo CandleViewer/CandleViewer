@@ -412,13 +412,18 @@ class RecordedStopRepository:
     async def void_orphans(
         self, account_id: UUID | None, *, at: datetime, write_ahead: SweepWriteAhead
     ) -> tuple[SweptStop, ...]:
-        """R10's startup sweep (21 Sec.3.3.11): an entry's pending stop rows that no order of
-        their account owns any more (one never sent, or ended with nothing filled) become `void`,
-        each audited write-ahead by `write_ahead` (`sl.modified`, or `tp.modified`, reason
-        `orphan_swept`, ids only). Slice 3's startup wiring (`oms_wiring.py`) calls it once per
-        process, with `account_id` None, before the order machines hydrate and before order entry
-        opens: a never-sent order is an orphan only while no request can still send it.
-        `AuditNotDurable` when the audit outlasts its bound, with nothing voided."""
+        """R10's startup sweep (21 Sec.3.3.11): the pending stop rows of an entry never placed
+        become `void`: one never sent (`UNSENT_ENTRY`: still `pending_submit`, its create
+        `unsent`, no attempt counted, nothing filled), or one its create's own answer refused
+        (`REFUSED_ENTRY`: `rejected` out of `submitting`, nothing filled). Each is audited
+        write-ahead by `write_ahead` (`sl.modified`, or `tp.modified`, reason
+        `unplaced_entry_swept`, ids only). It never voids a row blind (C-2.6): a killed order's,
+        one's that ended out of `unknown` and one's whose end the exchange did not confirm
+        unfilled stay `pending`, waiting for the complete read. Slice 3's startup wiring
+        (`oms_wiring.py`) calls it once per process, with `account_id` None, before the order
+        machines hydrate and before order entry opens: a never-sent order is an orphan only while
+        no request can still send it. `AuditNotDurable` when the audit outlasts its bound, with
+        nothing voided."""
         try:
             with self._timer.measure("recorded_stops"):
                 swept = await self._store.void_orphans(account_id, at=at, write_ahead=write_ahead)
@@ -426,7 +431,7 @@ class RecordedStopRepository:
             raise AuditNotDurable("the sweep's write-ahead audit did not land in time") from None
         for stop in swept:
             _log().warning(
-                "oms_stop_orphan_swept",
+                "oms_stop_unplaced_entry_swept",
                 record_id=str(stop.id),
                 account_id=str(stop.exchange_account_id),
                 order_id=str(stop.order_id),

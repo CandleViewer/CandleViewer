@@ -15,9 +15,12 @@ is written (`StaleRecordedStop`). An answer sets `answered_at`; a refusal or a r
 show the stop makes the row `void` and stamps `closed_at` (`rs_times`).
 
 `void_orphans_statement` is R10's startup sweep (`RecordedStopStore.void_orphans`): one UPDATE that
-voids the pending entry-attach rows no order of their account still owns (an order never sent, or
-ended with nothing filled), returning ids and kinds for the caller's write-ahead audit, which is
-awaited, bounded, before the commit.
+voids the pending entry-attach rows of an order of their account that was never placed (never
+sent, `UNSENT_ENTRY`; or refused by its create's own answer, `REFUSED_ENTRY` with the
+`REFUSED_BY` event), returning ids and kinds for the caller's write-ahead audit, which is awaited,
+bounded, before the commit. It names the rows it may void, never the ones it may not, so a row of
+any other order (killed, ended out of `unknown`, or with an end the exchange did not confirm
+unfilled) is left for the complete read (21 Sec.3.3.11).
 
 The store is a `CappedStore`: each unit of work caps its statements at `statement_timeout`, and
 a failure leaves as `OrderConstraintError(name)` (`ux_rs_in_flight` among them),
@@ -34,14 +37,16 @@ from uuid import UUID
 
 import sqlalchemy as sa
 
-from candleviewer.db.models import orders, recorded_stops
+from candleviewer.db.models import order_events, orders, recorded_stops
 from candleviewer.storage.repositories.orders import require_aware, typed_fields
 from candleviewer.storage.repositories.orders_sqlalchemy import (
     OMS_STATEMENT_TIMEOUT_MS,
     CappedStore,
 )
 from candleviewer.storage.repositories.recorded_stops import (
-    ORPHANING_STATES,
+    REFUSED_BY,
+    REFUSED_ENTRY,
+    UNSENT_ENTRY,
     NewRecordedStop,
     RecordedStopRow,
     StaleRecordedStop,
@@ -115,19 +120,21 @@ def for_order_statement(account_id: UUID, order_id: UUID) -> sa.Select[Any]:
 
 
 def void_orphans_statement(account_id: UUID | None, at: datetime) -> sa.Update:
-    """Pending entry-attach rows that no order of their account owns any more (module docstring):
-    the account's, or with `account_id` None every account's, the sweep at startup."""
-    o, rs = orders.c, recorded_stops.c
-    orphaned: sa.BindParameter[Any] = sa.bindparam(
-        "orphaning", sorted(ORPHANING_STATES), expanding=True, literal_execute=True
+    """Pending entry-attach rows whose order, of their account, was never placed (module
+    docstring): the account's, or with `account_id` None every account's, the sweep at startup."""
+    o, rs, e = orders.c, recorded_stops.c, order_events.c
+    unsent = sa.and_(*(o[name] == value for name, value in UNSENT_ENTRY.items()))
+    refusal = sa.select(sa.literal(1)).where(
+        e.order_id == o.id, e.from_state == REFUSED_BY[0], e.to_state == REFUSED_BY[1]
     )
-    owner = sa.select(sa.literal(1)).where(
+    refused = sa.and_(*(o[name] == value for name, value in REFUSED_ENTRY.items()))
+    unplaced = sa.select(sa.literal(1)).where(
         o.id == rs.order_id,
         o.exchange_account_id == rs.exchange_account_id,
-        sa.not_(sa.and_(o.state.in_(orphaned), o.cum_exec_qty == 0)),
+        sa.or_(unsent, sa.and_(refused, sa.exists(refusal))),
     )
     stmt = sa.update(recorded_stops).where(
-        rs.source == "entry_attach", rs.status == "pending", ~sa.exists(owner)
+        rs.source == "entry_attach", rs.status == "pending", sa.exists(unplaced)
     )
     if account_id is not None:
         stmt = stmt.where(rs.exchange_account_id == account_id)

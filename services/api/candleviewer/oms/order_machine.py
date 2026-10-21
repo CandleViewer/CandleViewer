@@ -789,10 +789,11 @@ class OrderMachines:
         """E29-T04 (S2-Q5): an order whose `SEND` step was refused is never sent, and nothing
         would send it again, so the pipeline ends it with a KILL from `validated` only. B1 takes
         it to `killed` with nothing to cancel (`skip_kill_cancel`, audited
-        `kill_no_cancel_unsubmitted`), and the step voids the entry's recorded stops. Answers
-        `killed`; `IllegalTransition` in any other state, nothing sent; `OrderStepRefused` when
-        the KILL's step rolled back; `OrderNotLoaded` when no machine of the account holds the
-        order. A reason B1's schema would refuse is cut, as `kill` cuts it."""
+        `kill_no_cancel_unsubmitted`); as for every KILL, the step leaves the entry's recorded
+        stops `pending`, waiting for the complete read (21 Sec.3.3.11's table), never voided blind.
+        Answers `killed`; `IllegalTransition` in any other state, nothing sent; `OrderStepRefused`
+        when the KILL's step rolled back; `OrderNotLoaded` when no machine of the account holds
+        the order. A reason B1's schema would refuse is cut, as `kill` cuts it."""
         reason = reason[: b01.MAX_TEXT] or "abandoned"
         o = self._live(account_id, order_id)
         for _ in range(FOLLOWS):

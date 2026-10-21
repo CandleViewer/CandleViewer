@@ -23,7 +23,9 @@ from candleviewer.db import models
 from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
 from candleviewer.storage.repositories import recorded_stops_sqlalchemy as mod
 from candleviewer.storage.repositories.recorded_stops import (
-    ORPHANING_STATES,
+    REFUSED_BY,
+    REFUSED_ENTRY,
+    UNSENT_ENTRY,
     NewRecordedStop,
     RecordedStopRow,
     StaleRecordedStop,
@@ -216,18 +218,30 @@ async def test_for_order_reads_the_entry_rows_oldest_first() -> None:
 # -- R10: the startup sweep ----------------------------------------------------------------------
 
 
-def test_the_sweep_voids_the_pending_entry_rows_no_order_of_their_account_owns() -> None:
-    sql = _sql(mod.void_orphans_statement(_ACCOUNT, _T))
+def test_the_sweep_voids_only_the_pending_entry_rows_of_an_order_never_placed() -> None:
+    """It names the orders whose rows it may void, never the ones it may not (`NOT EXISTS`, the
+    old shape, voided every row no listed order kept): never sent, or refused by its create."""
+    stmt = mod.void_orphans_statement(_ACCOUNT, _T)
+    sql = _sql(stmt)
     assert sql.startswith("UPDATE recorded_stops SET status=$1::VARCHAR, closed_at=$2::")
     where = sql.split(" WHERE ", 1)[1]
     assert "recorded_stops.source = $" in where and "recorded_stops.status = $" in where
-    assert "NOT (EXISTS (SELECT " in where
-    owner = where.split("EXISTS (SELECT ", 1)[1]
-    assert "orders.id = recorded_stops.order_id" in owner
-    assert "orders.exchange_account_id = recorded_stops.exchange_account_id" in owner
-    states = ", ".join(f"'{state}'" for state in sorted(ORPHANING_STATES))
-    assert f"NOT (orders.state IN ({states}) AND orders.cum_exec_qty = $" in owner
-    assert "answered_at" not in where  # an answered row of an entry that never filled goes too
+    assert "NOT" not in where and where.count("EXISTS (SELECT ") == 2
+    unplaced = where.split("EXISTS (SELECT ", 1)[1]
+    assert "FROM orders WHERE orders.id = recorded_stops.order_id" in unplaced
+    assert "orders.exchange_account_id = recorded_stops.exchange_account_id" in unplaced
+    unsent, refused = unplaced.split(" OR ", 1)
+    assert [term.split(" = ")[0] for term in unsent.split("AND (", 1)[1].split(" AND ")] == [
+        f"orders.{name}" for name in UNSENT_ENTRY
+    ]
+    refusal = "FROM order_events WHERE order_events.order_id = orders.id AND "
+    assert refusal + "order_events.from_state = $" in refused
+    assert "order_events.to_state = $" in refused and "orders.cum_exec_qty = $" in refused
+    bound = stmt.compile(dialect=_ASYNCPG).params
+    assert [bound[f"{name}_1"] for name in UNSENT_ENTRY] == list(UNSENT_ENTRY.values())
+    assert [bound["state_2"], bound["cum_exec_qty_2"]] == list(REFUSED_ENTRY.values())
+    assert (bound["from_state_1"], bound["to_state_1"]) == REFUSED_BY == ("submitted", "rejected")
+    assert "answered_at" not in where  # an answered row of an entry never placed goes too
     assert sql.endswith(
         "RETURNING recorded_stops.id, recorded_stops.exchange_account_id, "
         "recorded_stops.order_id, recorded_stops.kind"
@@ -242,11 +256,18 @@ def test_the_startup_sweep_over_every_account_names_none() -> None:
     )
 
 
-def test_an_order_that_filled_or_lives_never_orphans_its_stops() -> None:
-    """A filled entry's stop is its position's; a live order still answers its own."""
-    assert {"filled", "partially_filled", "submitted", "accepted", "unknown"}.isdisjoint(
-        ORPHANING_STATES
-    )
+def test_the_sweep_proves_an_entry_never_placed_and_nothing_else() -> None:
+    """Its whole scope (the 2026-10-21 ruling, CR-2A-01): an entry never sent, or one its create's
+    own answer refused (`rejected` out of `submitting`, persisted `submitted`), nothing filled. A
+    killed order (one never sent included), one ended out of `unknown` or `held`, and a cancel or
+    expiry the sweep cannot see confirmed wait for the complete read: never voided blind (C-2.6)."""
+    assert dict(UNSENT_ENTRY) == {
+        "state": "pending_submit", "idempotency_state": "unsent", "submit_attempts": 0,
+        "cum_exec_qty": Decimal(0),
+    }  # fmt: skip
+    assert dict(REFUSED_ENTRY) == {"state": "rejected", "cum_exec_qty": Decimal(0)}
+    assert set(UNSENT_ENTRY) | set(REFUSED_ENTRY) <= set(models.orders.c.keys())
+    assert REFUSED_BY == ("submitted", "rejected")
 
 
 _SWEPT = [{"id": str(_SL), "exchange_account_id": str(_ACCOUNT), "order_id": str(_ORDER),

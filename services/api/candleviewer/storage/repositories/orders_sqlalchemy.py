@@ -20,7 +20,8 @@ order row in the account, runs the compare-and-set UPDATE, appends the event wit
 commits; a missed compare-and-set raises `StaleOrderState` and rolls back (24 Sec.8.2 S7, S8). The
 send's step counts `submit_attempts` up in SQL, and a step that names `entry_stops` settles its
 entry's recorded stops (`settle_entry_stops_statement`, scoped by `recorded_stops`' account and the
-order) before that commit, in the same transaction (E29-T04, 21 Sec.3.3.11).
+order) before that commit, in the same transaction (E29-T04, 21 Sec.3.3.11); a void there also
+needs the order to hold no recorded fill, read after the step's own update (SEC-2A-01).
 Before any statement, `transition` refuses a fill's event and `filled`, `append` a fill's event
 (`require_no_fill`): a fill comes with its execution.
 
@@ -206,7 +207,10 @@ def settle_entry_stops_statement(
     account_id: UUID, order_id: UUID, settle: EntryStopSettle, at: datetime
 ) -> sa.Update:
     """The entry's attach rows still pending (21 Sec.3.3.11): `answered` stamps the ones in flight,
-    `void` ends every one; a row in force or ended is left as it is."""
+    `void` ends every one; a row in force or ended is left as it is. `void` also needs the order to
+    hold no recorded fill (SEC-2A-01): `commit_step` runs it after the step's own compare-and-set
+    and a fill's totals, in the same transaction, so a fill the store holds is never voided,
+    whatever the caller decided."""
     rs = recorded_stops.c
     stmt = sa.update(recorded_stops).where(
         rs.exchange_account_id == account_id,
@@ -216,7 +220,8 @@ def settle_entry_stops_statement(
     )
     if settle == "answered":
         return stmt.where(rs.answered_at.is_(None)).values(answered_at=at)
-    return stmt.values(status="void", closed_at=at)
+    filled = sa.select(sa.literal(1)).where(_O.id == rs.order_id, _O.cum_exec_qty > 0)
+    return stmt.where(~sa.exists(filled)).values(status="void", closed_at=at)
 
 
 def list_events_statement(
