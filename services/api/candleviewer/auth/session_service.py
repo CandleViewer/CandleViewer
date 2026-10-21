@@ -374,6 +374,7 @@ class SessionService:
         expires_at: datetime | None = None,
         session_id: uuid.UUID | None = None,
         view_as: ViewAsState | None = None,
+        last_seen_at: datetime | None = None,
     ) -> MintedSession:
         """Issue a brand-new session — session fixation is prevented by
         always minting a fresh `session_id`/refresh token here, never
@@ -389,6 +390,11 @@ class SessionService:
         *view_as* is the view-as context `refresh()` carries to the successor
         as the claim returned it (#3085, SR-013), inserted with the row and
         unchanged: nothing extends its expiry. A sign-in never passes it.
+
+        *last_seen_at* is the activity stamp `refresh()` carries to the
+        successor (#4012): a token rotation is no user activity, so it never
+        restarts the idle clock. A sign-in never passes it and starts the
+        clock at `now`.
 
         Raises `UserDisabled` when the user is `disabled` or gone (#2911):
         the repository reads `users.status` under the user-row lock in the
@@ -409,7 +415,7 @@ class SessionService:
             refresh_token_hash=_hash_refresh_token(raw_token),
             access_token_jti=hash_access_token(raw_access),
             issued_at=now,
-            last_seen_at=now,
+            last_seen_at=last_seen_at if last_seen_at is not None else now,
             expires_at=expires_at if expires_at is not None else now + ABSOLUTE_LIFETIME,
             revoked_at=None,
             revoked_reason=None,
@@ -576,6 +582,11 @@ class SessionService:
             # after the grace, rightly: no live session holds the context. A shorter grace could
             # end, as `session_ended`, a context a slow successor then carries.
             view_as=claimed.view_as,
+            # #4012: the idle clock runs from the last user activity, which a background token
+            # refresh is not. Carried from the claim's row (as `view_as` is), so a re-stamp that
+            # landed after `presented` was read still counts; a tab that only refreshes locks
+            # after its idle timeout, and its next refresh is refused `SessionIdleLocked` above.
+            last_seen_at=claimed.last_seen_at,
         )
         await self._repository.link_rotation(
             prev_session_id=str(presented.id), next_session_id=str(minted.session_id)

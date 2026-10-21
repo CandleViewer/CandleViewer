@@ -348,6 +348,9 @@ async def test_refresh_preserves_the_original_absolute_expiry() -> None:
     clock.advance(timedelta(minutes=30))
     outcome = await service.refresh(minted.refresh_token)
     assert outcome.minted.expires_at == original_expires_at
+    # #4012: a refresh is no activity, so the user acts with the new token; the session stays
+    # unlocked and only the absolute cap ends it.
+    await service.authenticate_access_token(outcome.minted.access_token, touch=True)
 
     clock.advance(timedelta(minutes=30))
     outcome2 = await service.refresh(outcome.minted.refresh_token)

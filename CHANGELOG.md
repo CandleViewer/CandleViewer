@@ -5111,6 +5111,7 @@ tracker).
 ### Security
 
 - **electron-shell**: with the desktop connection flag on, a response that issues the CSRF token to a request from a listed origin also carries it in an `X-CSRF-Token` header, and every response that issues the CSRF cookie is now `Cache-Control: no-store` (#3519) (#4044)
+- **auth-rbac**: a token refresh no longer counts as user activity, so a session with no activity locks after its idle timeout (#4012) (#4041)
 - **backend-platform**: a failed or cancelled first bars build keeps the other consumers' leases on its series, and a series whose saved state cannot be caught up starts afresh (#2762) (#3880)
 - **backend-platform**: bars `volume` and `delta` params are refused below 10 lot steps of their symbol, or while the symbol's lot step is not yet known, on REST and WebSocket (#2720) (#3885)
 - **rule-engine**: the rules-engine freeze scope is keyed by owner and account (#415) (#3847)
