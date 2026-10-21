@@ -2,9 +2,10 @@
 
 Ticket E08-D06 (#174); spec `docs/design/E08/E08-D06.md`. Five component contracts change (spec §16.4, A-2..A-6): one
 `16` §11.4 block each for CMP-036, CMP-046, CMP-125, CMP-126 and CMP-177. Tables 4, 5, Density and Essential exceptions
-share one shape, so they are given once with a component column. **Status:** text pass; Penpot and PNG lines are
-PENDING until the boards step (page `E08-D06 SCR-103 Symbol info`, boards 1–24, spec §15); the FE ticket, not yet named
-(spec Q8), writes the stories. Penpot token sets = `packages/ui/tokens` at `bf628c8c8b520309c6951e3a17b4c40329acb64d`.
+share one shape, so they are given once with a component column. **Status:** text pass; Penpot and PNG lines are PENDING
+until the boards step (page `E08-D06 SCR-103 Symbol info`, boards 1–24, spec §15); the FE ticket, not yet named (spec
+Q8), writes the stories, a deviation recorded in spec §17.1. Penpot token sets = `packages/ui/tokens` at
+`bf628c8c8b520309c6951e3a17b4c40329acb64d`.
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3). `[ ] PENDING` marks a line the boards step closes.
@@ -19,7 +20,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [ ] **Motion pair** — N/A — nothing animates (shared table 4)
 - [x] **Density notes** — shared density table: rows 24 / 32 px
 - [x] **Essential-exceptions log** — none (shared table)
-- [ ] **Tokens used** — the entry cites `space.row.*` and `font.size.body/label`, which do not resolve as named; patch A-2 binds `size.row.height`, `type.ui.body`, `type.num.base`, `type.ui.caption`, `color.text.primary` / `.secondary` / `.tertiary` and the `color.data-confidence.stale.*` set
+- [ ] **Tokens used** — the entry cites `space.row.*`, which resolves (`space.row.height.compact` / `.comfortable` in `semantic-dark.tokens.json`, density aliases per `packages/ui/tokens/themes.json`), and `font.size.body/label`, which do not exist; patch A-2 binds `size.row.height` (the density-resolved alias `themes.json` names), `type.ui.body`, `type.num.base`, `type.ui.caption`, `color.text.primary` / `.secondary` / `.tertiary` and the `color.data-confidence.stale.*` set
 - [x] **Data contract confirmed** — `InstrumentDetail` fields (spec §4.1) and `TickerUpdate` fields (§4.2), as decimal strings (spec F1)
 - [ ] **Contrast and CVD** — computed (spec §13: values, labels, units on `surface.overlay` and `surface.sunken`); the `surface.sunken` pairs join `tools/contrast/pairs.mjs` with the audit script in the boards step
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — attached at the end
@@ -140,19 +141,21 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — the entry cites `font.mono` and `color.text.buy/sell`, which do not exist; patch A-5 binds `type.num.base`, `color.text.primary` and, under 5 min, the `color.status.warning.strong` glyph
 - [ ] **Data contract confirmed** — A-5: `next_funding_time_ms` and `funding_rate` from `ticker.{symbol}` (the app topic, `23` §14.8), not Bybit's `tickers.{symbol}`; `rate` as a decimal string; the clock-skew state from SCR-152 and `welcome.clock_skew_ms`
-- [x] **Contrast and CVD** — the warning glyph carries words; `text.primary` pairs in spec §13
+- [x] **Contrast and CVD** — the warning glyph on `surface.overlay` is 10.17 / 3.78 / 10.17 and carries words; `text.primary` pairs in spec §13
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING
 
 ### Table 1 — Variants × States
 
-| Variant | State                                              | Penpot variant    | Story name                                     | Notes                                             |
-| ------- | -------------------------------------------------- | ----------------- | ---------------------------------------------- | ------------------------------------------------- |
-| row     | ≥ 1 h, < 1 h                                       | B15 / normal      | `Positive`, `Negative` (catalogued)            | `next in 01:24:13 · 08:00 UTC`                    |
-| row     | < 5 min                                            | B15 / under-5-min | `UnderFiveMinutes` (replaces `UnderOneMinute`) | glyph and words; no charge line in SCR-103        |
-| row     | settlement restart; elapsed, waiting for an update | B15 / settlement  | `Settlement`, `Elapsed` (new)                  | never negative, never a frozen 00:00:00           |
-| row     | clock skew on, or offset unknown                   | B15 / clock       | `ClockSkew` (new)                              | the absolute UTC time; no seconds                 |
-| row     | stale or disconnected; not trading                 | B15 / band, B6    | `InBandState`, `Suppressed` (new)              | counts on inside the band; suppressed with reason |
+| Variant                             | State                                              | Penpot variant    | Story name                                        | Notes                                                                        |
+| ----------------------------------- | -------------------------------------------------- | ----------------- | ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| rate sign: positive, negative, zero | ≥ 1 h, < 1 h                                       | B15 / sign        | `Positive`, `Negative` (catalogued), `Zero` (new) | the sign in text (CMP-020), never colour alone; where CMP-126 carries `rate` |
+| rate at its cap                     | —                                                  | —                 | PENDING E24-D01 G5                                | `fundingCap` is not mapped                                                   |
+| no `rate` (SCR-103)                 | ≥ 1 h, < 1 h                                       | B15 / normal      | `NoRate` (new)                                    | `next in 01:24:13 · 08:00 UTC`; the rate is its own row (spec §4.2)          |
+| any                                 | < 5 min                                            | B15 / under-5-min | `UnderFiveMinutes` (replaces `UnderOneMinute`)    | glyph and words; no charge line in SCR-103                                   |
+| any                                 | settlement restart; elapsed, waiting for an update | B15 / settlement  | `Settlement`, `Elapsed` (new)                     | never negative, never a frozen 00:00:00                                      |
+| any                                 | clock skew on, or offset unknown                   | B15 / clock       | `ClockSkew` (new)                                 | the absolute UTC time; no seconds                                            |
+| any                                 | stale or disconnected; not trading                 | B15 / band, B6    | `InBandState`, `Suppressed` (new)                 | counts on inside the band; suppressed with reason                            |
 
 ### Table 3 — Accessible name / role
 
@@ -206,10 +209,10 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 | CMP-126                        | countdown                                    | `off`; polite at 5 min and 1 min   | ≤ 1 Hz visual                   | —           |
 | CMP-177, CMP-125               | state word, band marker                      | none of their own                  | on change                       | latest only |
 
-| Density: component | Mode        | Row / control height                             | Padding tokens                                  | Smallest target                   |
-| ------------------ | ----------- | ------------------------------------------------ | ----------------------------------------------- | --------------------------------- |
-| all five           | compact     | 24 px (`size.row.height`, `size.control.height`) | `space.inset.sm`; drawer `space.dialog.padding` | 24 × 24 px (close, link, actions) |
-| all five           | comfortable | 32 px                                            | `space.inset.md`                                | 32 × 32 px                        |
+| Density: component | Mode        | Row / control height                                                                                                                               | Padding tokens                                  | Smallest target                   |
+| ------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------------------------------- |
+| all five           | compact     | 24 px (`size.row.height`, `size.control.height`)                                                                                                   | `space.inset.sm`; drawer `space.dialog.padding` | 24 × 24 px (close, link, actions) |
+| all five           | comfortable | 32 px (`size.row.comfortable`, `size.control.comfortable`; the density mode re-points `size.row.height` / `size.control.height` per `themes.json`) | `space.inset.md`                                | 32 × 32 px                        |
 
 | Essential exceptions: component | Exception | Compensating control | Reviewer | Date |
 | ------------------------------- | --------- | -------------------- | -------- | ---- |
@@ -269,8 +272,9 @@ Screen reader: written, not run; the release-level pass (`05` §8) runs it. Exce
 - [x] Contrast matrix for every pair introduced — spec §13; the script and `pairs.mjs` rows come with the boards.
 - [ ] CVD simulation reviewed — no state is carried by hue (spec §13); PENDING `cvd_sim.py` on the exports.
 - [ ] A Penpot variant and a story per state — variants PENDING (boards); stories named above.
-- [x] Disabled-with-reason for RBAC-gated actions — the SCR-140 link is a navigation affordance, hidden per E09-D09
-      step 1 with its sentence form; nothing else is gated (spec §8).
+- [x] Disabled-with-reason for RBAC-gated actions — the SCR-140 link is a T3 navigation affordance (hidden, sentence
+      form); "Record this symbol…" follows `recording:write` in E09-D09's T2 sentence form (CMP-026, `cta` omitted);
+      nothing else is gated (spec §8).
 - [x] Loading, empty and error designed — per dependency (spec §6).
 - [x] Keyboard table matches a keyboard path — spec §10.1; the test is the FE ticket's.
 - [x] Accessible name / role table — spec §10.2 and the tables 3 above.
