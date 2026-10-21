@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { resetSharedThemeStores } from "@candleviewer/ui";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { buildRoutes } from "../../src/routes/tree";
 import { setMeClaims, resetMeClaims } from "../../src/lib/auth/meCache";
@@ -20,6 +21,7 @@ function reply(status: number, body: unknown): Response {
 afterEach(() => {
   vi.unstubAllGlobals();
   resetMeClaims();
+  resetSharedThemeStores(); // the provider's flags follow the app's theme store (#3436)
 });
 
 function Probe(): JSX.Element {

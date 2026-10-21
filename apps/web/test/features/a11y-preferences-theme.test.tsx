@@ -311,16 +311,37 @@ describe("the engine flags follow the motion the runtime resolved", () => {
     flashOnTick: !calm,
   });
 
-  /** What `PreferencesProvider.onEngineFlags` delivers; the engine only ever acts on the latest set. */
+  /**
+   * What `PreferencesProvider.onEngineFlags` delivers, in order. The engine acts on each set as it
+   * arrives, so it can render a frame between two of them, the first one included.
+   */
   function recordFlags(): {
     readonly onEngineFlags: (flags: EngineFlags) => void;
     readonly latest: () => EngineFlags | undefined;
+    readonly all: () => readonly EngineFlags[];
   } {
     const told: EngineFlags[] = [];
     return {
       onEngineFlags: (flags) => void told.push(flags),
       latest: () => told[told.length - 1],
+      all: () => told,
     };
+  }
+
+  /**
+   * While `data-motion` holds still, every set the engine was told agrees with it, not only the latest:
+   * a set that disagrees animates (or calms) the canvas for the frames before the next one
+   * (05-accessibility-standard.md §7 item 2).
+   */
+  function expectEverySetToMatch(
+    told: { readonly all: () => readonly EngineFlags[] },
+    motion: "reduce" | "safe",
+  ): void {
+    const sets = told.all();
+    expect(sets.length).toBeGreaterThan(0);
+    sets.forEach((flags, i) => {
+      expect(flags, `set ${i + 1} of ${sets.length}`).toStrictEqual(flagsFor(motion === "reduce"));
+    });
   }
 
   /** The context's own answer to "is motion reduced?", for DOM components. */
@@ -410,6 +431,7 @@ describe("the engine flags follow the motion the runtime resolved", () => {
       });
       expect(root.getAttribute("data-motion")).toBe(motion);
       expectCanvasToFollowDom(told, "once /settings has answered");
+      expectEverySetToMatch(told, motion);
     },
   );
 
@@ -422,9 +444,10 @@ describe("the engine flags follow the motion the runtime resolved", () => {
     await act(async () => {});
     expect(root.getAttribute("data-motion")).toBe("reduce");
     expectCanvasToFollowDom(told);
+    expectEverySetToMatch(told, "reduce");
   });
 
-  // The session override (05-accessibility-standard.md §3.2, §7.1) is `setMotionOverride` on the runtime's
+  // The session override (05-accessibility-standard.md §3.2, §7 item 2) is `setMotionOverride` on the runtime's
   // store; the hotkey that calls it is registered by #305, the existing tests of this file drive it the same way.
   // [accessibility.reduced_motion, whether the OS asks for reduced motion, the override, data-motion before, after]
   it.each([
