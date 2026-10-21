@@ -272,8 +272,11 @@ class FakeTradingPort:
     transport error before the send, an auth, clock or rate error, `RateBudgetExceededError`),
     a `FakeReject` comes back as `OrderAck(ok=False)`, and `LandedThenAmbiguous` lands a
     create and raises `AmbiguousResultError`. `subscribe_private` replays the seeded events
-    of the account, then what `push` queues, until `end_stream`. It does not model a refusal
-    the venue gives on its own (a stop on a flat position, a margin shortfall): script it."""
+    of the account, then what `push` queues for it, until `end_stream`: each account has its
+    own bounded queue, so one account's event never reaches another account's subscriber (one
+    subscriber per account, as the exchange's private stream has one stream per account). It
+    does not model a refusal the venue gives on its own (a stop on a flat position, a margin
+    shortfall): script it."""
 
     def __init__(
         self,
@@ -307,7 +310,9 @@ class FakeTradingPort:
         self._scripts: dict[str, deque[FakeOutcome]] = {}
         self._next_id = 0
         self._events = list(private_events)
-        self._pushed: asyncio.Queue[PrivateEvent | None] = asyncio.Queue(maxsize=queue_size)
+        self._queue_size = queue_size
+        self._pushed: dict[AccountId, asyncio.Queue[PrivateEvent | None]] = {}
+        self._ended = False
 
     # -- seeding and scripting ------------------------------------------------------------
 
@@ -351,12 +356,16 @@ class FakeTradingPort:
         self._infos[info.account_id] = info
 
     def push(self, event: PrivateEvent) -> None:
-        """Queue one private event for `subscribe_private` (bounded: `QueueFull` when full)."""
-        self._pushed.put_nowait(event)
+        """Queue one private event for its account's `subscribe_private` (bounded per account:
+        `QueueFull` when that account's queue is full)."""
+        self._queue(event.account_id).put_nowait(event)
 
     def end_stream(self) -> None:
-        """End every `subscribe_private` iteration once the queued events are drained."""
-        self._pushed.put_nowait(None)
+        """End every account's `subscribe_private` iteration once its queued events are drained;
+        one opened later ends after its seeded events."""
+        self._ended = True
+        for queue in self._pushed.values():
+            queue.put_nowait(None)
 
     # -- trade calls ------------------------------------------------------------------------
 
@@ -568,9 +577,18 @@ class FakeTradingPort:
         for seeded in self._events:
             if seeded.account_id == account_id:
                 yield seeded
-        while (pushed := await self._pushed.get()) is not None:
-            if pushed.account_id == account_id:
-                yield pushed
+        queue = self._queue(account_id)
+        while (pushed := await queue.get()) is not None:
+            yield pushed
+
+    def _queue(self, account_id: AccountId) -> asyncio.Queue[PrivateEvent | None]:
+        """The account's own queue, made on first use (ended at once after `end_stream`)."""
+        queue = self._pushed.get(account_id)
+        if queue is None:
+            queue = self._pushed[account_id] = asyncio.Queue(maxsize=self._queue_size)
+            if self._ended:
+                queue.put_nowait(None)
+        return queue
 
     # -- internals --------------------------------------------------------------------------
 

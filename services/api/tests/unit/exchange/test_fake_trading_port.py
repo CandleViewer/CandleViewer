@@ -381,6 +381,30 @@ async def test_the_private_stream_replays_the_seeded_then_the_pushed_events() ->
     assert seen == [1, 4]
 
 
+async def test_each_account_has_its_own_private_queue_and_every_stream_ends() -> None:
+    """One account's pushed event never reaches another account's subscriber, and `end_stream`
+    ends every subscription. The G-8b planner's finding: one queue shared by every account let
+    a subscriber take, and drop, another account's events, and `end_stream` ended only one."""
+    port = FakeTradingPort(private_events=[_event(OTHER, 1)])
+    mine = await port.subscribe_private(_ref())
+    theirs = await port.subscribe_private(_ref(OTHER))
+    for seq, account_id in enumerate((OTHER, ACCOUNT, OTHER, ACCOUNT), start=2):
+        port.push(_event(account_id, seq))
+    port.end_stream()
+    async with asyncio.timeout(5):  # a guard only: every event is queued before the reads
+        seen_theirs = [event.seq async for event in theirs]
+        seen_mine = [event.seq async for event in mine]
+    assert (seen_mine, seen_theirs) == ([3, 5], [1, 2, 4])
+
+
+async def test_a_stream_opened_after_the_end_replays_its_seeded_events_and_ends() -> None:
+    port = FakeTradingPort(private_events=[_event(ACCOUNT, 1)])
+    port.end_stream()
+    async with asyncio.timeout(5):
+        seen = [event.seq async for event in await port.subscribe_private(_ref())]
+    assert seen == [1]
+
+
 async def test_the_private_stream_is_bounded_and_refuses_another_environment() -> None:
     port = FakeTradingPort(queue_size=1)
     port.push(_event(ACCOUNT, 1))
