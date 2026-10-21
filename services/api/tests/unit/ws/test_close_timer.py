@@ -19,11 +19,13 @@ import contextlib
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.audit.models import Severity
+from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
 from candleviewer.ws import gateway
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.lifecycle import bye_frame
@@ -678,3 +680,26 @@ async def test_the_timer_is_armed_at_the_next_deadline_on_either_clock(
     conn.stop_close_timer()
     conn.arm_close_timer()
     assert floored.cancelled() and conn.close_timer is None
+
+
+@_FLAG
+async def test_view_as_expiry_closes_socket_without_rest(
+    flag_on: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§9.6 (#3085): a socket bound to a view-as context closes `view_as_expired` (4403, sealed)
+    at the context's `expires_at` on its own timer, with no REST call to end it first."""
+    binding = ViewAsBinding(
+        context_id=uuid4(), target_user_id=uuid4(), expires_at=_at(20.0), phase=ViewAsPhase.LIVE
+    )
+
+    async def view_as(session_id: str) -> ViewAsBinding:
+        return binding
+
+    rig, sock = _Rig(BackpressureConfig() if flag_on else None, view_as=view_as), _Wire()
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, conn = await rig.open(sock)
+        assert conn.view_as_context_id == str(binding.context_id)
+        close = await _quiet_then_closed(rig, sock, conn, monkeypatch, quiet=10.0, at=20.0)
+        await handler
+    assert close["reason"] == "view_as_expired"
+    assert conn.bye_frame is not None and (conn.bye_frame["p"]["code"], conn.sealed) == (4403, True)

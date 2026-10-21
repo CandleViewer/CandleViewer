@@ -126,6 +126,10 @@ CLOSE_REASONS: Final[dict[str, tuple[CloseCode, bool]]] = {
     # builder says the same, so one reason has one answer (#572).
     "session_revoked": (CloseCode.UNAUTHENTICATED, False),
     "user_disabled": (CloseCode.FORBIDDEN, False),
+    # §9.6 (#3085): a view-as start, the viewer's end or a re-`auth` into another context:
+    # reconnect into the new scope. The server ended the context: clear it over REST first.
+    "view_as_changed": (CloseCode.UNAUTHENTICATED, True),
+    "view_as_expired": (CloseCode.FORBIDDEN, False),
     # §4.3 (#2295): enrolment-only session; enrol over REST, then connect again.
     "mfa_enrollment_required": (CloseCode.FORBIDDEN, False),
     "client_rate_limited": (CloseCode.RATE_LIMITED, True),
@@ -148,6 +152,8 @@ _MESSAGES: Final[dict[str, str]] = {
     "heartbeat_timeout": "No traffic within the heartbeat timeout.",
     "too_many_connections": "Connection limit per user exceeded; oldest idle closed.",
     "mfa_enrollment_required": "Enrol and confirm a TOTP method, then connect again.",
+    "view_as_changed": "The view-as context changed; reconnect into the new scope.",
+    "view_as_expired": "The view-as context ended; clear it, then connect again.",
 }
 #: `bye.message` of a connect-rate refusal (§4.3): the cause, not `_MESSAGES`' inbound-frame text.
 CONNECT_RATE_MESSAGE: Final = "Per-user connect rate exceeded; retry after retry_after_ms."

@@ -120,6 +120,7 @@ import structlog
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
 from candleviewer.net import RESOLVED_SOURCE_KEY
 from candleviewer.observability.context import current_request_id, spawn
 from candleviewer.settings import CLOSE_AUDIT_TIMEOUT_S, CLOSE_FLUSH_TIMEOUT_S
@@ -273,6 +274,14 @@ class AuthenticatorContractError(RuntimeError):
 
 #: Writes the record of an `AuthRefused` once the gateway supplies the socket's source address.
 RefusalAudit = Callable[[str | None], Awaitable[None]]
+#: §9.6 (#3085): the view-as binding of the session an `auth` presents, `None` when it holds no
+#: context. A read it cannot make raises, and the `auth` fails: never a scope it could not check.
+#: `ViewAsService.evaluate` in production (`view_as_wiring.SessionViewAs`).
+ViewAsRead = Callable[[str], Awaitable[ViewAsBinding | None]]
+
+
+def _context_of(binding: ViewAsBinding | None) -> str | None:
+    return None if binding is None else str(binding.context_id)
 
 
 class AuthRefused(Exception):
@@ -594,6 +603,10 @@ class _Connection:
         self.close_code: int | None = None
         #: The token's real expiry (epoch ms), also checked on the wall clock.
         self.token_expires_at_ms: int | None = None
+        #: §9.6 (#3085): the view-as context the socket authenticated into, and its `expires_at`
+        #: (epoch ms, wall clock): the socket closes `view_as_expired` then, with no REST call.
+        self.view_as_context_id: str | None = None
+        self.view_as_expires_at_ms: int | None = None
         #: #3100: the one close timer (`arm_close_timer`), from the first `auth_ok` until a close.
         self.close_timer: asyncio.Handle | None = None
         self.tick_s, self.recheck_s = tick_s, CLOSE_RECHECK_TICKS * tick_s
@@ -623,9 +636,13 @@ class _Connection:
     def due(self) -> str | None:
         """The watchdog verdict now. Token expiry fires on whichever clock gets
         there first: the monotonic deadline set at `auth`, or the wall clock,
-        which an NTP step or a resume moves on its own (#2259 review)."""
+        which an NTP step or a resume moves on its own (#2259 review). A view-as context's
+        `expires_at` fires on the wall clock, as the server's own reading of it does (§9.6)."""
         if self.token_expires_at_ms is not None and self.wall_ms() >= self.token_expires_at_ms:
             return "token_expired"
+        expiry = self.view_as_expires_at_ms
+        if expiry is not None and self.wall_ms() >= expiry:
+            return "view_as_expired"
         return self.watchdog.due(self.clock())
 
     def watch(self) -> bool:
@@ -633,7 +650,7 @@ class _Connection:
         every dequeue and every send, not only on an idle tick, so a socket fed faster than
         `tick_s` still expires (#2259 review); the close timer runs it at each deadline (#3100)."""
         due = self.due()
-        if due == "token_expired":
+        if due in ("token_expired", "view_as_expired"):
             self.close_with(due, seal=True)  # also seals a close already under way
         elif due == "ping":
             return not self.closing
@@ -642,15 +659,18 @@ class _Connection:
         return False
 
     def close_in(self) -> float:
-        """Seconds to the next close deadline: the token expiry on either clock and the heartbeat
-        deadline. Each is compared as `due` compares it, so it is positive exactly while its
-        close is not due. The timer runs only until a close, so it reads nothing else."""
+        """Seconds to the next close deadline: the token expiry on either clock, a view-as
+        context's expiry and the heartbeat deadline. Each is compared as `due` compares it, so
+        it is positive exactly while its close is not due. The timer runs only until a close,
+        so it reads nothing else."""
         dog, now = self.watchdog, self.clock()
         terms = [dog.heartbeat_timeout_s - (now - dog.last_inbound)]
         if dog.token_expires_at is not None:
             terms.append(dog.token_expires_at - now)
         if self.token_expires_at_ms is not None:
             terms.append((self.token_expires_at_ms - self.wall_ms()) / 1000)
+        if self.view_as_expires_at_ms is not None:
+            terms.append((self.view_as_expires_at_ms - self.wall_ms()) / 1000)
         return min(terms)
 
     def arm_close_timer(self, floor_s: float = 0.0) -> None:
@@ -1168,6 +1188,9 @@ def make_ws_router(
     flag_visible: FlagVisible | None = None,
     backpressure: BackpressureConfig | None = None,
     close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S,
+    # §9.6 (#3085): the view-as binding an `auth` reads (`ViewAsRead`). Without it no session is
+    # bound to a context, as before view-as: the composition root wires it on the real backend.
+    view_as: ViewAsRead | None = None,
 ) -> APIRouter:
     """The gateway endpoint, served at `/ws` and `/api/v1/ws` (`include_ws_router`).
 
@@ -1385,6 +1408,25 @@ def make_ws_router(
                 revocation_hub.unregister(conn.pending_session_id, conn.closer)
                 conn.pending_session_id = None
 
+    async def read_view_as(session_id: str) -> ViewAsBinding | None:
+        """§9.6: the session's view-as binding, under the `auth` call bound."""
+        if view_as is None:
+            return None
+        async with _auth_call("view_as", auth_call_timeout_s):
+            return await view_as(session_id)
+
+    def view_as_refusal(read: ViewAsBinding | None, socket_context: str | None) -> str | None:
+        """§9.6: why an `auth` that read `read` is refused, or `None`. A held context refuses
+        with `view_as_expired`; a context other than the socket's (none, or another one: a
+        re-`auth`, or a start or an end during this `auth`) with `view_as_changed`, so `None`
+        never widens a viewing socket to the viewer's scope (S4-SEC-08). A refresh keeps the
+        context, so its re-`auth` keeps the socket."""
+        if read is not None and read.phase is ViewAsPhase.HELD:
+            return "view_as_expired"
+        if _context_of(read) != socket_context:
+            return "view_as_changed"
+        return None
+
     async def run_auth(conn: _Connection, frame: dict[str, Any]) -> None:
         body = frame.get("p")
         token = body.get("access_token") if isinstance(body, dict) else None
@@ -1409,6 +1451,10 @@ def make_ws_router(
                 # this socket. `do_auth` drops it again unless this auth is accepted.
                 revocation_hub.register(session_id, conn.closer)
                 conn.pending_session_id = session_id
+            bound = await read_view_as(session_id)  # authenticated: never a revoked session's
+            before = conn.view_as_context_id if reauth else _context_of(bound)
+            if (refusal := view_as_refusal(bound, before)) is not None:
+                raise AuthRefused(refusal, ids={"session_id": session_id})
             async with _auth_call("resolve", auth_call_timeout_s):
                 snap = await registry.resolve(user_id)  # versioned: never undoes a newer one
             now, now_ms = conn.clock(), conn.wall_ms()
@@ -1437,6 +1483,10 @@ def make_ws_router(
                 # principal no longer allows are revoked (§9.5, same RBAC source).
                 frames = await registry.apply(conn.authz, snap, now_ms, event="reauth")
                 revoked = [f for f in frames if f["t"] == "revoked"]
+            if view_as is not None:  # §9.6: a start or an end during this `auth`, as SR-189 does
+                bound = await read_view_as(session_id)
+                if (refusal := view_as_refusal(bound, before)) is not None:
+                    raise AuthRefused(refusal, ids={"session_id": session_id})
         except AuthenticatorContractError:
             raise  # a server fault, not a failed auth: the handler closes 1011
         except AuthCallTimeout as late:
@@ -1445,6 +1495,9 @@ def make_ws_router(
         except AuthRefused as refused:
             # §4.3: refused at once, never `auth_ok`, not counted as a failure, nothing
             # registered; a re-auth ends the earlier identity too (#2295).
+            if fresh and conn.authz is not None:  # §9.6's re-read refuses after registering
+                registry.unregister(conn.authz)
+                conn.authz = conn.registered = None
             source_ip = _source_ip(conn.ws.scope)
             if refused.reason == "user_disabled":  # SR-029, counted as `refuse_disabled` counts
                 ws_revoked_total.labels(reason="user_disabled").inc()
@@ -1521,6 +1574,10 @@ def make_ws_router(
         conn.watchdog.auth_deadline = None
         conn.watchdog.token_expires_at = now + (expires_ms - now_ms) / 1000
         conn.token_expires_at_ms = expires_ms  # the same instant on the wall clock
+        conn.view_as_context_id = _context_of(bound)
+        conn.view_as_expires_at_ms = (
+            None if bound is None else int(bound.expires_at.timestamp() * 1000)
+        )
         conn.arm_close_timer()  # #3100: at the new expiry, a re-auth's too
         conn.stop_flush_deadline()  # #415: the bound from `accept` ends at the first `auth_ok`
         if conn.session_id != session_id:  # the old registration goes only after the check
@@ -1529,6 +1586,8 @@ def make_ws_router(
             conn.pending_session_id = None  # registered above, and now the socket's own
         conn.session_id, conn.user_id = session_id, user_id
         conn.authz.session_id = session_id  # E17-R-16: its audit rows name the session
+        # §9.6: a context's end closes the sockets bound to it, and only those (`close_context`).
+        revocation_hub.bind(session_id, conn.closer, conn.view_as_context_id)
         if not reauth:
             svc = registry.services
             conn.emitter = TopicEmitter(

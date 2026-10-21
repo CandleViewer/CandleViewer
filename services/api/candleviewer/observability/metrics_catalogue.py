@@ -3430,8 +3430,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "failures",
         (),
-        "WebSocket closes that failed during a session revocation or a user disable "
-        "(the socket may remain open).",
+        "WebSocket closes that failed during a session revocation, a user disable or a view-as "
+        "context's end (the socket may remain open).",
         "WsRevocationCloseFailed (any in 15m, ticket); ERROR log ws revocation close failed; "
         "runbook auth-rbac section 4",
         _L,

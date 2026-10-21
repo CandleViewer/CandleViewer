@@ -412,7 +412,7 @@ from candleviewer.storage.retention.workspaces_tasks import (
 )
 from candleviewer.storage.service import StorageService
 from candleviewer.user_cascade_wiring import build_user_disable_service, build_users_purge_task
-from candleviewer.view_as_wiring import RoleChangeNotifier, build_view_as
+from candleviewer.view_as_wiring import RoleChangeNotifier, SessionViewAs, build_view_as
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
@@ -1656,6 +1656,17 @@ def create_app(
             # `visibility` admits; a key the registry does not define reaches the Owner alone.
             flag_visible=default_registry().visible_to,
             backpressure=ws_backpressure,
+            # §9.6 (#3085): an `auth` reads its session's view-as binding through the service
+            # built below, read per call; none on the fake backend, which binds no session.
+            view_as=(
+                SessionViewAs(
+                    lambda: getattr(app.state, "view_as", None),
+                    ctx.auth.view_as_store,
+                    clock=auth_clock or (lambda: datetime.now(UTC)),
+                )
+                if ctx.auth.view_as_store_is_active
+                else None
+            ),
         ),
     )
     # E27-T02: gate transitions (KEK latch, mesh trip) reach connected clients directly.
@@ -1779,6 +1790,7 @@ def create_app(
         identity=identity,
         audit=_LazyAuditEmitter(ctx.audit),
         runner=csrf_audits,  # one in-flight cap and shutdown drain for the end records
+        hub=revocation_hub,  # an end closes the sockets bound to its context
         clock=auth_clock,
     )
     app.state.view_as, app.state.view_as_sweeper = view_as or (None, None)

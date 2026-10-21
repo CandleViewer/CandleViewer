@@ -45,6 +45,7 @@ import structlog
 
 from candleviewer.auth.metrics import auth_revocation_latency_seconds
 from candleviewer.observability.metrics import Counter
+from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import FANOUT_SEND_TIMEOUT_S
 
 
@@ -67,8 +68,8 @@ CLOSE_TOKEN_EXPIRED = 4401
 #: (`auth/metrics.py`, with `env` only); the `WsRevocationCloseFailed` ticket reads it.
 ws_revocation_close_failures_total = Counter(
     "ws_session_revocation_close_failures_total",
-    "WebSocket closes that failed during a session revocation or a user disable "
-    "(the socket may remain open).",
+    "WebSocket closes that failed during a session revocation, a user disable or a view-as "
+    "context's end (the socket may remain open).",
 )
 
 #: §9.5 / §13.6 closed `revoked.reason` set - no internal detail ever leaks through it.
@@ -143,6 +144,9 @@ def user_disabled_bye(now_ms: int) -> dict[str, Any]:
 
 
 Closer = Callable[[dict[str, Any], int], Awaitable[None]]  # (bye frame, close code)
+#: The §9.6 closes of a view-as context's sockets (`close_context`).
+ViewAsClose = Literal["view_as_changed", "view_as_expired"]
+VIEW_AS_CLOSES: Final[frozenset[str]] = frozenset({"view_as_changed", "view_as_expired"})
 
 
 def bye_frame(reason: str) -> dict[str, Any]:
@@ -200,6 +204,9 @@ class RevocationHub:
                 "remember_s and close_timeout_s must be finite and > 0, and max_remembered >= 1"
             )
         self._sockets: dict[str, list[Closer]] = defaultdict(list)
+        #: (session id, closer) -> the view-as context the socket authenticated into (#3085), set
+        #: at its `auth_ok` (`bind`): `close_context` closes only the sockets of one context.
+        self._contexts: dict[tuple[str, Closer], str] = {}
         #: Stamps the `user_disabled` bye's `ts`; injectable so tests read a fixed clock.
         self._wall_ms = wall_ms
         self._remember_s = remember_s
@@ -274,12 +281,43 @@ class RevocationHub:
             self._sockets[session_id].remove(closer)
         if not self._sockets.get(session_id):
             self._sockets.pop(session_id, None)
+        self._contexts.pop((session_id, closer), None)
+
+    def bind(self, session_id: str, closer: Closer, context_id: str | None) -> None:
+        """At a socket's `auth_ok` on `session_id`: the view-as context it is bound to, or none
+        (23-ws-protocol.md §9.6, #3085). A registered socket only."""
+        if context_id is None:
+            self._contexts.pop((session_id, closer), None)
+        elif closer in self._sockets.get(session_id, []):
+            self._contexts[(session_id, closer)] = context_id
+
+    async def close_context(self, session_id: str, context_id: str, reason: ViewAsClose) -> int:
+        """Close the sockets of `session_id` bound to the view-as context `context_id`, and only
+        those, with `reason`'s `bye` (§9.6: `view_as_changed`, 4401, or `view_as_expired`,
+        4403); returns how many closes it attempted. The session is not remembered: it stays
+        live, so the socket's reconnect is never refused, as a revocation's would be. Each close
+        is bounded and a failed one is counted and logged, as `revoke`'s are, and inline: the
+        caller (`ViewAsService`) bounds the whole and never raises on a failed close."""
+        closers = [
+            closer
+            for closer in self._sockets.get(session_id, [])
+            if self._contexts.get((session_id, closer)) == context_id
+        ]
+        for closer in closers:
+            self.unregister(session_id, closer)
+        if closers:
+            await self._close_each(session_id, reason, closers)
+        return len(closers)
 
     def close_for(self, reason: str) -> tuple[dict[str, Any], int]:
         """The `bye` and close code for `reason`. §9.5: a disabled user gets its own `bye`
-        and 4403 (do not reconnect); every other session revocation closes 4401."""
+        and 4403 (do not reconnect); a view-as close its §9.6 `bye` and code; every other
+        session revocation closes 4401."""
         if reason == "user_disabled":
             return user_disabled_bye(self._wall_ms()), CLOSE_USER_DISABLED
+        if reason in VIEW_AS_CLOSES:
+            frame = lifecycle_bye(reason, now_ms=self._wall_ms())
+            return frame, int(frame["p"]["code"])
         return bye_frame(reason), CLOSE_TOKEN_EXPIRED
 
     async def revoke(self, session_id: str, reason: str = "session_revoked") -> int:

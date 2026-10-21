@@ -3,8 +3,8 @@
 
 `22-api-openapi.yaml` "View-as session" and `endViewAs`; the state, its phase and the store
 contract are `auth/view_as.py`'s. The sweeper (`admin/view_as_sweeper.py`) runs it from the
-lifespan; nothing starts a context until the HTTP routes land (Q13), and the socket closer is a
-no-op until the WebSocket side is wired.
+lifespan; nothing starts a context until the HTTP routes land (Q13). Its socket closer closes the
+sockets bound to the ended context (`view_as_wiring.HubSocketCloser`).
 
 A context ends exactly once: of concurrent ends only the call whose conditional write
 (`end_view_as`, or `leave_view_as`, which also clears it) ended it closes the session's sockets
@@ -87,8 +87,10 @@ class ViewAsEligibility(Protocol):  # a read it cannot make raises: 503, never a
         ...
 
 
-class ViewAsSocketCloser(Protocol):  # every socket of the session's rotation family
-    async def close_family(self, session_id: str, *, reason: CloseReason) -> None: ...
+class ViewAsSocketCloser(Protocol):  # the session's rotation family's sockets on the context
+    async def close_family(
+        self, session_id: str, *, context_id: UUID, reason: CloseReason
+    ) -> None: ...
 
 
 class ViewAsLabels(Protocol):  # a user whose row is gone is absent
@@ -295,7 +297,7 @@ class ViewAsService:
         over the record. A failed close is logged by its context, never raised: the end stands."""
         try:
             async with asyncio.timeout(self._close_timeout_s):
-                await self._sockets.close_family(str(row.id), reason=why)
+                await self._sockets.close_family(str(row.id), context_id=context_id, reason=why)
         except Exception as exc:  # a timeout too
             _log().error(
                 "admin.view_as.close_failed",
