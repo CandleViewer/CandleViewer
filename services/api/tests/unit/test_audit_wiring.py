@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -11,7 +10,6 @@ import pytest
 from pydantic import ValidationError
 
 import candleviewer.app as app_mod
-from candleviewer.audit.service import AuditService
 from candleviewer.audit_lane_wiring import LaneKeyRefused
 from candleviewer.settings import Environment, Settings
 
@@ -93,15 +91,3 @@ async def test_the_audit_module_runs_the_lane_key_loader_first_on_either_backend
     with pytest.raises(LaneKeyRefused, match=r"^CV_AUDIT_LANE_KEY_HEX is refused"):
         await svc.start(cast(Any, SimpleNamespace(settings=settings)))
     assert not svc.is_active and not (tmp_path / "breakglass").exists()
-
-
-def test_create_app_hands_the_audit_module_the_lane_flag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """ADR-0037 decision 12: the composition root hands over the flag runtime's cached read."""
-    reads: list[Callable[[], bool]] = []
-    monkeypatch.setattr(AuditService, "use_lane_flag", lambda _svc, read: reads.append(read))
-    app = app_mod.create_app(
-        Settings(metrics_enabled=False, bars_state_root=str(tmp_path / "bars"))
-    )
-    assert reads == [app.state.feature_flags.lane_flag]

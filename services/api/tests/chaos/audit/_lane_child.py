@@ -71,7 +71,6 @@ async def main() -> None:
     arm(point, f'"object_id":"{tag}-victim"'.encode())
     relational = SqlAlchemyRelationalRepository(order["dsn"], "lane-chaos-child")
     svc = AuditService(SqlAlchemyAuditRepository(relational), lane_keys=lambda: (key, None))
-    svc.use_lane_flag(lambda: True)
     wal = f"{order['wal']}/audit.wal"
     settings = SimpleNamespace(audit_wal_path=wal, audit_page_structure_budget=50_000)
     await svc.start(cast(Any, SimpleNamespace(settings=settings)))

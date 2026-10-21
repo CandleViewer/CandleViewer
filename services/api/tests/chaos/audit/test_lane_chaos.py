@@ -5,8 +5,8 @@ half).
 The CI `integration` job's chaos step runs it (`-m "chaos and integration"`) against the compose
 Postgres, migrated, and the fixed-size loopback image it mounts. Each scenario boots the real
 `AuditService` as cv-api does: the lane key, `lane.lock`, the hard-link probe, the lane and its
-drain, and the façade with the flag on. Keys are generated per test; scenario 12's child process
-gets its key on stdin. Every wait is bounded and polls a condition; nothing sleeps.
+drain, and the façade. Keys are generated per test; scenario 12's child process gets its key on
+stdin. Every wait is bounded and polls a condition; nothing sleeps.
 """
 
 from __future__ import annotations
@@ -67,10 +67,9 @@ def tag_for(scenario: str) -> str:
 
 @contextlib.asynccontextmanager
 async def running(audit: Path, key: bytes) -> AsyncIterator[AuditService]:
-    """`AuditService` on `audit/`, started and stopped as the supervisor does, the flag on."""
+    """`AuditService` on `audit/`, started and stopped as the supervisor does."""
     relational = SqlAlchemyRelationalRepository(st.pg_dsn(), "lane-chaos")
     svc = AuditService(SqlAlchemyAuditRepository(relational), lane_keys=lambda: (key, None))
-    svc.use_lane_flag(lambda: True)
     settings = SimpleNamespace(
         audit_wal_path=str(audit / "audit.wal"), audit_page_structure_budget=50_000
     )

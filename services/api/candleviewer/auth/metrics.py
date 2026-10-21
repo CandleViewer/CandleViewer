@@ -113,6 +113,7 @@ auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets perf
 #: (else `other`): a route that starts to write an outcome record adds its action here, and the
 #: catalogue's `max_series` (this set plus `other`) with it.
 AUDIT_OUTCOME_ACTIONS: tuple[str, ...] = (
+    "auth.disabled_user_session_revoked",  # the backstop's record (`api/session_backstop_audit.py`)
     "auth.refresh_reuse_detected",  # the concurrent-refresh race (`api/sessions.py`)
     "auth.session_refreshed",  # a disabled user's refused refresh, reason `user_disabled` (#2911)
     "auth.session_revoked",  # one per session `POST /auth/logout` revoked

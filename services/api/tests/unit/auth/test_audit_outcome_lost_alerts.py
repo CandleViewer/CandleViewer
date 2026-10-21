@@ -37,6 +37,10 @@ PAGE = "AuthAuditOutcomesLostBurst"
 COMPONENT = "auth_audit"
 _EXPR = "sum by (env) (increase(auth_audit_outcome_lost_total[15m])) > {n}"
 _RUNBOOK = "docs/plan/07-release-and-prr.md#alert-authauditoutcomelost"
+#: The backstop's record (#3120, `api/session_backstop_audit.py`): `auth` writes it through a port,
+#: not a session route, so EX-08 names it and EX-07 does not; the counter has covered it since
+#: #3009 S4b-1c.
+BACKSTOP = "auth.disabled_user_session_revoked"
 
 
 def _rules(only: str | None = None) -> dict[str, dict[str, Any]]:
@@ -105,18 +109,22 @@ def test_the_exception_the_code_points_at_is_registered_and_expires_within_30_da
     assert re.search(r"#\d+", cells[-1]), cells[-1]  # the exit ticket has a number, not a promise
 
 
-def test_the_exception_and_both_runbooks_name_every_action_the_counter_covers() -> None:
+def test_the_exceptions_and_both_runbooks_name_every_action_the_counter_covers() -> None:
     """A route that starts to write an outcome record adds its action to the counter's closed set;
     EX-07's scope and both runbook entries must name it too (a disabled user's refused refresh,
-    #2911, once went unnamed), and EX-07 names no action the counter does not have yet."""
+    #2911, once went unnamed), and EX-07 names no action the counter does not have yet. The
+    backstop's record is EX-08's: its row and both runbook entries name it."""
     rows = _REGISTER.read_text(encoding="utf-8").splitlines()
     (ex07,) = [line for line in rows if line.startswith("| EX-07 ")]
+    (ex08,) = [line for line in rows if line.startswith("| EX-08 ")]
     scope = ex07.split(" | ")[1]  # it covers exactly these actions: nothing is pre-approved
-    assert set(re.findall(r"`(auth\.\w+)`", scope)) == set(AUDIT_OUTCOME_ACTIONS)
-    entries = {
-        "EX-07": ex07,
+    routes = set(AUDIT_OUTCOME_ACTIONS) - {BACKSTOP}
+    assert set(re.findall(r"`(auth\.\w+)`", scope)) == routes
+    assert f"`{BACKSTOP}`" in ex08.split(" | ")[1]
+    runbooks = {
         "alert runbook": _section(_PRR, "### AuthAuditOutcomeLost"),
         "auth runbook": _section(_AUTH_RUNBOOK, "## 10. An audit outcome record was lost"),
     }
     for action in AUDIT_OUTCOME_ACTIONS:
+        entries = runbooks if action == BACKSTOP else {"EX-07": ex07, **runbooks}
         assert [name for name, text in entries.items() if f"`{action}`" not in text] == [], action

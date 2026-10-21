@@ -243,7 +243,7 @@ async def test_facade_counts_each_fallback_by_class_and_reason(
     writer = await sink(tmp_path, repo)
     for reason in REFUSALS:
         error = None if reason == "timeout" else lj.LaneRefused(cast(lj.LaneReason, reason))
-        facade = LaneFacade(writer, cast(AuditLane, Lane(error)), lambda: True, wait_s=0)
+        facade = LaneFacade(writer, cast(AuditLane, Lane(error)), wait_s=0)
         await facade.emit(action, actor_label="owner")
         assert facade.refused == {key: int(key == (cls, reason)) for key in facade.refused}
 
@@ -255,7 +255,7 @@ async def test_writer_counts_the_refusals_its_callers_see_by_the_actions_domain(
     writer = await sink(tmp_path, repo, max_wal_bytes=600)
     with pytest.raises(AuditUnavailable):  # a record the WAL's cap cannot take
         await writer.emit("users.create", actor_label="owner", after_state={"pad": "x" * 600})
-    facade = LaneFacade(writer, cast(AuditLane, Lane(lj.LaneRefused("full"))), lambda: True)
+    facade = LaneFacade(writer, cast(AuditLane, Lane(lj.LaneRefused("full"))))
     await writer.stop(1)
     for action in ("auth.logout", "no.such_action"):  # refused before the action is checked
         with pytest.raises(aw.AuditWriterStopped):

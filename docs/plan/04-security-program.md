@@ -1583,9 +1583,8 @@ rule by exact method and path, each with its reason (SR-E42-09). `cv-admin-mutat
 declares neither `@audited("<action>")` nor `@audit_exempt("<reason>")`
 (`services/api/candleviewer/admin/audited.py`), naming the method; the declaration changes
 nothing at run time, and the record stays write-ahead where the change is made. Two more rules
-come with them: `cv-admin-no-flag-lookup` (SR-E42-07; it names every catalogue key, and
-`audit.lane_journal_first` reaches `audit/` only as the callable injected into
-`AuditService.use_lane_flag` until #3009) and the taint rule `cv-admin-no-secret-log` (SR-122).
+come with them: `cv-admin-no-flag-lookup` (SR-E42-07; it names every catalogue key) and the
+taint rule `cv-admin-no-secret-log` (SR-122).
 Their fixtures are trees, `.semgrep/tests/<rule-id>/<repo path>`, staged at those paths, each with
 a file that uses PEP 695 generics (Semgrep parses such a file another way).
 

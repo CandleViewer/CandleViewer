@@ -1,6 +1,6 @@
-"""ADR-0037 S2b-2a and S2b-2b (#3009): the façade (decisions 1, 2 and 12) and the `AuditService`
-wiring (start: writer, fold-in, lane; stop: the lane first). A silent lane or sink is an event that
-never fires, and a deadline is ordered against the loop's own timers. Files only in `tmp_path`."""
+"""ADR-0037 S2b-2a and S2b-2b (#3009): the façade (decisions 1 and 2) and the `AuditService` wiring
+(start: writer, fold-in, lane; stop: the lane first). A silent lane or sink is an event that never
+fires, and a deadline is ordered against the loop's own timers. Files only in `tmp_path`."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from typing import Any, cast
 
 import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
+from audit_waits import virtual
 from structlog.testing import capture_logs
 
 from candleviewer.audit import lane_journal as lj
@@ -36,14 +37,6 @@ from candleviewer.audit.writer import AuditUnavailable, AuditWriter, AuditWriter
 
 KEYS, WAIT_S = (bytes(range(32)), None), 5.0
 LOGOUT: dict[str, Any] = {"actor_label": "owner", "object_id": "s1"}
-
-
-def on() -> bool:
-    return True
-
-
-def off() -> bool:
-    return False
 
 
 class Lane:
@@ -68,8 +61,8 @@ async def sink(path: Path, repo: FakeAuditRepository) -> AuditWriter:
     return writer
 
 
-def facade(writer: AuditWriter, lane: Lane, flag: Any = on, **kw: Any) -> LaneFacade:
-    return LaneFacade(writer, cast(AuditLane, lane), flag, **kw)
+def facade(writer: AuditWriter, lane: Lane | None, **kw: Any) -> LaneFacade:
+    return LaneFacade(writer, cast(AuditLane | None, lane), **kw)
 
 
 async def ids(writer: AuditWriter, repo: FakeAuditRepository) -> list[uuid.UUID]:
@@ -143,16 +136,15 @@ async def test_facade_never_hands_a_lane_not_admitted_to_the_sink(
     assert await ids(writer, repo) == []
 
 
-@pytest.mark.parametrize("flag", [on, off], ids=["on", "off"])
 @pytest.mark.parametrize(
     "action", ["audit.lane_started", "audit.lane_resumed", "audit.lane_anomaly"]
 )
-async def test_facade_refuses_the_lanes_own_records_in_both_flag_positions(
-    tmp_path: Path, repo: FakeAuditRepository, flag: Any, action: str
+async def test_facade_refuses_the_lanes_own_records(
+    tmp_path: Path, repo: FakeAuditRepository, action: str
 ) -> None:
     writer, lane = await sink(tmp_path, repo), Lane()
     with pytest.raises(lj.LaneNotAdmitted):
-        await facade(writer, lane, flag).emit(action, actor_label="system:audit-lane")
+        await facade(writer, lane).emit(action, actor_label="system:audit-lane")
     assert lane.records == [] and await ids(writer, repo) == []
 
 
@@ -176,24 +168,25 @@ async def test_facade_builds_through_build_so_either_path_is_redacted(
     assert "s3cret" not in str(repo.rows)
 
 
-async def test_facade_with_the_flag_off_is_todays_path_byte_for_byte(
+async def test_facade_with_no_lane_matches_emit_byte_for_byte(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Off, every record goes straight to `ingest()`: the WAL frame and the row are `emit()`'s."""
+    """With no lane every record goes straight to `ingest()`: the WAL frame and the row are
+    `emit()`'s."""
     monkeypatch.setattr(uuid, "uuid4", lambda: uuid.UUID(int=1))
     repos = FakeAuditRepository(), FakeAuditRepository()
     for name, repo in zip("ab", repos, strict=True):
         (tmp_path / name).mkdir()
         repo.down = True  # each WAL keeps its frame
-    today, writer = [await sink(tmp_path / name, r) for name, r in zip("ab", repos, strict=True)]
-    lane, fields = Lane(), LOGOUT | {"after_state": {"token": "s3cret"}}
-    await today.emit("auth.logout", **fields)
-    await facade(writer, lane, off).emit("auth.logout", **fields)
+    direct, writer = [await sink(tmp_path / name, r) for name, r in zip("ab", repos, strict=True)]
+    fields = LOGOUT | {"after_state": {"token": "s3cret"}}
+    await direct.emit("auth.logout", **fields)
+    await facade(writer, None).emit("auth.logout", **fields)
     wal = [(tmp_path / name / "audit.wal").read_bytes() for name in "ab"]
-    assert lane.records == [] and wal[0] == wal[1] and b'"auth.logout"' in wal[0]
+    assert wal[0] == wal[1] and b'"auth.logout"' in wal[0]
     for repo in repos:
         repo.down = False
-    assert await ids(today, repos[0]) == await ids(writer, repos[1]) == [uuid.UUID(int=1)]
+    assert await ids(direct, repos[0]) == await ids(writer, repos[1]) == [uuid.UUID(int=1)]
     assert repos[0].rows == repos[1].rows
 
 
@@ -260,22 +253,70 @@ async def test_service_loads_its_keys_once_off_the_loop(
     await svc.stop(1)
 
 
-async def test_service_reads_the_flag_off_until_it_is_wired(
+@virtual
+async def test_an_unwired_service_still_journals_first(
     tmp_path: Path, repo: FakeAuditRepository
 ) -> None:
+    """#3009 S4b-1c: no flag is wired and none is read, so a record `LANE_ACTIONS` admits goes into
+    the lane before the sink: the journal holds it, and the drain hands it to the chain once, after
+    the boot's two rows."""
     svc = AuditService(repo, lane_keys=lambda: KEYS)
     await svc.start(ctx(tmp_path / "audit" / "a.wal"))
     assert svc._lane is not None
     end = svc._lane.journal.end
     await svc.lane.emit("auth.logout", **LOGOUT)
-    await svc.writer.flush(WAIT_S)
-    assert svc._lane.journal.end == end and "auth.logout" in [row["action"] for row in repo.rows]
+    assert svc._lane.journal.end > end  # the lane holds the record
+    await svc.lane.flush(WAIT_S)
+    actions = ["audit.lane_started", "audit.lane_resumed", "auth.logout"]
+    assert [row["action"] for row in repo.rows] == actions
     await svc.stop(1)
+
+
+#: Each way the façade hands a record to the writer: the action, whether the lane is asked, and
+#: the lane. `auth.mfa_verified` has no `LANE_ACTIONS` row, and `auth.session_refreshed` admits
+#: `denied` only, which `emit()`'s default outcome, `success`, is not.
+_FALLBACKS = [
+    ("auth.logout", True, lambda: Lane(lj.LaneRefused("busy"))),
+    ("auth.logout", True, lambda: Lane(stall=True)),
+    ("auth.mfa_verified", False, Lane),
+    ("auth.session_refreshed", False, Lane),
+    ("auth.logout", False, lambda: None),
+]
+
+
+@pytest.mark.parametrize(
+    ("action", "asked", "make_lane"),
+    _FALLBACKS,
+    ids=["refusal", "timeout", "unregistered-action", "unadmitted-outcome", "no-lane"],
+)
+@virtual
+async def test_every_fallback_hands_the_same_record_to_ingest_counted(
+    tmp_path: Path,
+    repo: FakeAuditRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    asked: bool,
+    make_lane: Any,
+) -> None:
+    """The writer takes what the lane did not: the record the lane was asked for (refused, or silent
+    past its 0.25 fake seconds) is the one `ingest_counted()` gets, and the chain row is it."""
+    writer, lane = await sink(tmp_path, repo), make_lane()
+    handed, counted = list[AuditEmission](), writer.ingest_counted
+
+    async def spying(record: AuditEmission) -> int:
+        handed.append(record)
+        return await counted(record)
+
+    monkeypatch.setattr(writer, "ingest_counted", spying)
+    await facade(writer, lane, wait_s=0.25).emit(action, **LOGOUT)
+    assert len(handed) == 1
+    asked_for = [] if lane is None else [r.record_id for r in lane.records]
+    assert asked_for == ([handed[0].record_id] if asked else [])
+    assert await ids(writer, repo) == [handed[0].record_id]
 
 
 async def started(tmp_path: Path, repo: FakeAuditRepository) -> tuple[AuditService, Path]:
     wal, svc = tmp_path / "audit" / "a.wal", AuditService(repo, lane_keys=lambda: KEYS)
-    svc.use_lane_flag(on)
     await svc.start(ctx(wal))
     return svc, wal
 
@@ -479,7 +520,6 @@ async def test_service_holds_a_lane_it_cannot_open_and_boots_on(
     else:
         (directory / "confirmed").symlink_to(tmp_path / "elsewhere")
     svc = AuditService(repo, lane_keys=lambda: KEYS)
-    svc.use_lane_flag(on)
     await svc.start(ctx(wal))
     assert svc._lane is not None and svc._lane.journal.refusal == "held"
     await svc.lane.emit("auth.logout", **LOGOUT)

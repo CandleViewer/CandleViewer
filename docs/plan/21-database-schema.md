@@ -2983,7 +2983,7 @@ Resolution order: user override → role override → percentage rollout (hash o
 
 `trading.live_enabled` and every kill-switch-class flag (`is_killswitch`, `maintenance.mode` included) resolve from the deployment value only: user and role overrides for them are ignored at resolution, not merely refused on write, so an override row that reaches this table another way (a seed, a migration, a direct change) changes nothing (E42-T03). Every other flag is served from a 30 s cache (TTL), `trading.live_enabled` included.
 
-> **Stored value and writer (E42-T03).** `default_value` is the deployment-wide stored value resolution falls back to: `PUT /admin/feature-flags/{flagKey}` writes it on a `boolean` or `variant` flag and writes `rollout_pct` on a `percentage` flag. `FeatureFlag.value` is the per-caller resolved value, so there is no separate current-value column. `updated_by` (`FeatureFlag.updated_by`) shipped with `0027_feature_flags` (the note above).
+> **Stored value and writer (E42-T03).** `default_value` is the deployment-wide stored value resolution falls back to: `PUT /admin/feature-flags/{flagKey}` writes it on a `boolean` or `variant` flag and writes `rollout_pct` on a `percentage` flag. `FeatureFlag.value` is the per-caller resolved value, so there is no separate current-value column. `updated_by` (`FeatureFlag.updated_by`) shipped with `0027_feature_flags` (the note above). A key the registry no longer defines keeps its row, inert: start-up only inserts, resolution and the list read the registry alone, and a write to the key answers an audited 404 (`flags.change`, `not_found`). `audit.lane_journal_first` (ADR-0037, removed with #3009) is the first, and no migration deletes its row.
 
 ### 3.10 Audit log (hash chain), system events, backups
 
@@ -4423,7 +4423,6 @@ Env switching has **no** hotkey by design (digest 23: must be a deliberate click
 | `killswitch.order_entry`                                                 | boolean | `false` | `is_killswitch=true`                          | `all_roles`  |
 | `maintenance.mode`                                                       | boolean | `false` | `is_killswitch=true`; blocks order entry      | `all_roles`  |
 | `maintenance.keep_recorder`                                              | boolean | `true`  | Recorder keeps running in maintenance         | `owner_only` |
-| `audit.lane_journal_first`                                               | boolean | `false` | ADR-0037 lane; owner @basiltt, removal #3009  | `owner_only` |
 | `desktop.backend_connection`                                             | boolean | `false` | ADR-0038 CORS; owner @basiltt, removal #3931  | `owner_only` |
 
 ### 10.8 Demo/dev fixtures (never in production)

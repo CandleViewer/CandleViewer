@@ -10,14 +10,8 @@ rules:
     metadata:
       rule-id: cv-admin-no-flag-lookup
       sr: SR-E42-07
-      # E42-X03 decision D3, the AD-F09 residual no static rule sees: ADR-0037 decision 12's
-      # `audit.lane_journal_first` reaches audit/ as a plain callable the composition root builds
-      # (`flags_wiring.LaneFlag`) and hands `AuditService.use_lane_flag`. Its key is in the list
-      # below like every other; services/api/tests/unit/admin/test_flag_lookup_rule.py holds the
-      # list to the catalogue.
-      residual: >-
-        D3 (AD-F09): audit.lane_journal_first enters audit/ as the injected callable that
-        AuditService.use_lane_flag receives, until #3009 retires the flag.
+      # services/api/tests/unit/admin/test_flag_lookup_rule.py holds the key list below to the
+      # catalogue.
     pattern-either:
       # the flag API: the module, its parts, and the composition root's flag wiring, imported
       # absolutely, relatively (leading dots) or by name at run time
@@ -58,7 +52,7 @@ rules:
               metavariable: $OBJ
               regex: (?i)^([\w.]*\.)?\w*flag\w*$
       # a catalogue key, exactly (candleviewer/admin/flags/catalogue.py)
-      - pattern: '"=~/^(algo\.chase|algo\.iceberg|algo\.oco|algo\.scaled|algo\.twap|audit\.lane_journal_first|desktop\.backend_connection|engine\.webgl_v2|killswitch\.ingestion|killswitch\.order_entry|maintenance\.keep_recorder|maintenance\.mode|recorder\.auto_record|rules\.form_editor|rules\.graph_editor|storage\.cold_tier|trading\.live_enabled|trading\.one_click)$/"'
+      - pattern: '"=~/^(algo\.chase|algo\.iceberg|algo\.oco|algo\.scaled|algo\.twap|desktop\.backend_connection|engine\.webgl_v2|killswitch\.ingestion|killswitch\.order_entry|maintenance\.keep_recorder|maintenance\.mode|recorder\.auto_record|rules\.form_editor|rules\.graph_editor|storage\.cold_tier|trading\.live_enabled|trading\.one_click)$/"'
     paths:
       include:
         - "services/api/candleviewer/auth/**"

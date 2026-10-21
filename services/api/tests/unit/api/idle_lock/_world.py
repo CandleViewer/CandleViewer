@@ -91,7 +91,7 @@ class _Writer:
 class _Audit:
     def __init__(self) -> None:
         self.writer = _Writer()
-        self.lane = WriterLane(self)  # ADR-0037 with its flag off: each record to the writer
+        self.lane = WriterLane(self)  # ADR-0037's façade as its fallback: each record to the writer
         self.is_active = True
 
 

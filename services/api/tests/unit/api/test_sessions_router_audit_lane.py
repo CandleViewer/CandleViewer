@@ -4,17 +4,15 @@ containment's intent and the race outcome, and a disabled user's refused refresh
 
 A real `AuditWriter` over `FakeAuditRepository` that refuses as #2872's `_RefusingWriter` does, a
 real lane journal and drain in `tmp_path` and the real façade, all on the test's loop (requests go
-through `httpx.ASGITransport`). Flag on, the sink refusing and the lane accepting: sign-out and
-revoke answer 204, a reused token's family is revoked, nothing is counted lost and every row reaches
-the chain once after a restart. Both refusing: today's answers and counters. Flag off: today's path,
-byte for byte. No network; every wait is a bound, never a sleep.
+through `httpx.ASGITransport`). The sink refusing and the lane accepting: sign-out and revoke
+answer 204, a reused token's family is revoked, nothing is counted lost and every row reaches the
+chain once after a restart. Both refusing: the writer-only answers and counters. No network; every
+wait is a bound, never a sleep.
 """
 
 from __future__ import annotations
 
 import contextlib
-import itertools
-import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -119,8 +117,8 @@ class _Lane(AuditLane):
 
 class _World:
     """The session router over the façade, a real lane and `_Sink`; the world is the router's audit
-    service (`is_active`, `writer`, `lane`). `today` gives the router the writer as `lane`, the
-    receiver every row had before S3. `caps`: the `shared` and lane byte limits (§15.6 Limits)."""
+    service (`is_active`, `writer`, `lane`). `caps`: the `shared` and lane byte limits (§15.6
+    Limits)."""
 
     is_active = True
 
@@ -128,14 +126,12 @@ class _World:
         self,
         path: Path,
         *,
-        flag: bool = True,
-        today: bool = False,
         error: Exception | None = None,
         service: type[SessionService] = SessionService,
         caps: tuple[int, int] = (lj.SHARED_MAX_BYTES, lj.LANE_MAX_BYTES),
     ) -> None:
         path.mkdir()
-        self.path, self.flag, self.today, self.caps = path, flag, today, caps
+        self.path, self.caps = path, caps
         self.error = error or _ERRORS[0]()
         self.repo, self.clock, self.sessions = (
             FakeAuditRepository(),
@@ -167,8 +163,7 @@ class _World:
         self.drain = _Lane(journal, self.writer, self.live)
         await self.drain.start()
         await self.drain.flush(_WAIT_S)
-        facade = LaneFacade(self.writer, self.drain, lambda: self.flag)
-        self.lane: LaneFacade | _Sink = self.writer if self.today else facade
+        self.lane = LaneFacade(self.writer, self.drain)
 
     async def stop(self) -> None:
         """`AuditService.stop()`: the lane first, then the writer."""
@@ -337,50 +332,6 @@ async def test_both_refusing_an_outcome_row_keeps_todays_answer_and_counts_it_lo
     assert await w.live() == before - ended  # the action stands
     assert [b - a for a, b in zip(lost, _lost(), strict=True)] == list(row.lost)
     assert w.writer.refused == list(row.refused)
-
-
-def _ids() -> Callable[[], uuid.UUID]:
-    """A `uuid.uuid4` stand-in that gives each world the same ids in the same order."""
-    counter = itertools.count(1)
-    return lambda: uuid.UUID(int=next(counter))
-
-
-async def _off(
-    open_world: Opener, monkeypatch: pytest.MonkeyPatch, row: _Row, accept: int | None, today: bool
-) -> tuple[Any, ...]:
-    """One flag-off world's run of *row*: the answer (a cleared cookie's `expires` is the wall
-    clock's, so it is dropped; all else is kept), the lost-counter deltas, the refusals and the
-    rows. The lane must hold nothing."""
-    monkeypatch.setattr(uuid, "uuid4", _ids())
-    w = await open_world(flag=False, today=today, service=row.service)
-    end, lost = w.drain.journal.end, _lost()
-    answer, *_ = await row.act(w, accept)
-    await w.writer.flush(_WAIT_S)
-    assert w.drain.journal.end == end  # the lane holds nothing
-    cleared = [(k, re.sub(r"expires=[^;]*; ", "", v)) for k, v in answer.headers.multi_items()]
-    deltas = [b - a for a, b in zip(lost, _lost(), strict=True)]
-    return answer.status_code, cleared, answer.content, deltas, w.writer.refused, w.repo.rows
-
-
-_OFF = [(n, None, r.status) for n, r in _ROWS.items()] + [
-    (n, r.accept, r.both) for n, r in _ROWS.items()
-]
-
-
-@pytest.mark.parametrize(
-    ("name", "accept", "status"),
-    _OFF,
-    ids=[f"{n}-sink" for n in _ROWS] + [f"{n}-sink-refusing" for n in _ROWS],
-)
-async def test_flag_off_is_todays_path_byte_for_byte(
-    worlds: Opener, monkeypatch: pytest.MonkeyPatch, name: str, accept: int | None, status: int
-) -> None:
-    """Off, the façade hands each row to the writer as `emit()` did. With the same ids and clock:
-    the same answer, counters, refusals and rows as the writer as receiver, and today's answer."""
-    today = await _off(worlds, monkeypatch, _ROWS[name], accept, today=True)
-    off = await _off(worlds, monkeypatch, _ROWS[name], accept, today=False)
-    assert off == today
-    assert off[0] == status
 
 
 async def test_login_flood_leaves_room_for_logout(worlds: Opener) -> None:

@@ -676,14 +676,20 @@ it (login refuses `disabled` only):
   `revoked_reason = 'user_disabled'` is then the only trace, so compare those rows in a window
   with the counter's increase over it (a disable's own transaction and sweep add rows of their
   own).
-- When the audit sink is down the record is dropped, not queued (C-2.18; exception EX-08,
-  `04-security-program.md` section 16.2), and the log says so:
+- When the lane and the audit sink both refuse the record it is dropped, not queued (C-2.18;
+  exception EX-08, `04-security-program.md` section 16.2), and the log says so:
   `auth.disabled_user_session_audit_failed` (ERROR, with `session_id`, `user_id` and `error`, the
   failure's class: `BackstopAuditSaturated` at the in-flight cap, `BackstopAuditNotAttached` for a
   wiring fault). A write still running after the 2 seconds logs
   `auth.disabled_user_session_audit_slow` (with the ids; the record may still land), and if it
   then fails, `auth.disabled_user_session_audit_failed_late` follows with `error` only and no
-  session, so count those lines. Three losses leave no log line that names the session and says
+  session, so count those lines. Each record the port loses (the lane and the writer both refused
+  it, the cap dropped it, or its write failed after the request stopped waiting or was still
+  running when the shutdown drain gave up) also adds one to
+  `auth_audit_outcome_lost_total{action="auth.disabled_user_session_revoked"}`, once however many
+  of those it meets, and `AuthAuditOutcomeLost` alerts on it (section 10);
+  `BackstopAuditNotAttached` never reaches the port and is not counted. Three losses leave no log
+  line that names the session and says
   its record is missing (the `WARNING`, logged as soon as `revoke` returns, names it in the last
   two, and in the first when the process dies after it, but cannot say the record failed): the
   process dies between the revoke and the write (the bullet above); it shuts down while a unit or
@@ -1169,6 +1175,15 @@ row (`success`) uncorrected: nothing was minted, and the user is `disabled` or g
 the missing rows by hand: only the audit writer writes the table. There is no
 automatic retry: that half of rule 2 (`04-security-program.md` section 8.3) is the time-boxed
 exception EX-07 (section 16.2), which ends when the journal-first lane (#3009) exists.
+
+The backstop's record, `auth.disabled_user_session_revoked` (section 4), counts on the same series.
+`auth` writes it through the lane's façade (the lane first, the writer its fallback), so it counts
+only when it is lost: the lane and the writer both refused it, the in-flight cap dropped it, or its
+write failed after the revoking request stopped waiting (the 2 second bound, or a cancel) or was
+still running when the shutdown drain gave up. A counted record may still have landed (a cancelled
+lane append or a durable WAL append can complete late), so check the trail. One count per record,
+whichever of these it meets. It logs `auth.disabled_user_session_audit_failed` (or its
+`_slow` and `_failed_late` forms), not `outcome_lost`: reconcile it as section 4 says.
 
 While the sink refuses records, sign-out, session revocation and refresh answer `503` and change
 nothing (C-2.9): an access token lapses within 12 minutes and a longer refusal ends every session
