@@ -497,7 +497,8 @@ async def test_loop_call_later_runs_its_callback_on_the_running_loop() -> None:
 def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _Kill]) -> None:
     client, _ = world
     catalogued = {s.name for s in CATALOGUE if s.name.startswith(("cv_ws_", "cv_machine_ws_"))}
-    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 36  # #415: two record counters
+    # #415: two record counters; E40-T04: `cv_ws_alerts_subscriptions_in_use`.
+    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 37
     with client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         ws.send_json({"t": "auth", "id": "x", "p": {}})  # one failed re-auth

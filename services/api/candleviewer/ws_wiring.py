@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 import structlog
 
 from candleviewer.accounts.wallet_topic import WalletTopic
+from candleviewer.alerts.ws_topic import AlertsTopic
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.book.resync import BookEngine
@@ -229,6 +230,14 @@ def wallet_topic(hub: SequencingHub) -> WalletTopic[SnapshotBody]:
     attaches its health `view` and wallet cache (`wire_account_health`); before, `build` gives
     `None`."""
     return WalletTopic(hub.publish, SnapshotBody)
+
+
+def alerts_topic(hub: SequencingHub) -> AlertsTopic[SnapshotBody]:
+    """E40-T04: the `alerts` family's adapter, which the alerts module owns: it renders through the
+    gateway's `SnapshotBody`, publishes its deltas through `hub` (each naming its owner), and wakes
+    or resyncs an owner's subscriptions through it. The composition root attaches the deliveries
+    reader; before, `build` gives `None`."""
+    return AlertsTopic(hub.publish, hub.flush_pending, hub.resnapshot, SnapshotBody)
 
 
 class _Identity(Protocol):

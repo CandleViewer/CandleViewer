@@ -27,6 +27,12 @@ _WD, _NA, _IP = "key_withdraw_permission", "key_permission_not_allowed", "key_ip
 # ADR-0037 S4a (#3009): the audit lane's series, each bound from process start.
 _LANE = 'cv_audit_lane_{}{{env="live"}}'
 _STATE = 'cv_audit_lane_state{{env="live",state="{}"}}'
+# #1016 (E40-T04): the outbox's depth gauge and dead-letter counter, for alert.deliver and, as the
+# silent case, for another topic (webhook.post).
+_DEPTH = 'cv_outbox_depth{env="live",topic="alert.deliver"}'
+_DEPTH_OTHER = 'cv_outbox_depth{env="live",topic="webhook.post"}'
+_DEAD = 'cv_outbox_dead_total{env="live",topic="alert.deliver"}'
+_DEAD_OTHER = 'cv_outbox_dead_total{env="live",topic="webhook.post"}'
 
 # alert -> (series, firing values, healthy values, eval_time, extra labels)
 SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
@@ -202,6 +208,8 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
     "AuditLaneQuarantineGrowing": (
         _LANE.format("quarantine_bytes"), "100+0x10 400+0x20", "400+0x30", "20m", {"env": "live"}
     ),
+    # #1016 (E40-T04): the alert.deliver backlog over 100 for 5 minutes; 100 itself is no backlog.
+    "AlertOutboxBacklog": (_DEPTH, "101+0x20", "100+0x20", "10m", {"env": "live"}),
 }
 
 _LAST_OK = 'cv_audit_verify_last_ok_timestamp_seconds{env="live"}'
@@ -424,6 +432,19 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("10h", False, {_CREATED: "1+0x700", _START: "0+0x700"}),
         ("10m", False, {_CREATED: "0+0x30", _START: "0+0x30"}),
     ),
+    # #1016 (E40-T04). Another topic's backlog is its owner's rule, not this one.
+    "AlertOutboxBacklog": (("10m", False, {_DEPTH_OTHER: "101+0x20"}),),
+    # #1016 (E40-T04): a dead-lettered alert.deliver row. A ticket with no `for`: fires on the first
+    # evaluation after the step and is held past the quiet-hours mute (firing at 9 h 49 m,
+    # resolved at 9 h 52 m), as the tickets above; a flat count is an old dead row, and another
+    # topic's dead rows are not this rule's.
+    "AlertOutboxDeadLettered": (
+        ("6m", True, {_DEAD: _RISE}),
+        ("9h49m", True, {_DEAD: _RISE}),
+        ("9h52m", False, {_DEAD: _RISE}),
+        ("30m", False, {_DEAD: _FLAT}),
+        ("6m", False, {_DEAD_OTHER: _RISE}),
+    ),
 }
 
 #: alert -> cases of (eval_time, {series: values}, the `rule` of each alert expected): #836's
@@ -493,6 +514,14 @@ EXTRA: dict[str, list[tuple[str, str, bool]]] = {
         ("400+0x10 0+0x20", "20m", False),
         ("100+0x10 400+0x700", "10h39m", True),
         ("100+0x10 400+0x700", "10h42m", False),
+    ],
+    # #1016 (E40-T04): the 5 minute `for` from both sides (the series is over from the first
+    # scrape, so 4 m is pending and 6 m fires), and a backlog that cleared at 10 minutes is no
+    # longer firing at 20: a condition ticket carries no hold, unlike the event tickets.
+    "AlertOutboxBacklog": [
+        ("101+0x20", "4m", False),
+        ("101+0x20", "6m", True),
+        ("101+0x10 0+0x10", "20m", False),
     ],
 }
 

@@ -20,6 +20,10 @@ adapter, and settles delivery + outbox row in one store call:
   adapter raising anything else is a retryable `adapter_error`, so a poison row
   dead-letters after `max_attempts` instead of looping once per lease;
 - `stop()` lets the in-flight send finish (bounded by `grace_s`) before cancelling;
+- the poll loop also samples the topic's backlog onto `cv_outbox_depth{topic}` (at most every
+  `DEPTH_EVERY_S`, even while a backlog keeps every poll full); a failed read is logged and never
+  stops dispatching. `AlertOutboxBacklog` (over 100 for 5 min) reads that gauge and
+  `AlertOutboxDeadLettered` reads `cv_outbox_dead_total` (infra/prometheus/alerts);
 - `suppressed` rows carry a bounded reason code (`SUPPRESSION_REASONS`) in
   `error_message` and `context.suppression_reason`;
 - `webhook` (flag `alerts_webhook_enabled`, E40-S03) and `push` (out of scope) are
@@ -32,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import random
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -54,6 +59,9 @@ MAX_BACKOFF_S = 300.0
 MAX_ATTEMPT_COLUMN = 10
 CHANNELS: tuple[str, ...] = ("in_app", "desktop", "email", "webhook", "push")
 MAX_ERROR_LEN = 200
+#: `cv_outbox_depth` is read at most this often (monotonic seconds): a backlog gauge, not a
+#: per-poll cost, since the loop polls every second.
+DEPTH_EVERY_S = 15.0
 
 #: Bounded `suppressed` reason codes (stored in `error_message` and `context`).
 SUPPRESSION_REASONS: frozenset[str] = frozenset(
@@ -145,6 +153,10 @@ class DispatchStore(Protocol):
         ...
 
     async def load(self, delivery_id: int) -> Delivery | None: ...
+
+    async def depth(self, topic: str) -> int:
+        """Rows of *topic* neither processed nor dead: the backlog (`cv_outbox_depth`)."""
+        ...
 
     async def settle_sent(self, job: OutboxJob, *, attempt: int, http_status: int | None) -> bool:
         """Conditional `queued -> sent` + outbox `processed_at`, one transaction."""
@@ -267,7 +279,8 @@ def default_adapters(
 
 class AlertDispatcher:
     """Outbox poller for `alert.deliver`. `run_once` is the unit of work (tests drive it);
-    `start` runs it in a tracked task, woken by `notify()` or every `interval_s`."""
+    `start` runs it in a tracked task, woken by `notify()` or every `interval_s`, and samples the
+    backlog's depth from there (`monotonic` is the clock of that throttle)."""
 
     def __init__(
         self,
@@ -282,6 +295,8 @@ class AlertDispatcher:
         batch: int = 64,
         lease_s: float = 60.0,
         interval_s: float = 1.0,
+        depth_every_s: float = DEPTH_EVERY_S,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         missing = set(CHANNELS) - adapters.keys()
         if missing:
@@ -289,6 +304,8 @@ class AlertDispatcher:
         self._store, self._adapters, self._worker = store, adapters, worker
         self._now, self._rng, self._metric, self._on_change = now, rng, metric, on_change
         self._batch, self._lease, self._interval = batch, lease_s, interval_s
+        self._depth_every, self._monotonic = depth_every_s, monotonic
+        self._depth_due: float | None = None  # monotonic time of the next sample; None: at once
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._stopping = False
@@ -377,8 +394,26 @@ class AlertDispatcher:
         if self._task is None:
             self._task = spawn(self._run(), name="alert-dispatcher")
 
+    async def _sample_depth(self) -> None:
+        """`cv_outbox_depth{topic="alert.deliver"}`, the gauge `AlertOutboxBacklog` reads, at most
+        once per `depth_every_s`. A failed read is logged by type and keeps the last value: the
+        gauge is a signal, never a reason to stop dispatching (a database that is down is
+        PostgresDown's, and the poll logs it)."""
+        now = self._monotonic()
+        if self._depth_due is not None and now < self._depth_due:
+            return
+        self._depth_due = now + self._depth_every  # also after a failure: no retry per poll
+        try:
+            depth = await self._store.depth(TOPIC_ALERT_DELIVER)
+            self._metric("cv_outbox_depth", (TOPIC_ALERT_DELIVER,)).set(depth)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _log().warning("alert_outbox_depth_failed", error=type(exc).__name__)
+
     async def _run(self) -> None:
         while not self._stopping:
+            self._wake.clear()  # before the poll: a firing that commits during it polls again
             try:
                 n = await self.run_once()
             except asyncio.CancelledError:
@@ -386,9 +421,10 @@ class AlertDispatcher:
             except Exception:  # storage blip: keep polling
                 _log().exception("alert_dispatch_poll_failed")
                 n = 0
+            if not self._stopping:
+                await self._sample_depth()  # before the `continue`: a backlog is sampled too
             if n >= self._batch or self._stopping:
                 continue
-            self._wake.clear()
             with contextlib.suppress(TimeoutError):
                 async with asyncio.timeout(self._interval):
                     await self._wake.wait()

@@ -891,7 +891,8 @@ def in_scope(
     permission. Re-evaluation swaps the principal in before it removes anything (§9.5), so this
     holds even if the removal stops part-way. Then: a family scoped to accounts needs the
     event's account among the subscription's; a SELF family (`alerts`) reaches only the
-    connections of the user the event belongs to, and nobody when the event names none; a NONE
+    subscriptions owned by the user the event belongs to (`Subscription.owner`, recorded at admit,
+    #2521), and nobody when the event names none; a NONE
     family (`recorder`) reaches every subscription. A `machines` subscription is matched by its
     entity: its kind's whole §6.4 row, applied to the scope stored on it at `sub` (no lookup)."""
     family = sub.topic.family
@@ -903,8 +904,8 @@ def in_scope(
     # nosemgrep: cv-ws-no-adhoc-authz reason=fan-out owner=@CandleViewer/security review=2027-03-25
     if family.permission not in authz.principal.permissions:
         return False
-    if family.scope is Scope.SELF:
-        return user is not None and authz.principal.user_id == user
+    if family.scope is Scope.SELF:  # #2521: the owner recorded at admit, as the snapshot reads
+        return user is not None and sub.owner == user
     if family.scope is Scope.NONE:
         return True
     return account is not None and account in sub.accounts

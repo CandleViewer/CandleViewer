@@ -93,6 +93,8 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | AuditLaneQuarantineGrowing | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlaneanomaly` | synthetic | | | | | | pending |
 | AuditLaneSeqRegressed | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlaneseqregressed` | synthetic | | | | | | pending |
 | AuditLaneCreated | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlaneseqregressed` | synthetic | | | | | | pending |
+| AlertOutboxBacklog | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-alertoutboxbacklog` | synthetic | | | | | | pending (promtool: a depth of 101 fires once held 5 m (silent at 4 m, firing at 6 m) and is no longer firing once it falls to 0, a condition ticket with no hold; a depth of 100 and another topic's backlog stay silent: `infra/prometheus/tests/system_alerts.test.yml`. Inert until `alerts_evaluator_enabled` runs the dispatcher, so a real drill needs a stopped poller and 101 queued `alert.deliver` rows) |
+| AlertOutboxDeadLettered | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-alertoutboxdeadlettered` | synthetic | | | | | | pending (promtool: fires on the first evaluation after the counter steps from 0 to 1, still firing at 9 h 49 m, resolved at 9 h 52 m once the `keep_firing_for` hold ends (tickets are muted 22:00-07:00 UTC); a flat count and another topic's dead rows stay silent: `infra/prometheus/tests/system_alerts.test.yml`. A real drill needs an `alert.deliver` adapter that raises `max_attempts` times) |
 
 ## Execution status and exception request (2026-10-02)
 

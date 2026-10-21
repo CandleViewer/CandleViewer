@@ -384,6 +384,44 @@ groups:
         annotations:
           summary: "Roll-off listed no closed day for a stream whose hot table holds aged partitions"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-rolloffstreamunlisted"
+      - alert: AlertOutboxBacklog
+        # #1016 (E40-T04): the alert.deliver outbox, its unprocessed and not-dead rows as the
+        # dispatcher samples them every 15 s (`cv_outbox_depth`). A healthy poller claims up to 64
+        # rows a poll and polls at least once a second, so over 100 for five minutes is a poller
+        # that is stalled, failing or slower than the firings. A ticket, not a page: each firing
+        # is already a committed `alert_deliveries` row with its outbox row, replayed after a
+        # restart, and an alert never places an order. A condition, so no hold, as PublicWsDown:
+        # a backlog that clears inside the 22:00-07:00 UTC ticket mute is not sent. For
+        # alert.deliver alone, as the ticket reads: no other topic has a poller that sets the
+        # gauge. No absent() guard, see AlertOutboxDeadLettered.
+        expr: max by (env) (cv_outbox_depth{topic="alert.deliver"}) > 100
+        for: 5m
+        labels:
+          severity: ticket
+          component: alerts
+        annotations:
+          summary: "More than 100 alert deliveries have waited in the outbox for over 5 minutes"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-alertoutboxbacklog"
+      - alert: AlertOutboxDeadLettered
+        # #1016 (E40-T04): an alert.deliver row used up its `max_attempts` (8) and was
+        # dead-lettered: that channel's delivery is `failed`, the user has one in-app notice, and
+        # the alert record and its other channels stand. An event, so no `for`; held past the
+        # quiet-hours mute as the any-event tickets are (ws_gateway.yml header, with its two
+        # preconditions). The topic's series is bound at 0 at start (app.py `_alert_dispatcher`),
+        # so the first dead row after a restart is an increase. Scoped to alert.deliver: `topic`
+        # is shared with other outbox topics (order.submit, webhook.post, metrics.export), whose
+        # owners choose their own severity and runbook when they bind a series. No absent() guard
+        # on either series: the dispatcher runs only with `alerts_evaluator_enabled` (off by
+        # default, C-4.13), where a guard would stand for good.
+        expr: sum by (env) (increase(cv_outbox_dead_total{topic="alert.deliver"}[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: alerts
+        annotations:
+          summary: "An alert delivery used up its attempts and was dead-lettered"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-alertoutboxdeadlettered"
       # --- Journal-first audit lane (ADR-0037, #3009 S4a). Series: audit/metrics.py, read at the
       # scrape. Each rule is a ticket: ADR-0037 lists seven as pages, which only the Owner grants
       # (#2701), so each of those says so; a ticket is muted 22:00-07:00 UTC, so an event rule

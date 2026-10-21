@@ -53,7 +53,7 @@ from candleviewer.bars.models import BarSpec
 from candleviewer.bars.series_store import Hold
 from candleviewer.bars.spec import check_param_bounds, from_wire, qty_step_for
 from candleviewer.observability.context import current_request_id
-from candleviewer.observability.metrics import Counter, Histogram
+from candleviewer.observability.metrics import Counter, Gauge, Histogram
 from candleviewer.orderflow.errors import (
     InstanceCapError,
     InstanceRefusedError,
@@ -145,6 +145,13 @@ cv_ws_client_topics_depth = Histogram(
     "Subscriptions held by a connection, observed after each sub/unsub.",
     buckets=(1, 5, 10, 20, 50, 100, 150, 200),
 )
+#: E40-T04: live `alerts` subscriptions across all connections (inc at admit, dec when dropped).
+cv_ws_alerts_subscriptions_in_use = Gauge(
+    "cv_ws_alerts_subscriptions_in_use",
+    "Live WS subscriptions of the alerts topic (each its user's own deliveries).",
+)
+#: The family the gauge above counts.
+_ALERTS: Final = "alerts"
 cv_ws_permission_snapshots_refused_total = Counter(
     "cv_ws_permission_snapshots_refused_total",
     "Older WS permission snapshots refused because a newer one was applied (SR-189).",
@@ -354,6 +361,12 @@ class Subscription:
     #: #3476: `_admit` holds one of its user's draws, which its start draws (`handle_sub`) or
     #: its end lets go (`_drop`): its draw comes after an await, so the check is not enough.
     rebuild_held: bool = False
+    #: #2521 (E40-T04): the server-side owner of a SELF-scoped subscription (`alerts`), the
+    #: principal's user id recorded at admit, never a client value; None for every other scope.
+    #: Its snapshot is built for this user alone and its deltas reach it only when they name this
+    #: user (`sequencing.in_scope`). A connection's principal never changes user
+    #: (`apply_snapshot`), so it holds for the subscription's life.
+    owner: uuid.UUID | None = None
 
     @property
     def ch(self) -> str:
@@ -653,6 +666,9 @@ class ConnectionAuthz:
             snapshot_pending=snapshot,
             entity=entity,
             announced=False,
+            # #2521: SELF families are owned by the principal (by value: a test may reload the
+            # generated `Scope`, a StrEnum, which leaves two classes behind).
+            owner=self.principal.user_id if fam.scope == Scope.SELF else None,
         )
         if not snapshot and not self._continuity(sub):
             sub.snapshot_pending = forced = True  # §7.6: continuity unproven -> snap anyway
@@ -731,6 +747,8 @@ class ConnectionAuthz:
     def _record(self, sub: Subscription) -> None:
         self.by_id[sub.sub_id] = sub
         self._by_topic.setdefault(sub.ch, set()).add(sub.sub_id)
+        if sub.topic.family.family == _ALERTS:
+            cv_ws_alerts_subscriptions_in_use.inc()
         for symbol in sub.symbols:  # fixed for its life: `symbols` is a scope option (no `ctl`)
             self.held_symbols[symbol] = self.held_symbols.get(symbol, 0) + 1
 
@@ -917,6 +935,8 @@ class ConnectionAuthz:
         """Bookkeeping only: each operation that calls it reports through `_dropped`, once."""
         sub.ended = True
         if (held := self.by_id.pop(sub.sub_id, None)) is not None:  # once, if dropped twice
+            if held.topic.family.family == _ALERTS:  # with `by_id`: exact, whatever raises below
+                cv_ws_alerts_subscriptions_in_use.dec()
             for symbol in held.symbols:  # with `by_id`, before a release below can raise
                 if (count := self.held_symbols.pop(symbol, 1) - 1) > 0:  # never a KeyError
                     self.held_symbols[symbol] = count

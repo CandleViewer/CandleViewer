@@ -178,6 +178,7 @@
 ["cv_workspace_request_seconds", "histogram", ["operation"], "planned", "E15"]
 ["cv_workspace_users", "gauge", ["bucket"], "planned", "E15"]
 ["cv_workspaces_purged_total", "counter", ["kind"], "planned", "E15"]
+["cv_ws_alerts_subscriptions_in_use", "gauge", [], "live", "E40"]
 ["cv_ws_audit_failures_total", "counter", ["reason"], "live", "E17"]
 ["cv_ws_auth_failures_total", "counter", ["reason"], "live", "E17"]
 ["cv_ws_client_topics_depth", "histogram", [], "live", "E17"]

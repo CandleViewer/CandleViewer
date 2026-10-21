@@ -70,6 +70,7 @@ from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
 from candleviewer.alerts.evaluator import AlertEvaluator, AlertMetrics
 from candleviewer.alerts.lifecycle import AlertCharts
 from candleviewer.alerts.outbox import TOPIC_ALERT_DELIVER, alert_deliver_dedup_key
+from candleviewer.alerts.ports import FiringStore, WakingFiringStore
 from candleviewer.alerts.service import AlertsService
 from candleviewer.api import (
     make_audit_router,
@@ -421,6 +422,7 @@ from candleviewer.ws_wiring import (
     StorePrincipalLoader,
     WsEvents,
     WsRuntime,
+    alerts_topic,
     book_snapshot_source,
     default_snapshot_router,
     ingestion_streams,
@@ -1513,6 +1515,10 @@ def create_app(
     # runtime built below, which attaches to it, and its deltas go out through this hub.
     ws_wallet = wallet_topic(ws_sequencing)
     snapshot_adapters["wallet"] = ws_wallet
+    # E40-T04: the alerts module's `alerts` topic. The deliveries reader is attached below, with
+    # the alerts store; its deltas come from the dispatcher and the inbox routes (`on_change`).
+    ws_alerts = alerts_topic(ws_sequencing)
+    snapshot_adapters["alerts"] = ws_alerts
     # E17-T08: `machines.{entity}.state` entries; `sub` is authorised and snapped from them, and a
     # publish fans out through the hub, coalesced per entity (§6.4), waking a pending subscription.
     machine_states = MachineStateRegistry(
@@ -2338,8 +2344,14 @@ def create_app(
             rules_actor.resolve if rules_actor else None,
             _LazyAuditEmitter(ctx.audit),
             metric=_alert_delivery_sink(metrics_facade),
+            on_change=ws_alerts.deliveries_changed,
         )
     )
+    # E40-T04: the `alerts` topic reads the deliveries on the real backend; on the fake one it
+    # stays unattached and its subscriptions stay `snapshot_pending` (no I/O).
+    if resolved.storage_backend == "real":
+        ws_alerts.attach(SqlAlchemyAlertDeliveryRepository(_alert_pg))
+    ctx.alerts.bind_topic(ws_alerts)
 
     async def _visible_rules(actor: Actor) -> frozenset[str]:
         mgr = ctx.rules.manager()  # the rules module stopped: no rule rows, never every rule
@@ -2368,9 +2380,13 @@ def create_app(
     if resolved.alerts_webhook_enabled:  # refused whatever the evaluator flag (E40-S03)
         default_adapters(None, webhook_enabled=True)  # raises
     if resolved.alerts_evaluator_enabled:
+        dispatcher = _alert_dispatcher(
+            _alert_pg, metrics_facade, resolved.alerts_webhook_enabled,
+            on_change=ws_alerts.deliveries_changed,
+        )  # fmt: skip
         ctx.alerts.bind(
-            _alert_evaluator_factory(ctx, _alert_pg, metrics_facade),
-            _alert_dispatcher(_alert_pg, metrics_facade, resolved.alerts_webhook_enabled),
+            _alert_evaluator_factory(ctx, _alert_pg, metrics_facade, wake=dispatcher.notify),
+            dispatcher,
         )
     # E14-T01: owner-scoped /drawings; callers from the session (`audit_resolver`, as for
     # /admin/audit; None without an identity store -> 401), RBAC via `auth.scopes.enforce`.
@@ -2526,23 +2542,35 @@ def create_app(
 
 
 def _alert_dispatcher(
-    pg: SqlAlchemyRelationalRepository, facade: Metrics, webhook_enabled: bool
+    pg: SqlAlchemyRelationalRepository,
+    facade: Metrics,
+    webhook_enabled: bool,
+    *,
+    on_change: Callable[[Sequence[int]], Awaitable[None]] | None = None,
 ) -> AlertDispatcher:
     """E40-T04: `alert.deliver` outbox poller. Email stays disabled (suppressed) until the
-    E04 relay transport is provisioned; no network transport is constructed here."""
+    E04 relay transport is provisioned; no network transport is constructed here. *on_change*
+    (the `alerts` topic) is told of each settled batch."""
     adapters = default_adapters(None, webhook_enabled=webhook_enabled)  # refuses webhook=on
+    sink = _alert_delivery_sink(facade)
+    # The series the two alert.deliver outbox tickets read, bound at start: a series created by
+    # its first dead row gives `increase()` nothing to subtract (AlertOutboxDeadLettered), and
+    # the gauge reads 0 until the first sample (AlertOutboxBacklog).
+    for name in ("cv_outbox_dead_total", "cv_outbox_depth"):
+        sink(name, (TOPIC_ALERT_DELIVER,))
     return AlertDispatcher(
         SqlAlchemyAlertDispatchStore(pg),
         adapters,
         worker=f"api-{os.getpid()}-{uuid.uuid4().hex[:8]}",
         now=lambda: datetime.now(UTC),
-        metric=_alert_delivery_sink(facade),
+        metric=sink,
+        on_change=on_change,
     )
 
 
 def _alert_delivery_sink(facade: Metrics) -> Callable[[str, tuple[str, ...]], Any]:
-    """The `cv_alert_delivery_*` sink shared by the dispatcher and the desktop report-back
-    route (E40-T04): identical re-registration returns the same series."""
+    """The `cv_alert_delivery_*` and `cv_outbox_*` sink shared by the dispatcher and the desktop
+    report-back route (E40-T04): identical re-registration returns the same series."""
     m = {
         "cv_alert_delivery_total": facade.counter(
             "cv_alert_delivery_total", "Settled alert deliveries.", ("transport", "state"),
@@ -2555,6 +2583,9 @@ def _alert_delivery_sink(facade: Metrics) -> Callable[[str, tuple[str, ...]], An
             buckets=(1, 2, 3, 4, 6, 8, 10)),
         "cv_outbox_dead_total": facade.counter(
             "cv_outbox_dead_total", "Dead-lettered outbox rows.", ("topic",), max_series=8),
+        "cv_outbox_depth": facade.gauge(
+            "cv_outbox_depth", "Unprocessed, not-dead outbox rows by topic.", ("topic",),
+            max_series=8),
     }  # fmt: skip
 
     def _sink(name: str, labels: tuple[str, ...]) -> Any:
@@ -2565,9 +2596,14 @@ def _alert_delivery_sink(facade: Metrics) -> Callable[[str, tuple[str, ...]], An
 
 
 def _alert_evaluator_factory(
-    ctx: AppContext, pg: SqlAlchemyRelationalRepository, facade: Metrics
+    ctx: AppContext,
+    pg: SqlAlchemyRelationalRepository,
+    facade: Metrics,
+    *,
+    wake: Callable[[], None] | None = None,
 ) -> Callable[[], Awaitable[AlertEvaluator | None]]:
-    """E40-T03: evaluator over the rules module's pushed metric source (shared E35 bus)."""
+    """E40-T03: evaluator over the rules module's pushed metric source (shared E35 bus). With
+    *wake* (E40-T04, the dispatcher's `notify`), a committed firing is delivered at once."""
     metric = _alert_metric_sink(facade)
 
     async def _make() -> AlertEvaluator | None:
@@ -2575,9 +2611,10 @@ def _alert_evaluator_factory(
         if source is None:  # E35 evaluator off: no metric bus to subscribe to
             return None
         audit = _LazyAuditEmitter(ctx.audit)
-        store = SqlAlchemyAlertFiringStore(
+        firing: FiringStore = SqlAlchemyAlertFiringStore(
             pg, topic=TOPIC_ALERT_DELIVER, dedup_key=alert_deliver_dedup_key
         )
+        store = firing if wake is None else WakingFiringStore(firing, wake)
         return AlertEvaluator(
             store, source, charts=AlertCharts(), audit=audit, metrics=AlertMetrics(metric)
         )
