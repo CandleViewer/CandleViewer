@@ -813,13 +813,13 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  A3["Chart on Volume 50 BTC, the user commits 75 in SCR-042, SCR-031 or a favourite after seeing the estimate: about 3.1 M prints, up to 30 s"] --> B3["Pill reads Vol 75 BTC with a pending mark, Volume 50 stays drawn and live, labelled as shown"]
+  A3["Chart on Volume 50 BTC, the user commits 75 in SCR-042, SCR-031 or a favourite after seeing the estimate: about 3.1 M prints, about 30 s"] --> B3["Pill reads Vol 75 BTC with a pending mark, Volume 50 stays drawn and live, labelled as shown"]
   B3 --> C3["Server builds volume:75 over the chart's loaded window, at most 31 days and 250 000 bars, from recorded prints: chunked, cancellable, published by generation swap, contract G-2"]
   C3 --> V3["chart.bar_rebuild_started"]
   C3 --> D3{"Elapsed time"}
   D3 -->|under 600 ms| E3["No progress UI"]
   D3 -->|600 ms to 2 s| F3["Strip: Building Volume 75 BTC, indeterminate, Esc cancels"]
-  D3 -->|over 2 s| G3["Strip: 40 percent, 412 k of 1.03 M prints, about 6 s left, Cancel button, an unknown total stays indeterminate"]
+  D3 -->|over 2 s| G3["Strip: 40 percent, 1.24 M of 3.1 M prints, about 19 s left, Cancel button, an unknown total stays indeterminate"]
   E3 --> H3{"Outcome"}
   F3 --> H3
   G3 --> H3
