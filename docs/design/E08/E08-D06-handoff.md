@@ -67,6 +67,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 | modal, right        | opening, open, closing         | B1, B20        | `Modal`, `RightSide` (catalogued) | 480 px; below the TopBar and the SCR-152 slot (spec D-14) |
 | full width          | viewport of 720 CSS px or less | B20            | `FullWidth` (new)                 | the 200 % zoom case                                       |
 | opened at a section | `section: "coverage"`          | B21            | `OpenAtSection` (new)             | focus on that band's heading, scrolled into view          |
+| pop-out window      | opener in a pop-out window     | — (text only)  | `PopOutHost` (new)                | scrim per window; one drawer per window (spec D-16)       |
 
 ### Table 2 — Keyboard
 
@@ -283,6 +284,7 @@ Screen reader: written, not run; the release-level pass (`05` §8) runs it. Exce
 - [ ] Accessibility sign-off — PENDING: the owner's approval (agent-delivery adaptation).
 - [x] Order placement, positions, arming — the drawer places no orders; both actions open a new panel (spec D-15).
 - [x] Estimated values chip-tagged — N/A: the funding rate reads "predicted" in words; no CMP-227 chip until E24-D01's
-      C7 (spec §4.2). Demo / Live unambiguous — the env band stays live above the scrim (spec D-14).
+      C7 (spec §4.2). Demo / Live unambiguous — the env band stays live above the scrim (spec D-14); what differs per
+      environment is the spec §6 "Demo / live" row (Q10).
 - [x] Reuses existing CMP-\* — yes; no new component id.
 - [ ] Stories match the matrix — PENDING the FE ticket. Published library components only — PENDING the boards.
