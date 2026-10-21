@@ -81,8 +81,14 @@ MAX_DENIALS_LISTED = 10
 DENIAL_AUDITS_PER_WINDOW = 20
 DENIAL_AUDIT_WINDOW_S = 60.0
 MAX_SUBSCRIPTIONS = 200
+#: §3.6 / §16.2 / `welcome.limits.max_outbound_frame_bytes`: the most one outbound frame holds; a
+#: snapshot or a `bars` delta is split above it (`sequencing`). The number's one home (#572).
+MAX_OUTBOUND_FRAME_BYTES = 4 * 1024 * 1024
 #: §16.2 / welcome `limits.max_symbols_per_connection`; excess -> `subscription_limit`.
 MAX_SYMBOLS_PER_CONNECTION = 40
+#: §5.1 / §16.2 / welcome `limits.min_throttle_ms`: a requested throttle is raised to it (0 stays
+#: 0 for `orders` and `executions`). The number's one home (#572); `ws/topics.py` names it.
+MIN_THROTTLE_MS = 50
 #: SR-E12-07 (§6.1): `bars.*` subscriptions per connection, live and replay; the next one gets
 #: `subscription_limit`. With `history` <= 1 000 this bounds one socket's snapshot amplification.
 MAX_BARS_SUBSCRIPTIONS = 16

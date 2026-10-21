@@ -22,6 +22,7 @@ from typing import Any, Final, Literal
 
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import Allow, Deny, PrincipalSnapshot, decide
+from candleviewer.ws import limits
 from candleviewer.ws.lifecycle import MAX_EPOCH_MS
 
 # Each pattern below is applied with `fullmatch`. Python's `$` also matches before a final newline,
@@ -46,7 +47,7 @@ _SEGMENT_RE: Final = re.compile(r"^[A-Za-z0-9:_]+$")
 TOPIC_MAX_LEN: Final = 120
 #: §13 `common.schema.json#/$defs/topic`: the shape of a topic name, before it is looked up (§6).
 TOPIC_NAME_RE: Final = re.compile(r"^[a-z_]+(\.[A-Za-z0-9:_-]+)*$")
-MIN_THROTTLE_MS: Final = 50
+MIN_THROTTLE_MS: Final = limits.MIN_THROTTLE_MS
 DEPTHS: Final = frozenset({1, 50, 200, 500})
 BAR_TYPES: Final = frozenset(
     {"time", "tick", "volume", "range", "delta", "renko", "pnf", "heikin_ashi"}

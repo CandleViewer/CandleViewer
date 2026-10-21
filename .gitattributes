@@ -20,6 +20,11 @@ docs/plan/ws-schema.json linguist-generated=true
 services/api/candleviewer/api/_generated/** linguist-generated=true
 services/api/candleviewer/ws/_generated/** linguist-generated=true
 
+# E17-T07: the cv.v1 wire-contract golden is text with LF endings. It is deliberately not marked
+# linguist-generated: a change to it is the reviewable act that changes the contract (`--extend` for
+# an additive change, a v2 golden for a breaking one), so its diff is shown in a PR.
+packages/protocol/wire-contract.v1.golden.json text eol=lf
+
 # Generated artefacts that are byte-compared against their generator in tests
 # (tools/rbac/generate.py --check, tools/gen/export_instrument_policy_*.py).
 # The generators always emit LF; pin eol=lf explicitly so the checkout can

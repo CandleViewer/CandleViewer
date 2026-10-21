@@ -685,8 +685,12 @@
         },
         "metrics": {
           "items": {
+            "maxLength": 64,
+            "minLength": 1,
             "type": "string"
           },
+          "maxItems": 12,
+          "minItems": 1,
           "type": "array"
         },
         "min_size": {
@@ -760,6 +764,11 @@
             ]
           },
           "then": {
+            "properties": {
+              "s": {
+                "type": "integer"
+              }
+            },
             "required": [
               "ch",
               "s",
@@ -782,6 +791,7 @@
           "then": {
             "required": [
               "ch",
+              "s",
               "ts",
               "p"
             ]
@@ -3003,7 +3013,8 @@
               ]
             },
             "from_seq": {
-              "$ref": "cv://ws/v1/common.schema.json#/$defs/seq"
+              "minimum": 0,
+              "type": "integer"
             },
             "from_ts_ms": {
               "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
@@ -3071,7 +3082,8 @@
               "type": "array"
             },
             "from_seq": {
-              "$ref": "cv://ws/v1/common.schema.json#/$defs/seq"
+              "minimum": 0,
+              "type": "integer"
             },
             "from_ts_ms": {
               "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
@@ -3094,6 +3106,8 @@
             },
             "metrics": {
               "items": {
+                "maxLength": 64,
+                "minLength": 1,
                 "type": "string"
               },
               "maxItems": 12,
@@ -3134,6 +3148,7 @@
               "items": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
               },
+              "maxItems": 100,
               "type": "array"
             },
             "session_anchor": {
@@ -3152,8 +3167,11 @@
             },
             "status": {
               "items": {
+                "maxLength": 64,
+                "minLength": 1,
                 "type": "string"
               },
+              "maxItems": 16,
               "type": "array"
             },
             "symbols": {
@@ -3161,6 +3179,7 @@
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/symbol"
               },
               "maxItems": 40,
+              "minItems": 1,
               "type": "array"
             },
             "throttle_ms": {
@@ -3280,7 +3299,7 @@
                 "type": "boolean"
               },
               "sub_id": {
-                "type": "string"
+                "$ref": "cv://ws/v1/common.schema.json#/$defs/subId"
               },
               "warning": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/error"
@@ -4296,7 +4315,8 @@
             "max_topics_per_request",
             "max_inbound_frame_bytes",
             "max_outbound_frame_bytes",
-            "min_throttle_ms"
+            "min_throttle_ms",
+            "max_symbols_per_connection"
           ],
           "type": "object"
         },

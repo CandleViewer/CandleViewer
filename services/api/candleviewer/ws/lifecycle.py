@@ -34,8 +34,11 @@ from typing import Any, Final
 from candleviewer.ws.limits import (
     AUTH_TIMEOUT_S,
     MAX_INBOUND_FRAME_BYTES,
+    MAX_OUTBOUND_FRAME_BYTES,
     MAX_SUBSCRIPTIONS,
+    MAX_SYMBOLS_PER_CONNECTION,
     MAX_TOPICS_PER_SUB,
+    MIN_THROTTLE_MS,
 )
 
 SUBPROTOCOL_JSON: Final = "cv.v1.json"
@@ -74,10 +77,12 @@ MAX_EPOCH_MS: Final = 2**53 - 1
 LIMITS_BLOCK: Final[dict[str, int]] = {
     "max_subscriptions": MAX_SUBSCRIPTIONS,
     "max_topics_per_request": MAX_TOPICS_PER_SUB,
+    # The contract default. `welcome_payload` replaces it with the cap the gateway enforces, which
+    # `CV_WS_MAX_INBOUND_FRAME_BYTES` may lower and never raise (23 section 4.3).
     "max_inbound_frame_bytes": MAX_INBOUND_FRAME_BYTES,
-    "max_outbound_frame_bytes": 4 * 1024 * 1024,
-    "min_throttle_ms": 50,
-    "max_symbols_per_connection": 40,
+    "max_outbound_frame_bytes": MAX_OUTBOUND_FRAME_BYTES,
+    "min_throttle_ms": MIN_THROTTLE_MS,
+    "max_symbols_per_connection": MAX_SYMBOLS_PER_CONNECTION,
 }
 #: §4.2 `welcome.features` every build serves. `coalescing` is not one of them: it mirrors
 #: `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2), so `welcome_features` adds it per
@@ -117,7 +122,9 @@ CLOSE_REASONS: Final[dict[str, tuple[CloseCode, bool]]] = {
     "auth_failed": (CloseCode.UNAUTHENTICATED, True),
     "not_authenticated": (CloseCode.UNAUTHENTICATED, True),
     "token_expired": (CloseCode.UNAUTHENTICATED, True),
-    "session_revoked": (CloseCode.UNAUTHENTICATED, True),
+    # The revocation hub sends this `bye` with `reconnect: false` (`revocation.bye_frame`); this
+    # builder says the same, so one reason has one answer (#572).
+    "session_revoked": (CloseCode.UNAUTHENTICATED, False),
     "user_disabled": (CloseCode.FORBIDDEN, False),
     # §4.3 (#2295): enrolment-only session; enrol over REST, then connect again.
     "mfa_enrollment_required": (CloseCode.FORBIDDEN, False),
@@ -497,9 +504,12 @@ def welcome_payload(
     auth_timeout_s: float = AUTH_TIMEOUT_S,
     heartbeat_interval_s: float = HEARTBEAT_INTERVAL_S,
     heartbeat_timeout_s: float = HEARTBEAT_TIMEOUT_S,
+    max_inbound_frame_bytes: int = MAX_INBOUND_FRAME_BYTES,
 ) -> dict[str, Any]:
     """§4.2 body. `clock_skew_ms` = server time - client `clock_ms` (reported, never corrected);
-    omitted when the client sent no §13 `epochMs` clock (`client_epoch_ms`)."""
+    omitted when the client sent no §13 `epochMs` clock (`client_epoch_ms`). `limits` advertises
+    what the gateway enforces: the inbound cap is the gateway's own, which
+    `CV_WS_MAX_INBOUND_FRAME_BYTES` may lower."""
     p: dict[str, Any] = {
         "protocol": "cv.v1",
         "encoding": encoding,
@@ -513,7 +523,7 @@ def welcome_payload(
             "interval_ms": int(heartbeat_interval_s * 1000),
             "timeout_ms": int(heartbeat_timeout_s * 1000),
         },
-        "limits": dict(LIMITS_BLOCK),
+        "limits": {**LIMITS_BLOCK, "max_inbound_frame_bytes": max_inbound_frame_bytes},
         "features": dict(features),
     }
     if (clock_ms := client_epoch_ms(client_clock_ms)) is not None:

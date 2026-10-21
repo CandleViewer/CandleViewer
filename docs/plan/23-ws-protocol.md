@@ -96,6 +96,24 @@ The server echoes exactly one. A client offering no recognised subprotocol is cl
 - **Breaking changes** (field removal, semantic change, envelope layout change) introduce `cv.v2`, served in parallel for at least one release.
 - The server states the exact build in the `welcome` frame (`protocol`, `server_version`, `git_sha`). A client whose `min_server_version` expectation is unmet SHOULD warn but MAY continue.
 
+The version is negotiated by the subprotocol (`cv.v1.*`, §2.2) and carried by `protocol: "cv.v1"` in `hello` and `welcome` (§4.2); a breaking change is `cv.v2`, served in parallel (C-6.3). The envelope has no `v` member, because one would repeat the subprotocol on every frame, and none is added.
+
+**Open enums.** The server-to-client enumerations `snapMeta.reason` (§7.4), `bye.reason` (§4.4, §13.6), `revoked.reason` (§9.5) and `system.kind` (§15.9, §16.5) are open: a new value is additive, and a client keeps an unknown one as a tag. Every other server-to-client enumeration is closed, and so is the set of frame types `t` (§3.1): a new frame type is breaking, because a client treats an unknown `t` as a decode failure.
+
+**Freeze (E17-T07, #572, 2026-10-20).** `cv.v1` is frozen. `packages/protocol/wire-contract.v1.golden.json`, generated from the implementation by `tools/contracts/wire_contract.py` and never edited by hand, pins:
+
+- the 24-byte binary header and every body kind's layout, field by field: offsets, sizes, the reserved bytes and the header flag names included, and that a heatmap frame carries one column (its header's `record_count` is 1);
+- the envelope: its frame types, its members and their types, the members each frame type requires, and the member types a frame type adds (`s` is an integer on every `d`);
+- every control frame of §13.1 to §13.6: its required members, the JSON type of each member and whether it admits others;
+- the pinned server-to-client enumerations of §13 (two of them open), the close codes with the reasons that map to them and each reason's `reconnect`, the error codes with their scope, `retryable` and close code, the six advertised limits (each as a floor or a ceiling, at the shipped defaults), the topic names with the name of each payload schema, and the subprotocols;
+- the bounds that were set before the freeze: `from_seq` (an integer of 0 or more), the list options `metrics`, `status`, `rule_ids` and `symbols`, `ctl.metrics` and `sub_id` (§13.5, §13.6).
+
+The limits and the bounds are compared by direction. Four limits are floors (`max_subscriptions`, `max_topics_per_request`, `max_inbound_frame_bytes`, `max_symbols_per_connection`): a later release may raise one, and lowering one is breaking. Two are ceilings (`max_outbound_frame_bytes`, `min_throttle_ms`): a later release may lower one, and raising one is breaking. A bound on a request (what the server accepts) may widen, which is additive, and may not narrow; a promise about what the server sends (`sub_id`'s length, the type of `s`) may narrow, which is additive, and may not widen.
+
+It does not pin: the other ranges, lengths, item bounds and enumerations of the request options (§13.5, §13.6) and of `hello` and `resync` (`hello.capabilities`, `hello.encodings`, `hello.shell`, `resync.reason`); the enumerations of `common` other than `snapMeta.reason`, `snapMeta.source` and the error codes (`environment`, which `auth_ok.allowed_environments` uses, `side`, `barType` and `depth`); the code list in `bye.code`'s schema (the gateway's own close-code set is pinned); the members of `snapMeta`; the `e` and `sp` clauses of the envelope schema (a binary `p` is a string; a span id needs an integer `s`); the members of the §14 and §15 payload schemas (only the name of each topic's schema is pinned); or the wording of any text. A change to one of those is judged against C-6.3 and `packages/protocol/README.md` in review, and no gate fails on it.
+
+`make contracts` and the `contract` job fail on a change to anything the golden pins, and the message names this section. An additive change (above) passes. The golden itself changes in two ways, each shown as a diff in review: `wire_contract.py --extend` records an additive change and refuses any other, and a breaking change adds `wire-contract.v2.golden.json` beside it, with `cv.v2` served in parallel (C-6.3). A deleted or damaged golden is restored from git; `--write` only creates the first golden and refuses to overwrite one. A bound, enumeration or limit that the tool declares and the golden lacks is damage, and any other member removed from the golden by hand reads as a promise never made and shows as a deleted line in the golden's diff. This document is the source of truth: `runtime_spec_parity` compares the running gateway's `welcome.limits`, the limits of §16.2, the error and close-code catalogues, the binary layout, the `CV_WS_*` defaults and the topic catalogue with it, and the code moves to match. Paragraphs headed "As built" are normative and frozen with their section.
+
 ### 2.4 Relationship to REST
 
 | Need                                                       | Surface                                                 |
@@ -248,7 +266,7 @@ If an emission cannot be built even structured (a value no valid bar has: not fi
 
 **body_kind 6 — heatmap column.** One time-bucket column: `u32 ts_offset_ms`, `i64 price_min`, `i64 price_step`, `u32 row_count`, then `row_count` × 16 bytes: `u64 bid_size`, `u64 ask_size`. The renderer uploads this straight into a texture row. The header's `record_count` counts the one column, so it is 1; any other value is `frame_malformed` (#415).
 
-**Reserved record bytes.** Bars (85 B) and footprint cells (33 B) records end in 4 reserved zero bytes after `flags` (the listed fields total 81 B / 29 B), and each footprint group prefix (28 B) ends in 3 after its `flags` (25 B listed); the encoder writes zeros and decoders ignore them. So do the header's `reserved` bytes and its `flags` bits 4–7: 0 on send, ignored on receive (#415). The byte layout of every kind is declared once in `packages/protocol/cvwb-layout.json` (E17-T02).
+**Reserved record bytes.** Bars (85 B) and footprint cells (33 B) records end in 4 reserved zero bytes after `flags` (the listed fields total 81 B / 29 B), and each footprint group prefix (28 B) ends in 3 after its `flags` (25 B listed); the encoder writes zeros and decoders ignore them. So do the header's `reserved` bytes and its `flags` bits 4–7: 0 on send, ignored on receive (#415). The byte layout of every kind is declared once in `packages/protocol/cvwb-layout.json` (E17-T02). Naming one of these bytes later, or a header flag bit, changes the layout that the wire-contract golden pins, so it is a `cv.v2` change (§2.3); a later bit of a record's `flags` byte that this section calls reserved is additive, as above.
 
 **Client obligations.** A client MUST validate `magic` and `format_version` (and MUST reject, as `frame_malformed`, a `(body_kind, format_version)` pair it does not know — e.g. a v1 decoder receiving v2 bars; the code is `frame_malformed` on the wire and decoders MAY surface the more specific diagnostic `unsupported_format_version` locally, which maps to `frame_malformed` in §10), and MUST treat a body whose length disagrees with `record_count` as a protocol error (`frame_malformed`, §10) and resync. For fixed-stride bodies (body_kind 4, bars) the rule is exact: body length MUST equal `24 + record_count × record_size`; both a short body and trailing bytes are `frame_malformed`. Forward compatibility is carried by `format_version`, not by trailing bytes. Variable-layout body kinds continue to ignore trailing bytes after the last declared record.
 
@@ -368,6 +386,17 @@ The client sends `hello` immediately on open. The server replies `welcome` with 
 }
 ```
 
+**`welcome.limits` (normative).** Every value below is what a `welcome` advertises and what the gateway enforces; `runtime_spec_parity` (§16.5) compares them with the running gateway. `max_inbound_frame_bytes` is the cap in force, which `CV_WS_MAX_INBOUND_FRAME_BYTES` may lower (§4.3). The wire-contract golden pins these six as the shipped defaults (§2.3). `max_subscriptions`, `max_topics_per_request`, `max_inbound_frame_bytes` and `max_symbols_per_connection` are floors: a later release may raise them and may not lower them. `max_outbound_frame_bytes` and `min_throttle_ms` are ceilings: a later release may lower them and may not raise them. A deployment that lowers the inbound cap applies a policy of its own, announced to its clients, and the contract does not change with it.
+
+| Key                          | Value     | Unit                                             | Enforced as                                                                 |
+| ---------------------------- | --------- | ------------------------------------------------ | --------------------------------------------------------------------------- |
+| `max_subscriptions`          | 200       | subscriptions per connection                     | `sub_ok` result `subscription_limit` (§5.2)                                 |
+| `max_topics_per_request`     | 50        | topics in one `sub` or `unsub` frame             | `too_many_topics` on a `sub`, `invalid_options` on an `unsub` (§5.2, §5.3)  |
+| `max_inbound_frame_bytes`    | 262 144   | bytes (8 192 until `auth_ok`)                    | `bye frame_too_big` and `1009` (§3.6)                                       |
+| `max_outbound_frame_bytes`   | 4 194 304 | bytes                                            | snapshots chunked, bars `d` split (§3.6)                                    |
+| `min_throttle_ms`            | 50        | milliseconds (0 only for `orders`, `executions`) | a lower request is raised to it, and `effective.throttle_ms` says so (§5.1) |
+| `max_symbols_per_connection` | 40        | distinct symbols per connection                  | `sub_ok` result `subscription_limit` (§5.2)                                 |
+
 `limits.max_inbound_frame_bytes` applies once `auth_ok` is sent. Until then a frame may be at most 8 KiB, and a MessagePack frame at most 72 values (§3.6).
 
 `clock_skew_ms` = server time minus the client's `clock_ms`. The UI surfaces a warning above ±2 000 ms because a skewed client mis-renders "bar closes in N seconds" countdowns. A `clock_ms` that is not a §13 `epochMs` (an integer from 0 to 2^53 - 1) is ignored as if absent, so the `welcome` then has no `clock_skew_ms`; a `ping`'s `client_ms` likewise, and its `pong` then has no `rtt_hint_ms` (§9.1, #415).
@@ -469,10 +498,12 @@ Rules:
 | `1011` | internal error  | Unhandled server fault.                       | Reconnect with backoff.                      |
 | `1012` | service restart | Server exiting without the §9.4 sequence.     | Reconnect with backoff; see §9.4.            |
 | `1013` | try again later | Server shedding load.                         | Reconnect after `Retry-After` hint in `bye`. |
-| `4401` | unauthenticated | Auth timeout, auth failure, or token expiry.  | Refresh token over REST, reconnect.          |
+| `4401` | unauthenticated | Auth timeout, auth failure, or token expiry.  | Refresh, reconnect; see `bye.reconnect`.     |
 | `4403` | forbidden       | Permissions revoked entirely (user disabled). | Return to login (see below); do not retry.   |
 | `4429` | rate limited    | Too many frames or reconnects.                | Back off per `bye.retry_after_ms`.           |
 | `4400` | bad client      | Repeated protocol violations.                 | Surface a bug report; do not hot-loop.       |
+
+**`bye.reconnect`.** A client MUST honour `bye.reconnect`: when it is `false` the client does not reconnect with this session, and does not refresh its token to retry it. What it does instead is the reason's own, in the rows above and the paragraphs below. `session_revoked` closes `4401` with `reconnect: false` (§4.3), so a revoked session is not refreshed and reconnected; on the other `4401` reasons (`auth_failed`, `auth_timeout`, `not_authenticated`, `token_expired`) `reconnect` is `true`, and the client refreshes its token over REST and reconnects (§9.2).
 
 A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It is sent before `accept`, so the client gets HTTP `403` and no `bye`. An `auth` or re-`auth` refused because the session is enrolment-only (§4.3) also closes with `4403`, reason `mfa_enrollment_required`. The client does not return to login: it finishes TOTP enrolment over REST, then connects with the full session's token, and never auto-retries. As built (#2155), `1013` has one cause: a socket shed at the cap on sockets that have not authenticated yet (§4.3).
 
@@ -1158,13 +1189,13 @@ A client that already bootstrapped over REST may attach to deltas only:
   "p": {
     "snapshot": false,
     "topics": [
-      { "ch": "bars.BTCUSDT.time.1", "opts": { "from_seq": null, "from_ts_ms": 1789132000000 } },
+      { "ch": "bars.BTCUSDT.time.1", "opts": { "from_seq": 0, "from_ts_ms": 1789132000000 } },
     ],
   },
 }
 ```
 
-The server accepts this **only** when it can prove continuity: it holds state covering `from_ts_ms` and no resync occurred since. Otherwise it answers `sub_ok` with `ok: true, snapshot_forced: true` and sends a `snap` anyway. The client must handle the forced snapshot; it may not assume its REST-derived state survived.
+The server accepts this **only** when it can prove continuity: it holds state covering `from_ts_ms` and no resync occurred since. Otherwise it answers `sub_ok` with `ok: true, snapshot_forced: true` and sends a `snap` anyway. The client must handle the forced snapshot; it may not assume its REST-derived state survived. `from_seq` is a whole number, 0 or more, and never `null` (§13.5); a `sub` with `snapshot: false` and no `from_seq` is `invalid_options` (§5.1). The server reads the key and not its value yet: every such attach is forced (§7.7).
 
 ### 7.7 As built (E17-S03, #2178; wired by #377)
 
@@ -1374,7 +1405,7 @@ Client reconnect policy is mandated (it is a contract-test assertion, not a sugg
 
 - Full jitter is mandatory — a deterministic backoff turns a server restart into a synchronised thundering herd from every open pane.
 - On close codes `1002`, `4400`, `4403` the client does **not** auto-reconnect; it surfaces an error, because retrying a protocol or authorisation fault is pure load.
-- On `4401` the client refreshes its token over REST **first**, then reconnects.
+- On `4401` the client refreshes its token over REST **first**, then reconnects, unless the `bye` says `reconnect: false` (`session_revoked`, §4.3): the session is over, and the client does not refresh or reconnect with it (§4.4).
 - The client shows a connection-state chip (`live` / `reconnecting` / `degraded` / `offline`) at all times; charts render last-known state greyed with a staleness age.
 
 ### 9.3 Resubscription after reconnect
@@ -1537,9 +1568,9 @@ The `REST` column shows the REST code a client may fold this into; “=” means
 | `auth_failed`              | connection | no          | `unauthenticated`      | Token invalid or signature rejected. Re-login.                                       |
 | `auth_timeout`             | connection | no          | —                      | No `auth` within 10 s.                                                               |
 | `token_expired`            | connection | yes         | `unauthenticated`      | Refresh over REST and re-`auth` (in place or on a new socket).                       |
-| `forbidden`                | topic      | no          | =                      | Missing permission for the topic family.                                             |
-| `account_scope_denied`     | topic      | no          | =                      | None of the requested accounts are in scope.                                         |
-| `view_as_read_only`        | request    | no          | =                      | Action frame on a view-as session (§9.6); `cv.v1` defines none yet. Nothing changes. |
+| `forbidden`                | any        | no          | =                      | Missing permission for the topic family.                                             |
+| `account_scope_denied`     | any        | no          | =                      | None of the requested accounts are in scope.                                         |
+| `view_as_read_only`        | any        | no          | =                      | Action frame on a view-as session (§9.6); `cv.v1` defines none yet. Nothing changes. |
 | `unknown_topic`            | topic      | no          | `not_found`            | Not in the catalogue, or a `bars.*` or `indicators.*` topic not served (§6.1).       |
 | `invalid_topic_format`     | topic      | no          | `validation_failed`    | Malformed topic (bad depth, dotted `param`, unknown bar type) or bad spec (§6.1).    |
 | `unsupported_symbol`       | topic      | no          | `unsupported_category` | Not a Bybit USDT linear perpetual, or unknown instrument.                            |
@@ -1552,13 +1583,15 @@ The `REST` column shows the REST code a client may fold this into; “=” means
 | `resync_rate_limited`      | topic      | yes         | `rate_limited`         | §7.5 budget spent: refused; spent by resyncs alone, a `resync` revokes. Back off.    |
 | `client_rate_limited`      | connection | yes         | `rate_limited`         | Inbound frame rate or per-user connect rate (`bye`, §4.3) exceeded. Back off.        |
 | `slow_consumer`            | connection | yes         | —                      | Outbound queue overflow; closes `4429`.                                              |
-| `no_data_recorded`         | topic      | no          | =                      | Topic needs recorded history that does not exist. Start recording first.             |
-| `degraded_data`            | topic      | yes         | =                      | Upstream stale beyond SLO; data will resume. Show the staleness badge.               |
-| `exchange_unavailable`     | topic      | yes         | =                      | Upstream disconnected; subscription stays open and will re-snapshot.                 |
+| `no_data_recorded`         | any        | no          | =                      | Topic needs recorded history that does not exist. Start recording first.             |
+| `degraded_data`            | any        | yes         | =                      | Upstream stale beyond SLO; data will resume. Show the staleness badge.               |
+| `exchange_unavailable`     | any        | yes         | =                      | Upstream disconnected; subscription stays open and will re-snapshot.                 |
 | `replay_session_not_found` | topic      | no          | `not_found`            | Unknown or destroyed `replay_session_id`.                                            |
 | `replay_session_ended`     | topic      | no          | `gone`                 | Replay finished or was destroyed; subscription revoked.                              |
 | `internal_error`           | any        | yes         | =                      | Server fault; `request_id` correlates to logs and the audit trail.                   |
 | `user_disabled`            | connection | no          | `forbidden`            | The account was disabled mid-session. `bye` + close `4403` follow; do not reconnect. |
+
+**Scope `any`.** The registry gives the seven dual-surface codes (`forbidden`, `account_scope_denied`, `no_data_recorded`, `degraded_data`, `exchange_unavailable`, `internal_error` and `view_as_read_only`) the scope `any`, because each also answers a REST request. The column therefore says nothing about where one lands on the socket: that is the frame's own addressing (§10.1), a `ch` scoping it to that topic, an `id` alone to that request, and neither to the connection.
 
 `mfa_enrollment_required` is deliberately absent from this table: it is a REST-only code (`x-error-codes`). An enrolment-only session never gets past `auth` (§4.3), so the WebSocket carries that refusal only as `bye.reason`, never as an `err` code.
 
@@ -2047,11 +2080,11 @@ Shared definitions used throughout:
   "allOf": [
     {
       "if": { "properties": { "t": { "const": "d" } }, "required": ["t"] },
-      "then": { "required": ["ch", "s", "ts", "p"] }
+      "then": { "required": ["ch", "s", "ts", "p"], "properties": { "s": { "type": "integer" } } }
     },
     {
       "if": { "properties": { "t": { "const": "snap" } }, "required": ["t"] },
-      "then": { "required": ["ch", "ts", "p"] }
+      "then": { "required": ["ch", "s", "ts", "p"] }
     },
     {
       "if": { "properties": { "e": { "const": "b" } }, "required": ["e"] },
@@ -2072,7 +2105,7 @@ Shared definitions used throughout:
 }
 ```
 
-A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the last, which takes the set's one sequence number; the chunks share one `id`. The envelope has no `partial` field: `partial` is a CVWB header bit (§3.4), so on either encoding the shared `id` marks a `snap` as a chunk of a set (a single-frame `snap` has none) and `s: null` marks a chunk that is not the last; the set is assembled and applied as §7.2 says. That `id` is an opaque server-minted set id, never a request's: clients compare it for equality only. No other frame carries `s: null`: a single-frame `snap`, the final chunk and every `d` carry an integer `s` (§7.1).
+A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the last, which takes the set's one sequence number; the chunks share one `id`. The envelope has no `partial` field: `partial` is a CVWB header bit (§3.4), so on either encoding the shared `id` marks a `snap` as a chunk of a set (a single-frame `snap` has none) and `s: null` marks a chunk that is not the last; the set is assembled and applied as §7.2 says. That `id` is an opaque server-minted set id, never a request's: clients compare it for equality only. No other frame carries `s: null`: a single-frame `snap`, the final chunk and every `d` carry an integer `s` (§7.1). The schema states it: `s` is required on every `snap` (`null` only on a chunk that is not the last) and is an integer on every `d`.
 
 ### 13.2 `hello`
 
@@ -2153,7 +2186,8 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "max_topics_per_request",
         "max_inbound_frame_bytes",
         "max_outbound_frame_bytes",
-        "min_throttle_ms"
+        "min_throttle_ms",
+        "max_symbols_per_connection"
       ],
       "properties": {
         "max_subscriptions": { "type": "integer" },
@@ -2299,7 +2333,7 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "throttle_ms": { "type": "integer", "minimum": 0, "maximum": 60000 },
         "encoding": { "enum": ["binary", "structured"] },
         "coalesce": { "type": "boolean", "default": true },
-        "from_seq": { "$ref": "cv://ws/v1/common.schema.json#/$defs/seq" },
+        "from_seq": { "type": "integer", "minimum": 0 },
         "from_ts_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
 
         "min_size": { "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal" },
@@ -2330,7 +2364,7 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
           "type": "array",
           "minItems": 1,
           "maxItems": 12,
-          "items": { "type": "string" }
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
         },
         "bar_type": { "$ref": "cv://ws/v1/common.schema.json#/$defs/barType" },
         "param": { "type": "string", "maxLength": 24 },
@@ -2343,13 +2377,19 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         },
         "symbols": {
           "type": "array",
+          "minItems": 1,
           "maxItems": 40,
           "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/symbol" }
         },
         "open_only": { "type": "boolean" },
-        "status": { "type": "array", "items": { "type": "string" } },
+        "status": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
         "rule_ids": {
           "type": "array",
+          "maxItems": 100,
           "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" }
         },
         "include_events": { "type": "boolean" },
@@ -2366,7 +2406,7 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "throttle_ms": { "type": "integer", "minimum": 0, "maximum": 60000 },
         "encoding": { "enum": ["binary", "structured"] },
         "coalesce": { "type": "boolean", "default": true },
-        "from_seq": { "$ref": "cv://ws/v1/common.schema.json#/$defs/seq" },
+        "from_seq": { "type": "integer", "minimum": 0 },
         "from_ts_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
         "instances": {
           "type": "array",
@@ -2399,7 +2439,7 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "properties": {
           "ch": { "$ref": "cv://ws/v1/common.schema.json#/$defs/topic" },
           "ok": { "type": "boolean" },
-          "sub_id": { "type": "string" },
+          "sub_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/subId" },
           "rs": {
             "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid",
             "description": "On each result of a replay `sub` but the `system` one, accepted or refused (§5.2)."
@@ -2488,7 +2528,12 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
     "coalesce": { "type": "boolean" },
     "depth": { "$ref": "cv://ws/v1/common.schema.json#/$defs/depth" },
     "price_grouping": { "type": "integer", "minimum": 1, "maximum": 1000 },
-    "metrics": { "type": "array", "items": { "type": "string" } },
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    },
     "instances": {
       "type": "array",
       "minItems": 1,
@@ -4564,7 +4609,7 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 
 Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m footprint, depth-50 DOM, tape) on BTCUSDT during a volatile session. Full method and thresholds in `06-performance-and-load-standard.md`.
 
-**Measured status (E17-K01, 2026-10-06; laptop i7-8550U, headless Chromium, modelled workload, not a live capture).** Book-delta decode p99 0.004 ms (JSON) / 0.002 ms (binary); footprint 400-cell decode p99 0.35 ms (JSON) / 0.19 ms (binary); bandwidth 154 KiB/s raw JSON, 24 KiB/s with `permessage-deflate` (binary 50 raw). All three encodings are inside the targets; the full re-snapshot, tick-to-pixel, fps and resync rows remain unmeasured until E17-Q03. See ADR-0005 Amendment 1.
+**Measured status (E17-K01, 2026-10-06; laptop i7-8550U, headless Chromium, modelled workload, not a live capture).** Book-delta decode p99 0.004 ms (JSON) / 0.002 ms (binary); footprint 400-cell decode p99 0.35 ms (JSON) / 0.19 ms (binary); bandwidth 154 KiB/s raw JSON, 24 KiB/s with `permessage-deflate` (binary 50 raw). All three encodings are inside the targets; the full re-snapshot, tick-to-pixel, fps and resync rows remain unmeasured until E17-Q03. See ADR-0005 Amendments 1 and 2.
 
 | Metric                                         | Target                | Hard fail          |
 | ---------------------------------------------- | --------------------- | ------------------ |
@@ -4575,6 +4620,8 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Full re-snapshot of the reference workspace    | < 700 KiB, < 400 ms   | > 2 MiB or > 1.5 s |
 | Renderer frame rate under continuous feed      | 60 fps                | < 45 fps p95       |
 | Resyncs per hour per topic (`upstream_desync`) | < 1                   | > 5                |
+
+**Tick→pixel is tick→decode (E17-T07, #572).** The latency row starts when the server releases the frame that carries the tick and ends when the client has decoded it. The server's throttle wait is not part of it, because a print waits up to its throttle window (100 ms for `trades`) and a row that included the wait would fail by construction. Painting is the frame-rate row's. The run asks for the 50 ms throttle floor (§5.1) on every subscription, which is the most frames the protocol allows, so the decode it measures is the heaviest.
 
 ### 16.4 Test matrix
 
@@ -4629,36 +4676,38 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 
 ### 16.5 Validation tooling and the CI contract gate
 
-Both this document and `22-api-openapi.yaml` are too large for manual review to guarantee structural correctness — 8 000+ lines of OpenAPI and 30+ embedded JSON Schemas. Correctness is therefore machine-enforced. The authoritative gate definitions live in `22-api-openapi.yaml` under **`x-contract-validation`** (job `contracts`, workflow `.github/workflows/contracts.yml`, blocking); `03-testing-strategy.md` §5 references that block rather than restating it.
+Both this document and `22-api-openapi.yaml` are too large for manual review to guarantee structural correctness — 8 000+ lines of OpenAPI and 30+ embedded JSON Schemas. Correctness is therefore machine-enforced. The authoritative gate definitions live in `22-api-openapi.yaml` under **`x-contract-validation`** (the gates run in the `contract` job of `.github/workflows/_job-contract.yml`, blocking); `03-testing-strategy.md` §5 references that block rather than restating it.
 
 | Gate                           | Tool                                                                                                                                          | Covers                                                                                                                                                                             |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `openapi_structural`           | `redocly lint --extends recommended` (+ `no-unresolved-refs`, `no-unused-components`, `operation-4xx-response`, `spec-strict-refs` as errors) | OpenAPI 3.1 structure, dangling `$ref`s, orphan components.                                                                                                                        |
 | `openapi_jsonschema`           | `openapi-spec-validator` (independent implementation)                                                                                         | JSON-Schema-2020-12 keyword misuse; notably the YAML 1.1 `on:`/`off:`/`yes:`/`no:` boolean-coercion trap that silently corrupts a `required` list.                                 |
-| `ref_closure`                  | `tools/contracts/check_refs.py`                                                                                                               | Every `$ref` resolves; every component referenced at least once.                                                                                                                   |
-| `rbac_coverage`                | `tools/contracts/check_rbac.py`                                                                                                               | Every operation has `x-rbac`; every permission code exists in `x-permissions`; every order/position mutation declares `x-idempotency: required`.                                   |
-| `enum_parity_db`               | `tools/contracts/check_enum_parity.py`                                                                                                        | Each schema in `22-api-openapi.yaml`'s `covers` list matches its `x-db-enum` type as introspected from Postgres (`21-database-schema.md`), modulo a declared `x-db-enum-superset`. |
+| `ref_closure`                  | `tools/contracts/check_refs.py` (planned: not written yet)                                                                                    | Every `$ref` resolves; every component referenced at least once.                                                                                                                   |
+| `rbac_coverage`                | `tools/contracts/check_rbac.py` (planned: not written yet)                                                                                    | Every operation has `x-rbac`; every permission code exists in `x-permissions`; every order/position mutation declares `x-idempotency: required`.                                   |
+| `enum_parity_db`               | `tools/contracts/check_enum_parity.py` (planned: not written yet)                                                                             | Each schema in `22-api-openapi.yaml`'s `covers` list matches its `x-db-enum` type as introspected from Postgres (`21-database-schema.md`), modulo a declared `x-db-enum-superset`. |
 | `error_registry_single_source` | `tools/contracts/check_error_registry.py`                                                                                                     | §10.2 == the canonical registry; `rest_analogue` values resolve; generated enums are fresh.                                                                                        |
 | `ws_message_schemas`           | `tools/contracts/validate_ws_schemas.py --draft 2020-12`                                                                                      | Every §13–§15 schema meta-validates; every §12 example validates.                                                                                                                  |
 | `schemathesis_fuzz`            | `schemathesis run --checks all`                                                                                                               | Live-instance property fuzzing of all 166 operations.                                                                                                                              |
-| `runtime_spec_parity`          | `tools/contracts/check_spec_drift.py`                                                                                                         | FastAPI's generated spec matches this hand-authored one (spec is the source of truth; code moves to match).                                                                        |
+| `runtime_spec_parity`          | WS: `services/api/tests/contract/ws/test_ws_spec_parity.py` (E17-T07). REST: `tools/contracts/check_spec_drift.py` (planned: not written yet) | WS: the running gateway matches this document. REST: FastAPI's generated spec matches the hand-authored one. The spec is the source of truth; code moves to match.                 |
 
 **Extraction step.** `tools/contracts/extract_ws_schemas.py` parses every fenced ```json block in §13–§15, keyed by its `$id`, and bundles them into `ws-schemas.json` — the single artefact consumed by the server (runtime response validation in dev/test), the TypeScript client codegen, and the `ws_message_schemas` gate. The Markdown is the source of truth; the bundle is always regenerated, never hand-edited.
 
 **Open enums.** A server-to-client `enum` that clients must not reject, such as `snapMeta.reason` (§7.4, C18) and `system.kind` (§15.9), is the server's closed set: the contract tests (§16.4) and a unit test hold the server to it. A client validates such a field as a string and never uses the `enum`, or the generated TypeScript union, as a decode check, so adding a member stays additive (C-6.3).
 
-**Local pre-commit.** `make contracts` runs `openapi_structural`, `openapi_jsonschema`, `ref_closure`, `rbac_coverage`, `error_registry_single_source` and `ws_message_schemas` offline in under 10 s (no database, no running API). `enum_parity_db`, `schemathesis_fuzz` and `runtime_spec_parity` need the docker-compose test environment and run in CI only.
+**WS wire gates (E17-T07, #572).** `wire_contract` (`tools/contracts/wire_contract.py`, tested by `services/api/tests/contract/ws/test_ws_wire_contract.py`) compares the wire the implementation speaks with `packages/protocol/wire-contract.v1.golden.json` and fails on a change `cv.v1` cannot take (§2.3); `runtime_spec_parity` for the WS surface (`services/api/tests/contract/ws/test_ws_spec_parity.py`, and the topic catalogue test beside it) compares the running gateway with this document: `welcome.limits` against §4.2, §16.2 row by row against the constants that enforce it, the §3.6 JSON and MessagePack bounds (SR-184, SR-185) against `ws/limits.py` and `ws/codec.py`, the §10.2 columns, the §4.4 codes, the §3.1 frame types, the §3.4 layout, the §4.3 settings, the §2.1 URL (against `WS_SERVER_BASE` and `WS_PATH` of `ws/gateway.py`) and the §2.2 subprotocols. Both run in the `contract` job and in the `py` job's contract lane; `make contracts` runs the first.
 
-**Status at authoring time.** All nine gates were executed against the current revision of both documents: `openapi_structural`, `openapi_jsonschema`, `ref_closure` (250 refs, 0 dangling; 196 schemas / 36 parameters / 12 responses / 6 headers, 0 orphans), `rbac_coverage` (166/166 operations), `enum_parity_db` (31/31 enums, 2 documented supersets), `error_registry_single_source` (28 WS codes reconciled) and `ws_message_schemas` (34 blocks) all pass. The remaining three are wired and will first execute against running code in Sprint 02.
+**Local pre-commit.** `make contracts` runs offline (no database, no running API): the bundle and constants freshness checks, `ws_message_schemas`, `error_registry_single_source` and the `wire_contract` check. The OpenAPI gates of the table are not in it. `enum_parity_db` and `schemathesis_fuzz` need the docker-compose test environment and are not wired yet, and the REST half of `runtime_spec_parity` is planned the same way. The WS half needs no compose environment: it runs with `tests/contract` in the `contract` job and in the `py` job's contract lane.
+
+**Status (E17-T07, 2026-10-20).** Running in the `contract` job: `ws_message_schemas` (37 schemas, 59 examples), `error_registry_single_source` (29 WS codes reconciled), `wire_contract`, the WS half of `runtime_spec_parity`, and the OpenAPI conformance test of `tests/contract` (`test_openapi_conformance.py`). The other gates of the table are specified here and in `22-api-openapi.yaml`; they are not wired, and a tool named above as planned is not written yet.
 
 ### 16.6 Open items tracked into implementation
 
 | #      | Item                                                                                                                                                                                                                                                                                                                                                                                                                              | Owner                              | Resolution point           |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | -------------------------- |
-| W1     | **Resolved 2026-10-06 (E17-K01).** Measured on the 4-pane reference workspace (laptop, modelled workload): JSON 153.6 KiB/s raw / 23.7 deflated; MessagePack-structured 113.6 / 3.7; binary 50.4 / 2.4. Workspace decode CPU JSON 0.76 ms/s, msgpack 1.58, binary 0.13. Gate verdict and the resulting data-plane decision: ADR-0005 Amendment 1; evidence `docs/plan/notes/e17-binary-vs-json.md`, `tests/perf/ws/results.json`. | Frontend + Architect               | Closed by E17-K01.         |
+| W1     | **Resolved 2026-10-06 (E17-K01).** Measured on the 4-pane reference workspace (laptop, modelled workload): JSON 153.6 KiB/s raw / 23.7 deflated; MessagePack-structured 113.6 / 3.7; binary 50.4 / 2.4. Workspace decode CPU JSON 0.76 ms/s, msgpack 1.58, binary 0.13. Gate verdict and the resulting data-plane decision: ADR-0005, Amend. 1-2; evidence `docs/plan/notes/e17-binary-vs-json.md`, `tests/perf/ws/results.json`. | Frontend + Architect               | Closed by E17-K01.         |
 | W2     | **Resolved 2026-10-06 (E17-K01): keep depth 500** (enum unchanged). Wire cost at the 100 ms worst-case cadence: +2 KiB/s raw JSON over depth 200 (4.7 vs 2.7; 1.0 vs 0.5 deflated), 21 KB snapshot, decode p99 <= 0.013 ms JSON; real Bybit depth-500 cadence is 200 ms (ADR-0021). Stays opt-in per subscription. Ingestion/storage cost is ADR-0021's.                                                                          | Backend                            | Closed by E17-K01.         |
 | ~~W3~~ | **CLOSED.** `heatmap.time_bucket_ms` is no longer a placeholder constant: §6.1.1 makes it a normative _derived_ value (device-pixel-per-column formula + ladder clamp + `500` server fallback), with bandwidth and snapshot-cap consequences specified. Design retains only the visual legibility band (2–8 device px), tracked as **DES-HEATMAP-01**, and cannot change it without editing §6.1.1.                               | Protocol + Chart Engine (resolved) | Resolved in this document. |
-| W4     | Whether session resumption (§9.3) is worth adding in v2 once real reconnect frequency over Tailscale is known.                                                                                                                                                                                                                                                                                                                    | Architect                          | Post-R2 review.            |
+| W4     | Whether session resumption (§9.3) is worth adding in v2 once real reconnect frequency over Tailscale is known. **Deferred (E17-T07):** reviewed at the R2 exit (R2 ends 2026-12-24, `30-release-roadmap.md`), decided by 2026-12-31. `cv.v1` has no gap-fill request; every topic re-snapshots.                                                                                                                                   | Architect                          | Post-R2 review.            |
 | W5     | Exact per-topic coalescing thresholds under `saturated` class — currently fixed multipliers, may become adaptive per topic cost.                                                                                                                                                                                                                                                                                                  | Backend                            | Load test in Sprint 05.    |
 | W6     | `machines.{entity}.state` B2 `trade_group` for Manager and Viewer: a group spans accounts. Is it visible when any leg's account is granted, or only when all are? The group must not reveal legs on accounts the caller cannot see. Refused until decided (§6.4).                                                                                                                                                                 | Owner + Security                   | Before E34 consumes it.    |
 | W7     | `machines.{entity}.state` B17 `live_gate` for Manager and Viewer: no REST read rule exists, and the gate reaches clients only as the `system` feature flag. Refused until decided (§6.4).                                                                                                                                                                                                                                         | Owner                              | Before E44 consumes it.    |

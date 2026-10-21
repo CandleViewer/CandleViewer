@@ -562,6 +562,8 @@ class Settings(BaseSettings):
     # needs a security review). M1 may not import `ws`, so the values are spelled out; a test pins
     # them to `ws.limits` and `ws.lifecycle`, and the frame cap to the server's transport cap.
     ws_auth_timeout_s: float = Field(default=10.0, gt=0, le=60)
+    # Lowered, never raised: the gateway's cap is the contract value (`ws.limits`), the transport
+    # closes a frame 4 KiB above it, and `welcome` advertises the effective value (#572).
     ws_max_inbound_frame_bytes: int = Field(default=262_144, ge=1024, le=262_144)
     # E17-T03 (#412): the WS backpressure pipeline (coalescing, adaptive throttling and the §8.4
     # outbound budget) behind `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: off by default; removal ticket

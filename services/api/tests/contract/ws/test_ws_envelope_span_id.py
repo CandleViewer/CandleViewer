@@ -99,10 +99,10 @@ SYSTEM_FRAMES = [
     ),
 ]
 
-#: Frames that are valid as they are, and that `sp` must not ride on.
+#: Frames that are valid as they are, and that `sp` must not ride on. A `snap` has `s` (#572,
+#: §13.1): `null` on a chunk that is not the last, never absent.
 NO_SEQUENCE = [
     pytest.param({**FINAL_CHUNK, "s": None, "p": "<partial chunk>"}, id="intermediate-chunk"),
-    pytest.param({k: v for k, v in SINGLE_SNAP.items() if k != "s"}, id="snapshot-without-s"),
 ]
 
 
@@ -128,6 +128,12 @@ def test_contract_envelope_sp_is_refused_on_a_frame_without_an_integer_s(
     frame: dict[str, Any],
 ) -> None:
     assert refusals(frame) == []
+    assert refusals(with_sp(frame)) != []
+
+
+def test_contract_envelope_refuses_a_snapshot_without_s_with_or_without_sp() -> None:
+    frame = {k: v for k, v in SINGLE_SNAP.items() if k != "s"}
+    assert refusals(frame) != []
     assert refusals(with_sp(frame)) != []
 
 
