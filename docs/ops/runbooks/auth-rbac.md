@@ -25,14 +25,19 @@ Quick facts the procedures rely on:
 **What counts as activity for the idle lock (#4012).** The idle clock runs from the session's
 `last_seen_at`. A request re-stamps it only when its handler authenticates the bearer with
 `authenticate_access_token(touch=True)`: the `/me` routes (`GET /me`, `/me/preferences`,
-`/me/keymap`), `GET /auth/sessions`, MFA enrolment, and the routes behind the session-backed
-principal resolvers (the rules, audit and admin routes and owner user management; list them with
-`rg 'touch=True' services/api/candleviewer`). A successful `POST /auth/unlock` re-stamps it too.
+`/me/keymap`), `GET /auth/sessions`, MFA enrolment, and every route whose caller comes from a
+session-backed principal resolver (`SessionAuditPrincipalResolver`, `SessionSnapshotResolver`,
+`SessionRulesActorResolver`). That is most of the signed-in REST surface: the market-data and chart
+reads (`/market/bars`, `/market/trades`, `/market/orderbook`, `/instruments` and its ticker,
+`/indicators`), drawings, workspaces, `POST /telemetry/frontend`, the rules, audit and admin
+routes, and owner user management. Find the resolvers with
+`grep -rn 'touch=True' services/api/candleviewer` and their routers in `candleviewer/app.py`
+(`audit_resolver`, `owner_resolver`). A successful `POST /auth/unlock` re-stamps it too.
 Nothing else does: not `GET /auth/session`, `DELETE /me/sessions/{sessionId}`, `POST /auth/logout`,
 the idle-lock middleware, the step-up and read-only guards, WS traffic, nor a token refresh, which
-carries the presented session's `last_seen_at` to its successor. A tab whose only requests are its
-token refreshes (about every 11 minutes) therefore locks after its idle timeout, 15 minutes by
-default: its next refresh is answered `401 session_idle_locked`, and its socket ends
+carries the presented session's `last_seen_at` to its successor. A tab whose only traffic is its
+socket and its token refreshes (about every 11 minutes) therefore locks after its idle timeout, 15
+minutes by default: its next refresh is answered `401 session_idle_locked`, and its socket ends
 `token_expired` within one access-token lifetime. `POST /auth/unlock` is dark until #2300's last
 slice (§1), so until then the way out of a lock is `POST /auth/logout` and a new sign-in. The
 contract's "Activity is explicit" model, in which only `POST /auth/session/extend` and
