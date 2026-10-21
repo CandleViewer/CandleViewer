@@ -14,12 +14,15 @@ type-alias pattern `admin.wiring` already uses to avoid a direct import edge.
 `classify.NativeStopGuard` and before the risk gate; the first step that fails refuses:
 
 1. the read-only gate (`OrderPlacementRefused`, `403 trading_disabled`);
-2. the instrument's trading status, then a limit order without its price and any price outside
-   the instrument's bounds (`validation_failed`);
-3. for an entry, the effective profile's symbol allow-list (`403 risk_limit_breached`):
-   `all_symbols`, else a listed symbol or an anchored suffix pattern (`*USDT`) that matches only a
-   trading USDT perpetual (SR-E28-06), then the deny list, whose patterns match any symbol; no
-   profile allows nothing (D11). An order that only reduces is never refused by it (SR-E28-24);
+2. a price, trigger price, reference price or quantity that is not finite, each listed, before
+   any figure is compared (`validation_failed`); then the instrument's trading status, a limit
+   order without its price and any price outside the instrument's bounds (`validation_failed`);
+3. for an entry, the effective profile (`403 risk_limit_breached`), as 24-internal-schemas.md
+   Sec.9.3 step 1 reads it: no profile allows nothing (D11); a profile not `enabled` or not
+   `trading_enabled` allows nothing (SR-E28-27); then the symbol allow-list, `all_symbols`, else a
+   listed symbol or an anchored suffix pattern (`*USDT`) that matches only a trading USDT
+   perpetual (SR-E28-06), then the deny list, whose patterns match any symbol. An order that only
+   reduces is never refused by them (SR-E28-24, SR-E28-27);
 4. the instrument filters of `exchange.policy.InstrumentPolicy`, the one rule source, with the
    order path's own: a trigger price on its tick, a market order's ceiling, and an entry's
    leverage within the instrument's maximum. Every violation is listed in `errors[]`, named by the
@@ -146,6 +149,9 @@ class Validator:
         if instrument.symbol != order.symbol:
             raise ValueError("the instrument is not the order's symbol")
         self.assert_order_placement_allowed()
+        non_finite = _non_finite_errors(order)
+        if non_finite:
+            raise OrderInvalid(errors=non_finite)
         priced = order.price if order.price is not None else order.reference_price
         violations = InstrumentPolicy(instrument).validate(priced, order.qty)
         not_trading = [v for v in violations if v.code is FilterViolationCode.SYMBOL_NOT_TRADING]
@@ -160,6 +166,8 @@ class Validator:
         if order.effect is OrderEffect.ENTRY:
             if profile is None:
                 raise RiskRefused("No profile allows this order.")
+            if not (profile.enabled and profile.trading_enabled):
+                raise RiskRefused("The account's profile is not enabled for trading.")
             if not symbol_allowed(profile, instrument):
                 raise RiskRefused("The account's profile does not allow this symbol.")
             errors += _leverage_errors(profile, instrument)
@@ -203,6 +211,21 @@ def _policy_error(violation: FilterViolation) -> FieldError:
     return FieldError(field, rule, violation.user_message)
 
 
+def _non_finite_errors(order: SizedOrder) -> list[FieldError]:
+    """Each figure `InstrumentPolicy` compares that is not finite: compared, it would raise."""
+    figures = (
+        ("price", order.price, "The price must be a finite number."),
+        ("trigger.price", order.trigger_price, "The trigger price must be a finite number."),
+        ("reference_price", order.reference_price, "The reference price must be a finite number."),
+        ("qty", order.qty, "The quantity must be a finite number."),
+    )
+    return [
+        FieldError(field, "finite", message)
+        for field, figure, message in figures
+        if figure is not None and not figure.is_finite()
+    ]
+
+
 def _price_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]:
     errors: list[FieldError] = []
     if order.order_type == "limit" and order.price is None:
@@ -210,7 +233,7 @@ def _price_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]
     for field, price in (("price", order.price), ("trigger.price", order.trigger_price)):
         if price is None:
             continue
-        if not price.is_finite() or price < instrument.min_price:
+        if price < instrument.min_price:
             message = f"Price must be at least {instrument.min_price}."
             errors.append(FieldError(field, "min_price", message))
         elif price > instrument.max_price:

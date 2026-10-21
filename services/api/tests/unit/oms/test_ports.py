@@ -1,10 +1,11 @@
 """The ports the submission pipeline consumes and their interim implementations (E29-T04, #913).
 
-Ruling R4: the sizer serves `fixed_qty` only; the stop resolver serves `price`, `ticks` and
-`percent` stops and the profile's offset, refusing `atr` and `r_multiple` with
-`stop_unit_unsupported`; the risk gate admits demo and refuses live; `NoArmRecords` refuses every
-live order. Each interim port logs once at startup and is counted in `oms_interim_ports{port}`.
-The rate verdict is a declared protocol only (G-8, #2877), exercised here through a test double.
+Ruling R4: the sizer serves `fixed_qty` only, refusing another mode with
+`sizing_mode_unsupported`; the stop resolver serves `price`, `ticks` and `percent` stops and the
+profile's offset, refusing `atr` and `r_multiple` with `stop_unit_unsupported`; the risk gate
+admits demo and refuses live; `NoArmRecords` refuses every live order. Each interim port logs once
+at startup and is counted in `oms_interim_ports{port}`. A `SizedOrder` cannot be built as an entry
+without a stop (C-2.6), and the arm token travels masked (C-12.6).
 """
 
 from __future__ import annotations
@@ -27,19 +28,25 @@ from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Side
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
-from candleviewer.oms.errors import RULE_STOP_UNIT_UNSUPPORTED, OrderInvalid, StopUnitUnsupported
+from candleviewer.observability.secret_type import Secret
+from candleviewer.oms.errors import (
+    RULE_STOP_UNIT_UNSUPPORTED,
+    FieldError,
+    OrderInvalid,
+    StopUnitUnsupported,
+)
 from candleviewer.oms.ports import (
     FAILED,
     INTERIM_PORTS_METRIC,
     PASSED,
     PORT_NAMES,
+    ArmToken,
     FixedQtySizer,
     Interim,
     InterimRiskGate,
     InterimStopResolver,
     NoArmRecords,
     OrderEffect,
-    RateVerdict,
     SizedOrder,
     SizingRequest,
     StopOffset,
@@ -129,6 +136,36 @@ def test_order_effect_values_are_the_two_effects_of_sr_e29_01() -> None:
     assert [e.value for e in OrderEffect] == ["entry", "reduce"]
 
 
+# --- SizedOrder: the invariants every later check relies on (C-2.6, SR-E29-01) ------------------
+
+
+def test_sized_order_builds_an_entry_with_its_stop_and_a_reduce_order_without_one() -> None:
+    assert _order("demo").stop_loss == Decimal("62900.0")
+    reduce = _order("demo", reduce_only=True, effect=OrderEffect.REDUCE, stop_loss=None)
+    assert reduce.stop_loss is None
+
+
+def test_sized_order_builds_a_reduce_only_order_that_is_an_entry_with_its_stop() -> None:
+    """R7: a reduce-only order above its position is an entry, and it carries a stop."""
+    assert _order("demo", reduce_only=True).effect is OrderEffect.ENTRY
+
+
+def test_sized_order_refuses_an_entry_without_a_stop() -> None:
+    with pytest.raises(ValueError, match="an entry carries a finite stop_loss above zero"):
+        _order("demo", stop_loss=None)
+
+
+@pytest.mark.parametrize("stop", ["0", "-0.1", "NaN", "sNaN", "Infinity", "-Infinity"])
+def test_sized_order_refuses_an_entry_whose_stop_is_not_finite_and_above_zero(stop: str) -> None:
+    with pytest.raises(ValueError, match="an entry carries a finite stop_loss above zero"):
+        _order("demo", stop_loss=Decimal(stop))
+
+
+def test_sized_order_refuses_an_order_that_only_reduces_but_is_not_reduce_only() -> None:
+    with pytest.raises(ValueError, match="an order that only reduces is reduce_only"):
+        _order("demo", effect=OrderEffect.REDUCE, intent="scale_out", stop_loss=None)
+
+
 # --- FixedQtySizer (R4: fixed_qty only) ----------------------------------------------------------
 
 
@@ -145,23 +182,28 @@ def test_fixed_qty_sizer_without_round_to_lot_keeps_the_quantity_for_the_validat
 def test_fixed_qty_sizer_needs_a_quantity() -> None:
     with pytest.raises(OrderInvalid) as refused:
         FixedQtySizer().size(SizingRequest(mode="fixed_qty"), INSTRUMENT)
-    assert [(e.field, e.rule) for e in refused.value.errors] == [("sizing.qty", "required")]
+    assert refused.value.errors == (
+        FieldError("sizing.qty", "required", "fixed_qty sizing needs a qty."),
+    )
 
 
 @pytest.mark.parametrize("qty", ["NaN", "Infinity", "-Infinity"])
 def test_fixed_qty_sizer_refuses_a_quantity_that_is_not_finite(qty: str) -> None:
-    with pytest.raises(OrderInvalid, match="finite"):
+    with pytest.raises(OrderInvalid) as refused:
         FixedQtySizer().size(SizingRequest(mode="fixed_qty", qty=Decimal(qty)), INSTRUMENT)
+    assert refused.value.detail == "The quantity must be a finite number."
 
 
 @pytest.mark.parametrize(
     "mode", ["fixed_notional", "pct_equity", "risk_based", "pct_position", "profile"]
 )
 def test_fixed_qty_sizer_refuses_every_other_sizing_mode(mode: Any) -> None:
+    """R4 as 22 `placeOrder` words it: `validation_failed` / `sizing_mode_unsupported`."""
     with pytest.raises(OrderInvalid) as refused:
         FixedQtySizer().size(SizingRequest(mode=mode, qty=Decimal("1")), INSTRUMENT)
-    assert refused.value.errors == ()
-    assert refused.value.detail == "Only fixed_qty sizing is available yet."
+    only = "Only fixed_qty sizing is available yet."
+    assert refused.value.errors == (FieldError("sizing.mode", "sizing_mode_unsupported", only),)
+    assert refused.value.detail == only
 
 
 # --- InterimStopResolver (R4: price, ticks, percent and the profile's offset) --------------------
@@ -213,9 +255,8 @@ def test_interim_stop_resolver_refuses_atr_and_r_multiple_stops(
 ) -> None:
     with pytest.raises(StopUnitUnsupported) as refused:
         _resolve(StopOffset(unit=unit, value=Decimal("1.5")), effect=effect)
-    assert [(e.field, e.rule) for e in refused.value.errors] == [
-        ("stop_loss", RULE_STOP_UNIT_UNSUPPORTED)
-    ]
+    message = "Stops in atr or r_multiple units are not available yet."
+    assert refused.value.errors == (FieldError("stop_loss", RULE_STOP_UNIT_UNSUPPORTED, message),)
 
 
 def test_a_request_percent_is_a_percent_and_a_profile_percent_a_fraction() -> None:
@@ -287,6 +328,7 @@ def test_interim_risk_gate_refuses_every_order_outside_demo(environment: Environ
     decision = InterimRiskGate(now=lambda: NOW).check(_order(environment), profile=_profile())
     assert not decision.allowed
     assert decision.code is RiskRefusal.RISK_STATE_UNAVAILABLE
+    assert decision.message == "No risk evaluation is available for this environment yet."
     assert decision.evaluated_at == NOW and decision.cap is None
 
 
@@ -298,9 +340,18 @@ def test_interim_risk_gate_refuses_a_live_reduce_only_order_too() -> None:
 # --- NoArmRecords (R4: refuses every live order) -------------------------------------------------
 
 
+def test_an_arm_token_never_shows_its_value() -> None:
+    """C-12.6: its `str`, `repr` and format are masked, and as a `Secret` the redaction filter
+    writes it as `***` under any key; `reveal()` alone gives the value back."""
+    held = ArmToken(_ISSUED)
+    assert isinstance(held, Secret)
+    assert _ISSUED not in f"{held} {held!r} {held:>40}"
+    assert held.reveal() == _ISSUED
+
+
 def test_no_arm_records_refuses_every_live_order_whatever_the_token() -> None:
     arm = NoArmRecords()
-    for issued in (None, "", _ISSUED):
+    for issued in (None, ArmToken(""), ArmToken(_ISSUED)):
         assert arm.check(session_id=SESSION, environment="live", token=issued) == FAILED
 
 
@@ -311,7 +362,7 @@ def test_no_arm_records_needs_no_token_outside_live(environment: Environment) ->
 
 def test_no_arm_records_never_logs_the_token() -> None:
     with capture_logs() as logs:
-        NoArmRecords().check(session_id=SESSION, environment="live", token=_ISSUED)
+        NoArmRecords().check(session_id=SESSION, environment="live", token=ArmToken(_ISSUED))
     assert _ISSUED not in repr(logs)
 
 
@@ -320,30 +371,9 @@ def test_the_interim_ports_refuse_every_live_order() -> None:
     ports = SubmissionPorts.interim(now=lambda: NOW)
     for order in (_order("live"), _order("live", reduce_only=True, effect=OrderEffect.REDUCE)):
         assert not ports.risk_gate.check(order, profile=_profile()).allowed
-        verdict = ports.arm_records.check(session_id=SESSION, environment="live", token=_ISSUED)
+        held = ArmToken(_ISSUED)
+        verdict = ports.arm_records.check(session_id=SESSION, environment="live", token=held)
         assert verdict == FAILED
-
-
-# --- RateVerdict (declared only; wired in slice 2 once G-8's rulings land) -----------------------
-
-
-class _Headroom:
-    """`RateVerdict` double: a fixed answer, and a count proving each read is non-consuming."""
-
-    def __init__(self, verdict: Verdict) -> None:
-        self.verdict = verdict
-        self.reads = 0
-
-    def headroom(self, account_id: AccountId, effect: OrderEffect) -> Verdict:
-        self.reads += 1
-        return self.verdict
-
-
-@pytest.mark.parametrize("verdict", [PASSED, FAILED])
-def test_rate_verdict_double_answers_the_same_on_every_read(verdict: Verdict) -> None:
-    rate: RateVerdict = _Headroom(verdict)
-    answers = [rate.headroom(ACCOUNT, effect) for effect in (*OrderEffect, *OrderEffect)]
-    assert answers == [verdict] * 4
 
 
 # --- the startup announcement and oms_interim_ports ----------------------------------------------

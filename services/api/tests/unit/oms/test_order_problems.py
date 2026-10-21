@@ -5,7 +5,7 @@ exchange_rate_limited` with `Retry-After`, the clock-drift block `503 clock_drif
 `Retry-After`, `OrderLinkIdExhausted` `500 internal_error` and a page, a stale `If-Match` `412
 version_conflict`. Every code is in the contract's `x-error-codes` registry with the status the
 table gives it, and a business rejection carries the exchange's return code only, never its text
-(SR-E29-09).
+(SR-E29-09). Each refusal's `detail`, the sentence a problem body carries, is pinned word for word.
 """
 
 from __future__ import annotations
@@ -147,11 +147,39 @@ def test_a_refusal_keeps_its_detail_and_every_error_in_order() -> None:
     )
 
 
+#: Each refusal's fixed `detail`, written out independently of the classes.
+_DETAILS: dict[type[OrderRefused], str] = {
+    OrderRefused: "The order request was refused.",
+    OrderInvalid: "The order failed validation.",
+    TickSizeViolation: "A price is not a multiple of the instrument's tick size.",
+    LotSizeViolation: "The quantity breaks the instrument's lot step, size or notional limits.",
+    AccountScopeDenied: "The exchange account is not one you may trade.",
+    RiskRefused: "The account's risk limits or profile do not allow this order.",
+    TradingDisabled: "Order entry is disabled.",
+    OrderPlacementRefused: "Order entry is paused: the terminal is read-only.",
+    SessionNotArmed: "This session is not armed for live trading.",
+    OrderNotFound: "No such order.",
+    IdempotencyKeyReuse: "The Idempotency-Key was first used with another request.",
+    VersionConflict: "The order has changed since the version you named.",
+    OrderNotAmendable: "The order cannot be amended in its current state.",
+    RateBudgetExceeded: "The exchange rate budget is spent; retry later.",
+    ExchangeRejected: "The exchange refused the order.",
+    ClockDriftBlocked: "Order entry is paused until the clock is back in sync.",
+    StoreUnavailable: "Orders cannot be recorded right now, so none is sent.",
+}
+
+
 @pytest.mark.parametrize(
-    "cls", [cls for cls in PROBLEMS if issubclass(cls, OrderRefused)], ids=lambda cls: cls.__name__
+    ("cls", "detail"), list(_DETAILS.items()), ids=[cls.__name__ for cls in _DETAILS]
 )
-def test_every_refusal_has_a_fixed_default_detail(cls: type[OrderRefused]) -> None:
-    assert cls.default_detail.endswith(".") and cls.default_detail != OrderRefused.default_detail
+def test_each_refusal_has_its_own_fixed_default_detail(
+    cls: type[OrderRefused], detail: str
+) -> None:
+    assert cls.default_detail == detail
+
+
+def test_every_refusal_the_table_answers_has_its_detail_pinned() -> None:
+    assert {cls for cls in PROBLEMS if issubclass(cls, OrderRefused)} <= set(_DETAILS)
 
 
 def test_environment_mismatch_names_both_environments() -> None:

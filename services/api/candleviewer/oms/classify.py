@@ -10,8 +10,10 @@ streams feed the local position store (E29-T05, E29-T06).
 
 `NativeStopGuard` resolves the stop through the `StopResolver` port and then judges the answer
 itself, so C-2.6 holds whatever the port does (R4): an entry must carry a stop, and any stop must
-be finite, above zero (L29) and on the protective side of the reference price, below it for a buy
-and above it for a sell. It never reads the profile's native-stop flag, a constant (SR-E29-01).
+be finite, above zero and on the protective side of the reference price, below it for a buy and
+above it for a sell. A zero or negative stop is `native_stop_required`: Low L29 of PR #3932's
+review record (issuecomment-6302240417), carried to this ticket. It never reads the profile's
+native-stop flag, a constant (SR-E29-01).
 Then the intent rule: an entry's intent must be an opening one (`entry`, `scale_in`), and the
 intent of an order that only reduces a reducing one (`stop_loss`, `take_profit`, `scale_out`,
 `flatten`); the server-assigned `reverse` and `algo_child` are refused either way. `errors[]`
@@ -113,8 +115,9 @@ async def effect_of(
 def stop_errors(
     *, effect: OrderEffect, side: Side, reference_price: Px, stop: Px | None
 ) -> list[FieldError]:
-    """The native-stop rule (C-2.6, L29): an entry needs a stop, and any stop must be finite,
-    above zero and on the protective side of `reference_price`."""
+    """The native-stop rule (C-2.6; #3932 issuecomment-6302240417, Low L29): an entry needs a
+    stop, and any stop must be finite, above zero and on the protective side of
+    `reference_price`."""
     if stop is None:
         if effect is OrderEffect.ENTRY:
             return [FieldError("stop_loss", RULE_NATIVE_STOP_REQUIRED, _NO_STOP)]

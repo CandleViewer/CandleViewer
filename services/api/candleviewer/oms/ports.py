@@ -1,12 +1,13 @@
 """The ports the submission pipeline consumes, and their interim implementations (E29-T04, #913).
 
 The pipeline (24-internal-schemas.md Sec.8.4) consumes interfaces whose owners have not landed:
-the sizer and the stop resolver (E28-T03, #907), the risk gate (E39-S01, #954), the arm record
-(E30-S04, #1088) and the rate verdict (E34-T02, #859). Ruling R4 on #913 approves an interim
-implementation of the first four, failing closed on live:
+the sizer and the stop resolver (E28-T03, #907), the risk gate (E39-S01, #954) and the arm record
+(E30-S04, #1088). Ruling R4 on #913 approves an interim implementation of each, failing closed on
+live:
 
 - `FixedQtySizer` serves `fixed_qty` sizing only, floored to the lot step unless `round_to_lot` is
-  false (the validator then judges the step); any other mode is `validation_failed`.
+  false (the validator then judges the step); any other mode is `validation_failed` /
+  `sizing_mode_unsupported`.
 - `InterimStopResolver` serves `price`, `ticks` and `percent` stops and, for an entry without one,
   the profile's offset; `atr` and `r_multiple` are `validation_failed` / `stop_unit_unsupported`.
   A request's `percent` is the percent a client writes (`"0.4"` is 0.4 %), the profile's a
@@ -21,15 +22,16 @@ resolver answers, so C-2.6 holds on every path whatever the port (C-4.14).
 `announce_interim_ports` logs one WARNING per interim port at startup and sets
 `oms_interim_ports{port}`, so nobody runs them on live unknowingly.
 
-`RateVerdict` is the non-consuming headroom check whose answer B1 records as its `rate` verdict.
-It is declared only: whether the trading port takes the rate token once per call is G-8's (#2877)
-and not ruled yet, so the second slice of #913 wires it. Nothing here imports the exchange adapter
-(C-2.2).
+The rate step is not a port here. #2877's G-8 rulings (item 4) have the trading port take the rate
+token once per call, and B1's `rate` verdict read a non-consuming headroom figure until E34-T02's
+`reserve()`; the second slice of #913 declares that port with its first consumer. Nothing here
+imports the exchange adapter (C-2.2).
 
 The vocabulary the ports speak lives here too: `OrderEffect` (SR-E29-01), `StopOffset` (22
-`Offset`), `SizingRequest` (22 `Sizing`) and `SizedOrder`, the order the validator, the risk gate
-and B1 see once it is sized and rounded (SR-E29-04). Verdicts are B1's gate values
-(`statechart/bindings/b01_order.py`).
+`Offset`), `SizingRequest` (22 `Sizing`), `ArmToken`, the session's arm token held masked (C-12.6),
+and `SizedOrder`, the order the validator, the risk gate and B1 see once it is sized and rounded
+(SR-E29-04), which cannot be built as an entry without a stop (C-2.6). Verdicts are B1's gate
+values (`statechart/bindings/b01_order.py`).
 """
 
 from __future__ import annotations
@@ -50,9 +52,10 @@ from candleviewer.domain.primitives import AccountId, Environment, Px, Qty, Side
 from candleviewer.exchange.policy import InstrumentPolicy
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.observability.secret_type import Secret
 from candleviewer.risk.models import RiskDecision, RiskRefusal
 
-from .errors import FieldError, OrderInvalid, StopUnitUnsupported
+from .errors import RULE_SIZING_MODE_UNSUPPORTED, FieldError, OrderInvalid, StopUnitUnsupported
 from .order_link import OrderPurpose
 
 Verdict = Literal["pass", "fail"]
@@ -70,6 +73,7 @@ INTERIM_PORTS_METRIC: Final = "oms_interim_ports"
 _UNEVALUATED: Final[frozenset[Environment]] = frozenset({"demo"})
 #: SR-043: the environment whose order mutations need an arm token.
 _ARMED: Final[frozenset[Environment]] = frozenset({"live"})
+_ONLY_FIXED_QTY: Final = "Only fixed_qty sizing is available yet."
 
 
 def _log() -> Any:
@@ -124,6 +128,26 @@ class SizedOrder:
     effect: OrderEffect
     stop_loss: Px | None
 
+    def __post_init__(self) -> None:
+        """The invariants every later check relies on, whatever the call order (C-2.6,
+        SR-E29-01): an entry carries a finite stop above zero, and an order that only reduces is
+        reduce-only."""
+        stop = self.stop_loss
+        stopless = stop is None or not stop.is_finite() or stop <= 0
+        if self.effect is OrderEffect.ENTRY and stopless:
+            raise ValueError("an entry carries a finite stop_loss above zero (C-2.6)")
+        if self.effect is OrderEffect.REDUCE and not self.reduce_only:
+            raise ValueError("an order that only reduces is reduce_only (SR-E29-01)")
+
+
+class ArmToken(Secret[str]):
+    """The session's arm token (SR-043, the `X-Arm-Token` header), held masked: its `str`, `repr`
+    and format are `[redacted]`, and the redaction filter writes it as `***` under any key, so no
+    log line, exception or repr carries it (C-12.6). Only an arm-record check calls `reveal()`;
+    the token is never bound to a logger."""
+
+    __slots__ = ()
+
 
 class Sizer(Protocol):
     """E28-T03 (#907): the order's quantity, sized and rounded, or an `OrderRefused`."""
@@ -157,19 +181,11 @@ class RiskGate(Protocol):
 class ArmRecords(Protocol):
     """E30-S04 (#1088): whether the session's arm token admits an order mutation that needs one
     (SR-043); `FAILED` for a token missing, expired, revoked or bound to another session. The
-    token is never logged (C-12.6)."""
+    token arrives masked, an `ArmToken`, and is never logged (C-12.6)."""
 
     def check(
-        self, *, session_id: UUID, environment: Environment, token: str | None
+        self, *, session_id: UUID, environment: Environment, token: ArmToken | None
     ) -> Verdict: ...
-
-
-class RateVerdict(Protocol):
-    """E34-T02 (#859), G-8 (#2877): whether the account's rate budget has headroom for an order of
-    this effect, read without taking a token; B1 records it as its `rate` verdict. Declared only:
-    the second slice of #913 wires it once G-8's rulings land."""
-
-    def headroom(self, account_id: AccountId, effect: OrderEffect) -> Verdict: ...
 
 
 class Interim:
@@ -184,11 +200,12 @@ class Interim:
 class FixedQtySizer(Interim):
     port: ClassVar[PortName] = "sizer"
     replaced_by: ClassVar[str] = "E28-T03 (#907)"
-    serves: ClassVar[str] = "fixed_qty sizing only; every other mode is validation_failed"
+    serves: ClassVar[str] = "fixed_qty sizing only; every other mode is sizing_mode_unsupported"
 
     def size(self, sizing: SizingRequest, instrument: Instrument) -> Qty:
         if sizing.mode != "fixed_qty":
-            raise OrderInvalid("Only fixed_qty sizing is available yet.")
+            unsupported = FieldError("sizing.mode", RULE_SIZING_MODE_UNSUPPORTED, _ONLY_FIXED_QTY)
+            raise OrderInvalid(_ONLY_FIXED_QTY, errors=(unsupported,))
         if sizing.qty is None:
             needed = FieldError("sizing.qty", "required", "fixed_qty sizing needs a qty.")
             raise OrderInvalid(errors=(needed,))
@@ -284,7 +301,9 @@ class NoArmRecords(Interim):
     replaced_by: ClassVar[str] = "E30-S04 (#1088)"
     serves: ClassVar[str] = "no arm record exists: every live order is session_not_armed"
 
-    def check(self, *, session_id: UUID, environment: Environment, token: str | None) -> Verdict:
+    def check(
+        self, *, session_id: UUID, environment: Environment, token: ArmToken | None
+    ) -> Verdict:
         return FAILED if environment in _ARMED else PASSED
 
 

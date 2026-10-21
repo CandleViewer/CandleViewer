@@ -160,6 +160,8 @@ RULE_NATIVE_STOP_REQUIRED: Final = "native_stop_required"
 RULE_INTENT_MISMATCH: Final = "intent_mismatch"
 #: Ruling R4: a stop in `atr` or `r_multiple` units until E28-T03's stop resolver (#907) lands.
 RULE_STOP_UNIT_UNSUPPORTED: Final = "stop_unit_unsupported"
+#: Ruling R4: a `sizing.mode` other than `fixed_qty` until E28-T03's sizer (#907) lands.
+RULE_SIZING_MODE_UNSUPPORTED: Final = "sizing_mode_unsupported"
 
 
 @dataclass(frozen=True, slots=True)

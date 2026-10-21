@@ -2,10 +2,12 @@
 
 SR-E29-01 / OM-S02: an order is classified by its effect on the exchange-truth position, never by
 its label. Rulings R2 and R7: a reduce-only order whose quantity exceeds the position is an entry,
-and the position is read for a reduce-only order only. L29: a zero or negative stop is
-`native_stop_required`. R4: C-2.6 holds whatever the stop resolver returns. `errors[]` lists every
-rule that fails, the stop's first (22-api-openapi.yaml `placeOrder`). The property test drives
-(reduce_only, quantity, position, intent, stop) against an oracle written from the rule's text.
+and the position is read for a reduce-only order only. A zero or negative stop is
+`native_stop_required` (Low L29 of PR #3932's review record, issuecomment-6302240417). R4: C-2.6
+holds whatever the stop resolver returns. `errors[]` lists every rule that fails, the stop's first
+(22-api-openapi.yaml `placeOrder`), each with its fixed sentence. The property test drives
+(reduce_only, quantity, position, intent, stop) against an oracle written from the rule's text,
+with its boundaries as explicit examples.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from typing import Any, get_args
 from uuid import UUID
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from candleviewer.accounts.profiles import AccountProfile
@@ -240,7 +242,7 @@ async def test_effect_of_a_position_read_that_never_answers_times_out() -> None:
         await _effect(_Silent(), reduce_only=True, timeout_s=0)
 
 
-# --- the stop rules (C-2.6, L29) -----------------------------------------------------------------
+# --- the stop rules (C-2.6; #3932 issuecomment-6302240417, Low L29) ------------------------------
 
 
 def test_stop_errors_entry_without_a_stop_is_native_stop_required() -> None:
@@ -255,11 +257,18 @@ def test_stop_errors_an_order_that_only_reduces_needs_no_stop() -> None:
 
 @pytest.mark.parametrize("effect", [ENTRY, REDUCE])
 @pytest.mark.parametrize("stop", ["0", "-0.1", "-63000", "NaN", "Infinity", "-Infinity"])
-def test_stop_errors_l29_a_stop_not_above_zero_is_native_stop_required(
+def test_stop_errors_a_stop_not_above_zero_is_native_stop_required(
     effect: OrderEffect, stop: str
 ) -> None:
     [error] = stop_errors(effect=effect, side="sell", reference_price=REF, stop=Decimal(stop))
     assert (error.field, error.rule) == ("stop_loss", RULE_NATIVE_STOP_REQUIRED)
+    assert error.message == "The stop-loss price must be above zero."
+
+
+_WRONG_SIDE = (
+    RULE_NATIVE_STOP_REQUIRED,
+    "The stop-loss must be below the entry price for a buy and above it for a sell.",
+)
 
 
 @pytest.mark.parametrize(
@@ -278,7 +287,7 @@ def test_stop_errors_a_stop_must_sit_on_the_protective_side(
     side: Side, stop: str, protective: bool, effect: OrderEffect
 ) -> None:
     errors = stop_errors(effect=effect, side=side, reference_price=REF, stop=Decimal(stop))
-    assert [e.rule for e in errors] == ([] if protective else [RULE_NATIVE_STOP_REQUIRED])
+    assert [(e.rule, e.message) for e in errors] == ([] if protective else [_WRONG_SIDE])
 
 
 # --- the intent rule (SR-E29-01) -----------------------------------------------------------------
@@ -301,6 +310,28 @@ def test_intent_errors_the_intent_must_agree_with_the_effect(
     assert [(e.field, e.rule) for e in errors] == (
         [] if agrees else [("intent", RULE_INTENT_MISMATCH)]
     )
+
+
+_ON_ENTRY = "This order opens or adds exposure, so its intent cannot reduce."
+_ON_REDUCE = "This order only reduces the position, so its intent cannot open."
+
+
+@pytest.mark.parametrize(
+    ("effect", "intent", "message"),
+    [
+        (ENTRY, "stop_loss", _ON_ENTRY),
+        (ENTRY, "take_profit", _ON_ENTRY),
+        (ENTRY, "scale_out", _ON_ENTRY),
+        (ENTRY, "flatten", _ON_ENTRY),
+        (REDUCE, "entry", _ON_REDUCE),
+        (REDUCE, "scale_in", _ON_REDUCE),
+    ],
+)
+def test_intent_errors_say_which_way_the_intent_disagrees(
+    effect: OrderEffect, intent: OrderPurpose, message: str
+) -> None:
+    [error] = intent_errors(effect=effect, intent=intent)
+    assert (error.field, error.rule, error.message) == ("intent", RULE_INTENT_MISMATCH, message)
 
 
 @pytest.mark.parametrize("intent", ["reverse", "algo_child"])
@@ -402,7 +433,7 @@ def test_guard_refuses_to_judge_against_a_reference_price_that_is_not_positive(
         )
 
 
-# --- the property (SR-E29-01, C-2.6, L29) --------------------------------------------------------
+# --- the property (SR-E29-01, C-2.6; the zero stop of #3932's Low L29) --------------------------
 
 _SIDES: tuple[Side, ...] = ("buy", "sell")
 _qty = st.decimals(min_value=Decimal("-1"), max_value=Decimal("50"), places=3)
@@ -412,8 +443,31 @@ _positions = st.none() | st.builds(
     qty=st.decimals(min_value=Decimal("0"), max_value=Decimal("50"), places=3),
 )
 _stops = st.none() | st.decimals(min_value=Decimal("-50"), max_value=Decimal("250"), places=1)
+_SHORT = ExchangePosition(side="sell", qty=Decimal("5"))
 
 
+def _case(**changes: Any) -> dict[str, Any]:
+    """One explicit example of the property: a buy entry of 1 with a stop, unless changed."""
+    base: dict[str, Any] = {
+        "reduce_only": False,
+        "side": "buy",
+        "qty": Decimal("1"),
+        "position": None,
+        "intent": "entry",
+        "stop": Decimal("99.9"),
+    }
+    return {**base, **changes}
+
+
+def _reduce(**changes: Any) -> dict[str, Any]:
+    """A reduce-only buy of 1 with no stop against a short of 5, unless changed."""
+    reduce: dict[str, Any] = {"reduce_only": True, "position": _SHORT, "intent": "scale_out"}
+    return _case(**{**reduce, "stop": None, **changes})
+
+
+# The rule's boundaries run on every pass, whatever Hypothesis draws: a stop at the reference and
+# a tick either side of it, a zero and a non-finite stop, and a reduce-only order at the edges of
+# the position it reduces.
 @given(
     reduce_only=st.booleans(),
     side=st.sampled_from(_SIDES),
@@ -422,6 +476,18 @@ _stops = st.none() | st.decimals(min_value=Decimal("-50"), max_value=Decimal("25
     intent=st.sampled_from(INTENTS),
     stop=_stops,
 )
+@example(**_case(stop=REF))  # a buy's stop at the reference protects nothing
+@example(**_case(side="sell", stop=REF))
+@example(**_case(stop=Decimal("99.9")))  # a tick to the protective side
+@example(**_case(side="sell", stop=Decimal("100.1")))
+@example(**_case(stop=Decimal("0")))
+@example(**_case(side="sell", stop=Decimal("Infinity")))
+@example(**_case(stop=Decimal("NaN")))
+@example(**_reduce(qty=Decimal("5")))  # the whole position: it reduces
+@example(**_reduce(qty=Decimal("0")))  # reduces nothing: an entry
+@example(**_reduce(qty=Decimal("5.001")))  # R7: more than the position: an entry
+@example(**_reduce(position=ExchangePosition(side=None, qty=Decimal("5"))))  # flat, sized
+@example(**_reduce(position=ExchangePosition(side="buy", qty=Decimal("5"))))  # same side
 def test_property_the_effect_decides_the_stop_and_the_intent_never_the_label(
     reduce_only: bool,
     side: Side,
@@ -439,7 +505,12 @@ def test_property_the_effect_decides_the_stop_and_the_intent_never_the_label(
     )
     assert effect is (REDUCE if reduces else ENTRY)
 
-    protective = stop is not None and stop > 0 and (stop < REF if side == "buy" else stop > REF)
+    protective = (
+        stop is not None
+        and stop.is_finite()
+        and stop > 0
+        and (stop < REF if side == "buy" else stop > REF)
+    )
     stop_ok = protective or (stop is None and effect is REDUCE)
     intent_ok = intent in (OPENING_INTENTS if effect is ENTRY else REDUCING_INTENTS)
     expected = ([RULE_NATIVE_STOP_REQUIRED] if not stop_ok else []) + (
