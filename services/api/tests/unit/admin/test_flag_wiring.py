@@ -26,6 +26,7 @@ from candleviewer.admin.flags import (
     FlagSpec,
     StoredFlag,
     Visibility,
+    default_registry,
 )
 from candleviewer.admin.flags.maintenance import MaintenanceController
 from candleviewer.admin.flags.policy import StepUpClass
@@ -96,9 +97,24 @@ def _lane_flag(default: bool) -> tuple[wiring.LaneFlag, SimpleNamespace, FakeFla
     return wiring.LaneFlag(cast(wiring.FeatureFlagsRuntime, runtime)), runtime, store, clock
 
 
-async def _settled(flag: wiring.LaneFlag) -> None:
+async def _settled(flag: wiring.LaneFlag | wiring.BackendConnectionFlag) -> None:
     assert flag._task is not None
     await asyncio.wait_for(flag._task, 5)
+
+
+_CONN = "desktop.backend_connection"
+
+
+def _connection_flag(
+    stored: StoredFlag,
+) -> tuple[wiring.BackendConnectionFlag, FakeFlagStore, Clock]:
+    """A `BackendConnectionFlag` over a fake store that holds `stored`, opened by `start()`."""
+    registry, store, clock = FlagRegistry([default_registry()[_CONN]]), FakeFlagStore(), Clock()
+    store.rows[_CONN] = stored
+    runtime = SimpleNamespace(registry=registry, service=FlagService(registry, store, clock=clock))
+    flag = wiring.BackendConnectionFlag(cast(wiring.FeatureFlagsRuntime, runtime), clock=clock)
+    flag.reopen()
+    return flag, store, clock
 
 
 async def test_a_boot_during_an_outage_reads_the_lane_flag_as_its_catalogue_default() -> None:
@@ -213,6 +229,117 @@ async def test_start_reads_the_lane_flag_once(monkeypatch: pytest.MonkeyPatch) -
     await runtime.start()
     try:
         assert runtime.lane_flag.value is False and len(reads) == 1  # the stored value, read once
+    finally:
+        await runtime.stop()
+
+
+async def test_backend_connection_flag_before_start_answers_off_and_starts_no_refresh() -> None:
+    """Closed until `start()`: a runtime that never starts (a bare `create_app`) answers off."""
+    flag = _runtime().backend_connection
+    assert flag() is False and flag._task is None
+
+
+async def test_backend_connection_flag_start_primes_it_with_one_awaited_read() -> None:
+    """`start()` reads the stored value before it returns, in no task (ADR-0038 2e, C-13.7)."""
+    runtime, store = _runtime(), FakeFlagStore()
+    store.rows[_CONN] = StoredFlag(True)
+    runtime.service = FlagService(runtime.registry, store, clock=Clock())  # before `start()`
+    await runtime.start()
+    try:
+        assert runtime.backend_connection.value is True
+        assert runtime.backend_connection._task is None
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.parametrize("fault", ["boot_outage", "outage", "unreadable"])
+async def test_backend_connection_flag_store_or_row_fault_keeps_last_value(fault: str) -> None:
+    """BC-D3: a boot during an outage keeps the default, off; an outage or an unreadable row after
+    a read of on keeps on, where failing closed would turn it off."""
+    flag, store, clock = _connection_flag(StoredFlag(True))
+    last = fault != "boot_outage"  # the value read before the fault, if any
+    if last:
+        await flag.refresh()
+        clock.now += 30  # the snapshot is stale: the next read reloads
+    if fault == "unreadable":
+        store.rows[_CONN] = StoredFlag("on")  # not a boolean
+    else:
+        store.down = True
+    await flag.refresh()
+    assert flag.value is last
+
+
+async def test_backend_connection_flag_call_while_store_hangs_answers_at_once() -> None:
+    """BC-D1: no request awaits the flag store; the refresh waits on it in its own task."""
+    flag, store, _ = _connection_flag(StoredFlag(True))
+    store.hold = asyncio.Event()
+    assert flag() is False  # the last value, at once
+    store.hold.set()
+    await _settled(flag)
+    assert flag.value is True
+
+
+@pytest.mark.parametrize("down", [False, True])
+async def test_backend_connection_flag_calls_within_30_s_start_no_second_refresh(
+    down: bool,
+) -> None:
+    """At most one refresh per 30 s, outage or not, and one at a time; the priming read counts."""
+    flag, store, clock = _connection_flag(StoredFlag(True))
+    await flag.refresh()  # the priming read, at t0
+    store.down, store.hold = down, asyncio.Event()
+    clock.now += 29
+    flag()
+    assert flag._task is None  # 29 s after it
+    clock.now += 1
+    flag()
+    first = flag._task
+    flag()
+    named = [t for t in asyncio.all_tasks() if t.get_name() == "desktop-backend-connection-flag"]
+    assert first is not None and named == [first]  # one task, though called twice
+    store.hold.set()
+    await _settled(flag)
+    clock.now += 29
+    flag()
+    assert flag._task is first  # it ended, but began 29 s ago
+    clock.now += 1
+    flag()
+    assert flag._task is not first  # 30 s after it began
+    await _settled(flag)
+
+
+async def test_backend_connection_flag_role_override_is_ignored_read_with_no_principal() -> None:
+    flag, store, _ = _connection_flag(StoredFlag(False, role_overrides={"owner": True}))
+    await flag.refresh()
+    assert flag.value is False and store.loads == 1  # read, and no role applies
+
+
+async def test_backend_connection_flag_stop_cancels_refresh_and_restart_reopens() -> None:
+    """A refresh in flight at stop is cancelled before the engine goes (C-2.18) and none starts
+    after it; the next `start()` primes the reader again and opens it."""
+    runtime, clock, store, ended = _runtime(), Clock(), FakeFlagStore(), list[bool]()
+    runtime.backend_connection = flag = wiring.BackendConnectionFlag(runtime, clock=clock)
+    runtime.service = FlagService(runtime.registry, store, clock=clock)
+    await runtime.start()
+    store.rows[_CONN], store.hold = StoredFlag(True), asyncio.Event()  # the next read hangs
+    clock.now += 30
+    flag()
+    task = flag._task
+
+    async def dispose() -> None:  # the real backend's engine
+        ended.append(task is not None and task.done())
+
+    runtime._relational = cast(Any, SimpleNamespace(dispose=dispose))
+    await runtime.stop()
+    assert task is not None and task.cancelled() and ended == [True]
+    clock.now += 30  # the 30 s are up, so only being closed keeps a refresh from starting
+    assert flag() is False and flag._task is task  # closed: the last value, no new refresh
+    store.hold.set()
+    await runtime.start()
+    try:
+        assert flag.value is True  # primed again
+        clock.now += 30
+        flag()
+        assert flag._task is not task  # and open
     finally:
         await runtime.stop()
 

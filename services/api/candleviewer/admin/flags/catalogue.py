@@ -23,6 +23,8 @@ _ALL, _OWNER = Visibility.ALL_ROLES, Visibility.OWNER_ONLY
 MAINTENANCE_KEEP_RECORDER = "maintenance.keep_recorder"
 #: ADR-0037 decision 12: the composition root reads it for `AuditService` with no principal.
 AUDIT_LANE_JOURNAL_FIRST = "audit.lane_journal_first"
+#: ADR-0038 2e: the composition root reads it with no principal for the CORS layer and the guard.
+DESKTOP_BACKEND_CONNECTION = "desktop.backend_connection"
 
 FLAGS: tuple[FlagSpec, ...] = (
     FlagSpec(
@@ -92,6 +94,16 @@ FLAGS: tuple[FlagSpec, ...] = (
         _B,
         "Lane audit records go to the journal-first audit lane before the sink (ADR-0037); "
         "owner @basiltt, removal #3009",
+        _ROLLOUT,
+        False,
+        _OWNER,
+        restrictive=False,
+    ),
+    FlagSpec(
+        DESKTOP_BACKEND_CONNECTION,
+        _B,
+        "CORS answers, the CSRF token response header and the desktop cookie attributes for the "
+        "SR-042 allow-list (ADR-0038); owner @basiltt, removal #3931",
         _ROLLOUT,
         False,
         _OWNER,
