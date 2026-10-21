@@ -1,7 +1,7 @@
 # E33-D01 — Session protocol: configuring and trusting an emulated algorithm
 
-- **Companion to:** the E33-D01 findings report in `docs/design/research/` (issue #857), "the report" below; RQ, F,
-  SC and OQ ids are the report's. "§n" is a section of this file; a bare `NN` is `docs/plan/NN-*`.
+- **Companion to:** the E33-D01 findings report `e33-emulated-algo-trust.md` (this folder; issue #857), "the report"
+  below; RQ, F, SC and OQ ids are the report's. "§n" is a section of this file; a bare `NN` is `docs/plan/NN-*`.
 - **Status:** not yet run. **No participant, session, timing, hit rate or quote exists**; every duration is an
   allocation inside 60 minutes. The report answers RQ1–RQ5 by heuristic evaluation; these sessions test it, and AC2
   (a caveat restated "in their own words") and AC3 (disputed defaults) need them. Results go into a dated addendum
@@ -89,8 +89,9 @@ the copy's example prices are re-set to that range when the stimuli are built.
   happens on a disconnect, so Probe C stays cold. Kept with the session materials, never in the repository.
 - **ST3 — "the backend just died mid-TWAP" (A).** Frame 1 in plain text, no emulation label: a BTCUSDT TWAP buying 2
   BTC over 30 minutes in 10 slices (the US-ALGO-006 example), 4 of 10 filled, slice 5 resting at the bid, the long
-  position with its native stop price; then one event card per situation. No banner, state change or caveat
-  appears. The scenario is narrated, never staged by stopping a real process.
+  position with its native stop price; then one event card per situation. Frame 0 (A-d): the same TWAP a minute after
+  its start with no position open, slice 1 resting and nothing filled (the report's §3 interim case). No banner, state
+  change or caveat appears. The scenario is narrated, never staged by stopping a real process.
 - **ST4 — terms and caveats (C-a–C-c).** Term cards "emulated", "app-managed", "client-side", "not
   exchange-native" (four of the plan's names for one idea), plus the report's recommended term if it differs; the
   report's caveat candidates per strategy in one type size, no styling cue, word counts on the moderator sheet.
@@ -104,10 +105,11 @@ the copy's example prices are re-set to that range when the stimuli are built.
 - **ST5b — resume messages (C-e).** Per situation, the report's proposed reconnect text and, where the plan has
   wording, candidate A (report §4), over the same frame after the return; the same rotation.
 - **ST6 — monitor, SCR-070 (D, F).** TWAP, iceberg, chase and OCO rows: running, paused by you, paused after the Bybit
-  link dropped, a TWAP whose window ended while paused (report SC-3), halted by risk control, failed, completed, and
-  the two orphan order rows of report M10a and M10b; the degraded banner; the empty state; content per the report;
-  field cards for D-b. Exported for 1920×1080 at 100 %, so a magnifier's zoom is real, and at 125 % (`10` §3), in
-  greyscale and in the high-contrast theme for F (7).
+  link dropped, a TWAP whose window ended while paused (report SC-3, PROPOSED), halted by risk control, failed,
+  completed, and the two orphan order rows of report M10a and M10b; the degraded banner; the empty state; one row
+  under view-as (report SC-15: every control disabled with SCR-124's reason except a kill switch the viewed user may
+  engage); content per the report; field cards for D-b. Exported for 1920×1080 at 100 %, so a magnifier's zoom is
+  real, and at 125 % (`10` §3), in greyscale and in the high-contrast theme for F (7).
 - **ST7 — pre-submit cards (E):** one per item listed in Probe E, plus a blank card.
 - **ST8 — keyboard build (F).** The E33-D02/D03 clickable prototype with the SCR-076 algo confirmation, else a
   Wizard-of-Oz deck (the participant names each key; the moderator shows the next focus). Signals only, until E33-D05
@@ -119,7 +121,7 @@ the debrief. No sort needs dragging: the participant names the card and the pile
 
 ## 4. Session script (60 minutes)
 
-Budget: opening, primer and consent 3 · warm-up 2 · A 8 · B 11 · C 15 · D 8 · E 5 · debrief 3 = **55 min**. The
+Budget: opening, primer and consent 3 · warm-up 2 · A 9 · B 10 · C 15 · D 8 · E 5 · debrief 3 = **55 min**. The
 keyboard-primary or magnification participant runs F (10) instead of E = **60 min**; if F cannot start by minute 47,
 it becomes a separate 20-minute session. The disconnect scenario runs first, before anything explains emulation or
 disconnects (ticket Test plan), so neither the parameter cards nor the competitor pages can prime it; the caveat comes
@@ -128,7 +130,7 @@ before the disconnect message, as in the product. No think-aloud during a restat
 **Warm-up (2 min).** "Tell me about the last time you split an order up or chased a price. Which tool? What did you
 set yourself?" Record tools, strategies and any incident. Show nothing.
 
-**Probe A — the disconnect scenario, before any explanation (RQ3, 8 min).** Nothing about emulation, disconnects or
+**Probe A — the disconnect scenario, before any explanation (RQ3, 9 min).** Nothing about emulation, disconnects or
 parameters has been shown. **A-a (4 min, backend-off, the ticket's scenario; always first).** Show ST3 frame 1 and
 read: "This is a TWAP you started 12 minutes ago: buy 2 BTC over 30 minutes, in 10 slices. Four slices have filled.
 The fifth is resting on the book. Your position has its stop-loss." Event card: "The computer that runs
@@ -140,10 +142,12 @@ stays · (c) the TWAP carries on as planned · (d) I don't know." (4) "How sure 
 min, Bybit-link-off)** and **A-c (2 min, app-off)**, order alternated, ask (1)–(4): "Another day, the same TWAP.
 CandleViewer is fine, but its connection to Bybit drops for 20 seconds." / "Another day, the same TWAP. You close the
 CandleViewer app for 10 minutes. The backend keeps running." Twenty seconds keeps the 30-second account-down rule and
-its dead-man's-switch policy out of A-b (`20` §7.2 `CV_ACCOUNT_DOWN_S`; US-ACCT-010).
+its dead-man's-switch policy out of A-b (`20` §7.2 `CV_ACCOUNT_DOWN_S`; US-ACCT-010). **A-d (1 min, the unprotected
+window; ST3 frame 0):** "Another day: you start the same TWAP with no position open. The backend crashes before slice
+1 fills, and slice 1 fills while it is down. What protects those 0.20 BTC?" (report §3, F12; coded in §5).
 
-**Probe B — parameter sort (RQ1, 11 min).** B-a (6 min): per strategy, rotated, sort ST1 into "I set this myself",
-"a default is fine", "unclear". B-b (2 min): per RQ1 pair (slice count vs duration; visible size vs show-ratio; peg
+**Probe B — parameter sort (RQ1, 10 min).** B-a (5 min): per strategy, rotated, sort ST1 into "I set this myself", "a
+default is fine", "unclear". B-b (2 min): per RQ1 pair (slice count vs duration; visible size vs show-ratio; peg
 offset vs maximum chase distance): "Which do you set, and which may follow or default? What would you set for 2 BTC
 on BTCUSDT?" B-c (2 min): for each "a default is fine" card, its reveal card: "Keep it, higher, lower, or would you
 always set it?" Record any value given. B-d (1 min): ST2 for one strategy they use: "Does this ask for anything ours
@@ -161,16 +165,17 @@ waiting on you?" C-f (1 min, RQ1): the policy card — "cancel this algo's worki
 leave what is working · cancel everything and alert me": "Choose per algo, or one setting? Which?" (the plan disagrees
 on whether this is a user choice). C-b, C-d and C-e are scored per §5.
 
-**Probe D — monitor (RQ4, 8 min).** D-a (2 min), before ST6: "List what a panel must show for you to be sure no algo
+**Probe D — monitor (RQ4, 8 min).** D-a (1 min), before ST6: "List what a panel must show for you to be sure no algo
 runs that you don't know about." D-b (2 min): show ST6: "Is anything running here that you cannot see? How would you
 know?" Then sort field cards into "in the row", "on demand", "not needed": type, symbol, account, side, environment
 badge, progress, filled and remaining, average price, next action and countdown, state and its cause, who paused or
 halted it, last reconciled time, child orders resting at Bybit, native-stop status, emulation tag, controls. D-c (2
 min), on the three paused rows and the halted row: "Why is this one stopped? What makes it run again? What would you
 do?" (the plan's one `paused` state has three causes and no stated trigger for leaving a freeze); answers are also
-scored with K5 (§5). D-d (1 min): "You press Cancel on the TWAP row. What happens to its slice resting at Bybit?"
-(US-ALGO-010: each algorithm's cancellation policy); "And if you close the position instead?" (report F29). D-e (1
-min): "You are about to close the app. What tells you what keeps running?"
+scored with K5 (§5). D-d (2 min): "You press Pause. What happens to the slice at Bybit?" (report M8; FB7); "You press
+Cancel on the TWAP row. What happens to its slice resting at Bybit?" (US-ALGO-010: each algorithm's cancellation
+policy); "And if you close the position instead?" (report F29). D-e (1 min): "You are about to close the app. What
+tells you what keeps running?"
 
 **Probe E — pre-submit information (RQ5, 5 min).** ST7: schedule preview table (SCR-066 A11y) · projected requests per
 second against the account's remaining headroom, counting running algos (report §6; E33-S05) · slippage estimate
@@ -182,17 +187,18 @@ rate card, "It says: with your running chase, 4 of 4 requests a second. What wou
 
 **Probe F — accessibility pass (keyboard-primary or magnification participant, 10 min).** ST8 with the participant's
 own setup, keyboard only or their magnifier at their zoom; in tasks (1)–(3) the focus ring is never hidden (`05` §3.4
-item 6): (1) find the TWAP row and read its progress and next action; (2) pause it, then resume it; (3) cancel the
-chase — the confirm names target and effect (SCR-070 A11y), and focus returns to the row (`05` §3.4 item 4); (4) with
-focus on a row, find the degraded banner and the row's emulation tag at that zoom, with nothing lost or clipped (`05`
-§5 item 7: WCAG 1.4.4, reflow per 1.4.10; CMP-118: text, not a tooltip); (5) tab through the TWAP builder to its
-caveat and schedule preview table (SCR-066, SCR-067 A11y) while the moderator swaps in a "Waiting for Bybit" banner
-card outside the magnified area (record if and when it is noticed unprompted), then submit and read the algo
-confirmation at their own pace (record whether SCR-076's 20 s auto-cancel would have expired); (6) "Pause all": does
-the confirm restate the count (SCR-070 sign-off)? (7) ST6 in greyscale, then in high contrast: "Which rows will act on
-their own, and which wait for you?" (Paused by you, Waiting for Bybit and Halted by risk control told apart without
-colour; E33-D05). Ask: "What did you have to pan or zoom to see? What did you miss?" Optional screen-reader pass: is
-the degraded banner read once as a status, and is a halt heard once, as a summary (report §5; record only)?
+item 6): (1) find the TWAP row and read its progress and next action; (2) pause it (does the confirmation say its
+order at Bybit stays?), then resume it; (3) cancel the chase — the confirm names target and effect (SCR-070 A11y), and
+focus returns to the row (`05` §3.4 item 4); (4) with focus on a row, find the degraded banner and the row's emulation
+tag at that zoom, with nothing lost or clipped (`05` §5 item 7: WCAG 1.4.4, reflow per 1.4.10; CMP-118: text, not a
+tooltip); (5) tab through the TWAP builder to its caveat and schedule preview table (SCR-066, SCR-067 A11y) while the
+moderator swaps in a "Waiting for Bybit" banner card outside the magnified area (record if and when it is noticed
+unprompted), then submit and read the algo confirmation at their own pace (record whether SCR-076's 20 s auto-cancel
+would have expired); (6) "Pause all": does the confirm restate the count (SCR-070 sign-off)? (7) ST6 in greyscale,
+then in high contrast: "Which rows will act on their own, and which wait for you?" (Paused by you, Waiting for Bybit
+and Halted by risk control told apart without colour; E33-D05). Ask: "What did you have to pan or zoom to see? What
+did you miss?" Optional screen-reader pass: is the degraded banner read once as a status, and is a halt heard once, as
+a summary (report §5; record only)?
 
 **Debrief (3 min).** "What surprised you today?" Then explain the three situations and answer the parking card;
 record reactions verbatim ("Is that what you would want?"). Thank, stop recording, note the stimulus version.
@@ -202,8 +208,11 @@ record reactions verbatim ("Is that what you would want?"). Thank, stop recordin
 **Session sheet.** Session id · date · type (owner, manager, outside trader) · informed · knows CandleViewer ·
 assistive tech, zoom and colour vision · stimulus version · every §4 answer, verbatim where spoken. Codes: A
 expectation cancel / freeze / continue / don't know / mixed; first action wait / act at Bybit / flatten / restart /
-other; A-a return resumes / waits for me / cancels, missed slices at once / spread / skipped; F per task: done, Tab
-stops, blockers; in (5) the banner noticed unprompted, and when, and the confirmation read inside 20 s or not.
+other; A-a return resumes / waits for me / cancels, missed slices at once / spread / skipped; A-d what protects the
+filled part: nothing until CandleViewer is back (today's answer, so FB3's "no stop" is not a fail here) / a stop at
+Bybit (**assumed stop**, false today: report §3) / the algo (FB3) / don't know; D-d Pause: the slice stays / is pulled
+(FB7) / don't know; F per task: done, Tab stops, blockers; in (5) the banner noticed unprompted, and when, and the
+confirmation read inside 20 s or not.
 
 **Restatement scoring (C-b, C-d, C-e).** **K1** who runs it: CandleViewer, not Bybit. **K2** what stops it: it acts
 only while CandleViewer's backend runs and reaches Bybit. **K3** what still protects: the stop-loss held by Bybit.
@@ -220,9 +229,11 @@ the participant's own words (K4 alone for a disconnect message, K5 alone for a r
 contradicts K1 or K3. **Partial** = one of the two (for a message, part of its code), no contradiction. **Fail** =
 neither, or a false belief: FB1 Bybit runs it, or it carries on while the backend is down or cut off from Bybit; FB2
 orders at Bybit were cancelled; FB3 there is no stop, or the algo is the stop; FB4 "emulated" means simulated or
-paper; FB5 closing the app stops it; FB6 a run that waits for you carries on by itself. Reading the card back is not a
-restatement; ask once, "And what does that mean for you?" The first candidate a participant sees for a strategy is the
-**cold** reading; Probe A primes K2 but explains nothing.
+paper; FB5 closing the app stops it; FB6 a run that waits for you carries on by itself; FB7 pausing pulls the order
+from Bybit. Reading the card back is not a restatement; ask once, "And what does that mean for you?" The first
+candidate a participant sees for a strategy is the **cold** reading. Probe A primes K2, and A-d's premise (a resting
+slice fills while the backend is down) primes K4's "can still fill" clause (TWAP's "a slice on the book can still
+fill", and its iceberg, chase and OCO analogues); that clause does not count toward a cold pass.
 
 **Choosing binding copy (AC2).** One rule for every binding text: per strategy for the caveat (C-b), per window text
 for the disconnect message (C-d) and per situation for the resume message (C-e). The candidate with the most passes
@@ -266,13 +277,14 @@ parameter, recommended default, keep / higher / lower / always set, values given
 and what to read. (5) Accessibility signals for E33-D05; OQ ids closed or opened. (6) Hand-offs: E33-D02/D03 (copy,
 defaults), E33-T01 (config defaults), E33-X01 (residual risk), E33-D06 (exact copy).
 
-## 6. Owner walkthrough checklist (ready to post on issue #857; owner approval pending)
+## 6. Owner walkthrough checklist (to be posted on issue #857 when the PR leaves draft; owner approval pending)
 
 Approval by exception: tick an item to accept it (yes); to override it (no), leave it unticked and comment with the
 item number and the report id. Ticked items feed E33-D02/D03, E33-T01 and E33-X01. If you will be a participant,
 run your own session before items 2–9, or it is tagged informed (§5).
 
-1. [ ] Every source conflict (SC) and open question (OQ) keeps the report's recommended default, except those I list.
+1. [ ] Every source conflict (SC) and open question (OQ) keeps the report's recommended default, except those I list;
+       for the E33 threat model's D6–D8 it is only a recommendation into them (report §1a).
 2. [ ] The report's disconnect and resume copy is provisional binding copy until steps C-d and C-e run, and it never
        says an algo pauses when only the app link is lost (app-off, §1).
 3. [ ] The report's caveat for TWAP, iceberg, chase and OCO is provisional binding copy until step C-b runs.
@@ -286,19 +298,20 @@ run your own session before items 2–9, or it is tagged informed (§5).
 10. [ ] The report's default on whether the disconnect policy is a per-algo choice in R3.
 11. [ ] The report's monitor rows, where every stopped row names its cause and what restarts it.
 12. [ ] The report's minimum pre-submit set for SCR-066–069.
-13. [ ] The report's viewer variant of SCR-070: controls disabled with the reason "Read-only role", never hidden
-        (report SC-15).
+13. [ ] The report's viewer variant of SCR-070: controls disabled with the reason "Read-only role", never hidden;
+        under view-as only a kill switch the viewed user may engage stays enabled (report SC-15).
 14. [ ] §2 is this study's data-handling policy (deletion at read-out acceptance, at the latest at epic close).
 15. [ ] I commented `approved` on #857, or left rework notes citing these item numbers and the report's ids.
 16. [ ] Before S1: I opened the lead pages listed in the report's §7 (none could be read for the report) and
         confirmed or corrected its Low-confidence claims (where Bybit's TWAP, iceberg and chase run; a chase at its
         maximum distance; TWAP duration bounds) and checked what Sierra Chart's pages say about orders that need the
-        platform running.
+        platform running, and the DJ execution-desk row there.
 17. [ ] Before S1: ST1–ST8 are built from the approved version, and the pilot ran with no data kept.
 18. [ ] After the sessions: ≥ 5 ran, including a CandleViewer newcomer and a keyboard-primary or magnification user.
 19. [ ] Binding copy followed the §5 rule: a caveat per strategy, a disconnect message per window text and a resume
         message per situation, binding only where at least half passed and none was an FB1, FB5 or FB6 fail.
 20. [ ] Contested defaults are stated, recommended and flagged for the R3 soak; defaults went to E33-D02/D03, E33-T01.
-21. [ ] My acceptance of "emulated algos stop when the backend stops" (residual AS-D05 of the E33 threat model, §4.2,
-        §11.2; queued on #2701) is recorded by the model's approval PR, with Probe A and C evidence for its input O-1.
+21. [ ] My acceptances of the E33 threat model's residuals AS-D05 ("emulated algos stop when the backend stops", §4.2)
+        and AS-S02 (a stolen session starting a demo run), both §11.2 and queued on #2701, are recorded by the model's
+        approval PR, not here, with Probe A and C evidence for AS-D05's input O-1.
 22. [ ] Recordings and raw notes are deleted per §2.
