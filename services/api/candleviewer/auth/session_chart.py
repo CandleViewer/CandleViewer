@@ -25,6 +25,7 @@ from candleviewer.statechart import build
 from candleviewer.statechart.bindings import b16_session
 from candleviewer.statechart.factory import default_clock
 from candleviewer.statechart.gateway import Gateway, receipt_is_conclusive
+from candleviewer.statechart.plugins import FeedBinding, MachineStatePort, feed_plugins
 
 #: Max live interpreters per process; least-recently-used is stopped first
 #: (it is rebuilt from the row on next use).
@@ -64,7 +65,10 @@ def to_us(when: datetime) -> int:
 
 
 class SessionChart:
-    def __init__(self, *, max_charts: int = MAX_CHARTS) -> None:
+    def __init__(
+        self, *, max_charts: int = MAX_CHARTS, feed: MachineStatePort | None = None
+    ) -> None:
+        self._feed = feed  # 23 §6.4: each chart publishes `machines.session:{id}.state`
         self._charts: OrderedDict[str, Any] = OrderedDict()
         self._gateway = Gateway()
         self.refusals = _Refusals()
@@ -142,6 +146,7 @@ class SessionChart:
                 ctx={"session_id": sid, "user_id": str(record.user_id)},
                 clock=default_clock(),
                 lane="control",
+                plugins=feed_plugins(self._feed, FeedBinding("session", sid, user=record.user_id)),
             )
             interp = result.interpreter
             self._gateway.register(

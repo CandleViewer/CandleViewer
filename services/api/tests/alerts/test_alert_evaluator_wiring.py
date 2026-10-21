@@ -128,18 +128,23 @@ async def test_evaluator_crash_between_insert_and_poll_leaves_outbox_pending() -
 class Charts:
     def __init__(self) -> None:
         self.calls: list[tuple[str, Any]] = []
+        self.owners: list[str | None] = []
 
-    async def fired(self, alert_id: str, ids: Any, channels: Any) -> None:
+    async def fired(self, alert_id: str, ids: Any, channels: Any, **kw: Any) -> None:
         self.calls.append(("fired", alert_id))
+        self.owners.append(kw.get("owner"))
 
-    async def suppressed(self, alert_id: str, end: int) -> None:
+    async def suppressed(self, alert_id: str, end: int, **kw: Any) -> None:
         self.calls.append(("suppressed", alert_id))
+        self.owners.append(kw.get("owner"))
 
-    async def suppression_expired(self, alert_id: str) -> None:
+    async def suppression_expired(self, alert_id: str, **kw: Any) -> None:
         self.calls.append(("expired", alert_id))
+        self.owners.append(kw.get("owner"))
 
-    async def disabled(self, alert_id: str) -> None:
+    async def disabled(self, alert_id: str, **kw: Any) -> None:
         self.calls.append(("disabled", alert_id))
+        self.owners.append(kw.get("owner"))
 
 
 class Audit:
@@ -171,6 +176,7 @@ async def test_evaluator_records_b10_and_audits_fire_storm_disarm() -> None:
     await ev.process(AlertTick("on_price_update", clock.now, "BTCUSDT"))
     assert charts.calls[-1] == ("disabled", "e")
     assert audit.actions == ["alert.fired", "alert.fired", "alert.disarmed"]
+    assert charts.owners == ["u1"] * len(charts.calls)  # every call names the alert's owner (§6.4)
 
 
 async def test_evaluator_audit_failure_never_loses_committed_delivery() -> None:

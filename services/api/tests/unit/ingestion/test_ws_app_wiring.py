@@ -27,6 +27,12 @@ def test_flag_on_manager_constructed_and_owned_by_ingestion() -> None:
     assert ing.ws_frames.maxsize == WS_FRAME_QUEUE_MAXSIZE > 0  # bounded (C-2.18)
 
 
+def test_flag_on_gives_the_book_supervisor_the_apps_machine_feed() -> None:
+    """E17-T08: `create_app` hands `wire_public_ws` its one feed: the B14 charts publish (§6.4)."""
+    app = create_app(Settings(ingestion_ws_enabled=True))
+    assert app.state.app_context.ingestion.books._supervisor._feed is app.state.machine_feed
+
+
 def test_frame_queue_overflow_drops_and_counts() -> None:
     ing = create_app(Settings(ingestion_ws_enabled=True)).state.app_context.ingestion
     for _ in range(WS_FRAME_QUEUE_MAXSIZE + 3):

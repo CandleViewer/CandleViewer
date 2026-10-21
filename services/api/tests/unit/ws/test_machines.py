@@ -976,9 +976,9 @@ def test_a_refused_payload_changes_nothing() -> None:
     order = MachineEntity("order", OID, ON_A)
     registry.publish(order, _payload())
     conn.sub(order.ch)
-    before = _count("cv_machine_ws_publish_total")
+    before, done = _count("cv_machine_ws_publish_total"), {**_payload(), "tags": ["terminal"]}
     with capture_logs() as logs:
-        assert not registry.terminal(order, {**_payload(state="filled"), "state_ids": []})
+        assert not registry.terminal(order, {**done, "state": "filled", "state_ids": []})
         assert not registry.publish(order, _payload("kill_switch"))  # another kind's chart
     with pytest.raises(TypeError):
         registry.terminal(order, {**_payload(state="filled"), "feed": (n for n in range(0))})
@@ -1015,7 +1015,8 @@ def test_a_further_terminal_payload_replaces_the_last_one_and_keeps_its_retentio
 
 
 def test_a_payload_whose_tags_hold_terminal_is_the_last_whichever_call_carried_it() -> None:
-    """R1S-04: a `publish` of a terminal-tagged payload is retained for 60 s and is the last."""
+    """R1S-04: a `publish` of a terminal-tagged payload is retained for 60 s and is the last; a
+    `terminal()` whose payload lacks the tag is too, and warns, by kind only (#3988 R1S-04)."""
     loop = _Loop()
     conn, registry, _ = _world(**loop.kw)
     order = MachineEntity("order", OID, ON_A)
@@ -1026,6 +1027,9 @@ def test_a_payload_whose_tags_hold_terminal_is_the_last_whichever_call_carried_i
     loop.advance(60.0)
     assert registry.scope(order.ch) is None  # and the retention timer ends it
     assert [f["t"] for f in conn.take()] == ["snap", "revoked"]
+    with capture_logs() as logs:
+        assert registry.terminal(order, _payload(state="filled")) and not registry.remove(order)
+    assert logs == [_line("machine terminal without its tag", "warning")]
 
 
 def test_the_registry_bounds_are_pinned() -> None:

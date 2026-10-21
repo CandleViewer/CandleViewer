@@ -222,7 +222,10 @@ class MachineStateRegistry:
     ) -> bool:
         kind, entry = entity.kind, self._entries.get(entity.ch)
         tags = payload.get("tags")  # the payload's own tags decide, whichever call carried it
-        terminal = terminal or (isinstance(tags, list) and "terminal" in tags)
+        tagged = isinstance(tags, list) and "terminal" in tags
+        if terminal and not tagged:  # a publisher defect: a frozen entry would read as live
+            self._note("warning", "machine terminal without its tag", kind)
+        terminal = terminal or tagged
         ended = entry is not None and entry.terminal
         if ended and not terminal:
             self._note("warning", "machine state after terminal ignored", kind)

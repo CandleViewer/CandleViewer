@@ -308,7 +308,7 @@ def test_a_snap_that_raises_after_a_failed_waking_d_stays_pending_and_is_logged(
     registry, order, ((bad, bs), (good, _)) = _machines(hub)
     monkeypatch.setattr(bad.emitter, "push", raiser)
     with capture_logs() as logs:
-        assert registry.terminal(order, _payload(state="filled"))
+        assert registry.terminal(order, {**_payload(state="filled"), "tags": ["terminal"]})
     failed = [(e["event"], e["family"], e["error"], e["log_level"]) for e in logs]
     assert failed == [
         ("ws delta failed", "machines", error, "warning"),

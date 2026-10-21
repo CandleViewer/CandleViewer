@@ -26,6 +26,7 @@ from candleviewer.auth.invite_service import InviteService
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import SessionRecord, UserRecord
+from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_repository import SessionRepository
 from candleviewer.auth.session_service import (
     BackstopAuditSink,
@@ -41,6 +42,7 @@ from candleviewer.auth.view_as import ViewAsSessionStore
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.observability.health_probes import SystemEventWriter
 from candleviewer.settings import Environment
+from candleviewer.statechart.plugins import MachineStatePort
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
@@ -106,6 +108,9 @@ class AuthService:
         #: #3120: where the audit record of a backstop revocation goes (an adapter over the audit
         #: writer); attached by the composition root, like the revocation sink.
         self._backstop_audit: BackstopAuditSink | None = None
+        #: E17-T08: where each session chart publishes `machines.session:{id}.state` (23 §6.4);
+        #: attached by the composition root, read when `start()` builds the step-up service.
+        self._machine_feed: MachineStatePort | None = None
         self._skew_reporter: TotpSkewReporter | None = None
         #: E09-S11 (O4): the unresolved break-glass state behind the WS `system` notice.
         self._break_glass_notice = BreakGlassNotice(break_glass_events)
@@ -221,6 +226,11 @@ class AuthService:
         after `start()`."""
         self._backstop_audit = sink
 
+    def attach_machine_feed(self, feed: MachineStatePort) -> None:
+        """Publish each session chart built from now on through *feed* (`23-ws-protocol.md` §6.4).
+        Attach before `start()`, which builds the step-up service."""
+        self._machine_feed = feed
+
     async def _audit_backstop(self, revocation: BackstopRevocation) -> None:
         if self._backstop_audit is None:
             raise BackstopAuditNotAttached
@@ -311,6 +321,7 @@ class AuthService:
                     Hasher(pepper=self._pepper),
                     publish_revocation=self._publish_revocation,
                     clock=self._clock,
+                    chart=SessionChart(feed=self._machine_feed),
                     skew_reporter=skew_reporter,
                 )
         await self._break_glass_notice.start()  # read before cv-api serves, then every minute
