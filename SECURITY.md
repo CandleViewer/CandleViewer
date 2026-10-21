@@ -130,7 +130,9 @@ noted in `CHANGELOG.md` under _Security_.
   `services/api/secrets/`, in memory, at signing time. No API, log, metric, trace, error, fixture or
   frontend bundle may contain a key (C-2.7).
 - **Authentication:** app-level accounts with **mandatory TOTP 2FA**, independent of Bybit's. Sessions are
-  token-based, short-lived, revocable, and cookies are `Secure`/`HttpOnly`/`SameSite=Strict`.
+  token-based, short-lived and revocable. Cookies are `Secure` and `SameSite=Strict`, and `HttpOnly`
+  except the CSRF cookie, which is deliberately not; only the desktop shell's origin,
+  `app://candleviewer`, may get `SameSite=None` (C-12.9).
 - **Authorisation:** RBAC — **Owner** (full admin), **Manager** (assigned accounts only; trade and view
   own positions; no key or user management; cannot see other managers), **Viewer** (read-only incl.
   audit). Enforced **server-side** at the API boundary and re-checked at the data layer; deny by default.

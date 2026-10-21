@@ -202,7 +202,7 @@ flowchart LR
     B -->|egress TLS, IP-allowlisted at Bybit| X["Bybit v5"]
 ```
 
-- **B1 device to host** — Tailscale identity + ACL, then app session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`) plus TOTP at login.
+- **B1 device to host** — Tailscale identity + ACL, then app session cookie (`Secure`, `HttpOnly`, `SameSite=Strict`; only the desktop shell's origin may get `SameSite=None`, C-12.9) plus TOTP at login.
 - **B2 host to WSL** — services bind `127.0.0.1` / WSL-internal only; never `0.0.0.0` (WSL portproxy leak risk).
 - **B3 WSL to Bybit** — outbound TLS only; API keys envelope-encrypted; KEK never resident in WSL; startup self-check refuses trading mode if any stored key has Withdrawal enabled or lacks an IP allowlist.
 - **B4 renderer to Electron main** — context-isolated preload with an explicit IPC allow-list; no `nodeIntegration`; strict CSP; `window.open` denied.

@@ -211,6 +211,8 @@
 # E22-T01: the SR-E22 constants module at its real path. Threat model E22 §7. (Its pre-`candleviewer/`
 # placeholder `/services/api/orderflow/limits.py` was removed with the others in #2706.)
 /services/api/candleviewer/orderflow/limits.py  @CandleViewer/backend @CandleViewer/security @basiltt
+# ADR-0038 4b (C-12.9): the one cookie writer the SR-012 Semgrep rules exempt, so Security co-owns it.
+/services/api/candleviewer/api/csrf.py  @CandleViewer/backend @CandleViewer/security @basiltt
 /services/api/pyproject.toml            @CandleViewer/backend @CandleViewer/devsecops @CandleViewer/security @basiltt
 
 # ---------------------------------------------------------------------------

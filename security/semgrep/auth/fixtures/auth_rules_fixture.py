@@ -208,6 +208,103 @@ def cookie_ok(response, sid):
     response.set_cookie("cv_refresh", sid, httponly=True, secure=True, samesite="strict")  # ok: cookie-flags
 
 
+def cookie_samesite_none_bad(response, sid):
+    response.set_cookie("cv_refresh", sid, httponly=True, secure=True, samesite="none")  # ruleid: cookie-flags
+
+
+def cookie_samesite_lax_bad(response, sid):
+    response.set_cookie("cv_refresh", sid, httponly=True, secure=True, samesite="lax")  # ruleid: cookie-flags
+
+
+def cookie_samesite_computed_bad(response, sid, attrs):
+    response.set_cookie("cv_refresh", sid, httponly=True, secure=True, samesite=attrs.samesite)  # ruleid: cookie-flags
+
+
+def cookie_samesite_conditional_bad(response, sid, request):
+    samesite = "none" if request.headers.get("origin") == "app://candleviewer" else "strict"
+    response.set_cookie("cv_refresh", sid, httponly=True, secure=True, samesite=samesite)  # ruleid: cookie-flags
+
+
+def cookie_csrf_computed_bad(response, token, attrs):
+    # HttpOnly=False is the CSRF cookie's one exception; its samesite is not an exception (ADR-0038 4b)
+    response.set_cookie("__Host-cv_csrf", token, path="/", secure=True, httponly=False, samesite=attrs.samesite)  # ruleid: cookie-flags
+
+
+def cookie_delete_ok(response):
+    response.delete_cookie("cv_refresh", path="/api/v1/auth", httponly=True, secure=True, samesite="strict")  # ok: cookie-flags
+
+
+def cookie_delete_computed_bad(response, attrs):
+    response.delete_cookie("cv_refresh", path="/api/v1/auth", httponly=True, secure=True, samesite=attrs.samesite)  # ruleid: cookie-flags
+
+
+def cookie_delete_default_bad(response):
+    response.delete_cookie("cv_refresh", path="/api/v1/auth")  # ruleid: cookie-flags
+
+
+# ADR-0038 4b: the one function that picks SameSite. Its home is api/csrf.py, so its definition in
+# any other module (this one) is refused; cookie-flags and cookie-flags-raw-header read its body as
+# the writer's.
+def write_auth_cookie(response, name, value, attrs, httponly, max_age):  # ruleid: cookie-flags-writer-location
+    response.set_cookie(name, value, max_age=max_age, path="/", secure=True, httponly=httponly, samesite=attrs.samesite)  # ok: cookie-flags
+    response.set_cookie(name, "", max_age=0, expires=0, path="/", secure=True, httponly=httponly, samesite=attrs.samesite)  # ok: cookie-flags
+    response.set_cookie(name, value, max_age=max_age, path="/", httponly=httponly, samesite=attrs.samesite)  # ruleid: cookie-flags
+    response.set_cookie(name, value, max_age=max_age, path="/", secure=True, samesite=attrs.samesite)  # ruleid: cookie-flags
+    response.set_cookie(name, value, max_age=max_age, path="/", secure=True, httponly=httponly)  # ruleid: cookie-flags
+    response.set_cookie(name, value, max_age=max_age, secure=True, httponly=httponly, samesite=attrs.samesite, domain=".x.io")  # ruleid: cookie-flags-domain
+    response.delete_cookie(name, path="/", secure=True, httponly=httponly, samesite=attrs.samesite)  # ok: cookie-flags
+    response.delete_cookie(name, path="/", httponly=httponly, samesite=attrs.samesite)  # ruleid: cookie-flags
+    header_name, header = response.raw_headers[-1]
+    response.raw_headers[-1] = (header_name, header + b"; Partitioned")  # ok: cookie-flags-raw-header
+
+
+# Same-named writers outside api/csrf.py: each would escape cookie-flags by its name alone.
+async def write_auth_cookie(response, name, value, attrs):  # ruleid: cookie-flags-writer-location
+    response.set_cookie(name, value, secure=True, httponly=True, samesite=attrs.samesite)
+
+
+def cookie_writer_nested(response, attrs):
+    def write_auth_cookie(name, value):  # ruleid: cookie-flags-writer-location
+        response.set_cookie(name, value, secure=True, httponly=True, samesite=attrs.samesite)
+
+    write_auth_cookie("cv_refresh", "x")  # ok: cookie-flags-writer-location
+
+
+class CookieWriter:
+    def write_auth_cookie(self, response, name, value, attrs):  # ruleid: cookie-flags-writer-location
+        response.set_cookie(name, value, secure=True, httponly=True, samesite=attrs.samesite)
+
+
+def cookie_raw_header_bad(response, message, headers, pair, pairs, value):
+    response.headers.append("set-cookie", value)  # ruleid: cookie-flags-raw-header
+    response.headers["Set-Cookie"] = value  # ruleid: cookie-flags-raw-header
+    headers.setdefault("set-cookie", value)  # ruleid: cookie-flags-raw-header
+    headers.update({"Set-Cookie": value})  # ruleid: cookie-flags-raw-header
+    message["headers"].append((b"set-cookie", value))  # ruleid: cookie-flags-raw-header
+    response.raw_headers.append((b"set-cookie", value))  # ruleid: cookie-flags-raw-header
+    response.raw_headers.extend(pairs)  # ruleid: cookie-flags-raw-header
+    response.raw_headers.insert(0, pair)  # ruleid: cookie-flags-raw-header
+    header_name, header = response.raw_headers[-1]
+    response.raw_headers[-1] = (header_name, header + b"; Partitioned")  # ruleid: cookie-flags-raw-header
+    response.raw_headers += [pair]  # ruleid: cookie-flags-raw-header
+    response.raw_headers = [pair]  # ruleid: cookie-flags-raw-header
+    response.raw_headers[:] = [pair]  # ruleid: cookie-flags-raw-header
+    response.headers.raw.append(pair)  # ruleid: cookie-flags-raw-header
+    response.headers.raw.extend(pairs)  # ruleid: cookie-flags-raw-header
+    response.headers.raw.insert(0, pair)  # ruleid: cookie-flags-raw-header
+    response.headers.raw[0] = pair  # ruleid: cookie-flags-raw-header
+    response.headers.raw += [pair]  # ruleid: cookie-flags-raw-header
+    response.headers.raw = [pair]  # ruleid: cookie-flags-raw-header
+    response.headers . raw.append(pair)  # ruleid: cookie-flags-raw-header
+
+
+def cookie_raw_header_ok(response, token):
+    response.headers.append("x-csrf-token", token)  # ok: cookie-flags-raw-header
+    response.headers["Cache-Control"] = "no-store"  # ok: cookie-flags-raw-header
+    redacted = ("set-cookie", "authorization")  # ok: cookie-flags-raw-header
+    count = len(response.headers.raw)  # ok: cookie-flags-raw-header
+
+
 # --- argon2-params (SR-011) -----------------------------------------------
 weak = PasswordHasher(memory_cost=1024, time_cost=3, parallelism=4)  # ruleid: argon2-params
 strong = PasswordHasher(memory_cost=65536, time_cost=3, parallelism=4)  # ok: argon2-params

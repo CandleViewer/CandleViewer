@@ -1,6 +1,6 @@
 # CandleViewer Constitution
 
-> **Status:** Ratified 2026-09-14 · **Version:** 1.1.0 · **Owner:** @basiltt
+> **Status:** Ratified 2026-09-14 · **Version:** 2.0.0 · **Owner:** @basiltt
 > **Applies to:** every human contributor and every AI coding agent working in this repository.
 > **Authority:** This document outranks any other document, README, comment, habit, skill, agent prompt or
 > tool default in this repository. Where another document conflicts with the Constitution, the Constitution
@@ -798,8 +798,17 @@ append-only (C-2.9). Recorded market data defaults to **30-day** retention with 
 
 **C-12.9 Network posture.** Backend binds to `127.0.0.1` / WSL-internal only. Remote access is
 **Tailscale-only** with ACLs per manager. No public ingress, no port-forwarding, no UPnP, no reverse
-tunnel. A CI/infra check asserts no `0.0.0.0` bind in compose/config. TLS terminates inside the tailnet;
-cookies are `Secure`, `HttpOnly`, `SameSite=Strict`.
+tunnel. A CI/infra check asserts no `0.0.0.0` bind in compose/config. TLS terminates inside the tailnet.
+Cookies are `Secure` and `SameSite=Strict`, and every cookie is `HttpOnly` except the CSRF double-submit
+cookie `__Host-cv_csrf`, which is deliberately not. One exception to `SameSite=Strict`: a response to
+a request whose `Origin` is exactly `app://candleviewer` (the desktop shell's page) and is on the
+backend's configured `Origin` allow-list may set the session cookie `cv_refresh` and the CSRF cookie
+`__Host-cv_csrf` with `SameSite=None` instead, on issue, rotation, re-issue and expiry alike. No other
+attribute is relaxed, and no other cookie, no other origin and no request without an `Origin` gets the
+exception. *(Amended on the merge of #3949 by decision D2 of ADR-0038, taken by the delivery
+orchestrator under the owner's delegation on #2701 and approved by the owner on #3949: the desktop
+shell's page and its loopback backend are different sites, so `Strict` cookies never reach it; the
+original sentence is preserved in the amendment log.)*
 
 **C-12.10 Application hardening.** Strict CSP (no `unsafe-eval`, no `unsafe-inline`; WASM/worker sources
 explicit), no `dangerouslySetInnerHTML` without a sanitiser and a security review, parameterised queries
@@ -1134,6 +1143,7 @@ A PR that copies any of these lists into a second file is rejected; replace the 
 |---|---|---|---|
 | 1.0.0 | 2026-09-14 | Initial ratification | @basiltt |
 | 1.1.0 | 2026-09-25 | C-10.1: agent-delivery review mode — two independent agent reviews + delegated merge of code PRs; design PRs and §16/C-16.2/C-15.9 stay owner-only. Owner decision (chat, 2026-09-25: "I authorise you to do full git operations"). Original text: "2 approving reviews, ≥1 CODEOWNER, approvals come from humans". | @basiltt |
+| 2.0.0 | merge of #3949 | C-12.9: cookie attributes. The text now names the one cookie that is not `HttpOnly`, the CSRF double-submit cookie `__Host-cv_csrf` (true since #2238), and allows one exception to `SameSite=Strict`: a response to a request whose `Origin` is exactly `app://candleviewer` (the desktop shell) and is on the backend's `Origin` allow-list may set `cv_refresh` and `__Host-cv_csrf` with `SameSite=None`, expiry included; no other attribute, cookie or origin is relaxed. Major: weakens a guardrail (C-16.1 step 5). Decision D2 of ADR-0038 (4b), taken by the delivery orchestrator under the owner's delegation (#2701 comments 6284192190 and 6290430849) and approved by the owner on #3949 (issue #3947). Original text: "TLS terminates inside the tailnet; cookies are `Secure`, `HttpOnly`, `SameSite=Strict`." | @basiltt |
 
 ---
 
