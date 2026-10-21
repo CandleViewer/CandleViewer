@@ -19,7 +19,7 @@ which does not exist; plans live under `qa/plans/` and results under `docs/qa/pe
 export K6_BIN=<absolute path of the pinned k6 v2.3.0>   # an executable file, never taken from PATH; any other version is refused
 cd services/api
 uv run python -m bench.ws.runner run A --staging --out-dir <dir>      # also B, C, smoke; --flag off for the control
-#   --ws-path /api/v1/ws moves the gateway's mount and k6's URL together (default /ws)
+#   --ws-path /api/v1/ws points k6 there (default /ws); the fixture serves both, as the app does
 uv run python -m bench.ws.runner selfcheck --staging --out-dir <dir>
 uv run python -m bench.ws.runner w5 --staging --out-dir <dir>         # --duration-s 30 --warmup-s 10: a dry run
 uv run python -m bench.ws.runner repro <run 1> <run 2>                 # AC 5
@@ -32,8 +32,8 @@ and k6 on 8-15, so they never share a CPU (`--backend-cpus` and `--k6-cpus` set 
 is a pass, 1 a budget missed with its check named, 2 an INVALID run (a validity guard tripped, so no budget is
 judged). k6 never phones home (`K6_NO_USAGE_REPORT=true`), resolves no extension, and the script refuses a
 non-loopback target. A run clears its directory of an earlier run's artefacts and bar state first, but only a
-directory the harness made: one that holds such names without the `.cv-bench-ws-run` marker is refused, untouched
-(use an empty `--out-dir`).
+directory the harness made: an empty one, or one that holds the `.cv-bench-ws-run` marker a run writes (a regular
+file). Any other is refused, untouched (use an empty `--out-dir`), and no step follows a symlink inside it.
 
 **A run is only as long as it says.** A run shorter than its profile (`--duration-s`, `--warmup-s`, the workflow's
 `duration_s`) is labelled `smoke`: the gate never holds it to a full baseline, and `record` refuses it, so a short
@@ -41,9 +41,10 @@ window can never become a baseline.
 
 **The regression gate** is C-13.9's: more than 5 % on the median of 3 runs fails, and one run can only warn. The
 tolerance is a parameter (`--tolerance 0.10` is the ticket's 10 %). `runner gate` takes three runs that all passed and
-are of one profile, flag, machine and length; it refuses (exit 2, naming why) on fewer, on an INVALID run or on runs
-that differ, and exits 1 when a run missed a budget or the median regressed. E08's absolute floor applies to every
-`_ms` metric: a move of 0.5 ms or less never gates, so a fan-out that goes from 0.7 to 1.19 ms (+70 %) passes.
+are of one profile, flag, machine, length and event loop; it refuses (exit 2, naming why) on fewer, on an INVALID run,
+on a run that records no loop or on runs that differ, and exits 1 when a run missed a budget or the median regressed.
+E08's absolute floor applies to every `_ms` metric: a move of 0.5 ms or less never gates, so a fan-out that goes
+from 0.7 to 1.19 ms (+70 %) passes.
 A baseline is recorded by `runner record` from a passing, full-length run, as `warn-only`: the gate never fails
 against it. Promoting it is a reviewed PR that changes its `gate` key to `gated` once a second run of the same
 profile has confirmed it (06 §7.4); a baseline moves only by such a PR.
@@ -86,10 +87,10 @@ Warm-up (5 min, 20 s for the smoke) comes before the steady window and is never 
 - **Book and trades are stand-ins** at the feed tiers of `profiles.json` (hot 50 book `d`/s and 60 prints/s,
   warm 10 and 10, cold 2 and 1; A totals 84 and 87, B 368 and 384). The book is the recorded BTCUSDT book, with
   its prices at 10x the trade prices, and clones replay it from seeded offsets.
-- **`/ws`, not `/api/v1/ws`.** 23 §2.1 and the web client say `/api/v1/ws`; the gateway mounts `/ws` and nothing
-  maps one to the other. The harness targets `/ws` by default. `ws_path` (`--ws-path`, the workflow input, the
-  profile table's default) moves the fixture's mount and k6's URL together to `/api/v1/ws`, so the follow-up can
-  re-point without a code change.
+- **`/ws` by default; `/api/v1/ws` reaches the same gateway.** 23 §2.1 and the web client say `/api/v1/ws`. Since
+  #3916 the gateway is served at both, one router included twice (`include_ws_router`), and the fixture mounts it
+  the same way. The harness targets `/ws` by default. `ws_path` (`--ws-path`, the workflow input, the profile
+  table's default) points k6's URL at `/api/v1/ws` with no fixture change; under another prefix it is served too.
 
 ## Approximations the numbers carry
 
@@ -108,8 +109,8 @@ Warm-up (5 min, 20 s for the smoke) comes before the steady window and is never 
    (`server.run()`, uvicorn `loop=auto`) picks uvloop, which the lock file installs. Fan-out, event-loop lag, the
    window timers and backend CPU (so the W5 CPU per family) are loop-sensitive and err on the pessimistic side
    against production, where item 3 errs on the optimistic one. A baseline therefore compares with this harness's
-   own runs only: every run records its loop (`loop` in `run.json`, and in a baseline), and the gate does not
-   compare across loops, or with a baseline that records none.
+   own runs only: every run records its loop (`loop` in `run.json`, and in a baseline), and the gate compares a run
+   with a baseline only when both record the same one, never across loops or when either side records none.
 
 ## Budgets: the §16.3 column the Results PR writes (a recorded run fills it)
 
@@ -149,7 +150,8 @@ efficiency, else per-family multipliers). A cohort is put in `lagging` or `satur
 the server's `s-rtt-*` probes, and no product code is added. `runner w5` runs 10 phases (an unsubscribed idle
 baseline, the mixed workspace in each class, and book, trades and bars alone, healthy and saturated) and writes
 `w5.json`; the tables below take its rows. It exits 1, never green, when there is no usable answer (no data, or a
-mixed phase left out because it was INVALID or the server applied another class), and when its table has no row.
+mixed phase left out because it was INVALID or the server applied another class), and when its table has no row;
+its first line then reads `W5: no usable answer`, naming any mixed phase left out, never a recommendation.
 `--duration-s` and `--warmup-s` replace every phase's window and warm-up, so `runner w5 --duration-s 30 --warmup-s
 10` is a dry run of the whole plan (about 9 minutes; the W5 profile does not wait for a 60 s bandwidth window).
 The workflow's `duration_s` input sets the window alone, so there the phases keep their own warm-ups (60 s for the
