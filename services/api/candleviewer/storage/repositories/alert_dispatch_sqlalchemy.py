@@ -41,6 +41,11 @@ _LOAD = sa.text(
     "(SELECT a.severity::text FROM alerts a WHERE a.id = alert_deliveries.alert_id) AS severity "
     "FROM alert_deliveries WHERE id = :id"
 )
+#: Fixed SQL, bound param only. `ix_outbox_ready` is partial on these two predicates, so the scan
+#: reads the backlog (every topic's, filtered by `topic`), never the processed history.
+_DEPTH = sa.text(
+    "SELECT count(*) FROM outbox WHERE topic = :topic AND processed_at IS NULL AND dead_at IS NULL"
+)
 _OB_DONE = sa.text(
     "UPDATE outbox SET processed_at = now(), locked_by = NULL, locked_until = NULL, "
     "attempts = :attempts WHERE id = :id"
@@ -104,6 +109,10 @@ class SqlAlchemyAlertDispatchStore:
         async with self._relational.unit_of_work() as uow:
             m = (await uow.session.execute(_LOAD, {"id": delivery_id})).mappings().first()
         return None if m is None else row_of(m)
+
+    async def depth(self, topic: str) -> int:
+        async with self._relational.unit_of_work() as uow:
+            return int((await uow.session.execute(_DEPTH, {"topic": topic})).scalar_one())
 
     async def settle_processed(self, job: Any) -> None:
         async with self._relational.unit_of_work() as uow:

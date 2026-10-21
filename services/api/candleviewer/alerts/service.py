@@ -69,13 +69,17 @@ class AlertsService:
 
     async def stop(self, grace_s: float) -> None:
         ev, self.evaluator = self.evaluator, None
-        if ev is not None:
-            await ev.stop(grace_s)
-        if self.dispatcher is not None:
-            await self.dispatcher.stop()
-        if self.topic is not None:  # last: the dispatcher's final settles may still tell it
-            await self.topic.stop()
         self._started = False
+        try:
+            if ev is not None:
+                await ev.stop(grace_s)
+        finally:
+            try:
+                if self.dispatcher is not None:
+                    await self.dispatcher.stop()
+            finally:
+                if self.topic is not None:  # last: the dispatcher's final settles may tell it
+                    await self.topic.stop()
 
     def health(self) -> HealthReport:
         status = HealthStatus.OK if self._started else HealthStatus.STOPPED

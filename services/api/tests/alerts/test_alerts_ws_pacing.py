@@ -8,9 +8,11 @@ never a truncated one, even when the topic must first load that set."""
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any, cast
 from uuid import UUID
 
+import pytest
 from fastapi import WebSocket
 
 from candleviewer.alerts.ws_topic import delivery_item
@@ -26,6 +28,15 @@ from tests.unit.ws._seq_support import Clock, validate
 
 BASE_MS = 1_790_000_000_000
 WINDOW_S = 0.25  # the family's default throttle (23 §6.2.1, topics.py)
+
+
+@pytest.fixture
+async def world() -> AsyncIterator[World]:
+    """The topic with its worker running, as the gateway's module runs it; stopped at the end."""
+    w = World()
+    w.topic.start()
+    yield w
+    await w.topic.stop()
 
 
 class Paced:
@@ -96,8 +107,7 @@ async def _subscribed(world: World, user: UUID = USER_A) -> tuple[Paced, Subscri
     return paced, sub
 
 
-async def test_deltas_leave_in_250_ms_windows_whole_and_in_order() -> None:
-    world = World()
+async def test_deltas_leave_in_250_ms_windows_whole_and_in_order(world: World) -> None:
     paced, _ = await _subscribed(world)
     first, *rest = [_update(world, USER_A, n) for n in range(1, 5)]
     assert world.hub.publish("alerts", first, user=USER_A) == 1
@@ -114,8 +124,7 @@ async def test_deltas_leave_in_250_ms_windows_whole_and_in_order() -> None:
     assert all("coalesced" not in f["p"] for f in [now, *window])
 
 
-async def test_another_owners_burst_never_reaches_this_socket() -> None:
-    world = World()
+async def test_another_owners_burst_never_reaches_this_socket(world: World) -> None:
     paced, _ = await _subscribed(world)
     for n in range(MAX_PENDING_FRAMES + 2):
         world.hub.publish("alerts", _update(world, USER_B, n), user=USER_B)
@@ -123,10 +132,13 @@ async def test_another_owners_burst_never_reaches_this_socket() -> None:
     assert paced.frames() == [] and paced.closed == []
 
 
-async def test_a_burst_past_the_frame_bound_resyncs_with_the_owners_current_set() -> None:
+async def test_a_burst_past_the_frame_bound_resyncs_with_the_owners_current_set(
+    world: World,
+) -> None:
     """The window's frames are dropped, never sent cut short; the `backpressure` snapshot is the
-    owner's current unacked set, which the topic still holds (no change since its load)."""
-    world = World()
+    owner's current unacked set. The burst goes straight to the hub, so the topic's view is out of
+    date; a change through the topic's worker then drops it (as it does before every publish), and
+    the snapshot the held subscription is owed is read again, carrying every change."""
     paced, sub = await _subscribed(world)
     rows = [world.reader.add(USER_A) for _ in range(3)]  # what the snapshot will carry
     world.hub.publish("alerts", _update(world, USER_A, 1), user=USER_A)
@@ -134,7 +146,9 @@ async def test_a_burst_past_the_frame_bound_resyncs_with_the_owners_current_set(
     for n in range(MAX_PENDING_FRAMES + 1):
         world.hub.publish("alerts", _update(world, USER_A, n), user=USER_A)
     assert (sub.snapshot_pending, sub.pending_reason) == (True, "backpressure")
-    world.topic._views.clear()  # the set changed since: the snapshot must be read again
+    last = world.reader.add(USER_A)  # one more change, now through the worker: its delta is held
+    await world.topic.deliveries_changed([last.id])
+    await world.changes()  # the worker drops the owner's view before it publishes
     paced.at(100.0 + WINDOW_S)
     assert paced.frames() == []  # held for the reload: nothing partial meanwhile
     await world.loads()  # the topic's `flush_pending` unparks it and wakes the writer (§8.4)
@@ -144,7 +158,7 @@ async def test_a_burst_past_the_frame_bound_resyncs_with_the_owners_current_set(
     assert (snap["t"], snap["meta"]["reason"]) == ("snap", "backpressure")
     unacked = sorted(world.reader.rows.values(), key=lambda r: (r.queued_at, r.id), reverse=True)
     assert [d["id"] for d in snap["p"]["deliveries"]] == [r.id for r in unacked]
-    assert snap["p"]["unacked_count"] == len(unacked) and {r.id for r in rows} <= {
+    assert snap["p"]["unacked_count"] == len(unacked) and {r.id for r in [*rows, last]} <= {
         d["id"] for d in snap["p"]["deliveries"]
     }
     assert snap["s"] > lead["s"] and paced.closed == []

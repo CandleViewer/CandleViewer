@@ -235,7 +235,7 @@ def _inhibited(component: str) -> bool:
 
 
 def test_postgres_inhibits_db_dependent_tickets() -> None:
-    for c in ("storage", "oms", "rules", "book", "audit"):
+    for c in ("storage", "oms", "rules", "book", "audit", "alerts"):  # #1016: the outbox
         assert _inhibited(c), c
 
 

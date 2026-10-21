@@ -13,6 +13,13 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
+import structlog
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
 
 class AlertRecord(Protocol):
     """The `alerts` columns the evaluator reads (satisfied by `AlertRow`)."""
@@ -113,7 +120,10 @@ class WakingFiringStore:
             body=body, context=context, fired_at=fired_at, once=once, bump=bump, disable=disable,
         )  # fmt: skip
         if ids and status == "queued":  # committed with outbox rows: deliver them now
-            self._wake()
+            try:  # past the commit nothing may raise: the evaluator would re-fire a committed one
+                self._wake()
+            except Exception as exc:  # the next poll delivers them
+                _log().warning("alerts_dispatcher_wake_failed", error=type(exc).__name__)
         return ids
 
 

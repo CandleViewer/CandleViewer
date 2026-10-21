@@ -34,16 +34,19 @@ which the composition root attaches.
 - **Failure.** The topic is a view: what fails here is logged by its error type (never its message,
   C-12.6) and goes no further. A change that cannot be published (its read failed, or the queue was
   full) re-snapshots the affected subscriptions, or every `alerts` subscription when the owners are
-  unknown, with `upstream_desync` (§7.4), so a client never silently misses one.
+  unknown, with `upstream_desync` (§7.4), so a client never silently misses one. A snapshot load
+  that fails is tried `LOAD_TRIES` times in all, backed off and jittered; after the last, the
+  subscription stays pending until the owner's next change (which flushes it, so its build loads
+  again), a flush or a resync.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import random
 import re
 from collections import OrderedDict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final, Literal, Protocol
@@ -69,6 +72,11 @@ LOADS_MAX: Final = 8
 #: A load a change keeps racing reads again at most this often before it serves what it read
 #: and re-snapshots (so a burst cannot hold a subscription pending for ever).
 LOAD_ROUNDS: Final = 3
+#: A load whose read fails is tried this often in all, `LOAD_BACKOFF_S` doubled per try and
+#: jittered in [0.5, 1.0] between them, its slot released while it waits (a database blip must
+#: not leave a session's bell blank, nor a down database hold the slots).
+LOAD_TRIES: Final = 3
+LOAD_BACKOFF_S: Final = 0.5
 #: The rows that enter or leave the unacked set: what an `unacked_only` subscription is sent.
 UNACKED_STATUSES: Final = frozenset({"sent", "acked"})
 _SYMBOL: Final = re.compile(r"^[A-Z0-9]{2,20}USDT$")
@@ -231,10 +239,13 @@ class AlertsTopic[B]:
         queue_max: int = QUEUE_MAX,
         views_max: int = MAX_VIEWS,
         loads_max: int = LOADS_MAX,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        rng: Callable[[], float] = random.random,
     ) -> None:
         self._publish, self._flush, self._resnapshot, self._body = (
             publish, flush_pending, resnapshot, body,
         )  # fmt: skip
+        self._sleep, self._rng = sleep, rng
         self._reader: DeliveryReader | None = None
         self._queue: asyncio.Queue[tuple[int, ...]] = asyncio.Queue(maxsize=queue_max)
         self._overflowed = False
@@ -259,14 +270,13 @@ class AlertsTopic[B]:
             self._worker = spawn(self._run(), name="alerts-ws-topic")
 
     async def stop(self) -> None:
-        """Cancel the worker and every load: what they held is re-read by the next attach."""
+        """Cancel the worker and every load: what they held is re-read by the next attach. A
+        cancellation of `stop` itself still propagates (#3361)."""
         tasks = [t for t in (self._worker, *self._loads.values()) if t is not None]
         self._worker = None
         for task in tasks:
             task.cancel()
-        for task in tasks:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        await asyncio.gather(*tasks, return_exceptions=True)
         self._loads.clear()
 
     # -- SnapshotSource
@@ -297,12 +307,10 @@ class AlertsTopic[B]:
             return
         try:
             self._queue.put_nowait(tuple(delivery_ids))
-        except asyncio.QueueFull:
+        except asyncio.QueueFull:  # the worker has batches to take: its next round resyncs
             if not self._overflowed:
                 _log().warning("alerts_topic_queue_full", queue_max=self._queue.maxsize)
             self._overflowed = True
-            with contextlib.suppress(asyncio.QueueFull):
-                self._queue.put_nowait(())  # wakes the worker, which resyncs everyone
 
     async def _run(self) -> None:
         """The one worker: a round that fails is contained (every subscription reads again), so
@@ -369,6 +377,11 @@ class AlertsTopic[B]:
         except Exception as exc:  # contained: this owner's subscriptions read again
             _log().warning("alerts_topic_publish_failed", error=type(exc).__name__)
             self._resync(_owned_by(owner), "publish_failed")
+        if owner not in self._loads:  # a subscription left pending by a failed load reads again
+            try:  # (its build starts one load; a served subscription is not pending: untouched)
+                self._flush(_owned_by(owner))
+            except Exception as exc:
+                _log().warning("alerts_topic_flush_failed", error=type(exc).__name__)
 
     # -- snapshot loads
 
@@ -378,27 +391,12 @@ class AlertsTopic[B]:
         self._loads[owner] = spawn(self._load_view(owner), name="alerts-ws-topic-load")
 
     async def _load_view(self, owner: UUID) -> None:
-        reader, user = self._reader, str(owner)
         try:
-            if reader is None:
-                return
-            async with self._load_slots:
-                for _ in range(LOAD_ROUNDS):
-                    self._dirty.discard(owner)
-                    page = await reader.list_page(
-                        user_id=user, unacked_only=True, limit=SNAPSHOT_MAX
-                    )
-                    count = await reader.unacked_count(user)
-                    if owner not in self._dirty:
-                        break
-            view = _View(tuple(delivery_item(r) for r in page.items), count)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # stays pending; its next flush or resync tries again
-            _log().warning("alerts_topic_load_failed", error=type(exc).__name__)
-            return
+            view = await self._read_view(owner)
         finally:
             self._loads.pop(owner, None)
+        if view is None:  # stays pending; the owner's next change, a flush or a resync retries
+            return
         self._views[owner] = view
         self._views.move_to_end(owner)
         while len(self._views) > self._views_max:
@@ -411,6 +409,35 @@ class AlertsTopic[B]:
             self._dirty.discard(owner)
             self._views.pop(owner, None)
             self._resync(_owned_by(owner), "load_raced")
+
+    async def _read_view(self, owner: UUID) -> _View | None:
+        """The owner's view, read again while a change races it (`LOAD_ROUNDS`) and tried again
+        when a read fails (`LOAD_TRIES`); None once every try failed."""
+        reader, user = self._reader, str(owner)
+        if reader is None:
+            return None
+        for attempt in range(1, LOAD_TRIES + 1):
+            try:
+                async with self._load_slots:
+                    for _ in range(LOAD_ROUNDS):
+                        self._dirty.discard(owner)
+                        page = await reader.list_page(
+                            user_id=user, unacked_only=True, limit=SNAPSHOT_MAX
+                        )
+                        count = await reader.unacked_count(user)
+                        if owner not in self._dirty:
+                            break
+                return _View(tuple(delivery_item(r) for r in page.items), count)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                error = type(exc).__name__
+                if attempt == LOAD_TRIES:
+                    _log().error("alerts_topic_load_failed", error=error, tries=attempt)
+                    return None
+                _log().warning("alerts_topic_load_retry", error=error, attempt=attempt)
+            await self._sleep(LOAD_BACKOFF_S * 2 ** (attempt - 1) * (0.5 + 0.5 * self._rng()))
+        return None  # not reached: the last try returns
 
     def _resync(self, match: Match, why: str) -> None:
         try:

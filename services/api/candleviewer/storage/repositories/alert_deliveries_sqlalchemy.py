@@ -272,7 +272,8 @@ class SqlAlchemyAlertDeliveryRepository:
         return int(getattr(res, "rowcount", 0) or 0)
 
     async def get_many(self, delivery_ids: Sequence[int]) -> list[DeliveryRow]:
-        """The rows of *delivery_ids* that exist, by id (the `alerts` topic's deltas)."""
+        """The rows of *delivery_ids* that exist, by id (the `alerts` topic's deltas). Unscoped and
+        internal, never a request path: the topic routes each row by its own `user_id`."""
         if not delivery_ids:
             return []
         params = {"ids": sorted(set(delivery_ids))}
@@ -284,7 +285,7 @@ class SqlAlchemyAlertDeliveryRepository:
     ) -> list[DeliveryRow]:
         """The unacknowledged channel-failure notices raised for *failed_ids* (the dispatcher's
         terminal failure and the desktop report-back write one each, in the failure's own
-        transaction)."""
+        transaction). Internal, never a request path: the topic routes each by its `user_id`."""
         if not user_ids or not failed_ids:
             return []
         params = {"users": sorted(set(user_ids)), "failed": sorted({str(i) for i in failed_ids})}

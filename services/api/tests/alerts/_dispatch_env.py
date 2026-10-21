@@ -110,6 +110,10 @@ class MemStore:
     async def load(self, delivery_id: int) -> Row | None:
         return self.rows.get(delivery_id)
 
+    async def depth(self, topic: str) -> int:
+        """`SqlAlchemyAlertDispatchStore.depth`: the topic's rows neither processed nor dead."""
+        return sum(o.topic == topic and not (o.processed or o.dead) for o in self.outbox.values())
+
     def _cond(self, did: int, **f: Any) -> bool:
         r = self.rows[did]
         if r.status != "queued":

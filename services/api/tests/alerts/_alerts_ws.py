@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -16,12 +16,13 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.storage.repositories.alert_deliveries_sqlalchemy import DeliveryRow
 from candleviewer.storage.repositories.alerts import Page
-from candleviewer.ws.permissions import ConnectionAuthz, SubscriptionServices
+from candleviewer.ws.permissions import ConnectionAuthz, Subscription, SubscriptionServices
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody, TopicEmitter
 from tests.unit.ws._seq_support import validate
 
 USER_A = UUID("00000000-0000-4000-8000-00000000000a")
 USER_B = UUID("00000000-0000-4000-8000-00000000000b")
+USER_C = UUID("00000000-0000-4000-8000-00000000000c")
 ALERT_A = "13000000-0000-4000-8000-00000000000a"
 ALERT_B = "13000000-0000-4000-8000-00000000000b"
 T0 = datetime(2026, 10, 20, 9, 0, tzinfo=UTC)
@@ -32,15 +33,47 @@ def principal(user: UUID, permissions: frozenset[Permission] = READ) -> Principa
     return PrincipalSnapshot(user, frozenset({"manager"}), permissions)
 
 
+def is_attached(topic: AlertsTopic[Any]) -> bool:
+    """A deliveries reader is attached: `build` can read, so a subscription is not left pending."""
+    return topic._reader is not None
+
+
+async def drained(topic: AlertsTopic[Any], within_s: float = 5) -> None:
+    """Every queued change has been read and published (the topic's worker must be started)."""
+    await asyncio.wait_for(topic._queue.join(), timeout=within_s)
+
+
+async def landed(topic: AlertsTopic[Any], within_s: float = 5) -> None:
+    """Every snapshot load in flight has landed (and flushed what it woke)."""
+    async with asyncio.timeout(within_s):
+        while topic._loads:
+            await asyncio.gather(*list(topic._loads.values()), return_exceptions=True)
+
+
+async def settled(topic: AlertsTopic[Any], within_s: float = 5) -> None:
+    """The changes are published and the loads they and the subscribers started have landed."""
+    await drained(topic, within_s)
+    await landed(topic, within_s)
+
+
 class FakeReader:
-    """`DeliveryReader` over rows in memory; records each read and can hold or fail one."""
+    """`DeliveryReader` over rows in memory; records each read and can hold or fail one.
+
+    A `list_page` takes its rows when it starts, then waits on `gate` and runs `on_list_page`: a
+    change that lands while the read is held or running is not in them, as a slow query's would be
+    (`pages` keeps what each read returned)."""
 
     def __init__(self) -> None:
         self.rows: dict[int, DeliveryRow] = {}
         self.calls: list[tuple[str, Any]] = []
-        self.fail: set[str] = set()
+        self.pages: list[list[int]] = []  # the delivery ids each `list_page` returned
+        self.fail: set[str] = set()  # reads that fail every time
+        self.flaky: dict[str, int] = {}  # reads that fail this many more times, then work
         self.gate: asyncio.Event | None = None  # `list_page` waits on it (a load held mid-read)
+        self.on_list_page: Callable[[], Awaitable[None]] | None = None  # runs mid-read
         self.entered = asyncio.Event()  # set once a `list_page` has started
+        self.reading = 0  # `list_page` reads in flight now
+        self.most_reading = 0  # the most that were in flight at once
         self.next_id = 100
 
     def add(self, user: UUID | None, **over: Any) -> DeliveryRow:
@@ -61,25 +94,44 @@ class FakeReader:
         self.rows[row_id] = replace(self.rows[row_id], **over)
         return self.rows[row_id]
 
+    def ack(self, row_id: int) -> DeliveryRow:
+        """The owner acknowledged the delivery (what the inbox route commits)."""
+        return self.set(row_id, status="acked", acked_at=self.rows[row_id].queued_at)
+
+    def count(self, name: str) -> int:
+        """How many times *name* was read."""
+        return sum(1 for call, _ in self.calls if call == name)
+
     def _check(self, name: str) -> None:
         if name in self.fail:
+            raise RuntimeError(f"{name} failed")
+        if self.flaky.get(name, 0) > 0:
+            self.flaky[name] -= 1
             raise RuntimeError(f"{name} failed")
 
     async def list_page(
         self, *, user_id: str, unacked_only: bool = False, limit: int = 50
     ) -> Page[DeliveryRow]:
         self.calls.append(("list_page", user_id))
-        self.entered.set()
-        if self.gate is not None:
-            await self.gate.wait()
-        self._check("list_page")
-        items = sorted(
-            (r for r in self.rows.values()
-             if r.user_id == user_id
-             and (not unacked_only or (r.status == "sent" and r.acked_at is None))),
-            key=lambda r: (r.queued_at, r.id), reverse=True,
-        )  # fmt: skip
-        return Page(items[:limit], None)
+        self.reading += 1
+        self.most_reading = max(self.most_reading, self.reading)
+        try:
+            self.entered.set()
+            items = sorted(
+                (r for r in self.rows.values()
+                 if r.user_id == user_id
+                 and (not unacked_only or (r.status == "sent" and r.acked_at is None))),
+                key=lambda r: (r.queued_at, r.id), reverse=True,
+            )[:limit]  # fmt: skip
+            if self.gate is not None:
+                await self.gate.wait()
+            if self.on_list_page is not None:
+                await self.on_list_page()
+            self._check("list_page")
+            self.pages.append([r.id for r in items])
+            return Page(items, None)
+        finally:
+            self.reading -= 1
 
     async def unacked_count(self, user_id: str) -> int:
         self.calls.append(("unacked_count", user_id))
@@ -134,10 +186,19 @@ class Conn:
             self.emitter.flush_pending([sub])
         return result
 
+    def subscription(self) -> Subscription:
+        """The connection's one subscription."""
+        (sub,) = self.authz.by_id.values()
+        return sub
+
     def take(self) -> list[tuple[str, dict[str, Any]]]:
         """The type and payload of every frame since the last take."""
         frames, self.frames = self.frames, []
         return [(frame["t"], frame["p"]) for frame in frames]
+
+    def snap_reasons(self) -> list[str]:
+        """The `meta.reason` of each `snap` since the last take, which does not consume them."""
+        return [frame["meta"]["reason"] for frame in self.frames if frame["t"] == "snap"]
 
     def items(self) -> list[tuple[str, list[int], int | None]]:
         """Per frame since the last take: its type, its delivery ids and its unacked count."""
@@ -146,25 +207,78 @@ class Conn:
 
 
 class World:
-    """The topic on a hub of its own, reading a `FakeReader`, its worker running."""
+    """The topic on a hub of its own, reading a `FakeReader`; the test starts its worker. A load's
+    backoff is recorded in `slept`, never waited (it holds on `backoff_gate` when a test sets one),
+    and its jitter is the top of its range. `broken` names the hub calls that raise."""
 
-    def __init__(self, **topic_kw: Any) -> None:
+    def __init__(self, *, attached: bool = True, **topic_kw: Any) -> None:
         self.hub = SequencingHub()
         self.reader = FakeReader()
+        self.slept: list[float] = []
+        self.backoff_gate: asyncio.Event | None = None  # a backoff waits on it
+        self.backing_off = asyncio.Event()  # set once a load has begun to back off
+        self.broken: set[str] = set()  # "publish", "flush_pending", "resnapshot": raise
+        topic_kw.setdefault("sleep", self._sleep)
+        topic_kw.setdefault("rng", lambda: 1.0)
         self.topic = AlertsTopic(
-            self.hub.publish, self.hub.flush_pending, self.hub.resnapshot, SnapshotBody,
-            **topic_kw,
+            self._hub("publish"), self._hub("flush_pending"), self._hub("resnapshot"),
+            SnapshotBody, **topic_kw,
         )  # fmt: skip
-        self.topic.attach(self.reader)
+        if attached:
+            self.topic.attach(self.reader)
+
+    def _hub(self, name: str) -> Callable[..., int]:
+        """The hub's *name*, which raises while it is in `broken` (a fan-out that is down)."""
+        real: Callable[..., int] = getattr(self.hub, name)
+
+        def call(*args: Any, **kwargs: Any) -> int:
+            if name in self.broken:
+                raise RuntimeError(f"hub {name} down")
+            return real(*args, **kwargs)
+
+        return call
+
+    async def _sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.backing_off.set()
+        if self.backoff_gate is not None:
+            await self.backoff_gate.wait()
+        await asyncio.sleep(0)  # a yield, as a real wait would be: other tasks run meanwhile
 
     def conn(self, user: UUID, permissions: frozenset[Permission] = READ) -> Conn:
         return Conn(self.hub, self.topic, principal(user, permissions))
 
     async def loads(self) -> None:
         """Every snapshot load in flight has landed (and flushed what it woke)."""
-        while self.topic._loads:
-            await asyncio.gather(*list(self.topic._loads.values()), return_exceptions=True)
+        await landed(self.topic)
+
+    async def loaded(self, user: UUID) -> None:
+        """*user*'s snapshot load, if one is in flight, has landed; another's may still be."""
+        task = self.topic._loads.get(user)
+        if task is not None:
+            await asyncio.wait_for(task, timeout=5)
 
     async def changes(self) -> None:
         """Every queued change has been read and published (the worker must be started)."""
-        await asyncio.wait_for(self.topic._queue.join(), timeout=5)
+        await drained(self.topic)
+
+    def loading(self) -> list[UUID]:
+        """The owners whose snapshot load is in flight."""
+        return list(self.topic._loads)
+
+    def views(self) -> list[UUID]:
+        """The owners whose view is cached, least recently used first."""
+        return list(self.topic._views)
+
+    def queued(self) -> int:
+        """The change batches no worker has taken yet."""
+        return self.topic._queue.qsize()
+
+    def tasks(self) -> list[asyncio.Task[None]]:
+        """The worker and every load in flight."""
+        return [t for t in (self.topic._worker, *self.topic._loads.values()) if t is not None]
+
+    def running(self) -> bool:
+        """The worker is started and has not ended."""
+        worker = self.topic._worker
+        return worker is not None and not worker.done()

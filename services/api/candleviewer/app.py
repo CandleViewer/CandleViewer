@@ -2539,19 +2539,25 @@ def _alert_dispatcher(
     E04 relay transport is provisioned; no network transport is constructed here. *on_change*
     (the `alerts` topic) is told of each settled batch."""
     adapters = default_adapters(None, webhook_enabled=webhook_enabled)  # refuses webhook=on
+    sink = _alert_delivery_sink(facade)
+    # The series the two alert.deliver outbox tickets read, bound at start: a series created by
+    # its first dead row gives `increase()` nothing to subtract (AlertOutboxDeadLettered), and
+    # the gauge reads 0 until the first sample (AlertOutboxBacklog).
+    for name in ("cv_outbox_dead_total", "cv_outbox_depth"):
+        sink(name, (TOPIC_ALERT_DELIVER,))
     return AlertDispatcher(
         SqlAlchemyAlertDispatchStore(pg),
         adapters,
         worker=f"api-{os.getpid()}-{uuid.uuid4().hex[:8]}",
         now=lambda: datetime.now(UTC),
-        metric=_alert_delivery_sink(facade),
+        metric=sink,
         on_change=on_change,
     )
 
 
 def _alert_delivery_sink(facade: Metrics) -> Callable[[str, tuple[str, ...]], Any]:
-    """The `cv_alert_delivery_*` sink shared by the dispatcher and the desktop report-back
-    route (E40-T04): identical re-registration returns the same series."""
+    """The `cv_alert_delivery_*` and `cv_outbox_*` sink shared by the dispatcher and the desktop
+    report-back route (E40-T04): identical re-registration returns the same series."""
     m = {
         "cv_alert_delivery_total": facade.counter(
             "cv_alert_delivery_total", "Settled alert deliveries.", ("transport", "state"),
@@ -2564,6 +2570,9 @@ def _alert_delivery_sink(facade: Metrics) -> Callable[[str, tuple[str, ...]], An
             buckets=(1, 2, 3, 4, 6, 8, 10)),
         "cv_outbox_dead_total": facade.counter(
             "cv_outbox_dead_total", "Dead-lettered outbox rows.", ("topic",), max_series=8),
+        "cv_outbox_depth": facade.gauge(
+            "cv_outbox_depth", "Unprocessed, not-dead outbox rows by topic.", ("topic",),
+            max_series=8),
     }  # fmt: skip
 
     def _sink(name: str, labels: tuple[str, ...]) -> Any:

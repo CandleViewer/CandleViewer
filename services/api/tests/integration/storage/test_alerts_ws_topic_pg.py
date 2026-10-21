@@ -9,7 +9,6 @@ in the merge-group integration lane.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -31,7 +30,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
-from tests.alerts._alerts_ws import Conn, principal
+from tests.alerts._alerts_ws import Conn, principal, settled
 from tests.integration.storage import test_alerts_migration as _mig
 
 pytestmark = pytest.mark.integration
@@ -85,20 +84,14 @@ async def rig(pg_dsn: str) -> AsyncIterator[dict[str, Any]]:
     await topic.stop()
 
 
-async def _settled(topic: AlertsTopic[SnapshotBody]) -> None:
-    await asyncio.wait_for(topic._queue.join(), timeout=10)
-    while topic._loads:
-        await asyncio.gather(*list(topic._loads.values()), return_exceptions=True)
-
-
 async def test_fire_deliver_push_ack_on_postgres(rig: dict[str, Any]) -> None:
     conn, topic = rig["conn"], rig["topic"]
     conn.sub()
-    await _settled(topic)
+    await settled(topic, 10)
     assert conn.items() == [("snap", [], 0)]  # nothing unacked yet
     did = _queued(rig["dsn"], rig["alert"], rig["user"])
     assert await rig["disp"].run_once() >= 1  # in_app: settled `sent`, the topic told
-    await _settled(topic)
+    await settled(topic, 10)
     ((kind, payload),) = conn.take()
     assert kind == "d" and payload["unacked_count"] == 1
     (item,) = payload["deliveries"]
@@ -106,7 +99,7 @@ async def test_fire_deliver_push_ack_on_postgres(rig: dict[str, Any]) -> None:
     acked = await rig["repo"].ack(did, rig["user"])
     assert acked is not None
     await topic.deliveries_changed([did])
-    await _settled(topic)
+    await settled(topic, 10)
     ((kind, payload),) = conn.take()
     assert kind == "d" and payload["unacked_count"] == 0
     assert payload["deliveries"][0]["status"] == "acked"
@@ -116,7 +109,7 @@ async def test_fire_deliver_push_ack_on_postgres(rig: dict[str, Any]) -> None:
 async def test_a_blocked_desktop_report_brings_its_notice(rig: dict[str, Any]) -> None:
     conn, topic = rig["conn"], rig["topic"]
     conn.sub()
-    await _settled(topic)
+    await settled(topic, 10)
     conn.take()
     did = _queued(rig["dsn"], rig["alert"], rig["user"], channel="desktop")
     got = await rig["repo"].report_desktop(
@@ -124,7 +117,7 @@ async def test_a_blocked_desktop_report_brings_its_notice(rig: dict[str, Any]) -
     )
     assert got is not None and got.status == "failed"
     await topic.deliveries_changed([did])  # as the inbox route tells it: the failed row only
-    await _settled(topic)
+    await settled(topic, 10)
     ((kind, payload),) = conn.take()
     statuses = {d["channel"]: d["status"] for d in payload["deliveries"]}
     assert kind == "d" and statuses == {"desktop": "failed", "in_app": "sent"}
@@ -134,8 +127,8 @@ async def test_a_blocked_desktop_report_brings_its_notice(rig: dict[str, Any]) -
 async def test_a_late_attach_reads_the_current_rows(rig: dict[str, Any]) -> None:
     did = _queued(rig["dsn"], rig["alert"], rig["user"])
     await rig["disp"].run_once()
-    await _settled(rig["topic"])
+    await settled(rig["topic"], 10)
     conn = rig["conn"]
     conn.sub()  # after the change: its snapshot is a fresh read, the delivery in it
-    await _settled(rig["topic"])
+    await settled(rig["topic"], 10)
     assert conn.items() == [("snap", [did], 1)]

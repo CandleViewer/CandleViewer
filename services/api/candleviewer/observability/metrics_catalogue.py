@@ -1934,7 +1934,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "rows",
         ("topic",),
         "Unprocessed, not-dead outbox rows by topic.",
-        "alert.deliver > 100 for 5m",
+        "AlertOutboxBacklog (alert.deliver over 100 for 5m, ticket); the alert dispatcher samples "
+        "alert.deliver every 15 s, no other topic yet",
         _P,
         "E40",
         max_series=8,
@@ -1945,7 +1946,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "rows",
         ("topic",),
         "Outbox rows dead-lettered after max_attempts.",
-        "alert on any increase",
+        "AlertOutboxDeadLettered (alert.deliver, any increase in 15m, ticket, held 9 h 30 m); "
+        "another topic's producer binds its series and adds its own rule",
         _P,
         "E40",
         max_series=8,
