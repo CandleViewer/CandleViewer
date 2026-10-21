@@ -94,6 +94,7 @@ def test_run_semgrep_gates_the_verbose_json_report_its_scan_wrote(
     (scan,) = [cmd for cmd in calls if cmd[0] == "semgrep"]
     gate = calls[-1]
     assert "--verbose" in scan
+    assert scan[scan.index("--max-target-bytes") + 1] == "5000000"  # #4048: CI's size bound
     assert gate[gate.index("--semgrep-json") + 1] == scan[scan.index("--json-output") + 1]
     assert result.status == status
     assert detail in result.detail

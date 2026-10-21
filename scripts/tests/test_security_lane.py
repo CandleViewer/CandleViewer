@@ -93,6 +93,9 @@ ACTIONS = {
 SEMGREP_LOCK = "tools/ci/requirements-semgrep.txt"
 SEMGREP_INSTALL = f"pip install --require-hashes --only-binary=:all: -r {SEMGREP_LOCK}"
 SCANNERS = (SEMGREP_INSTALL, '"pip-audit==', '"bandit[sarif]==')
+# #4048: Semgrep skips a target over 1 MB by default and CI-SEC-005 fails the scan on it; the REST
+# contract crossed that size, so both scans raise the limit to 5 MB.
+MAX_TARGET_BYTES = "--max-target-bytes 5000000"
 FILTERS = " || ".join(f"needs.changed-paths.outputs.{f} == 'true'" for f in ("js", "py", "infra"))
 # The pr.yml caller as it stood before the fold; #3104 leaves it and the resolver lane alone.
 CALLER = {
@@ -201,7 +204,7 @@ def test_semgrep_step_hands_its_json_report_to_the_gate() -> None:
     # and with --verbose it also lists the targets Semgrep skipped (one over the size limit).
     (step,) = [s for s in _steps("semgrep-bandit") if s.get("id") == "semgrep"]
     lines = [line.strip() for line in step["run"].splitlines()]
-    scan = "semgrep scan $CONFIG_ARGS --verbose --sarif --output semgrep.sarif"
+    scan = f"semgrep scan $CONFIG_ARGS --verbose {MAX_TARGET_BYTES} --sarif --output semgrep.sarif"
     gate = "python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif"
     assert scan + " --json-output semgrep.json" in lines
     assert lines[-1] == gate + " --semgrep-json semgrep.json"
@@ -216,7 +219,7 @@ def test_security_auth_step_hands_its_verbose_json_report_to_the_gate() -> None:
     report = '"$RUNNER_TEMP/semgrep-auth.json"'
     scan = "semgrep scan --config security/semgrep/auth --error --metrics=off --verbose"
     targets = "--exclude fixtures services/api/candleviewer apps packages/ui"
-    assert f"{scan} --json-output {report} {targets}" in lines
+    assert f"{scan} {MAX_TARGET_BYTES} --json-output {report} {targets}" in lines
     assert lines[-1] == f"python tools/ci/security_gate.py --tool semgrep-auth --report {report}"
 
 
