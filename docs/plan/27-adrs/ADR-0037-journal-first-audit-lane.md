@@ -1,11 +1,13 @@
 # ADR-0037 — Journal-first audit lane for auth and risk-reducing records (EX-07 exit)
 
-- Status: **accepted (interim; main-orchestrator 2026-10-17 — owner ratification due before S3)**, on #3009 under
-  the owner's delegation; the owner ratifies it before S3 merges, the first slice that changes what
-  a user sees during an audit outage. EX-07 expires on 2026-11-15; Rollout has the dates.
+- Status: **accepted**: ratified 2026-10-20 by main-orchestrator under the owner's delegation, #2701
+  issuecomment-6291902866; the owner may revoke there. It was accepted on an interim basis by main-orchestrator
+  on 2026-10-17, on #3009. Amendment 1 (2026-10-21) records the lane's exit: the flag removed, EX-07 and EX-08
+  retired, and the carries left open.
 - Date: 2026-10-17 (review round 4 folded the same day)
-- Deciders: Owner (`@basiltt`) through main-orchestrator. Questions pending: hcl-worker-1 (Q2), the E27 owner
-  (Q4); the Security engineer reviews through the `security-review` label. Author: hpe-worker-1.
+- Deciders: Owner (`@basiltt`) through main-orchestrator, under the owner's delegation (the ratification above).
+  Questions pending: hcl-worker-1 (Q2), main-orchestrator (Q3), the E27 owner (Q4) and Security (Q6); the
+  Security engineer reviews through the `security-review` label. Author: hpe-worker-1.
 - Numbering note: 0031 is reserved by E45-K01 (`ADR-0031-resilience-and-chaos`, not on `main`) and 0036 is the
   last on `main`, so this record takes the next free number.
 - Related: #3009; #2914 (rulings D1 to D4; its slice D adds EX-07 and RR-16, the sink-refusal residual;
@@ -76,7 +78,7 @@ Nothing on `main` can hold these records durably while the sink refuses:
 - **(e)** An in-memory retry queue.
 - **(f)** Reserved WAL headroom for risk-reducing records (#2914 item 3, option D).
 
-## Decision (proposed)
+## Decision
 
 Option (b), built from the proven patterns of (a) and (c) without sharing their files.
 
@@ -170,43 +172,53 @@ Option (b), built from the proven patterns of (a) and (c) without sharing their 
    audit volume. The path is absolute and free of `..` and symlinks (the `anchored_journal_dir` rule,
    `audit/journal.py:50-60`); the directory is `0700` and its files `0600`, owned by the cv-api user (uid
    10001, `infra/images/Dockerfile.api:76`); every open uses `O_NOFOLLOW`. The running cv-api holds `lane.lock`
-   exclusively, so a second process on the same volume refuses to boot. No route or WS topic opens the lane, and
-   the only CLI that does is S2c's release command, in `admin/`; the break-glass CLI keeps its own journal (R3).
-10. **Module boundaries.** Two new files inside M19, `audit/lane_journal.py` (S1a–S1c) and `audit/lane.py`
-    (S2a2, S2b), and S2c's release command in M21, beside `admin/breakglass.py`, over the existing edge from
-    `admin` to `audit`; no new third-party dependency. There is no new module or import edge, so C-3.4 does not
-    apply; this record exists for C-12.1 and the security decision.
+   exclusively, so a second process on the same volume refuses to boot. It takes the lock through directory
+   descriptors (`audit/lane_lock.py`, SEC-REM-03, #4005): the audit directory is opened
+   `O_DIRECTORY | O_NOFOLLOW`, then `lane/` and `lane.lock` relative to it, so a symlink swapped in after a check
+   is never followed. Only those opens are anchored to descriptors; the lane's other file operations still name
+   paths under `lane/`, the residual RR-01 accepts (`24-internal-schemas.md` §15.6 Directory). No route or WS
+   topic opens the lane, and the only CLI that does is S2c's release command, in `admin/`, which takes
+   `lane.lock` the same way; the break-glass CLI keeps its own journal (R3).
+10. **Module boundaries.** Four new files inside M19, `audit/lane_journal.py` (S1a–S1c), `audit/lane.py`
+    (S2a2, S2b), `audit/metrics.py` (S4a-1, #3758) and `audit/lane_lock.py` (S4b-2b, #4005), and S2c's release
+    command, `admin/lane_release.py`, in M21, beside `admin/breakglass.py`, over the existing edge from `admin` to
+    `audit`; the key loader, `audit_lane_wiring.py` (S2b-1), is composition-root wiring, not a module (decision 6).
+    No new third-party dependency. There is no new module or import edge, so C-3.4 does not apply; this record
+    exists for C-12.1 and the security decision.
 11. **Failure while running.** A failed write truncates the segment back to its last good boundary and refuses
     the append, with `seq` not advanced. A failed fsync or a dead drain task stops the lane until a restart and
     refuses appends with `stopped`; a hold (decision 8) stops it the same way and refuses them with `held`. An
     fsync is never retried on the same file descriptor. The façade then falls back, and `AuditLaneRefusing`
     pages. Every file operation runs in a worker thread (§15.6).
-12. **A C-4.13 flag that gates no invariant (C-4.14).** The lane spans ten PRs, so it ships behind
-    `audit.lane_journal_first`: boolean, default off, Owner-only, `restrictive` off (what the flag service answers
-    while the flag store cannot be read; the façade's own read is below), owned by `@basiltt`, its description
-    ending `removal #3009`, because #3009 is the removal
-    ticket and stays open until S4b removes the flag. S2b adds it to the catalogue (`admin/flags/catalogue.py`;
-    C-4.13 still names `services/api/config/flags.py`, which does not exist) and to `21-database-schema.md`
-    §10.7. Its `gates` category is `FEATURE_ROLLOUT`, like `engine.webgl_v2`. `FlagSpec` refuses `AUDIT` at import
-    (`admin/flags/registry.py:57-66`, `:125-131`), and that category is not this flag's: both of its positions
-    write the same record durably, through the writer's own rules, before the action proceeds. Off, the façade
-    hands every record straight to `AuditWriter.ingest()`, today's audited, fail-closed path; on, the lane takes it
-    first. The composition root injects the resolver into `AuditService`, because `audit` may not import `admin`;
-    it reads the flag's stored value with no principal (`user_id=None`, no roles), so no user or role override
-    applies, although `FlagSpec.overridable` is true for this flag and `admin/flags/resolver.py:53-64` honours
-    overrides. The façade's read is cached and refreshed in the background (READY-21, S2b-2a row): it is off, the
-    catalogue default, before the first successful read, and afterwards the last value read is kept, while the store
-    cannot be read too. The admin API then shows the fail-closed off while the process runs on the cached value. S4a
-    exported that value as a gauge, `cv_audit_lane_journal_first` (SR-S2B2A-02), which S4b-1b removed: the evidence
-    that journal-first is in force is `cv_audit_lane_appended_total{class}` moving past a boot's own frames
-    (`audit.lane_resumed`, plus `audit.lane_started` on a new lane) and `audit.lane.appended` lines naming record
-    actions. S4b-1c removed the flag itself, so there is no stored value to read beside them.
-    A change is audited like any flag's (`flags.change`). The journal and drain run whenever a real audit
-    backend is wired, so records journaled while the flag was on still drain after it goes off. Order: S3 wires
-    the call sites, and the Owner turns the flag on in staging; live gets the lane only when S4b removes the flag,
-    after S4a's alerts and runbook rows have landed (C-11.2 item 9), so the flag is never turned on in live by
-    hand. No state exists in which the flag disables a control that no exception covers. ADR-0036's decision 10
-    chose a boot-fixed switch because its code is absent from the release image; this code ships.
+12. **A C-4.13 flag that gated no invariant (C-4.14), removed in S4b-1c.** The lane spanned many PRs, so from
+    S2b-2a until S4b-1c it shipped behind `audit.lane_journal_first`: boolean, default off, Owner-only,
+    `restrictive` off (what the flag service answered while the flag store could not be read; the façade's own
+    read is below), owned by `@basiltt`, its description ending `removal #3009`, because #3009 was the removal
+    ticket. S2b added it to the catalogue (`admin/flags/catalogue.py`; C-4.13 still names
+    `services/api/config/flags.py`, which does not exist) and to `21-database-schema.md` §10.7. Its `gates`
+    category was `FEATURE_ROLLOUT`, like `engine.webgl_v2`. `FlagSpec` refuses `AUDIT` at import
+    (`admin/flags/registry.py:57-66`, `:125-131`), and that category was not this flag's: both of its positions
+    wrote the same record durably, through the writer's own rules, before the action proceeded. Off, the façade
+    handed every record straight to `AuditWriter.ingest()`, the audited, fail-closed path of before; on, the lane
+    took it first. The composition root injected the resolver into `AuditService`, because `audit` may not import
+    `admin`; it read the flag's stored value with no principal (`user_id=None`, no roles), so no user or role
+    override applied, although `FlagSpec.overridable` was true for this flag and `admin/flags/resolver.py:53-64`
+    honours overrides. The façade's read was cached and refreshed in the background (READY-21, S2b-2a row): off,
+    the catalogue default, before the first successful read, and afterwards the last value read, which it kept
+    while the store could not be read; the admin API then showed the fail-closed off. S4a exported that value as a
+    gauge, `cv_audit_lane_journal_first` (SR-S2B2A-02), which S4b-1b removed: the evidence that journal-first is
+    in force is `cv_audit_lane_appended_total{class}` moving past a boot's own frames (`audit.lane_resumed`, plus
+    `audit.lane_started` on a new lane) and `audit.lane.appended` lines naming record actions. A change was
+    audited like any flag's (`flags.change`). The journal and drain ran whenever a real audit backend was wired,
+    so records journaled while the flag was on still drained after it went off. Order: S3 wired the call sites,
+    for the Owner to turn the flag on in staging; live got the lane only when S4b-1c removed the flag, after S4a's
+    alerts and runbook rows had landed (C-11.2 item 9), so the flag was never turned on in live by hand. No state
+    existed in which the flag disabled a control that no exception covered. S4b-1c removed the catalogue spec,
+    `LaneFlag` in `flags_wiring.py` (first added at `c429880a`; its last form is at `4a971175^`) and the façade's
+    guard, so every record that a call site hands to the façade and `LANE_ACTIONS` admits now goes to the lane
+    first; the removed flag's stored row stays inert, and a `PUT` to its key answers an audited `404`
+    (`21-database-schema.md` §3.9, "Stored value and writer"). ADR-0036's decision 10 chose a boot-fixed switch
+    because its code is absent from the release image; this code ships.
 13. **A replay of a contained family is `shared` (Q9).** Ruled (a) by main-orchestrator on 2026-10-21 (#3009
     S4b-1a). Only a family's first containment intent is `reserved` (`auth.refresh_reuse_detected`, `critical`). A
     rotated refresh token presented again once this process has contained its family, that token or another rotated
@@ -223,9 +235,9 @@ Option (b), built from the proven patterns of (a) and (c) without sharing their 
     (`auth.refresh_reuse.replay_refused`, the session id only), so a flood is visible. The `401`, and the `503` when
     the lane and the sink both refuse, are unchanged. The action id, the `warning` severity and the memo do not
     depend on the lane taking the row: the route never reads a flag, and a lane that refuses it or is not wired
-    hands it to the writer, as decision 1 says. A replay flood now shares the `shared` class (64 waiters) with the
-    login outcome rows, which under a sink outage fall back and are counted lost, as decision 1 already accepts (its
-    bound is decision 4's).
+    hands it to the writer, as decision 1 says. A replay flood shares the `shared` class (64 waiters; its bound is
+    decision 4's) with the login outcome rows once #2914's PR C adopts the façade (Q2, EX-10); today the class
+    carries the replay rows and a disabled user's refused refresh.
 
 ## How E27 KV-D04 joins the lane
 
@@ -246,19 +258,19 @@ adds no mechanism:
 
 ## Consequences
 
-- Good: EX-07 exits. Sign-out, revoke-my-session and reuse containment work while the sink refuses, and RR-16
-  narrows to refresh and sign-in. §8.3 rule 2 gets one durable-retry mechanism, which its pointer names. Lane
-  frames are MAC'd and hash-linked, stronger than the WAL's CRC; the exclusive `lane.lock` also keeps a second
-  cv-api off the shared WAL; and the journal runs wherever a real audit backend is wired, carrying its own
-  `audit.lane_started` and `audit.lane_resumed` records.
+- Good: EX-07 exits. Sign-out, revoke-my-session and reuse containment work while the sink refuses, and RR-16 narrows
+  to refresh and sign-in, and the idle lock's extend and unlock (#4052). §8.3 rule 2 gets one durable-retry mechanism,
+  which its pointer names. Lane frames are MAC'd and hash-linked, stronger than the WAL's CRC; the exclusive
+  `lane.lock` also keeps a second cv-api off the shared WAL; and the journal runs wherever a real audit backend is
+  wired, carrying its own `audit.lane_started` and `audit.lane_resumed` records.
 - Bad: a lane record costs two fsyncs (the lane, then the WAL through the drain) and reaches `audit_log` a
   moment after an `emit()` record would; tests that read rows after a lane write await
   `AuditService.lane.flush()`. Across the lane and the direct path, chain position is arrival order, and
   `event_ts` (set once by `build()`, kept by `ingest()`) gives the write order. That is in tension with U21,
   which makes the chain, not a clock, the ordering authority; it is accepted because within the lane `seq`
   order is the write order and every break in it leaves an anomaly row.
-- Bad: one more secret to provision and rotate, and a flag to remove; from S2b a real-backend stack without the
-  key refuses to boot.
+- Bad: one more secret to provision and rotate, and a flag to remove, which S4b-1c did; from S2b a real-backend
+  stack without the key refuses to boot.
 - Risk: the lane and the WAL share #2615's volume, so a full or read-only volume refuses both and callers behave
   as today. A second docker volume on the same WSL disk would not change that (Q5).
 - Risk: once ingested, a record waits in the CRC-only WAL like every `emit()` record; the lane's MAC does not
@@ -274,8 +286,8 @@ adds no mechanism:
 ## Rollout, slices and the EX-07 exit
 
 One branch per slice (`feat/e09-3009-<slug>`), at most 800 counted LOC each, labelled `security-review` (the
-`audit/` and `infra/` paths), with `Refs #3009` and a `Partial:` line; only S4b carries the closing line. The
-analogues are the break-glass journal slice (131 source and 255 test lines) and the WAL with the writer (820 and
+`audit/` and `infra/` paths), with `Refs #3009` and a `Partial:` line; only S4b's last PR, S4b-2a, carries the
+closing line. The analogues are the break-glass journal slice (131 source and 255 test lines) and the WAL with the writer (820 and
 1,378): tests run about 1.7 to 1.9 times the source, so a slice stays under 800 only with about 285 source lines
 or fewer. The estimates below are source plus tests at that ratio. The dates assume the seams named here (S2a1
 and S2a2, S4a and S4b) but no further split. A slice whose counted LOC would pass 800 splits at its contingency
@@ -304,14 +316,15 @@ split moves every date after it, and Schedule risks says when that is reported.
 | S2c | The offline release command in `admin/` (under `lane.lock`, cv-api stopped) and its runbook row. Unit and integration: an unknown-`kid` frame is held, released and recorded as one `released` row with the operator, ticket and `operator_reason`; a note with a bad MAC or another hold is ignored; the command refuses while cv-api runs | 796 counted, in one PR with S3 and S4a-2 | S2b-2b3 | 2026-10-31 |
 | S3 | The rows: `api/sessions.py` (the logout intent and outcomes, revoke-my-session, the reuse intent and race outcome, the disabled user's denial), and the login outcome rows if #2914's PR C has landed (otherwise PR C adopts the façade, Q2). Unit per row with #2872's `_RefusingWriter`: flag on, sink refusing, lane accepting, so logout and revoke answer `204`, a reused token's family is revoked, the outcome rows land after a restart and nothing is counted lost; both refusing, today's answers and counters; flag off, today's behaviour; a `shared` flood leaves room for a sign-out (`test_login_flood_leaves_room_for_logout`). Integration: a sign-out during an audit outage, a restart, the rows exactly once; `test_auth_e2e_pg.py` awaits `lane.flush()` | 650 counted, in S2c's PR | S2b-2a; #2914 slice D merged; Q1 decided | 2026-11-03 |
 | S4a | Metrics (`cv_audit_lane_depth`, `_bytes{class}`, `_oldest_age_seconds`, `_last_seq`, `_appended_total{class}`, `_drained_total`, `_refused_total{class,reason}`, `_drain_failures_total{reason}`, `_anomalies_total{reason}`, `_quarantine_bytes`, `_created_total`, `_paused_batches_total` (S2a2c's `AuditLane.paused_batches`), `_boot_overshoot_frames_total` (S2a2b's `LaneJournal.boot_overshoot_frames`, alerted on with a restart alert, since a crash loop can die before a scrape), `_lock_failures_total` and `_link_failures_total` (S2b-2a's `AuditService.lane_lock_failures` and S2b-2b1's `lane_link_failures`: boots that held the lane), the gauge `cv_audit_lane_journal_first` (removed in S4b-1b; the flag's effective value, which the admin API cannot show while the flag store is down; SR-S2B2A-02), `_state{state}` (`open`, `held` or `stopped`, which the hold and stop alerts read, so a quiet lane alerts too: review L6), and `cv_audit_writer_refused_total{domain}`, the action's first dotted segment: the write-ahead refusal signal asked for on #3009 at 2026-10-17 01:50Z), each with its catalogue entry, golden row, §12.1 row and label allow-list entry as in #3057. Alerts that page, never muted by quiet hours, once the Owner grants them (#2701; until then each ships as a ticket that says so): `AuditSinkRefusing`, `AuditLaneBacklogAged`, `AuditLaneRefusing`, `AuditLaneAnomaly` (a torn tail alone is a ticket, `AuditLaneTornTail`), `AuditLaneDrainHeld` (it says the façade has fallen back), `AuditLaneSeqRegressed`, `AuditLaneCreated`; tickets: `AuditLaneQuarantineGrowing` and the restart alert `AuditLaneBootOvershoot`. Promtool tests, `07-release-and-prr.md` entries and `docs/ops/runbooks/auth-rbac.md` rows, key rotation and `_PREVIOUS_` retirement among them. Split at its seam: S4a-1 the metrics, S4a-2 the alerts and runbook rows | S4a-1 799 (#3758); S4a-2 730, its review folds 464 and S4a-1's 179 counted, in S2c's PR | S3 | 2026-11-04 |
-| S4b | The drill: an outage with sign-outs and a login flood, a restart, a tampered frame and a rolled-back copy (AC-LANE-01, -04 and -09). The exit: the flag and EX-07 removed, RR-16 narrowed, RR-01 extended to the lane's residuals, §8.3's sentences updated, the counter-coverage test checking the registry, and the release-checklist row of the Consequences | 300 | S4a; #2615 merged | 2026-11-05 |
+| S4b | Split by main-orchestrator into six PRs, in this order. S4b-2b (#4005): `lane.lock` taken through directory descriptors (SEC-REM-03, decision 9) and a boot that passes a damaged newest segment (§15.6 row 16). S4b-1a (#4019): a replay of a contained family takes the `shared` row (Q9, decision 13). S4b-1b (#4021): the backstop's record through the lane, the `cv_audit_lane_journal_first` gauge removed, RR-01 extended to the lane's key and frames, and the release-checklist row of the Consequences. S4b-1c (#4037): the flag removed (decision 12) and a lost backstop record counted. S4b-1d: the exit records, EX-07 and EX-08 removed, EX-10 added for the login routes' refusal rows, RR-16 narrowed, RR-01 extended to an ingested record, §8.3's sentences updated, the counter-coverage test checking the registry, this record accepted, and Amendment 1. S4b-2a: the drill, an outage with sign-outs and a login flood, a restart, a tampered frame and a rolled-back copy (AC-LANE-01, -04 and -09), with the closing line | 300 planned; each PR counts its own | S4a; #2615 merged | 2026-11-05 |
 
 **Schedule risks.** S3 needed #2914's slice D, merged as #3229 on 2026-10-17; S4b needed #2615, which #3290
 closed on 2026-10-17, so S4b no longer waits on it (Q10 is answered). The E42-T02 fold train, rationed CI and
 the stack-depth cap limit how many slices can be in review at once. If S4b cannot open by 2026-11-05, or a
 contingency split threatens that date,
 hpe-worker-1 says so on #3009 by 2026-10-25. S4b merges by 2026-11-10; if it has not, hpe-worker-1 asks the owner
-that day, on #2701, for EX-07's re-decision, since its row says to re-decide, never extend.
+that day, on #2701, for EX-07's re-decision, since its row says to re-decide, never extend; S4b-1d removed
+that row, so only the drill's date remains.
 
 **`infra/` impact.** No new volume: `lane/` sits on #2615's audit volume (an absolute `CV_AUDIT_WAL_PATH`), and
 cv-api creates it, directory `0700` and files `0600`, as uid 10001 on the read-only root filesystem. S2b-2a
@@ -354,7 +367,9 @@ lane drains again without duplicates, and an older copy shows as a lower head in
 - **Q1, owner and Security, before S3.** Confirm the narrowed RR-16: sign-out, revoke-my-session and reuse
   containment proceed journal-first, while refresh and sign-in stay fail closed. Should the Owner's revocation
   of another user's session (`revokeUserSession`) and a user's disablement (SR-029) join now, since ending a
-  compromised Manager's session matters more than self sign-out?
+  compromised Manager's session matters more than self sign-out? Answered 2026-10-20 with the ratification:
+  the narrowed set only. `revokeUserSession` (`users.session_revoked`, `api/users.py`) and a user's
+  disablement stay on the writer; their joining is a carry (Amendment 1).
 - **Q2, hcl-worker-1.** If #2914's PR C lands after S3, does it call the façade itself? Does F1 stay as it is
   on the branch? Is `cv_audit_writer_refused_total{domain}` the write-ahead refusal signal you asked for, or do
   the `503` sites also need a per-action counter?
@@ -364,12 +379,21 @@ lane drains again without duplicates, and an older copy shows as a lower head in
 - **Q4, E27 (KV-D04).** Separate action ids for the risk-reducing borrow purposes, or a purpose rule in the
   registry?
 - **Q5, owner.** Accept the shared volume (the lane does not cover a full or read-only audit volume), or add a
-  reserve, such as a ballast file, in a later ticket?
+  reserve, such as a ballast file, in a later ticket? Answered 2026-10-20 with the ratification: the shared
+  volume is accepted (RR-16), and the reserve is a carry (Amendment 1).
 - **Q6, Security.** Give the main WAL the lane's frame MAC in a follow-up ticket?
 - **Q7, owner.** Should other outcome records lost without a retry today (for example the ones
-  `cv_credential_outcome_audit_failures_total` counts) join the registry, or get a §16.2 exception?
+  `cv_credential_outcome_audit_failures_total` counts) join the registry, or get a §16.2 exception? The
+  2026-10-20 ratification's answer, "the §16.2 exception per family" (#3910's record), is superseded by the
+  2026-10-21 rulings. Answered by main-orchestrator 2026-10-21 for S4b-1d, recorded on #3009
+  (issuecomment-6308870301): no §16.2 rows for the lane's callers. The lane covers every outcome record the
+  session routes and the backstop write. The login routes' rows are registered but not yet lane-written (Q2;
+  Amendment 1's carry), and EX-07 excluded them; a later ruling the same day gives them one narrow row, EX-10
+  (04 §16.2), until #2914's PR C (issuecomment-6321348055): EX-10 is now that answer, for the login family
+  alone. The records that counter counts, outside auth, stay with E27 KV-D04 (How E27 KV-D04 joins the lane).
 - **Q8, owner.** `quarantine/` keeps PII (`actor_ip`, user and session ids) for good. Do account erasure and
-  the retention job reach it, or does it follow `audit_log`'s indefinite retention (C-12.8)?
+  the retention job reach it, or does it follow `audit_log`'s indefinite retention (C-12.8)? Answered
+  2026-10-20 with the ratification: it follows `audit_log`'s indefinite retention.
 - **Q9, Security.** Should a replay against an already-revoked family get its own `shared` action id, keeping
   only the first containment intent `reserved`? Answered: yes, `auth.refresh_reuse_replayed` (main-orchestrator
   2026-10-21, ruling (a)); decision 13.
@@ -380,15 +404,129 @@ lane drains again without duplicates, and an older copy shows as a lower head in
 
 - S1a to S4b carry the named tests above; the integration and chaos lanes run in CI.
 - #3009's done-means maps to the slices: the EX-07 rows are written journal-first (S3); a refusing sink and a
-  restart lose none of them (S2a2, S2b, S3); EX-07 is removed and RR-16 updated (S4b); unit, Postgres-integration
+  restart lose none of them (S2a2, S2b, S3); EX-07 is removed and RR-16 updated (S4b-1d); unit, Postgres-integration
   and chaos tests pass, and the journal's tamper evidence is tested (S1a, S2a2, S2b).
-- The decision is taken when main-orchestrator records the interim acceptance on #3009 and the owner ratifies
-  it (status line).
+- The decision was taken on 2026-10-20, when main-orchestrator ratified it under the owner's delegation (status
+  line).
+
+## Amendment 1 (2026-10-21, #3009 S4b-1d: the lane's exit and the carries it leaves)
+
+**The exit.** Journal-first is unconditional since S4b-1c removed the flag (decision 12): every record that a
+call site hands to the façade and `LANE_ACTIONS` admits goes to the lane first, with the writer as its fallback.
+S4b-1c also counts a lost backstop record on
+`auth_audit_outcome_lost_total{action="auth.disabled_user_session_revoked"}`, which `AuthAuditOutcomeLost`
+alerts on, as main-orchestrator ruled on #3009 (Info-1, from #4021's security review). So EX-07 and EX-08 leave
+`04-security-program.md` §16.2 together in S4b-1d, with no narrowed EX-08: the lane is §8.3 rule 2's durable
+retry for every outcome record the session routes and the backstop write, and a record that the lane and the
+writer both lose is counted and alerted. The login routes' rows are registered but not yet lane-written (Q2),
+and EX-07 excluded them: their adoption is a carry below. §8.3 now says so, and reads rule 1 by analogy for the
+backstop's record, which has no intent ahead of it because refusing that revocation would leave a disabled
+user's session alive (SR-029). RR-16 narrows to what remains: refresh, sign-in, and the idle lock's extend and
+unlock (#4052) fail closed while the sink refuses, and sign-out and revoke-my-session while the lane refuses
+too, as a full or read-only audit volume makes it (Q5); a double refusal still loses an outcome row, now counted
+and alerted (#4021's Low-2). RR-01 takes residual 4 of the threat model's §3.6.2, a lane record waiting in the
+CRC-only WAL after ingest (Q6), beside residuals 1 and 2. Q7 adds no §16.2 rows for the lane's callers; EX-10
+covers the login routes. The counter-coverage tests now check, for each action the counter covers, that it is a
+`LANE_ACTIONS` row and that both runbook entries name it (`tests/unit/auth/test_audit_outcome_lost_alerts.py`).
+
+**Built, not carried.** SEC-REM-03, and with it the one helper for the lock that S2c's review left unfolded: #4005
+takes `lane.lock` through directory descriptors, for cv-api and the release command alike (decision 9). S2c's n3:
+#4005's scan fails fast when a release note does not move it past its hold
+(`test_a_note_that_does_not_move_the_scan_forward_fails_fast`). From #3910's review: N1, which #4005 built
+(`test_lane_journal_scan.py` pins `gap_again.end == (7, 0)`), and c8-F1, which #4021 built (`test_lane_metrics.py`
+pins an empty lane's `oldest_age_seconds` at exactly 0). F3 needs nothing: the S3 row has read 650 counted, the
+figure `count_loc` gives, since #3910 merged.
+
+**Carries, recorded and not built.** Filing has been frozen since 2026-10-19, so these are recorded here
+instead of as issues; #3009 closes with S4b-2a, and this ledger outlives it. Each names where it was raised, an
+owner and the trigger that brings it back.
+
+- **Compose's previous-key input** (#3910, S4a-2's C3). Compose gives the `api` service one lane key secret and no
+  `CV_AUDIT_LANE_PREVIOUS_KEY_FILE`, so a key rotation under compose is blocked (`docs/ops/runbooks/auth-rbac.md`
+  §13). Owner: E09 security. Trigger: the first lane key rotation in a compose deployment.
+- **The Q5 reserve.** A reserve on the audit volume, such as a ballast file, so that a full volume still leaves
+  the lane room (the threat model's §3.6.2 residual 3, RR-16). Owner: the Owner (Q5, #2701), with E09 security.
+  Trigger: the first lane and sink refusal caused by a full or read-only audit volume, or RR-16's review.
+- **The Q1 follow-up.** The Owner's revocation of another user's session (`users.session_revoked`,
+  `api/users.py`) and a user's disablement (`users.disable`, `admin/user_disable.py`) joining the lane: a
+  registry row and a lane port at each call site. Owner: the Owner decides on #2701, and E09 security builds it.
+  Trigger: that decision, or such a revocation or disablement refused with `503` during an audit outage.
+- **The login routes' adoption of the façade** (#2914's PR C, Q2). `LANE_ACTIONS` registers the six login
+  outcome actions (decision 3), but `api/auth.py` writes every record through `AuditService.writer`, so none
+  reaches the lane yet; EX-07 excluded them too. Adopting it means calling `AuditService.lane`, with the
+  `LaneNotWired` guard `api/sessions.py` uses. Its constraint: `auth.login` is registered `shared` for any
+  outcome, yet it is also a write-ahead record of the enrolment-only mint (`_enrolment_only_sign_in`), as
+  `auth.recovery_code_used` is of the recovery mint. So is `auth.session_revoked`, `reserved` for any outcome:
+  `/auth/mfa/recovery` and `/auth/mfa/enroll/confirm` write it ahead of their mints, so a wholesale move of
+  `api/auth.py` to the façade would put those rows in the `reserved` class too. Decision 3's list of a mint's
+  records names none of the three. U42's control (admission by action and outcome, which excludes mints) holds
+  today only because `api/auth.py` stays on the writer, so PR C splits those actions or keeps the mints' call
+  sites on the writer. Until PR C, a refused mint's row that the writer cannot write (`_audit_refusal`) is
+  logged only, neither journaled nor counted, as is a refusal row of `/auth/mfa/recovery`: exception EX-10
+  (04 §16.2, expires 2026-11-15) records that gap. Two more rows of `api/auth.py` are PR C's, and EX-10 lists
+  neither. First, `/auth/mfa/recovery` writes an `unplanned` `auth.session_revoked` row through the writer,
+  after its commit and `revoke_all`, for each session minted since its plan: an outcome row. One that the
+  writer refuses ends the request in the `unminted` `401` and stops the loop, so no later row is tried;
+  nothing journals it or counts it on `auth_audit_outcome_lost_total`, and the log line
+  `auth.recovery.completed_unminted` names the planned (`ending`) sessions only, so no record or line names the
+  unplanned ones. `auth.session_revoked` is not one of EX-10's six actions. PR C names the unplanned ids in
+  that line and takes the row onto the façade like any outcome row. Second, `/auth/mfa/verify` writes
+  `auth.session_created` after `mint()`, not ahead of it, although decision 3 lists it among a mint's
+  write-ahead records: a refused write is not caught, so the route answers `500` (`internal_error`) with the
+  session row minted and never delivered, and no record of it. PR C writes it ahead of the mint, as
+  `_enrolment_only_sign_in` does, or amends decision 3. Owner: hcl-worker-1, with E09 security. Trigger: PR C.
+- **SEC-REM-01** (#3910). When the lane's alerts become pages, they need `absent()` guards on
+  `cv_audit_lane_state`, `cv_audit_lane_anomalies_total` and `process_start_time_seconds`: a lane read that fails
+  at a scrape drops every lane family, and the young-process arms read the start time. Owner: the Owner (#2701).
+  Trigger: the page promotion.
+- **SEC-REM-02** (#3910). A second release of the same hold, after its first `released` row committed, is
+  deduplicated by the keyed `record_id`, so the second operator's words never reach `audit_log`. S4b-2a lands it
+  as one sentence in `docs/ops/runbooks/auth-rbac.md` §12. Owner: E09 security. Trigger: S4b-2a, whose merge
+  closes it; should S4b-2a drop the sentence, the next change to that section.
+- **S3-I3** (content not recorded in the repo; S3's security review in #3910), an Info neither folded nor carried
+  there. Owner: E09 security. Trigger: the next change to the session routes' lane rows (`api/sessions.py`).
+- **S2c's review Q4** (#3910): the optional Q4 fix of S2c's code review and its word tightenings, not folded
+  there (the review's Q4, not this record's). Owner: E09 security. Trigger: the next change to the release
+  command (`admin/lane_release.py`).
+- **S4a-1's N1, N5 and N6** (#3758), from S4a-1's code review: one `os.stat` for a quarantine copy's size (N1),
+  N5's zip and stand-in guards, and a test's shape (N6). Owner: E09 security. Trigger: the next change to the
+  lane's metrics (`audit/metrics.py`).
+- **c8-L-1** (#3910, an optional Low). A smaller fake `WAIT_S` (5 to 10 fake seconds, not 600) in
+  `test_lane_release.py` and `test_lane_metrics.py`, the modules #3910's commit 8 moved to `VirtualTimeLoop`, so
+  a retrying stall is reported sooner: it takes about 23 real seconds today, bounded and never silent.
+  (`test_lane_drain.py` keeps its 600: a test there waits through 121.5 fake seconds of backoff.) Owner: E09
+  security. Trigger: the next change to either module.
+- **c8-F2** (#3910). One shared `until()`, `workers()` and `failed()` in `tests/unit/audit/audit_waits.py`, of
+  which `test_lane_drain.py`, `test_lane_release.py` and `test_lane_metrics.py` each keep a copy today. Owner:
+  E09 security. Trigger: the next change to one of those modules.
+- **The `ReexportCollector` scrape guard.** `ReexportCollector.collect()` (`observability/metrics.py`) serves
+  the default registry's families with no guard, so one collector that raises at a scrape fails the whole
+  scrape, where `ScrapeCollector` loses only its own families (SR-S4A1-01, #3758; #3910 guarded it). Owner:
+  backend-platform. Trigger: the next change to `observability/metrics.py`, or a scrape that fails.
+- **F2** (#3910), promtool constants not yet pinned (AuditLaneSeqRegressed's `[1d]`, the young `< 900` windows,
+  AuditLaneBootOvershoot's `[1h]` and AuditLaneTornTail's young-arm `reason` selector), in
+  `infra/alertmanager/gen_promtool_tests.py` and the regenerated `infra/prometheus/tests/system_alerts.test.yml`.
+  It is S4b-2a's, with the drill, and joins this ledger only if S4b-2a drops it.
+- **The boot-side recovery of a volume an earlier build wedged** (`24-internal-schemas.md` §15.6, Failures while
+  running; from #4005): frames in a segment named below one the drain had passed are not recovered; a boot that
+  scans such a segment first, as row 2 does, would recover them. No live volume holds such frames; a staging
+  volume is checked by hand (§15.6). Owner: E09 security. Trigger: a lane restored from a backup taken before
+  #4005, or a boot that meets such a segment.
+- **The refresh race** (from #4019's security review, a Low). A refresh that claims the live head while a
+  containment walk runs mints a successor the walk misses (`SessionService.refresh`'s rotated branch, where the
+  family walk runs before `link_rotation`); the next presentation of a held member revokes it under the
+  `warning` replay row although a live session flipped. No row is lost, and the `401` and the revocation stand.
+  The fix is for `RefreshReuseDetected` to carry the newly revoked ids, so that a replay that revokes something
+  writes the `critical` row. With it, the same review's Info: on the concurrent-refresh race path a family's
+  only `critical` row is the outcome row, so a double refusal that loses it leaves the family with `warning`
+  replay rows only; that loss is counted on `auth_audit_outcome_lost_total{action="auth.refresh_reuse_detected"}`
+  and alerted by `AuthAuditOutcomeLost`. Owner: E09 security. Trigger: the next change to
+  `SessionService.refresh` or to the reuse handler in `api/sessions.py`.
 
 ## References
 
-- `docs/plan/04-security-program.md` §8.1, §8.3, §16.1 (RR-16, the sink-refusal residual, on #2914's branch) and
-  §16.2 (EX-07, on that branch)
+- `docs/plan/04-security-program.md` §8.1, §8.3, §16.1 (RR-01, and RR-16, the sink-refusal residual) and §16.2
+  (EX-07 and EX-08, until S4b-1d removed them)
 - `docs/plan/24-internal-schemas.md` §15.4 and §15.6; `docs/plan/21-database-schema.md` §10.7
 - `docs/security/threat-models/e09-auth-rbac.md` §3.6.1 and §3.6.2; `docs/security/threat-models/E27-accounts.md`
   KV-D04 and AC-27

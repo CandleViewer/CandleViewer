@@ -1,12 +1,12 @@
 """#3402: the reconcile step of `docs/ops/runbooks/auth-rbac.md` section 4 (#3120 AC7, the
-compensating control of EX-08) tells a session a disable revoked from a backstop revocation whose
-record was lost. The deployed app of `test_disable_user_e2e.py`, every record written through the
-real `AuditWriter` into an in-memory `audit_log`: the Owner disables M, who has two live sessions,
-through `DELETE /users/{userId}`; a third session of M escaped both the disable's transaction and
-its sweep, and the backstop revokes it on its next use while the sink refuses records (the writer
-has stopped). The step's lookup is the query `GET /admin/audit` runs for the Owner. So is its
-fallback for a window from before #3402, whose `auth.session_revoked` records name no subject. The
-runbook's literal of each is pinned to the one run here."""
+compensating control of EX-08, retired by #3009) tells a session a disable revoked from a backstop
+revocation whose record was lost. The deployed app of `test_disable_user_e2e.py`, every record
+written through the real `AuditWriter` into an in-memory `audit_log`: the Owner disables M, who has
+two live sessions, through `DELETE /users/{userId}`; a third session of M escaped both the disable's
+transaction and its sweep, and the backstop revokes it on its next use while the sink refuses
+records (the writer has stopped). The step's lookup is the query `GET /admin/audit` runs for the
+Owner. So is its fallback for a window from before #3402, whose `auth.session_revoked` records name
+no subject. The runbook's literal of each is pinned to the one run here."""
 
 from __future__ import annotations
 

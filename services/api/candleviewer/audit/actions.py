@@ -298,7 +298,8 @@ LANE_ACTIONS: Mapping[str, tuple[LaneClass, frozenset[str]]] = MappingProxyType(
         # Q9 (decision 13): only a family's first containment intent is `reserved`; a replay
         # against a contained family is `shared`, so a flood of them never spends that share.
         "auth.refresh_reuse_replayed": ("shared", frozenset({AuditOutcome.DENIED})),
-        # #3120 (EX-08): the backstop revocation's outcome; #3355 adds it to AUDIT_ACTIONS.
+        # #3120: the backstop revocation's outcome (#3355 adds it to AUDIT_ACTIONS). The lane takes
+        # the row first and the writer is its fallback; a row both refuse is counted lost (#3009).
         "auth.disabled_user_session_revoked": ("reserved", frozenset({AuditOutcome.SUCCESS})),
         "auth.session_refreshed": ("shared", frozenset({AuditOutcome.DENIED})),
         "auth.login": ("shared", _ANY),

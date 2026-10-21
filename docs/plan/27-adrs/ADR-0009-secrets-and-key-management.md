@@ -229,7 +229,7 @@ nothing was stored: unless the key is imported again, the Owner deletes it at th
 (`docs/ops/runbooks/key-selfcheck.md`). If the destroy fails as well, the row stays `pending`,
 signs only its own `key_verify` and holds its label until the revoke route exists (#898).
 
-## Amendment 7 (2026-10-18, #3009; ADR-0037 decision 6, accepted on an interim basis on #3009)
+## Amendment 7 (2026-10-18, #3009; ADR-0037 decision 6, accepted: ratified 2026-10-20 by main-orchestrator under the owner's delegation, #2701)
 
 Adds one application secret to the key inventory (Design §8; Amendment 4, "Unchanged").
 
