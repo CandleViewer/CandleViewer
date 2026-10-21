@@ -192,12 +192,14 @@ describe("decodeFrame", () => {
       recording_started_at_ms: 5,
       build_version: 2,
       spec_hash: "a".repeat(64),
+      stale: true,
     };
     const metaOf = (meta: string) => (decodeFrame(text(meta)) as DataFrame).meta;
     expect(metaOf(JSON.stringify({ ...whole, ...more }))).toEqual({ ...whole, ...more });
     const hostile =
       '{"reason":"x","junk":[1],"source":"mars","previous_seq":"7","include_delta":1,"spec_hash":"zz",' +
-      '"history_bars":-1,"recording_started_at_ms":1.5,"build_version":"2","__proto__":{"polluted":true}}';
+      '"history_bars":-1,"recording_started_at_ms":1.5,"build_version":"2","stale":"yes",' +
+      '"__proto__":{"polluted":true}}';
     const meta = metaOf(hostile);
     expect(meta).toEqual({ reason: "x" }); // the rest was unknown or of the wrong type
     expect(Object.getPrototypeOf(meta)).toBe(Object.prototype);
@@ -205,6 +207,41 @@ describe("decodeFrame", () => {
     // `reason` is an open set (C18), but a short one.
     expect(metaOf(`{"reason":"${"r".repeat(64)}"}`)).toEqual({ reason: "r".repeat(64) });
     expect(metaOf(`{"reason":"${"r".repeat(65)}"}`)).toEqual({});
+  });
+
+  describe("meta.stale (7.2, C21)", () => {
+    const BARS = "bars.BTCUSDT.time.1";
+    const metaWith = (meta: object) =>
+      (decodeFrame(wire({ t: "snap", ch: BARS, s: 1, ts: 1, p: {}, meta })) as DataFrame).meta;
+
+    it("survives as true and as false: an explicit false is kept, not read as absent", () => {
+      expect(metaWith({ reason: "initial", stale: true })).toEqual({
+        reason: "initial",
+        stale: true,
+      });
+      expect(metaWith({ reason: "initial", stale: false })).toEqual({
+        reason: "initial",
+        stale: false,
+      });
+    });
+
+    it("is not added when the server sends none: an absent stale reads as false", () => {
+      expect(metaWith({ reason: "initial" })).not.toHaveProperty("stale");
+    });
+
+    it.each([
+      ["a string", "yes"],
+      ["the string true", "true"],
+      ["a one", 1],
+      ["a zero", 0],
+      ["a null", null],
+      ["an array", [true]],
+      ["an object", { value: true }],
+    ])("is dropped, like any bad meta field, when it is %s", (_what, stale) => {
+      const meta = metaWith({ reason: "initial", stale });
+      expect(meta).toEqual({ reason: "initial" });
+      expect(meta).not.toHaveProperty("stale");
+    });
   });
 
   it("carries the span id and the message size of a data frame (13.1)", () => {

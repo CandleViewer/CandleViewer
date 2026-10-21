@@ -131,6 +131,9 @@ const META_FIELDS: Readonly<Record<string, (v: unknown) => boolean>> = {
   recording_started_at_ms: isInt,
   spec_hash: (v) => isStr(v) && v.length === 64 && /^[0-9a-f]{64}$/.test(v),
   build_version: isInt,
+  // 7.2 (C21): a snapshot's staleness, in either encoding. Strictly a boolean: any other value is dropped
+  // like a bad field of any kind, and an absent `stale` reads as `false`.
+  stale: (v) => typeof v === "boolean",
 };
 
 /** `meta` is server-controlled: only the documented fields survive (unknown ones are ignored, 2.3), so it stays small and of known shape. */
