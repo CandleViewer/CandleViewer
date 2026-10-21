@@ -1273,13 +1273,15 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "bars_tail_scan_bounded_total",
         "counter",
         "reads",
-        (),
-        "Non-time WS tail reads the table-row bound started later than their window: the"
-        " series' snapshot holds only its bars among its kind's newest MAX_TAIL_SCAN_ROWS rows.",
+        ("kind",),
+        "WS tail reads the table-row bound started later than their window, by bar kind (time"
+        " reads too since #399 R1): the series' snapshot holds only its bars among its kind's"
+        " newest MAX_TAIL_SCAN_ROWS rows; each such read also logs bars_tail_scan_truncated.",
         "rising with most first reads = sparse series get shallow snapshots: re-size the bound on"
         " the target host (the D2-M4 bench); none = slack",
         _L,
         "E12",
+        max_series=6,
         exported=True,
     ),
     _s(

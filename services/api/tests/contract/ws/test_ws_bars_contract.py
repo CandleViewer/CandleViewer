@@ -86,7 +86,7 @@ class _Storage:
         self.rows = {bar_param: list(stored) for bar_param, stored in rows.items()}
 
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
-        if len(params) == 1:  # a non-time read's table-row bound (D2-M4): far fewer rows than K
+        if len(params) == 1:  # a read's table-row bound (D2-M4, time reads too): below K rows
             return []
         symbol, bar_param, start = params[:3]
         limit = int(sql.rsplit("LIMIT ", 1)[1])
