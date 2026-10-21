@@ -257,7 +257,7 @@ credential that outlives the page.
   - `allow_origins` is `Settings.allowed_origin_set`, with credentials on, no regex and never `*`.
   - Methods: `GET, HEAD, POST, PUT, PATCH, DELETE`.
   - Allowed request headers: `Authorization`, `Content-Type` and the contract's header parameters, today
-    `X-CSRF-Token`, `Idempotency-Key`, `If-Match` and `X-Reauth-Password` (`22-api-openapi.yaml:1216`,
+    `X-CSRF-Token`, `Idempotency-Key`, `If-Match`, `X-Reauth-Password` and `X-Arm-Token` (#3944) (`22-api-openapi.yaml:1216`,
     `12634-12661`).
   - Exposed response headers: every response header the contract declares, both in `components.headers`
     (`RateLimit-*`, `Retry-After`, `ETag`, `Idempotency-Replayed`; `22-api-openapi.yaml:12914-12929`) and
@@ -337,7 +337,7 @@ credential that outlives the page.
       after a restart, and S9a's first call, see the stored value (C-13.7); a boot during an outage keeps
       the default, off.
     - A call returns the last value read at once. `LaneFlag` starts a refresh on every call once the last
-      one has ended; this reader starts one only when none runs and the last started over 30 s ago (the
+      one has ended; this reader starts one only when none runs and the last started 30 s or more ago (the
       snapshot's TTL), so at most one starts per 30 s, outage or not, and a request creates no task
       otherwise. No request awaits the store, and an outage keeps the last value read (BC-D3).
     - It is read only after the origin match (2b, 2c): a request with no `Origin` or an unlisted one
