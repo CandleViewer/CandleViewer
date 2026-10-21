@@ -473,7 +473,7 @@ async def test_runtime_stop_cut_short_may_notify_again() -> None:
 
 async def test_runtime_stop_cancels_the_machine_registry_timers() -> None:
     """E17-T08: once the notice ends, no `machines` window or retention timer is left armed."""
-    machines = MachineStateRegistry(call_later=asyncio.get_running_loop().call_later)
+    machines = MachineStateRegistry(call_later=loop_call_later, coalesce_s=3600.0)
     switch = MachineEntity("kill_switch")
     machines.publish(switch, _payload("kill_switch", "clear"))
     machines.terminal(switch, _payload("kill_switch", "engaged"))  # waits for its window

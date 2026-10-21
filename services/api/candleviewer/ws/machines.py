@@ -15,8 +15,8 @@ quiet window of `coalesce_s` (100 ms) goes out at once; a later one is recorded 
 reads it, and goes out in the call of the one timer that closes the window, the latest only.
 
 Retention (§6.4): a terminal entry stays `retention_s`, at most `terminal_max` of them (oldest
-first); `remove` ends a live one when its machine stops. A removal sends what waits for its window,
-revokes each live subscription (`topic_removed`) and hands the frames to `on_revoked` to audit.
+first); `remove` ends a live one when its machine stops. A removal sends what waits for its window
+(flag on, §8.6 drops it with the queue), revokes each subscription, hands `on_revoked` the frames.
 
 Bound (C-2.18): `MACHINE_ENTRIES_MAX` entries; a payload for a new entity past it is refused and
 counted (no live state is evicted), so a `sub` to that entity gets the refusal a foreign one gets.
@@ -184,9 +184,9 @@ class MachineStateRegistry:
         self._remove(entity.ch, entry)
         return True
 
-    def sweep(self, now: float | None = None) -> int:
+    def sweep(self) -> int:
         """Remove each terminal entry whose retention ended (how many), then re-arm the timer."""
-        now, removed = self._clock() if now is None else now, 0
+        now, removed = self._clock(), 0
         while self._terminal and next(iter(self._terminal.values())).expires <= now:
             ch, entry = self._terminal.popitem(last=False)
             if self._entries.get(ch) is entry:  # else stale: `ch` holds another entry, or none

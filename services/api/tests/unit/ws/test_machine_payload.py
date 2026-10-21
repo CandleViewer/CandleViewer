@@ -84,3 +84,4 @@ def test_the_chart_table_is_the_schemas_the_kind_sets_and_the_admin_apis() -> No
     assert sorted(MACHINE_ENTITY_KIND) == sorted(_MACHINES["properties"]["machine_kind"]["enum"])
     assert set(MACHINE_ENTITY_KIND.values()) == set(MACHINE_KINDS)
     assert all(entity_kind(chart) == kind for chart, kind in MACHINE_ENTITY_KIND.items())
+    assert set(_SUMMARY) == set(_MACHINES["properties"]["context_summary"]["properties"])
