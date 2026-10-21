@@ -47,7 +47,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 - [ ] **Final Penpot link** — PENDING: boards 1, 20, 21; PNGs `scr-103-context-min-viewport-dark.png`, `scr-103-keyboard-focus-order-dark.png`
 - [x] **Variants × States matrix** — table 1
-- [x] **Keyboard table** — table 2; checked against `05` §3.2 and `05` §3.3: no global override, `Esc` and `Ctrl+K` untouched; the root stops the keys it handles because the shipped dispatcher reports every binding (spec §10.1)
+- [x] **Keyboard table** — table 2; checked against `05` §3.2 and `05` §3.3: no global override; the Accessibility bindings (`Ctrl+=`, `Ctrl+-`, `Ctrl+Shift+H`, `Ctrl+Shift+M`) and `?` run with the drawer open, every other Global `Ctrl` / `Alt` / F-key binding closes it first; `Esc` and `Ctrl+K` untouched; the root stops the keys it handles because the shipped dispatcher reports every binding (spec §10.1)
 - [x] **Accessible name / role table** — table 3
 - [x] **Live data** — shared table 5: the drawer's one polite region
 - [x] **Motion pair** — shared table 4: the slide, instant under reduced motion
@@ -69,12 +69,14 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Table 2 — Keyboard
 
-| Key                                           | Action                       | Focus after                                          | Global conflict?                    | Notes                          |
-| --------------------------------------------- | ---------------------------- | ---------------------------------------------------- | ----------------------------------- | ------------------------------ |
-| `Tab` / `Shift+Tab`                           | move through the controls    | next control; wraps inside the drawer (trap)         | none; stopped at the root           | order in spec §10.1            |
-| `Esc`                                         | close                        | the opener, or the opener of the surface that closed | universal cancel (`05` §3.3 rule 3) | releases the live subscription |
-| `Enter` / `Space`                             | activate the focused control | stays, or the target of a navigation                 | stopped at the root                 | —                              |
-| a Global binding with `Ctrl`, `Alt`, an F-key | closes the drawer, then runs | its target                                           | the binding keeps its meaning       | as E08-D05 §8                  |
+| Key                                             | Action                       | Focus after                                          | Global conflict?                    | Notes                          |
+| ----------------------------------------------- | ---------------------------- | ---------------------------------------------------- | ----------------------------------- | ------------------------------ |
+| `Tab` / `Shift+Tab`                             | move through the controls    | next control; wraps inside the drawer (trap)         | none; stopped at the root           | order in spec §10.1            |
+| `Esc`                                           | close                        | the opener, or the opener of the surface that closed | universal cancel (`05` §3.3 rule 3) | releases the live subscription |
+| `Enter` / `Space`                               | activate the focused control | stays, or the target of a navigation                 | stopped at the root                 | —                              |
+| `Ctrl+=` `Ctrl+-` `Ctrl+Shift+H` `Ctrl+Shift+M` | run; the drawer stays open   | stays; the scroll position kept                      | none; the binding keeps its meaning | re-lays out in place (§10.1)   |
+| `?` (`Shift+/`)                                 | opens the cheat sheet        | the sheet; on close, back to the drawer              | none; always available              | over the drawer (§10.1)        |
+| any other Global `Ctrl`, `Alt`, F-key binding   | closes the drawer, then runs | its target                                           | the binding keeps its meaning       | as E08-D05 §8                  |
 
 ### Table 3 — Accessible name / role
 
@@ -223,23 +225,38 @@ Feature: SCR-103 symbol info drawer — accessibility acceptance criteria
     When the user opens the drawer from the search menu and presses Tab through it
     Then focus starts on the title, visits every control in the spec §10.1 order and stays inside the drawer
     And Esc closes it and returns focus to the opener
+    And the `05` §3.2 Accessibility bindings and `?` work with the drawer open, which stays open (spec §10.1)
     And a live update, a recorder update or a rules change never moves focus
     And every focused control shows a ring of at least 3:1
 
   Scenario: Screen-reader operation
     Given NVDA on the Electron shell (spec §14.3, a script not yet run)
+    When the user reads the drawer from the title down
     Then the dialog name, the three band headings and every fact as a term and definition with its unit are announced
     And a band's state change is spoken once, politely; the countdown is never spoken per second
     And a contract load failure alerts once
+    And no canvas is involved, so no DOM mirror or table view is needed
 
-  Scenario: Colour independence, contrast and reduced motion
-    Then bands are told apart by headings, and recording, stale and not-trading states by words and glyphs
-    And the computed pairs pass in dark, light and high contrast (text 4.5:1, non-text 3:1)
-    And under prefers-reduced-motion the drawer opens and closes instantly
+  Scenario: Colour-independence
+    Given the drawer shows recording, stale, not-trading, 24 h change and funding sign states
+    When the state is rendered
+    Then bands are told apart by headings, and each state by words, glyphs or a sign, never colour alone
+    And the drawer passes deuteranopia/protanopia/tritanopia simulation review (PENDING `cvd_sim.py` on the exports)
+
+  Scenario: Contrast
+    Given the drawer is rendered in the dark, light and high-contrast themes
+    Then text meets 4.5:1 and meaningful non-text elements 3:1, per the computed pairs (spec §13)
+
+  Scenario: Reduced motion
+    Given the user has prefers-reduced-motion enabled (OS or in-app override)
+    When the drawer would slide in or out
+    Then it opens and closes instantly, nothing flashes and no motion lasts over 5 s
 
   Scenario: Automated gates
     Given the consuming FE ticket's PR
-    Then axe-core reports no serious or critical violation and the keyboard-only E2E covers the path above
+    Then axe-core reports no serious or critical violation
+    And the affected screen's Lighthouse Accessibility score remains >= 95
+    And the keyboard-only E2E covers the path above
 ```
 
 Screen reader: written, not run; the release-level pass (`05` §8) runs it. Exceptions: none.
