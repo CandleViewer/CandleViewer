@@ -252,6 +252,7 @@ from candleviewer.journal.service import JournalService
 from candleviewer.key_import_wiring import wire_key_import
 from candleviewer.key_selfcheck_wiring import wire_key_selfcheck
 from candleviewer.key_test_wiring import wire_key_test
+from candleviewer.machine_state_wiring import RegistryFeed
 from candleviewer.net import (
     BindingSelfCheck,
     CidrAllowList,
@@ -314,6 +315,7 @@ from candleviewer.settings import (
 )
 from candleviewer.statechart.bindings.b16_session import set_audit_sink as set_b16_audit_sink
 from candleviewer.statechart.gateway import Gateway, GatewayOverloadedError
+from candleviewer.statechart.plugins import MachineStatePort
 from candleviewer.storage.cold.archive_import import FileImportLedger
 from candleviewer.storage.cold.compaction_run import compact_all
 from candleviewer.storage.cold.compactor import Compactor
@@ -550,6 +552,7 @@ def _build_replay_sessions(
     pg: SqlAlchemyRelationalRepository,
     coverage: CoverageService,
     audit: AuditHandle,
+    feed: MachineStatePort | None = None,
 ) -> ReplaySessionService:
     """E26-T01: the B12 session lifecycle. Paper-account grants and source handles are ports
     E26-T05/E36 wire: until then a paper-trading session is refused (fail closed)."""
@@ -566,6 +569,7 @@ def _build_replay_sessions(
         limits=limits,
         gateway=Gateway(),
         env=settings.environment.value,
+        machine_feed=feed,
     )
 
 
@@ -574,11 +578,12 @@ def _attach_replay_sessions(
     settings: Settings,
     pg: SqlAlchemyRelationalRepository | None,
     coverage: CoverageService | None,
+    feed: MachineStatePort | None = None,
 ) -> None:
     """Replay sessions need Postgres and the recorded-coverage service (real backend only);
     without them the module stays scaffold-only and nothing is attached."""
     if pg is not None and coverage is not None:
-        ctx.replay.attach_sessions(_build_replay_sessions(settings, pg, coverage, ctx.audit))
+        ctx.replay.attach_sessions(_build_replay_sessions(settings, pg, coverage, ctx.audit, feed))
 
 
 def _audit_ready(audit: AuditHandle) -> Callable[[], bool]:
@@ -1342,7 +1347,20 @@ def create_app(
     app.state.coverage_service = coverage_service
     if coverage_service is not None:
         ctx.recorder.attach_coverage(coverage_service)
-    _attach_replay_sessions(ctx, resolved, _kb_pg, coverage_service)  # started by the supervisor
+    # E17-T08: the gateway's one hub and the `machines.{entity}.state` registry come first, so each
+    # module that owns a machine is handed the one feed it publishes through (23 §6.4). The timers
+    # are the running loop's, and `WsRuntime` closes them.
+    ws_sequencing = SequencingHub()
+    machine_states = MachineStateRegistry(
+        hub=ws_sequencing, call_later=loop_call_later, wall_ms=_now_ms
+    )
+    machine_feed = RegistryFeed(
+        machine_states, environment=resolved.environment.value, now_ms=_now_ms
+    )
+    app.state.machine_feed = machine_feed
+    ctx.auth.attach_machine_feed(machine_feed)
+    # Started by the supervisor:
+    _attach_replay_sessions(ctx, resolved, _kb_pg, coverage_service, machine_feed)
     # E16-T07 (#491): DiskBudget on the real backend (no recorder flag; lifespan-started).
     app.state.disk_budget = build_disk_budget(
         resolved,
@@ -1357,12 +1375,11 @@ def create_app(
     # #2599: the public WS and the instrument catalogue share one public REST client (C-12.7).
     public_rest = PublicRest(ctx) if resolved.ingestion_ws_enabled else None
     if public_rest is not None:
-        wire_public_ws(ctx, kline_boundary, public_rest)
+        wire_public_ws(ctx, kline_boundary, public_rest, machine_feed)
     # E12 #2031 (flag `bars_enabled`, default off - C-4.13; removal with #398/#399): the set
     # and its writer are started/stopped by the lifespan (set first, then writer).
     # #399: the WS series store (hydrated by the reader, built first) and the bars publisher on
-    # the gateway's one hub (the machine states below share it), both on the emit path.
-    ws_sequencing = SequencingHub()
+    # the gateway's one hub (the machine states above share it), both on the emit path.
     bars_reader: BarReader | None = None
     bars_series: SeriesStore | None = None
     indicators: IndicatorEngine | None = None
@@ -1547,11 +1564,7 @@ def create_app(
     # the alerts store; its deltas come from the dispatcher and the inbox routes (`on_change`).
     ws_alerts = alerts_topic(ws_sequencing)
     snapshot_adapters["alerts"] = ws_alerts
-    # E17-T08: `machines.{entity}.state` entries; `sub` is authorised and snapped from them, and a
-    # publish fans out through the hub, coalesced per entity (§6.4), waking a pending subscription.
-    machine_states = MachineStateRegistry(
-        hub=ws_sequencing, call_later=loop_call_later, wall_ms=_now_ms
-    )
+    # E17-T08: `sub` is authorised and snapped from `machine_states`, built above with the feed.
     ws_services = SubscriptionServices(
         upstream=ws_upstream,
         bars=getattr(getattr(app.state, "bars_runtime", None), "builder_set", None),
@@ -2425,7 +2438,9 @@ def create_app(
             on_change=ws_alerts.deliveries_changed,
         )  # fmt: skip
         ctx.alerts.bind(
-            _alert_evaluator_factory(ctx, _alert_pg, metrics_facade, wake=dispatcher.notify),
+            _alert_evaluator_factory(
+                ctx, _alert_pg, metrics_facade, wake=dispatcher.notify, feed=machine_feed
+            ),
             dispatcher,
         )
     # E14-T01: owner-scoped /drawings; callers from the session (`audit_resolver`, as for
@@ -2641,6 +2656,7 @@ def _alert_evaluator_factory(
     facade: Metrics,
     *,
     wake: Callable[[], None] | None = None,
+    feed: MachineStatePort | None = None,
 ) -> Callable[[], Awaitable[AlertEvaluator | None]]:
     """E40-T03: evaluator over the rules module's pushed metric source (shared E35 bus). With
     *wake* (E40-T04, the dispatcher's `notify`), a committed firing is delivered at once."""
@@ -2656,7 +2672,7 @@ def _alert_evaluator_factory(
         )
         store = firing if wake is None else WakingFiringStore(firing, wake)
         return AlertEvaluator(
-            store, source, charts=AlertCharts(), audit=audit, metrics=AlertMetrics(metric)
+            store, source, charts=AlertCharts(feed=feed), audit=audit, metrics=AlertMetrics(metric)
         )
 
     return _make
@@ -2892,6 +2908,7 @@ def wire_public_ws(
     ctx: AppContext,
     kline_boundary: KlineHotBoundary | None = None,
     public_rest: PublicRest | None = None,
+    machine_feed: MachineStatePort | None = None,
 ) -> ConnectionManager:
     """E08-T04 (flag `ingestion_ws_enabled`, default off — C-4.13): compose the
     public WS skeleton. The exchange adapter (M4) supplies the socket factory and
@@ -3032,7 +3049,7 @@ def wire_public_ws(
             touch=watchdog.touch,
             clock=clock,
             writer=_BookWriter(),
-            supervisor=B14BookSupervisor(),
+            supervisor=B14BookSupervisor(feed=machine_feed),
             tick_size=_tick_size,  # #3806: a tick-size change under a LIVE book resyncs it
         )
     )

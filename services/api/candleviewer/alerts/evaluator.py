@@ -114,14 +114,21 @@ class ChartRecorder(Protocol):
     """B10 lifecycle recorder (`alerts.lifecycle.AlertCharts`): records, never decides."""
 
     async def fired(
-        self, alert_id: str, delivery_ids: Sequence[int], channels: Sequence[str]
+        self,
+        alert_id: str,
+        delivery_ids: Sequence[int],
+        channels: Sequence[str],
+        *,
+        owner: str | None = None,
     ) -> None: ...
 
-    async def suppressed(self, alert_id: str, window_end_ms: int) -> None: ...
+    async def suppressed(
+        self, alert_id: str, window_end_ms: int, *, owner: str | None = None
+    ) -> None: ...
 
-    async def suppression_expired(self, alert_id: str) -> None: ...
+    async def suppression_expired(self, alert_id: str, *, owner: str | None = None) -> None: ...
 
-    async def disabled(self, alert_id: str) -> None: ...
+    async def disabled(self, alert_id: str, *, owner: str | None = None) -> None: ...
 
 
 #: `MetricValue.reason`s meaning the data source itself is gone (vs. warming up / stale).
@@ -382,9 +389,9 @@ class AlertEvaluator:
                   trigger_mode=a.trigger_mode, delivery_ids=ids)  # fmt: skip
         await self._emit("alert.fired", a, after_state={"delivery_ids": ids, "once": once})
         if self._charts is not None:
-            await self._charts.fired(a.id, ids, a.channels)
+            await self._charts.fired(a.id, ids, a.channels, owner=a.owner_user_id)
             if once:
-                await self._charts.disabled(a.id)
+                await self._charts.disabled(a.id, owner=a.owner_user_id)
         if once:
             a.enabled = False
             self._retire(a)
@@ -432,7 +439,7 @@ class AlertEvaluator:
         st.count += 1
         st.symbols[str(context.get("symbol") or a.symbol or a.name)] = None
         if self._charts is not None:
-            await self._charts.suppressed(a.id, end)
+            await self._charts.suppressed(a.id, end, owner=a.owner_user_id)
         if once:
             a.enabled = False
             self._retire(a)
@@ -458,7 +465,7 @@ class AlertEvaluator:
                 fired_at=_dt(now), once=False, bump=False,
             )  # fmt: skip
             if self._charts is not None:
-                await self._charts.suppression_expired(st.alert_id)
+                await self._charts.suppression_expired(st.alert_id, owner=user)
 
     # --- auto-disarm on source loss (US-ALRT-002 scenario 2) ------------------------
 
@@ -485,5 +492,5 @@ class AlertEvaluator:
             await self._emit("alert.disarmed", a, reason="source_unavailable",
                              after_state={"enabled": False, "metric": metric})  # fmt: skip
             if self._charts is not None:
-                await self._charts.disabled(a.id)
+                await self._charts.disabled(a.id, owner=a.owner_user_id)
             self._retire(a)

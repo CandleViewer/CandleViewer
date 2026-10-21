@@ -21,6 +21,7 @@ from candleviewer.ingestion.metrics import ingest_book_resyncs_total, symbol_lab
 from candleviewer.orderbook_wiring import BookStream
 from tests._corpus import frames
 from tests.unit.ingestion._fakes import settle
+from tests.unit.ws._feed_support import Feed
 
 FRAMES = frames("ws/orderbook_BTCUSDT.jsonl")  # snapshot u=1, then deltas u=2, 3, ...
 SYMBOL = "BTCUSDT"
@@ -155,3 +156,24 @@ async def test_the_composition_root_passes_the_catalogue_tick_size_to_the_book_s
     assert stream.phase(SYMBOL) is BookPhase.SNAPSHOT_PENDING
     await stream.stop()
     await settle()  # the B14 chart's spawned stop
+
+
+async def test_the_composition_root_gives_the_book_supervisor_the_machines_feed() -> None:
+    """E17-T08: `wire_public_ws(machine_feed=)` reaches the B14 supervisor, so a book that goes live
+    is `machines.book:{symbol}.state` (an unscoped entry) and a stopped stream takes it away."""
+    feed, ch = Feed(), f"machines.book:{SYMBOL}.state"
+    ctx = build_app_context()
+    wire_public_ws(ctx, machine_feed=feed.port)
+    inst = SimpleNamespace(tick_size=A, status="trading", launch_time=0)
+    ctx.ingestion.attach_instruments(cast(Any, SimpleNamespace(snapshot=lambda: {SYMBOL: inst})))
+    stream = ctx.ingestion.books
+    assert isinstance(stream, BookStream)
+    stream.acquire("c", SYMBOL)
+    await stream.handle_frame(FRAMES[0])  # the snapshot: the engine and its B14 chart go live
+    await settle(64)
+    served = feed.served(ch)
+    assert served is not None and (served["state"], served["tags"]) == ("live", ["consumable"])
+    assert feed.scope_missing() == 0
+    await stream.stop()
+    await settle(64)  # the chart's spawned stop
+    assert feed.served(ch) is None

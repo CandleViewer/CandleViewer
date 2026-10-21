@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -25,6 +26,7 @@ from pydantic import SecretStr
 
 import candleviewer.app as appmod
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.machine_state_wiring import RegistryFeed
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories import account_access as aa
 from candleviewer.storage.repositories.account_access_sqlalchemy import SqlAlchemyAccountAccessStore
@@ -34,6 +36,10 @@ from candleviewer.ws.lifecycle import ConnectRateLimiter
 from candleviewer.ws_wiring import MachineRevocationAudit, loop_call_later
 from tests.contract.rbac import rbac_harness as rbac
 from tests.csrf_helpers import csrf_headers
+from tests.unit.replay.test_sessions_service import FakeCoverage, FakeHandles, request
+from tests.unit.storage.fakes_replay_sessions import FakeClock, FakeReplaySessionRepository
+from tests.unit.ws._feed_support import scope_missing_total
+from tests.unit.ws._seq_support import validate
 
 _MATRIX: dict[str, Any] = yaml.safe_load(rbac.MATRIX_PATH.read_text(encoding="utf-8"))
 _TOPICS: dict[str, dict[str, Any]] = _MATRIX["topics"]
@@ -353,3 +359,53 @@ def test_the_derived_families_cover_the_issue_scope() -> None:
     """Guard for the derived parametrisation: it can never silently become empty."""
     assert {"orders", "positions", "wallet", "executions"} <= set(ACCOUNT_SCOPED)
     assert {"alerts", "recorder", "book", "trades", "ticker"} <= set(FAMILIES)
+
+
+def test_deployed_app_hands_one_feed_to_the_modules_that_own_a_machine(
+    deployed: SimpleNamespace,
+) -> None:
+    """E17-T08 (§6.4): `create_app` builds one `RegistryFeed` over the registry `sub` reads and
+    gives it to the session charts (through auth) and to the replay sessions."""
+    state = deployed.app.state
+    feed, ctx = state.machine_feed, state.app_context
+    assert isinstance(feed, RegistryFeed) and feed.registry is state.ws_registry.services.machines
+    assert ctx.auth._machine_feed is feed and ctx.replay.sessions._feed is feed
+
+
+def test_a_replay_session_created_on_the_deployed_app_is_snapped_and_updated_over_the_socket(
+    deployed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC1 end to end: the deployed `ReplaySessionService`, its SQL edges swapped for in-memory
+    ones, builds B12 with the app's feed on the app's loop, and `/ws` snaps it, then sends its next
+    state. The audit emitter and the hub are the deployed ones. A `PREPARE` inside the registry's
+    100 ms window sends `paused` alone, one outside it `buffering` first: both are `d`s in order."""
+    app = deployed.app
+    svc = app.state.app_context.replay.sessions
+    for name, fake in (
+        ("_repo", FakeReplaySessionRepository(FakeClock(datetime(2026, 10, 1, tzinfo=UTC)))),
+        ("_coverage", FakeCoverage()),
+        ("_handles", FakeHandles()),
+    ):
+        monkeypatch.setattr(svc, name, fake)  # the SQL edges: undone with the test
+    owner = str(rbac.user_id_of("owner"))  # a replay session is its creator's alone (D2)
+    missing = scope_missing_total()
+    with _client(app) as client, client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+        _open(ws, "owner")
+        assert client.portal is not None
+        row = client.portal.call(svc.create, owner, request())
+        assert _sub(ws, f"machines.replay:{row.id}.state", None) == "sub_ok"
+        snap = _recv(ws)
+        with client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as other:
+            _open(other, "manager_with_grant")  # holds `replay:read`, but the entity is the owner's
+            assert _sub(other, f"machines.replay:{row.id}.state", None) == "forbidden"
+        client.portal.call(svc.transition, owner, row.id, "PREPARE")  # buffering, then paused
+        deltas = [_recv(ws)]
+        while deltas[-1]["p"]["state"] != "paused":
+            deltas.append(_recv(ws))
+    validate(snap)
+    for frame in deltas:
+        validate(frame)
+    assert (snap["t"], snap["meta"]["reason"], snap["p"]["state"]) == ("snap", "initial", "created")
+    assert snap["s"] == 1 and [f["p"]["state"] for f in deltas][:-1] in ([], ["buffering"])
+    assert [(f["t"], f["s"]) for f in deltas] == [("d", s) for s in range(2, 2 + len(deltas))]
+    assert scope_missing_total() == missing  # the entry was bound to its user

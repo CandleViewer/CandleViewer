@@ -146,7 +146,7 @@ def test_the_dispatcher_and_the_evaluator_are_wired_to_the_topic(
         return d
 
     def factory(*a: Any, **kw: Any) -> Any:
-        seen["wake"] = kw.get("wake")
+        seen["wake"], seen["feed"] = kw.get("wake"), kw.get("feed")
         return real_factory(*a, **kw)
 
     monkeypatch.setattr(app_mod, "_alert_dispatcher", dispatcher)
@@ -155,6 +155,7 @@ def test_the_dispatcher_and_the_evaluator_are_wired_to_the_topic(
     topic = app.state.app_context.alerts.topic
     assert seen["on_change"] == topic.deliveries_changed
     assert seen["wake"] == seen["dispatcher"].notify
+    assert seen["feed"] is app.state.machine_feed  # E17-T08: the evaluator's charts publish (§6.4)
 
 
 @pytest.mark.parametrize("evaluator_enabled", [False, True])

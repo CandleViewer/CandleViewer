@@ -37,7 +37,7 @@ and close codes, never an internal class. The automated half lives in `services/
 - **Fixtures, not live Bybit.** Book/trade/bar state comes from the recorded corpus replayed into staging
   (`03-testing-strategy.md` §4.1); no case consumes exchange rate-limit budget. The automated half needs no corpus
   (see the deviations above).
-- **Case id:** `E17-TC-<group><nn>`; groups A–E = §1–§5.
+- **Case id:** `E17-TC-<group><nn>`; groups A–E = §1–§5, F = §14.
 - **Case columns:** Case · Preconditions · Steps · Expected · Req (`S1`–`S14`, §16.1) · Automation (test name in
   `tests/contract/ws/`, a unit test named with its file, or `manual-only`).
 - **Time:** cases that wait on a deadline (auth 10 s, heartbeat 45 s, token expiry) use the staging
@@ -332,3 +332,16 @@ used to be strict xfails (#2409, #2410) were flipped by #3102 (#412, S2b) and pa
   producer's slice, and a row is due with it.
 - **Not in this suite (cross-referenced):** §16.4 coalescer and book-delta unit rows belong to E17-T03 and E17-S03; F7 is closed by
   #2897 (`test_s13_f7_msgpack_only_offer_negotiates_cv_v1_msgpack`).
+
+## 14. Group F: `machines.{entity}.state` (E17-T08, 23 §6.4)
+
+Added with E17-T08 (#414, slice 2d). Black box on staging with the real backend: a client of your own, two users (U and V, both holding `replay:read`) and the Owner. Every `snap` and `d` must validate against §15.10 (`docs/plan/ws-schema.json`). A kind with no runtime machine yet (the §6.4 status note) answers as an unknown entity.
+
+- **E17-TC-F01 replay, live.** U creates a replay session and subscribes `machines.replay:{id}.state`. Expect `sub_ok`, then a `snap` (`s` 1, `reason` `initial`, `machine_kind` `replay`, `state` `created`, `machine_hash` equal to `machine_hashes.lock`). U sends `PREPARE`. If the entity was quiet for 100 ms, a `d` `buffering` arrives at once; then, within about 100 ms, one `d` with the latest state (`paused`). Inside a window, there is never one `d` per intermediate state. Automated: `test_a_replay_session_created_on_the_deployed_app_is_snapped_and_updated_over_the_socket`.
+- **E17-TC-F02 replay, ended.** U destroys the session: a `d` `destroyed` (its tags hold `terminal`); a `sub` within 60 s still gets that `snap`; after 60 s the open subscription gets `revoked` `topic_removed` with `resubscribe_allowed: false`, and a new `sub` is `forbidden`. Automated: `test_a_session_publishes_its_entry_bound_to_its_user_and_destroy_ends_it`.
+- **E17-TC-F03 no oracle.** V subscribes to U's replay session id, to a random uuid and to a well-formed id of another kind: every answer is `forbidden` with the same message. Automated: `test_unknown_and_foreign_entities_get_the_identical_sub_error`.
+- **E17-TC-F04 session.** U signs in twice (sessions S1 and S2). On S2's socket, `machines.session:{S1}.state` is `forbidden` until S1's chart exists (its first step-up, unlock or idle-lock call; not at login), then a `snap` (`active`, `regions` `auth` and `elevation`). The Owner revokes S1: S2's subscription gets a `d` `revoked` (tags hold `terminal`), then `revoked` `topic_removed` after 60 s. Manual only (needs real logins).
+- **E17-TC-F05 cross-account.** A manager granted account A subscribes to `machines.risk_lockout:{B}.state`: `account_scope_denied`, the fixed message. B20 has no runtime machine yet, so this checks the refusal only. Automated: `test_rbac_blocks_cross_account_subscription`.
+- **E17-TC-F06 kinds not yet fed.** `machines.order:{uuid}.state` is `account_scope_denied` for a manager and for the Owner; `machines.kill_switch.state` is `sub_ok` with `snapshot_pending: true`. Automated: the RBAC matrix cells.
+- **E17-TC-F07 book and alert, flags on.** With `ingestion_ws_enabled`, `machines.book:{symbol}.state` snaps `live` with `resync_count`; with `alerts_evaluator_enabled` and `rules_evaluator_enabled`, an alert's firing is `delivered` and a re-fire sends no `revoked`. Manual on staging, as the flags are off by default; automated: `test_a_book_publishes_its_symbols_entry_and_a_detach_removes_it`, `test_a_finished_firings_fresh_chart_takes_its_entry_over`.
+- **E17-TC-F08 audit.** A `topic_removed` revocation writes one `ws.subscription.revoked` row whose `reason` is `evicted`, visible to the Owner only. Automated: `test_a_removal_is_audited_as_evicted`.

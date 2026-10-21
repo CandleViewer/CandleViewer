@@ -50,6 +50,7 @@ from candleviewer.statechart.persistence import (
     RestoreRefusedError,
     SealedSnapshot,
 )
+from candleviewer.statechart.plugins import FeedBinding, MachineStatePort, feed_plugins
 from candleviewer.storage.repositories.replay_sessions import (
     LIVE_STATES,
     MAX_PAGE_LIMIT,
@@ -270,13 +271,14 @@ class ReplaySessionService:
         restorer: Restorer | None = None,
         persister: Persister | None = None,
         on_ended: SessionEnded | None = None,
+        machine_feed: MachineStatePort | None = None,
     ) -> None:
         self._repo, self._coverage, self._audit, self._limits = repo, coverage, audit, limits
         self._handles: SessionHandles = handles or NoHandles()
         self._paper_gate, self._env, self._clock, self._sleep = paper_gate, env, clock, sleep
         self._gateway = gateway or Gateway()
         self._snapshots, self._restorer, self._persister = snapshots, restorer, persister
-        self._on_ended = on_ended
+        self._on_ended, self._feed = on_ended, machine_feed
         self._live: dict[str, _Live] = {}
         #: Sessions whose chart entered a state since the last mirror (<= one entry per session).
         self._dirty: dict[str, None] = {}
@@ -575,7 +577,10 @@ class ReplaySessionService:
         interp: Any = None
         if sealed is not None and self._restorer is not None:
             try:  # a refused envelope is quarantined and paged by the Restorer; rebuild instead
-                restored = await self._io("restore", restore_chart(self._restorer, key, sealed))
+                restore = restore_chart(
+                    self._restorer, key, sealed, extra_plugins=self._feed_for(row)
+                )
+                restored = await self._io("restore", restore)
                 interp = restored.interpreter
             except RestoreRefusedError:
                 interp = None
@@ -586,6 +591,12 @@ class ReplaySessionService:
             await self._sync(live)
         return live
 
+    def _feed_for(self, row: ReplaySessionRow) -> tuple[Any, ...]:
+        """B12's feed (23 §6.4): `replay:{id}`, scoped to its user from the row, never the chart."""
+        if self._feed is None:
+            return ()
+        return feed_plugins(self._feed, FeedBinding(MACHINE, row.id, user=uuid.UUID(row.user_id)))
+
     async def _build(self, row: ReplaySessionRow, gaps: Sequence[Sequence[int]] = ()) -> Any:
         """A fresh chart in `created`; the facts land under `context["input"]` (`b12.facts`)."""
         ctx = {
@@ -594,7 +605,10 @@ class ReplaySessionService:
             "speed": float(row.speed), "loop": row.loop_enabled,
             "paper_account_id": row.paper_account_id, "coverage_gaps": [list(g) for g in gaps],
         }  # fmt: skip
-        return (await build(MACHINE, ctx=ctx, clock=default_clock(), lane=LANE)).interpreter
+        plugins = self._feed_for(row)
+        return (
+            await build(MACHINE, ctx=ctx, clock=default_clock(), lane=LANE, plugins=plugins)
+        ).interpreter
 
     async def _adopt(self, row: ReplaySessionRow, interp: Any) -> _Live:
         """Allocate the handles and register the chart; on any failure after the allocation the

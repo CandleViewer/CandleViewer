@@ -114,7 +114,8 @@ MACHINE_TERMINAL_RETENTION_S = 60.0
 MACHINE_TERMINAL_MAX = 10_000
 #: §6.4: one retention-timer callback removes at most this many terminal entries; each removal
 #: revokes its subscriptions (C-2.17), so the rest wait for the next loop turn.
-#: 64 removals x 40 subscriptions (an owner and 4 managers, 8 sockets each) = 2 560 frames.
+#: It bounds one callback's hold, not the queue: 64 x 40 subscriptions (06 §10's plan, not a cap)
+#: is 2 560 frames; more drops, counted. A user-scoped kind's entity has one user's 8 sockets.
 MACHINE_SWEEP_BATCH = 64
 #: §6.4: `revoked` frames of removals waiting for their audit writer (C-2.18). Past it the oldest
 #: removal's rows are dropped, counted (`abandoned`) and logged.
