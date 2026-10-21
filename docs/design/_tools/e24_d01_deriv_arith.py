@@ -8,9 +8,10 @@ intervals the plan docs name and on the fixture rates, with the settlements per 
 imminent-settlement charge with its pay / receive sign; (3) the countdown wording ladder and the
 remaining time in the one recorded ticker capture; (4) the cascade arithmetic of SCR-054's 500
 prints/s target against the 250 ms client bucket, Bybit's 500 ms batching and the WS topic cadence
-read from `ws/topics.py`; (5) the quadrant, OI-delta and basis definitions per source and the
-`22` `MetricCode` members the derivatives descriptors lack; (6) the `deriv.*` keys of the E24 epic
-against the `22` `Settings` schema; (7) the fixture inventory (which derivative captures exist,
+read from `ws/topics.py`; (5) the quadrant, OI-delta and basis definitions per source, the two names
+of the quadrant metric code, the `22` `MetricCode` members the derivatives descriptors lack and the
+component token bindings F30 names; (6) the `deriv.*` keys of the E24 epic against the `22`
+`Settings` schema; (7) the fixture inventory (which derivative captures exist,
 which are assembled from documented shapes, and that no liquidation or open-interest capture
 exists); (8) the Sprint 10 / 12 / 13 dates from `calendar_cv.py`; (9) WCAG contrast of the token
 pairs the memo names in the three themes. A row reads NOT FOUND when an anchor moved; the tool never
@@ -40,7 +41,7 @@ INTERVALS_MIN = (480, 240, 120, 60)  # 22 /market/funding: "8 h common, some 1/2
 RATE = Decimal("0.0001")  # 0.01 % per interval, the 24 section 2.7 worked example
 CHARGE = Decimal("12.40")  # SCR-054 states line: "position will be charged ~ 12.40 USDT"
 WARN_MS = 300_000  # SCR-054: the <5 min warning; announced at 5 min and 1 min only
-LADDER_MS = (11_564_000, 3_599_000, 252_000, 59_000, 0)  # 3:12:44, 59:59, 4:12, 0:59, settled
+LADDER_MS = (11_564_000, 3_599_000, 252_000, 59_000, 0)  # 03:12:44, 00:59:59, 00:04:12, 00:00:59, 0
 CASCADE = {"prints_per_s": 500, "seconds": 10, "bucket_ms": 250, "bybit_push_ms": 500}
 DERIV_24 = [  # 24 section 7.2 Derivatives table, in order
     "open_interest",
@@ -60,6 +61,17 @@ PROBED = [
     "deriv.liq.mode",
     "deriv.liq.min_notional_usd",
 ]
+TOKEN_FILES = ("primitives", "semantic-dark", "semantic-light", "semantic-hc")
+COMPONENT_TOKENS = (  # (component, token name as 15 binds it) - memo F30; "resolves" = real names
+    ("CMP-126", "font.mono"),
+    ("CMP-126", "color.text.buy"),
+    ("CMP-126", "color.text.sell"),
+    ("CMP-127", "color.status.danger"),
+    ("CMP-188", "color.chart.axis"),
+    ("CMP-188", "font.mono"),
+    ("resolves", "font.family.mono"),
+    ("resolves", "color.status.danger.default"),
+)
 PAIRS = (  # (foreground token, background token, bar, what the memo uses the pair for)
     ("color.text.primary", "color.surface.raised", 4.5, "readouts and legend words"),
     ("color.text.secondary", "color.surface.raised", 4.5, "interval, source"),
@@ -92,18 +104,44 @@ def annualised_pct(rate: Decimal, interval_min: int) -> str:
 
 
 def hms(ms: int) -> str:
+    """One fixed-width hh:mm:ss form at every rung (memo F11): never mm:ss beside it."""
     s = ms // 1000
     h, m, sec = s // 3600, (s % 3600) // 60, s % 60
-    return f"{h:02d}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
+    return f"{h:02d}:{m:02d}:{sec:02d}"
 
 
-def ladder(ms: int) -> dict[str, object]:
-    """The PROPOSED countdown wording ladder (memo section 3.3); every form keeps the seconds."""
+def ladder(ms: int, interval_min: int = 480) -> dict[str, object]:
+    """The PROPOSED countdown wording ladder (memo section 3.3), one fixed-width hh:mm:ss form.
+
+    At settlement two states run independently: the countdown restarts at once from the ticker's
+    advanced next_funding_time_ms (23 section 14.8), while the header rate reads 'settled rate
+    pending' until the /market/funding row arrives; the restart never waits for that fetch.
+    """
     if ms <= 0:
-        return {"ms": ms, "band": "settlement", "form": "Settling - awaiting the settled rate"}
+        return {
+            "ms": ms,
+            "band": "settlement",
+            "form": f"next in {hms(interval_min * 60_000)}",
+            "rate": "settled rate pending",
+            "restart": "at once, from the ticker's advanced next_funding_time_ms",
+        }
     if ms < WARN_MS:
-        return {"ms": ms, "band": "<5 min", "form": f"Funding settles in {hms(ms)}", "warn": True}
+        return {
+            "ms": ms,
+            "band": "<5 min",
+            "form": f"Funding settles in {hms(ms)}",
+            "warn": True,
+            "scope": "the selected account's position on the symbol",
+        }
     return {"ms": ms, "band": "<1 h" if ms < 3_600_000 else ">=1 h", "form": f"next in {hms(ms)}"}
+
+
+def token_keys() -> set[str]:
+    """Every token name declared in packages/ui/tokens (the four files), for the F30 bindings."""
+    keys: set[str] = set()
+    for name in TOKEN_FILES:
+        keys.update(json.loads(text(f"packages/ui/tokens/{name}.tokens.json")))
+    return keys
 
 
 def rel_lum(hex_colour: str) -> float:
@@ -192,8 +230,11 @@ def fixtures() -> dict[str, object]:
 
 def definitions() -> dict[str, object]:
     p24, p22 = PLAN + "24-internal-schemas.md", PLAN + "22-api-openapi.yaml"
+    p11 = PLAN + "11-user-stories.md"
+    prose = grab(p24, r"(OI-price quadrant table \(research 08 §6\): [^\n]+)") or ""
     quad = {
         "24 section 7.2": grab(p24, r"`oi_price_quadrant`\s*\|\s*enum `([^`]+)`"),
+        "24 section 7.2 prose": " / ".join(re.findall(r"= ([^;.\n]+)", prose)) or None,
         "shipped metrics.py": grab(
             METRICS_PY, r'"oi_price_quadrant", "OI/price quadrant", "enum:([^"]+)"'
         ),
@@ -201,6 +242,12 @@ def definitions() -> dict[str, object]:
             PLAN + "30-release-roadmap.md", r"quadrant classification \(([^)]+)\)"
         ),
     }
+    codes = {
+        "11 US-DERIV-002 NFR": grab(p11, r"classification exposed as a metric \(`([a-z_]+)`\)"),
+        "24 section 7.2": grab(p24, r"`(oi_price_quadrant)`\s*\|\s*enum"),
+        "shipped metrics.py": grab(METRICS_PY, r'"(oi_price_quadrant)", "OI/price quadrant"'),
+    }
+    keys = token_keys()
     code22 = grab(p22, r"\n    MetricCode:\n      type: string\n      enum:\n(.*?)\n\n") or ""
     members = re.findall(r"- ([a-z_]+)", code22)
     settings_block = grab(p22, r"\n    Settings:\n(.*?)\n    [A-Z]") or ""
@@ -211,6 +258,12 @@ def definitions() -> dict[str, object]:
     return {
         "quadrant_spellings": quad,
         "quadrant_distinct": len({v for v in quad.values() if v}),
+        "quadrant_metric_codes": codes,
+        "quadrant_metric_code_distinct": len({v for v in codes.values() if v}),
+        "component_token_bindings": [
+            {"component": c, "token": t, "defined": t in keys} for c, t in COMPONENT_TOKENS
+        ],
+        "undefined_component_tokens": sorted({t for _, t in COMPONENT_TOKENS if t not in keys}),
         "oi_delta_24": grab(p24, r"`open_interest_delta`\s*\|\s*`([^`]+)`"),
         "oi_delta_shipped": grab(
             METRICS_PY, r'"open_interest_delta", "OI change", "([^"]+)", "oi", "([^"]+)"'
