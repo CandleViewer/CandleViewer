@@ -39,7 +39,8 @@ writer can create a table again between a drop and its re-creation. On an instal
 no `_cv_migrations` (the case #3897 came from: ILP created them on first write), drop or rebuild those
 tables first. `CREATE TABLE IF NOT EXISTS` leaves the shape ILP inferred (no DEDUP keys), the drift
 guard compares column names only, and a plain `ADD COLUMN` of a column ILP already added is skipped
-when its type is the DDL's and is exit 9 when it is not.
+when its type is the DDL's and is exit 9 when it is not. Before #3093 that `ADD COLUMN` stopped the
+run (exit 7) ahead of `0004`'s drops; nothing does now, so this check is the only guard.
 
 ```bash
 C="docker compose -f infra/compose/docker-compose.yml"
@@ -136,4 +137,4 @@ none, so a re-run failed at a plain `ADD COLUMN` (exit 7) and a re-run of `0004`
 `bars_*` tables first. Found while fixing #3064 (#3077); filed 2026-10-17 as P2, raised to P1 that
 day; reproduced on 2026-10-21 on QuestDB 8.1.1, where 10 of 11 sampled crash points failed or lost
 rows. No loss is known: this step shipped on 2026-10-21 (#3982) and the rows are derived bars. Its
-risk register entry is still to be written (`32-risk-register.md`).
+risk register entry (`32-risk-register.md`) is tracked by #4014.

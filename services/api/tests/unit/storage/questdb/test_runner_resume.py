@@ -259,10 +259,14 @@ async def test_the_guard_reads_columns_only_after_the_alter_was_applied() -> Non
         await run_migrations(engine, DDL_DIR, sleep=_no_sleep)
     assert engine.tables["liquidations"].behind == 1  # the ALTER is not applied yet
     engine.crash_after = None
+    slept: list[float] = []
 
-    await run_migrations(engine, DDL_DIR, sleep=_no_sleep)  # "already exists" if it read too early
+    async def record(seconds: float) -> None:
+        slept.append(seconds)
 
-    assert engine.records == NAMES
+    await run_migrations(engine, DDL_DIR, sleep=record)  # "already exists" if it read too early
+
+    assert engine.records == NAMES and slept == [0.02, 0.02]  # the record read's and the guard's
 
 
 async def test_a_suspended_data_table_stops_the_run_before_any_drop() -> None:
@@ -285,6 +289,7 @@ async def test_a_resumed_file_logs_each_skipped_statement_and_one_warning_with_n
 
     skipped = [log for log in logs if log["event"] == "questdb_statement_skipped"]
     resumed = [log for log in logs if log["event"] == "questdb_migration_resumed"]
+    assert {s["log_level"] for s in skipped} == {"info"}  # the lines the runbook points to
     assert [(s["filename"], s["kind"], s["table"], s.get("column")) for s in skipped] == [
         *[(NAMES[3], "drop_table", table.name, None) for table in parse_ddl_file(FILES[3])],
         (NAMES[4], "add_column", "liquidations", "batch_index"),

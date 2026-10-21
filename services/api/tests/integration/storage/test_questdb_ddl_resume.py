@@ -39,10 +39,13 @@ pytestmark = pytest.mark.integration
 _FILES = sorted(DDL_DIR.glob("*.sql"))
 _NAMES = [path.name for path in _FILES]
 _BARS = [f"bars_{kind}" for kind in ("time", "tick", "volume", "range", "renko", "delta")]
-_BAR_ROW = (
-    'INSERT INTO {table} (ts, symbol, bar_param, generation, "index", open, high, low, close) '
+#: One row for each of the six fixed tables, built once from the closed list above.
+_BAR_ROW = {
+    table: f"INSERT INTO {table} "  # noqa: S608  # nosec B608 - a name from the fixed list above
+    '(ts, symbol, bar_param, generation, "index", open, high, low, close) '
     "VALUES (now(), 'BTCUSDT', '1m', 0, 1, 1.0, 2.0, 0.5, 1.5)"
-)
+    for table in _BARS
+}
 
 
 def _statements_through(files: int) -> int:
@@ -103,7 +106,7 @@ async def test_a_rerun_of_0004_without_its_record_keeps_the_populated_bars_table
             for statement in parse_ddl_file_statements(DDL_DIR / name):
                 await conn.execute(statement)
         for table in _BARS:
-            await conn.execute(_BAR_ROW.format(table=table))
+            await conn.execute(_BAR_ROW[table])
         assert [await _rows(conn, table) for table in _BARS] == [1] * 6
 
         with capture_logs() as logs:
@@ -150,7 +153,7 @@ async def test_a_run_that_dies_between_statements_resumes_and_keeps_its_rows(
         kept = await _bars_with_0004_shape(conn)  # rows written after the crash, into each one
         assert len(kept) == bars_kept
         for table in kept:
-            await conn.execute(_BAR_ROW.format(table=table))
+            await conn.execute(_BAR_ROW[table])
 
         await run_migrations(executor, DDL_DIR)  # no `column ... already exists`
 

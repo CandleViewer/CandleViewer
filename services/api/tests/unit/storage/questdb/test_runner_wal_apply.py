@@ -274,7 +274,7 @@ async def test_second_pass_waits_for_the_newest_migration_record_to_be_applied()
 
     assert second == []
     assert clock.slept == [0.02]  # one backoff: the second status poll saw the apply caught up
-    assert executor.wal_polls - polls_after_the_first_pass == 2  # both before the second read
+    assert (polls_after_the_first_pass, executor.wal_polls) == (1, 3)  # both before the 2nd read
 
 
 async def test_suspended_migrations_table_raises_instead_of_re_running_ddl() -> None:
