@@ -4,8 +4,9 @@ Ruling 1 on G-6 (#3972) gives E29-T04's contract PR the table that `24-internal-
 section 8.8 rule 6 describes: per position and per side a stop request sets, one row per stop the
 OMS requests, written ahead of the request and never from a read; one request in flight per
 position and one row in force per side; a row that ends with its position; the TP/SL order it
-binds; and its audit link. Read from the document, never from a copy, and held to the `orders`
-table it sits beside, so the two keep one vocabulary.
+binds, released once; the read that resolves a request left unanswered; no DELETE or TRUNCATE;
+and its audit link. Read from the document, never from a copy, and held to the `orders` table it
+sits beside, so the two keep one vocabulary.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ _REQUEST = (
     "created_at"
 ).split()
 _COLUMNS = [*_REQUEST[:13], "exchange_order_id", "status", *_REQUEST[13:]]
-_COLUMNS += ["answered_at", "in_force_at", "closed_at"]
+_COLUMNS += ["answered_at", "in_force_at", "closed_at", "released_at", "position_marker"]
 
 
 def _words(text: str) -> str:
@@ -137,30 +138,87 @@ def test_one_request_is_in_flight_per_position_and_one_row_is_in_force_per_side(
         "insert is refused (SQLSTATE 23505) until the first has its answer",
         "puts it `in_force` and, in the same transaction, the row in force for its position "
         "and kind `replaced` (`ux_rs_in_force`)",
-        "A request whose outcome stays unknown keeps its position in flight",
+        "A request whose outcome stays unknown keeps its position in flight, so no other stop "
+        "request leaves for the position until its row is resolved",
+    )
+
+
+def test_an_unanswered_request_is_resolved_by_a_read_before_the_next_stop_request() -> None:
+    """A row in flight has an owner and an end: the complete read of 24 section 8.8 rule 6,
+    never a timer, so a writer that is gone never blocks its position for good."""
+    assert not _missing(
+        _words(_SECTION),
+        "A row left unanswered past its request's bound, or found unanswered at startup, is "
+        "resolved before any other stop request for its key leaves, by the complete read of 24 "
+        "§8.8 rule 6",
+        "a read that shows its stop puts it `in_force`, as above",
+        "one that shows neither the stop nor an order that matches it nor a resting entry that "
+        "carries it makes it `void`, audited `sl.modified` (`tp.modified` for a take-profit side) "
+        "with reason `in_flight_resolved`",
+        "The two rows of one request are answered together",
+        "no row is ever resolved by a time-based expiry",
+        "The writer of its request owns the resolution: E29-T04 for an entry's attach and the "
+        "trading-stop path, E29-T06 for its 24 §8.5 step 5 restore",
+    )
+    rule = _words(_INTERNAL_DOC.split("6. **The recorded stop (SR-E29-06", 1)[1].split("\n", 1)[0])
+    assert (
+        "a complete read after the request's timeout shows neither the stop nor an order that "
+        "matches it nor a resting entry that carries it (the position, and for a Partial side the "
+        "open orders and the order history since the request)" in rule
     )
 
 
 def test_a_row_ends_with_its_position_so_no_later_position_inherits_it() -> None:
+    ends = "closing execution that takes the position to zero, or a read whose instance marker "
     assert not _missing(
         _words(_SECTION),
         "that shows the key flat or absent, or holding a position of the other side (a "
         "one-way reversal, a new position on the key), ends every row in force for the key "
         "(`ended`)",
-        "It ends no pending row (24 §8.8 rule 6)",
+        f"so does a {ends}differs from the row's (`[O-4]`, E29-K01)",
+        "None of these ends a pending row (24 §8.8 rule 6)",
         "So a later position never inherits an old stop",
+        "`position_marker` holds the marker of the position the row protects, set once: by the "
+        "trading-stop writer's position read, or by the read that puts the row in force",
+    )
+    rule = _words(_INTERNAL_DOC.split("6. **The recorded stop (SR-E29-06", 1)[1].split("\n", 1)[0])
+    assert not _missing(
+        rule,
+        "shows the key flat or absent, or holding a position of the other side (a one-way "
+        "reversal, a new position on the key), once the trade executions",
+        f"A {ends}differs from the record's (`[O-4]`, E29-K01), ends it as such a read "
+        "does; the record keeps the marker of the position it protects, set once",
     )
     assert _words(_check(_TABLE_DDL, "rs_times")).startswith(
         "(closed_at IS NOT NULL) = (status IN ('replaced','ended','void'))"
     )
+    marker = "position_marker IS NULL OR char_length(position_marker) BETWEEN 1 AND 64"
+    assert _check(_TABLE_DDL, "rs_marker") == marker
 
 
 def test_the_guard_keeps_the_request_and_admits_only_the_lifecycle_moves() -> None:
     assert [c for c in _REQUEST if not re.search(rf"NEW\.{c}\b.*OLD\.{c}\b", _GUARD, re.S)] == []
-    once = ["answered_at", "in_force_at", "closed_at"]
+    once = ["answered_at", "in_force_at", "closed_at", "released_at", "position_marker"]
     pattern = r"WHEN OLD\.(\w+) IS NOT NULL AND NEW\.\1 IS DISTINCT FROM OLD\.\1 THEN '\1'"
     assert re.findall(pattern, _GUARD) == once
-    assert "WHEN NEW.exchange_order_id <> OLD.exchange_order_id THEN 'exchange_order_id'" in _GUARD
+    guard = " ".join(re.sub(r"--[^\n]*", "", _GUARD).split())
+    assert not _missing(
+        guard,  # one bind, one stamped release, and never a bind again
+        "WHEN NEW.exchange_order_id IS DISTINCT FROM OLD.exchange_order_id "
+        "AND NOT (OLD.exchange_order_id IS NULL AND OLD.released_at IS NULL) "
+        "AND NOT (NEW.exchange_order_id IS NULL AND NEW.released_at IS NOT NULL) "
+        "THEN 'exchange_order_id'",
+        "WHEN NEW.released_at IS DISTINCT FROM OLD.released_at AND OLD.exchange_order_id IS NULL "
+        "THEN 'released_at'",
+    )
+    assert "<>" not in guard.split("THEN 'closed_at'", 1)[1].split("THEN 'exchange_order_id'")[0]
+    assert _check(_TABLE_DDL, "rs_release") == "released_at IS NULL OR exchange_order_id IS NULL"
+    assert not _missing(
+        _words(_SECTION),
+        "`exchange_order_id` is bound at most once",
+        "it is cleared only by its release, the one of 24 §8.3 rule 7",
+        "which stamps `released_at` (`rs_release`), and it is never bound again",
+    )
     moves = re.findall(r"\('(\w+)','(\w+)'\)", _words(_GUARD.split("NOT IN", 1)[1]))
     assert moves == [
         ("pending", "in_force"),
@@ -171,6 +229,23 @@ def test_the_guard_keeps_the_request_and_admits_only_the_lifecycle_moves() -> No
     ]
     assert "USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_rs_guard';" in _GUARD
     assert "ALTER TABLE recorded_stops ENABLE ALWAYS TRIGGER trg_rs_guard;" in _GUARD
+
+
+def test_no_role_deletes_or_truncates_the_record() -> None:
+    """SR-E29-05's pattern: a statement trigger refuses TRUNCATE whatever the role, and the app
+    and read-only roles hold neither DELETE nor TRUNCATE."""
+    assert not _missing(
+        _GUARD,
+        "CREATE TRIGGER trg_rs_no_truncate BEFORE TRUNCATE ON recorded_stops\n"
+        "  FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();",
+        "ALTER TABLE recorded_stops ENABLE ALWAYS TRIGGER trg_rs_no_truncate;",
+    )
+    assert not _missing(
+        _words(_SECTION),
+        "`cv_app` and `cv_ro` hold no DELETE or TRUNCATE on the table where the roles exist, and "
+        "`trg_rs_no_truncate` (BEFORE TRUNCATE, `ENABLE ALWAYS`, 0003's `audit_refuse_truncate()`) "
+        "refuses a TRUNCATE by any role, SR-E29-05's pattern",
+    )
 
 
 def test_the_writers_readers_and_audit_link_are_the_ones_the_rulings_name() -> None:
@@ -207,4 +282,16 @@ def test_the_table_is_registered_where_21_registers_one() -> None:
     assert "**E29-T04 #913**, planned: with the slice that first writes a record" in planned
     classes = _DOC.split("\n## 12. ", 1)[1]
     assert re.search(r"^\| `recorded_stops` +\| monetary columns +\| P1 +\|", classes, re.M)
-    assert "`cv_app` holds no DELETE on the table where the role exists" in _SECTION
+    [actor] = re.findall(r"^\| `recorded_stops` +\| `actor_user_id` +\| P0 +\|.*$", classes, re.M)
+    assert "A user id (0043), never a name, email or IP; `ON DELETE RESTRICT` keeps" in actor
+    assert "actor_user_id         uuid REFERENCES users(id) ON DELETE RESTRICT," in _TABLE_DDL
+
+
+def test_the_rules_it_cites_keep_their_numbers() -> None:
+    """24 section 8.8 rule 6 and section 8.3 rule 7 are cited by number here and in 21; a
+    renumbering fails this contract instead of leaving the citations dangling."""
+    record = _INTERNAL_DOC.split("### 8.8 ", 1)[1].split("### 8.9 ", 1)[0]
+    pairing = _INTERNAL_DOC.split("### 8.3 ", 1)[1].split("### 8.4 ", 1)[0]
+    assert "\n6. **The recorded stop (SR-E29-06" in record
+    assert "\n7. **Pairing through the bound id (SR-E29-03).**" in pairing
+    assert not _missing(_SECTION, "24 §8.8 rule 6", "24 §8.3 rule 7")
