@@ -1,0 +1,68 @@
+"""#3085 Q3: `AuditWriter.emit_keyed()` keys a record by its action's namespace and a name. A
+repeat of a keyed record, after a restart too, is one row (`ON CONFLICT (record_id) DO NOTHING`),
+the first written; an action has its own namespace, fixed for good, and one not keyed is refused."""
+
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+
+import pytest
+from audit_fakes import FakeAuditRepository, FakeClock
+from test_writer_build import _dead_flusher, _writer
+
+from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.audit.query import AuditQueryService
+from candleviewer.audit.writer import KEYED_ACTIONS, AuditUnavailable, AuditWriterStopped
+
+_ACTION, _NAME = "admin.view_as_ended", "00000000-0000-4000-8000-000000000001"
+
+
+def test_writer_keyed_actions_keep_their_namespaces_for_good() -> None:
+    """A new namespace would give a context written on both sides of the change two rows (V45);
+    the restart test below pins the id one derives."""
+    assert KEYED_ACTIONS[_ACTION] == uuid.UUID("f30c6b64-1ea6-416d-aebb-8aaa0760f421")
+    assert set(KEYED_ACTIONS) <= AUDIT_ACTIONS
+    assert len(set(KEYED_ACTIONS.values())) == len(KEYED_ACTIONS)  # never two actions on one id
+
+
+async def test_writer_keyed_emit_repeated_after_a_restart_is_one_row(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock
+) -> None:
+    repo.down = True
+    first = _writer(repo, tmp_path, clock)
+    await first.start()
+    await first.emit_keyed(_ACTION, _NAME, actor_label="ana", reason="ended")
+    await first.stop(0.01)  # simulated kill: the record is in the WAL, not in Postgres
+    repo.down = False
+    second = _writer(repo, tmp_path, clock)
+    await second.start()  # replays the first frame
+    late = {"recorded_late": True}
+    await second.emit_keyed(_ACTION, _NAME, actor_label="ana", after_state=late)
+    await second.emit("auth.logout", actor_label="ana")
+    await second.flush(5)
+    await second.stop(1)
+
+    assert [r["action"] for r in repo.rows] == [_ACTION, "auth.logout"]
+    assert repo.rows[0]["record_id"] == "65978c65-517c-56e7-b92b-7978fdce545c"  # uuid5, for good
+    assert repo.rows[0]["after_state"] is None  # the first written stays
+    assert uuid.UUID(repo.rows[1]["record_id"]).version == 4  # an unkeyed emit mints its own
+    assert (await AuditQueryService(repo).verify()).verified
+
+
+async def test_writer_keyed_emit_refuses_an_unkeyed_action_and_raises_every_refusal(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock
+) -> None:
+    """An action it does not key is a caller error, appended and counted nowhere. A writer that
+    refuses raises it, counted as `emit()`'s, so no caller marks a record written that was not
+    (`ViewAsService.write_end_record` leaves its end pending)."""
+    stopped = _writer(repo, tmp_path, clock)
+    dead = await _dead_flusher(repo, tmp_path / "dead", clock)
+    with pytest.raises(ValueError, match="not a keyed audit action"):
+        await dead.emit_keyed("admin.view_as_started", _NAME, actor_label="ana")
+    for writer, refusal in ((stopped, AuditWriterStopped), (dead, AuditUnavailable)):
+        with pytest.raises(refusal):
+            await writer.emit_keyed(_ACTION, _NAME, actor_label="ana")
+        assert writer.refused_by_domain["admin"] == 1
+    await dead.stop(1)
+    assert stopped.buffer_depth == 0 and dead.buffer_depth == 1 and repo.rows == []

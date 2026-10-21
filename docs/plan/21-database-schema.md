@@ -868,7 +868,7 @@ force-disable (C-2.8) sets `trading_enabled` false with the failing rule's code 
 text) and the time in one conditional update. The disarm is owed its `account.disabled_by_policy`
 record until `policy_disarm_audited_at` is set after the record is written; every pass, the boot
 pass included, first sends the records still owed (decisions 2 and 5 on #836). The audit sink
-cannot deduplicate a re-send (`AuditWriter.emit` mints its own `record_id`), so a record can be
+cannot deduplicate this re-send (`AuditWriter.emit` mints its own `record_id`), so a record can be
 written twice, never zero times, in two windows: a crash between record and mark, and an emit cut
 by its bound once the writer has started the append (the writer keeps it; the job counts it
 refused, so it stays owed). The record carries the disarm's time (`disarmed_at`), however late it
@@ -2943,7 +2943,7 @@ Append-only, tamper-evident. Each row's `entry_hash` = SHA-256 over the canonica
 | Column          | Type          | Null | Default     | Notes                                                                                        |
 | --------------- | ------------- | ---- | ----------- | -------------------------------------------------------------------------------------------- |
 | `id`            | bigserial     | no   | —           | PK, chain order                                                                              |
-| `record_id`     | uuid          | no   | —           | UNIQUE; writer-assigned idempotency key (WAL replay is `ON CONFLICT (record_id) DO NOTHING`) |
+| `record_id`     | uuid          | no   | —           | UNIQUE; writer-assigned idempotency key: random, or keyed as version 5 (`emit_keyed`, #3085) |
 | `prev_hash`     | sha256_hex    | no   | —           | Previous row's `entry_hash`; genesis = 64×`0`                                                |
 | `entry_hash`    | sha256_hex    | no   | —           | UNIQUE; computed by trigger, never by the app                                                |
 | `actor_user_id` | uuid          | yes  | NULL        | NULL for system actions                                                                      |

@@ -29,14 +29,16 @@ from typing import Final, Literal, TypeVar, get_args
 
 from candleviewer.audit.actions import validate_action
 
-ExemptReason = Literal["read", "lifecycle", "wiring", "caller_audits"]
+ExemptReason = Literal["read", "lifecycle", "wiring", "caller_audits", "contract_unrecorded"]
 #: Why a public admin method writes no audit record:
 #: - `read`: it reads, derives or caches state (or refills or invalidates its own cache); nothing
 #:   stored changes and no action is taken;
 #: - `lifecycle`: it starts, stops, drains or polls the service itself;
 #: - `wiring`: it builds or configures an instance;
 #: - `caller_audits`: it changes in-process state (a lock, a link, a gauge, a push) for a caller
-#:   whose own declaration names the record that action writes.
+#:   whose own declaration names the record that action writes;
+#: - `contract_unrecorded`: the contract records nothing for its write (22 `endViewAs`: "Clearing
+#:   a held context writes no record of its own").
 EXEMPT_REASONS: Final[frozenset[str]] = frozenset(get_args(ExemptReason))
 #: The attribute each declaration sets on the function it declares.
 DECLARATION_ATTR: Final = "__cv_audit__"
