@@ -27,21 +27,21 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Table 1 — Variants × States
 
-| Variant                | State                                   | Penpot variant | Story name                                   | Notes                                                |
-| ---------------------- | --------------------------------------- | -------------- | -------------------------------------------- | ---------------------------------------------------- |
-| label, value, unit     | rest                                    | B19 / row      | `Default` (catalogued)                       | value right-aligned, tabular; unit in its own column |
-| rule row               | rest, with a sentence and an example    | B19 / rule-row | `WithRuleExample` (new)                      | second line `type.ui.caption`, `color.text.tertiary` |
-| live row in a band     | live, stale T1, stale T2, disconnected  | B3, B4         | `LiveFreshness` (catalogued, now band-level) | rows inherit the band's state; no per-row CMP-239    |
-| changed                | "Changed · was 0.01"                    | B9             | `Changed` (new)                              | a static tag until the drawer closes                 |
-| unavailable, malformed | "not available yet", "—"                | B1, B14        | `Unavailable` (new)                          | name "not available"                                 |
-| stacked                | label over value, under 400 px of width | B20            | `Stacked` (new)                              | no value is cut or scrolled sideways                 |
+| Variant                | State                                   | Penpot variant | Story name                                   | Notes                                                                       |
+| ---------------------- | --------------------------------------- | -------------- | -------------------------------------------- | --------------------------------------------------------------------------- |
+| label, value, unit     | rest                                    | B19 / row      | `Default` (catalogued)                       | one value per row (spec F8), right-aligned, tabular; unit in its own column |
+| rule row               | rest, with a sentence and an example    | B19 / rule-row | `WithRuleExample` (new)                      | second line `type.ui.caption`, `color.text.tertiary`                        |
+| live row in a band     | live, stale T1, stale T2, disconnected  | B3, B4         | `LiveFreshness` (catalogued, now band-level) | rows inherit the band's state; no per-row CMP-239                           |
+| changed                | "Changed · was 0.01"                    | B9             | `Changed` (new)                              | a static tag until the drawer closes                                        |
+| unavailable, malformed | "not available yet", "—"                | B1, B14        | `Unavailable` (new)                          | name "not available"                                                        |
+| stacked                | label over value, under 400 px of width | B20            | `Stacked` (new)                              | no value is cut or scrolled sideways                                        |
 
 ### Table 3 — Accessible name / role
 
-| Element | Role | Accessible name (source)   | States / properties                                     |
-| ------- | ---- | -------------------------- | ------------------------------------------------------- |
-| label   | `dt` | the label text             | —                                                       |
-| value   | `dd` | value and unit as one text | the rule sentence and example inside it (contract rows) |
+| Element | Role | Accessible name (source)                             | States / properties                                     |
+| ------- | ---- | ---------------------------------------------------- | ------------------------------------------------------- |
+| label   | `dt` | the label text                                       | —                                                       |
+| value   | `dd` | one value and its unit as one text ("82,751.2 USDT") | the rule sentence and example inside it (contract rows) |
 
 ## Handoff checklist — CMP-046 Drawer (E08-D06, #174)
 
