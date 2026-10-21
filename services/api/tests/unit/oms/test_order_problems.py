@@ -5,7 +5,8 @@ exchange_rate_limited` with `Retry-After`, the clock-drift block `503 clock_drif
 `Retry-After`, `OrderLinkIdExhausted` `500 internal_error` and a page, a stale `If-Match` `412
 version_conflict`. Every code is in the contract's `x-error-codes` registry with the status the
 table gives it, and a business rejection carries the exchange's return code only, never its text
-(SR-E29-09). Each refusal's `detail`, the sentence a problem body carries, is pinned word for word.
+(SR-E29-09). Each refusal's `detail`, the sentence a problem body carries, is pinned word for word,
+and each `errors[].rule` code to its wire value, which 22 `placeOrder` names.
 """
 
 from __future__ import annotations
@@ -19,6 +20,10 @@ from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.oms.errors import (
     INTERNAL_ERROR,
     PROBLEMS,
+    RULE_INTENT_MISMATCH,
+    RULE_NATIVE_STOP_REQUIRED,
+    RULE_SIZING_MODE_UNSUPPORTED,
+    RULE_STOP_UNIT_UNSUPPORTED,
     AccountScopeDenied,
     ClockDriftBlocked,
     DuplicateOrderLinkId,
@@ -49,6 +54,22 @@ from candleviewer.oms.validator import OrderPlacementRefused
 
 _SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
 _REGISTRY: dict[str, int] = {entry["code"]: entry["status"] for entry in _SPEC["x-error-codes"]}
+#: 22 `placeOrder`'s description on one line: a YAML block keeps its line breaks.
+_PLACE_ORDER: str = " ".join(
+    next(
+        op["description"]
+        for item in _SPEC["paths"].values()
+        for op in item.values()
+        if isinstance(op, dict) and op.get("operationId") == "placeOrder"
+    ).split()
+)
+#: The `errors[].rule` codes of the order path's refusals, written out independently.
+_RULES = (
+    "native_stop_required",
+    "intent_mismatch",
+    "stop_unit_unsupported",
+    "sizing_mode_unsupported",
+)
 
 #: The plan's table and R12, written out independently of `PROBLEMS`.
 _EXPECTED: list[tuple[OmsError, int, str, bool, bool]] = [
@@ -145,6 +166,23 @@ def test_a_refusal_keeps_its_detail_and_every_error_in_order() -> None:
         errors,
         "2 rules failed.",
     )
+
+
+def test_each_rule_code_is_its_wire_value() -> None:
+    """`errors[].rule` is a free string in the contract, and every other test compares through
+    these constants, so this is the test a changed literal fails."""
+    constants = (
+        RULE_NATIVE_STOP_REQUIRED,
+        RULE_INTENT_MISMATCH,
+        RULE_STOP_UNIT_UNSUPPORTED,
+        RULE_SIZING_MODE_UNSUPPORTED,
+    )
+    assert constants == _RULES
+
+
+@pytest.mark.parametrize("rule", _RULES)
+def test_place_order_names_each_rule_code(rule: str) -> None:
+    assert f"`{rule}`" in _PLACE_ORDER
 
 
 #: Each refusal's fixed `detail`, written out independently of the classes.

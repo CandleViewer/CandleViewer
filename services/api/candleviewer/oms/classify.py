@@ -17,7 +17,8 @@ native-stop flag, a constant (SR-E29-01).
 Then the intent rule: an entry's intent must be an opening one (`entry`, `scale_in`), and the
 intent of an order that only reduces a reducing one (`stop_loss`, `take_profit`, `scale_out`,
 `flatten`); the server-assigned `reverse` and `algo_child` are refused either way. `errors[]`
-lists every rule that fails, the stop's first (22-api-openapi.yaml `placeOrder`).
+lists every rule that fails, the stop's first (22-api-openapi.yaml `placeOrder`). Both rules fail
+closed on the effect they are given: any effect but `OrderEffect.REDUCE` is an entry's.
 """
 
 from __future__ import annotations
@@ -115,11 +116,11 @@ async def effect_of(
 def stop_errors(
     *, effect: OrderEffect, side: Side, reference_price: Px, stop: Px | None
 ) -> list[FieldError]:
-    """The native-stop rule (C-2.6; #3932 issuecomment-6302240417, Low L29): an entry needs a
-    stop, and any stop must be finite, above zero and on the protective side of
-    `reference_price`."""
+    """The native-stop rule (C-2.6; #3932 issuecomment-6302240417, Low L29): an entry, any effect
+    but `REDUCE`, needs a stop, and any stop must be finite, above zero and on the protective side
+    of `reference_price`."""
     if stop is None:
-        if effect is OrderEffect.ENTRY:
+        if effect is not OrderEffect.REDUCE:
             return [FieldError("stop_loss", RULE_NATIVE_STOP_REQUIRED, _NO_STOP)]
         return []
     if not stop.is_finite() or stop <= 0:
@@ -131,16 +132,18 @@ def stop_errors(
 
 
 def intent_errors(*, effect: OrderEffect, intent: OrderPurpose) -> list[FieldError]:
-    """The intent rule (SR-E29-01): the intent must agree with the effect, never decide it."""
-    allowed = OPENING_INTENTS if effect is OrderEffect.ENTRY else REDUCING_INTENTS
+    """The intent rule (SR-E29-01): the intent must agree with the effect, never decide it; any
+    effect but `REDUCE` is an entry's."""
+    reduces = effect is OrderEffect.REDUCE
+    allowed = REDUCING_INTENTS if reduces else OPENING_INTENTS
     if intent in allowed:
         return []
     if intent in SERVER_ASSIGNED_INTENTS:
         message = _SERVER_INTENT
-    elif effect is OrderEffect.ENTRY:
-        message = _REDUCING_ON_ENTRY
-    else:
+    elif reduces:
         message = _OPENING_ON_REDUCE
+    else:
+        message = _REDUCING_ON_ENTRY
     return [FieldError("intent", RULE_INTENT_MISMATCH, message)]
 
 

@@ -2,17 +2,20 @@
 
 The validator matrix, both directions: each instrument filter (tick size, qty step, min and max
 quantity, the market ceiling, min notional, price bounds, max leverage) on the SIZED and ROUNDED
-order; the read-only gate first; a figure that is not finite, refused before any is compared; the
+order; the read-only gate first; a figure that is not finite, refused before any is compared; a
+figure above its bound, refused before any meets a step, which cannot judge one of 10**28 steps or
+more, and one no step can judge all the same answered `validation_failed`, never a crash; the
 trading status; the effective profile's enable flags and symbol lists (24 Sec.9.3 step 1, D11,
-SR-E28-06, SR-E28-24, SR-E28-27); and the environment match (C-2.11). Every violated filter is
-listed in `errors[]` with its fixed sentence, named by the instrument field it breaks
-(24-internal-schemas.md Sec.1.3 rule 3), the instrument's own filters before the order path's.
+SR-E28-06, SR-E28-24, SR-E28-27), which hold any effect but `REDUCE` (fail closed); and the
+environment match (C-2.11). Every violated filter is listed in `errors[]` with its fixed sentence,
+named by the instrument field it breaks (24-internal-schemas.md Sec.1.3 rule 3), the instrument's
+own filters before the order path's.
 """
 
 from __future__ import annotations
 
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -181,6 +184,7 @@ def test_filters_are_enforced_before_any_exchange_call() -> None:
                 "qty": Decimal("0.010"),
                 "price": Decimal("400.0"),
                 "reference_price": Decimal("400.0"),
+                "stop_loss": Decimal("390.0"),
             },
             LotSizeViolation,
             "qty",
@@ -188,7 +192,7 @@ def test_filters_are_enforced_before_any_exchange_call() -> None:
             "Order notional must be at least 5.",
         ),
         (
-            {"price": Decimal("0.0"), "reference_price": Decimal("1")},
+            {"price": Decimal("0.0"), "reference_price": Decimal("1"), "stop_loss": Decimal("0.5")},
             OrderInvalid,
             "price",
             "min_price",
@@ -227,9 +231,24 @@ def test_each_filter_refuses_the_order_that_breaks_it(
         {"qty": Decimal("0.250")},
         {"qty": Decimal("0.01")},  # exactly the minimum
         {"qty": Decimal("100")},  # exactly the maximum
-        {"qty": Decimal("0.010"), "price": Decimal("500.0"), "reference_price": Decimal("500.0")},
-        {"price": Decimal("0.1"), "qty": Decimal("50"), "reference_price": Decimal("0.1")},
-        {"price": Decimal("199999.8"), "stop_loss": Decimal("199000.0")},
+        {
+            "qty": Decimal("0.010"),
+            "price": Decimal("500.0"),
+            "reference_price": Decimal("500.0"),
+            "stop_loss": Decimal("490.0"),
+        },
+        {
+            "side": "sell",  # a buy at the minimum price has no stop on a tick above zero
+            "price": Decimal("0.1"),
+            "qty": Decimal("50"),
+            "reference_price": Decimal("0.1"),
+            "stop_loss": Decimal("0.2"),
+        },
+        {
+            "price": Decimal("199999.8"),
+            "reference_price": Decimal("199999.8"),
+            "stop_loss": Decimal("199000.0"),
+        },
     ],
 )
 def test_each_filter_passes_the_order_at_its_limit(changes: dict[str, Any]) -> None:
@@ -252,7 +271,9 @@ def test_each_filter_passes_the_order_at_its_limit(changes: dict[str, Any]) -> N
 def test_a_figure_that_is_not_finite_is_refused_before_any_filter(
     attribute: str, field: str, message: str, figure: str
 ) -> None:
-    order = _order(**{attribute: Decimal(figure)})
+    """An order that only reduces and carries no stop: `SizedOrder` itself refuses to judge a
+    stop against a reference price that is not finite."""
+    order = _order(**_REDUCE, **{attribute: Decimal(figure)})
     with pytest.raises(OrderInvalid) as refused:
         _check(order, instrument=_instrument(status="closed"))  # before the trading status too
     assert type(refused.value) is OrderInvalid
@@ -262,7 +283,7 @@ def test_a_figure_that_is_not_finite_is_refused_before_any_filter(
 def test_every_figure_that_is_not_finite_is_listed() -> None:
     nan = Decimal("NaN")
     with pytest.raises(OrderInvalid) as refused:
-        _check(_order(price=nan, trigger_price=nan, reference_price=nan, qty=nan))
+        _check(_order(**_REDUCE, price=nan, trigger_price=nan, reference_price=nan, qty=nan))
     assert _rules(refused.value) == [
         ("price", "finite"),
         ("trigger.price", "finite"),
@@ -274,6 +295,88 @@ def test_every_figure_that_is_not_finite_is_listed() -> None:
 def test_the_read_only_gate_answers_before_a_figure_that_is_not_finite() -> None:
     with pytest.raises(OrderPlacementRefused):
         _check(_order(qty=Decimal("NaN")), gate=_Gate(is_read_only=True))
+
+
+# --- a figure above its bound, refused before any figure meets a step ----------------------------
+
+_MAX_PRICE = "Price must not exceed 199999.8."
+_MARKET = {"order_type": "market", "price": None}
+
+
+@pytest.mark.parametrize("figure", [Decimal(10**28), Decimal(10**30)], ids=["1e28", "1e30"])
+@pytest.mark.parametrize(
+    ("changes", "attribute", "error", "expected"),
+    [
+        ({}, "price", OrderInvalid, FieldError("price", "max_price", _MAX_PRICE)),
+        ({}, "trigger_price", OrderInvalid, FieldError("trigger.price", "max_price", _MAX_PRICE)),
+        (
+            {},
+            "qty",
+            LotSizeViolation,
+            FieldError("qty", "max_order_qty", "Quantity must not exceed 100."),
+        ),
+        (
+            _MARKET,
+            "qty",
+            LotSizeViolation,
+            FieldError("qty", "max_mkt_order_qty", "A market order's quantity must not exceed 50."),
+        ),
+    ],
+    ids=["price", "trigger_price", "qty", "market_qty"],
+)
+def test_a_figure_no_step_can_judge_is_refused_at_its_bound_never_a_crash(
+    changes: dict[str, Any],
+    attribute: str,
+    error: type[OrderRefused],
+    expected: FieldError,
+    figure: Decimal,
+) -> None:
+    """A step check (`%`) raises decimal.InvalidOperation on a figure of 10**28 steps or more, so
+    the bounds are judged first, before the trading status too."""
+    order = _order(**changes, **{attribute: figure})
+    with pytest.raises(error) as refused:
+        _check(order, instrument=_instrument(status="closed"))
+    assert type(refused.value) is error
+    assert refused.value.errors == (expected,)
+
+
+def test_every_figure_above_its_bound_is_listed() -> None:
+    huge = Decimal(10**30)
+    with pytest.raises(LotSizeViolation) as refused:
+        _check(_order(price=huge, trigger_price=huge, qty=huge))
+    assert _rules(refused.value) == [
+        ("price", "max_price"),
+        ("trigger.price", "max_price"),
+        ("qty", "max_order_qty"),
+    ]
+
+
+@pytest.mark.parametrize("reference", [Decimal(10**28), Decimal(10**30)], ids=["1e28", "1e30"])
+def test_a_reference_price_no_step_can_judge_is_validation_failed_never_a_crash(
+    reference: Decimal,
+) -> None:
+    """A market order's reference price has no bound of its own: `InstrumentPolicy.validate`
+    raises decimal.InvalidOperation on it, answered `validation_failed` with the cause kept."""
+    with pytest.raises(OrderInvalid) as refused:
+        _check(_order(**_MARKET, reference_price=reference))
+    assert type(refused.value) is OrderInvalid
+    assert (refused.value.detail, refused.value.errors) == ("The order failed validation.", ())
+    assert isinstance(refused.value.__cause__, InvalidOperation)
+
+
+def test_a_market_quantity_within_a_higher_market_ceiling_goes_on_to_the_filters() -> None:
+    """Above `max_order_qty` but within the market's own ceiling: the market's to judge."""
+    higher = _instrument(max_mkt_order_qty=Decimal("200"))
+    _check(_order(**_MARKET, qty=Decimal("150")), instrument=higher)
+
+
+def test_a_limit_quantity_above_max_order_qty_is_refused_whatever_the_market_ceiling() -> None:
+    """Within a higher market ceiling, so the filters judge it, in the same sentence."""
+    higher = _instrument(max_mkt_order_qty=Decimal("200"))
+    with pytest.raises(LotSizeViolation) as refused:
+        _check(_order(qty=Decimal("150")), instrument=higher)
+    expected = FieldError("qty", "max_order_qty", "Quantity must not exceed 100.")
+    assert refused.value.errors == (expected,)
 
 
 def test_a_market_order_is_held_to_the_market_ceiling() -> None:
@@ -299,9 +402,10 @@ def test_a_market_orders_reference_price_is_not_held_to_the_tick() -> None:
 
 def test_a_market_orders_notional_is_measured_at_its_reference_price() -> None:
     market = {"order_type": "market", "price": None, "qty": Decimal("0.01")}
-    _check(_order(**market, reference_price=Decimal("500")))
+    stop = Decimal("390")  # below either reference price, as a buy's stop is
+    _check(_order(**market, reference_price=Decimal("500"), stop_loss=stop))
     with pytest.raises(LotSizeViolation) as refused:
-        _check(_order(**market, reference_price=Decimal("400")))
+        _check(_order(**market, reference_price=Decimal("400"), stop_loss=stop))
     assert _rules(refused.value) == [("qty", "min_notional")]
 
 
@@ -488,6 +592,19 @@ def test_an_order_that_only_reduces_is_never_refused_by_the_allow_list() -> None
     eth = _instrument(symbol="ETHUSDT", base_coin="ETH")
     validator.check_order(_order(**_REDUCE, symbol="ETHUSDT"), instrument=eth, profile=_profile())
     validator.check_order(_order(**_REDUCE), instrument=_instrument(), profile=None)
+
+
+@pytest.mark.parametrize("effect", ["entry", "bogus"])
+def test_check_order_holds_any_effect_but_reduce_to_the_entry_checks(effect: str) -> None:
+    """Fail closed: an effect that is not the `REDUCE` member is an entry's, so the reduce
+    exemption never applies to it. Forced past `SizedOrder`'s own coercion, as only a type
+    violation can produce it."""
+    order = _order(**_REDUCE)
+    object.__setattr__(order, "effect", effect)
+    validator = Validator(read_only_gate=_Gate())
+    with pytest.raises(RiskRefused) as refused:
+        validator.check_order(order, instrument=_instrument(), profile=None)
+    assert refused.value.detail == "No profile allows this order."
 
 
 # --- the environment match (C-2.11) --------------------------------------------------------------

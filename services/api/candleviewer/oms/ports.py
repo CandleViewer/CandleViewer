@@ -28,14 +28,17 @@ token once per call, and B1's `rate` verdict read a non-consuming headroom figur
 imports the exchange adapter (C-2.2).
 
 The vocabulary the ports speak lives here too: `OrderEffect` (SR-E29-01), `StopOffset` (22
-`Offset`), `SizingRequest` (22 `Sizing`), `ArmToken`, the session's arm token held masked (C-12.6),
-and `SizedOrder`, the order the validator, the risk gate and B1 see once it is sized and rounded
-(SR-E29-04), which cannot be built as an entry without a stop (C-2.6). Verdicts are B1's gate
-values (`statechart/bindings/b01_order.py`).
+`Offset`), `SizingRequest` (22 `Sizing`), `ArmToken`, the session's arm token held masked (C-12.6)
+and compared in constant time (SR-043), and `SizedOrder`, the order the validator, the risk gate
+and B1 see once it is sized and rounded (SR-E29-04), which cannot be built as an entry without a
+stop, nor with a stop off the protective side (C-2.6). Every decision by effect here and in
+`classify` and `validator` fails closed: any effect but `OrderEffect.REDUCE` is an entry's.
+Verdicts are B1's gate values (`statechart/bindings/b01_order.py`).
 """
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -129,14 +132,25 @@ class SizedOrder:
     stop_loss: Px | None
 
     def __post_init__(self) -> None:
-        """The invariants every later check relies on, whatever the call order (C-2.6,
-        SR-E29-01): an entry carries a finite stop above zero, and an order that only reduces is
+        """The invariants every later check relies on, whatever the call order, as strict as
+        `classify.stop_errors` (C-2.6, SR-E29-01): `effect` is an `OrderEffect`, a string that
+        names none refused, and any effect but `REDUCE` is an entry's; an entry carries a stop;
+        any stop is finite, above zero and on the protective side of a reference price above
+        zero, below it for a buy and above it for a sell; and an order that only reduces is
         reduce-only."""
-        stop = self.stop_loss
-        stopless = stop is None or not stop.is_finite() or stop <= 0
-        if self.effect is OrderEffect.ENTRY and stopless:
-            raise ValueError("an entry carries a finite stop_loss above zero (C-2.6)")
-        if self.effect is OrderEffect.REDUCE and not self.reduce_only:
+        object.__setattr__(self, "effect", OrderEffect(self.effect))
+        entry = self.effect is not OrderEffect.REDUCE
+        stop, reference = self.stop_loss, self.reference_price
+        if stop is None:
+            if entry:
+                raise ValueError("an entry carries a stop_loss (C-2.6)")
+        elif not stop.is_finite() or stop <= 0:
+            raise ValueError("a stop_loss is finite and above zero (C-2.6)")
+        elif not reference.is_finite() or reference <= 0:
+            raise ValueError("a stop_loss is judged against a reference_price above zero")
+        elif not (stop < reference if self.side == "buy" else stop > reference):
+            raise ValueError("a stop_loss is below a buy's reference_price, above a sell's (C-2.6)")
+        if not entry and not self.reduce_only:
             raise ValueError("an order that only reduces is reduce_only (SR-E29-01)")
 
 
@@ -144,9 +158,25 @@ class ArmToken(Secret[str]):
     """The session's arm token (SR-043, the `X-Arm-Token` header), held masked: its `str`, `repr`
     and format are `[redacted]`, and the redaction filter writes it as `***` under any key, so no
     log line, exception or repr carries it (C-12.6). Only an arm-record check calls `reveal()`;
-    the token is never bound to a logger."""
+    the token is never bound to a logger.
+
+    Two tokens compare in constant time over their encoded values (`hmac.compare_digest`), so the
+    time a comparison takes tells nothing of how much of a presented token matches (SR-043). A
+    token never equals another kind of `Secret`, whose `==` is not constant time, nor a plain
+    string. Every token hashes alike: equal tokens hash alike, and the hash carries nothing of the
+    token."""
 
     __slots__ = ()
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, ArmToken):
+            return hmac.compare_digest(self.reveal().encode(), other.reveal().encode())
+        if isinstance(other, Secret):
+            return False
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(ArmToken)
 
 
 class Sizer(Protocol):
@@ -181,7 +211,9 @@ class RiskGate(Protocol):
 class ArmRecords(Protocol):
     """E30-S04 (#1088): whether the session's arm token admits an order mutation that needs one
     (SR-043); `FAILED` for a token missing, expired, revoked or bound to another session. The
-    token arrives masked, an `ArmToken`, and is never logged (C-12.6)."""
+    token arrives masked, an `ArmToken`, and is never logged (C-12.6). The real port compares a
+    presented token through `ArmToken`'s own equality, or `hmac.compare_digest` on `reveal()`,
+    never with a plain `==` on the strings (SR-043)."""
 
     def check(
         self, *, session_id: UUID, environment: Environment, token: ArmToken | None
@@ -237,7 +269,7 @@ class InterimStopResolver(Interim):
         tick = instrument.tick_size
         if stop is not None:
             level = _requested_level(stop, side, reference_price, tick)
-        elif effect is OrderEffect.ENTRY and profile is not None:
+        elif effect is not OrderEffect.REDUCE and profile is not None:  # an entry: fail closed
             level = _profile_level(profile, side, reference_price, tick)
         else:
             return None

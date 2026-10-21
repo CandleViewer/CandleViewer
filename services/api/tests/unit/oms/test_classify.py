@@ -5,9 +5,10 @@ its label. Rulings R2 and R7: a reduce-only order whose quantity exceeds the pos
 and the position is read for a reduce-only order only. A zero or negative stop is
 `native_stop_required` (Low L29 of PR #3932's review record, issuecomment-6302240417). R4: C-2.6
 holds whatever the stop resolver returns. `errors[]` lists every rule that fails, the stop's first
-(22-api-openapi.yaml `placeOrder`), each with its fixed sentence. The property test drives
-(reduce_only, quantity, position, intent, stop) against an oracle written from the rule's text,
-with its boundaries as explicit examples.
+(22-api-openapi.yaml `placeOrder`), each with its fixed sentence. Both rules fail closed: any
+effect but `REDUCE` is an entry's. The property test drives (reduce_only, quantity, position,
+intent, stop) against an oracle written from the rule's text, with its boundaries as explicit
+examples.
 """
 
 from __future__ import annotations
@@ -255,6 +256,13 @@ def test_stop_errors_an_order_that_only_reduces_needs_no_stop() -> None:
     assert stop_errors(effect=REDUCE, side="buy", reference_price=REF, stop=None) == []
 
 
+@pytest.mark.parametrize("effect", ["entry", "bogus"])
+def test_stop_errors_any_effect_but_reduce_needs_a_stop(effect: Any) -> None:
+    """Fail closed: an effect that is not the `REDUCE` member is an entry's, a string too."""
+    [error] = stop_errors(effect=effect, side="buy", reference_price=REF, stop=None)
+    assert (error.field, error.rule) == ("stop_loss", RULE_NATIVE_STOP_REQUIRED)
+
+
 @pytest.mark.parametrize("effect", [ENTRY, REDUCE])
 @pytest.mark.parametrize("stop", ["0", "-0.1", "-63000", "NaN", "Infinity", "-Infinity"])
 def test_stop_errors_a_stop_not_above_zero_is_native_stop_required(
@@ -341,6 +349,14 @@ def test_intent_errors_a_server_assigned_intent_is_refused_on_either_effect(
 ) -> None:
     [error] = intent_errors(effect=effect, intent=intent)
     assert error.message == "This intent is assigned by the server and cannot be requested."
+
+
+@pytest.mark.parametrize("effect", ["entry", "bogus"])
+def test_intent_errors_hold_any_effect_but_reduce_to_an_opening_intent(effect: Any) -> None:
+    """Fail closed: an effect that is not the `REDUCE` member is an entry's, a string too."""
+    assert intent_errors(effect=effect, intent="entry") == []
+    [error] = intent_errors(effect=effect, intent="scale_out")
+    assert (error.rule, error.message) == (RULE_INTENT_MISMATCH, _ON_ENTRY)
 
 
 def test_intent_errors_an_unknown_intent_is_refused() -> None:
