@@ -2,8 +2,9 @@
 
 `Execution` follows 24 §8.1: it names the exchange order it fills (`exchange_order_id`, never
 empty), and its `exec_type` and `fee_rate` are what `21-database-schema.md` §3.3.6 stores (the
-`ex_type` CHECK, numeric(18,10)). A model the parser could not fill refuses, so no read returns
-an execution the OMS could not pair or store.
+`ex_type` CHECK, numeric(18,10)). Every `Order` a read returns carries the exchange's id too
+(the orchestrator's ruling 3 on #3972). A model the parser could not fill refuses, so no read
+returns an order or an execution the OMS could not bind, pair or store.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import pytest
 from pydantic import ValidationError
 
 from candleviewer.domain.primitives import AccountId
-from candleviewer.exchange.base.models import ExecType, Execution
+from candleviewer.exchange.base.models import ExecType, Execution, Order
 
 ACCOUNT = AccountId(UUID("5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d"))
 T0 = 1_790_000_000_000_000
@@ -80,3 +81,21 @@ def test_an_execution_without_its_order_id_is_refused() -> None:
     del base["exchange_order_id"]
     with pytest.raises(ValidationError):
         Execution.model_validate(base)
+
+
+def _order(**fields: Any) -> Order:
+    base: dict[str, Any] = {
+        "order_link_id": "ext-" + "0" * 32, "exchange_order_id": "e-1", "account_id": ACCOUNT,
+        "symbol": "BTCUSDT", "side": "buy", "order_type": "limit", "qty": Decimal("1"),
+        "price": Decimal("60000"), "state": "new", "filled_qty": Decimal(0),
+        "leaves_qty": Decimal("1"), "avg_fill_price": None, "created_at": T0,
+        "terminal_at": None,
+    }  # fmt: skip
+    return Order.model_validate(base | fields)
+
+
+@pytest.mark.parametrize("exchange_order_id", ["", None, "e" * 65])
+def test_an_order_without_the_exchanges_id_is_refused(exchange_order_id: object) -> None:
+    assert _order().exchange_order_id == "e-1"
+    with pytest.raises(ValidationError):
+        _order(exchange_order_id=exchange_order_id)

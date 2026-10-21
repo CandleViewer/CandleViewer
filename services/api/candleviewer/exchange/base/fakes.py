@@ -327,7 +327,7 @@ class FakeTradingPort:
     def seed_order(self, order: Order, *, uid: str) -> None:
         """An order the venue holds for the UID: open, or in history once terminal."""
         self._seen.add((uid, order.order_link_id))
-        key = order.exchange_order_id or order.order_link_id
+        key = order.exchange_order_id
         (self._history if order.state in _TERMINAL else self._open)[key] = order
 
     def seed_position(self, position: Position) -> None:

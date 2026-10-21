@@ -150,6 +150,20 @@ async def test_a_batch_items_code_reads_as_the_taxonomy_with_open_outcomes_unkno
     assert (acks[1].error_code in OPEN_ITEM_CODES and not acks[1].retryable) is is_open
 
 
+async def test_a_batch_item_accepted_without_its_order_id_is_never_ok() -> None:
+    """The orchestrator's ruling 3 on #3972, for a batch: an item answered code 0 with an empty
+    `orderId` is an open outcome, its ack not `ok`, with the open-outcome code and never
+    retryable, so its order goes to `unknown`, never `submitted`."""
+    links = [link(seq=0), link(seq=1)]
+    reply = _batch(links, [(0, "OK"), (0, "OK")], ["e-1", ""])
+    acks = await make_port(Venue().on("/v5/order/create-batch", reply)).place_batch(
+        [place(order_link_id=lk) for lk in links]
+    )
+    assert [(a.ok, a.exchange_order_id) for a in acks] == [(True, "e-1"), (False, None)]
+    assert (acks[1].error_code, acks[1].retryable) == ("TRANSPORT_ERROR", False)
+    assert acks[1].error_code in OPEN_ITEM_CODES
+
+
 async def test_the_transcribed_batch_reply_pairs_with_no_request_so_outcomes_are_open() -> None:
     """The documentation's batch is spot orders under its own ids: none of ours."""
     venue = Venue().on("/v5/order/create-batch", BATCH)

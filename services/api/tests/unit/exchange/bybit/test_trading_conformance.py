@@ -1,12 +1,14 @@
 """One conformance suite over both `TradingPort` implementations (G-8, #2877): the exchange's
 port, over transcribed replies (ruling R2), and `FakeTradingPort`. Each case asks of both what
-the OMS relies on: what they refuse, before anything is sent, and how they answer.
+the OMS relies on: what they refuse, before anything is sent, and how they answer. Every ack
+either port returns in any case here is checked as it leaves (the orchestrator's ruling 3 on
+#3972): one that is `ok` names the exchange's order, and only a stop write names none.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
@@ -20,6 +22,7 @@ from candleviewer.exchange.base.models import (
     AmendOrderRequest,
     CancelOrderRequest,
     Order,
+    OrderAck,
     TradingStopRequest,
 )
 from tests._corpus import rest
@@ -36,6 +39,7 @@ from tests.unit.exchange.bybit._trading import (
 )
 
 CANCEL = rest("rest/trading-cancel-reply.json")
+AMENDED = rest("rest/trading-amend-reply.json")
 ORDER_ID = CANCEL["result"]["orderId"]
 BATCH = rest("rest/trading-create-batch-reply.json")
 CANCEL_ALL = rest("rest/trading-cancel-all-reply.json")
@@ -43,6 +47,15 @@ REALTIME = rest("rest/trading-order-realtime.json")
 DUPLICATE = rest("rest/trading-error-110072.json")
 #: The fake's cancel-all cap in these cases: one call takes two orders, as the venue takes 500.
 FAKE_CANCEL_ALL_LIMIT = 2
+#: The calls that answer with acks; every one but the stop write names an order.
+ACKING = (
+    "place_order",
+    "place_batch",
+    "amend_order",
+    "cancel_order",
+    "cancel_all",
+    "set_trading_stop",
+)
 
 
 @dataclass
@@ -57,6 +70,33 @@ class Harness:
     prime_cancel_all: Callable[[], None]
     prime_batch_duplicate: Callable[[str, str], None]
     prime_capped_book: Callable[[], None]
+    prime_amend: Callable[[str], None]
+    acks: list[tuple[str, OrderAck]] = field(default_factory=list)
+
+
+def _watch(port: TradingPort, seen: list[tuple[str, OrderAck]]) -> None:
+    """Record every ack `port` returns, by the call that returned it: an instance attribute over
+    each acking method, so the port itself runs unchanged."""
+    for name in ACKING:
+        call: Callable[..., Awaitable[OrderAck | Sequence[OrderAck]]] = getattr(port, name)
+
+        async def watched(*args: Any, _name: str = name, _call: Any = call, **kwargs: Any) -> Any:
+            answer = await _call(*args, **kwargs)
+            acks = [answer] if isinstance(answer, OrderAck) else list(answer)
+            seen.extend((_name, ack) for ack in acks)
+            return answer
+
+        setattr(port, name, watched)
+
+
+def check_acks_name_their_orders(seen: Sequence[tuple[str, OrderAck]]) -> None:
+    """The orchestrator's ruling 3 on #3972, as a property of every ack a port returns: one that
+    is `ok` names the exchange's order, never empty; a stop write names no order at all."""
+    for name, ack in seen:
+        if name == "set_trading_stop":
+            assert (ack.order_link_id, ack.exchange_order_id) == (None, None)
+        elif ack.ok:
+            assert ack.exchange_order_id, (name, ack)
 
 
 def _exchange() -> Harness:
@@ -92,7 +132,10 @@ def _exchange() -> Harness:
             with_result(REALTIME, list=[], nextPageCursor=""),
         )
 
-    return Harness(
+    def prime_amend(order_link_id: str) -> None:
+        venue.on("/v5/order/amend", with_result(AMENDED, orderLinkId=order_link_id))
+
+    harness = Harness(
         port=make_port(venue, governor=governor),
         sent=lambda: len(venue.sent) + len(governor.acquired),
         lanes=lambda: [lane for _, _, lane, _ in governor.acquired],
@@ -101,7 +144,10 @@ def _exchange() -> Harness:
         prime_cancel_all=prime_cancel_all,
         prime_batch_duplicate=prime_batch_duplicate,
         prime_capped_book=prime_capped_book,
+        prime_amend=prime_amend,
     )
+    _watch(harness.port, harness.acks)
+    return harness
 
 
 def _fake() -> Harness:
@@ -124,7 +170,7 @@ def _fake() -> Harness:
         port.seed_order(_order(link(seq=9), "fake-c"), uid="100001")
 
     calls: list[FakeCall] = port.calls
-    return Harness(
+    harness = Harness(
         port=port,
         sent=lambda: len(calls),
         lanes=lambda: [c.lane for c in calls],
@@ -133,7 +179,10 @@ def _fake() -> Harness:
         prime_cancel_all=seed_two,
         prime_batch_duplicate=seed_taken,
         prime_capped_book=seed_three,
+        prime_amend=lambda _link: None,  # the fake amends the order a create landed
     )
+    _watch(harness.port, harness.acks)
+    return harness
 
 
 def _order(order_link_id: str, exchange_order_id: str) -> Order:
@@ -156,8 +205,11 @@ def _order(order_link_id: str, exchange_order_id: str) -> Order:
 
 
 @pytest.fixture(params=["exchange", "fake"])
-def harness(request: pytest.FixtureRequest) -> Harness:
-    return _exchange() if request.param == "exchange" else _fake()
+def harness(request: pytest.FixtureRequest) -> Iterator[Harness]:
+    """One port per case; every ack it returned is checked as the case ends (ruling 3, #3972)."""
+    built = _exchange() if request.param == "exchange" else _fake()
+    yield built
+    check_acks_name_their_orders(built.acks)
 
 
 def test_both_satisfy_the_port(harness: Harness) -> None:
@@ -175,6 +227,48 @@ async def test_both_accept_a_create_then_refuse_its_id_again(harness: Harness) -
     assert ack.exchange_order_id
     with pytest.raises(DuplicateClientIdError):
         await harness.port.place_order(request)
+
+
+async def test_every_ok_ack_of_an_order_call_names_its_exchange_order(harness: Harness) -> None:
+    """Ruling 3 on #3972 over each order call that answers `ok`: a create, a batch, an amend, a
+    cancel and a cancel-all (the fixture checks every other case's acks the same way)."""
+    request = place()
+    harness.prime_create(request.order_link_id)
+    await harness.port.place_order(request)
+    fresh, taken = link(seq=3), link(seq=4)
+    harness.prime_batch_duplicate(fresh, taken)
+    await harness.port.place_batch([place(order_link_id=fresh), place(order_link_id=taken)])
+    harness.prime_amend(request.order_link_id)
+    amend = AmendOrderRequest(
+        account=account(),
+        symbol="BTCUSDT",
+        order_link_id=request.order_link_id,
+        qty=Decimal("0.02"),
+    )
+    await harness.port.amend_order(amend)
+    harness.prime_ext_cancel()
+    await harness.port.cancel_order(
+        CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id=ORDER_ID)
+    )
+    harness.prime_cancel_all()
+    await harness.port.cancel_all(account(), None)
+    answered = {name for name, ack in harness.acks if ack.ok}
+    assert answered == set(ACKING) - {"set_trading_stop"}
+    check_acks_name_their_orders(harness.acks)
+
+
+def test_the_ack_check_fails_an_ok_ack_without_its_order_and_a_stop_write_naming_one() -> None:
+    """The check itself is no tautology: it fails on what ruling 3 forbids."""
+    ok = OrderAck(
+        ok=True, order_link_id=link(), exchange_order_id=None, latency_ms=0, transport="rest"
+    )
+    with pytest.raises(AssertionError):
+        check_acks_name_their_orders([("place_order", ok)])
+    named = ok.model_copy(update={"order_link_id": None, "exchange_order_id": "e-1"})
+    with pytest.raises(AssertionError):
+        check_acks_name_their_orders([("set_trading_stop", named)])
+    refused = ok.model_copy(update={"ok": False})
+    check_acks_name_their_orders([("place_order", refused)])
 
 
 async def test_both_cancel_an_ext_order_by_its_exchange_id(harness: Harness) -> None:

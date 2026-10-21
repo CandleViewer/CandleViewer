@@ -133,6 +133,33 @@ async def test_a_create_whose_answer_is_unreadable_is_ambiguous() -> None:
         await make_port(Venue().on("/v5/order/create", malformed)).place_order(place())
 
 
+CREATED = rest("rest/trading-create-reply.json")
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        with_result(CREATED, orderId="", orderLinkId=link()),
+        {key: value for key, value in CREATED.items() if key != "result"},
+        {**CREATED, "result": None},
+        {**CREATED, "result": {}},
+        with_result(CREATED, orderLinkId=link(seq=9)),
+    ],
+    ids=["empty-order-id", "no-result", "null-result", "empty-result", "another-orders-id"],
+)
+async def test_a_create_answered_zero_without_its_order_id_is_never_an_ok_ack(
+    answer: dict[str, object],
+) -> None:
+    """The orchestrator's ruling 3 on #3972: the ack contract requires `orderId` when `ok` is
+    true, so a `retCode` 0 that names no order of this id is an ambiguous outcome (`unknown`,
+    never `submitted`): it raises, no ack is returned, and the create is never sent again."""
+    venue = Venue().on("/v5/order/create", answer)
+    with pytest.raises(AmbiguousResultError) as caught:
+        await make_port(venue).place_order(place())
+    assert (caught.value.order_link_id, caught.value.retryable) == (link(), False)
+    assert _bare(caught.value) and len(venue.sent) == 1
+
+
 async def test_a_transport_fault_on_a_read_raises_without_its_httpx_cause() -> None:
     def refuse(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)

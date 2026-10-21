@@ -699,7 +699,7 @@ class BybitTradingPort:
             orders += await self._orders("order_history", account, {**params, **window})
         return [
             o
-            for o in _unique(orders, lambda o: o.exchange_order_id or o.order_link_id)
+            for o in _unique(orders, lambda o: o.exchange_order_id)
             if order_link_id in (None, o.order_link_id)
             and exchange_order_id in (None, o.exchange_order_id)
         ]
@@ -713,7 +713,7 @@ class BybitTradingPort:
 
         orders = _unique(
             await self._pages(name, account, params, read),
-            lambda o: o.exchange_order_id or o.order_link_id,
+            lambda o: o.exchange_order_id,
         )
         return kept(orders, lambda o: o.order_link_id, account)
 

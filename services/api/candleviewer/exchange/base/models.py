@@ -557,14 +557,16 @@ class Order(BaseModel):
     **Deviation, noted in the PR**: §14.4 does not give `Order` a formal
     field list; this shape is the read-facing minimum implied by
     `TradingPort.open_orders`/`order_history`. `order_id` is the OMS's local
-    id, which an adapter cannot know, so a read leaves it `None`. B1's full
-    match (SR-E29-03) reads `reduce_only`, `trigger_price` and `stop_loss`."""
+    id, which an adapter cannot know, so a read leaves it `None`;
+    `exchange_order_id` is the exchange's, which every order a read returns
+    carries (24 §14.2 rule 11). B1's full match (SR-E29-03) reads
+    `reduce_only`, `trigger_price` and `stop_loss`."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     order_id: OrderId | None = None
     order_link_id: OrderLinkId
-    exchange_order_id: str | None
+    exchange_order_id: ExchangeOrderId
     account_id: AccountId
     symbol: Symbol
     side: Side
