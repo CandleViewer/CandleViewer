@@ -23,8 +23,8 @@ E27-T03 and carried by none of its tickets, and the E28-X01 SR-E28-16 requiremen
   other BEFORE UPDATE row trigger left it (the integration test pins the order).
   `trg_ea_env_in_use`, the guard the orchestrator's R-14 ruling let stand in the interval, stays:
   dropping it would change 0039's own DDL, and it costs nothing.
-* The application never assigns `env`: no SQL under `candleviewer/` sets it, the store's patch and
-  the API's PATCH body carry no environment, and the accounts store maps a refusal by either
+* The application never changes `env` after the INSERT: no UPDATE or upsert under `candleviewer/`
+  assigns it, the store's patch and the API's PATCH body carry no environment, and the accounts store maps a refusal by either
   trigger to its typed rule error (unit tests pin all three).
 * Residuals: the guard covers UPDATE only. `cv_app` keeps DELETE on `exchange_accounts` (the
   `pg_bootstrap.sql` default; no revision revokes it), so an account that nothing RESTRICTs (no

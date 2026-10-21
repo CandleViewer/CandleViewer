@@ -2,12 +2,13 @@
 
 `trg_ea_env_write_once` (revision `0041_account_env_write_once`) refuses any change of `env` in the
 database. These tests hold the same premise in code, as `tests/unit/credentials_m2/
-test_write_once_surface.py` does for `api_keys`: no SQL string under `candleviewer/` assigns `env`
-in an UPDATE or upsert of `exchange_accounts`, and none MERGEs into it; the `exchange_accounts`
-Table is named in code only where it is defined and, to read it, by the profiles store; and the
-PATCH body of `/exchange-accounts/{accountId}` carries no environment. The store's own patch and
-its typed error for a refusal are pinned in `test_accounts_store_sqlalchemy.py`. They stop an
-honest regression, not a deliberate bypass: the trigger is the enforcement.
+test_write_once_surface.py` does for `api_keys`: after the INSERT that creates an account, no SQL
+string under `candleviewer/` assigns `env` in an UPDATE or upsert of `exchange_accounts`, and none
+MERGEs into it; the `exchange_accounts` Table is named in code only where it is defined and, to
+read it, by the modules in `_READERS` (today the profiles store); and the PATCH body of
+`/exchange-accounts/{accountId}` carries no environment. The store's own patch and its typed error
+for a refusal are pinned in `test_accounts_store_sqlalchemy.py`. They stop an honest regression,
+not a deliberate bypass: the trigger is the enforcement.
 
 The migrations are not scanned: they run as the schema owner, the trigger refuses them like any
 other writer, and they hold the trigger's own SQL. Neither scan reads SQL assembled from parts
@@ -37,10 +38,11 @@ _PKG = _API / "candleviewer"
 _CONTRACT = _API.parents[1] / "docs" / "plan" / "22-api-openapi.yaml"
 _TABLE = "exchange_accounts"
 _SQL_WRITE = re.compile(r"\b(?:update|insert\s+into|merge\s+into)\b", re.IGNORECASE)
-#: Where the Table is defined; and the one module that names it in code, to read it only: the
-#: profiles store scopes a profile to a live account with `exchange_accounts.c` and `select_from`.
+#: Where the Table is defined; and the modules that name it in code, to read it only (each one
+#: added here with its reason): the profiles store scopes a profile to a live account with
+#: `exchange_accounts.c` and `select_from`.
 _DEFINITION = Path("db/models.py")
-_READER = Path("storage/repositories/account_profiles_sqlalchemy.py")
+_READERS = frozenset({Path("storage/repositories/account_profiles_sqlalchemy.py")})
 _READS = frozenset({"import", "columns", "select_from"})
 _ENVIRONMENT = ("env", "environment")
 
@@ -54,7 +56,8 @@ def _modules(root: Path) -> Iterator[tuple[Path, ast.Module]]:
         if rel.parts[:2] != ("migrations", "versions") and _TABLE in source.lower():
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)  # a `\:` in some SQL text
-                yield rel, ast.parse(source)
+                tree = ast.parse(source)
+            yield rel, tree
 
 
 def _prose(tree: ast.Module) -> set[ast.expr]:
@@ -236,16 +239,16 @@ def _table_writers(root: Path = _PKG) -> list[str]:
     return [
         f"{rel.as_posix()}:{line}"
         for rel, line, shape in _table_uses(root)
-        if rel != _DEFINITION and (rel != _READER or shape not in _READS)
+        if rel != _DEFINITION and (rel not in _READERS or shape not in _READS)
     ]
 
 
 def test_only_the_definition_and_the_profiles_reader_name_the_accounts_table() -> None:
-    assert {rel for rel, _, _ in _table_uses()} == {_DEFINITION, _READER}  # the scan sees both
+    assert {rel for rel, _, _ in _table_uses()} == {_DEFINITION, *_READERS}  # the scan sees all
     assert _table_writers() == []
 
 
-_IN_READER = _READER.as_posix()
+_IN_READER = min(_READERS).as_posix()
 #: `(module, source, path:line flagged)`: a reference that could write the Table.
 _TABLE_WRITES = {
     "any use elsewhere": (

@@ -130,6 +130,7 @@ def test_a_sub_account_never_changes_its_environment(pg_dsn: str) -> None:
         with pytest.raises(pgerr.CheckViolation) as exc:
             c.execute("UPDATE exchange_accounts SET env = 'live' WHERE id = %s", (child,))
         assert exc.value.sqlstate == "23514"
+        assert (exc.value.diag.message_primary or "").startswith("trg_ea_env_parent:")
         assert _env_of(c, child) == "demo"
 
 
@@ -200,35 +201,35 @@ def test_the_rule_holds_under_the_replica_role(pg_dsn: str) -> None:
 
 
 def _guards(c: Conn) -> list[tuple[str, str]]:
-    """The environment triggers on `exchange_accounts`, by name, with `tgenabled`."""
+    """The two environment guards this revision reasons about, by name, with `tgenabled`
+    (`trg_ea_env_parent`'s own state is #3962's)."""
     return [
         (str(name), str(enabled))
         for name, enabled in c.execute(
             "SELECT tgname, tgenabled::text FROM pg_trigger "
-            "WHERE tgrelid = 'exchange_accounts'::regclass AND tgname LIKE 'trg_ea_env_%' "
+            "WHERE tgrelid = 'exchange_accounts'::regclass "
+            "AND tgname IN ('trg_ea_env_in_use', 'trg_ea_env_write_once') "
             "ORDER BY tgname"
         ).fetchall()
     ]
 
 
 def test_the_round_trip_lifts_and_restores_the_rule(pg_dsn: str) -> None:
-    """C-5.5: the downgrade drops only the trigger and its function, so 0039's `trg_ea_env_in_use`
-    and 0017's `trg_ea_env_parent` stay; the upgrade brings them back; no row changes either way."""
+    """C-5.5: the downgrade drops only this revision's trigger and its function, so 0039's
+    `trg_ea_env_in_use` stays; the upgrade brings the rule back; no row changes either way."""
     dsn = _fresh(pg_dsn)
     with _conn(dsn) as c:
         account = _account(c)
     downgraded = _alembic(dsn, "downgrade", _PREV)
     assert downgraded.returncode == 0, downgraded.stderr
     with _conn(dsn) as c:
-        assert _guards(c) == [("trg_ea_env_in_use", "A"), ("trg_ea_env_parent", "O")]
+        assert _guards(c) == [("trg_ea_env_in_use", "A")]
         assert c.execute("SELECT to_regprocedure('ea_env_write_once()')").fetchone() == (None,)
         assert _env_of(c, account) == "demo"
     upgraded = _alembic(dsn, "upgrade", "head")
     assert upgraded.returncode == 0, upgraded.stderr
     with _conn(dsn) as c:
-        assert _guards(c) == [
-            ("trg_ea_env_in_use", "A"), ("trg_ea_env_parent", "O"), ("trg_ea_env_write_once", "A"),
-        ]  # fmt: skip
+        assert _guards(c) == [("trg_ea_env_in_use", "A"), ("trg_ea_env_write_once", "A")]
         assert _env_of(c, account) == "demo"
         with pytest.raises(pgerr.CheckViolation) as exc:
             c.execute("UPDATE exchange_accounts SET env = 'live' WHERE id = %s", (account,))
