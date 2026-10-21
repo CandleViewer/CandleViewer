@@ -1054,7 +1054,7 @@ def check_destructive_annotations(
         lines = source.splitlines()
         try:  # the call's arguments, from the line it starts on, however it wraps
             audit_drops = _op_targets(ast.parse(source), drops, forbidden_tables)
-        except SyntaxError:
+        except (SyntaxError, RecursionError):  # the audit rule refuses such a revision
             audit_drops = {}
         for idx, line in enumerate(lines):
             is_destructive = bool(_DESTRUCTIVE_OP_RE.search(line))

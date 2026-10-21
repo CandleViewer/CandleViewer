@@ -1090,6 +1090,8 @@ def test_a_drop_whose_table_name_is_on_the_next_line_is_flagged(tmp_path: Path) 
         "ALTER ROLE cv_app SET statement_timeout = '5s'",
         "CREATE EXTENSION IF NOT EXISTS pgcrypto",
         "DROP SCHEMA staging",
+        "INSERT INTO verbs (v) VALUES ('create')",  # a bare word: no statement
+        "DROP EXTENSION citext",  # not the extension the chain hashes with
     ],
 )
 def test_a_statement_that_mutates_no_audit_table_is_not_flagged(
@@ -1161,6 +1163,12 @@ _UPGRADE = f"\n\ndef upgrade() -> None:\n    op.execute({_OWNER_DROPS!r})\n"
             'class _Meta:\n    revision = "0003_audit_log"\n' + _UPGRADE,
             id="a-class-body-claim",
         ),
+        pytest.param(
+            "0003_audit_log.py",
+            'from alembic import op\n\nrevision = "0003_audit_log"\n'
+            'revision = str("0003_audit_log")\n' + _UPGRADE,
+            id="a-later-claim-that-is-not-a-constant",
+        ),
     ],
 )
 def test_no_other_revision_can_claim_the_owner_exemption(
@@ -1197,6 +1205,23 @@ def test_a_revision_nested_too_deeply_is_refused_and_the_others_still_report(
         ("0050_deep.py", True),
         ("0051_other.py", False),
     ]
+
+
+def test_a_python_revision_nested_too_deeply_is_refused_by_the_cli_with_its_sibling(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CLI runs every check over the revisions: one too deep for Python's own parser
+    stops none of them, and both revisions are reported."""
+    versions = tmp_path / "versions"
+    versions.mkdir()
+    deep = "x = " + "+".join(["1"] * 60_000) + "\n"
+    _write(versions, "0050_deep.py", deep)
+    _write(versions, "0051_other.py", _raw_sql_revision("DELETE FROM audit_log"))
+    assert main(["--versions-dir", str(versions)]) == 1
+    err = capsys.readouterr().err  # findings go to stderr
+    assert (
+        "0050_deep.py" in err and "nests too deeply" in err and "0051_other.py" in err
+    )
 
 
 def _chain_texts() -> tuple[str, str]:
@@ -1867,6 +1892,11 @@ def test_a_trigger_grant_on_every_table_of_a_schema_is_flagged(tmp_path: Path) -
     ("sql", "callee"),
     [
         (
+            "CREATE FUNCTION DIGEST(bytea, text) RETURNS bytea"
+            " LANGUAGE sql AS $$ SELECT $1 $$",
+            "digest",
+        ),
+        (
             "CREATE FUNCTION digest(bytea, text) RETURNS bytea"
             " LANGUAGE sql AS $$ SELECT $1 $$",
             "digest",
@@ -1967,6 +1997,7 @@ def test_only_the_revision_that_creates_the_audit_tables_may_add_their_triggers(
         " ON audit_log FOR EACH ROW WHEN (false) EXECUTE FUNCTION forbid_mutation()",
         "CREATE CONSTRAINT TRIGGER trg_late AFTER INSERT ON audit_log"
         " FOR EACH ROW EXECUTE FUNCTION refuse()",
+        "DROP RULE r ON audit_log",
         "CREATE RULE r AS ON INSERT TO audit_log DO INSTEAD NOTHING",
         "GRANT cv_owner TO cv_app",
         "CREATE FUNCTION digest(bytea, text) RETURNS bytea"
@@ -2008,6 +2039,7 @@ def test_an_audit_table_given_through_a_name_or_a_core_table_is_flagged(
     "sql",
     [
         'DROP TABLE U&"audit\\005flog"',
+        'DROP TABLE u&"audit\\005flog"',
         "DROP TABLE U&\"audit!005flog\" UESCAPE '!'",
         "DO $$ BEGIN EXECUTE U&'\\0044ELETE FROM audit_log'; END $$",
     ],
