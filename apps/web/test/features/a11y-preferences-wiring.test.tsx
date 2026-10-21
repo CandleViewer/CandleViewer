@@ -94,16 +94,11 @@ describe("engine flags channel", () => {
       if (f === null || f.animate) work += 1000; // stand-in for transition/fade/inertia work
       work += 1;
     };
-    ch.publish(resolveFlags(DEFAULT_PREFERENCES, { reducedMotion: false, highContrast: false }));
+    ch.publish(resolveFlags(DEFAULT_PREFERENCES, "safe"));
     frame();
     const animating = work;
     work = 0;
-    ch.publish(
-      resolveFlags(
-        { ...DEFAULT_PREFERENCES, disable_canvas_animation: true },
-        { reducedMotion: false, highContrast: false },
-      ),
-    );
+    ch.publish(resolveFlags({ ...DEFAULT_PREFERENCES, disable_canvas_animation: true }, "safe"));
     frame();
     expect(work).toBeLessThan(animating);
     expect(work).toBe(1);
@@ -145,15 +140,7 @@ describe("engine flags binding and accessible panel", () => {
     const ch = createEngineFlagsChannel();
     const engine = createEngine();
     const off = bindEngineFlags(engine, ch);
-    ch.publish(
-      resolveFlags(
-        { ...DEFAULT_PREFERENCES, disable_canvas_animation: true },
-        {
-          reducedMotion: false,
-          highContrast: false,
-        },
-      ),
-    );
+    ch.publish(resolveFlags({ ...DEFAULT_PREFERENCES, disable_canvas_animation: true }, "safe"));
     expect(engine.getFlags()).toEqual({
       animate: false,
       heatmapFade: false,

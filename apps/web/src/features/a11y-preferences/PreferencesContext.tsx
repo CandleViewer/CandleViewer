@@ -6,14 +6,17 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { ReactNode } from "react";
+import type { MotionName } from "@candleviewer/ui";
 import { applyAppearance } from "../../shell/bootstrap/preferencesApply";
 import { getShellState } from "../../shell/bootstrap/store";
 import {
   increasedContrastThemeSettings,
   reducedMotionThemeSettings,
 } from "../../shell/bootstrap/themeFromSettings";
+import { appThemeStore } from "../../shell/bootstrap/themeStore";
 import {
   DEFAULT_PREFERENCES,
   resolveFlags,
@@ -28,6 +31,7 @@ export interface PreferencesValue {
   readonly prefs: A11yPreferences;
   readonly media: SystemMedia;
   readonly flags: EngineFlags;
+  /** True while the runtime reduces motion (`data-motion="reduce"`), as the flags follow it. */
   readonly reducedMotion: boolean;
   readonly increasedContrast: boolean;
   readonly saveError: string | null;
@@ -36,6 +40,19 @@ export interface PreferencesValue {
 }
 
 const Ctx = createContext<PreferencesValue | null>(null);
+
+/**
+ * The motion the theme runtime resolved: the value behind `data-motion`. The runtime folds the OS query,
+ * the tri-state, its boolean twin in the appearance, a persisted local choice and the session override
+ * into it, so a reader agrees with the DOM whichever of them decided (#3436). It reads the app's one
+ * store, the one `applyAppearance` feeds, so it takes no context; `<ThemeProvider>` connects that store
+ * to the OS.
+ */
+function useResolvedMotion(): MotionName {
+  const store = appThemeStore();
+  const read = (): MotionName => store.getSnapshot().motion;
+  return useSyncExternalStore(store.subscribe, read, read);
+}
 
 function readMedia(): SystemMedia {
   const m = typeof window !== "undefined" && window.matchMedia ? window.matchMedia : null;
@@ -89,8 +106,11 @@ export function PreferencesProvider(props: PreferencesProviderProps): JSX.Elemen
     return () => qs.forEach((q) => q.removeEventListener("change", on));
   }, []);
 
-  const flags = useMemo(() => resolveFlags(prefs, media), [prefs, media]);
-  const reducedMotion = resolveTriState(prefs.reduced_motion, media.reducedMotion);
+  // The runtime's motion decides the DOM and the canvas alike: neither re-derives it from `prefs` and
+  // `media`, which cannot see the boolean twin, a persisted local choice or the session override.
+  const motion = useResolvedMotion();
+  const flags = useMemo(() => resolveFlags(prefs, motion), [prefs, motion]);
+  const reducedMotion = motion === "reduce";
   const increasedContrast = resolveTriState(prefs.increased_contrast, media.highContrast);
 
   useEffect(() => {
