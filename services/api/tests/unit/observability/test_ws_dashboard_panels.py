@@ -19,7 +19,12 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE, MetricSpec
 from candleviewer.ws.limits import MAX_SUBSCRIPTIONS
 from candleviewer.ws.metrics import JSON_KIND, MSGPACK_KIND
 from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES
-from candleviewer.ws.pacing import LAGGING_QUEUE_PCT, LAGGING_RTT_MS
+from candleviewer.ws.pacing import (
+    LAGGING_QUEUE_PCT,
+    LAGGING_RTT_MS,
+    SATURATED_QUEUE_PCT,
+    SATURATED_RTT_MS,
+)
 from candleviewer.ws.sequencing import MAX_OUTBOUND_FRAME_BYTES
 
 _ROOT = Path(__file__).resolve().parents[5]
@@ -221,7 +226,13 @@ def test_each_ws_line_sits_at_its_documented_value() -> None:
     )
     handshake = re.fullmatch(r"p99 > (\d+)s", _BY_NAME["cv_ws_handshake_seconds"].alert)
     assert handshake
-    assert (queue_from, rtt_from) == (LAGGING_QUEUE_PCT, LAGGING_RTT_MS)  # the code's own edges
+    # The document's class edges are the code's own: lagging from, saturated from.
+    assert (queue_from, queue_to, rtt_from, rtt_to) == (
+        LAGGING_QUEUE_PCT,
+        SATURATED_QUEUE_PCT,
+        LAGGING_RTT_MS,
+        SATURATED_RTT_MS,
+    )
     expected: dict[str, set[float]] = {
         "WS fan-out latency p95": {0.02},
         "WS resyncs in the range": {resync_target, resync_fail},

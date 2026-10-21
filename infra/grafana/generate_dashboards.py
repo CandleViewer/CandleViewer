@@ -419,7 +419,7 @@ def _ws_gateway(b: Board) -> None:
         "WS bandwidth per connection, sampled (lines: 350 KiB/s target, 1 MiB/s hard fail)",
         f'sum(rate(cv_ws_frame_bytes_sum{{{E},kind=~"json|msgpack"}}[{RI}])) '
         f"/ clamp_min(sum(cv_ws_connections_in_use{{{E}}}), 1)",
-        "Bps",
+        "binBps",
         350 * KIB,
         MIB,
     )
@@ -667,7 +667,8 @@ def _ws_cost(b: Board) -> None:
         "Build and render time of each snapshot the cache builds, by family; one served from the "
         "cache is not observed. The lines are 23-ws-protocol.md 16.3's budget for a full "
         "re-snapshot of the reference workspace (target 400 ms, hard fail 1.5 s), so one family "
-        "alone above them breaks it.",
+        "alone above them breaks it. Below them is no proof of the budget, which is the sum over "
+        "the workspace.",
     )
     _threshold_lines(b)
     b.ts(
@@ -681,7 +682,8 @@ def _ws_cost(b: Board) -> None:
     _describe(
         b,
         "All chunks of each snapshot sent, by family. The lines are 16.3's workspace re-snapshot "
-        "budget (target 700 KiB, hard fail 2 MiB), as for the build time.",
+        "budget (target 700 KiB, hard fail 2 MiB), as for the build time: below them is no proof "
+        "of the budget, which is the sum over the workspace.",
     )
     _threshold_lines(b)
 

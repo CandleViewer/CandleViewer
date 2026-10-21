@@ -2,13 +2,17 @@
 
 The ticket's design notes: `topic` (the family) and `kind` are safe labels; a symbol or a user id
 is not, and belongs in logs. Each label below has a closed value set in code, and each labelled
-series a `max_series` cap in the catalogue; the per-series tests (`tests/unit/ws/`) pin each set
-against its cap. Here: no WS series takes a label outside the reviewed names or an identifier,
-each labelled one declares a cap, and the one series with a `symbol` label folds every symbol past
-the first `MAX_SYMBOL_LABELS` into `other`.
+series a `max_series` cap in the catalogue. Several per-series tests (`tests/unit/ws/`) pin the
+runtime folds; for a re-exported prometheus_client series the cap is the catalogue's declaration,
+which this module pins. Here: no WS series takes a label outside the reviewed names or an
+identifier, each labelled one declares its own cap, and the one series with a `symbol` label folds
+every symbol past the first `MAX_SYMBOL_LABELS` into `other`. The machine-feed series
+(`cv_machine_ws_*`, E17-T08) are not this ticket's and are not covered here.
 """
 
 from __future__ import annotations
+
+import dataclasses
 
 from candleviewer.observability.metrics_catalogue import CATALOGUE, MetricSpec
 from candleviewer.ws.metrics import CV_WS_NAMES, EXPORTED_NAMES
@@ -43,6 +47,8 @@ IDENTIFIERS = frozenset(
 )
 #: The largest cap a WS series declares: `cv_ws_subscribe_total`, topic family x result.
 LARGEST_CAP = 256
+#: What a series gets when its catalogue entry omits `max_series`.
+DEFAULT_CAP = next(f.default for f in dataclasses.fields(MetricSpec) if f.name == "max_series")
 
 
 def _ws_specs() -> list[MetricSpec]:
@@ -66,6 +72,8 @@ def test_every_labelled_ws_series_declares_its_cap() -> None:
     capped = {s.name: s.max_series for s in _ws_specs() if s.labels}
     assert capped
     assert {n: cap for n, cap in capped.items() if not 1 <= cap <= LARGEST_CAP} == {}
+    # A labelled series that omitted its cap would carry the default: each states its own.
+    assert {n: cap for n, cap in capped.items() if cap == DEFAULT_CAP} == {}
 
 
 def test_symbol_is_a_label_only_where_symbols_fold_into_other() -> None:
