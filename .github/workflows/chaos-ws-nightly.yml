@@ -1,0 +1,75 @@
+name: chaos-ws-nightly
+
+# E17-Q02 (#410): the client WS chaos suite (services/api/tests/chaos/ws, catalogue in its
+# SCENARIOS.md), every night on main and on demand. Additive to the PR lane: _job-py.yml's
+# db-chaos-5 runs the suite when pr.yml's `py` filter matches (marker `chaos`); this run repeats
+# it and picks up any `chaos` test that also carries `harness` (E17-Q02's full-length runs),
+# which that lane deselects.
+# Not a required check (C-9.1 is unchanged), but a red night blocks the next release (C-9.2,
+# C-13.6). One pytest call; its own `-m` replaces addopts', so `not flaky` repeats the C-9.3
+# quarantine. No retries: a flaky test is quarantined, never re-run until green. `--no-cov`:
+# addopts' coverage floor is the lanes' and a suite this size cannot meet it (as
+# perf-storage-nightly.yml, #3429). `-rA` puts the records the tests print (D8 accounting,
+# recovery times) in the job log. A red night comments on, or opens, the `chaos-ws` signal's issue
+# (_nightly-issue.yml, #1849); it pages no one, as CI has no path into Alertmanager. No
+# workflow-level concurrency group (#3449). Offline: loopback only, no exchange egress (C-13.5).
+on:
+  schedule:
+    - cron: "29 3 * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  chaos-ws:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35 # the step caps (3 + 3 + 5 + 15 + 3) plus 6 for set-up and post steps
+    env:
+      CV_ENV: test
+      CV_CI_ALLOWED_HOSTS: "" # SR-140: loopback only (the network guard reads this)
+      PYTHONIOENCODING: utf-8
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+      - name: Install uv (cache keyed on uv.lock)
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        timeout-minutes: 3
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+      - name: uv sync --frozen (fails if pyproject.toml drifted from uv.lock)
+        timeout-minutes: 5
+        run: uv sync --frozen --all-groups
+      - name: WS chaos suite (the PR lane's tests and any harness-marked ones)
+        # The suite takes minutes. This limit ends a hang as a failed step, which the report job
+        # files; the job's own limit would cancel the job, which it does not file.
+        timeout-minutes: 15
+        run: |
+          uv run pytest tests/chaos/ws -m "chaos and not flaky" --no-cov -p no:randomly \
+            -p no:cacheprovider -rA --durations=20 --junitxml=chaos-ws-junit.xml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        timeout-minutes: 3
+        with:
+          name: chaos-ws-junit
+          path: services/api/chaos-ws-junit.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  chaos-ws-issue:
+    needs: chaos-ws
+    if: ${{ always() && needs.chaos-ws.result == 'failure' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: chaos-ws
+      title-prefix: "chaos: ws gateway nightly failed"
+      labels: qa,area/backend-platform,priority/p1
+      body: "chaos-ws-nightly (E17-Q02, #410: the client WS chaos suite, C-13.6) failed, and a red night blocks the next release (C-9.2). Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Artifact: chaos-ws-junit. Triage: docs/ci-runbook.md section 2, Nightly WS chaos. Quarantine a flaky test per C-9.3; never re-run until green."

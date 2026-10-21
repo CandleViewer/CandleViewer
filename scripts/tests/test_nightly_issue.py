@@ -6,7 +6,9 @@ their verdict and report to one caller job per signal, which calls `_nightly-iss
 on the newest open issue that github-actions[bot] opened with the signal's title prefix and labels,
 or opens one. Other authors' issues never match: no account can take the bot's login.
 #3449: a workflow-level group shared by scheduled and manual runs let a pending run replace the
-scheduled one, so the per-signal group sits on the seconds-long report job instead."""
+scheduled one, so the per-signal group sits on the seconds-long report job instead.
+#410 (E17-Q02): chaos-ws-nightly.yml is a caller too: its `chaos-ws-issue` job reports a failed
+`chaos-ws` job, and registers here or this suite fails."""
 
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ NIGHTLIES = (
     "perf-storage-nightly.yml",
     "perf-ingestion-nightly.yml",
     "dast-admin-nightly.yml",
+    "chaos-ws-nightly.yml",
 )
 BOT = "github-actions[bot]"
 RUN_URL = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -80,6 +83,14 @@ SIGNALS = {
         "dast-admin",
         "security: dast-admin-nightly failed",
         "security,area/accounts-admin",
+    ),
+    # E17-Q02: the client WS chaos suite; any failed step of its one job is the verdict.
+    ("chaos-ws-nightly.yml", "chaos-ws-issue"): (
+        "chaos-ws",
+        "${{ always() && needs.chaos-ws.result == 'failure' }}",
+        "chaos-ws",
+        "chaos: ws gateway nightly failed",
+        "qa,area/backend-platform,priority/p1",
     ),
 }
 #: The verdicts the measuring jobs hand over: the conditions of the issue steps they replace, less
