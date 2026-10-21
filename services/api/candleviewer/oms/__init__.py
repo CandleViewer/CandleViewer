@@ -18,6 +18,12 @@ docs/plan/20-architecture.md Sec.3 and the module table in CONSTITUTION.md Sec.3
   (`order_link_allocator`), success-after-lookup and history retention
   (`order_link_resolution`), the typed errors (`errors`) and the in-memory lookup fake
   (`fakes`). The submission pipeline that calls them is E29-T04.
+- The submission pipeline's checks (E29-T04, #913, its first slice): the ports it consumes with
+  their interim implementations and `announce_interim_ports` (`ports`, ruling R4),
+  classification by effect, the intent rule and `NativeStopGuard` (`classify`, SR-E29-01),
+  `Validator.check_order` and `check_route` (`validator`), and `problem_for`, the one table of
+  the answer each OMS error gets at the HTTP edge (`errors`). Nothing calls them yet: the
+  pipeline that does is the ticket's next slice.
 - The persistence (E29-T01): `OrderRepository`, `OrderEventRepository`,
   `ExecutionRepository`, `PositionRepository` and `PositionSnapshotRepository`
   (`repository`) over the driver-free stores of M10, the `WriteTimer` behind
