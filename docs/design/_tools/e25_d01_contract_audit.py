@@ -12,10 +12,13 @@ mentions an event name never counts), (6) the Poisson noise floor of a trades-pe
 tape is overdispersed), (6b) the deterministic-mean step response of those windows and of three
 rolling-baseline lengths to a sustained burst — detection latency, re-normalisation, the dip after
 the burst, warm-up — under two sd models printed side by side, the Poisson sd and the baseline
-window's sample sd (the baseline trade-off of F4c / Q13), (7) the `22` `MetricCode` members against
-the shipped vocabulary's codes (G11) and (8) the Sprint 10 and 13 dates from `calendar_cv.py`. A row
-reads NOT FOUND when the anchor text moved; the tool never guesses a value and never raises on a
-moved anchor. Results are TypedDicts, so `mypy --strict` is clean (round-3 lens item 8).
+window's sample sd (the baseline trade-off of F4c / Q13), with a median/MAD baseline's cliff at
+B / 2 and, by a seeded brute force with Poisson draws, where its hold ends once the buckets are
+noisy, (7) the `22` `MetricCode` members against the shipped vocabulary's codes (G11) and (8) the
+Sprint 10 and 13 dates from `calendar_cv.py`. A row reads NOT FOUND when the anchor text moved; the
+tool never guesses a value and never raises on a moved anchor. Results are TypedDicts, so
+`mypy --strict` is clean (delta lens round 2, item 8). The lens rounds are named as the report names
+them: the pre-PR lens, then the orchestrator's text lens rounds 1, 3 and 4 and delta lens round 2.
 
 Usage: python3 -I docs/design/_tools/e25_d01_contract_audit.py          (Markdown)
        python3 -I docs/design/_tools/e25_d01_contract_audit.py --json   (the boards' numbers)
@@ -23,6 +26,7 @@ Usage: python3 -I docs/design/_tools/e25_d01_contract_audit.py          (Markdow
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -31,6 +35,7 @@ import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from statistics import median, median_low
 from typing import TypedDict
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -42,6 +47,8 @@ WINDOWS_S = (1, 5, 30)  # the windows 11 / 14 / 22 name
 Z, PUSH_HZ, COOLDOWN_S = 3.0, 4, 60  # US-DET-002 z > 3; SCR-055 4 Hz; US-DET-002 cooldown 60 s
 SCAN_PER_S = 4.0  # one-token scan, E22-D01 F5 (heuristic)
 BURST_K = 3.0  # a sustained burst at 3x the usual rate (shape only, like the noise floor)
+MAD_SCALE = 1.4826  # MAD-to-sd consistency constant, so the median/MAD z compares with the sd ones
+MEDIAN_SEEDS = 20  # seeded runs of the median/MAD brute force (text lens round 4, item 2)
 BASELINES_S = {  # the three rolling-baseline lengths the sources name (F5, C3, Q13)
     300: "shipped tape_speed_zscore base_ms=300000; 22 '1 s vs 300 s baseline'",
     1200: "Jigsaw POT Average Time, '20 minutes is the default' (report 3.2)",
@@ -58,7 +65,7 @@ ZONE_CODES = (  # the imbalance-zone codes F13's layout reads (shipped metrics.p
 )
 
 
-class Regime(TypedDict):  # the result shapes, so `mypy --strict` passes (round-3 lens item 8)
+class Regime(TypedDict):  # the result shapes, so `mypy --strict` passes (delta lens round 2, 8)
     raw: dict[str, str | None]
     sets: dict[str, list[str]]
     sources: int
@@ -88,6 +95,7 @@ class Step(TypedDict):
     burst_multiple: float
     display_window_s: int
     detect_latency_s: dict[str, float]
+    extreme_fraction_of_b: dict[str, float]
     baselines: dict[str, dict[str, str | int]]
 
 
@@ -300,7 +308,7 @@ def z3_threshold(n: float) -> int:
     """The smallest count with z > Z strictly: floor(n + Z*sqrt(n)) + 1, so n = 25 gives 41.
 
     `ceil(n + Z*sqrt(n))` was wrong when n + Z*sqrt(n) is an integer: at n = 25 it gave 40, which
-    is z = 3 exactly, not z > 3 (round-2 lens item 6).
+    is z = 3 exactly, not z > 3 (text lens round 1, item 6).
     """
     return math.floor(n + Z * math.sqrt(n)) + 1
 
@@ -351,6 +359,48 @@ def _root(fn: Callable[[float], float]) -> float:
     return (lo + hi) / 2
 
 
+def _uniform(seed: int, i: int) -> float:
+    """Counter-based uniform in [0, 1): SHA-256 of (seed, draw index), so every platform and
+    Python version draws the same sequence without a stateful generator."""
+    digest = hashlib.sha256(f"{seed}:{i}".encode()).digest()
+    return int.from_bytes(digest[:7], "big") / 2**56
+
+
+def _poisson(u: float, mean: float) -> int:
+    """One Poisson draw by inversion of the uniform u."""
+    p, x = math.exp(-mean), 0
+    cdf = p
+    while u > cdf:
+        x += 1
+        p *= mean / x
+        cdf += p
+    return x
+
+
+def _median_mad_hold(b: int, n: float, k: float, w: int) -> tuple[int, int, int]:
+    """Seconds until a median/MAD baseline of B = b s (b // w buckets of n expected prints) stops
+    reading a sustained k x burst as extreme (z <= Z) with Poisson draws per bucket: the median and
+    the min / max over MEDIAN_SEEDS seeded runs. The numerator is the burst level k * n, as in the
+    two mean models; the MAD is scaled by MAD_SCALE. As the burst fraction nears one half the median
+    climbs through the usual distribution's upper tail and the MAD widens, so the hold ends before
+    the deterministic flip at B / 2 (median_cliff_s)."""
+    ends: list[int] = []
+    for seed in range(MEDIAN_SEEDS):
+        draws = iter(range(1 << 30))  # the draw index of this seed's sequence
+        window = [_poisson(_uniform(seed, next(draws)), n) for _ in range(b // w)]
+        for i in range(1, b // w + 1):
+            window.pop(0)
+            window.append(_poisson(_uniform(seed, next(draws)), k * n))
+            med = median(window)
+            mad = median(abs(v - med) for v in window) * MAD_SCALE
+            if mad > 0 and (k * n - med) / mad <= Z:
+                ends.append(i * w)
+                break
+        else:
+            ends.append(b)  # the deterministic bound: at B every bucket is a burst bucket
+    return median_low(ends), min(ends), max(ends)
+
+
 def step_response() -> Step:
     """Deterministic-mean step response at RATES[0] prints/s to a BURST_K x burst (shape only).
 
@@ -360,14 +410,20 @@ def step_response() -> Step:
     WINDOWS_S[1]: inside a sustained burst the baseline mean rises linearly to the burst rate over
     B, so the burst reads z <= 3 ("no longer extreme") at some t < B and z = 0 ("usual") at t = B;
     after a burst at least B long ends, the baseline decays over B and the usual rate reads z < -1
-    ("below usual") for part of B. Two sd models side by side (round-3 lens item 1): `*_s` takes
-    the baseline sd as the Poisson sqrt of its mean; `*_sample_sd_s` takes the sample sd of the
-    baseline window's bucket counts — US-DET-002's "z-score against the configured baseline
+    ("below usual") for part of B. Two sd models side by side (delta lens round 2, item 1): `*_s`
+    takes the baseline sd as the Poisson sqrt of its mean; `*_sample_sd_s` takes the sample sd of
+    the baseline window's bucket counts — US-DET-002's "z-score against the configured baseline
     window" read conventionally — which the burst's own buckets inflate. Warm-up is B itself.
     (c) A median/MAD baseline (one of the burst-robust levers of F4c / Q13) keeps the usual level
     as its median while fewer than half of its buckets are burst buckets, then jumps to the burst
     level, so z falls to 0 at once at `median_cliff_s` = B / 2 — a cliff, not the mean's slope
-    (deterministic mean; any burst multiple above 1; round-4 lens item 2).
+    (deterministic mean; any burst multiple above 1; text lens round 3, item 2). With Poisson
+    draws per bucket the hold ends earlier and the cliff has a short ramp: `median_hold_noisy_s`
+    is the median over MEDIAN_SEEDS seeded runs of the first bucket at which z <= Z, with the min
+    and max beside it (_median_mad_hold; text lens round 4, item 2). `extreme_fraction_of_b` is
+    the fraction of B at which the burst stops reading extreme under each model, the same at every
+    length: the sample-sd mean's is the smallest, the median/MAD's 0.5 sits between it and the
+    Poisson-sd mean's (text lens round 4, item 3).
     """
     lam, k, w_disp = RATES[0], BURST_K, WINDOWS_S[1]
     detect: dict[str, float] = {}
@@ -382,8 +438,10 @@ def step_response() -> Step:
     # sample sd: the burst fraction of B at which z = Z, and the usual fraction at which z = -1
     f_extreme = _root(lambda f: _z_sample_sd(f, n, k, True) - Z)
     g_quiet = _root(lambda g: _z_sample_sd(g, n, k, False) + 1)
-    baselines: dict[str, dict[str, str | int]] = {
-        f"{b} s": {
+    baselines: dict[str, dict[str, str | int]] = {}
+    for b, src in BASELINES_S.items():
+        hold, hold_min, hold_max = _median_mad_hold(b, n, k, w_disp)
+        baselines[f"{b} s"] = {
             "source": src,
             "warmup_s": b,
             "extreme_until_s": round(b * (r_extreme - 1) / (k - 1)),
@@ -392,14 +450,20 @@ def step_response() -> Step:
             "below_usual_for_s": round(b * (k - r_quiet) / (k - 1)),
             "below_usual_for_sample_sd_s": round(b * g_quiet),
             "median_cliff_s": b // 2,
+            "median_hold_noisy_s": hold,
+            "median_hold_noisy_min_s": hold_min,
+            "median_hold_noisy_max_s": hold_max,
         }
-        for b, src in BASELINES_S.items()
-    }
     return {
         "rate_per_s": lam,
         "burst_multiple": k,
         "display_window_s": w_disp,
         "detect_latency_s": detect,
+        "extreme_fraction_of_b": {
+            "poisson_sd": round((r_extreme - 1) / (k - 1), 2),
+            "sample_sd": round(f_extreme, 2),
+            "median_mad": 0.5,
+        },
         "baselines": baselines,
     }
 
@@ -420,7 +484,8 @@ def sprints() -> dict[str, str]:
 
 def main(argv: list[str]) -> int:
     # `python -I` ignores PYTHONIOENCODING / PYTHONUTF8, so a non-UTF-8 locale would otherwise
-    # encode the section signs and multiplication signs below in locale bytes (round-2 item 7).
+    # encode the section signs and multiplication signs below in locale bytes (text lens round 1,
+    # item 7).
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(encoding="utf-8")
     reg, tape, params, pl = regime_vocabularies(), tape_windows(), detector_params(), placement()
@@ -488,17 +553,25 @@ def main(argv: list[str]) -> int:
         "- detection latency to z > 3 per fast window (the same under both sd models): "
         + ", ".join(f"{w}: {t} s" for w, t in st["detect_latency_s"].items())
     )
+    frac = st["extreme_fraction_of_b"]
+    print(
+        "- the burst stops reading extreme at this fraction of B, the same at every length: "
+        f"Poisson sd {frac['poisson_sd']}, sample sd {frac['sample_sd']}, median/MAD "
+        f"{frac['median_mad']} (deterministic)"
+    )
     print(
         f"- rolling baseline vs the {st['display_window_s']} s display window (warm-up | stops "
         "reading extreme, Poisson sd / sample sd | reads usual | reads below usual after it ends, "
-        "Poisson sd / sample sd | a median/MAD baseline's cliff at B / 2):"
+        "Poisson sd / sample sd | a median/MAD baseline's cliff at B / 2, then where its hold ends "
+        f"with Poisson draws per bucket — median and min-max over {MEDIAN_SEEDS} seeds):"
     )
     for b, row in st["baselines"].items():
         print(
             f"  - {b} ({row['source']}): {row['warmup_s']} s | {row['extreme_until_s']} / "
             f"{row['extreme_until_sample_sd_s']} s | {row['usual_at_s']} s | "
             f"{row['below_usual_for_s']} / {row['below_usual_for_sample_sd_s']} s | "
-            f"{row['median_cliff_s']} s"
+            f"{row['median_cliff_s']} s, noisy {row['median_hold_noisy_s']} s "
+            f"({row['median_hold_noisy_min_s']}-{row['median_hold_noisy_max_s']})"
         )
     print("\n## 22 MetricCode vs the shipped vocabulary (G11)\n")
     print(
