@@ -162,6 +162,7 @@ from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.users import (
     AccountAccessStore,
+    PermissionChangeNotifier,
     SnapshotResolver,
     UserDisable,
     UserRoleStore,
@@ -409,7 +410,7 @@ from candleviewer.storage.retention.workspaces_tasks import (
 )
 from candleviewer.storage.service import StorageService
 from candleviewer.user_cascade_wiring import build_user_disable_service, build_users_purge_task
-from candleviewer.view_as_wiring import build_view_as
+from candleviewer.view_as_wiring import RoleChangeNotifier, build_view_as
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
@@ -1750,7 +1751,8 @@ def create_app(
         spec=spec,
     )
     # #3085: the view-as service and its sweeper, which the lifespan runs (`None` on the fake
-    # backend, which has no session store).
+    # backend, which has no session store). A role change, by either users router, ends the
+    # contexts it makes ineligible before the WS registry re-evaluates the user's sockets.
     view_as = build_view_as(
         resolved,
         auth=ctx.auth,
@@ -1760,13 +1762,16 @@ def create_app(
         clock=auth_clock,
     )
     app.state.view_as, app.state.view_as_sweeper = view_as or (None, None)
+    roles_notifier: PermissionChangeNotifier = (
+        ws_registry if view_as is None else RoleChangeNotifier(view_as[0], ws_registry)
+    )
     # Audit emitter + notifier are mandatory; store/resolver `None` -> 501.
     app.include_router(
         make_users_router(
             user_role_store,
             _LazyAuditEmitter(ctx.audit),
             owner_resolver,
-            ws_registry,
+            roles_notifier,
             auth=ctx.auth,
             account_access=account_access_store,
             access_service=access_service,
@@ -1790,7 +1795,7 @@ def create_app(
             build_user_admin_store(resolved),
             _LazyAuditEmitter(ctx.audit),
             owner_resolver,
-            ws_registry,
+            roles_notifier,
             auth=ctx.auth,
             user_disable=user_disable,
         )

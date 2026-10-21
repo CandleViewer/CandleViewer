@@ -288,6 +288,9 @@ class FakeSessionRepository:
     async def list_live_view_as_by_target(self, target_user_id: UUID) -> tuple[SessionRecord, ...]:
         return tuple(s for s, v in self._unended() if v.target_user_id == target_user_id)
 
+    async def list_live_view_as_by_viewer(self, viewer_user_id: UUID) -> tuple[SessionRecord, ...]:
+        return tuple(s for s, _ in self._unended() if s.user_id == viewer_user_id)
+
 
 class YieldingFindRepository(FakeSessionRepository):
     """Yields after each by-id and by-refresh-hash read, so every request of a burst holds the row

@@ -237,6 +237,33 @@ class ViewAsService:
             return False
         return True
 
+    @audited("admin.view_as_ended")
+    async def on_roles_changed(self, user_id: UUID) -> None:
+        """A role change of `user_id` (#3085): each live context the user views from, or that
+        names them as its target, is evaluated at once as a request's would be, so one the change
+        made ineligible (`users:write` gone, or the target an Owner now) ends before the WebSocket
+        registry re-evaluates the user's sockets. A read or a row that fails leaves the rest to
+        run; the first failure is raised after them, and the sweeper's next tick evaluates what it
+        left."""
+        now = self._clock()
+        rows: dict[UUID, SessionRecord] = {}
+        failed: Exception | None = None
+        for read in (
+            self._store.list_live_view_as_by_viewer,
+            self._store.list_live_view_as_by_target,
+        ):
+            try:
+                rows |= {row.id: row for row in await read(user_id)}
+            except Exception as exc:  # the other read still runs
+                failed = failed or exc
+        for row in rows.values():
+            try:
+                await self.evaluate(row, now=now)
+            except Exception as exc:  # the others still end
+                failed = failed or exc
+        if failed is not None:
+            raise failed
+
     @property
     @audit_exempt("read")
     def end_record_bound(self) -> timedelta:

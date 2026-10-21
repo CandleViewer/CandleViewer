@@ -233,6 +233,10 @@ _VIEW_AS_LIVE_BY_TARGET_SQL = _sql(
     "SELECT @COLS@ FROM sessions WHERE view_as_target_user_id = CAST(:target AS uuid) "
     "AND view_as_context_id IS NOT NULL AND view_as_ended_at IS NULL AND revoked_at IS NULL"
 )
+_VIEW_AS_LIVE_BY_VIEWER_SQL = _sql(
+    "SELECT @COLS@ FROM sessions WHERE user_id = CAST(:viewer AS uuid) "
+    "AND view_as_context_id IS NOT NULL AND view_as_ended_at IS NULL AND revoked_at IS NULL"
+)
 
 
 def _elevations(stored: str | None) -> dict[str, datetime]:
@@ -517,3 +521,6 @@ class SqlAlchemySessionRepository:
 
     async def list_live_view_as_by_target(self, target_user_id: uuid.UUID) -> tuple[Any, ...]:
         return await self._many(_VIEW_AS_LIVE_BY_TARGET_SQL, {"target": str(target_user_id)})
+
+    async def list_live_view_as_by_viewer(self, viewer_user_id: uuid.UUID) -> tuple[Any, ...]:
+        return await self._many(_VIEW_AS_LIVE_BY_VIEWER_SQL, {"viewer": str(viewer_user_id)})

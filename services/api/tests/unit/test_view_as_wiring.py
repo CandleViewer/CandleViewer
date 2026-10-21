@@ -19,7 +19,13 @@ from candleviewer.admin.view_as_sweeper import ViewAsSweeper
 from candleviewer.app import _LazyAuditEmitter, create_app
 from candleviewer.auth.service import AuthService
 from candleviewer.settings import Settings
-from candleviewer.view_as_wiring import IdentityEligibility, IdentityLabels, build_view_as
+from candleviewer.view_as_wiring import (
+    HOOK_TIMEOUT_S,
+    IdentityEligibility,
+    IdentityLabels,
+    RoleChangeNotifier,
+    build_view_as,
+)
 from tests.unit.admin.test_view_as_service import _TARGET, _VIEWER, _Ports, _Runner
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.auth.test_step_up import _Clock, _session
@@ -60,6 +66,7 @@ _WRITE = ["users:read", "users:write"]
         (_WRITE, {"status": "disabled", "roles": ["manager"]}, "target_ineligible"),
         (_WRITE, {"status": "invited", "roles": []}, "target_ineligible"),
         (_WRITE, {"status": "suspended", "roles": ["manager"]}, "target_ineligible"),
+        (_WRITE, {"roles": ["manager"]}, "target_ineligible"),  # no status: never read as active
         (_WRITE, {"status": "active", "roles": ["superuser"]}, "target_ineligible"),
         (_WRITE, None, "target_ineligible"),  # gone
     ],
@@ -72,6 +79,7 @@ _WRITE = ["users:read", "users:write"]
         "disabled",
         "invited",
         "unknown-status",
+        "no-status",
         "unknown-role",
         "gone",
     ],
@@ -128,16 +136,43 @@ def test_the_sweeper_settings_outside_their_bounds_are_refused(name: str, value:
         Settings(**{name: value})
 
 
-def test_create_app_puts_the_service_and_its_sweeper_on_app_state() -> None:
-    """So the lifespan, which reads `app.state.view_as_sweeper`, starts and stops it."""
-    real = Settings(
+def _real() -> Settings:
+    return Settings(
         storage_backend="real",
         auth_pepper=SecretStr("test-pepper"),
         auth_totp_key_hex=SecretStr("11" * 32),
         auth_recovery_hmac_key_hex=SecretStr("22" * 32),
         auth_csrf_key_hex=SecretStr("33" * 32),
     )
-    state = create_app(real).state
+
+
+def test_create_app_gives_both_users_routers_the_role_change_notifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A role change by `PUT /users/{id}/roles` or `PATCH /users/{id}` runs the view-as hook, so
+    both routers get the app's one `RoleChangeNotifier` around its service and its registry."""
+    import candleviewer.app as appmod
+
+    seen: dict[str, list[Any]] = {}
+    for name in ("make_users_router", "make_user_admin_router"):
+        real = getattr(appmod, name)
+
+        def capture(*args: Any, _real: Any = real, _name: str = name, **kwargs: Any) -> Any:
+            given = (*args, *kwargs.values())
+            seen[_name] = [a for a in given if isinstance(a, RoleChangeNotifier)]
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(appmod, name, capture)
+    state = create_app(_real()).state
+    assert set(seen) == {"make_users_router", "make_user_admin_router"}
+    (one,), (other,) = seen.values()
+    assert one is other and one._view_as is state.view_as
+    assert one._registry is state.ws_registry and one._timeout_s == HOOK_TIMEOUT_S
+
+
+def test_create_app_puts_the_service_and_its_sweeper_on_app_state() -> None:
+    """So the lifespan, which reads `app.state.view_as_sweeper`, starts and stops it."""
+    state = create_app(_real()).state
     assert isinstance(state.view_as, ViewAsService)
     assert isinstance(state.view_as_sweeper, ViewAsSweeper)
     assert state.view_as_sweeper._service is state.view_as

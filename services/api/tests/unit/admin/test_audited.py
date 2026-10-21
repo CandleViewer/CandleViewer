@@ -222,6 +222,7 @@ def test_every_public_method_of_an_admin_class_is_declared() -> None:
         ("view_as", "ViewAsService.evaluate", {"admin.view_as_ended"}),
         ("view_as", "ViewAsService.leave", {"admin.view_as_ended"}),
         ("view_as", "ViewAsService.write_end_record", {"admin.view_as_ended"}),
+        ("view_as", "ViewAsService.on_roles_changed", {"admin.view_as_ended"}),
         ("view_as_sweeper", "ViewAsSweeper.tick", {"admin.view_as_ended"}),
         (
             "service",

@@ -292,3 +292,8 @@ class ViewAsSessionStore(Protocol):
     async def list_live_view_as_by_target(self, target_user_id: UUID) -> tuple[SessionRecord, ...]:
         """Unrevoked rows whose unended context names `target_user_id`; the caller reads phases."""
         ...
+
+    async def list_live_view_as_by_viewer(self, viewer_user_id: UUID) -> tuple[SessionRecord, ...]:
+        """Unrevoked rows of `viewer_user_id`'s sessions that hold an unended context; the caller
+        reads phases."""
+        ...

@@ -430,6 +430,11 @@ _VIEW_AS_CALLS: dict[str, tuple[Call, str, dict[str, Any]]] = {
         "_VIEW_AS_LIVE_BY_TARGET_SQL",
         {"target": str(_TARGET)},
     ),
+    "list_live_view_as_by_viewer": (
+        lambda r: r.list_live_view_as_by_viewer(_TARGET),
+        "_VIEW_AS_LIVE_BY_VIEWER_SQL",
+        {"viewer": str(_TARGET)},
+    ),
 }
 _WRITES = [method for method in _VIEW_AS_CALLS if not method.startswith("list_")]
 

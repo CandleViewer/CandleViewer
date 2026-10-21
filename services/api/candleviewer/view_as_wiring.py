@@ -1,5 +1,5 @@
-"""Composition-root adapters for view-as (#3085): `ViewAsService`'s ports, and `build_view_as`,
-which composes the service and its sweeper.
+"""Composition-root adapters for view-as (#3085): `ViewAsService`'s ports, the users routes'
+role-change notifier, and `build_view_as`, which composes the service and its sweeper.
 
 The eligibility port reads what the request resolvers read (`SessionSnapshotResolver`): the
 viewer's permissions (none unless active), the target's status and roles. What it cannot place,
@@ -11,10 +11,13 @@ route lands, so no socket is bound to one meanwhile.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Collection, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID
+
+import structlog
 
 from candleviewer.admin.view_as import (
     CloseReason,
@@ -24,6 +27,7 @@ from candleviewer.admin.view_as import (
     ViewAsService,
 )
 from candleviewer.admin.view_as_sweeper import ViewAsSweeper
+from candleviewer.api.users import PermissionChangeNotifier
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -34,6 +38,7 @@ if TYPE_CHECKING:
     from candleviewer.auth.service import AuthService
 
 _VIEWABLE: Final = frozenset({UserStatus.ACTIVE.value, UserStatus.LOCKED.value})
+HOOK_TIMEOUT_S: Final = 5.0  # bounds the role-change hook, so it never holds the registry
 
 
 class Identity(Protocol):  # `SqlAlchemyIdentityProvider`
@@ -82,6 +87,44 @@ class IdentityLabels:
 class UnwiredSockets:
     async def close_family(self, session_id: str, *, reason: CloseReason) -> None:
         return None
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
+
+class RoleChangeNotifier:
+    """The users routes' `PermissionChangeNotifier`: `ViewAsService.on_roles_changed` runs first,
+    so no viewing socket takes on a promoted target's Owner scope when the WebSocket registry
+    re-evaluates. A hook that fails or outlasts its bound still lets the registry run; its error
+    is raised after, for the route to count (`users.update.step`), and the sweeper evaluates what
+    it left within a tick. A cancelled request still runs the registry, and a registry failure
+    then is logged, never raised: it would replace the cancellation."""
+
+    def __init__(
+        self,
+        view_as: ViewAsService,
+        registry: PermissionChangeNotifier,
+        *,
+        timeout_s: float = HOOK_TIMEOUT_S,
+    ) -> None:
+        self._view_as, self._registry, self._timeout_s = view_as, registry, timeout_s
+
+    async def roles_changed(self, user_id: UUID) -> None:
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                await self._view_as.on_roles_changed(user_id)
+        except asyncio.CancelledError:
+            try:
+                await self._registry.roles_changed(user_id)
+            except Exception as exc:
+                _log().error("admin.view_as.registry_push_failed", error=type(exc).__name__)
+            raise
+        except Exception:
+            await self._registry.roles_changed(user_id)
+            raise
+        await self._registry.roles_changed(user_id)
 
 
 def build_view_as(
