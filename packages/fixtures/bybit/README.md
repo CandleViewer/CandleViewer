@@ -77,8 +77,10 @@ entry and `build_corpus.py` row, and its line below. The same PR removes the fil
 recording, or updates, every test that loads the file by name (`rest("rest/trading-...")`; the
 modules are those `grep -rln 'rest/trading-' services/api/tests` lists), so no test reads a
 deleted file. Not documented, so not transcribed: a `10001` duplicate's text (E29
-model O-1), a Partial-mode TP/SL order row, a REST `create-batch` reply with a refused item, and a
-linear position, wallet (USDT) or fee-rate row; strict-model unit tests alone cover those parsers.
+model O-1), a Partial-mode TP/SL order row, a REST `create-batch` reply with a refused item (whose
+echo of its request's `orderLinkId`, which the port pairs it by, is assumed pending E29-K01: 24
+§14.1), and a linear position, wallet (USDT) or fee-rate row; strict-model unit tests alone
+cover those parsers.
 
 Licence: the upstream repository `bybit-exchange/docs` has no licence file at that commit, so no
 licence grants these examples. Each file reproduces one short documented example, used only to

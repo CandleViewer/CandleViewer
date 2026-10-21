@@ -5,8 +5,11 @@ recorded in this corpus (`publicTrade`, `tickers`, `orderbook`, `recent-trade`)
 and the field names parsed by `candleviewer.exchange.bybit` (24-internal-schemas
 §2.1-§2.3, §8.6, §14.3). Owner exception #1778 group A: replace with
 `capture_fixture.py` captures when a refresh is recorded; the `recorded_*` files
-are the first such captures (#3447), listed here, never rewritten. Re-running is
-byte-identical (seeded RNG, fixed epoch). Run: python tools/fixtures/build_corpus.py
+are the first such captures (#3447), listed here, never rewritten. The
+`rest/trading-*.json` files are transcribed from the Bybit v5 documentation
+(#2877 ruling R2), listed here and never rewritten either: the builder emits only
+their manifest entries. Re-running is byte-identical (seeded RNG, fixed epoch).
+Run: python tools/fixtures/build_corpus.py
 """
 
 from __future__ import annotations
