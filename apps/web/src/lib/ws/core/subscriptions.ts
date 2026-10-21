@@ -1,7 +1,7 @@
-// E17-T04 S2 (23 5.2, 5.4, 7.1-7.2, 9.5, 11; C2-C5, C10, C11): the subscription registry. It counts
-// consumers per stream, records what the server says about each subscription (`sub_ok`, `ctl_ok`,
-// `unsub_ok`, `revoked`: the control plane, which names a `ch` and never its stream) and turns
-// validated data frames into what the engine delivers: a frame applies only to a baseline it
+// E17-T04 S2 (23 5.2, 5.4, 7.1-7.2, 9.5, 11; C2-C5, C10, C11, C21): the subscription registry. It
+// counts consumers per stream, records what the server says about each subscription (`sub_ok`,
+// `ctl_ok`, `unsub_ok`, `revoked`: the control plane, which names a `ch` and never its stream) and
+// turns validated data frames into what the engine delivers: a frame applies only to a baseline it
 // continues, and anything else voids the stream and asks for a fresh `snap`, through the guard that
 // keeps resyncs under the gateway's limit. Frames leave through `host.deliver`, in order: queueing
 // and fan-out to tabs belong to the layer that owns the consumers. No sockets, timers or wall clock

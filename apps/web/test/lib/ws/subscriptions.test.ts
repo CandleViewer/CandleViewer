@@ -164,7 +164,7 @@ describe("snapshot staleness is meta.stale (7.2, C21)", () => {
     expect(handle.status).toBe("stale");
   });
 
-  it("shows it once a chunked set is complete, read from the frame that completes it: every chunk repeats it", () => {
+  it("shows it once a chunked set is complete: every chunk repeats it", () => {
     const { registry, take } = setup();
     const handle = registry.consume(spec({ ch: BARS }));
     registry.onData(barsSnap(null, STALE, { id: "set-1" }), 1);
