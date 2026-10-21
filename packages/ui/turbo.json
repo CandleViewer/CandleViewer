@@ -15,6 +15,7 @@
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
+        "$TURBO_ROOT$/apps/web/package.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
         "$TURBO_ROOT$/tools/contrast/**",
         "$TURBO_ROOT$/tools/style-dictionary/**"
@@ -34,6 +35,7 @@
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
+        "$TURBO_ROOT$/apps/web/package.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
         "$TURBO_ROOT$/tools/contrast/**",
         "$TURBO_ROOT$/tools/style-dictionary/**"

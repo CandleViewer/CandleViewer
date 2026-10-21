@@ -1,54 +1,9 @@
-import { execFileSync } from "node:child_process";
-import {
-  mkdtempSync,
-  rmSync,
-  mkdirSync,
-  writeFileSync,
-  readFileSync,
-  existsSync,
-  cpSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { tokenRows } from "../../src/docs/TokenTables.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UI_ROOT = path.resolve(__dirname, "..", "..");
-const BUILD_SCRIPT = path.join(UI_ROOT, "scripts", "build-tokens.mjs");
-
-function runBuild(cwd = UI_ROOT) {
-  const script = path.join(cwd, "scripts", "build-tokens.mjs");
-  return execFileSync(process.execPath, [script], { cwd, encoding: "utf-8" });
-}
-
-/** A temp copy of the files the token build reads; `<dir>/packages/ui` is where it builds. */
-function makeSandbox() {
-  const dir = mkdtempSync(path.join(tmpdir(), "cv-tokens-"));
-  mkdirSync(path.join(dir, "packages", "ui", "tokens"), { recursive: true });
-  cpSync(path.join(UI_ROOT, "tokens"), path.join(dir, "packages", "ui", "tokens"), {
-    recursive: true,
-  });
-  mkdirSync(path.join(dir, "packages", "ui", "scripts"), { recursive: true });
-  cpSync(BUILD_SCRIPT, path.join(dir, "packages", "ui", "scripts", "build-tokens.mjs"));
-  cpSync(
-    path.join(UI_ROOT, "scripts", "chart-color-modes.mjs"),
-    path.join(dir, "packages", "ui", "scripts", "chart-color-modes.mjs"),
-  );
-  mkdirSync(path.join(dir, "tools", "style-dictionary", "formats"), { recursive: true });
-  cpSync(
-    path.join(UI_ROOT, "..", "..", "tools", "style-dictionary", "formats"),
-    path.join(dir, "tools", "style-dictionary", "formats"),
-    { recursive: true },
-  );
-  cpSync(
-    path.join(UI_ROOT, "..", "..", "tools", "style-dictionary", "package.json"),
-    path.join(dir, "tools", "style-dictionary", "package.json"),
-  );
-  return dir;
-}
+import { UI_ROOT, makeSandbox, runBuild } from "./sandbox.js";
 
 /**
  * The `tokens` tree a generated `build/ts/tokens.ts` exports, as the Foundations page imports it.

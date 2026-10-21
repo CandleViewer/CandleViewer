@@ -9,6 +9,8 @@ a11y addon; Style Dictionary token build. Depends only on
   verified by `tokens/tests/verify_tokens.py`.
 - `src/tokens/`, `src/primitives/`, `src/components/` — TS/React surface.
 - `scripts/build-tokens.mjs` — the token build entry point (E05-T01).
+- `scripts/token-css.mjs` — how a token becomes CSS (a shadow as a `box-shadow` list, a typography
+  token as one custom property per field) and the esbuild check of each written CSS file (#3422).
 - `build/` — generated artefacts, **gitignored, never committed**. CI
   regenerates them on every run: the `js` lane's `build` job builds this
   package (which runs `pnpm --filter @candleviewer/ui build:tokens`) and then
@@ -57,6 +59,13 @@ lockfile. Two consecutive builds are byte-identical (asserted by
 - `TOKENS-E003 unknown category for the engine filter` — a
   `color.chart.*`/`color.candle.*`/etc. token whose resolved value isn't a
   hex colour string.
+- `TOKENS-E004 invalid CSS output` — a token that `scripts/token-css.mjs` cannot write (an
+  unknown or missing shadow or typography field, a length or `inset` with no CSS form, an object of
+  any other type) or will not let the browser misread (a name with a character other than a letter,
+  a digit, `_`, `-` or `.`; a value with `;`, a brace, a comment delimiter, a control character, a
+  trailing backslash, a `!` or brackets that do not pair up), or a theme's CSS that esbuild, the
+  production minifier, warns about or minifies to an empty custom property, checked before
+  `build/css/tokens.<theme>.css` is written; the error names the token or the custom property.
 
 **Build output policy**: `build/` is gitignored. The build must be
 deterministic and fast enough (`<=10s` locally) to run on every `pnpm dev`
