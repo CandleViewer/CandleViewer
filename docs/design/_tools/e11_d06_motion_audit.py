@@ -8,7 +8,10 @@ layering from `themes.json`); the contrast formula is `contrast_ratio()` from
 `docs/design/_tools/contrast_check.py` (imported, not re-implemented), so the numbers agree with
 E11-D02's, E11-D04's, E30-D01's and E09-D03's. The motion constants are the PROPOSED values of
 `docs/design/E11/E11-D06.md` section 2 (tau, the termination and fling thresholds, the cut
-thresholds, the durations and easings) and change only when the owner's feel run changes them.
+thresholds, the durations and easings) and change only when the owner's feel run changes them. Two
+comparison arms are computed beside them, never as the proposal: the distance-based termination of
+trial T2 (`abs(v) * tau < 0.5 px`, with its extra tail) and the Material 3 `emphasized-decelerate`
+curve of trial T7 (the A-16 change request to E11-D05; not a token).
 
 Usage: python3 -I docs/design/_tools/e11_d06_motion_audit.py   (Markdown; exit 1 on a FAIL)
        python3 -I docs/design/_tools/e11_d06_motion_audit.py --json   (the boards' numbers)
@@ -54,6 +57,8 @@ THEMES = ("dark", "light", "high-contrast")
 # ---- PROPOSED motion constants (spec section 2; heuristic until the owner's feel run) -----------
 TAU_MS = 120.0  # momentum time constant (`26` section 3.5)
 V_TERM = 0.02  # px/ms, momentum termination (`26` section 3.5)
+V_TERM_DIST_PX = 0.5  # px, the T2 alternative: terminate when the remainder abs(v)*tau < 0.5 px
+V_TERM_ALT = V_TERM_DIST_PX / TAU_MS  # px/ms, the velocity at which the distance rule terminates
 V_MIN_FLING = 0.3  # px/ms, below this a release starts no coast (D3)
 VELOCITY_WINDOW_MS = 50  # the release velocity is estimated over the last 50 ms (E11-S04)
 PLOT_W = 1200  # px, the reference plot width of the worked numbers
@@ -65,7 +70,11 @@ EASING = {
     "standard": (0.2, 0.0, 0.0, 1.0),
     "decelerate": (0.0, 0.0, 0.0, 1.0),
     "accelerate": (0.3, 0.0, 1.0, 1.0),
-}  # motion.easing.* (tokens)
+    # Not a token: Material 3 `easing-emphasized-decelerate` (material-web
+    # tokens/versions/v0_192/_md-sys-motion.scss), the T7 third arm and the A-16 change request.
+    "emphasized_decelerate": (0.05, 0.7, 0.1, 1.0),
+}  # motion.easing.* (tokens) plus the one change-request candidate
+KINEMATICS_EASINGS = ("standard", "decelerate", "emphasized_decelerate")
 SHIMMER_PERIOD_MS = 1200  # D16: the skeleton loop period (`slow` 400 ms would be 2.5 Hz)
 FPS = (30, 60, 144)
 V0_SET = {"gentle": 1.0, "brisk": 3.0, "hard": 8.0}  # px/ms release velocities
@@ -77,12 +86,14 @@ def x_inf(v0: float) -> float:
     return v0 * TAU_MS
 
 
-def t_stop(v0: float) -> float:
+def t_stop(v0: float, v_term: float = V_TERM) -> float:
     """The instant the velocity first falls below the termination threshold."""
-    return TAU_MS * math.log(v0 / V_TERM)
+    return TAU_MS * math.log(v0 / v_term)
 
 
-def integrate_exact(v0: float, dts: list[float]) -> tuple[float, int, float]:
+def integrate_exact(
+    v0: float, dts: list[float], v_term: float = V_TERM
+) -> tuple[float, int, float]:
     """Per-frame integration with the exact exponential (semigroup property): x += v*tau*(1-k),
     v *= k, k = exp(-dt/tau). Returns (x at the terminating frame, frames, v at termination)."""
     x, v = 0.0, v0
@@ -90,9 +101,17 @@ def integrate_exact(v0: float, dts: list[float]) -> tuple[float, int, float]:
         k = math.exp(-dt / TAU_MS)
         x += v * TAU_MS * (1.0 - k)
         v *= k
-        if v < V_TERM:
+        if v < v_term:
             return x, n, v
     raise RuntimeError("did not terminate")
+
+
+def remainder_spike(fps: int) -> float:
+    """The remainder the terminating frame applies (v*tau) divided by that frame's own step
+    (v_prev*tau*(1-k)) with v = v_prev*k: k/(1-k). It is the one-frame velocity spike D2 trades for
+    a rest with nothing moving after it."""
+    k = math.exp(-(1000.0 / fps) / TAU_MS)
+    return k / (1.0 - k)
 
 
 def integrate_naive(v0: float, dts: list[float], k_fixed: float) -> tuple[float, int]:
@@ -322,6 +341,13 @@ def numbers() -> dict[str, object]:
         "shimmer_hz": round(1000 / SHIMMER_PERIOD_MS, 2),
         "shimmer_hz_if_slow_token": round(1000 / DUR["slow"], 2),
         "k60": round(math.exp(-(1000 / 60) / TAU_MS), 4),
+        # D2's remainder: at most v_term * tau in the terminating frame; the T2 alternative
+        # (abs(v) * tau < V_TERM_DIST_PX) terminates later and leaves under half a pixel.
+        "remainder_max_px": round(V_TERM * TAU_MS, 2),
+        "remainder_spike_ratio": {str(fps): round(remainder_spike(fps), 1) for fps in FPS},
+        "alt_term_dist_px": V_TERM_DIST_PX,
+        "alt_term_v_px_per_ms": round(V_TERM_ALT, 5),
+        "alt_extra_tail_ms": round(TAU_MS * math.log(V_TERM / V_TERM_ALT), 1),
     }
     coast: dict[str, object] = {}
     k60 = math.exp(-(1000 / 60) / TAU_MS)
@@ -330,6 +356,7 @@ def numbers() -> dict[str, object]:
             "v0": v0,
             "x_inf_px": round(x_inf(v0), 1),
             "t_stop_ms": round(t_stop(v0), 1),
+            "t_stop_alt_ms": round(t_stop(v0, V_TERM_ALT), 1),
         }
         for fps in FPS:
             x, n, _v = integrate_exact(v0, frame_dts(fps))
@@ -337,9 +364,21 @@ def numbers() -> dict[str, object]:
             short = round(x_inf(v0) - x, 2)
             row[f"exact_{fps}"] = {"frames": n, "x_px": round(x, 2), "short_px": short}
             row[f"naive_{fps}"] = round(xn, 1)
+            xa, na, _va = integrate_exact(v0, frame_dts(fps), V_TERM_ALT)
+            row[f"alt_{fps}"] = {
+                "frames": na,
+                "extra_frames": na - n,
+                "short_px": round(x_inf(v0) - xa, 2),
+            }
         xd, nd, _ = integrate_exact(v0, dropped_frame_dts())
         short_d = round(x_inf(v0) - xd, 2)
         row["exact_60_dropped"] = {"frames": nd, "x_px": round(xd, 2), "short_px": short_d}
+        xad, nad, _ = integrate_exact(v0, dropped_frame_dts(), V_TERM_ALT)
+        row["alt_60_dropped"] = {
+            "frames": nad,
+            "extra_frames": nad - nd,
+            "short_px": round(x_inf(v0) - xad, 2),
+        }
         coast[label] = row
     out["coast"] = coast
     bars_per_w = PLOT_W / 6
@@ -354,7 +393,7 @@ def numbers() -> dict[str, object]:
         "spacing_0p5_to_12_ratio": 12 / 0.5,
     }
     kin: dict[str, object] = {}
-    for name in ("standard", "decelerate"):
+    for name in KINEMATICS_EASINGS:
         kin[name] = {
             "first_frame_fraction": {
                 str(fps): round(first_frame_fraction(name, DUR["normal"], fps), 3) for fps in FPS
@@ -370,6 +409,7 @@ def numbers() -> dict[str, object]:
             ),
         }
     out["kinematics"] = kin
+    out["easing_curves"] = {k: list(v) for k, v in EASING.items()}
     k1 = 1.0 - math.exp(-(1000 / 60) / TAU_MS)  # the exact model's first 60 fps frame (D1)
     out["hard_fling_first_frame_px_60"] = round(V0_SET["hard"] * TAU_MS * k1, 0)
     out["hard_fling_first_frame_px_60_linear"] = round(V0_SET["hard"] * (1000 / 60), 0)
@@ -396,7 +436,8 @@ def main(argv: list[str] | None = None) -> int:
         f"{V_MIN_FLING} px/ms · release velocity over the last {VELOCITY_WINDOW_MS} ms · plot "
         f"{PLOT_W} px · max fling {D_MAX_W} W = {D_MAX_W * PLOT_W:.0f} px ⇒ v_max "
         f"{D_MAX_W * PLOT_W / TAU_MS:.0f} px/ms · cut at > {CUT_W:.0f} W or a scale ratio > "
-        f"{CUT_RATIO:.0f} · k60 = exp(-16.67/120) = {n['k60']}\n"
+        f"{CUT_RATIO:.0f} · k60 = exp(-16.67/120) = {n['k60']} · T2 alternative: terminate when "
+        f"abs(v) x tau < {V_TERM_DIST_PX} px\n"
     )
     print("## 1. Momentum: exact per-frame integration vs the per-frame-multiplier mistake\n")
     print(
@@ -420,6 +461,32 @@ def main(argv: list[str] | None = None) -> int:
         "that remainder in the terminating frame, so the rest position is identical. The naive "
         "multiplier lands at twice the distance at 30 fps and under half at 144 fps.\n"
     )
+    spike = cast(dict[str, Any], n["remainder_spike_ratio"])
+    print(
+        f"Trade-off of D2 (T2): the applied remainder is at most v_term x tau = "
+        f"{n['remainder_max_px']} px, i.e. {spike['30']} / {spike['60']} / {spike['144']} x the "
+        f"terminating frame's own step at 30 / 60 / 144 fps — one frame of faster motion in "
+        f"exchange for a rest with nothing moving after it. The distance-based alternative "
+        f"terminates when abs(v) x tau < {V_TERM_DIST_PX} px (v < {n['alt_term_v_px_per_ms']} "
+        f"px/ms): the remainder stays under half a pixel, for {n['alt_extra_tail_ms']} ms more of "
+        f"sub-pixel tail at every release velocity (tau x ln(v_term / v_alt)):\n"
+    )
+    print(
+        "| release | alt t_stop | extra tail | 30 fps frames (+ extra) / short of x∞ | 60 fps | "
+        "144 fps | 60 fps, every 3rd frame dropped |"
+    )
+    print("| --- | --- | --- | --- | --- | --- | --- |")
+    for label, r in coast.items():
+        a30, a60, a144, ad = r["alt_30"], r["alt_60"], r["alt_144"], r["alt_60_dropped"]
+        print(
+            f"| {label} | {r['t_stop_alt_ms']} ms | "
+            f"{round(r['t_stop_alt_ms'] - r['t_stop_ms'], 1)} ms | "
+            f"{a30['frames']} (+{a30['extra_frames']}) / {a30['short_px']} px | "
+            f"{a60['frames']} (+{a60['extra_frames']}) / {a60['short_px']} px | "
+            f"{a144['frames']} (+{a144['extra_frames']}) / {a144['short_px']} px | "
+            f"{ad['frames']} (+{ad['extra_frames']}) / {ad['short_px']} px |"
+        )
+    print()
     print("## 2. The cut rule, worked\n")
     ce = cast(dict[str, Any], n["cut_examples"])
     print(
@@ -444,8 +511,9 @@ def main(argv: list[str] | None = None) -> int:
     kin = cast(dict[str, Any], n["kinematics"])
     for name, k in kin.items():
         ff = k["first_frame_fraction"]
+        label = name if name in ("standard", "decelerate") else f"{name} (M3, not a token; A-16)"
         print(
-            f"| {name} | {ff['30']} / {ff['60']} / {ff['144']} | "
+            f"| {label} | {ff['30']} / {ff['60']} / {ff['144']} | "
             f"{k['peak_px_per_frame_60_1w_normal']:.0f} px | "
             f"{k['peak_px_per_frame_60_3w_slow']:.0f} px | "
             f"{k['peak_px_per_frame_60_3w_normal']:.0f} px |"
