@@ -85,7 +85,7 @@ class Parts:  # what `lane_families` reads of an `AuditService`: its parts and t
 
 def families(parts: Parts) -> dict[str, dict[tuple[str, ...], float]]:
     """`lane_families` over `parts`, by name: each sample's label values and value."""
-    read = lane_families(cast(AuditService, parts), lambda: False)
+    read = lane_families(cast(AuditService, parts))
     return {family.name: dict(family.samples) for family in read}
 
 
@@ -285,9 +285,9 @@ async def test_writer_does_not_count_the_drains_own_refusals(
 
 def test_catalogue_declares_every_served_family_and_bounds_it_by_its_closed_sets() -> None:
     specs = {s.name: s for s in CATALOGUE if s.name in EXPORTED_NAMES}
-    families = lane_families(AuditService(), lambda: False)  # unwired: no lane, no gauges
+    families = lane_families(AuditService())  # unwired: no lane, no gauges
     names = {f.name for f in families}
-    assert names == EXPORTED_NAMES - {f"cv_audit_lane_{g}" for g in GAUGES} and len(specs) == 18
+    assert names == EXPORTED_NAMES - {f"cv_audit_lane_{g}" for g in GAUGES} and len(specs) == 17
     assert all(s.exported and (s.status, s.owner_epic) == ("live", "E09") for s in specs.values())
     for family in families:
         assert family.labels == specs[family.name].labels
@@ -302,12 +302,9 @@ def test_catalogue_declares_every_served_family_and_bounds_it_by_its_closed_sets
 async def test_the_scrape_serves_each_family_with_env_and_the_lanes_gauges_once_it_runs(
     tmp_path: Path, repo: FakeAuditRepository
 ) -> None:
-    registry, audit, flag = CollectorRegistry(), AuditService(repo, lane_keys=lambda: RAW), [True]
-    col = export_audit_lane_metrics(
-        registry, env="demo", audit=audit, journal_first=lambda: flag[0]
-    )
+    registry, audit = CollectorRegistry(), AuditService(repo, lane_keys=lambda: RAW)
+    col = export_audit_lane_metrics(registry, env="demo", audit=audit)
     unwired = served(registry)
-    assert unwired["cv_audit_lane_journal_first"] == one(1.0)
     assert unwired["cv_audit_writer_refused_total"] == {("demo", d): 0.0 for d in AUDIT_DOMAINS}
     assert not {f"cv_audit_lane_{g}" for g in GAUGES} & set(unwired)
     await audit.start(cast(Any, SimpleNamespace(settings=SimpleNamespace(
@@ -318,7 +315,7 @@ async def test_the_scrape_serves_each_family_with_env_and_the_lanes_gauges_once_
     await lane.flush(WAIT_S)
     lane.paused_batches, lane.journal.boot_overshoot_frames, audit.lane_lock_failures = 3, 2, 4
     audit.lane_link_failures = 6
-    lane.anomalies["seq_gap"], lane.drain_failures["held"], flag[0] = 5, 6, False
+    lane.anomalies["seq_gap"], lane.drain_failures["held"] = 5, 6
     facade.refused["shared", "busy"], lane.journal.quarantine_bytes = 7, 9
     writer._refused_by_domain["auth"], lane.journal._bytes, lane.journal._shared = 8, 12, 5
     got = await asyncio.to_thread(served, registry)  # the scrape's own thread
@@ -326,7 +323,7 @@ async def test_the_scrape_serves_each_family_with_env_and_the_lanes_gauges_once_
     assert got["cv_audit_lane_bytes"] == one(7.0, "reserved") | one(5.0, "shared")
     assert got["cv_audit_lane_appended_total"] == one(2.0, "reserved") | one(0.0, "shared")
     for name, value in {
-        "created_total": 1, "journal_first": 0, "paused_batches_total": 3, "depth": 0,
+        "created_total": 1, "oldest_age_seconds": 0, "paused_batches_total": 3, "depth": 0,
         "boot_overshoot_frames_total": 2, "lock_failures_total": 4, "quarantine_bytes": 9,
         "link_failures_total": 6,
         "last_seq": 2, "drained_total": 2,
@@ -336,7 +333,6 @@ async def test_the_scrape_serves_each_family_with_env_and_the_lanes_gauges_once_
     assert got["cv_audit_lane_drain_failures_total"][("demo", "held")] == 6.0
     assert got["cv_audit_lane_refused_total"][("demo", "shared", "busy")] == 7.0
     assert got["cv_audit_writer_refused_total"][("demo", "auth")] == 8.0
-    assert 0.0 <= got["cv_audit_lane_oldest_age_seconds"][("demo",)] < WAIT_S
     lane.journal.hold()
     held = served(registry)
     assert held["cv_audit_lane_state"][("demo", "held")] == 1.0
@@ -346,9 +342,9 @@ async def test_the_scrape_serves_each_family_with_env_and_the_lanes_gauges_once_
     assert served(registry) == {}
 
 
-def test_create_app_serves_the_lane_families_with_the_flags_cached_value() -> None:
+def test_create_app_serves_the_lane_families_and_no_flag_gauge() -> None:
     scraped = served(create_app(Settings(environment=Environment.DEMO)).state.app_context.metrics)
-    assert scraped["cv_audit_lane_journal_first"] == one(0.0)  # the catalogue default, off
+    assert "cv_audit_lane_journal_first" not in scraped  # the flag gauge is gone (#3009 S4b)
     assert len(scraped["cv_audit_writer_refused_total"]) == len(AUDIT_DOMAINS)
 
 

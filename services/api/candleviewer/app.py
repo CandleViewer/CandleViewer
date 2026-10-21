@@ -14,6 +14,7 @@ contracts and every later epic have a concrete injection point.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import os
 import time
@@ -48,6 +49,7 @@ from candleviewer.admin.service import AdminService
 from candleviewer.admin.wiring import (
     AuditHandle,
     AuditVerifyRunner,
+    LaneNotWired,
     SecretsBundle,
     SecretsHandle,
     audit_writer_sink,
@@ -147,7 +149,7 @@ from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_a
 from candleviewer.api.rules_crud import make_rules_crud_router
 from candleviewer.api.session_backstop_audit import SessionBackstopAudit
 from candleviewer.api.session_snapshot import SessionSnapshotResolver
-from candleviewer.api.sessions import make_session_router
+from candleviewer.api.sessions import AuditEmitter, make_session_router
 from candleviewer.api.step_up import (
     make_read_only_guard,
     make_step_up_router,
@@ -497,6 +499,27 @@ class _LazyAuditEmitter:
 
     async def emit(self, action: str, **kwargs: Any) -> None:
         await self._audit.writer.emit(action, **kwargs)
+
+
+class _LazyLaneEmitter:
+    """Resolves `audit.lane` per call, for a row the lane's registry admits (ADR-0037): the façade,
+    whose fallback is the writer. With no façade (`LaneNotWired`: before `start()`, once `stop()`
+    began) the writer takes the row, today's path, logged once."""
+
+    def __init__(self, audit: AuditHandle) -> None:
+        self._audit, self._unwired_logged = audit, False
+
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        sink: AuditEmitter
+        try:
+            sink = self._audit.lane
+        except LaneNotWired:  # only this: any other error is a defect and propagates
+            if not self._unwired_logged:
+                self._unwired_logged = True
+                with contextlib.suppress(Exception):  # a failing logger changes nothing
+                    structlog.get_logger(__name__).warning("audit.lane.unwired", action=action)
+            sink = self._audit.writer
+        await sink.emit(action, **kwargs)  # the one write, outside the handler
 
 
 class _LazyAuditQuery:
@@ -1484,9 +1507,10 @@ def create_app(
     app.state.revocation_hub = revocation_hub
     ctx.auth.attach_revocation_sink(_hub_publisher(revocation_hub))  # every revoke path (#2272)
     # The backstop's audit record (C-2.9, #3120), from `require_active` or a refused `refresh()`
-    # (#3331), in flight under the shared cap.
+    # (#3331), in flight under the shared cap, through the audit lane's façade (ADR-0037), the
+    # writer its fallback.
     ctx.auth.attach_backstop_audit(
-        SessionBackstopAudit(_LazyAuditEmitter(ctx.audit), tracker=csrf_audits)
+        SessionBackstopAudit(_LazyLaneEmitter(ctx.audit), tracker=csrf_audits)
     )
     app.include_router(
         make_session_router(
@@ -1827,7 +1851,6 @@ def create_app(
         ctx.metrics,
         env=resolved.environment.value,
         audit=ctx.audit,
-        journal_first=lambda: feature_flags.lane_flag.value,
     )
     # E42-T04 (#965 R7): user lifecycle calls and steps, read by the lifecycle tickets.
     app.state.user_lifecycle_metrics = export_user_lifecycle_metrics(

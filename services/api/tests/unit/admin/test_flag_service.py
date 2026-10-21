@@ -27,8 +27,10 @@ from candleviewer.admin.flags.service import (
     READ_BUDGET_SETTING,
     FlagService,
 )
+from candleviewer.admin.flags.writes import FlagWriter, UnknownFlagError
+from candleviewer.audit.access import AuditPrincipal
 from candleviewer.observability.metrics import CollectorRegistry
-from tests.unit.admin.flag_fakes import T0, Clock, FakeFlagStore
+from tests.unit.admin.flag_fakes import T0, Clock, FakeAudit, FakeFlagStore, FakeStepUp, FakeUsers
 
 _OWNER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001")
 _STORED = {"key", "kind", "description", "value"}
@@ -410,3 +412,31 @@ async def test_every_safety_flag_ignores_override_rows_at_resolution(key: str) -
     )
     service.invalidate()
     assert await service.value(key, user_id=_OWNER, roles=frozenset({"owner"})) is False
+
+
+async def test_a_stored_row_for_a_key_the_registry_no_longer_defines_is_ignored_and_kept() -> None:
+    """The first flag removal (#3009 S4b) leaves its row inert: a later boot's `ensure` only inserts
+    (`ON CONFLICT (key) DO NOTHING`), the list and a resolution read the registry alone, and a
+    write is the audited 404. A synthetic key stands in for the removed one. The fake store cannot
+    prove the SQL clause: `tests/unit/storage/test_flags_sqlalchemy.py`
+    (`test_ensure_inserts_only_where_no_row_is`) pins the statement, and
+    `tests/integration/storage/test_flags_store_pg.py`
+    (`test_ensure_inserts_every_flag_once_at_its_default`) runs it against Postgres."""
+    gone = FlagSpec(
+        "ui.retired", FlagKind.BOOLEAN, "d", Category.FEATURE_ROLLOUT, True, Visibility.OWNER_ONLY
+    )
+    _, store, clock = await _service(500, gone)  # the release that still defined it
+    row = store.rows[gone.key]
+    service = FlagService(default_registry(), store, clock=clock)  # the next one does not
+    await service.start()
+    listed = await service.visible(_OWNER, frozenset({"owner"}))
+    assert listed.resolution is Resolution.STORED
+    assert gone.key not in {flag.spec.key for flag in listed.items}
+    with pytest.raises(KeyError):
+        service.resolved(gone, store.rows[gone.key], None, frozenset())
+    audit, who = FakeAudit(), AuditPrincipal(_OWNER, "owner", frozenset({"flags:write"}))
+    writer = FlagWriter(service, audit, FakeStepUp(), FakeUsers())
+    with pytest.raises(UnknownFlagError):
+        await writer.set(gone.key, who, value=False, reason="rollout", expected_updated_at=T0)
+    assert [(a, r["reason"]) for a, r in audit.records] == [("flags.change", "not_found")]
+    assert store.rows[gone.key] is row  # kept, never rewritten

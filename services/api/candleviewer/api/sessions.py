@@ -544,7 +544,8 @@ def make_session_router(
 
     def _lane_unwired(action: str) -> None:
         """A lane row goes to the writer, today's path, because the service has no façade
-        (`LaneNotWired`). One warning per router, the app's only one, with the action alone."""
+        (`LaneNotWired`). One warning per router, with the action alone; the backstop's emitter in
+        `app.py` logs its own, once, as `audit.lane.unwired`."""
         nonlocal lane_unwired_logged
         if not lane_unwired_logged:
             lane_unwired_logged = True

@@ -144,7 +144,8 @@ class BackstopRevocation:
 
 #: Awaited once per session `require_active` or a refused `refresh()` revoked as `user_disabled`,
 #: after the revoke, the count, the log and the publish. The composition root wires it to the
-#: audit writer (`auth` never imports `audit`, `forbidden-M18`; C-2.9):
+#: audit lane, the writer its fallback (ADR-0037; `auth` never imports `audit`, `forbidden-M18`;
+#: C-2.9):
 #: `AuthService.attach_backstop_audit`.
 BackstopAuditSink = Callable[[BackstopRevocation], Awaitable[None]]
 
