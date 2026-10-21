@@ -64,7 +64,7 @@ MAX_ERROR_LEN = 200
 #: per-poll cost, since the loop polls every second.
 DEPTH_EVERY_S = 15.0
 #: A depth read that outlasts this is abandoned and logged like a failed one: the poll loop waits
-#: on it, so a half-open connection must not hold up the claims behind it.
+#: on it, so a stalled read (a lock wait, a busy server) must not hold up the claims behind it.
 DEPTH_TIMEOUT_S = 5.0
 
 #: Bounded `suppressed` reason codes (stored in `error_message` and `context`).

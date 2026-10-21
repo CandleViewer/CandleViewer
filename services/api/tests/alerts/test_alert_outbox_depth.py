@@ -27,7 +27,7 @@ _TOPIC = ("alert.deliver",)
 
 class DepthStore(MemStore):
     """`MemStore` that records each depth read, raises `error` from it or, with `hang`, never
-    returns from it (a half-open connection). `idle` is set by the first poll that claims nothing,
+    returns from it (a stalled read). `idle` is set by the first poll that claims nothing,
     the point where the loop has drained and is about to wait. `polling` is set as a poll begins
     and, when a test sets `hold`, the poll waits on it before it claims: a poll held in flight."""
 
@@ -115,7 +115,7 @@ async def test_a_failing_read_is_logged_by_type_keeps_the_last_value_and_waits_i
 
 
 async def test_a_hung_read_is_cut_off_logged_by_type_and_keeps_the_last_value() -> None:
-    """A read that never returns (a half-open connection) is abandoned after `depth_timeout_s` and
+    """A read that stalls (a lock wait, a busy server) is abandoned after `depth_timeout_s` and
     handled as any failed read: unbounded, it would stall the poll loop that waits on it."""
     clock, metrics = Clock(), Metrics()
     store, now = DepthStore(clock), [0.0]

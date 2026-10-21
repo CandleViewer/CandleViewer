@@ -201,8 +201,8 @@ async def test_the_topic_is_private_never_cached_and_never_continuous(world: Wor
 
 def test_the_load_retry_constants_match_the_contract_doc() -> None:
     """23-ws-protocol.md §6.2.1 (Integrity): a load whose read fails is "tried three times in all,
-    backed off and jittered". `LOAD_TRIES` is that three and `LOAD_BACKOFF_S` (doubled per try) the
-    first wait: changing either is a contract change, so the doc changes with it."""
+    backed off and jittered". `LOAD_TRIES` is that three (changing it changes the doc); the first
+    wait `LOAD_BACKOFF_S` is the module's own, pinned so that a change to it is deliberate."""
     assert (LOAD_TRIES, LOAD_BACKOFF_S) == (3, 0.5)
 
 
