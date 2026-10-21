@@ -22,10 +22,13 @@ from tests.unit.credentials_m2._helpers import (
     _with,
 )
 from tests.unit.credentials_m2._vectors import (
+    ACCOUNT,
     API_KEY,
     API_SECRET,
+    ENV,
     KEK_V1,
     KEK_V2,
+    SNAPSHOT,
     AuditLog,
     kek,
 )
@@ -181,3 +184,25 @@ async def test_drop_kek_fails_closed(broker: CredentialBroker) -> None:
 
 async def test_in_memory_touch_is_noop(store: Any) -> None:
     assert await store.touch_last_used(uuid4()) is None
+
+
+@pytest.mark.parametrize(
+    ("change", "can_trade"),
+    [
+        ({}, True),
+        ({"readOnly": 1}, False),
+        ({"permissions": {**SNAPSHOT["permissions"], "ContractTrade": ["Order"]}}, False),
+        ({"readOnly": False}, False),
+    ],
+    ids=["trade", "read_only", "missing_position", "bool_read_only"],
+)
+async def test_store_writes_can_trade_derived_from_the_projected_snapshot(
+    broker: CredentialBroker, store: Any, change: dict[str, Any], can_trade: bool
+) -> None:
+    """#2240: `can_trade` is derived from the snapshot at insert, not left at its default until
+    the verification pass; the fund flags stay false (`ak_no_withdraw`, `ak_no_transfer`)."""
+    meta = await broker.store(
+        ENV, ACCOUNT, "main", Secret(API_KEY), Secret(API_SECRET), {**SNAPSHOT, **change}
+    )
+    row = store.rows[meta.key_id]
+    assert (row["can_trade"], row["can_withdraw"], row["can_transfer"]) == (can_trade, False, False)

@@ -1,7 +1,9 @@
 """C-2.8 / SR-030a: withdraw and transfer rights are refused in the value-in-group shape (#2240).
 
 Before #2240, `PermissionSnapshot` only looked at a top-level `Withdraw` group, so
-`"Wallet": ["AccountTransfer"]` passed. The refused-case tests below fail on that code.
+`"Wallet": ["AccountTransfer"]` passed. The refused-case tests below fail on that code, and the
+non-string-key tests on the code before the shared kernel (`candleviewer.domain.key_permissions`),
+whose JSON round trip let `{None: ["Withdraw"], "null": []}` pass as `{"null": []}`.
 
 Shape source: Bybit v5 "Get API Key Information" (`GET /v5/user/query-api`,
 https://bybit-exchange.github.io/docs/v5/user/apikey-info) returns the key's `permissions` as
@@ -32,10 +34,16 @@ from tests.unit.accounts._permission_cases import (
     SR030A_WALLET_RIGHTS,
     Case,
     non_json_cases,
+    non_string_key_cases,
 )
 
 _NOW = datetime(2026, 9, 14, tzinfo=UTC)
 _NON_JSON_IDS = [name for name, _ in non_json_cases()]
+_NON_STRING_KEYS = pytest.mark.parametrize(
+    "permissions",
+    [p for _, p in non_string_key_cases()],
+    ids=[name for name, _ in non_string_key_cases()],
+)
 
 
 def _perms(cases: list[Case]) -> pytest.MarkDecorator:
@@ -69,6 +77,20 @@ def test_reject_withdraw_refuses_withdraw_and_transfer_rights(permissions: dict[
 def test_reject_withdraw_fails_closed_on_non_json(permissions: dict[str, Any]) -> None:
     with pytest.raises(WithdrawPermissionError, match="key_withdraw_permission"):
         reject_withdraw(permissions)
+
+
+@_NON_STRING_KEYS
+def test_reject_withdraw_refuses_non_string_keys(permissions: dict[Any, Any]) -> None:
+    """Refused before the JSON round trip, which would spell the key as text and let a later
+    empty group of that spelling hide the right."""
+    with pytest.raises(WithdrawPermissionError, match="key_withdraw_permission"):
+        reject_withdraw(permissions)
+
+
+@_NON_STRING_KEYS
+def test_snapshot_refuses_non_string_keys(permissions: dict[Any, Any]) -> None:
+    with pytest.raises(ValidationError, match="key_withdraw_permission"):
+        _snapshot(permissions)
 
 
 def test_forbidden_tokens_are_the_c28_rights() -> None:

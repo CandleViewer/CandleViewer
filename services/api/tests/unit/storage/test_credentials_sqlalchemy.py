@@ -142,3 +142,35 @@ async def test_a_kek_rewrap_moves_a_row_whose_snapshot_is_no_object_and_every_ot
     rotating = RotatingBroker(store, audit, kek(KEK_V2, 2), prev_kek=kek(KEK_V1, 1))
     report = await rotating.rewrap_all(2, auth_keys=InMemoryAuthKeyStore())
     assert (report.rewrapped, report.failed, audit.actions()[-1]) == (3, (), "security.kek_rotated")
+
+
+def _recording(seen: list[tuple[str, dict[str, Any]]]) -> SqlAlchemyCredentialStore:
+    """The adapter over a unit of work that records each statement and answers one row written."""
+
+    @asynccontextmanager
+    async def unit_of_work() -> AsyncIterator[Any]:
+        async def execute(statement: object, params: dict[str, Any]) -> Any:
+            seen.append((str(statement), params))
+            return SimpleNamespace(returns_rows=False, rowcount=1)
+
+        async def commit() -> None:
+            return None
+
+        yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=commit)
+
+    return SqlAlchemyCredentialStore(cast(Any, SimpleNamespace(unit_of_work=unit_of_work)))
+
+
+async def test_insert_binds_can_trade_and_never_a_fund_flag() -> None:
+    """#2240: M2 derives `can_trade` at insert, so the INSERT writes it; the fund flags stay the
+    database's (default false, pinned by `ak_no_withdraw` and `ak_no_transfer`), whatever the
+    record says."""
+    memory = InMemoryCredentialStore()
+    await _store(CredentialBroker(memory, AuditLog(), kek()))
+    [record] = memory.rows.values()
+    seen: list[tuple[str, dict[str, Any]]] = []
+    await _recording(seen).insert({**record, "can_withdraw": True, "can_transfer": True})
+    [(sql, params)] = seen
+    assert (params["can_trade"], params["read_only"]) == (True, False)
+    assert ":can_trade" in sql and "can_withdraw" not in sql and "can_transfer" not in sql
+    assert not {"can_withdraw", "can_transfer", "status", "revoked"} & set(params)

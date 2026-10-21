@@ -1,10 +1,12 @@
 """C-2.8 / SR-030 / SR-030a key permission gate and snapshot projection (E27-T02). Private to M2.
 
 Two lines refuse a key before anything is encrypted or audited: the SR-030 allow-list
-(`require_allow_listed`, #2270) first, the substring deny-list (`reject_withdraw`) second. M13
-(`accounts/_permissions.py`, `PermissionSnapshot`) and migration 0019's `ak_snapshot_shape` CHECK
-keep only the deny-list, as backstops: C-3.2 bars M13 from importing this module, and an
-allow-list CHECK needs a new migration (C-5.4).
+(`require_allow_listed`, #2270) first, the substring deny-list (`reject_withdraw`) second. The
+deny-list is the shared kernel's (`candleviewer.domain.key_permissions`, #2240), which M13
+(`accounts/_permissions.py`, `PermissionSnapshot`) wraps too. M13 and migration 0019's
+`ak_snapshot_shape` CHECK keep only the deny-list, as backstops: C-3.2 bars M13 from importing
+this module, and an allow-list CHECK needs a new migration (C-5.4). `trade_capable` derives
+`api_keys.can_trade` from the projected snapshot when a key is stored (#2240).
 """
 
 from __future__ import annotations
@@ -15,12 +17,16 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Final
 
+from candleviewer.domain import key_permissions
 from candleviewer.secrets.errors import SnapshotInvalid, WithdrawPermissionRejected
 
 _SNAPSHOT_KEYS = frozenset(
     {"fetched_at", "uid", "note", "readOnly", "permissions", "ips", "type", "expiredAt", "uta"}
 )
-_FORBIDDEN_TOKENS = ("withdraw", "transfer")
+#: The trade scope `can_trade` reads: M13's `TRADE_GROUP` and `TRADE_RIGHTS`
+#: (`accounts/verification.py`), held equal by a parity test.
+_TRADE_GROUP: Final = "ContractTrade"
+_TRADE_RIGHTS: Final = frozenset({"Order", "Position"})
 
 #: The only rights a stored key may hold, by group, spelled exactly (#2270). SR-030: "the scope
 #: set is the minimum needed (Contract/Order/Position read+trade)"; SR-030a: the non-trading groups
@@ -43,17 +49,6 @@ def _norm(value: object) -> object:
         return json.loads(json.dumps(value, allow_nan=False))
     except (TypeError, ValueError):
         raise SnapshotInvalid("snapshot_invalid") from None
-
-
-def _bad_token(value: object) -> bool:
-    if isinstance(value, str):
-        text = value.strip().lower()
-        return any(tok in text for tok in _FORBIDDEN_TOKENS)
-    if isinstance(value, dict):
-        return any(_bad_token(k) or _bad_token(v) for k, v in value.items())
-    if isinstance(value, list):
-        return any(_bad_token(v) for v in value)
-    return False
 
 
 def require_allow_listed(permissions: Mapping[str, object]) -> None:
@@ -83,13 +78,30 @@ def reject_withdraw(permissions: Mapping[str, object]) -> None:
     withdraw *or* transfer right (`Withdraw`, `AccountTransfer`, `SubMemberTransfer`, ...) as a
     group key or a value, at any depth, ignoring case and leading/trailing whitespace only (inner
     spacing and lookalike characters are the allow-list's job). An empty group (`"Withdraw": []`)
-    grants nothing."""
-    normed = _norm(dict(permissions))
-    if not isinstance(normed, dict):  # pragma: no cover - json of a dict is a dict
+    grants nothing. The rule is the shared kernel's; permissions it cannot judge exactly (a value
+    JSON cannot carry, a key that is not a string, nesting past its bound) are refused as
+    `snapshot_invalid` (fail closed)."""
+    try:
+        granted = key_permissions.grants_fund_right(permissions)
+    except key_permissions.PermissionsUnreadable:
+        raise SnapshotInvalid("snapshot_invalid") from None
+    if granted:
         raise WithdrawPermissionRejected("key_withdraw_permission")
-    for name, value in normed.items():
-        if _bad_token(value) or (_bad_token(name) and value not in (None, [], "")):
-            raise WithdrawPermissionRejected("key_withdraw_permission")
+
+
+def trade_capable(snapshot: Mapping[str, Any]) -> bool:
+    """`api_keys.can_trade` for a projected snapshot (#2240): write access, `readOnly` exactly the
+    integer 0 (`False == 0` in Python), and every trade right in the trade group. The verification
+    pass that precedes a key's activation writes the same value again (`record_pass`)."""
+    permissions = snapshot.get("permissions")
+    rights = permissions.get(_TRADE_GROUP) if isinstance(permissions, Mapping) else None
+    read_only = snapshot.get("readOnly")
+    return (
+        type(read_only) is int
+        and read_only == 0
+        and isinstance(rights, list)
+        and _TRADE_RIGHTS <= {right for right in rights if isinstance(right, str)}
+    )
 
 
 def project_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:

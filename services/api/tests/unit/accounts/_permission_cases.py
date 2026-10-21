@@ -1,11 +1,11 @@
 """Shared C-2.8 / SR-030a permission corpus (#2240, #2270).
 
-Every JSON case is run through the M13 predicate and `PermissionSnapshot` (unit tests) and through
-the `ak_snapshot_shape` CHECK of migration 0019 (integration test); these three deny-list layers
-must agree. EXACT_WITHDRAW records the one place where they refuse in different ways, and
-KNOWN_GAPS the spellings all three accept. The M2 gate adds the SR-030 allow-list (#2270) and
-refuses every KNOWN_GAPS case; GATE_ALLOWS names the JSON cases it accepts
-(tests/unit/credentials_m2/test_allow_list.py).
+Every JSON case is run through the shared deny-list (`candleviewer.domain.key_permissions`, behind
+the M2 and M13 wrappers) and `PermissionSnapshot` (unit tests) and through the `ak_snapshot_shape`
+CHECK of migration 0019 (integration test); these deny-list layers must agree. EXACT_WITHDRAW
+records the one place where they refuse in different ways, and KNOWN_GAPS the spellings all of
+them accept. The M2 gate adds the SR-030 allow-list (#2270) and refuses every KNOWN_GAPS case;
+GATE_ALLOWS names the JSON cases it accepts (tests/unit/credentials_m2/test_allow_list.py).
 
 Shape: the exchange's key-info response (`GET /v5/user/query-api`) reports a key's rights as
 values inside permission groups, e.g. `"Wallet": ["AccountTransfer", "SubMemberTransfer",
@@ -126,4 +126,18 @@ def non_json_cases() -> list[tuple[str, dict[str, Any]]]:
         ("bytes_harmless", {"Wallet": [b"Order"]}),
         ("iterator", {"Affiliate": iter(["Order"])}),
         ("nan", {"Affiliate": [float("nan")]}),
+    ]
+
+
+def non_string_key_cases() -> list[tuple[str, dict[Any, Any]]]:
+    """A key that is no string, at any depth, is refused whatever it says (fail closed, #2240).
+    JSON writes `None` as `"null"`, `1` as `"1"` and `True` as `"true"`, and keeps the last of two
+    equal keys, so the round trip would let a later empty group hide an earlier right. Unit-only,
+    since jsonb keys are text."""
+    return [
+        ("none_hidden_by_null", {None: ["Withdraw"], "null": []}),
+        ("int_hidden_by_str", {1: ["AccountTransfer"], "1": []}),
+        ("nested_hidden", {"Affiliate": {True: ["SubMemberTransfer"], "true": []}}),
+        ("hidden_in_a_list", {"Affiliate": [{1.5: "Withdraw", "1.5": ""}]}),
+        ("harmless", {1: ["Order"]}),
     ]

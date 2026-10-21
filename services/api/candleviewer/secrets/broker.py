@@ -28,6 +28,7 @@ from candleviewer.secrets._permissions import (
     project_snapshot,
     reject_withdraw,
     require_allow_listed,
+    trade_capable,
 )
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
@@ -260,6 +261,7 @@ class CredentialBroker:
             dek_ref=dek_ref,
             kek_version=kek.version,
             permission_snapshot=snapshot,
+            can_trade=trade_capable(snapshot),
         )
         await self._audit("security.credential_stored", self._fields(row, actor=actor))
         try:

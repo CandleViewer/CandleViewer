@@ -199,10 +199,11 @@ async def test_withdraw_right_is_reported_as_withdraw_enabled() -> None:
     assert (result.passed, result.withdraw_enabled) == (False, True)
 
 
-#: Withdraw or transfer named in any letter case at any depth, and a value JSON cannot carry (the
-#: deny-list refuses it whatever it says, fail closed): `key_withdraw_permission`.
+#: Withdraw or transfer named in any letter case at any depth, and a value or key JSON cannot carry
+#: exactly (the deny-list refuses it whatever it says, fail closed): `key_withdraw_permission`.
 _DENIED_CASES: list[tuple[str, Any]] = [(c[0], c[1]) for c in REFUSED]
 _DENIED_CASES += [*non_json_cases(), ("non_text_group_granting_nothing", {**BASE, b"Wallet": []})]
+_DENIED_CASES += [("integer_group", {**BASE, 1: ["Order"]})]
 #: Every other right outside the allow-list: `key_permission_not_allowed`. A right that may move
 #: funds also reports `withdraw_enabled` (the third field), fail closed: any right of `Wallet` or of
 #: a fiat or card group, under any case, padding or spacing (every KNOWN_GAPS spelling), or a group
@@ -230,7 +231,6 @@ _UNLISTED_CASES += [
     ("withdraw_spaced_outside_a_fund_group", {**BASE, "Spot": ["With draw"]}, True),
     ("transfer_spaced_outside_a_fund_group", {**BASE, "Spot": ["Account Trans fer"]}, True),
     ("withdraw_full_width_outside_a_fund_group", {**BASE, "Spot": ["\uff37ithdraw"]}, True),
-    ("integer_group", {**BASE, 1: ["Order"]}, False),
 ]
 
 
