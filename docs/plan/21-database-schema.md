@@ -607,6 +607,14 @@ Only `risk.unfreeze_manager` lowers a freeze.
 | `step_up_elevations` | jsonb       | no   | `'{}'`  | E09-S04 (`0009`): `{key: expiry}` (ISO-8601 UTC). Key grammar (#2304, `auth/step_up.py`): `<class>` is a grace window (5 min); `pending:<class>:<challenge_id>[:<sha256>]` is the session's one live challenge (5 min; `<sha256>` required for a no-grace class); `once:<class>:<challenge_id>:<sha256>` is a no-grace class's one-shot grant, bound to the challenged request (60 s). `<class>` is one of `ACTION_CLASSES` (no-grace: `NO_GRACE_ACTION_CLASSES`), `<challenge_id>` a UUID, `<sha256>` 64 lower-case hex digits: a request fingerprint (method, target, RFC 8785 body), not credential material. Any other key (a class-only `pending:`/`once:` key from before #2304, a `once:` key without `<sha256>`) is inert: it never elevates and lapses at its expiry. Written only under the row lock (`FOR NO KEY UPDATE`) or by one conditional `UPDATE` |
 | `step_up_failures`   | smallint    | no   | `0`     | E09-S04: consecutive bad step-up codes, CHECK 0..3 (`0009`)                    |
 | `readonly_until`     | timestamptz | yes  | NULL    | E09-S04: read-only downgrade expiry after 3 strikes (`0009`)                   |
+| `view_as_context_id` | uuid        | yes  | NULL    | #3085 (`0042`): the view-as context's id; NULL = no context, every `view_as_*` NULL |
+| `view_as_target_user_id` | uuid    | yes  | NULL    | FK → users, RESTRICT: whom the session views as; never the row's `user_id`     |
+| `view_as_started_at` | timestamptz | yes  | NULL    | Set by the server's clock at the start                                         |
+| `view_as_expires_at` | timestamptz | yes  | NULL    | `view_as_started_at` + 30 min (CHECK); nothing extends it                      |
+| `view_as_ended_at`   | timestamptz | yes  | NULL    | The end, written once with its reason; at most `view_as_expires_at`            |
+| `view_as_end_recorded_at` | timestamptz | yes | NULL | When `admin.view_as_ended` was written; NULL after an end = record pending   |
+| `view_as_cleared_at` | timestamptz | yes  | NULL    | Set by `DELETE /auth/session/view-as` once ended; the end columns stay         |
+| `view_as_end_reason` | text        | yes  | NULL    | `ended` / `expired` / `viewer_ineligible` / `target_ineligible` / `session_ended` |
 
 ```sql
 CREATE TABLE sessions (
@@ -638,6 +646,46 @@ CREATE TABLE sessions_rotation (
 ```
 
 Rotation semantics: every refresh issues a new `sessions` row, marks the old `revoked_reason='rotated'`, and links them. Presenting an already-rotated refresh token revokes the **entire family** (walk `sessions_rotation` transitively) and writes audit event `auth.refresh_reuse_detected` with severity `critical`.
+
+**View-as context (#3085, migration `0042_sessions_view_as`).** A session's view-as context (22 "View-as session", `auth/view_as.py`) lives on its own row, so a restart keeps it and every read of the row carries it (`SessionRecord.view_as`). The eight `view_as_*` columns hold ids and times only (§12, P0); the reason given for a start is stored only in `admin.view_as_started.after_state`, never on the row. Either all eight are NULL, or the context's id, target, start and expiry are set. `sessions_view_as_shape` refuses what `ViewAsState` and `SessionRecord` refuse: `view_as_expires_at` is `view_as_started_at` plus 30 minutes; the target is never the row's `user_id`; `view_as_ended_at` and `view_as_end_reason` are set together; `view_as_end_recorded_at` and `view_as_cleared_at` come only with an end; and the end is at or before the expiry, with reason `expired` exactly when it is at the expiry. It orders none of the end, its record and the clear, since a clock stepped between two writes could break such an order, and `IS TRUE` keeps a NULL comparison from passing. `sessions_view_as_end_reason` admits the five `ViewAsEndReason` values. An end whose `admin.view_as_ended` record is not written yet (`view_as_ended_at` set, `view_as_end_recorded_at` NULL) is pending: a clear keeps it, the record is written late, and the row is kept until it is (§7). `ix_sessions_view_as_due` serves the sweeper's read of unrecorded ends, `ix_sessions_view_as_target` the read of the unended contexts that name a target, `ix_sessions_view_as_context` the lookup of the other rows that hold one context (a refresh carries it to the successor row, so it may sit on several). The revision ships the columns and the read path only; nothing writes them until #3085 S2b and the start (S13a).
+
+The target FK is `ON DELETE RESTRICT`. No `users` row is ever deleted: the E42-T10 purge anonymises a user in place (§3.1.1, §12) and no other path deletes one. RESTRICT therefore blocks no purge, keeps every context's target readable (an anonymised one included), and never writes the row, so the CHECK always holds. A hard delete of a user a row names fails with SQLSTATE 23503 naming `sessions_view_as_target_user_id_fkey` until that row holds no context or another one. `CASCADE` would delete the viewer's row, and with it an end whose record is still owed; `SET NULL` would leave a context with no target, which the CHECK refuses under its own name. The downgrade refuses while any row names a context (C-5.2). The viewer's side is the existing `sessions.user_id` FK, `ON DELETE CASCADE`: the same invariant, that no `users` row is ever deleted, is what keeps a viewer's row, and an end it still owes, from going with a deleted user; a purge of either party keeps all eight columns (it nulls only `ip`, `user_agent`, `device_label` and `tailscale_node`), so a pending end survives it.
+
+```sql
+-- 0042_sessions_view_as (#3085): a session's view-as context, ids and times only
+ALTER TABLE sessions
+  ADD COLUMN view_as_context_id      uuid,
+  ADD COLUMN view_as_target_user_id  uuid REFERENCES users(id) ON DELETE RESTRICT,
+  ADD COLUMN view_as_started_at      timestamptz,
+  ADD COLUMN view_as_expires_at      timestamptz,
+  ADD COLUMN view_as_ended_at        timestamptz,
+  ADD COLUMN view_as_end_recorded_at timestamptz,
+  ADD COLUMN view_as_cleared_at      timestamptz,
+  ADD COLUMN view_as_end_reason      text,
+  ADD CONSTRAINT sessions_view_as_shape CHECK ((
+        (view_as_context_id IS NULL AND view_as_target_user_id IS NULL
+         AND view_as_started_at IS NULL AND view_as_expires_at IS NULL
+         AND view_as_ended_at IS NULL AND view_as_end_recorded_at IS NULL
+         AND view_as_cleared_at IS NULL AND view_as_end_reason IS NULL)
+     OR (view_as_context_id IS NOT NULL AND view_as_target_user_id IS NOT NULL
+         AND view_as_started_at IS NOT NULL AND view_as_expires_at IS NOT NULL
+         AND view_as_expires_at = view_as_started_at + interval '30 minutes'
+         AND view_as_target_user_id <> user_id
+         AND (view_as_ended_at IS NULL) = (view_as_end_reason IS NULL)
+         AND (view_as_ended_at IS NOT NULL
+              OR (view_as_end_recorded_at IS NULL AND view_as_cleared_at IS NULL))
+         AND (view_as_ended_at IS NULL OR (view_as_ended_at <= view_as_expires_at
+              AND (view_as_end_reason = 'expired') = (view_as_ended_at = view_as_expires_at))))
+  ) IS TRUE),  -- a NULL comparison would pass a bare CHECK
+  ADD CONSTRAINT sessions_view_as_end_reason CHECK (view_as_end_reason IS NULL
+    OR view_as_end_reason IN ('ended','expired','viewer_ineligible','target_ineligible','session_ended'));
+CREATE INDEX ix_sessions_view_as_due     ON sessions (view_as_expires_at)
+  WHERE view_as_context_id IS NOT NULL AND view_as_end_recorded_at IS NULL;
+CREATE INDEX ix_sessions_view_as_target  ON sessions (view_as_target_user_id)
+  WHERE view_as_context_id IS NOT NULL AND view_as_ended_at IS NULL;
+CREATE INDEX ix_sessions_view_as_context ON sessions (view_as_context_id)
+  WHERE view_as_context_id IS NOT NULL;
+```
 
 #### 3.1.5 `mfa_methods`, `mfa_challenges`, `recovery_codes`
 
@@ -3973,7 +4021,7 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | `alert_deliveries` (PG)               | 180 d              | 24 mo                                  | 24 mo         | archive_parquet              |                                                                                   |
 | `journal_trades` (PG)                 | ∞                  | 7 y mirror                             | ∞             | archive_parquet              | User's own record                                                                 |
 | `notes`, `drawings`, layouts, presets | ∞                  | —                                      | ∞             | —                            | Soft-deleted rows purged after 90 d (ids become re-usable after the 90-day purge) |
-| `sessions` (PG)                       | 30 d after expiry  | —                                      | 30 d          | drop                         |                                                                                   |
+| `sessions` (PG)                       | 30 d after expiry  | —                                      | 30 d          | drop                         | A pending view-as end is written before its row is dropped (§3.1.4, #3223 L2)     |
 | `users` (PG)                          | ∞                  | —                                      | ∞             | anonymise                    | A `?purge=true` delete: anonymised 90 d later, not dropped (E42-T10, O6, §12)     |
 | `mfa_challenges` (PG)                 | 24 h               | —                                      | 24 h          | drop                         |                                                                                   |
 | `audit_log` (PG)                      | ∞ live 24 mo       | 7 y                                    | 7 y (min)     | archive_parquet              | Chain head checkpointed before any detach                                         |
@@ -4151,6 +4199,7 @@ NAMING_CONVENTION = {
 | `0039_trade_groups`             | `trade_groups`, `trade_group_legs`, `trade_group_definitions`, `trade_group_definition_members`, three enums, the environment, write-once and profile triggers, the leg and rule-run FKs (§3.3.2–§3.3.3a) — **E28-T01 #905 PR-2**; the downgrade refuses while any row exists              |
 | `0040_indicator_presets`        | `indicator_presets` (§3.8.4) with its four added CHECKs, `ux_ip_name`, `ix_ip_fav`, and the 18 §10.5 built-ins seeded `ON CONFLICT DO NOTHING` under fixed ids — **E13-T03 #427**; the downgrade refuses while any user preset exists, a soft-deleted one included                         |
 | `0041_account_env_write_once`   | trigger `trg_ea_env_write_once` (§3.2.1): `exchange_accounts.env` is write-once — **#2333**; the downgrade (rollback only) drops the trigger and its function                                                                                                                              |
+| `0042_sessions_view_as`         | `sessions.view_as_*` (eight nullable columns), CHECKs `sessions_view_as_shape` and `sessions_view_as_end_reason`, the target FK `ON DELETE RESTRICT`, three partial indexes (§3.1.4) — **#3085 S2a**; the downgrade refuses while a row names a context                                    |
 
 ---
 
@@ -4460,6 +4509,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `sessions`                                             | `refresh_token_hash`                    | S          | SHA-256 of token                                | Raw token exists only in the response body and the client                                                                                       |
 | `sessions`                                             | `ip`, `user_agent`, `tailscale_node`    | P2         | plaintext                                       | Set to NULL when the user is purged (O6, below); no reaper deletes session rows yet                                                             |
 | `sessions`                                             | `device_label`                          | P2         | plaintext                                       | User-named device; set to NULL when the user is purged (O6, below)                                                                              |
+| `sessions`                                             | `view_as_*` (eight columns)             | P0         | plaintext                                       | Ids and times of a view-as context (0042), never a name or an IP; the reason for a start is stored only in `admin.view_as_started.after_state`  |
 | `mfa_methods`                                          | `secret_enc`                            | S          | AES-256-GCM under the KEK-wrapped TOTP key      | Opened only in the MFA verifier, as a zeroed `bytearray`; never logged, snapshotted, returned or exported (§3.1.5a); row deleted on purge (O6)  |
 | `mfa_methods`                                          | `public_key`, `credential_id`           | P1         | plaintext                                       | Not secret, but identifying; the row is deleted when the user is purged (O6, below)                                                             |
 | `mfa_challenges`                                       | `nonce`                                 | S          | SHA-256 hex digest of `mfa_token` (UTF-8 bytes) | 24 h TTL; raw token never stored                                                                                                                |
