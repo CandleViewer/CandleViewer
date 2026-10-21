@@ -3485,6 +3485,13 @@
           },
           "type": "object"
         },
+        "exchange_account_ids": {
+          "items": {
+            "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
         "expected_downtime_ms": {
           "type": "integer"
         },
@@ -3513,7 +3520,8 @@
             "shutdown_notice",
             "degraded_data",
             "clock_drift",
-            "notice"
+            "notice",
+            "account_notice"
           ]
         },
         "message": {

@@ -800,7 +800,7 @@ The account-scoped private topics (below) intersect the requested `exchange_acco
 
 **`orders` and `executions` are never throttled or coalesced.** Losing an intermediate order state or dropping a fill would corrupt the OMS mirror the UI renders and the journal derives from. If a client cannot keep up with these two topics, the server closes the connection (`4429`) rather than silently degrading them — a slow client must not be able to see a wrong position.
 
-**`system` is auto-subscribed.** Every authenticated connection is subscribed to `system` implicitly at `auth_ok`; it carries kill-switch transitions, feature-flag changes, degraded-data notices, exchange connectivity changes and planned-shutdown warnings. A client may not unsubscribe from it.
+**`system` is auto-subscribed.** Every authenticated connection is subscribed to `system` implicitly at `auth_ok`; it carries kill-switch transitions, feature-flag changes, degraded-data notices, exchange connectivity changes, planned-shutdown warnings and account notices (§15.9). A client may not unsubscribe from it.
 
 **As built (#377).** Kill-switch transitions are pushed on `system` as a `kill_switch` frame (§12.5) before the re-evaluation in §9.5 runs, so the UI can disable order entry on that frame alone. A live public subscription takes one shared upstream lease per `(symbol, family)` on the E08 ingestion streams. The lease is released 30 s after the last consumer leaves. Families with no ingestion stream yet stay `snapshot_pending`.
 
@@ -832,7 +832,7 @@ introduced, and deliveries are discrete records, so none are coalesced away. Per
 | `rules`                                                                                          | `rules:read`        | granted accounts (bindings) |
 | `alerts`                                                                                         | `alerts:read`       | own alerts only             |
 | `recorder`                                                                                       | `recording:read`    | none                        |
-| `system`                                                                                         | — (implicit)        | content filtered by role    |
+| `system`                                                                                         | — (implicit)        | by role and grant (§15.9)   |
 | `machines.{entity}.state`                                                                        | per kind, §6.4      | per entity, §6.4            |
 
 Permissions are checked **at subscribe time and again on every change to the user's grants** (§9.5). A viewer subscribing to `orders` succeeds (read-only) but any attempt to act comes over REST, where `orders:write` is enforced.
@@ -1207,7 +1207,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 | `machines`                      | Whole-object last-write-wins; at most one pending payload per subscription (§6.4).                                                                            | A state topic: only the latest state matters.                  |
 | `trades`, `liquidations`        | **Append, never merge** — throttling batches them into arrays.                                                                                                | Every print matters for the tape and CVD.                      |
 | `orders`, `executions`          | **Never coalesced, never throttled.**                                                                                                                         | State-machine transitions and fills must be seen individually. |
-| `system`                        | `feature_flags`: per flag key, last-write-wins, a key is never dropped. `notice`, `kill_switch`, `shutdown_notice`: **never coalesced**.                      | A flag delta carries only changed keys; notices are events.    |
+| `system`                        | `feature_flags`: per flag key, last-write-wins, a key is never dropped. `notice`, `kill_switch`, `shutdown_notice`, `account_notice`: **never coalesced**.    | A flag delta carries only changed keys; notices are events.    |
 
 **Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts at 0 only inside a fresh generation/epoch (ADR-0033; a builder cold start begins one, #2662). No two bars of one channel share `(generation, index)`, barring the clock-regression residual and a restore whose tape lost trades after the watermark (24 §3.5). A channel streams one generation at a time; any change of generation, in either direction, is a swap and arrives as a new snapshot (ADR-0033 client ingestion): a `snap` with `meta.reason: "generation_swap"` (§7.4), never a `d`. Clients compare generations for equality only, and MUST replace their whole series with that snapshot, never merging bars across generations. The server never drops an emission as stale for carrying a lower generation. One live builder serves a series at a time, which is what lets a channel stream one generation at a time: a server invariant that the rebuild flip (E12-S12, #535) must keep, with no client backstop (§7.4). Clients key their bar stores the same way. **Footprint bars take the same key (#2529; decided with E12-T06):** §14.4 bar items carry `generation` and `index`, and so does each CVWB kind-5 group prefix (`format_version = 2`, §3.4), so two footprint bars that share an open time are never merged: the coalescer keys them by `(generation, index)` (#3297), and an item without the key is malformed, merged or queued whole (§8.6 Failures). The coalescer keys two generations apart but does not police them: a generation change arrives as a `snap` (§7.4), and the server discards the window that predates it. Footprint items carry no `amended` (§14.4 has no such field, and kind-5 group `flags` bit1 stays reserved), so the carve-out below does not apply to them, and this contract defines no way to republish a late trade into a confirmed footprint bar: clients keep a confirmed footprint bar as received (the coalescer holds that within one window only: an update to a footprint bar confirmed earlier in the window breaks this rule, so it is refused `unmergeable`, §8.4 step 4), the series' `bars` topic carries the `amended` bar, and that bar's footprint cells are corrected only by the next `snap`, which is authoritative (§7.1). Delivering a late trade on `footprint` sooner is decided with the producer (#2197) and would be additive.
 
@@ -1763,6 +1763,14 @@ S→C {"t":"d","ch":"system","s":22,"ts":1789133000000,"e":"j","p":{
 The frame above is as the Owner receives it. A Manager or Viewer receives the §15.9 cut: no `engaged_by`, `engaged_by_username`, `reason` or `actions`, and only the accounts its `account_scope` lists.
 
 The UI must disable order entry on this frame alone, as C12 says, without waiting for a REST poll.
+
+An account notice (§15.9) names its accounts only in `exchange_account_ids`. Account `…0002` loses
+its private stream: the Owner and a Manager granted that account receive the frame below, while a
+Manager granted only account `…0001` receives nothing, and its `system` `s` does not move.
+
+```jsonc
+S→C {"t":"d","ch":"system","s":23,"ts":1789133300000,"e":"j","p":{"kind":"account_notice","severity":"warning","reason":"oms.account_resyncing","message":"An account is resynchronising; its orders and positions are being verified.","exchange_account_ids":["a1000000-0000-4000-8000-000000000002"]}}
+```
 
 ### 12.6 Subscribing to a symbol with no recorded history
 
@@ -3642,7 +3650,8 @@ lists every monitored account of the subscription, and a delta carries an accoun
 monitoring starts and on every `state` transition. A delta changes only what it carries: balance
 items per `exchange_account_id` and `coin`, health entries per `exchange_account_id`, each
 last-write-wins (§8.2); a delta that only reports health has an empty `balances`. Health rides on
-`wallet` because `wallet` is narrowed to granted accounts (§6.3), never on role-filtered `system`.
+`wallet` because `wallet` is narrowed to granted accounts (§6.3); `system` names an account only
+in a list cut to the connection's grants (an `account_notice`, a kill switch, §15.9).
 
 ### 15.5 `TradeGroupUpdate`
 
@@ -4059,7 +4068,8 @@ with it. `refusal` and `write_gate_reason` are open-ended for readers (C-6.3).
         "shutdown_notice",
         "degraded_data",
         "clock_drift",
-        "notice"
+        "notice",
+        "account_notice"
       ]
     },
     "severity": { "enum": ["debug", "info", "warning", "error", "critical"] },
@@ -4127,6 +4137,11 @@ with it. `refusal` and `write_gate_reason` are open-ended for readers (C-6.3).
     },
 
     "reason": { "type": "string" },
+    "exchange_account_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" }
+    },
     "closing_in_ms": { "type": "integer" },
     "expected_downtime_ms": { "type": "integer" },
     "clock_offset_ms": { "type": "integer" },
@@ -4224,8 +4239,8 @@ left out takes no `s` (S3). The Owner receives every frame whole. A Manager or V
 left out. So `message` must be role-neutral in every kind, as the notices above require. A frame
 of any other `kind` is sent to nobody, and so is every frame to a connection whose principal
 holds no role (the deny-all principal of a failed load, and every socket on the fake backend).
-Such a frame, and a `kill_switch` frame with no `kill_switch` object (left out of every connection
-but the Owner's), are counted by `cv_ws_system_frames_withheld_total` (20 §12.1).
+Such a frame, a `kill_switch` frame with no `kill_switch` object and a frame that breaks the
+`exchange_account_ids` rule below (each left out of every connection but the Owner's), are counted by `cv_ws_system_frames_withheld_total` (20 §12.1).
 
 | `kind`               | Fields a Manager or Viewer also receives                                                                                                                                                                                             |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -4238,11 +4253,11 @@ but the Owner's), are counted by `cv_ws_system_frames_withheld_total` (20 §12.1
 | `degraded_data`      | `degraded_topics`, `affected_symbols`                                                                                                                                                                                                |
 | `clock_drift`        | `clock_offset_ms`                                                                                                                                                                                                                    |
 | `notice`             | `reason`                                                                                                                                                                                                                             |
+| `account_notice`     | `reason`, `exchange_account_ids` (cut to the connection's `account_scope`; a frame left with none is not sent, and one whose list names no account goes to the Owner only, counted as `invalid_body`)                                |
 
 So who engaged the kill switch (`engaged_by`, `engaged_by_username`), its free-text `reason`, the
 `actions` counts, the accounts outside the connection's scope, the `owner_only` flag keys and any
-key that no flag definition names reach the Owner only. This uses the existing schema; no schema
-change.
+key that no flag definition names reach the Owner only.
 
 Likewise `exchange` (in `health` and `exchange_state`) reaches a Manager or Viewer with only
 `public_ws`, `private_ws` and `rest`; `applied` (in `connection_quality`) with only
@@ -4257,6 +4272,32 @@ accounts it may view, so `[]` means that none of this connection's accounts is c
 
 `auth_ok.kill_switch` (§4.3) is cut by the same rule, on a first `auth` and on an in-place re-`auth`,
 and is left out for a connection whose principal holds no role (the field is optional, §13.4).
+
+**Account notices (SR-E29-10, #3864).** A fact about one exchange account, or a few, is a frame of
+`kind: "account_notice"` and of no other kind, and the frame names an account only in its
+`exchange_account_ids`. The frame carries `severity`, `message`, `reason` and
+`exchange_account_ids` (the accounts it concerns, at least one) and no other field. `reason` is a
+machine code from an **open** set; current values are `oms.account_resyncing` (the account's private
+stream was lost and its orders and positions are being re-read, E29-T05), `oms.account_desync`
+(reconciliation found a difference and is correcting it, E29-T06), `oms.account_stale`
+(reconciliation has failed for 2 minutes and order entry for the account is refused, E29-T06) and
+`oms.account_synced` (the account is reconciled and live again). A frame reports the state of each
+account it names, so a client keeps the latest `reason` per account id, which `oms.account_synced`
+clears, and keys on the code, never on `severity`. `message` is one role-neutral sentence per
+`reason`: it names no account (no label, id or exchange uid) and counts none. An account's state
+reaches a Manager or Viewer in an `account_notice` and in no other field: no `health` value,
+`components[]` item, `exchange` word, `private_ws` word or `degraded_topics` entry is derived from it.
+
+The Owner receives an `account_notice` whole. A Manager or Viewer receives it with
+`exchange_account_ids` cut to the accounts its `account_scope` lists (§4.3), and only when one
+remains: otherwise nothing is queued for that connection, no `s` is taken (S3) and nothing is
+counted, as for a `feature_flags` frame left with no key. An `account_notice` whose
+`exchange_account_ids` is missing or names no account, and a frame of any other `kind` that carries
+`exchange_account_ids`, go to the Owner only, counted as `invalid_body`. The cut is made when the
+frame is queued, as for every `system` frame: a grant withdrawn or added applies to every later
+frame, a frame already queued when a grant is withdrawn is not recalled (§9.5), and a connection
+that authenticates or gains a grant later is not sent the notices before it. Both are additive
+(C-6.3): `system.kind` is an open enum (§16.5), so a client ignores a `kind` it does not know.
 
 ### 15.10 `MachineStateUpdate`
 
@@ -4481,6 +4522,8 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 
 **Contract change, 2026-10-19 (#415).** `account_scope` in `auth_ok` and `permission_change`, and the accounts of a kill-switch view (§15.9), list the grants that currently permit access, so a frozen grant is no longer listed (§4.3, §9.5). Before, each listed every view grant, a frozen one too. This changes meaning (C-6.3) before the protocol freeze (#572), within `cv.v1`: no frame shape changes, a `sub` naming a frozen account was already refused, and no shipped client reads the list for a decision (`apps/web` validates `account_scope`'s shape, keeps the kill-switch list in state, and reads neither to decide). This is an orchestrator contract decision (2026-10-19); the owner may override it.
 
+**Contract change, 2026-10-20 (#3864).** `system` gains `kind: "account_notice"` and an optional top-level `exchange_account_ids`, and `system.kind` becomes an open enum (§15.9, §16.5; SR-E29-10). This is additive (C-6.3): no shipped client validates `kind` (`apps/web` reads it as a string) and no producer sends either yet (E29-T05 is the first). This is an orchestrator contract decision (2026-10-20); the owner may override it.
+
 ### 16.2 Limits summary
 
 | Limit                          | Value                                              |
@@ -4601,7 +4644,7 @@ Both this document and `22-api-openapi.yaml` are too large for manual review to 
 
 **Extraction step.** `tools/contracts/extract_ws_schemas.py` parses every fenced ```json block in §13–§15, keyed by its `$id`, and bundles them into `ws-schemas.json` — the single artefact consumed by the server (runtime response validation in dev/test), the TypeScript client codegen, and the `ws_message_schemas` gate. The Markdown is the source of truth; the bundle is always regenerated, never hand-edited.
 
-**Open enums.** A server-to-client `enum` that clients must not reject, such as `snapMeta.reason` (§7.4, C18), is the server's closed set: the contract tests (§16.4) and a unit test hold the server to it. A client validates such a field as a string and never uses the `enum`, or the generated TypeScript union, as a decode check, so adding a member stays additive (C-6.3).
+**Open enums.** A server-to-client `enum` that clients must not reject, such as `snapMeta.reason` (§7.4, C18) and `system.kind` (§15.9), is the server's closed set: the contract tests (§16.4) and a unit test hold the server to it. A client validates such a field as a string and never uses the `enum`, or the generated TypeScript union, as a decode check, so adding a member stays additive (C-6.3).
 
 **Local pre-commit.** `make contracts` runs `openapi_structural`, `openapi_jsonschema`, `ref_closure`, `rbac_coverage`, `error_registry_single_source` and `ws_message_schemas` offline in under 10 s (no database, no running API). `enum_parity_db`, `schemathesis_fuzz` and `runtime_spec_parity` need the docker-compose test environment and run in CI only.
 

@@ -1,10 +1,11 @@
 """SR-188 (#3125): `cv_ws_system_frames_withheld_total{reason}` counts the `system` frames a socket
 is not given for a reason other than its role's cut (`23-ws-protocol.md` §15.9): a `kind` outside
-§15.9, which reaches nobody, and a kill switch without its state, which only the Owner receives (so
-a producer that sends either shows up here), a socket with no principal, and a principal with none
-of the three roles. A field cut from a frame, and a frame its role is not meant to receive (a
-`feature_flags` frame with no key a Manager or Viewer may learn, E42-T03), are the contract and
-count nothing.
+§15.9, which reaches nobody, a kill switch without its state, an account notice naming no account
+and an account list on any other kind, which only the Owner receives (so a producer that sends one
+shows up here), a socket with no principal, and a principal with none of the three roles. A field
+cut from a frame, and a frame its role is not meant to receive (a `feature_flags` frame with no key
+a Manager or Viewer may learn, E42-T03; an `account_notice` naming only accounts it may not view,
+SR-E29-10), are the contract and count nothing.
 
 `push_system` runs on a bare `_Connection`. The counter is module-global, so each test reads the
 difference it made, never a total. That its series exist from process start is pinned in
@@ -12,6 +13,8 @@ difference it made, never a total. That its series exist from process start is p
 
 from __future__ import annotations
 
+import contextlib
+import uuid
 from itertools import product
 from pathlib import Path
 from typing import Any, cast
@@ -28,7 +31,10 @@ from candleviewer.ws.metrics import WITHHELD_REASONS, cv_ws_system_frames_withhe
 from candleviewer.ws.permissions import ConnectionAuthz
 from candleviewer.ws.system_filter import NEUTRAL_FIELDS, FlagVisible, system_view, withheld_reason
 from tests.unit.ws.test_system_filter import (
+    _ACCOUNT,
     _FLAG_FRAME,
+    ACC_A,
+    ACC_B,
     BODIES,
     DENY_ALL,
     MANAGER,
@@ -42,6 +48,11 @@ from tests.unit.ws.test_system_filter import (
 NAME = "cv_ws_system_frames_withheld_total"
 ARCH = Path(__file__).resolve().parents[5] / "docs" / "plan" / "20-architecture.md"
 NOTICE, FLAGS = SAMPLES["notice"][0], SAMPLES["feature_flags"][0]
+LIST = "exchange_account_ids"
+#: An account notice naming the account its Manager and Viewer are granted, and one naming only the
+#: other, and the notices that name no account: the list missing, empty or all junk.
+ONLY_A, ONLY_B = (_ACCOUNT | {LIST: [str(ACC_A)]}, _ACCOUNT | {LIST: [str(ACC_B)]})
+NO_ACCOUNTS = [_ACCOUNT, _ACCOUNT | {LIST: []}, _ACCOUNT | {LIST: ["x"]}]
 NO_STATE = {"kind": "kill_switch", "severity": "critical"}  # a kill switch frame is its state
 NO_STATES = [
     NO_STATE,
@@ -95,6 +106,11 @@ def _since(before: dict[str, float]) -> dict[str, float]:
         (["notice"], DENY_ALL, "unknown_kind"),
         *((state, who, "invalid_body") for state in NO_STATES for who in (MANAGER, VIEWER, None)),
         (NO_STATE, DENY_ALL, "invalid_body"),  # the frame is judged before the socket
+        *((body, who, "invalid_body") for body in NO_ACCOUNTS for who in (MANAGER, VIEWER, None)),
+        (NO_ACCOUNTS[0], DENY_ALL, "invalid_body"),
+        (NOTICE | {LIST: [str(ACC_A)]}, MANAGER, "invalid_body"),  # a list on another kind
+        (ONLY_A, None, "no_principal"),
+        (ONLY_A, DENY_ALL, "no_role"),
         (NOTICE, None, "no_principal"),
         (NOTICE, DENY_ALL, "no_role"),
         (FLAGS, DENY_ALL, "no_role"),
@@ -106,11 +122,31 @@ def test_withheld_reason_names_the_frame_fault_or_the_socket_that_gets_nothing(
     assert withheld_reason(body, who) == reason
 
 
+def _named(ids: Any) -> set[uuid.UUID]:
+    """The accounts a list of ids names: its entries that are, or parse as, an account id. Worked
+    out here apart from the filter."""
+    named: set[uuid.UUID] = set()
+    for raw in ids if isinstance(ids, list | tuple) else ():
+        if isinstance(raw, uuid.UUID):
+            named.add(raw)
+        elif isinstance(raw, str):
+            with contextlib.suppress(ValueError):  # not an account id: it names nothing
+                named.add(uuid.UUID(raw))
+    return named
+
+
 def _not_meant(body: Any, who: PrincipalSnapshot | None, visible: FlagVisible | None) -> bool:
-    """A flag frame with no key a Manager or Viewer may learn (§15.9, E42-T03), worked out here
-    apart from the filter."""
+    """A frame the role is not meant to receive, worked out here apart from the filter: a flag
+    frame with no key a Manager or Viewer may learn (§15.9, E42-T03), and an account notice naming
+    only accounts it may not view (SR-E29-10), which is cut to nothing. Neither is a fault."""
     if who is None or who not in (MANAGER, VIEWER) or not isinstance(body, dict):
         return False
+    if body.get("kind") != "account_notice" and LIST in body:
+        return False  # an account list on another kind is a fault of the producer: counted
+    if body.get("kind") == "account_notice":
+        named = _named(body.get(LIST))
+        granted = {g.exchange_account_id for g in who.account_grants if g.can_view and not g.frozen}
+        return bool(named) and not named & granted  # naming none at all is a fault: counted
     if body.get("kind") != "feature_flags":
         return False
     flags = body.get("feature_flags")
@@ -165,6 +201,9 @@ def test_system_view_and_withheld_reason_agree_on_what_is_withheld() -> None:
 @example(body={"kind": "exchange_state", "exchange": {"uid": "1"}}, who=VIEWER, visible=None)
 @example(body={"kind": "health", "components": [1]}, who=MANAGER, visible=None)
 @example(body={"kind": "connection_quality", "applied": {"uid": "x"}}, who=VIEWER, visible=None)
+@example(body=ONLY_B, who=MANAGER, visible=None)  # cut to nothing: the contract, not counted
+@example(body=NO_ACCOUNTS[2], who=VIEWER, visible=None)  # names no account: a fault, counted
+@example(body=NOTICE | {LIST: [str(ACC_A)]}, who=MANAGER, visible=None)  # a list on another kind
 @given(body=BODIES, who=st.sampled_from(WHOS), visible=st.sampled_from([None, _visible]))
 def test_system_view_and_withheld_reason_agree_for_every_drawn_body(
     body: Any, who: PrincipalSnapshot | None, visible: FlagVisible | None
@@ -172,7 +211,9 @@ def test_system_view_and_withheld_reason_agree_for_every_drawn_body(
     """The same assertion over drawn bodies: a drawn shape that is given nothing, with no reason,
     fails. The draws reach a shape by chance, so the examples name what they reach on chance alone:
     an empty `components`, `affected_symbols` or `applied`, and an `exchange`, `components` or
-    `applied` the cut leaves empty (it holds only what a Manager or Viewer may not learn)."""
+    `applied` the cut leaves empty (it holds only what a Manager or Viewer may not learn), and an
+    account list that names no account, only an account the socket may not view, or rides a kind
+    that has none."""
     _agree(body, who, visible)
 
 
@@ -181,6 +222,7 @@ def test_system_view_and_withheld_reason_agree_for_every_drawn_body(
     [
         (TICK, OWNER, "unknown_kind"),
         (NO_STATE, MANAGER, "invalid_body"),
+        (NO_ACCOUNTS[1], MANAGER, "invalid_body"),
         (NOTICE, None, "no_principal"),
         (NOTICE, DENY_ALL, "no_role"),
     ],
@@ -194,13 +236,28 @@ def test_push_system_counts_a_frame_it_leaves_out_once_under_its_reason(
 
 
 @pytest.mark.parametrize(
-    ("body", "who"), [(NOTICE, OWNER), (NOTICE, VIEWER), (FLAGS, MANAGER), (NO_STATE, OWNER)]
+    ("body", "who"),
+    [(NOTICE, OWNER), (NOTICE, VIEWER), (FLAGS, MANAGER), (NO_STATE, OWNER), (ONLY_B, MANAGER)],
 )
 def test_push_system_counts_nothing_for_a_frame_it_queues_or_its_role_is_not_meant_to_get(
     body: Any, who: PrincipalSnapshot
 ) -> None:
     before = _counts()
     _conn(who).push_system(body)
+    assert _since(before) == {}
+
+
+@pytest.mark.parametrize("who", [MANAGER, VIEWER], ids=["manager", "viewer"])
+def test_push_system_queues_no_notice_naming_only_accounts_the_socket_may_not_view(
+    who: PrincipalSnapshot,
+) -> None:
+    """The cut is the contract, as for a flag frame left with no key: no frame, no `s` taken and
+    nothing counted, so the next notice the socket may view follows with `s` 1, no gap (S3)."""
+    conn, before = _conn(who), _counts()
+    conn.push_system(ONLY_B)
+    assert (conn.outbound.qsize(), conn.system_seq) == (0, 0)
+    conn.push_system(ONLY_A)
+    assert (conn.outbound.qsize(), conn.system_seq) == (1, 1)
     assert _since(before) == {}
 
 
@@ -236,18 +293,33 @@ def test_the_counter_is_catalogued_as_a_bounded_exported_counter() -> None:
     assert spec.max_series == len(WITHHELD_REASONS)
 
 
-def test_the_help_and_the_ops_row_say_a_flag_frame_left_with_no_key_is_not_counted() -> None:
-    """What an operator reads: a Manager's or Viewer's `feature_flags` frame left with no key it
-    may learn is the contract, not a fault to chase (E42-T03)."""
+def _what_an_operator_reads() -> list[str]:
+    """The counter's catalogue help and its row of the ops table (`20-architecture.md` §12.1)."""
     (spec,) = [s for s in CATALOGUE if s.name == NAME]
     (row,) = [
         line
         for line in ARCH.read_text(encoding="utf-8").splitlines()
         if line.startswith("| Gateway |") and f"`{NAME}" in line
     ]
+    return [spec.help, row.replace("`", "")]
+
+
+def test_the_help_and_the_ops_row_say_a_flag_frame_left_with_no_key_is_not_counted() -> None:
+    """What an operator reads: a Manager's or Viewer's `feature_flags` frame left with no key it
+    may learn is the contract, not a fault to chase (E42-T03)."""
     scoped = "Manager's or Viewer's feature_flags frame left with no key it may learn"
-    for text in (spec.help, row.replace("`", "")):
+    for text in _what_an_operator_reads():
         assert f"{scoped} is the contract and is not counted" in text
+
+
+def test_the_help_and_the_ops_row_say_an_account_notice_cut_to_nothing_is_not_counted() -> None:
+    """What an operator reads, as above: an `account_notice` naming no account the socket may view
+    is the contract (SR-E29-10), while one naming no account at all, or an account list on another
+    kind, is a producer fault counted as `invalid_body`."""
+    for text in _what_an_operator_reads():
+        assert "nor is an account_notice naming no account it may view" in text
+        assert "naming no account" in text.split("nor is an account_notice")[0]  # the fault
+        assert "an account list on another" in text
 
 
 def test_section_15_9_names_the_counter_of_a_frame_it_leaves_out() -> None:

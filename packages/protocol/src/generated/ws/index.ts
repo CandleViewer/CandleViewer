@@ -1622,7 +1622,8 @@ export interface System {
     | "shutdown_notice"
     | "degraded_data"
     | "clock_drift"
-    | "notice";
+    | "notice"
+    | "account_notice";
   severity?: "debug" | "info" | "warning" | "error" | "critical";
   message?: string;
   health?: "healthy" | "degraded" | "warning" | "down";
@@ -1659,6 +1660,10 @@ export interface System {
     degraded_topics?: string[];
   };
   reason?: string;
+  /**
+   * @minItems 1
+   */
+  exchange_account_ids?: [string, ...string[]];
   closing_in_ms?: number;
   expected_downtime_ms?: number;
   clock_offset_ms?: number;

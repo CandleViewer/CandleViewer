@@ -81,6 +81,14 @@ const CASES: readonly Case[] = [
     event: notice({ closing_in_ms: Number.NaN, expected_downtime_ms: "5" }),
   },
   { name: "system notice", event: system({ kind: "notice", message: "PROSE_NOTICE" }) },
+  {
+    name: "system account notice",
+    event: system({
+      kind: "account_notice",
+      reason: "oms.account_stale",
+      exchange_account_ids: ["a1000000-0000-4000-8000-000000000002"],
+    }),
+  },
   { name: "system update is null", event: { type: "system", update: wire(null) } },
   ...STATUSES.map((s): Case => ({ name: `system stream ${s}`, event: stream(s) })),
   { name: "request_id", event: { type: "request_id", requestId: "REQ_A" } },
