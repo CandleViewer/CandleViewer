@@ -6,16 +6,18 @@ The file runs in the connected Penpot plugin exactly like one `execute_code` cal
 with `penpot`, `penpotUtils` and `storage` in scope, so a loader sent here is visible to later tool
 calls. Its content goes to the selected MCP server (the hosted design.penpot.app for the default
 entry) and runs in your own plugin, under docs/design/README.md's rule: `execute_code` only on the
-file named in the ticket. A request body over about 90 KB (the server refuses bodies near 110 KB) is
-sent in parts kept in `storage.__cvx_<random>` (one key per run, removed on success and on failure),
-then joined and run as one async function body. The plugin sandbox refuses the AsyncFunction
-constructor, so the parts run through `Function`.
+file named in the ticket. A request body over about 90 KB (the server refuses bodies near 110 KB)
+is sent in parts kept in `storage.__cvx_<random>` (one key per run, removed on success and, best
+effort, on failure), then joined and run as one async function body. The plugin sandbox refuses
+the AsyncFunction constructor, so the parts run through `Function`.
 The key is the `userToken` of an MCP server entry in ~/.claude.json and is never printed. Entry,
 endpoint and env rules match penpot_export.py: --server (default `penpot`, user scope), --project
 for a local-scope entry, the endpoint from the entry's own URL unless --endpoint overrides it
-(https, or http on loopback only, opened without a proxy; redirects are refused), PENPOT_MCP_SERVER
-/ _PROJECT / _ENDPOINT. Prints the tool's text answer; --out gets the same text (truncated first).
-Exit 0: an answer; 2: a tool error (a sleeping tab included); 1: the request failed; 64: bad usage.
+(https, which honours env proxies as a CONNECT tunnel only, or http on loopback only, opened without
+a proxy; redirects are refused), PENPOT_MCP_SERVER / _PROJECT / _ENDPOINT. The answer is untrusted
+text: it is redacted, and control characters are escaped on a terminal. --out gets the same text
+(truncated first). Exit 0: an answer; 2: a tool error (a sleeping tab included); 1: the request
+failed, or a bad endpoint or entry; 64: bad usage or an unreadable input file.
 Requires the Penpot MCP plugin to be connected in an open browser tab.
 """
 import argparse
@@ -63,7 +65,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # a redirect would carry the key to another URL
 
 
-# _entry, _redact and the endpoint rule: keep in sync with penpot_export.py
+# _entry and ENDPOINT_RE match penpot_export.py; _redact and _post here are stricter
+# (percent-encoded key forms, refused redirects, split on \n only)
 def _entry(server: str, project: str | None) -> tuple[str, str]:
     """(endpoint, key) of an MCP server entry: user scope, or a project's local scope."""
     cfg = json.load(open(os.path.expanduser("~/.claude.json"), encoding="utf-8"))
@@ -88,7 +91,7 @@ def _redact(text: str, key: str) -> str:
     return text
 
 
-def _post(url: str, body: dict, sid: str | None = None):
+def _post(url: str, body: dict, sid: str | None = None, timeout: int = 600):
     h = {"User-Agent": "candleviewer-design-tools", "Content-Type": "application/json",
          "Accept": "application/json, text/event-stream"}
     if sid:
@@ -99,7 +102,7 @@ def _post(url: str, body: dict, sid: str | None = None):
         handlers: list = [_NoRedirect()]
         if url.startswith("http://"):  # loopback only: never through an env proxy
             handlers.append(urllib.request.ProxyHandler({}))
-        r = urllib.request.build_opener(*handlers).open(req, timeout=600)
+        r = urllib.request.build_opener(*handlers).open(req, timeout=timeout)
         sid = r.headers.get("Mcp-Session-Id") or sid
         # split on \n only: JSON.stringify leaves U+2028/U+2029/U+0085 raw, which splitlines() cuts
         data = [json.loads(x[5:]) for x in r.read().decode().split("\n") if x.startswith("data:")]
@@ -112,9 +115,11 @@ def _post(url: str, body: dict, sid: str | None = None):
     return sid, data
 
 
-def _call(url: str, sid: str | None, n: int, code: str, key: str) -> tuple[int, str]:
+def _call(url: str, sid: str | None, n: int, code: str, key: str,
+          timeout: int = 600) -> tuple[int, str]:
     _, frames = _post(url, {"jsonrpc": "2.0", "id": n, "method": "tools/call",
-                            "params": {"name": "execute_code", "arguments": {"code": code}}}, sid)
+                            "params": {"name": "execute_code", "arguments": {"code": code}}},
+                      sid, timeout)
     frame = next((f for f in reversed(frames) if isinstance(f, dict) and f.get("id") == n), None)
     if frame is None:
         return 1, "the MCP reply carried no answer for this call"
@@ -134,12 +139,16 @@ def _encoded(text: str) -> int:
     return len(json.dumps(text, ensure_ascii=False).encode())
 
 
+def _part_size(part: str) -> int:  # escaped twice: into the JS literal, then into the JSON body
+    return _encoded(json.dumps(part, ensure_ascii=False))
+
+
 def _parts(code: str) -> list[str]:
     out, i = [], 0
     while i < len(code):  # code points, so a surrogate pair is never cut
         n = min(len(code) - i, PART_BUDGET)
-        while n > 1 and _encoded(code[i:i + n]) > PART_BUDGET:
-            n //= 2
+        while n > 1 and (size := _part_size(code[i:i + n])) > PART_BUDGET:
+            n = max(1, min(n - 1, int(n * PART_BUDGET / size * 0.95)))
         out.append(code[i:i + n])
         i += n
     return out
@@ -170,14 +179,23 @@ def run(code: str, server: str = DEFAULT_SERVER, project: str | None = None,
         except SystemExit as e:
             rc, text = 1, str(e.code)
         if rc:
-            try:  # best effort: drop the parts already stored
-                _call(url, sid, 3 + len(parts), f"delete storage[{slot}];\nreturn true;", key)
-            except SystemExit:
-                pass
+            _drop(url, sid, 3 + len(parts), slot, key)
             return rc, f"part {i}/{len(parts)} failed (re-send the whole file): {text}"
     units = len(code.encode("utf-16-le")) // 2  # JS string length counts UTF-16 code units
     assemble = ASSEMBLE.substitute(slot=slot, n=len(parts), units=units)
-    return _call(url, sid, 3 + len(parts), assemble, key)
+    try:
+        return _call(url, sid, 3 + len(parts), assemble, key)
+    except SystemExit as e:  # the file may or may not have run: never suggest a blind re-send
+        _drop(url, sid, 4 + len(parts), slot, key)
+        return 1, f"assembly request failed; the file may or may not have run: {e.code}"
+
+
+def _drop(url: str, sid: str | None, n: int, slot: str, key: str) -> None:
+    """Best effort: remove the stored parts (a no-op if the assembler already did)."""
+    try:
+        _call(url, sid, n, f"delete storage[{slot}];\nreturn true;", key, timeout=15)
+    except SystemExit:
+        pass
 
 
 if __name__ == "__main__":
@@ -188,14 +206,26 @@ if __name__ == "__main__":
     p.add_argument("--project", default=os.environ.get("PENPOT_MCP_PROJECT") or None)
     p.add_argument("--endpoint", default=os.environ.get("PENPOT_MCP_ENDPOINT") or None)
     a = p.parse_args()
+    try:
+        with open(a.file, encoding="utf-8") as fh:
+            code = fh.read()
+    except (OSError, UnicodeDecodeError) as e:
+        p.exit(64, f"{p.prog}: cannot read {a.file}: {type(e).__name__}\n")
+    if a.out and os.path.exists(a.out) and os.path.samefile(a.out, a.file):
+        p.error("--out must not be the input file")
     if a.out:  # truncate first, so a failed run never leaves a stale answer behind
         os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
         open(a.out, "w", encoding="utf-8").close()
-    with open(a.file, encoding="utf-8") as fh:
-        rc, answer = run(fh.read(), a.server, a.project, a.endpoint)
-    sys.stdout.reconfigure(errors="backslashreplace")
-    print(answer)
-    if a.out:
+    rc, answer = run(code, a.server, a.project, a.endpoint)
+    if a.out:  # before stdout, so a closed pipe never loses the answer
         with open(a.out, "w", encoding="utf-8", errors="backslashreplace") as fh:
             fh.write(answer)
+    if sys.stdout.isatty():  # untrusted text: no terminal control sequences
+        answer = re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]",
+                        lambda m: f"\\x{ord(m.group()):02x}", answer)
+    sys.stdout.reconfigure(errors="backslashreplace")
+    try:
+        print(answer)
+    except BrokenPipeError:
+        pass
     raise SystemExit(rc)

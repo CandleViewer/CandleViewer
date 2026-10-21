@@ -45,9 +45,6 @@ ticket only moves to **Done** when the owner has approved it. Concretely:
 - **Screenshots**: one PNG per frame/state exported with `docs/design/_tools/penpot_export.py`, committed under
   `docs/design/<epic>/img/`, and **embedded** in the PR body (`![SCR-nnn/state](../docs/design/<epic>/img/<name>.png)`
   or the raw GitHub URL) so the owner can review without opening Penpot.
-- **Long scripts** (board, relayout and dedupe scripts): send the file with `docs/design/_tools/penpot_exec.py`
-  (the exporter's entry flags) instead of pasting it into `execute_code`; the rule below on which file
-  `execute_code` may touch still applies.
 - UX-research tickets still design in Penpot: the artefact is a research board (personas/journey/findings cards,
   comparison matrices, annotated wireframes) on the ticket's page — not a markdown file alone. Journey maps and
   flows are drawn as frames; Mermaid may be _additional_, never the only deliverable.
@@ -59,7 +56,10 @@ ticket only moves to **Done** when the owner has approved it. Concretely:
 
 Agents never delete or restructure pages/components they did not create in the current ticket, never touch the
 shared DS library file without an explicit ticket, and never call `execute_code` on a file other than the one named
-in the ticket. Skills: the official `penpot-*` skill set (penpot-ai-kit 0.4.0) is installed in `~/.claude/skills/`;
+in the ticket. Long scripts (board, relayout and dedupe scripts) go through `docs/design/_tools/penpot_exec.py`
+(same `--server`/`--project`/`--endpoint` flags as `penpot_export.py`) instead of being pasted into `execute_code`;
+the same rule applies to them. Skills: the official `penpot-*` skill set (penpot-ai-kit 0.4.0) is installed in
+`~/.claude/skills/`;
 `penpot-router` picks the skill, `penpot-foundations` owns tokens, `penpot-build-screen` owns screens,
 `penpot-component-factory` owns `CMP-*`, `penpot-audit-accessibility` runs before every hand-off.
 
