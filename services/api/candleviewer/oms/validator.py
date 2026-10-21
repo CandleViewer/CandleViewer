@@ -18,12 +18,13 @@ type-alias pattern `admin.wiring` already uses to avoid a direct import edge.
    any figure is compared (`validation_failed`); then each figure outside the instrument's
    bounds, listed before any figure meets a step, which cannot judge one of 10**28 steps or more,
    so a figure however large or negative is named: a price, trigger price or stop above
-   `max_price` or below `min_price`, and a quantity below `min_order_qty` or above both quantity
-   ceilings, named by the order's own (`lot_size_violation` if a quantity is listed, else
-   `validation_failed`); then the instrument's trading status and a limit order without its price
-   (`validation_failed`). Every step on a figure runs under one handler, so a figure no step can
-   judge all the same, such as a market order's reference price or a trigger price of 10**28
-   ticks within `max_price`, is `validation_failed` too, never an unhandled error;
+   `max_price` or below `min_price`, a quantity not above zero, named by `min_order_qty`, and a
+   quantity above both quantity ceilings, named by the order's own (`lot_size_violation` if a
+   quantity is listed, else `validation_failed`); then the instrument's trading status and a
+   limit order without its price (`validation_failed`). Every step on a figure runs under one
+   handler, so a figure no step can judge all the same, such as a market order's reference price
+   or a trigger price of 10**28 ticks within `max_price`, is `validation_failed` too, never an
+   unhandled error;
 3. for an entry, any order whose effect is not `REDUCE` (fail closed), the effective profile
    (`403 risk_limit_breached`), as 24-internal-schemas.md Sec.9.3 step 1 reads it: no profile
    allows nothing (D11); a profile not `enabled` or not `trading_enabled` allows nothing
@@ -33,11 +34,12 @@ type-alias pattern `admin.wiring` already uses to avoid a direct import edge.
    (SR-E28-24, SR-E28-27);
 4. the instrument filters of `exchange.policy.InstrumentPolicy`, the one rule source, with the
    order path's own: a trigger price on its tick, a market order's ceiling, and an entry's
-   leverage within the instrument's maximum. Every violation is listed in `errors[]`, named by the
-   instrument field it breaks (24-internal-schemas.md Sec.1.3 rule 3); the answer is
-   `tick_size_violation` if a price is off its tick, else `lot_size_violation` if the quantity or
-   the notional is, else `validation_failed`. A market order has no price of its own: its
-   reference price measures its notional only.
+   leverage within the instrument's maximum. Every violation is listed in `errors[]`, a quantity
+   above zero but below `min_order_qty` among them, named by the instrument field it breaks
+   (24-internal-schemas.md Sec.1.3 rule 3); the answer is `tick_size_violation` if a price is off
+   its tick, else `lot_size_violation` if the quantity or the notional is, else
+   `validation_failed`. A market order has no price of its own: its reference price measures its
+   notional only.
 
 `Validator.check_route` refuses an order whose environment is not its route's (C-2.11): a demo
 account's order never reaches a live client, nor the reverse. Decimal throughout.
@@ -245,9 +247,10 @@ def _bound_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]
     """Each figure outside the instrument's bounds, judged before any figure meets a step, which
     cannot judge one of 10**28 steps or more (`decimal.DivisionImpossible`), so a figure however
     large or negative is named: a price, trigger price or stop above `max_price` or below
-    `min_price`, and a quantity below `min_order_qty` or above both quantity ceilings, named by
-    the order's own. A quantity within either ceiling goes on to the filters, which judge it
-    against its own."""
+    `min_price`, a quantity not above zero, the only one below `min_order_qty` that can be that
+    far from its step, and a quantity above both quantity ceilings, named by the order's own. A
+    quantity above zero and within either ceiling goes on to the filters, which judge it against
+    its own and list it with every other violation (24-internal-schemas.md Sec.1.3)."""
     above = f"Price must not exceed {instrument.max_price}."
     below = f"Price must be at least {instrument.min_price}."
     errors: list[FieldError] = []
@@ -262,7 +265,7 @@ def _bound_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]
             errors.append(FieldError(field, "max_price", above))
         elif price < instrument.min_price:
             errors.append(FieldError(field, "min_price", below))
-    if order.qty < instrument.min_order_qty:
+    if order.qty <= 0:
         message = f"Quantity must be at least {instrument.min_order_qty}."
         errors.append(FieldError("qty", "min_order_qty", message))
     elif order.qty > max(instrument.max_order_qty, instrument.max_mkt_order_qty):

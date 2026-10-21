@@ -136,7 +136,9 @@ async def _cancel_lost(rig: Rig) -> NewOrder:
 
 
 async def _overlong_ack(rig: Rig) -> NewOrder:
-    """An ack whose exchange order id is longer than B1 takes: the order is acked, never bound."""
+    """An accepted create whose exchange order id is longer than B1 keeps (`text_id`): ruling 3
+    on #3972 makes it an ambiguous outcome, so the order waits in `unknown`, never `submitted`
+    unbound, as a `submitted` row is always bound."""
 
     async def overlong(_command: b01.Command) -> Mapping[str, Any]:
         return {"ok": True, "exchange_order_id": "x" * (b01.MAX_TEXT + 1)}
@@ -274,7 +276,7 @@ LIVE: dict[str, tuple[Path, str]] = {
     "held_unbound": (_held_unbound, "held"),
     "untracked": (_untracked, "untracked"),
     "duplicate": (_duplicate, "submitted"),
-    "overlong_ack": (_overlong_ack, "submitted"),
+    "overlong_ack": (_overlong_ack, "unknown"),  # ruling 3 on #3972: submitted is always bound
 }
 FINAL: dict[str, tuple[Path, str]] = {
     "filled": (_filled, "filled"),

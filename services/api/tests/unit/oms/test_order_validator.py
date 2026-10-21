@@ -422,11 +422,13 @@ def test_every_figure_below_its_bound_is_listed() -> None:
     ]
 
 
-def test_a_quantity_below_its_minimum_is_refused_at_its_bound_before_any_step() -> None:
-    """A bound is judged before the steps, so the quantity's minimum answers alone: the price
-    off its tick is not listed with it."""
+@pytest.mark.parametrize("qty", [Decimal("0"), Decimal("-0.0055")], ids=["zero", "negative"])
+def test_a_quantity_not_above_zero_is_refused_at_its_bound_before_any_step(qty: Decimal) -> None:
+    """Only a quantity not above zero can be 10**28 steps below its minimum, so only it answers
+    at its bound, before the steps: the price off its tick is not listed with it. One above zero
+    but below its minimum is listed with every other violated filter (24 Sec.1.3)."""
     with pytest.raises(LotSizeViolation) as refused:
-        _check(_order(price=Decimal("63100.05"), qty=Decimal("0.0055")))
+        _check(_order(price=Decimal("63100.05"), qty=qty))
     assert refused.value.errors == (FieldError("qty", "min_order_qty", _MIN_QTY),)
 
 
@@ -533,22 +535,19 @@ def test_a_market_orders_notional_is_measured_at_its_reference_price() -> None:
 
 
 def test_every_violated_filter_is_listed_and_the_tick_answers_first() -> None:
-    """Every figure within its bounds: the price off its tick, the quantity off its step and the
-    notional under its minimum are all listed."""
-    priced = {"price": Decimal("100.05"), "reference_price": Decimal("100.05")}
     with pytest.raises(TickSizeViolation) as refused:
-        _check(_order(**priced, stop_loss=Decimal("90.0"), qty=Decimal("0.0105")))
+        _check(_order(price=Decimal("63100.05"), qty=Decimal("0.0055")))
     assert _rules(refused.value) == [
         ("price", "tick_size"),
         ("qty", "qty_step"),
-        ("qty", "min_notional"),
+        ("qty", "min_order_qty"),
     ]
 
 
 def test_a_lot_violation_answers_before_the_leverage_and_lists_it() -> None:
     with pytest.raises(LotSizeViolation) as refused:
-        _check(_order(qty=Decimal("0.2505")), instrument=_instrument(max_leverage=Decimal("5")))
-    assert _rules(refused.value) == [("qty", "qty_step"), ("leverage", "max_leverage")]
+        _check(_order(qty=Decimal("0.005")), instrument=_instrument(max_leverage=Decimal("5")))
+    assert _rules(refused.value) == [("qty", "min_order_qty"), ("leverage", "max_leverage")]
 
 
 def test_the_instruments_filters_are_listed_before_the_order_paths_own() -> None:
@@ -809,6 +808,29 @@ def _any_order(draw: st.DrawFn) -> SizedOrder:
     )
 
 
+def _outside(order: SizedOrder, instrument: Instrument) -> list[tuple[str, str]]:
+    """The oracle's own reading of the bounds, as `(field, rule)`: a price, trigger price or stop
+    outside `[min_price, max_price]`, then a quantity not above zero or above both ceilings, the
+    latter named by the order's own ceiling."""
+    low, high = instrument.min_price, instrument.max_price
+    figures = (
+        ("price", order.price),
+        ("trigger.price", order.trigger_price),
+        ("stop_loss", order.stop_loss),
+    )
+    found = [
+        (field, "min_price" if figure < low else "max_price")
+        for field, figure in figures
+        if figure is not None and not low <= figure <= high
+    ]
+    ceiling = "max_mkt_order_qty" if order.order_type == "market" else "max_order_qty"
+    if order.qty <= 0:
+        found.append(("qty", "min_order_qty"))
+    elif order.qty > max(instrument.max_order_qty, instrument.max_mkt_order_qty):
+        found.append(("qty", ceiling))
+    return found
+
+
 @given(
     order=_any_order(),
     instrument=st.sampled_from(_INSTRUMENTS),
@@ -830,11 +852,17 @@ def test_property_check_order_answers_any_finite_figures_with_a_typed_refusal_on
     order: SizedOrder, instrument: Instrument, profile: AccountProfile | None
 ) -> None:
     """For any finite figures `check_order` passes the order or raises an `OrderRefused`, never
-    another exception; a refusal that lists no `errors[]` is the profile's, or a figure no step
-    can judge, its decimal.InvalidOperation kept as the cause."""
+    another exception. A figure outside its bounds (`_outside`, the oracle's own reading) is never
+    passed: the refusal lists exactly those figures, each by its field and bound. With none
+    outside, a refusal that lists no `errors[]` is the profile's, or a figure no step can judge,
+    its decimal.InvalidOperation kept as the cause."""
+    outside = _outside(order, instrument)
     validator = Validator(read_only_gate=_Gate())
     try:
         validator.check_order(order, instrument=instrument, profile=profile)
     except OrderRefused as refused:
         named = bool(refused.errors) or isinstance(refused, RiskRefused)
-        assert named or isinstance(refused.__cause__, InvalidOperation)
+        assert not outside or _rules(refused) == outside  # each figure outside, named
+        assert outside or named or isinstance(refused.__cause__, InvalidOperation)
+    else:
+        assert not outside  # a figure outside its bounds is never passed

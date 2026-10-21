@@ -163,14 +163,18 @@ async def test_inv_b1_g_every_step_is_written_before_it_is_seen(book: Book, char
         assert book.commands.kinds() == ["place"]
 
 
-#: Accepted creates that name no exchange order id, no non-empty text: ruling 3 on #3972.
+#: Accepted creates that name no exchange order id B1 keeps (`text_id`: text of 1 to `MAX_TEXT`
+#: characters with no control character): ruling 3 on #3972.
 _UNNAMED: list[dict[str, Any]] = [
     {"ok": True, "exchange_order_id": None},
     {"ok": True, "exchange_order_id": ""},
     {"ok": True},
     {"ok": True, "exchange_order_id": 1},
+    {"ok": True, "exchange_order_id": "x" * 65},
+    {"ok": True, "exchange_order_id": "x1\n"},
+    {"ok": True, "exchange_order_id": "x\x00y"},
 ]
-_UNNAMED_IDS = ["none", "empty", "absent", "not_text"]
+_UNNAMED_IDS = ["none", "empty", "absent", "not_text", "over_max_text", "newline", "nul"]
 _NAMED = {"ok": True, "exchange_order_id": "x1"}
 _MISSING = ("error", {"error": "ExchangeOrderIdMissingError"})  # the error's class, no ack
 
@@ -191,10 +195,11 @@ async def test_an_accepted_place_is_submitted_only_when_it_names_its_order(
     book: Book,
     charts: Charts,
 ) -> None:
-    """Ruling 3 on #3972: an accepted create names its order (24 Sec.8.6 "Order creates"). One
-    that names none is an ambiguous outcome: `place` raises `ExchangeOrderIdMissingError`, so
-    `onError` lands the order in `unknown` for reconciliation (S1), never in `submitted` unbound,
-    and its row records the error's class, no ack. A named one is submitted and bound."""
+    """Ruling 3 on #3972 (#3972's 24 Sec.8.3 rule 7): an accepted create names its order as B1
+    keeps one (`text_id`). One that names none B1 keeps is an ambiguous outcome: `place` raises
+    `ExchangeOrderIdMissingError`, so `onError` lands the order in `unknown` for reconciliation
+    (S1), never in `submitted` unbound, and its row records the error's class, no ack. A named
+    one is submitted and bound."""
 
     async def _accepted(_command: b01.Command) -> Mapping[str, Any]:
         return ack
