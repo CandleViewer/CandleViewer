@@ -231,7 +231,8 @@ def test_the_revision_register_lists_the_revision() -> None:
 def test_the_revision_is_flagged_for_security_review_on_each_table() -> None:
     """CI-MIG-006 (`tools/ci/security-sensitive-tables.txt`): signed state and audit-class
     storage, so the revision raises the security-review flag for each of the three tables. The
-    lint matches quoted names only, so the revision lists the tables its SQL alters."""
+    revision also lists the tables its SQL alters, which the lint needed while it matched quoted
+    names only (until #3935)."""
     declared = re.search(r"^ALTERED_TABLES: Final = (\(.*\))$", _revision_text(), re.M)
     assert declared is not None
     assert sorted(re.findall(r'"(\w+)"', declared[1])) == sorted(_COLUMNS)

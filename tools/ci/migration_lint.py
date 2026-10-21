@@ -16,6 +16,8 @@ Error codes (ticket "Technical notes / design"):
     CI-MIG-003  destructive operation without a `# cv:contract-phase:` annotation
     CI-MIG-004  upgrade-path (previous release) failure
     CI-MIG-005  `IF NOT EXISTS` used in a migration file
+    CI-MIG-006  security-sensitive table touched (a `WARN` for the reviewer; never
+                fails the job)
 
 Stdlib only for the lint (`--check-if-not-exists`, `--check-destructive`);
 the `alembic heads` / `alembic check` / `upgrade head` steps in
@@ -132,7 +134,9 @@ def _resolve_simple_name_constants(tree: ast.AST) -> dict[str, str]:
     return values
 
 
-def _iter_string_literals(path: Path, source: str) -> list[tuple[int, str, bool]]:
+def _iter_string_literals(
+    path: Path, source: str, skip_docstrings: bool = False
+) -> list[tuple[int, str, bool]]:
     """Every string literal in the migration file, via the AST (so f-string
     parts and implicit concatenation are covered, not just single-line
     `op.execute("...")` calls). Returns `(1-based lineno of the literal's
@@ -144,14 +148,28 @@ def _iter_string_literals(path: Path, source: str) -> list[tuple[int, str, bool]
     access, call, unresolved name, f-string format spec, etc.) is replaced
     with `_UNRESOLVED_PLACEHOLDER` and the triple's third element is `True`,
     so a dynamic table name in an audit-sensitive statement still trips a
-    dedicated fail-closed finding even though the real name is unknown."""
+    dedicated fail-closed finding even though the real name is unknown.
+
+    `skip_docstrings` leaves out a string used as a statement (a module, class
+    or function docstring): it is documentation and never executes."""
     try:
         tree = ast.parse(source, filename=str(path))
     except SyntaxError:
         return []
     name_constants = _resolve_simple_name_constants(tree)
+    docstrings: set[int] = set()
+    if skip_docstrings:
+        docstrings = {
+            id(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        }
     literals: list[tuple[int, str, bool]] = []
     for node in ast.walk(tree):
+        if id(node) in docstrings:
+            continue
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             literals.append((node.lineno, node.value, False))
         elif isinstance(node, ast.JoinedStr):
@@ -193,6 +211,70 @@ def _sql_statements(text: str) -> list[str]:
     return chunks or [text]
 
 
+# CI-MIG-006 reads a revision for the identifiers it names, not for substrings:
+# `orders`, `positions`, `executions` and `backups` are also plain words, and a
+# table that only a comment or a message mentions is not touched. One scan, left
+# to right, consumes whole whatever is not an identifier (comments, `'...'`
+# literals) before it takes a name, so a `--` inside a literal or an apostrophe
+# inside a comment can neither hide nor swallow a statement. A name is then
+# either unquoted (Postgres folds it to lower case) or double-quoted (case kept,
+# `""` is one `"`); in `public.orders`, `"public"."orders"` and `orders.id` each
+# part is a name. A `$tag$ ... $tag$` body (a `DO` block, a trigger function) is
+# code: it is consumed whole, so an apostrophe in it cannot pair with a quote
+# outside it, and scanned on its own.
+_SQL_TOKEN_RE = re.compile(
+    r"--[^\n]*"  # line comment
+    r"|/\*.*?\*/"  # block comment
+    r"|(?P<estring>[eE]'(?:[^'\\]|\\.|'')*')"  # E'..': backslash escapes
+    r"|(?P<string>'(?:[^']|'')*')"  # '..': a doubled quote is one quote
+    r'|"(?P<quoted>(?:[^"]|"")+)"'  # "..": a quoted identifier
+    r"|\$(?P<tag>(?:[^\W\d]\w*)?)\$(?P<body>.*?)\$(?P=tag)\$"  # $tag$..$tag$
+    r"|\$(?:[^\W\d]\w*)?\$"  # a $tag$ delimiter with no partner
+    r"|(?P<word>\w[\w$]*)",  # unquoted identifier, keyword or number
+    re.DOTALL,
+)
+
+# A `'...'` literal is a value unless it is SQL, so its text is read only when it
+# is dynamic SQL (it opens with one of `SQL_COMMANDS`, as in the `EXECUTE 'REVOKE
+# DELETE ON t FROM cv_app'` these revisions write their grants as) or a bare,
+# possibly qualified name (`'orders'::regclass`, the quoted form this rule has
+# always matched). A `COMMENT ... IS` text, a `RAISE` message or a seed value such
+# as 'orders:read' is prose and is skipped, unless it opens with a command word,
+# when it is read as SQL (an extra flag, never a missed one); `$$` text is always
+# read as code.
+SQL_COMMANDS = (
+    "ALTER", "ANALYZE", "BEGIN", "CALL", "CLUSTER", "COMMENT", "COPY", "CREATE",
+    "DECLARE", "DELETE", "DO", "DROP", "EXECUTE", "GRANT", "INSERT", "LOCK", "MERGE",
+    "REFRESH", "REINDEX", "REVOKE", "SELECT", "SET", "TABLE", "TRUNCATE", "UPDATE",
+    "VACUUM", "WITH",
+)  # fmt: skip
+_SQL_COMMAND_RE = re.compile(r"\s*(?:" + "|".join(SQL_COMMANDS) + r")\b", re.IGNORECASE)
+_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+_BARE_NAME_RE = re.compile(r'\s*[\w".]+\s*')
+
+
+def _sql_identifiers(sql: str) -> set[str]:
+    """Every name `sql` uses as an identifier, as Postgres reads it: an unquoted
+    name folded to lower case, a double-quoted one exactly (`"ORDERS"` is not
+    `orders`). Fail-closed: a column or alias that shares a table's name is read
+    as the table, since no grammar is parsed."""
+    names: set[str] = set()
+    for token in _SQL_TOKEN_RE.finditer(sql):
+        quoted, word, body = token["quoted"], token["word"], token["body"]
+        literal = token["string"] or token["estring"]
+        if body is not None:
+            names |= _sql_identifiers(body)
+        elif quoted is not None:
+            names.add(quoted.replace('""', '"'))
+        elif word is not None:
+            names.add(word.lower())
+        elif literal is not None:
+            text = literal[literal.index("'") + 1 : -1].replace("''", "'")
+            if _BARE_NAME_RE.fullmatch(text) or _SQL_COMMAND_RE.match(text):
+                names |= _sql_identifiers(text)
+    return names
+
+
 # Populated from `tools/ci/security-sensitive-tables.txt` when present;
 # migrations touching these need the `security-review` label (flagged, not
 # blocked, by this tool — the label/reviewer gate is enforced elsewhere).
@@ -209,6 +291,11 @@ class LintFinding:
 
     def render(self) -> str:
         return f"{self.code}: {self.path}: {self.message}"
+
+
+def _read_revision(path: Path) -> str:
+    """A revision's text as Python reads it: a byte-order mark is not code."""
+    return path.read_text(encoding="utf-8-sig")
 
 
 def _read_sensitive_tables(path: Path) -> frozenset[str]:
@@ -236,7 +323,7 @@ def _line_has_contract_phase_nearby(
 def check_if_not_exists(paths: list[Path]) -> list[LintFinding]:
     findings: list[LintFinding] = []
     for path in paths:
-        text = path.read_text(encoding="utf-8")
+        text = _read_revision(path)
         for lineno, line in enumerate(text.splitlines(), start=1):
             if _IF_NOT_EXISTS_RE.search(line) and not _CREATE_EXTENSION_RE.search(line):
                 findings.append(
@@ -281,7 +368,7 @@ def check_audit_table_integrity(
     comment, marker or annotation of any kind suppresses a finding here."""
     findings: list[LintFinding] = []
     for path in paths:
-        source = path.read_text(encoding="utf-8")
+        source = _read_revision(path)
         lines = source.splitlines()
 
         for lineno, literal, unresolved in _iter_string_literals(path, source):
@@ -354,7 +441,7 @@ def check_destructive_annotations(
 ) -> list[LintFinding]:
     findings: list[LintFinding] = []
     for path in paths:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = _read_revision(path).splitlines()
         for idx, line in enumerate(lines):
             is_destructive = bool(_DESTRUCTIVE_OP_RE.search(line))
             is_narrowing_type = bool(_ALTER_COLUMN_TYPE_RE.search(line))
@@ -404,7 +491,17 @@ def check_security_sensitive(
     """Non-blocking flag (CI-MIG-006, informational): migrations touching
     security-sensitive tables need mandatory Security review per
     `02-definition-of-ready-done.md` §4.1. Returned as findings with code
-    'CI-MIG-006' so the caller can choose to warn rather than fail."""
+    'CI-MIG-006' so the caller can choose to warn rather than fail.
+
+    A revision touches a table when a string literal in it names the table as
+    an identifier (see `_sql_identifiers`): in raw SQL, unquoted, double-quoted
+    or schema-qualified (`CREATE TABLE account_profiles`), or as an Alembic
+    argument (`op.add_column("orders", ...)`). A docstring, a Python or SQL
+    comment, and a name that only the text of a `'...'` literal mentions are
+    prose, not a touch, unless the literal opens with an SQL command: then it
+    is read as SQL, so such prose can add a flag, never hide one; `$$` text is
+    always read as code. A revision Python cannot parse has every word read as
+    a name (fail-closed). One finding per table per file, ordered by table."""
     tables = sensitive_tables
     if tables is None:
         tables = _read_sensitive_tables(_DEFAULT_SECURITY_SENSITIVE_TABLES_PATH)
@@ -412,19 +509,27 @@ def check_security_sensitive(
         return []
     findings: list[LintFinding] = []
     for path in paths:
-        text = path.read_text(encoding="utf-8")
-        for table in tables:
-            if re.search(rf"['\"]{re.escape(table)}['\"]", text):
-                findings.append(
-                    LintFinding(
-                        code="CI-MIG-006",
-                        path=path,
-                        message=(
-                            f"touches security-sensitive table '{table}' — "
-                            "requires mandatory Security review (DoR §4.1)"
-                        ),
-                    )
+        source = _read_revision(path)
+        try:
+            ast.parse(source, filename=str(path))
+        except SyntaxError:  # not Python: every word is a name, fail-closed
+            names = {word.lower() for word in _WORD_RE.findall(source)}
+        else:
+            names = set()
+            literals = _iter_string_literals(path, source, skip_docstrings=True)
+            for _, literal, _ in literals:
+                names |= _sql_identifiers(literal)
+        for table in sorted(names & tables):
+            findings.append(
+                LintFinding(
+                    code="CI-MIG-006",
+                    path=path,
+                    message=(
+                        f"touches security-sensitive table '{table}' — "
+                        "requires mandatory Security review (DoR §4.1)"
+                    ),
                 )
+            )
     return findings
 
 
