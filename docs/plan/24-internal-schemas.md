@@ -1990,66 +1990,91 @@ One ticket → N accounts, each sized and protected by its own profile. The grou
 ### 9.1 Model
 
 ```python
-class TradeGroup(BaseModel):
-    group_id: GroupId
-    created_by: UserId
-    environment: Environment
+GroupOrigin = Literal["manual","hotkey","dom_click","chart_click","rule","alert","replay_sim"]   # 21 tg_origin
+EntryType = Literal["market","limit","conditional"]          # columns Market / Limit / Conditional
+TriggerBy = Literal["last","mark","index"]                   # columns LastPrice / MarkPrice / IndexPrice
+AlgoKind = Literal["none","oco","iceberg","twap","chase","scaled","bracket"]
+type JsonValue = None | bool | int | str | list[JsonValue] | dict[str, JsonValue]   # no float; a Decimal travels as its string
+
+class TradeGroup(BaseModel):                     # one trade_groups row (21 §3.3.2), all but client_body_sha256
+    group_id: GroupId                            # id
+    client_group_ref: UUID                       # the Idempotency-Key (§8.3 rule 1), unique per created_by
+    definition_id: UUID | None                   # set when fired from a definition; write-once
+    environment: Environment                     # env; write-once
     symbol: Symbol
     side: Side
-    intent: OrderIntent
-    account_ids: tuple[AccountId, ...]
-    status: Literal["draft","submitting","partially_open","open","closing",
-                    "closed","failed","cancelled"]
-    leg_failure_policy: Literal["best_effort","all_or_none","abort_on_first"]
+    status: Literal["draft","submitting","partially_open","open","closing","closed","failed","cancelled"]
+    leg_failure_policy: Literal["best_effort","all_or_none","abort_on_first"]   # §9.5 (21 tg_policy); write-once, named by every draft
+    algo: AlgoKind
+    algo_params: dict[str, JsonValue] | None     # checked per kind by E32/E33 before the write
+    note: str | None                             # intent_note; never logged
+    origin: GroupOrigin
+    rule_id: RuleId | None                       # origin_rule_id; None once the rule is deleted
+    rule_run_id: UUID | None                     # origin_rule_run_id
+    requested_qty_mode: Literal["fixed_qty","fixed_notional","pct_equity","risk_based"]   # the request, never authority
+    requested_qty_value: Decimal | None
+    entry_type: EntryType
+    entry_price: Px | None                       # > 0 when limit (tg_limit_px)
+    trigger_price: Px | None                     # > 0, with trigger_by, when conditional (tg_cond_px)
+    trigger_by: TriggerBy | None
+    sl_price_hint: Px | None                     # hints, never authority (SR-E28-05)
+    tp_price_hint: Px | None
+    is_paper: bool                               # ExecutionMode persisted (§1.2); orthogonal to environment
+    submitted_at: TsUs | None                    # the first leg sent
+    opened_at: TsUs | None                       # the first fill
+    closed_at: TsUs | None                       # >= opened_at (tg_times)
+    created_by: UserId
     created_at: TsUs
-    submitted_at: TsUs | None
-    closed_at: TsUs | None
-    rule_id: RuleId | None                 # set when a rule originated the group
-    tags: tuple[str, ...]
-    aggregate: "TradeGroupAggregate"
+    updated_at: TsUs
 
-class TradeGroupLeg(BaseModel):
+class TradeGroupLeg(BaseModel):                  # one trade_group_legs row (21 §3.3.3), all but profile_snapshot
     leg_id: UUID
-    group_id: GroupId
-    account_id: AccountId
-    profile_id: UUID
-    profile_snapshot: "AccountProfile"     # frozen copy — profiles change over time
-    sized_qty: Qty
-    entry_price_target: Px | None
-    stop_loss: Px
-    take_profits: tuple["TakeProfitLeg", ...]
-    leverage: Decimal
-    position_idx: Literal[0,1,2]
+    group_id: GroupId                            # trade_group_id
+    account_id: AccountId                        # exchange_account_id
+    account_profile_id: UUID | None              # None only once its profile row is gone
+    profile_version: int                         # >= 1; the snapshot's version
     status: Literal["pending","submitted","rejected","open","partially_filled",
                     "filled","cancelled","closed","error"]
-    order_ids: tuple[OrderId, ...]
-    filled_qty: Qty
+    sequence_no: int                             # 0..100, fan-out order
+    target_qty: Qty                              # > 0
+    filled_qty: Qty                              # 0..target_qty
     avg_entry_price: Px | None
+    avg_exit_price: Px | None
+    resolved_leverage: Decimal                   # 1..100, 2 places
+    resolved_sl_price: Px | None                 # > 0 unless rejected, cancelled or error (tgl_sl_px)
+    resolved_tp_price: Px | None                 # the entry's one native take-profit
+    native_sl_confirmed: bool
+    native_sl_confirmed_at: TsUs | None          # set whenever native_sl_confirmed (tgl_sl_conf)
+    risk_usd: Notional | None
     realised_pnl: Notional
-    fees: Notional
-    funding: Notional
-    error_code: OmsErrorCode | None
-    error_message: str | None
-    skipped_reason: str | None             # e.g. "symbol_not_allowed", "daily_loss_cap"
+    fees_paid: Notional                          # >= 0
+    rejection_code: str | None                   # taxonomy code (writers bound it to 1..64; read as stored), redacted at insert; never logged
+    rejection_message: str | None                # exchange text, redacted at insert; never logged
+    submitted_at: TsUs | None
+    closed_at: TsUs | None
+    created_at: TsUs
+    updated_at: TsUs
 
-class TakeProfitLeg(BaseModel):
-    price: Px
-    qty_pct: Decimal          # fraction of leg size, must sum to <= 1
-    reduce_only: bool = True
+class TakeProfitLeg(BaseModel):                  # a resolved TakeProfitRung (§9.2); not stored
+    price: Px                                    # > 0
+    qty_pct: Decimal                             # fraction of the leg's filled size, 0 < v <= 1; a ladder sums to <= 1
+    reduce_only: Literal[True] = True
 
-class TradeGroupAggregate(BaseModel):
-    requested_qty: Qty
-    filled_qty: Qty
-    weighted_avg_entry: Px | None
+class TradeGroupAggregate(BaseModel):            # computed by E34-T01; not stored
+    target_qty: Qty                              # sum of the legs' target_qty
+    filled_qty: Qty                              # sum of the legs' filled_qty
+    weighted_avg_entry: Px | None                # None while filled_qty is 0
     total_notional: Notional
-    unrealised_pnl: Notional
+    unrealised_pnl: Notional                     # from positions, not from legs
     realised_pnl: Notional
     total_fees: Notional
-    total_funding: Notional
+    total_funding: Notional                      # from funding executions, not from legs
     legs_ok: int
     legs_failed: int
-    legs_skipped: int
+    legs_skipped: int                            # from the fan-out outcome: a skip has no leg row
 ```
+
+**As built (E28-T01, #905).** The models live in `candleviewer.accounts.trade_groups` (M13) and mirror `trade_groups` and `trade_group_legs` (`21-database-schema.md` §3.3.2, §3.3.3) as §9.2's `AccountProfile` mirrors its table: every column is a field except two. `client_body_sha256`, the replay anchor's request fingerprint (G-6(b)), stays in M10: the store compares it in SQL and never returns it. `profile_snapshot` is read on demand by `leg_profile_snapshot`, which validates it as the `AccountProfile` it was written from and checks that it names its leg's account, profile and version (`tgl_snapshot`); one validation costs about 0.15 ms and no REST or WS shape carries the snapshot, so lists and frames never pay it. `group_from_row`, `leg_from_row`, `group_values` and `leg_values` are the one adapter: they rename (`id` to `group_id` or `leg_id`, `env` to `environment`, `intent_note` to `note`, `origin_rule_id` to `rule_id`, `origin_rule_run_id` to `rule_run_id`, `trade_group_id` to `group_id`, `exchange_account_id` to `account_id`), map the Bybit-cased labels to §1.2's (`Buy`/`Sell`, `Market`/`Limit`/`Conditional` and `LastPrice`/`MarkPrice`/`IndexPrice` to `buy`/`sell`, `market`/`limit`/`conditional` and `last`/`mark`/`index`) and turn `timestamptz` into `TsUs`; no column of either table is a percent, so nothing is scaled. The models refuse what the tables refuse (`tg_*`, `tgl_*`; SR-E28-08), a `float` anywhere (C2) and a value its column would round, so a valid group or leg round-trips with `Decimal` equality. The write models `TradeGroupDraft` and `LegDraft` add what the database cannot state: a draft names its `leg_failure_policy`, because the column default is only §9.5's manual-ticket default (§9.5's default for each origin is the fan-out's to apply); a leg is built from the one `AccountProfile` it was sized from, which gives its account, `account_profile_id`, `profile_version` and the snapshot (`model_dump(mode="json")`: decimals and ids as strings, never a float); a `note` has at most 280 characters; `algo_params` is absent when `algo` is `none` and holds no fractional JSON number; a `replay_sim` group is `is_paper`; only a `rule` origin carries rule ids. `TakeProfitLeg` and `TradeGroupAggregate` are values that nothing stores.
 
 ### 9.2 Per-account profile
 
@@ -2111,7 +2136,7 @@ class AccountProfile(BaseModel):
 
 Risk caps are **server-side and non-negotiable** — a manager cannot exceed them from the UI, an API call, or a rule (research 09 §10 recommendation). Every profile change is audited with a before/after diff.
 
-**As built (E28-T01, #905).** The model lives in `candleviewer.accounts.profiles` (M13) and repeats the rules of the `account_profiles` CHECKs and triggers (`21-database-schema.md` §3.2.4; SR-E28-08: the floor holds at every layer), so a leg's frozen copy is always a profile the database could hold. It is stricter in two places: a value its column would round, and a symbol entry that is neither a symbol nor an anchored suffix pattern. `profile_from_row` and `profile_values` are the one adapter to the stored row: percentages are percents (0–100) there and fractions here, an offset in `percent` included; a ladder rung's `pct` is `qty_pct`; `denied_symbols` is the column `blocked_symbols`; an empty tuple is a NULL list; `updated_at` is µs. Refusing a value its column would round means every valid profile round-trips with `Decimal` equality (a property test). `SymbolPattern` is a listed symbol or an anchored suffix pattern (`*USDT`, never a bare `*`), expanded against the instrument cache at evaluation time (E28-T04, SR-E28-06). Each cap maps to one enforcing gate in `candleviewer.accounts.profile_caps` (SR-E28-10). A ladder rung is relative (`TakeProfitRung`); `TakeProfitLeg` (§9.1), with its absolute `price`, is the resolved form on a leg.
+**As built (E28-T01, #905).** The model lives in `candleviewer.accounts.profiles` (M13) and repeats the rules of the `account_profiles` CHECKs and triggers (`21-database-schema.md` §3.2.4; SR-E28-08: the floor holds at every layer), so a leg's frozen copy is always a profile the database could hold. It is stricter in two places: a value its column would round, and a symbol entry that is neither a symbol nor an anchored suffix pattern. `profile_from_row` and `profile_values` are the one adapter to the stored row: percentages are percents (0–100) there and fractions here, an offset in `percent` included; a ladder rung's `pct` is `qty_pct`; `denied_symbols` is the column `blocked_symbols`; an empty tuple is a NULL list; `updated_at` is µs. Refusing a value its column would round means every valid profile round-trips with `Decimal` equality (a property test). `SymbolPattern` is a listed symbol or an anchored suffix pattern (`*USDT`, never a bare `*`), expanded against the instrument cache at evaluation time (E28-T04, SR-E28-06). Each cap maps to one enforcing gate in `candleviewer.accounts.profile_caps` (SR-E28-10). A ladder rung is relative (`TakeProfitRung`); `TakeProfitLeg` (§9.1), with its absolute `price`, is the resolved form of a rung; nothing stores it.
 
 **Reads and writes (E28-T01, #905).** `candleviewer.accounts.profile_repository.ProfilesRepository` is the domain facade over the M10 `AccountProfileStore` (`storage/repositories/account_profiles_sqlalchemy.py`): reads take the caller's account scope and writes an owner scope, both applied in SQL (SR-051); a write is addressed by the path's account and profile ids, and a body naming others reads as missing like any path mismatch; it passes the client's `If-Match` as `expected_version` and never writes `version` (the database bumps it and records the revision); only `set_default_profile` moves the default, and the default is never deleted. Each write takes an optional `write_ahead` hook, awaited in the write's transaction before it commits (C-2.9), once per row it changed, with that row before and after in stored units (`profile_from_row` reads them); E28-T02 wires the profile's audit records through it, and its own failure is a typed refusal, since a raw `OSError` from it reads as the database's. `candleviewer.accounts.profile_cache.EffectiveProfiles` is the order path's read: `get_effective_profile(account_id, profile_id | None)` (`None` is the account's default), cached per profile for at most 30 s, loaded single-flight, and invalidated by every write before it returns, so no older version is served after a narrowing write (SR-E28-15); a store failure, a timeout, a stored row that cannot be decoded or a read overtaken twice by writes raises `ProfileUnavailableError`, on which the order path fails closed (SR-E28-24). `peek()` is its synchronous, cache-only form.
 
@@ -5004,3 +5029,23 @@ These are contract-test obligations created by this pass; they belong in the CI 
 ### 19.18 2026-10-20 — §13 recorder status follow-up (E16-D02, #323; E16-T08, #492; #2216)
 
 - `StorageUsage` gains `accelerate_retention` (§13.4.1's flag: the ladder's own step, on from step 2 until used < 75 % and free > 25 %) and the WS `storage` block gains `used_bytes`, the meter's numerator. The coverage gap `reason` (§13.3) was a closed enum; it is opened for readers on purpose and gains `seq_jump` and `backpressure_drop` (#2216), outside C-6.3's additive list by the orchestrator's ruling of 2026-10-20 (recorded on #323), safe because no client reads data-coverage yet. The recorder `policy` lists its seven fields as required: it is new in §15.8 and no server emits it yet. The `volume_refused` row names every boot refusal and its precedence over `disk_halt`.
+
+### 19.20 2026-10-20 — §9.1 `TradeGroup` and `TradeGroupLeg` reconciled with their tables (E28-T01)
+
+- The models live in `candleviewer.accounts.trade_groups` (M13) and mirror `trade_groups` and `trade_group_legs` (`21-database-schema.md` §3.3.2, §3.3.3) as §9.2's `AccountProfile` mirrors its table (§19.16): every column is a field, and `group_from_row`, `leg_from_row`, `group_values` and `leg_values` are the one adapter. Two columns are not fields: `client_body_sha256`, the replay anchor's request fingerprint (G-6(b)), which the store compares and never returns, and `profile_snapshot`, which `leg_profile_snapshot` reads on demand (one `AccountProfile` validation costs about 0.15 ms, and no REST or WS shape carries it).
+- New, because the tables have them and §9.1 lacked them. `TradeGroup`: `client_group_ref` (a `UUID`; the `Idempotency-Key`, §8.3 rule 1), `definition_id`, `algo`, `algo_params`, `note` (`intent_note`), `origin`, `rule_run_id` (`origin_rule_run_id`), `requested_qty_mode`, `requested_qty_value`, `entry_type`, `entry_price`, `trigger_price`, `trigger_by`, `sl_price_hint`, `tp_price_hint`, `is_paper`, `opened_at`, `updated_at`. `TradeGroupLeg`: `profile_version`, `sequence_no`, `avg_exit_price`, `resolved_tp_price`, `native_sl_confirmed` and `native_sl_confirmed_at` (§19.10's `native_sl_observable`), `risk_usd`, `submitted_at`, `closed_at`, `created_at`, `updated_at`.
+- Renamed to their columns, the names §19.4 gave 22 and 23: `profile_id` to `account_profile_id`, now `UUID | None` (its FK is `ON DELETE SET NULL`; the snapshot keeps the id); `sized_qty` to `target_qty` (B3's context key stays `sized_qty`); `stop_loss` to `resolved_sl_price`, now `Px | None` (`tgl_sl_px`: a rejected, cancelled or failed leg may have none); `leverage` to `resolved_leverage`; `fees` to `fees_paid`; `error_code` and `error_message` to `rejection_code` and `rejection_message`. Id fields keep §9.1's role names (`group_id`, `leg_id`, `account_id`, `environment`, `rule_id`).
+- `rejection_code` is a `str` its writers bound to 1 to 64 characters (`LegDraft`, `LegUpdate`), not `OmsErrorCode`: M13 may not import `exchange.base`, `Order.reject_code` is a `str` too (§8.1), and the store redacts it before insert (21 §12), so a stored code can read `[redacted]`. `TradeGroupLeg` reads whatever is stored, as the column has no CHECK: a refused row would fail the safety scan closed. Its writer (M14) checks it against §8.6.
+- Removed, with where each value lives. `intent`: the request is the group's own columns; the `OrderIntent` fields without a column are resolved per order. `account_ids`: the legs' accounts in `sequence_no` order (`TradeGroupWithLegs.account_ids`). `aggregate`: computed by E34-T01. `tags`: the journal's (21 §3.7). Leg `entry_price_target` and `position_idx`: on the leg's orders (`position_idx` follows the snapshot's `position_mode` and the side). `take_profits`: `resolved_tp_price` is the entry's one native take-profit; a ladder is the leg's reduce-only take-profit orders (§9.3.3, §10.7). `order_ids`: the join on `orders.trade_group_leg_id` (`ix_orders_leg`), read by the projection. `funding`: funding executions and `journal_trades.funding_paid`. `skipped_reason`: see the next item.
+- A skipped account has no leg row: `leg_status` has no `skipped`, and a leg needs `target_qty > 0` and a profile revision. A skip, like a sizing failure before a quantity exists, is an outcome of the fan-out, recorded per leg in the audit (SR-E28-20, PF-R02) and counted in B2's `legs_skipped`; `TradeGroupAggregate.legs_skipped` comes from there.
+- `leg_failure_policy` is a write-once field of `TradeGroup` and `TradeGroupDraft`: the column `trade_groups.leg_failure_policy` with §9.5's three values (`tg_policy`), frozen by `trg_tg_write_once`, so B2, the unwind and a restart read it from the row, never from a machine snapshot, and no update reaches it. A draft names it, because the column default (`best_effort`) is only §9.5's manual-ticket default: §9.5's default for each origin (`abort_on_first` for a rule-originated group) is the fan-out's to apply (E34-S02), never taken by omission. 22's and 23's two-value `atomicity` is its projection until SR-E28-25 settles one vocabulary.
+- `TakeProfitLeg` and `TradeGroupAggregate` are values that nothing stores. `TakeProfitLeg` is a resolved `TakeProfitRung` (§9.2): `price`, `qty_pct` (a fraction of the leg's filled size; a ladder sums to at most 1, checked exactly) and `reduce_only`, now `Literal[True]` (a take-profit that could add exposure is refused). `TradeGroupAggregate.requested_qty` is renamed `target_qty`, as 22's `totals.target_qty`; it is E34-T01's output, and its `unrealised_pnl`, `total_funding` and `legs_skipped` do not come from leg rows.
+- `origin` keeps 21's labels (C7). §8.1's `OrderIntent.origin` maps to it in the fan-out (E34-S01): `ticket` to `manual`, `chart` to `chart_click`, `dom` to `dom_click`, `hotkey`, `rule`, and `api` to `manual`; `algo_child` never names a group; `alert` and `replay_sim` are group origins only. `is_paper` is §1.2's `ExecutionMode` persisted, orthogonal to `environment`; a `replay_sim` group is always `is_paper`.
+- `algo_params` is a JSON object with no fractional number (a `Decimal` is its string, as `model_dump(mode="json")` renders it), absent when `algo` is `none`. M13 cannot import §10's parameter models, so E32 and E33 check it per kind before the write.
+- Contract follow-ups, unchanged here (P-1, E28-T05, E34-T01):
+  - 22's `TradeGroup` and 23's frame lack `environment`, `origin`, `definition_id`, `submitted_at` and `opened_at`.
+  - Their `intent` and `totals` have no column, or differ from `TradeGroupAggregate`.
+  - 22's `TradeGroupLeg.account_profile_id` is null "when the ticket overrode the profile entirely", which `trg_tgl_profile` refuses at insert.
+  - `LegError.code` says an `x-error-codes` slug, while the column holds the taxonomy code; `exchange_ret_code` and `retryable` have no column.
+  - `ResolvedLegParams` says its derivation is captured in `profile_snapshot`, which holds only the `AccountProfile` projection.
+  - ADR-0008's model predates the eight statuses and puts the snapshot on the child order; its dated As-built note records both.
