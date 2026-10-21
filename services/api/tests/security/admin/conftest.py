@@ -7,9 +7,12 @@ explicit `MonkeyPatch` undone at module teardown, so none outlives the module (C
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from datetime import timedelta
+from typing import Any
 
+import httpx
 import pytest
 
 from candleviewer.auth.step_up import GRACE_WINDOW
@@ -41,3 +44,20 @@ def world(admin_world: AdminWorld, b16_audit: object) -> AdminWorld:
     after, so each test points it back here; one log holds every record, as in production."""
     b16_session.set_audit_sink(admin_world.audit)
     return admin_world
+
+
+@pytest.fixture
+def sent(world: AdminWorld, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every request `world.send` makes names its own correlation id, listed here in order (#3990:
+    an audit record must carry the id the middleware bound for its request)."""
+    ids: list[str] = []
+    real = world.send
+
+    def send(actor: str, method: str, path: str, request: Any, **kw: Any) -> httpx.Response:
+        cid = str(uuid.uuid4())
+        ids.append(cid)
+        stamped = {**request, "headers": {**request.get("headers", {}), "X-Correlation-Id": cid}}
+        return real(actor, method, path, stamped, **kw)
+
+    monkeypatch.setattr(world, "send", send)
+    return ids

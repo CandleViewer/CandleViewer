@@ -83,7 +83,9 @@ async def _emit(
     request it is bound to (never the request itself). A `session_object`
     record names its session as the object instead (#3402), because the
     audit query's `subject_type`/`subject_id` filter reads only the object;
-    one with no session id keeps the object above, never a kind with no id."""
+    one with no session id keeps the object above, never a kind with no id.
+    The record names the request the event happened in when its payload
+    carries one (`request_id`, a UUID string: #3990)."""
     payload = _payload(event)
     if payload.get("replay"):
         return
@@ -93,6 +95,7 @@ async def _emit(
     before = payload.get("before")
     after = elevation_view(context)
     challenge, bound = payload.get("challenge_id"), payload.get("request_sha256")
+    request_id = payload.get("request_id")
     if isinstance(bound, str):
         after["bound_request_sha256"] = bound
     kind, obj = ("step_up_challenge", challenge) if isinstance(challenge, str) else (None, None)
@@ -110,6 +113,7 @@ async def _emit(
         reason=reason,
         before_state=before if isinstance(before, dict) else None,
         after_state=after,
+        request_id=request_id if isinstance(request_id, str) else None,
     )
 
 

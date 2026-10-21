@@ -24,6 +24,7 @@ from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_chart import SessionChart, SessionChartError
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService, grace_expires_at
+from candleviewer.observability.context import bind_context
 from candleviewer.statechart.bindings import b16_session
 from tests.conftest import RecordingAuditSink
 
@@ -59,6 +60,73 @@ async def test_challenge_issued_records_action_request_and_audits_required(
     assert call["action"] == "auth.step_up_required" and call["outcome"] == "denied"
     assert call["session_id"] == sid and call["actor_user_id"] == str(user)
     assert call["reason"] == "keys" and call["after_state"]["step_up_failures"] == 0
+
+
+async def test_a_challenge_names_the_request_it_refuses(b16_audit: RecordingAuditSink) -> None:
+    """#3990: B16 writes in the chart's own task, so the refused request's id rides on the
+    event."""
+    svc, *_ = await _setup()
+    bound = uuid.uuid4()
+    with bind_context(request_id=str(bound)):  # as `CorrelationMiddleware` binds it
+        await svc.record_pending("s1", "keys")
+    assert [c.get("request_id") for c in b16_audit.calls] == [str(bound)]
+
+
+async def test_a_challenge_outside_a_request_names_none(b16_audit: RecordingAuditSink) -> None:
+    svc, *_ = await _setup()
+    await svc.record_pending("s1", "keys")
+    assert [c.get("request_id") for c in b16_audit.calls] == [None]
+
+
+async def test_a_grace_use_names_the_request_it_lets_through(b16_audit: RecordingAuditSink) -> None:
+    svc, clock, seed, user, _sessions = await _setup()
+    await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
+    bound = uuid.uuid4()
+    with bind_context(request_id=str(bound)):
+        await svc.require_elevation("s1", "keys")  # within the grace window
+    (used,) = [c for c in b16_audit.calls if c["action"] == "auth.step_up_grace_used"]
+    assert used.get("request_id") == str(bound)
+
+
+async def test_a_granted_step_up_names_its_request(b16_audit: RecordingAuditSink) -> None:
+    svc, clock, seed, user, _sessions = await _setup()
+    bound = uuid.uuid4()
+    with bind_context(request_id=str(bound)):
+        await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
+    (granted,) = [c for c in b16_audit.calls if c["action"] == "auth.step_up_granted"]
+    assert granted.get("request_id") == str(bound)
+
+
+async def test_a_failed_step_up_names_its_request(b16_audit: RecordingAuditSink) -> None:
+    svc, _clock, _seed, user, _sessions = await _setup()
+    bound = uuid.uuid4()
+    with bind_context(request_id=str(bound)), pytest.raises(StepUpCodeInvalid):
+        await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
+    (failed,) = [c for c in b16_audit.calls if c["action"] == "auth.step_up_failed"]
+    assert failed.get("request_id") == str(bound)
+
+
+async def test_a_revocation_names_the_request_that_revokes(b16_audit: RecordingAuditSink) -> None:
+    """Every B16 event a request raises carries its id, the session's revocation included (an
+    admin's revoke, a disable cascade and a TOTP reset all reach `SessionChart.revoke`)."""
+    svc, clock, _seed, _user, sessions = await _setup()
+    bound = uuid.uuid4()
+    with bind_context(request_id=str(bound)):
+        await svc.chart.revoke(sessions.sessions["s1"], clock.now, "admin_revoke")
+    (revoked,) = [c for c in b16_audit.calls if c["action"] == "auth.session_revoked"]
+    assert revoked.get("request_id") == str(bound)
+
+
+async def test_an_idle_lock_names_the_request_that_finds_it(
+    b16_audit: RecordingAuditSink,
+) -> None:
+    svc, clock, _seed, _user, sessions = await _setup()
+    clock.now += timedelta(minutes=16)  # past the default 15-minute idle timeout
+    bound = uuid.uuid4()
+    with bind_context(request_id=str(bound)):
+        await svc.chart.observe(sessions.sessions["s1"], clock.now)
+    (locked,) = [c for c in b16_audit.calls if c["action"] == "auth.idle_locked"]
+    assert locked.get("request_id") == str(bound)
 
 
 async def test_step_up_ok_elevates_chart_and_audits_granted(

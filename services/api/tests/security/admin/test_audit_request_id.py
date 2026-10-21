@@ -5,16 +5,15 @@ The real `create_app()` of the E42-X03 world (`_world.py`), the elevation state 
 requests are stamped with an `X-Correlation-Id` of the test's choosing, so what the middleware bound
 is known without reading the response: a record whose `request_id` is NULL, or any other id, fails.
 
-The step-up exchange's own records (`auth.step_up_*`, B16's chart) are not the route guard's and
-are outside this ticket; the cells' presence and status expectations stay in `_cells.py`.
+The route's own step-up records, the challenge (`auth.step_up_required`) and the grace use
+(`auth.step_up_grace_used`), which B16's chart writes, are checked like any other; the stale state's
+challenges are `test_audit_request_id_stale.py`'s. The step-up exchange's own records (`POST
+/auth/step-up`, which the cells send without a stamped id) are not the route's. The cells'
+presence and status expectations stay in `_cells.py`.
 """
 
 from __future__ import annotations
 
-import uuid
-from typing import Any
-
-import httpx
 import pytest
 
 from tests.security.admin import _cells as cells
@@ -33,26 +32,6 @@ FAMILIES = {
 }
 
 
-@pytest.fixture
-def sent(world: AdminWorld, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Every request `world.send` makes names its own correlation id, listed here in order."""
-    ids: list[str] = []
-    real = world.send
-
-    def send(actor: str, method: str, path: str, request: Any, **kw: Any) -> httpx.Response:
-        cid = str(uuid.uuid4())
-        ids.append(cid)
-        stamped = {**request, "headers": {**request.get("headers", {}), "X-Correlation-Id": cid}}
-        return real(actor, method, path, stamped, **kw)
-
-    monkeypatch.setattr(world, "send", send)
-    return ids
-
-
-def _guard_records(seen: cells.Observed) -> list[dict[str, Any]]:
-    return [r for r in seen.records if not r["action"].startswith("auth.step_up")]
-
-
 def _unnamed(world: AdminWorld, op: cells.Op, actor: str, sent: list[str]) -> list[str]:
     """`action: request_id` of each record of the cell that does not carry a stamped id."""
     start = len(sent)
@@ -60,7 +39,7 @@ def _unnamed(world: AdminWorld, op: cells.Op, actor: str, sent: list[str]) -> li
     stamped = set(sent[start:])
     return [
         f"{r['action']}: {r.get('request_id')}"
-        for r in _guard_records(seen)
+        for r in cells.route_records(seen.records)
         if str(r.get("request_id")) not in stamped
     ]
 
