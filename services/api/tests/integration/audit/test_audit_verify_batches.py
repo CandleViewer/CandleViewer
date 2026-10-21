@@ -61,9 +61,11 @@ async def relational(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepositor
         await client.dispose()
 
 
-async def _append(repo: SqlAlchemyAuditRepository, sizes: list[int]) -> int:
-    """One entry per size, a `reason` of that many characters; returns the id before them."""
+async def _append(repo: SqlAlchemyAuditRepository, sizes: list[int]) -> tuple[int, list[int]]:
+    """One entry per size, a `reason` of that many characters; returns the id before them and
+    their ids, read back: an insert draws two ids since `0045_audit_chain_hardening`."""
     head = await repo.read_head()
+    ids: list[int] = []
     for i, size in enumerate(sizes):
         await repo.insert(
             {
@@ -76,7 +78,10 @@ async def _append(repo: SqlAlchemyAuditRepository, sizes: list[int]) -> int:
                 "event_ts": (_T0 + timedelta(seconds=i)).isoformat(),
             }
         )
-    return 0 if head is None else head[0]
+        written = await repo.read_head()
+        assert written is not None
+        ids.append(written[0])
+    return 0 if head is None else head[0], ids
 
 
 def _n(row: tuple[Any, ...]) -> int:
@@ -93,10 +98,10 @@ async def test_a_batch_stops_before_the_row_that_starts_past_the_budget(
 ) -> None:
     whole = SqlAlchemyAuditRepository(relational)  # the default budget: all twelve fit
     cut = SqlAlchemyAuditRepository(relational, verify_batch_max_bytes=_BUDGET)
-    base = await _append(whole, [100] * 12)
-    every = await whole.fetch_verify_batch(after_id=base, to_id=base + 12, limit=100)
-    assert _ids(every) == list(range(base + 1, base + 13))
-    batch = await cut.fetch_verify_batch(after_id=base, to_id=base + 12, limit=100)
+    base, ids = await _append(whole, [100] * 12)
+    every = await whole.fetch_verify_batch(after_id=base, to_id=ids[-1], limit=100)
+    assert _ids(every) == ids
+    batch = await cut.fetch_verify_batch(after_id=base, to_id=ids[-1], limit=100)
     assert batch == every[: len(batch)] and 1 < len(batch) < 12
     sizes = [_n(row) for row in every]  # the last row in starts below the budget
     assert sum(sizes[: len(batch) - 1]) < _BUDGET <= sum(sizes[: len(batch)])
@@ -106,13 +111,13 @@ async def test_an_entry_over_the_budget_comes_alone_first_and_ends_a_batch_other
     relational: SqlAlchemyRelationalRepository,
 ) -> None:
     repo = SqlAlchemyAuditRepository(relational, verify_batch_max_bytes=_BUDGET)
-    base = await _append(repo, [10, 10, 5000, 10, 10])  # the third is over the whole budget
-    big, last = base + 3, base + 5
+    base, ids = await _append(repo, [10, 10, 5000, 10, 10])  # the third is over the whole budget
+    big, last = ids[2], ids[4]
     fetch = repo.fetch_verify_batch
-    assert _ids(await fetch(after_id=base, to_id=last, limit=10)) == [base + 1, base + 2, big]
-    assert _ids(await fetch(after_id=base + 2, to_id=last, limit=10)) == [big]
-    assert _ids(await fetch(after_id=big, to_id=last, limit=10)) == [base + 4, last]
-    result = await AuditQueryService(repo).verify(from_id=base + 1, to_id=last, batch_size=10)
+    assert _ids(await fetch(after_id=base, to_id=last, limit=10)) == ids[:3]
+    assert _ids(await fetch(after_id=ids[1], to_id=last, limit=10)) == [big]
+    assert _ids(await fetch(after_id=big, to_id=last, limit=10)) == ids[3:]
+    result = await AuditQueryService(repo).verify(from_id=ids[0], to_id=last, batch_size=10)
     assert (result.verified, result.entries_checked) == (True, 5)
 
 
@@ -120,12 +125,12 @@ async def test_an_entry_over_the_cap_is_never_fetched_and_stops_the_run(
     relational: SqlAlchemyRelationalRepository,
 ) -> None:
     repo = SqlAlchemyAuditRepository(relational, verify_max_entry_bytes=2000)
-    base = await _append(repo, [10, 10, 5000, 10])  # the third is over the cap
-    big, last = base + 3, base + 4
+    base, ids = await _append(repo, [10, 10, 5000, 10])  # the third is over the cap
+    big, last = ids[2], ids[3]
     batch = await repo.fetch_verify_batch(after_id=base, to_id=last, limit=10)
-    assert _ids(batch) == [base + 1, base + 2]  # ends before it
+    assert _ids(batch) == ids[:2]  # ends before it
     with pytest.raises(AuditEntryTooLarge) as err:
-        await repo.fetch_verify_batch(after_id=base + 2, to_id=last, limit=10)
+        await repo.fetch_verify_batch(after_id=ids[1], to_id=last, limit=10)
     assert err.value.entry_id == big
     with pytest.raises(AuditEntryTooLarge):
-        await AuditQueryService(repo).verify(from_id=base + 1, to_id=last, batch_size=10)
+        await AuditQueryService(repo).verify(from_id=ids[0], to_id=last, batch_size=10)

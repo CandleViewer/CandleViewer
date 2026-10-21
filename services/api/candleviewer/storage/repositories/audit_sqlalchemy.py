@@ -265,10 +265,10 @@ async def insert_audit_row_locked(session: AsyncSession, record: dict[str, Any])
     advisory lock, then the INSERT. The WAL path (`insert` below) and every in-transaction
     record, such as a re-wrap's (#2266), go through here. The rules for such a transaction:
 
-    - Take the chain lock explicitly, right before the INSERT. `audit_chain()` takes it too, but
-      only after the bigserial default has drawn `id`: an insert waiting there can commit with an
-      id below a row that committed first and hash that later row as its predecessor, while
-      verify walks the chain by id.
+    - Take the chain lock explicitly, right before the INSERT. `audit_chain()` takes it too and,
+      since `0045_audit_chain_hardening`, draws `id` under it, so every insert path keeps ids in
+      chain order and this lock is defence in depth (before 0045 the default drew `id` before the
+      trigger's lock, and an insert waiting there could link out of id order).
     - Take row locks first and the chain lock last. The WAL path holds only the chain lock, so
       no deadlock cycle forms.
     - Never raise the isolation level above READ COMMITTED: the trigger reads the chain head

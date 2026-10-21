@@ -495,12 +495,12 @@ class AuditQueryService:
         self, *, from_id: int | None, to_id: int | None, max_span: int = VERIFY_MAX_SPAN
     ) -> VerifyPlan:
         """Range defaulting (#2392/#2446). One bounds read serves the defaults, the
-        beyond-head test and the clamp. With neither bound, the newest `max_span` entries;
-        with one, the other makes a `max_span` range, clipped to the first entry and the
-        head; `to_id` past the head is clamped to it. A `from_id` past the head raises
-        `VerifyRangeBeyondHead` (404), unless a checkpoint names an id above the head: then
-        the plan carries that tail truncation. The caller checks the span of two given
-        bounds (422) first."""
+        beyond-head test and the clamp. With neither bound, the newest `max_span` ids (about
+        half as many entries since `0045_audit_chain_hardening`); with one, the other makes a
+        `max_span` range, clipped to the first entry and the head; `to_id` past the head is
+        clamped to it. A `from_id` past the head raises `VerifyRangeBeyondHead` (404), unless a
+        checkpoint names an id above the head: then the plan carries that tail truncation. The
+        caller checks the span of two given bounds (422) first."""
         bounds = await self._repository.read_bounds()
         first, head = bounds if bounds is not None else (None, 0)
         if (from_id is not None and from_id > head) or first is None:

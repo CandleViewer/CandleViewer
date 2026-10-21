@@ -862,6 +862,9 @@ What NOT to do (each destroys the tamper signal):
 Verify the incident is recorded: `GET $API/admin/audit?action=...` for the actions around
 `first_bad_id`. Stop and escalate at step 1 if `verified` is false; the rest is Security's decision.
 Expected elapsed time: `verify` duration is not measured here; for large logs use `from_id`/`to_id`.
+Since `0045_audit_chain_hardening` (#889) each insert consumes two ids, so gaps in the ids are
+expected and are not a break, and a range of N ids drawn since then holds about N/2 entries: a
+call capped at `audit_verify_max_span` (1,000,000 ids by default) checks about 500,000 of them.
 
 ## 6. Binding self-check failure (read-only mode)
 

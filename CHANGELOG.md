@@ -5135,3 +5135,4 @@ tracker).
 - **auth-rbac**: a token refresh keeps a session's step-up penalty, so the read-only period after failed step-up codes can no longer be lifted by refreshing (#4051) (#4060)
 - **backend-platform**: a database error no longer carries the server's text (row values, the statement or its parameters) into the API's logs; it keeps its class, SQLSTATE and constraint name (#2748) (#4074)
 - **infra-devops**: the Postgres server log no longer records a failed statement's row values or bound parameters (#2748) (#4080)
+- **accounts-admin**: every audit insert now draws its row id under the chain lock, and `audit_chain()` resolves what it calls through a search path of its own rather than the inserting session's (#889) (#4094)
