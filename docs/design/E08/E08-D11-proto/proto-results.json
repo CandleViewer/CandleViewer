@@ -9,15 +9,27 @@
     "appearances",
     "suppressed",
     "fill_changes",
-    "text_flips",
+    "title_swaps",
+    "title_swaps_max_per_s",
+    "scrim_flips",
+    "scrim_flips_max_per_s",
     "earliest_collapse_s",
     "min_visible_s"
   ],
   "flap": {
-    "ac1": [10, 1, 4, 2, 10, 24, 24],
+    "ac1": [10, 1, 4, 2, 4, 1, 3, 1, 24, 24],
     "ac1_announcements": ["0 s alert", "2 s unstable", "14 s recovered"],
-    "flap2hz": [120, 1, 59, 2, 120, 44.75, 44.75],
-    "flap2hz_announcements": ["0 s alert", "0.5 s unstable", "34.75 s recovered"]
+    "flap2hz": [120, 1, 59, 2, 3, 1, 3, 2, 44.75, 44.75],
+    "flap2hz_announcements": ["0 s alert", "1 s unstable", "34.75 s recovered"],
+    "slow": [6, 1, 2, 6, 9, 1, 9, 1, 40, 40],
+    "slow_announcements": [
+      "0 s alert",
+      "6 s recovered",
+      "12 s alert",
+      "18 s recovered",
+      "24 s alert",
+      "30 s recovered"
+    ]
   },
   "mass_columns": [
     "arm",
@@ -29,13 +41,13 @@
     "frame_ms_max",
     "frames",
     "over_20_ms",
-    "over_33_3_ms",
+    "ge_33_ms",
     "idle_frame_ms_p95"
   ],
   "mass": [
-    ["per-row 200", 200, 42.1, 29, 42.1, 16.8, 33.3, 119, 2, 0, 16.7],
-    ["container 200", 200, 13.4, 11.7, 13.4, 16.8, 16.8, 121, 0, 0, 16.8],
-    ["container 60 (virtualised window)", 60, 4.5, 3.5, 4.5, 16.7, 16.8, 122, 0, 0, 16.8],
-    ["container 200 + 4 Hz ticks, 20 emphases", 200, 16.7, 14.5, 16.7, 16.7, 16.8, 120, 0, 0, 16.8]
+    ["per-row 200", 200, 42.6, 33.7, 42.6, 16.8, 66.6, 112, 5, 5, 16.77],
+    ["container 200 (all 200 rows in the DOM)", 200, 15.6, 11.5, 15.6, 16.7, 16.8, 121, 0, 0, 16.8],
+    ["container 60 (virtualised window)", 60, 7.2, 3.4, 7.2, 16.8, 16.8, 121, 0, 0, 16.8],
+    ["container 200 + 4 Hz ticks, 20 emphases", 200, 15.7, 11.1, 15.7, 16.8, 16.8, 121, 0, 0, 16.8]
   ]
 }

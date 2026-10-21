@@ -11,11 +11,18 @@ ladder, E08-D03's `recovered` hold, the `23` section 7.5 resync budget); PROPOSE
 `docs/design/E08/E08-D11.md` section 2's and change only when the owner's run (section 11) changes
 them. The mass-transition measurements are read from `E08-D11-proto/proto-results.json` if present.
 
+The flap replay follows section 3 as folded after the first lens round: the title swaps at 0 ms on
+the first change, then at most once per second and, once T5 trips, latches on "Connection unstable"
+until the stable window completes; the glyph follows the transport; the banner fill and the panel
+scrim are debounced on the clearing side (the scrim steps to the 15 % hold dim when the fresh
+snapshot lifts the block and cuts with the window); `role="alert"` fires on every Disconnected
+entry that follows an announced recovery.
+
 Usage: python3 -I docs/design/_tools/e08_d11_motion_audit.py          (Markdown; exit 1 on a FAIL)
        python3 -I docs/design/_tools/e08_d11_motion_audit.py --json   (the boards' numbers)
 
-Gated rows are the composites this spec introduces (dimmed text and glyphs, the scrim label); the
-banner pairs E08-D03 already bound are reported, never gated here.
+Gated rows are the composites this spec introduces (dimmed text and glyphs, the scrim and hold
+labels); the banner pairs E08-D03 already bound are reported, never gated here.
 """
 
 from __future__ import annotations
@@ -57,25 +64,33 @@ FLASH_PER_S, SAFE_AREA_PX2 = 3, 341 * 256  # WCAG 2.3.1 threshold and small safe
 STABLE_WINDOW_S = 5.0  # continuous `up` before the fill steps down and recovery is announced
 DEGRADED_CLEAR_S = 5.0  # every topic fresh for this long before the `degraded` banner clears
 DIM_ALPHA = 0.85  # stale text at 85 % over `stale.surface` (E17-D01 15 %, E11-D06 D13)
+HOLD_DIM_ALPHA = 0.15  # the scrim's hold level: `stale.surface` at 15 % over the panel (H8)
+WORD_SLOT_S = 1.0  # title swaps after the first: at most one per second (D2)
 EMPHASIS_ALPHA, EMPHASIS_MIN_MS, EMPHASIS_MAX_CELLS = 0.25, 500, 20
-AREAS = (  # element|width|height in CSS px (E08-D03's 1280 px boards; compact density)
-    "banner fill|1280|96;banner icon|20|20;stale chip|64|18;one row|1280|24;"
-    "rendered rows 60|76800|24;emphasis cell|96|20;emphasis cells 20|1920|20;"
+# element|width|height in CSS px (E08-D03's 1280 px boards; compact density). The title line is
+# E08-D03 section 3's "Disconnected — reconnecting (attempt 3, next in 4 s)" (52 characters) in
+# `type.ui.body-strong` = `font.size.base` 13 px at `font.lineheight.normal` 1.4: 52 x 13 x 0.56 em.
+AREAS = (
+    "banner fill|1280|96;banner title line|379|19;banner icon|20|20;stale chip|64|18;"
+    "one row|1280|24;rendered rows 60|76800|24;emphasis cell|96|20;emphasis cells 20|1920|20;"
     "panel scrim|480|600;progress bar|400|4"
 )
 FLASH = (  # element|changes per second, worst case under the table|kind
     f"banner fill|{2 / STABLE_WINDOW_S}|luminance;"
-    f"banner title and body|{1000 / (LADDER_MS[0] - 250)}|text;"
+    f"banner title and body|{1 / WORD_SLOT_S}|text;"
+    f"banner glyph|{1000 / (LADDER_MS[0] - 250)}|text;"
     f"stale chip, book|{1 / T1_S['book']}|luminance;"
     f"watchlist row settle, ticker|{1 / T1_S['ticker']}|luminance;"
     f"degraded banner|{2 / (T1_S['book'] + DEGRADED_CLEAR_S)}|luminance;"
     f"resync scrim|{2 * RESYNC_PER_MIN / 60}|luminance;"
+    f"disconnected scrim|{2 / STABLE_WINDOW_S}|luminance;"
     f"value-change emphasis, per cell|{1000 / EMPHASIS_MIN_MS}|luminance;"
     f"backfill bar step|1.0|luminance;delayed chip|{1 / DELAYED_MIN_S}|luminance;"
     f"long-outage escalation|{1 / 300}|luminance"
 )
 ALIAS = {"dc.": "color.data-confidence.", "st.": "color.status.", "tx.": "color.text."}
-# role|row|fg|bg; `dim:` = fg at 85 % over the stale surface; `scrim:` = overlay at 0.6 over raised
+# role|row|fg|bg; `dim:` = fg at 85 % over the stale surface; `scrim:` = overlay at 0.6 over raised;
+# `hold:` = the stale surface at 15 % over raised (the scrim's hold level)
 ROWS = """\
 text|dimmed value text (text.primary at 85 %) on stale.surface|dim:tx.primary|dc.stale.surface
 text|dimmed secondary text (stale.text at 85 %) on stale.surface|dim:dc.stale.text|dc.stale.surface
@@ -84,6 +99,7 @@ non-text|dimmed sell arrow glyph on stale.surface|dim:color.sell.default|dc.stal
 text|stale chip text (undimmed) on stale.surface|dc.stale.text|dc.stale.surface
 non-text|stale indicator dot on stale.surface|dc.stale.indicator|dc.stale.surface
 text|scrim label on the scrim (surface.overlay at 0.6 over surface.raised)|tx.primary|scrim:
+text|hold label on the hold dim (stale.surface at 0.15 over surface.raised)|tx.primary|hold:
 inherited|banner title on danger.subtle|tx.primary|st.danger.subtle
 inherited|banner body on danger.subtle|tx.secondary|st.danger.subtle
 inherited|banner icon on danger.subtle|st.danger.strong|st.danger.subtle
@@ -99,6 +115,13 @@ SCENARIOS: dict[str, Drops] = {
     "flap 2/s for 30 s": [(0.5 * k, 0.5 * k + 0.25) for k in range(60)],
     "slow flap (every 12 s)": [(12.0 * k, 12.0 * k + 1.0) for k in range(3)],
 }
+WORDS = {
+    "down": "Disconnected — reconnecting",
+    "up": "Reconnected — reconciling",
+    "unstable": "Connection unstable — reconnecting",
+    "recovered": "Reconnected",
+}
+SCRIM_BLOCK, SCRIM_HOLD = 0.6, HOLD_DIM_ALPHA  # the scrim's two levels; 0 = off
 
 
 def table(src: str, sep: str = ";") -> list[list[str]]:
@@ -110,38 +133,72 @@ def max_per_second(times: list[float]) -> int:
 
 
 def flap(drops: Drops) -> dict[str, Any]:
-    """Replay a drop/recover timeline against the hysteresis table (spec section 3, D2-D4)."""
+    """Replay a drop/recover timeline against the hysteresis table (section 3, D2-D4, H1, H8)."""
     changes = sorted([(d, "down") for d, _ in drops] + [(u, "up") for _, u in drops])
     fill: list[tuple[float, str]] = []
+    words: list[tuple[float, str]] = []  # title swaps: the first at 0 ms, then <= 1 per second
+    scrim: list[tuple[float, float]] = []  # the panel scrim's large-area level (H8)
     ann: list[tuple[float, str]] = []
-    appearances, collapse, occupied, unstable, down = 0, math.inf, False, False, False
+    appearances, collapse, occupied, down = 0, math.inf, False, False
+    unstable = latched = False
+
+    def swap(t: float, text: str) -> None:  # a pending swap takes the latest wording (latest wins)
+        applied = [w for w in words if w[0] <= t]
+        slot = max(t, applied[-1][0] + WORD_SLOT_S) if applied else t
+        if words and words[-1][0] > t:
+            words[-1] = (words[-1][0], text)
+        else:
+            words.append((slot, text))
+
     for t, kind in changes:
         if occupied and t >= collapse:  # dismissed at the earliest moment: the worst case
-            occupied, unstable = False, False
+            occupied = False
+        recovered = bool(fill) and fill[-1][1] == "success"
+        recent = sum(1 for c in changes if t - FLAP_WINDOW_S < c[0] <= t)
+        trip = recent >= FLAP_CHANGES and not unstable
+        if trip:
+            unstable = latched = True
         if kind == "down":
-            if not occupied:  # the slot was empty: an appearance, `role="alert"` once
-                appearances, occupied = appearances + 1, True
+            if not occupied or recovered:  # the first drop, or a drop after an announced recovery
                 ann.append((t, "alert: Disconnected"))
-            if not fill or fill[-1][1] != "danger":
+            if not occupied:
+                appearances, occupied = appearances + 1, True
+            if not fill or recovered:
                 fill.append((t, "danger"))
+            if not scrim or scrim[-1][1] == 0:  # the first drop of a panel episode: scrim + block
+                scrim.append((t, SCRIM_BLOCK))
             down, collapse = True, math.inf
         else:
-            down, nxt = False, [c for c in changes if c[0] > t]
+            down = False
+            if scrim and scrim[-1][1] == SCRIM_BLOCK:  # the block lifts; the hold dim stays
+                scrim.append((t, SCRIM_HOLD))
+        if trip:
+            swap(t, WORDS["unstable"])
+            ann.append((words[-1][0], "polite: Connection unstable"))  # with the title (D20)
+        elif not latched:
+            swap(t, WORDS[kind])
+        if kind == "up":
+            nxt = [c for c in changes if c[0] > t]
             step = t + STABLE_WINDOW_S  # the fill steps down only after a stable window
             if not nxt or nxt[0][0] >= step:
                 fill.append((step, "success"))
                 ann.append((step, "assertive: Reconnected"))
+                swap(step, WORDS["recovered"])
+                scrim.append((step, 0.0))
+                latched = unstable = False  # the next drop opens a new episode
                 collapse = step + RECOVERED_HOLD_S  # earliest; dismissal still required
-        recent = [c for c in changes if t - FLAP_WINDOW_S < c[0] <= t]
-        if len(recent) >= FLAP_CHANGES and not unstable:
-            unstable = True
-            ann.append((t, "polite: Connection unstable"))
     out: dict[str, Any] = {"changes": len(changes), "appearances": appearances}
     out["suppressed"] = len(drops) - appearances
     out["fill"] = [f"{t:g} s {w}" for t, w in fill]
     out["fill_changes"], out["fill_max_per_s"] = len(fill), max_per_second([f[0] for f in fill])
-    out["text_max_per_s"] = max_per_second([c[0] for c in changes])
+    out["words"] = [f"{t:g} s {w}" for t, w in words]
+    out["word_swaps"], out["text_max_per_s"] = len(words), max_per_second([w[0] for w in words])
+    out["glyph_max_per_s"] = max_per_second([c[0] for c in changes])
+    out["scrim"] = [f"{t:g} s {lvl:g}" for t, lvl in scrim]
+    out["scrim_changes"] = len(scrim)
+    out["scrim_max_per_s"] = max_per_second([s[0] for s in scrim])
     out["announcements"] = [f"{t:g} s {w}" for t, w in sorted(ann)]
+    out["alerts"] = sum(1 for _, w in ann if w.startswith("alert"))
     out["unstable_at_s"] = next((t for t, w in ann if w.endswith("unstable")), None)
     out["recovery_at_s"] = next((t for t, w in fill if w == "success"), None)
     out["earliest_collapse_s"] = None if down else collapse
@@ -176,11 +233,12 @@ def col(theme: str, name: str) -> str:
     if name.startswith("dim:"):
         surface = T[theme]["color.data-confidence.stale.surface"]
         return cast(str, verify.over(col(theme, name[4:]), surface, DIM_ALPHA))
+    raised = T[theme]["color.surface.raised"]
     if name == "scrim:":
-        return cast(
-            str,
-            verify.over(T[theme]["color.surface.overlay"], T[theme]["color.surface.raised"], 0.6),
-        )
+        return cast(str, verify.over(T[theme]["color.surface.overlay"], raised, SCRIM_BLOCK))
+    if name == "hold:":
+        stale = T[theme]["color.data-confidence.stale.surface"]
+        return cast(str, verify.over(stale, raised, HOLD_DIM_ALPHA))
     return T[theme][name]
 
 
@@ -209,6 +267,8 @@ STEPS = {  # the large-area flips: what the fill becomes | what it was
     "banner fill (danger.subtle over surface.app)": ("st.danger.subtle", "color.surface.app"),
     "stale row (stale.surface vs surface.raised)": ("dc.stale.surface", "color.surface.raised"),
     "resync scrim (overlay at 0.6 vs surface.raised)": ("scrim:", "color.surface.raised"),
+    "hold dim (stale.surface at 0.15 vs surface.raised)": ("hold:", "color.surface.raised"),
+    "scrim to hold dim (the step at the fresh snapshot)": ("scrim:", "hold:"),
 }
 
 
@@ -222,6 +282,7 @@ def numbers() -> dict[str, Any]:
         DIM_ALPHA,
         FLAP_WINDOW_S,
     )
+    n["hold_dim_alpha"], n["word_slot_s"] = HOLD_DIM_ALPHA, WORD_SLOT_S
     n["resync_per_min"], n["safe_area_px2"] = RESYNC_PER_MIN, SAFE_AREA_PX2
     n["emphasis"] = {"peak_alpha": EMPHASIS_ALPHA, "min_interval_ms": EMPHASIS_MIN_MS}
     n["emphasis"]["max_cells"], n["emphasis"]["rate_per_s"] = (
@@ -251,7 +312,9 @@ def numbers() -> dict[str, Any]:
     n["settle"]["first_frame_fraction_standard_normal"] = {
         str(f): round(bezier_y(STANDARD, 1000 / f / DUR["normal"]), 3) for f in fps
     }
-    arms = {"per-row 200": (200, 200), "container 200": (60, 1), "container 60": (60, 1)}
+    # restyled rows . running animations per arm; the "container 200" arm keeps all 200 rows in the
+    # DOM and restyles every one (an upper bound) — production renders 60 (the next arm)
+    arms = {"per-row 200": (200, 200), "container 200": (200, 1), "container 60": (60, 1)}
     n["mass"] = {"arms": {k: {"restyled": a, "animations": b} for k, (a, b) in arms.items()}}
     n["mass"]["measured"] = (
         json.loads(PROTO.read_text(encoding="utf-8")) if PROTO.exists() else None
