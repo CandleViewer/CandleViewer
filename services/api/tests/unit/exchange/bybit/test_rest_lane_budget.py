@@ -112,6 +112,31 @@ async def test_a_lane_wait_stops_the_backoffs_that_would_end_past_it() -> None:
     assert clock.sleeps == [1.0, 2.0] and len(sent) == 3  # a third pause (4 s) would end at 7 s
 
 
+async def test_a_backoff_ending_exactly_at_the_wait_is_made() -> None:
+    """The wait is inclusive: the 2 s pause after the second attempt ends on a 3 s wait."""
+    clock, sent = FakeClock(), list[httpx.Request]()
+    client, _ = _client(clock, _unavailable(sent))
+
+    with pytest.raises(TransportError, match="HTTP 503 after 3 attempts"):
+        await _cancel(client, 3.0)
+
+    assert clock.sleeps == [1.0, 2.0] and len(sent) == 3
+
+
+async def test_a_public_call_draws_the_poll_lane_with_no_wait() -> None:
+    """The public clients (catalogue, kline, server time) read in the `poll` lane, unbounded."""
+    governor = RecordingGovernor()
+    time_reply = rest("rest/server_time.json")
+    client = BybitRestClient(
+        RestClientConfig(base_url="https://api.bybit.com"),
+        governor=governor,
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=time_reply)),
+    )
+    async with client:
+        await client.get_public("/v5/market/time")
+    assert governor.acquired == [("public", EndpointClass.MARKET_DATA, "poll", None)]
+
+
 async def test_without_a_lane_wait_every_retry_is_made_as_before() -> None:
     clock, sent = FakeClock(), list[httpx.Request]()
     client, _ = _client(clock, _unavailable(sent))

@@ -146,8 +146,9 @@ class TokenBucketGovernor:
         IP-wide bucket each have a spare token, then consume one from each. `lane` is
         accepted and served like any other until E34-T02. With `deadline_s`, a wait (a hold,
         and the queue behind other takers of a bucket, included) that would end later raises
-        `RateBudgetExceededError`; a token taken before the refusal is given back, so nothing is
-        spent on a request that is never sent."""
+        `RateBudgetExceededError`; a token taken before the refusal, or before the caller
+        cancels the wait or cuts it with a timeout, is given back, so nothing is spent on a
+        request that is never sent."""
         limit = None if deadline_s is None else self._now() + max(0.0, deadline_s)
         await self._wait_ip_hold(limit)
         targets = [b for b in (self._cap, self._get_bucket(uid, endpoint_class)) if b is not None]
@@ -156,7 +157,7 @@ class TokenBucketGovernor:
             for target in (*targets, self._ip.bucket):
                 await self._take(target, limit)
                 taken.append(target)
-        except RateBudgetExceededError:
+        except (RateBudgetExceededError, asyncio.CancelledError):
             for bucket in taken:
                 bucket.tokens = min(bucket.capacity, bucket.tokens + 1.0)
             raise
@@ -256,10 +257,12 @@ class TokenBucketGovernor:
         """Feed `X-Bapi-Limit-Status` back into the local bucket so a
         server-side view of the budget wins over our own accounting drift
         (technical notes: "fed back from `X-Bapi-Limit-Status` / `X-Bapi-
-        Limit` response headers")."""
+        Limit` response headers"). The header is untrusted input: a figure
+        below zero empties the bucket and no more, so one malformed answer
+        cannot hold a UID's order class for longer than a refill."""
         bucket = self._get_bucket(uid, endpoint_class)
         bucket._refill(self._now())
-        bucket.tokens = min(bucket.capacity, float(remaining))
+        bucket.tokens = max(0.0, min(bucket.capacity, float(remaining)))
 
     def drain(self, uid: str, endpoint_class: EndpointClass, amount: float) -> None:
         """Account for budget consumed server-side that a `RateLimitError`

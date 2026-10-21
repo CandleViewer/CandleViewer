@@ -119,6 +119,12 @@ def test_map_ret_code_10001_duplicate_order_link_id() -> None:
     assert isinstance(error, DuplicateClientIdError)
 
 
+def test_a_10001_saying_duplicate_in_capitals_is_a_duplicate_too() -> None:
+    """The text is read whatever its case: the exact `10001` text is assumed pending E29-K01."""
+    error = map_ret_code(10001, "Duplicate orderLinkId", create=True)
+    assert isinstance(error, DuplicateClientIdError)
+
+
 def test_a_10001_that_only_names_the_field_is_not_a_duplicate() -> None:
     """#2877 R9: the text must say "duplicate"; naming `orderLinkId` is a parameter error."""
     error = map_ret_code(10001, "orderLinkId is invalid", create=True)

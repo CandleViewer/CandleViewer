@@ -256,3 +256,120 @@ def test_a_capped_view_holds_every_attribute_of_its_governor() -> None:
     assert (view._ip, view._buckets) == (governor._ip, governor._buckets)
     assert view._ip is governor._ip and view._buckets is governor._buckets
     assert governor._cap is None and view._cap is not None
+
+
+# -- the round-3 fold (#2877): give back on a cut, an untrusted header, and each edge pinned ---
+
+
+class _Parked:
+    """An injected sleep that parks its caller until it is cancelled: a wait cut from outside."""
+
+    def __init__(self) -> None:
+        self.parked = asyncio.Event()
+
+    async def __call__(self, _seconds: float) -> None:
+        self.parked.set()
+        await asyncio.Event().wait()
+
+
+@pytest.mark.parametrize("cut", ["cancel", "timeout"])
+@pytest.mark.asyncio
+async def test_an_acquire_cut_while_it_waits_gives_its_tokens_back(cut: str) -> None:
+    """A taker parked on the empty IP bucket has taken its cap and UID tokens already; a cancel,
+    or the caller's own timeout (key verification cuts each call at 5 s), gives both back, as a
+    refusal does: nothing is spent on a request that is never sent."""
+    sleep = _Parked()
+    governor = TokenBucketGovernor(ip_budget_per_5s=1, clock=_FakeClock(), sleep=sleep)
+    await governor.acquire_ip_only()  # the IP bucket is empty now
+    view = governor.capped(5)
+    if cut == "cancel":
+        waiter = asyncio.ensure_future(view.acquire("uid-1", EndpointClass.ACCOUNT, lane="poll"))
+        await sleep.parked.wait()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+    else:
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0):  # due at once: it cuts the first wait
+                await view.acquire("uid-1", EndpointClass.ACCOUNT, lane="poll")
+    assert view._cap is not None and view._cap.tokens == pytest.approx(5.0)
+    assert governor.remaining("uid-1", EndpointClass.ACCOUNT) == pytest.approx(10.0)
+
+
+@pytest.mark.parametrize("remaining", [-5, -(10**9)])
+@pytest.mark.asyncio
+async def test_a_limit_status_below_zero_empties_the_bucket_and_no_more(remaining: int) -> None:
+    """The venue's header is untrusted (`rest.py`): a negative figure must not push the bucket
+    so far below zero that its next token is hours or years away."""
+    clock = _FakeClock()
+    sleeps = _Sleeps(clock)
+    governor = TokenBucketGovernor(
+        default_capacity=10.0, default_refill_per_s=5.0, ip_budget_per_5s=1000, clock=clock,
+        sleep=sleeps,
+    )  # fmt: skip
+    governor.observe_header("uid-1", EndpointClass.ORDER, remaining)
+    assert governor.headroom("uid-1", EndpointClass.ORDER, lane="critical") == (0.0, 0.2)
+    await governor.acquire("uid-1", EndpointClass.ORDER, lane="critical")
+    assert sleeps.waits == [pytest.approx(0.2)]  # one refill interval at 5 tokens a second
+
+
+@pytest.mark.asyncio
+async def test_a_capped_view_refills_its_cap_at_its_own_rate() -> None:
+    """SR-E27-05: 5 per 5 s is one token a second, so the sixth acquisition waits 1 s for it."""
+    clock = _FakeClock()
+    sleeps = _Sleeps(clock)
+    governor = TokenBucketGovernor(clock=clock, sleep=sleeps)
+    view = governor.capped(5)
+    for _ in range(5):
+        await view.acquire("uid-1", EndpointClass.ACCOUNT, lane="poll")
+    assert sleeps.waits == []
+    await view.acquire("uid-1", EndpointClass.ACCOUNT, lane="poll")
+    assert sleeps.waits == [pytest.approx(1.0)]
+
+
+@pytest.mark.asyncio
+async def test_a_long_token_wait_polls_each_second_and_sees_a_hold_set_meanwhile() -> None:
+    """A bucket 100 s from its token is polled at most a second at a time, so an IP hold set
+    while the taker waits (a `10018` on another client) is waited out before the next poll."""
+    clock = _FakeClock()
+    waits: list[float] = []
+    governor: TokenBucketGovernor | None = None
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+        clock.advance(seconds)
+        if len(waits) == 1 and governor is not None:
+            governor.hold_ip(30.0)
+
+    governor = TokenBucketGovernor(
+        default_capacity=1.0, default_refill_per_s=0.01, ip_budget_per_5s=1000, clock=clock,
+        sleep=sleep,
+    )  # fmt: skip
+    governor.drain("uid-1", EndpointClass.ORDER, 1.0)
+    await governor.acquire("uid-1", EndpointClass.ORDER, lane="critical")
+    assert waits[:2] == [pytest.approx(1.0), pytest.approx(30.0)]
+    assert all(wait <= 1.0 for wait in waits[2:])
+
+
+@pytest.mark.asyncio
+async def test_a_token_due_exactly_at_the_deadline_is_taken() -> None:
+    """The deadline is inclusive: a wait that ends on it is waited, never refused."""
+    clock = _FakeClock()
+    sleeps = _Sleeps(clock)
+    governor = TokenBucketGovernor(
+        default_capacity=1.0, default_refill_per_s=1.0, ip_budget_per_5s=1000, clock=clock,
+        sleep=sleeps,
+    )  # fmt: skip
+    governor.drain("uid-1", EndpointClass.ORDER, 1.0)
+    await governor.acquire("uid-1", EndpointClass.ORDER, lane="entry", deadline_s=1.0)
+    assert sleeps.waits == [pytest.approx(1.0)]
+
+
+@pytest.mark.asyncio
+async def test_an_ip_hold_ending_exactly_at_the_deadline_is_waited_out() -> None:
+    clock = _FakeClock()
+    sleeps = _Sleeps(clock)
+    governor = TokenBucketGovernor(clock=clock, sleep=sleeps)
+    governor.hold_ip(5.0)
+    await governor.acquire("uid-1", EndpointClass.ORDER, lane="critical", deadline_s=5.0)
+    assert sleeps.waits == [pytest.approx(5.0)]

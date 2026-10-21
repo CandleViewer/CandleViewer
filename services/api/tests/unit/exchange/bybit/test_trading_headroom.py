@@ -199,3 +199,45 @@ def test_the_reading_refuses_another_environments_account() -> None:
     port = make_port(Venue(), governor=governor)
     with pytest.raises(ValueError, match="another environment"):
         port.headroom(account(environment="live"), "entry")
+
+
+def test_a_half_refilled_bucket_reads_the_rest_of_its_wait() -> None:
+    """Half a token back after 0.5 s at one a second: the reading is the deficit's 0.5 s, the
+    wait `acquire` would meet, never a whole token's 1 s."""
+    clock, governor = _governed(1.0)
+    port = make_port(Venue(), governor=governor, clock=clock)
+    governor.drain(UID, EndpointClass.ORDER, 1.0)
+    clock.now_s += 0.5
+    assert port.headroom(account(), "critical").wait_s == pytest.approx(0.5)
+
+
+def test_an_empty_process_ip_bucket_is_in_every_lanes_reading() -> None:
+    """The IP bucket is drawn by every request: empty, it leaves no lane a spare token, and
+    its next token is 1/120 s away (600 per 5 s), whatever the account's own buckets hold."""
+    clock, governor = _governed(10.0)
+    port = make_port(Venue(), governor=governor, clock=clock)
+    governor._ip.bucket.tokens = 0.0
+    readings = [port.headroom(account(), lane) for lane in LANES]
+    assert [r.tokens for r in readings] == [0.0] * 3
+    assert [r.wait_s for r in readings] == pytest.approx([1 / 120] * 3)
+
+
+def test_an_idle_bucket_reads_no_more_than_it_holds() -> None:
+    """A bucket refills up to its capacity and no further: after a long idle the reading is the
+    capacity, never what the refill rate would add without a cap."""
+    clock, governor = _governed(10.0)
+    port = make_port(Venue(), governor=governor, clock=clock)
+    governor.drain(UID, EndpointClass.ORDER, 4.0)
+    clock.now_s += 1000.0
+    assert port.headroom(account(), "entry").tokens == 10.0
+
+
+def test_a_limit_status_below_zero_reads_as_an_empty_bucket() -> None:
+    """An untrusted header below zero empties the bucket: the reading is 0 tokens and one
+    refill's wait, never a negative figure the reading's model refuses."""
+    clock, governor = _governed(1.0)
+    port = make_port(Venue(), governor=governor, clock=clock)
+    governor.observe_header(UID, EndpointClass.ORDER, -5)
+    assert port.headroom(account(), "critical") == RateHeadroom(
+        lane="critical", tokens=0.0, wait_s=1.0
+    )
