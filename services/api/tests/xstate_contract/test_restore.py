@@ -1083,6 +1083,71 @@ async def test_a_start_that_does_not_settle_is_stopped_paged_and_raised(
     assert severity == "P1" and "did not settle" in text and "is stopped" in text
 
 
+class _BringUp(PluginBase[Any]):
+    """An owner's extra plugin with a bring-up, in the machines feed's slot (#3978)."""
+
+    def __init__(self, steps: _Steps) -> None:
+        self.order = steps
+
+    def cv_bring_up(self, interpreter: Any) -> None:
+        self.order.steps.append("bring_up")
+
+
+def _record_start(monkeypatch: pytest.MonkeyPatch, steps: _Steps, *, settles: bool) -> None:
+    real_start = Interpreter.start
+
+    async def start(self: Interpreter[Any]) -> Any:
+        result = await real_start(self)
+        steps.steps.append("start")
+        if not settles:
+            await asyncio.Event().wait()
+        return result
+
+    monkeypatch.setattr(Interpreter, "start", start)
+
+
+async def test_a_seeded_restore_brings_up_extra_plugins_after_start_before_the_replay(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The merged order (#3801 on #3978): the seed, then the triple with the owner's extra plugins
+    after it, then `start()`, then each `cv_bring_up`, then the replay."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    replay = journal.replay_once
+
+    async def spy(*args: Any) -> ReplayReport:
+        steps.steps.append("replay")
+        return await replay(*args)
+
+    monkeypatch.setattr(journal, "replay_once", spy)
+    _record_start(monkeypatch, steps, settles=True)
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    res = await restorer.restore(KEY, env, extra_plugins=[_BringUp(steps)])
+    try:
+        assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start", "bring_up", "replay"]
+        names = [type(getattr(p, "_plugin", p)).__name__ for p in res.interpreter._plugins]
+        assert names == ["CvErrorHooks", "CvMetricsPlugin", "CvAuditPlugin", "_BringUp"]
+    finally:
+        await res.interpreter.stop()
+
+
+@virtual
+async def test_a_start_that_does_not_settle_never_brings_up_the_extra_plugins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A machine that did not start is stopped and paged (#3898) and never brought up (#3978)."""
+    registry = Registry(machines_dir=_FIXTURES)
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    env = await _sealed(registry, keys, InMemoryDrainJournal())
+    _record_start(monkeypatch, steps, settles=False)
+    restorer = _seeded(_restorer(registry, keys, audit, pager), steps)
+    with pytest.raises(TimeoutError, match="CV-C56"):
+        await restorer.restore(KEY, env, extra_plugins=[_BringUp(steps)])
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start"]
+    assert [s for s, _ in pager.pages] == ["P1"] and steps.outcomes == [("restore", "error")]
+
+
 async def test_a_hanging_pager_is_cut_by_its_deadline(
     registry: Registry, journal: JournalSubject, monkeypatch: pytest.MonkeyPatch
 ) -> None:
