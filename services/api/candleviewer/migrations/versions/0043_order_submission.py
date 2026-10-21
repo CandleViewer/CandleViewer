@@ -177,7 +177,8 @@ CREATE TABLE recorded_stops (
     AND trailing_active_price <> 'NaN'),
   CONSTRAINT rs_status  CHECK (status IN ('pending','in_force','replaced','ended','void')),
   CONSTRAINT rs_times   CHECK ((closed_at IS NOT NULL) = (status IN ('replaced','ended','void'))
-    AND (in_force_at IS NOT NULL OR status NOT IN ('in_force','ended'))
+    AND (in_force_at IS NOT NULL OR status <> 'in_force')
+    AND (status <> 'ended' OR num_nonnulls(in_force_at, answered_at) > 0)
     AND (in_force_at IS NULL OR status IN ('in_force','replaced','ended'))),
   CONSTRAINT rs_release CHECK (released_at IS NULL OR exchange_order_id IS NULL),
   CONSTRAINT rs_marker  CHECK (position_marker IS NULL OR char_length(position_marker) BETWEEN 1 AND 64)
@@ -218,7 +219,9 @@ BEGIN
       THEN 'exchange_order_id'
     WHEN NEW.released_at IS DISTINCT FROM OLD.released_at AND OLD.exchange_order_id IS NULL THEN 'released_at'
     WHEN NEW.status <> OLD.status AND (OLD.status, NEW.status) NOT IN (('pending','in_force'),
-      ('pending','void'), ('pending','replaced'), ('in_force','replaced'), ('in_force','ended')) THEN 'status'
+      ('pending','void'), ('pending','replaced'), ('pending','ended'), ('in_force','replaced'),
+      ('in_force','ended')) THEN 'status'
+    WHEN OLD.status = 'pending' AND NEW.status = 'ended' AND OLD.answered_at IS NULL THEN 'status'
   END;
   IF changed IS NOT NULL THEN
     RAISE EXCEPTION 'trg_rs_guard: recorded_stops.% may not change so', changed

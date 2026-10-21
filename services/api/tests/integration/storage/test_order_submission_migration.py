@@ -315,6 +315,30 @@ def test_the_guards_hold_under_the_replica_role(db: str) -> None:
         assert error.diag.constraint_name == "trg_ia_write_once"
 
 
+def test_a_record_ends_unread_only_once_answered(db: str) -> None:
+    """#4010's CR-G6-R4-05 (f): `pending` -> `ended` once the request is answered, `in_force_at`
+    left NULL; the guard refuses the move unanswered, and `rs_times` refuses an `ended` row that
+    holds neither time."""
+    with _conn(db) as c:
+        _seed(c)
+        record = _stop(c)
+        assert _refused_update(c, record, "status = 'ended', closed_at = now()") == "trg_rs_guard"
+        _update(c, record, "answered_at = now()")
+        _update(c, record, "status = 'ended', closed_at = now()")
+        ended = c.execute(
+            "SELECT status, in_force_at IS NULL, answered_at IS NOT NULL FROM recorded_stops "
+            "WHERE id = %s",
+            (record,),
+        ).fetchone()
+        assert ended == ("ended", True, True)
+        unanswered = _STOP_SQL.replace(") VALUES (", ", status, closed_at) VALUES (").replace(
+            "%(marker)s)", "%(marker)s, 'ended', now())"
+        )
+        trading = _values("stop", {"order": None, "source": "trading_stop"})
+        error = _refused(c, unanswered, trading)
+    assert error.diag.constraint_name == "rs_times"
+
+
 def _refused_update(c: Conn, record: uuid.UUID, assignments: str) -> str | None:
     with pytest.raises(psycopg.Error) as exc:
         _update(c, record, assignments)

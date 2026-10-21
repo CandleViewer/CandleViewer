@@ -242,6 +242,23 @@ def _row(record_id: uuid.UUID, **over: Any) -> dict[str, Any]:
     return row | over
 
 
+@pytest.mark.parametrize(
+    ("status", "shown", "end"),
+    [
+        ("ended", True, "in_force"),
+        ("ended", False, "answered_unread"),
+        ("in_force", True, None),
+        ("pending", False, None),
+        ("void", False, None),
+    ],
+)
+def test_a_row_says_how_it_ended(status: str, shown: bool, end: str | None) -> None:
+    """#4010's CR-G6-R4-05 (f): an `ended` row with no `in_force_at` is an answered, unread end,
+    never one a read confirmed in force."""
+    row = mod.stop_row(_row(_SL, status=status, answered_at=_T, in_force_at=_T if shown else None))
+    assert row.end == end
+
+
 def _store(rel: _Rel) -> mod.SqlAlchemyRecordedStopStore:
     return mod.SqlAlchemyRecordedStopStore(cast(Any, rel))  # structural fake
 

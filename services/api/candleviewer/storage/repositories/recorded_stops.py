@@ -42,13 +42,18 @@ from candleviewer.storage.repositories.orders import (
 __all__ = [
     "EVERY_ACCOUNT", "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY", "SWEEP_REASON",
     "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE", "NewRecordedStop", "RecordedStopRow",
-    "RecordedStopStore", "SettleWriteAhead", "StaleRecordedStop", "StopKind", "StopOutcome",
-    "StopSource", "StopStatus", "SweepScope", "SweepWriteAhead", "SweptStop", "check_request",
+    "RecordedStopStore", "SettleWriteAhead", "StaleRecordedStop", "StopEnd", "StopKind",
+    "StopOutcome", "StopSource", "StopStatus", "SweepScope", "SweepWriteAhead", "SweptStop",
+    "check_request",
 ]  # fmt: skip
 
 StopKind = Literal["stop_loss", "take_profit"]
 StopSource = Literal["entry_attach", "trading_stop", "restore"]
 StopStatus = Literal["pending", "in_force", "replaced", "ended", "void"]
+#: How an `ended` row ended (24 Sec.8.8 rule 6, 21 Sec.3.3.11): `in_force`, after a read showed its
+#: stop, or `answered_unread`, a request the exchange accepted that no read showed before its
+#: position closed (no `in_force_at`, which `rs_times` admits only with `answered_at` set).
+StopEnd = Literal["in_force", "answered_unread"]
 #: How `settle` answers a request in flight: the exchange answered it (`answered`: the row stays
 #: pending until a read shows its stop), refused it (`refused`), or a complete read after its
 #: bound showed neither its stop nor an order or entry that carries it (`not_shown`, 21
@@ -206,6 +211,15 @@ class RecordedStopRow:
     closed_at: datetime | None
     released_at: datetime | None
     position_marker: str | None
+
+    @property
+    def end(self) -> StopEnd | None:
+        """How the row ended, None unless it is `ended`. The two ends never read alike (the
+        orchestrator's ruling on #4010's CR-G6-R4-05 (f)): slice 3's complete read and
+        reconciliation never take an answered, unread end for one a read confirmed in force."""
+        if self.status != "ended":
+            return None
+        return "in_force" if self.in_force_at is not None else "answered_unread"
 
 
 @dataclass(frozen=True, slots=True)

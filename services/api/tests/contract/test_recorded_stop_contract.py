@@ -287,11 +287,39 @@ def test_the_guard_keeps_the_request_and_admits_only_the_lifecycle_moves() -> No
         ("pending", "in_force"),
         ("pending", "void"),
         ("pending", "replaced"),
+        ("pending", "ended"),
         ("in_force", "replaced"),
         ("in_force", "ended"),
     ]
     assert "USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_rs_guard';" in _GUARD
     assert "ALTER TABLE recorded_stops ENABLE ALWAYS TRIGGER trg_rs_guard;" in _GUARD
+
+
+def test_a_pending_record_answered_ok_ends_as_one_in_force_and_says_so() -> None:
+    """#4010's CR-G6-R4-05 (f), the orchestrator's ruling: a flat read ends no pending record but
+    one the exchange answered `ok` that no resting entry carries, which ends as one in force does
+    and keeps `in_force_at` NULL, so it never reads as an end a read confirmed in force."""
+    guard = " ".join(re.sub(r"--[^\n]*", "", _GUARD).split())
+    assert (
+        "WHEN OLD.status = 'pending' AND NEW.status = 'ended' AND OLD.answered_at IS NULL "
+        "THEN 'status'"
+    ) in guard
+    times = _words(_check(_TABLE_DDL, "rs_times"))
+    assert "(in_force_at IS NOT NULL OR status <> 'in_force')" in times
+    assert "(status <> 'ended' OR num_nonnulls(in_force_at, answered_at) > 0)" in times
+    rule = _words(_INTERNAL_DOC.split("6. **The recorded stop (SR-E29-06", 1)[1].split("\n", 1)[0])
+    assert not _missing(
+        rule,
+        "A flat read ends no pending record, except one whose request the exchange answered `ok` "
+        "and that no resting entry carries",
+        "its end is marked as one no read confirmed in force",
+    )
+    assert not _missing(
+        _words(_SECTION),
+        "An `ended` row with no `in_force_at` is that end, answered and never shown",
+        "`pending` → `in_force`, `void`, `replaced` or, once answered (`answered_at` set before "
+        "the move), `ended`",
+    )
 
 
 def test_no_role_deletes_or_truncates_the_record() -> None:
