@@ -17,6 +17,7 @@ only on an unreplayed row with the same payload text, and any other is paged P1 
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import json
@@ -27,6 +28,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from structlog.testing import capture_logs
 from xstate_statemachine import Event, Interpreter, SimulatedClock, create_machine
 from xstate_statemachine.events import persist_event
 
@@ -517,3 +519,105 @@ def test_settled_means_running_no_step_open_and_a_finished_descent_or_a_restore(
         _step_in_flight=lambda: in_step,
     )
     assert persistence._is_settled(cast(Any, interp)) is settled
+
+
+# --- E50-T63 (#3898 carry): every persist() exception is a P1 page, best effort ---------------
+
+
+class _Ops:
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, str]] = []
+
+    def __call__(self, operation: str, outcome: str) -> None:
+        self.seen.append((operation, outcome))
+
+
+async def test_a_persist_that_raises_pages_p1_once_and_raises_the_same_error(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    """MUST-01: never retried silently. The page names the error type only, never its text."""
+    interp = await _started(registry)
+    pager, ops = FakePager(), _Ops()
+    persister = _persister(registry, FakeRepo(fail=True), journal, FakeAudit(), pager)
+    persister.ops = ops
+    with pytest.raises(ConnectionError, match="simulated"):
+        await persister.persist(interp, key=KEY)
+    [(severity, text)] = pager.pages
+    assert severity == "P1" and "ConnectionError" in text and "simulated" not in text
+    assert ops.seen == [("persist", "error")]
+    await interp.stop()
+
+
+async def test_an_unsettled_persist_is_paged_too(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    interp = await _started(registry)
+    await interp.stop()
+    pager = FakePager()
+    with pytest.raises(AssertionError, match="CV-C40"):
+        await _persister(registry, FakeRepo(), journal, FakeAudit(), pager).persist(interp, key=KEY)
+    assert [s for s, _ in pager.pages] == ["P1"]
+
+
+async def test_a_refused_persist_is_paged_by_its_fault_writer_never_twice(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    interp = await _started(registry)
+    interp.context["_fault"] = {"kind": "ActionError"}
+    pager, ops = FakePager(), _Ops()
+    persister = _persister(registry, FakeRepo(), journal, FakeAudit(), pager)
+    persister.ops = ops
+    try:
+        with pytest.raises(PersistRefusedError):
+            await persister.persist(interp, key=KEY)
+        assert pager.pages == [] and ops.seen == [("persist", "refused")]
+    finally:
+        await interp.stop()
+
+
+async def test_a_clean_persist_is_counted_ok(registry: Registry, journal: JournalSubject) -> None:
+    interp = await _started(registry)
+    pager, ops = FakePager(), _Ops()
+    persister = _persister(registry, FakeRepo(), journal, FakeAudit(), pager)
+    persister.ops = ops
+    await persister.persist(interp, key=KEY)
+    assert ops.seen == [("persist", "ok")] and pager.pages == []
+
+
+async def test_a_raising_pager_never_masks_the_persist_failure(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    class _Down(FakePager):
+        async def page(self, key: MachineKey, severity: str, message: str) -> None:
+            await super().page(key, severity, message)
+            raise OSError("pager transport down")
+
+    interp = await _started(registry)
+    pager = _Down()
+    with capture_logs() as logs, pytest.raises(ConnectionError):
+        await _persister(registry, FakeRepo(fail=True), journal, FakeAudit(), pager).persist(
+            interp, key=KEY
+        )
+    failed = [e for e in logs if e["event"] == "statechart_page_failed"]
+    assert [(e["reason"], e["error"]) for e in failed] == [("persist failed", "OSError")]
+    assert "transport" not in repr(logs)
+    await interp.stop()
+
+
+async def test_a_hanging_pager_on_a_failed_persist_is_cut_by_its_deadline(
+    registry: Registry, journal: JournalSubject, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(persistence, "PAGE_TIMEOUT_S", 0.0)
+
+    class _Hangs(FakePager):
+        async def page(self, key: MachineKey, severity: str, message: str) -> None:
+            await super().page(key, severity, message)
+            await asyncio.Event().wait()
+
+    interp = await _started(registry)
+    with capture_logs() as logs, pytest.raises(ConnectionError):
+        await _persister(registry, FakeRepo(fail=True), journal, FakeAudit(), _Hangs()).persist(
+            interp, key=KEY
+        )
+    assert [e["error"] for e in logs if e["event"] == "statechart_page_failed"] == ["TimeoutError"]
+    await interp.stop()
