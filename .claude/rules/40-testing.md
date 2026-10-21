@@ -14,8 +14,9 @@ Source: `CONSTITUTION.md` §13 (C-13.1 to C-13.9), §9; `docs/plan/03-testing-st
 - **E2E (C-13.4):** only user-visible critical paths, Playwright, against a seeded stack (web + Electron smoke).
 
 ## Fixtures (C-13.5)
-- Market/exchange data comes **only** from recorded, redacted Bybit captures in `tests/fixtures/bybit/`
-  (and `services/api/tests/fixtures/bybit/`). Each fixture has a README line: source, date, symbol, env, redaction.
+- Market/exchange data comes **only** from recorded, redacted Bybit captures in `packages/fixtures/bybit/`,
+  one dated directory per capture. Each file has an entry in that directory's `manifest.json`: source, capture
+  date, symbol, stream, host (its README).
 - **No live-exchange calls in any test, local or CI.** Hosts `*.bybit.com`, `*.bytick.com` are denied.
 - New fixture = recorded via the recorder tool, redacted (keys, signatures, UIDs, order ids), reviewed.
 

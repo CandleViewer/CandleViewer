@@ -168,7 +168,7 @@ noted in `CHANGELOG.md` under _Security_.
 4. **Redaction is mandatory.** A central logging filter masks credentials, signatures, auth headers,
    session tokens, TOTP codes and key-management request bodies. A unit test asserts the filter against a
    corpus of secret-shaped payloads. Log level never changes redaction behaviour.
-5. **Fixtures are redacted.** Recorded Bybit captures in `tests/fixtures/bybit/` must contain no real key,
+5. **Fixtures are redacted.** Recorded Bybit captures in `packages/fixtures/bybit/` must contain no real key,
    signature or UID, and are reviewed like code.
 6. **Key rotation** is a first-class admin flow with audit records and must never require a code change.
    Rotate at least every 90 days, and immediately on any suspicion of exposure or on a manager's

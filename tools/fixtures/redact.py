@@ -5,6 +5,13 @@ capture can never commit an API key, HMAC signature, account/UID id or auth
 header (security notes threat 1; C-2.7, C-12.6). Patterns mirror
 `scripts/check_secrets_hygiene.py` and `packages/fixtures/scripts/verify.mjs`
 (the gates that re-scan the committed corpus) and widen them to identifiers.
+
+It finds a secret by key name and value shape only, so it assumes a public-stream capture
+(`capture_fixture.py` dials only Bybit's public stream), whose frames carry no account data.
+It is not enough for a private-stream capture (`order`, `execution`, `position`, `wallet`):
+those frames carry order and execution ids, balances and sizes under names it does not list.
+One would need an allow-list of the fields its tests read instead of this deny-list, stable
+fake ids, and a field-by-field review before commit (C-13.5).
 """
 
 from __future__ import annotations

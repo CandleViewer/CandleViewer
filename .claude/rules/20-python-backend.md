@@ -41,5 +41,5 @@ Source: `AGENTS.md` §5.2, `CONSTITUTION.md` §2–§3, `docs/plan/20-architectu
 ## Tests
 - pytest + pytest-asyncio (`asyncio_mode = "auto"`), hypothesis for invariants (bar aggregation, book deltas,
   rounding, risk limits). Coverage ≥85% line / ≥75% branch for `services/api/**` (CONSTITUTION §9 #3).
-- Market/exchange data comes from recorded fixtures under `tests/fixtures/bybit/`; no network (see `40-testing.md`).
+- Market/exchange data comes from recorded fixtures under `packages/fixtures/bybit/`; no network (see `40-testing.md`).
 - Mark integration tests `@pytest.mark.integration` (need docker compose stack).

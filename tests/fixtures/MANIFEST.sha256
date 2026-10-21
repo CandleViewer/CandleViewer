@@ -10,8 +10,8 @@
 #
 #   python -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <path>
 #
-# Fixtures with real Bybit-sourced captures land under
-# `services/api/tests/fixtures/bybit/` (C-13.5) as each pipeline stage is
-# implemented; this ticket only builds the harness. `synthetic_sample.jsonl`
-# is the one fixture that exists today (E02-T12 synthetic-feed dev loop).
+# The recorded Bybit corpus lives in `packages/fixtures/bybit/` (C-13.5), with
+# its own per-file `manifest.json`; list a file here when an `integration`
+# suite reads it. `synthetic_sample.jsonl` (E02-T12 synthetic-feed dev loop)
+# is the one entry today.
 5765e0fe59dfeba078e998149bd363ee1d30e04f1c69652c8da1bb8c22eff0b6  packages/fixtures/raw/synthetic_sample.jsonl
