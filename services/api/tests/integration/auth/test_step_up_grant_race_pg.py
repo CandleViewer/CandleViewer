@@ -312,9 +312,7 @@ async def test_a_refresh_carries_the_step_up_penalty_to_its_successor_row(
 ) -> None:
     """#4051 (SR-025): the successor's INSERT binds the claimed row's strikes and read-only
     window, so a rotation never lifts the downgrade; grants are not carried."""
-    s = await _live_session(
-        pg_dsn, rel, {_GRANT: _GRANT_UNTIL}, failures=3, readonly_until=_NOW + timedelta(minutes=5)
-    )
+    s = await _live_session(pg_dsn, rel, {})  # its user and repository; the row is not refreshed
     sessions = SessionService(s.repo, _HASHER, clock=lambda: _NOW)
     minted = await sessions.mint(s.user)
     assert await s.repo.update_step_up_state(

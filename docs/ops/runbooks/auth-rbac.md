@@ -49,7 +49,9 @@ for the client (#1640).
 **A token refresh keeps the step-up penalty (#4051, SR-025).** The successor session carries the
 presented one's strike count and read-only window (`step_up_failures`, `readonly_until`), so a
 refresh never lifts the downgrade. Step-up grants are never carried. The refresh's
-`auth.session_refreshed` record names a penalty in `after_state` (counts only).
+`auth.session_refreshed` record names the penalty in `after_state` as the presented row held it when
+the refresh was accepted (counts only); a strike landing after that is carried and recorded on its
+own.
 
 ## 1. Unlock a locked account (SR-016)
 

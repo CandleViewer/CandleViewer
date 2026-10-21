@@ -111,8 +111,8 @@ async def test_refresh_audit_record_precedes_rotation() -> None:
 
 
 async def test_a_refresh_record_names_the_step_up_penalty_the_successor_carries() -> None:
-    """#4051 (SR-025): counts only, as the presented row holds them; a clean session's record
-    carries no `after_state`."""
+    """#4051 (SR-025): counts only, as the presented row holds them, the window too when it has
+    none yet; a clean session's record carries no `after_state`."""
     env = _Env()
     m = await env.mint(uuid.uuid4())
     until = env.svc.now() + timedelta(minutes=5)
@@ -120,12 +120,18 @@ async def test_a_refresh_record_names_the_step_up_penalty_the_successor_carries(
         str(m.session_id), elevations={}, failures=3, readonly_until=until
     )
     assert _refresh(env, m.refresh_token).status_code == 200
+    struck = await env.mint(uuid.uuid4())
+    await env.repo.save_step_up_state(
+        str(struck.session_id), elevations={}, failures=2, readonly_until=None
+    )
+    assert _refresh(env, struck.refresh_token).status_code == 200
     clean = await env.mint(uuid.uuid4())
     assert _refresh(env, clean.refresh_token).status_code == 200
-    penalised, plain = [
+    penalised, strikes, plain = [
         e for e in env.audit.writer.events if e["action"] == "auth.session_refreshed"
     ]
     assert penalised["after_state"] == {"step_up_failures": 3, "readonly_until": until.isoformat()}
+    assert strikes["after_state"] == {"step_up_failures": 2, "readonly_until": None}
     assert plain.get("after_state") is None
 
 

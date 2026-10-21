@@ -23,7 +23,7 @@ from candleviewer.auth.step_up import FAILURE_CAP, READONLY_WINDOW, StepUpServic
 
 from .auth_fakes import FakeUserRepository
 from .mfa_fakes import FakeMfaRepository
-from .session_fakes import FakeSessionRepository
+from .session_fakes import FakeSessionRepository, YieldingFindRepository
 
 _T0 = datetime(2026, 10, 21, 9, 0, 0, tzinfo=UTC)
 _USER = "00000000-0000-4000-8000-000000004051"
@@ -115,14 +115,18 @@ async def test_the_successor_carries_the_claims_penalty_not_the_read_one() -> No
 async def test_of_two_concurrent_refreshes_one_mints_and_its_successor_carries_the_penalty() -> (
     None
 ):
-    """The loser is refused; whether reuse detection then ends the family or not, no successor
-    exists without the penalty."""
-    svc, repo = _svc()
+    """Both read the row before either claims it (the repository yields after each read, as
+    Postgres's read and revoke are two statements): one wins the claim and mints, the other loses
+    it and is refused with no family revoked, and the one successor carries the penalty."""
+    svc, repo = _svc(YieldingFindRepository())
     until = _T0 + READONLY_WINDOW
     minted = await _penalised(svc, repo, FAILURE_CAP, until)
     results = await asyncio.gather(
         svc.refresh(minted.refresh_token), svc.refresh(minted.refresh_token), return_exceptions=True
     )
-    assert sum(isinstance(r, RefreshReuseDetected) for r in results) == 1
+    (lost,) = [r for r in results if isinstance(r, RefreshReuseDetected)]
+    assert lost.revoked_session_ids == ()  # the lost claim, not reuse detection
     successors = [r for r in repo.sessions.values() if r.id != minted.session_id]
-    assert [(r.step_up_failures, r.readonly_until) for r in successors] == [(FAILURE_CAP, until)]
+    assert [(r.is_revoked, r.step_up_failures, r.readonly_until) for r in successors] == [
+        (False, FAILURE_CAP, until)
+    ]

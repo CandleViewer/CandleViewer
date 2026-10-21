@@ -15,7 +15,9 @@ not `disabled`, read under the user-row lock in the insert's transaction, and th
 reads by id and by refresh hash carry the user's status (#2911). Every record read
 carries the row's view-as context (#3085, `0042_sessions_view_as`). The insert writes
 the context a record carries (a refresh carries it to the successor row), and the
-`ViewAsSessionStore` writes (`auth/view_as.py`) are one conditional statement each.
+`ViewAsSessionStore` writes (`auth/view_as.py`) are one conditional statement each. The
+insert also writes the step-up strikes and read-only window a refresh carries from the
+claim's row (#4051): a new row, from a revoked source row no writer can change.
 """
 
 from __future__ import annotations
