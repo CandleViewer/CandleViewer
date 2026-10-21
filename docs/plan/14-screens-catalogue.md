@@ -1177,6 +1177,7 @@ Drag preview                Drop zones
 - **States:** calm · elevated · extreme (threshold chips, text labels not colour only) · insufficient sample ("Warming up — 8 s of data").
 - **Components:** CMP-024 Sparkline, CMP-036 KeyValueRow, CMP-131 SpeedOfTapeGauge, CMP-187 SpeedOfTapePane, CMP-227 EstimatedBadge.
 - **Stories:** US-DET-001, US-DET-002, US-DET-003.
+- **UX research (E25-D01):** [E25-D01.md](../design/E25/E25-D01.md) — heuristic research, every recommendation PROPOSED pending the owner's sessions: the default tape window (5 s of 1 s / 5 s / 30 s), number-primary composite of gauge, number and strip, the baseline named in the readout; contradictions and gaps in its §9.
 - **A11y:** The gauge has a text readout ('42 trades/s, 3.1 sigma above the 1-hour mean') as its primary accessible value; threshold crossings are announced politely at most once every 5 s; the sparkline has a table alternative.
 - **Performance:** Rolling statistics are computed backend-side and pushed on `metrics.{symbol}` at 4 Hz; the panel renders at <=4 Hz with a 1 ms budget and never recomputes z-scores client-side over a long window.
 - **Analytics/audit:** `tapespeed.window_changed`, `tapespeed.threshold_changed`, `tapespeed.alert_created` (analytics); creating a rule/alert from a threshold crossing inherits the rule/alert audit events.
@@ -1198,6 +1199,7 @@ Drag preview                Drop zones
 - **Interactions:** click → chart crosshair jumps and highlights the cells; "Create alert from this level".
 - **Components:** CMP-011 Tag / Chip, CMP-049 Table, CMP-132 ImbalanceStackIndicator, CMP-134 DetectorEventCard, CMP-227 EstimatedBadge.
 - **Stories:** US-DET-004, US-FP-007, US-FP-008.
+- **UX research (E25-D01):** [E25-D01.md](../design/E25/E25-D01.md) — heuristic research, every recommendation PROPOSED pending the owner's sessions: list-first primacy with chart markers as the cross-highlighted secondary, rows ordered by distance from price, one status vocabulary, no `(estimated)` chip on exact stack rows.
 - **A11y:** Each imbalance event is a row in a real table (time, price, ratio, side, stacked count) so the canvas heat strip is never the only representation; the ratio is read as 'bid 340 vs ask 82, ratio 4.1 to 1'; the stacked-imbalance grouping is stated in text.
 - **Performance:** Events stream on `metrics.{symbol}` and are appended incrementally; the panel keeps a bounded 2,000-event ring buffer and renders <=4 Hz with a 1.5 ms budget; recomputation on a threshold change is done backend-side, with a visible recompute state rather than a client-side full-history pass.
 - **Analytics/audit:** `imbalance.threshold_changed`, `imbalance.stacked_min_changed`, `imbalance.event_clicked` (jumps the chart to the bar), `imbalance.alert_created` (analytics).
@@ -1221,6 +1223,7 @@ Drag preview                Drop zones
 - **A11y:** the badge is text-first; the confidence value is always numeric.
 - **Components:** CMP-032 Rating/Confidence Dots, CMP-036 KeyValueRow, CMP-069 InfoPanel, CMP-133 RegimeIndicatorChip, CMP-227 EstimatedBadge.
 - **Stories:** US-DET-008, US-DET-005.
+- **UX research (E25-D01):** [E25-D01.md](../design/E25/E25-D01.md) — heuristic research, every recommendation PROPOSED pending the owner's sessions: regime wording as classification plus evidence with no imperative verb, confidence as number plus word, neutral (never buy/sell) colour; the six regime vocabularies found are its C8.
 - **Performance:** Regime classification is computed backend-side and pushed on `metrics.{symbol}` at most 1 Hz; the panel renders only on change; the sub-signal breakdown is fetched once per change, not polled. Budget <=1 ms per update.
 - **Analytics/audit:** `regime.panel_opened`, `regime.explain_opened` (opens SCR-058), `regime.sensitivity_changed`, `regime.alert_created` (analytics).
 - **Design sign-off acceptance checklist:** [ ] current regime label with the mandatory _(estimated)_ chip [ ] confidence expressed as a number plus words, never a bare colour [ ] sub-signal breakdown (trend strength, volatility, volume profile shape, tape speed, OI trend) each with its own value [ ] regime-change history strip [ ] 'why this classification?' link to SCR-058 [ ] insufficient-history state
@@ -1232,6 +1235,7 @@ Drag preview                Drop zones
 - **A11y:** plain-language summary first, technical detail second; no jargon without a glossary link.
 - **Components:** CMP-021 Link, CMP-032 Rating/Confidence Dots, CMP-046 Drawer, CMP-069 InfoPanel, CMP-227 EstimatedBadge.
 - **Stories:** US-DET-009, US-CHART-014.
+- **UX research (E25-D01):** [E25-D01.md](../design/E25/E25-D01.md) — heuristic research, every recommendation PROPOSED pending the owner's sessions: the section template (what it infers, from what data, thresholds in force, failure modes, what certainty would need), the stop-run comprehension test, and the `methodology.opened{detector}` baseline (its §5).
 - **Performance:** Static documentation content bundled with the app plus the current parameter values from `GET /api/v1/detectors/config`; opens in <=150 ms and issues no streaming subscriptions.
 - **Analytics/audit:** `methodology.opened` with `{detector}` (analytics) - the read of this drawer is deliberately tracked so we can tell whether the honesty affordance is actually used.
 - **Design sign-off acceptance checklist:** [ ] one section per estimated signal (iceberg, stop-run, absorption, queue position, order-count footprint, regime, liquidity cluster) [ ] each section states: what it infers, from what data, the exact heuristic and thresholds in force, the known failure modes, and what would be required to know it for certain [ ] the words 'this is an estimate, not exchange-provided fact' appear in each section [ ] link to the detector settings (SCR-059)
@@ -1242,6 +1246,7 @@ Drag preview                Drop zones
 - **Validation:** thresholds bounded per detector with published ranges; "Sensitivity high may produce many false positives" warning.
 - **Components:** CMP-004 Toggle, CMP-008 NumericStepperInput, CMP-010 Slider, CMP-028 Callout / Banner, CMP-040 FormField, CMP-043 Dialog, CMP-065 FormSection, CMP-227 EstimatedBadge.
 - **Stories:** US-DET-005, US-DET-006, US-DET-007, US-DET-009.
+- **UX research (E25-D01):** [E25-D01.md](../design/E25/E25-D01.md) — heuristic research, every recommendation PROPOSED pending the owner's sessions: the `(estimated)` affordance escalates to an inline callout at decision points (enable, arm, alert), and the three detector parameter vocabularies it found must be unified before the fieldsets are final (its C12–C14).
 - **A11y:** Per-detector fieldsets with numeric inputs, units and default values shown; each detector has an enable switch and a text description; changing a value announces the new effective threshold.
 - **Performance:** Changes are applied server-side and take effect on the next evaluation window (<=2 s); the dialog shows 'applied' only after the backend confirms, never optimistically.
 - **Analytics/audit:** `detector.enabled_changed`, `detector.threshold_changed` with `{detector, key, before, after}` - **audited**, because detector output can feed armed rules that place orders.
