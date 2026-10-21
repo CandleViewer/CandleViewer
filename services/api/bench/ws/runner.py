@@ -1,10 +1,11 @@
 """E17-Q03 runner: one profile run, the self-check, the W5 phases, the reproducibility check.
 
-    K6_BIN=<pinned k6> uv run python -m bench.ws.runner run A --flag on --out-dir DIR [--staging]
-    K6_BIN=<pinned k6> uv run python -m bench.ws.runner run A --ws-path /api/v1/ws   # a prefix
-    K6_BIN=<pinned k6> uv run python -m bench.ws.runner run smoke --duration-s 120 --warmup-s 20
-    K6_BIN=<pinned k6> uv run python -m bench.ws.runner selfcheck [--duration-s 180]
-    K6_BIN=<pinned k6> uv run python -m bench.ws.runner w5 --out-dir DIR
+    export K6_BIN=<absolute path of the pinned k6 v2.3.0>   # run, selfcheck and w5 start it
+    uv run python -m bench.ws.runner run A --flag on --out-dir DIR [--staging]
+    uv run python -m bench.ws.runner run A --ws-path /api/v1/ws   # k6 on the prefixed path
+    uv run python -m bench.ws.runner run smoke --duration-s 120 --warmup-s 20
+    uv run python -m bench.ws.runner selfcheck [--duration-s 180]
+    uv run python -m bench.ws.runner w5 --out-dir DIR
     uv run python -m bench.ws.runner judge DIR            # re-judge a saved run
     uv run python -m bench.ws.runner gate DIR DIR DIR     # C-13.9: 5 % on the median of 3 runs
     uv run python -m bench.ws.runner repro DIR_A DIR_B    # AC 5: within 15 %, or a named source
@@ -116,17 +117,22 @@ def k6_binary() -> str:
         raise SystemExit(
             f"K6_BIN={path!r} is not an absolute path: k6 is never found through PATH or the cwd"
         )
-    if not binary.is_file():
+    try:  # a parent that cannot be searched, or a name too long, is a refusal, not a traceback
+        is_file, runnable = binary.is_file(), os.access(binary, os.X_OK)
+    except OSError as exc:
+        raise SystemExit(f"K6_BIN={path!r} cannot be checked: {exc.strerror or exc}") from None
+    if not is_file:
         raise SystemExit(f"K6_BIN={path!r} is not a regular file")
-    if not os.access(binary, os.X_OK):
+    if not runnable:
         raise SystemExit(f"K6_BIN={path!r} is not executable")
+    argv0 = os.fspath(binary)  # the path the checks saw (`Path` drops a trailing slash): run that
     # Semgrep (CI-SEC-001) reads argv[0], the operator's own K6_BIN, as environment data. It is an
     # absolute, executable regular file by now, never found on PATH, run with a fixed argv and then
     # held to the pinned version (the perf workflow installs it by sha256 first): the marker below
     # records that, as Semgrep cannot see any of it.
     out = subprocess.run(  # noqa: S603 - the operator's own binary, fixed argv
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args reason=bench-only-k6-validated-fixed-argv-version-pinned owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
-        [path, "version"],
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args reason=bench-only-operator-env-k6-path-fixed-argv owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
+        [argv0, "version"],
         capture_output=True,
         text=True,
         check=True,
@@ -135,7 +141,7 @@ def k6_binary() -> str:
     ).stdout
     if f"k6 {K6_VERSION} " not in out:
         raise SystemExit(f"{out.strip()!r}: this harness is pinned to k6 {K6_VERSION}")
-    return path
+    return argv0
 
 
 def _env(*, debug: bool = False) -> dict[str, str]:
@@ -240,19 +246,26 @@ def _stop(proc: subprocess.Popen[Any], wait_s: float = 30.0) -> None:
 
 def _fresh(out: Path) -> None:
     """An empty slate for a run in `out`: nothing an earlier run left is judged as this one's.
-    It deletes only what a run of this harness made: a directory that holds such names but not our
-    marker (`--out-dir candleviewer` holds a `bars/`) is refused, and nothing in it is touched."""
+    It takes only a directory the harness made: an empty one, or one with our marker, a regular
+    file as a run writes it. Any other (`--out-dir candleviewer` holds a `bars/`) is refused and
+    nothing in it is touched. No step follows a link inside it: a link is an entry, and the clear
+    removes the link, never what it points at."""
     out.mkdir(parents=True, exist_ok=True)
-    held = [name for name in (*STALE, "bars") if (out / name).exists()]
-    if held and not (out / MARKER).exists():
+    marker = out / MARKER
+    held = sorted(entry.name for entry in out.iterdir())
+    if held and not (marker.is_file() and not marker.is_symlink()):
+        shown = ", ".join(held[:3]) + (", ..." if len(held) > 3 else "")
         raise SystemExit(
-            f"{out} was not made by this harness (no {MARKER}) and holds {', '.join(held)}: "
+            f"{out} was not made by this harness (no {MARKER} file) and holds {shown}: "
             "use an empty --out-dir; nothing was deleted"
         )
-    for name in STALE:
-        (out / name).unlink(missing_ok=True)
-    shutil.rmtree(out / "bars", ignore_errors=True)  # the next backend would restore its state
-    (out / MARKER).write_text(f"{HARNESS_VERSION}\n", encoding="utf-8")
+    for name in (*STALE, "bars"):
+        path = out / name
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)  # the next backend would restore its state
+        else:
+            path.unlink(missing_ok=True)
+    marker.write_text(f"{HARNESS_VERSION}\n", encoding="utf-8")
 
 
 def start_backend(p: Plan) -> tuple[subprocess.Popen[str], int, int]:
@@ -538,10 +551,13 @@ def run_profile(facts: Mapping[str, Any]) -> str:
 
 
 def not_recordable(res: Result, facts: Mapping[str, Any]) -> str | None:
-    """Why a run cannot become a baseline: it did not pass, or it was shortened (a baseline taken
-    from a short window would be gated against full-length runs); `None` when it can."""
+    """Why a run cannot become a baseline: it did not pass, it records no event loop (a baseline
+    without one is never compared), or it was shortened (a baseline taken from a short window would
+    be gated against full-length runs); `None` when it can."""
     if res.status != "PASS":
         return f"the run is {res.status}; only a PASS run becomes a baseline"
+    if not facts.get("loop"):
+        return "the run does not record its event loop: a baseline without one is never compared"
     if run_profile(facts) != "full":
         if "profile_duration_s" not in facts or "profile_warmup_s" not in facts:
             return "the run does not record how long its profile is: it may be a short one"
@@ -560,8 +576,8 @@ def compare(
     single noisy sample, so fewer runs can only warn."""
     tol = {m: tolerance for m in res.verdict.metrics}
     base = gate.load_baseline(baseline_name(facts), BASELINES)
-    if base is not None and base.get("loop") != facts.get("loop"):
-        return gate.GateResult(  # never defaulted to this loop: a missing loop proves nothing
+    if base is not None and (not facts.get("loop") or base.get("loop") != facts.get("loop")):
+        return gate.GateResult(  # refused when either side records none: never taken as this loop
             gated=False,
             reason=f"baseline loop {base.get('loop') or 'not recorded'}, this run's "
             f"{facts.get('loop') or 'not recorded'}: loop-sensitive numbers are not comparable "
@@ -709,13 +725,18 @@ def merge(runs: Sequence[tuple[Result, dict[str, Any]]]) -> tuple[Result, dict[s
 
 
 def comparable(runs: Sequence[tuple[Result, dict[str, Any]]], names: Sequence[str]) -> list[str]:
-    """Why these runs cannot be compared with each other: an INVALID run proves nothing, and runs
-    of another profile, flag, machine, length or event loop are not samples of one thing. Empty
-    when they can."""
+    """Why these runs cannot be compared with each other: an INVALID run proves nothing, nor does a
+    run that records no event loop, and runs of another profile, flag, machine, length or event
+    loop are not samples of one thing. Empty when they can."""
     why = [
         f"{name} is {res.status} ({'; '.join(res.invalid)}{_missed(res)})"
         for name, (res, _) in zip(names, runs, strict=True)
         if res.invalid
+    ]
+    why += [
+        f"{name} does not record its event loop"
+        for name, (_, facts) in zip(names, runs, strict=True)
+        if not facts.get("loop")
     ]
     for key in ("profile", "flag", "machine_profile", "steady_s", "warmup_s", "loop"):
         seen = sorted({str(facts.get(key, "not recorded")) for _, facts in runs})
@@ -813,8 +834,9 @@ def cmd_judge(a: argparse.Namespace) -> int:
 
 def cmd_gate(a: argparse.Namespace) -> int:
     """C-13.9: the median of `MIN_GATE_RUNS` runs against the baseline. Exit 2 when the runs cannot
-    be gated (fewer than three, an INVALID one, or not of one profile), 1 for a regression or a
-    run that missed a budget, 0 only for three comparable runs that passed and did not regress."""
+    be gated (fewer than three, an INVALID one, one without a loop, or not of one profile), 1 for a
+    regression or a run that missed a budget, 0 only for three comparable runs that passed and did
+    not regress."""
     outs = [Path(d) for d in a.dirs]
     runs = [judge(o) for o in outs]
     why = comparable(runs, [o.name for o in outs])
@@ -886,7 +908,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sp.add_argument("--backend-cpus", help="taskset cpuset of the backend (--staging: 0-7)")
             sp.add_argument("--k6-cpus", help="taskset cpuset of k6 (--staging: 8-15)")
             sp.add_argument("--seed", type=int, default=7)
-            sp.add_argument("--ws-path", help="where the gateway is served: /ws, or /api/v1/ws")
+            sp.add_argument("--ws-path", help="k6's path: /ws (default), or /api/v1/ws")
             sp.add_argument("--gate-on", choices=("including", "excluding"))
             for opt in OVERRIDES:
                 sp.add_argument(f"--{opt.replace('_', '-')}", type=float)

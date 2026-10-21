@@ -19,8 +19,9 @@ cannot be pointed at a stub exchange (no setting overrides the hosts).
   constructed here; k6 refuses a non-loopback target. The Python socket guard (connect and name
   lookups) is defence in depth on top: the backend runs on the stdlib loop, because uvloop resolves
   names inside libuv, where no patched Python function sees them.
-- **Path.** The gateway is served at `ws_path` (default `/ws`; `--ws-path /api/v1/ws` mounts it
-  under a prefix, as 23 2.1 names it), and k6 connects to the same one.
+- **Path.** The gateway is served at `/ws` and at `/api/v1/ws` (23 2.1), one router included
+  twice by `include_ws_router` as `create_app` does since #3916, so either path reaches the same
+  handler. `ws_path` (default `/ws`) is where k6 connects; under another prefix it is served too.
 - **Logs.** The project's `configure_logging()` (JSON, `RedactionFilter`) writes to stderr, which
   the runner keeps as `backend.err`; stdout carries the ready line alone.
 - **Bench-only knobs** (environment, read here only): `CV_BENCH_WS_SEND_DELAY_MS` delays every
@@ -74,7 +75,13 @@ from candleviewer.settings import Settings
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
-from candleviewer.ws.gateway import GatewayHub, make_ws_router
+from candleviewer.ws.gateway import (
+    WS_PATH,
+    WS_SERVER_BASE,
+    GatewayHub,
+    include_ws_router,
+    make_ws_router,
+)
 from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
@@ -293,18 +300,18 @@ class Backend:
             registry=self.metrics,
         )  # fmt: skip
         app = FastAPI()
-        app.include_router(
-            make_ws_router(
-                authenticate=self._authenticate,
-                registry=registry,
-                revocation_hub=RevocationHub(),
-                allowed_origins=frozenset({table["origin"]}),
-                hub=self.gateway,
-                backpressure=BackpressureConfig.from_settings(self.settings) if cfg.flag else None,
-                server_version=HARNESS_VERSION,
-            ),
-            prefix=profiles.ws_prefix(cfg.ws_path),
+        router = make_ws_router(
+            authenticate=self._authenticate,
+            registry=registry,
+            revocation_hub=RevocationHub(),
+            allowed_origins=frozenset({table["origin"]}),
+            hub=self.gateway,
+            backpressure=BackpressureConfig.from_settings(self.settings) if cfg.flag else None,
+            server_version=HARNESS_VERSION,
         )
+        include_ws_router(app, router)  # `/ws` and `/api/v1/ws`, as `create_app` serves it (#3916)
+        if cfg.ws_path not in (WS_PATH, WS_SERVER_BASE + WS_PATH):  # another prefix: served too
+            app.include_router(router, prefix=profiles.ws_prefix(cfg.ws_path))
         app.add_api_route("/auth/refresh", self._refresh, methods=["POST"])
         app.add_api_route("/metrics", self._scrape, methods=["GET"])
         app.state.ws_runtime = WsRuntime(self.gateway, UpstreamRefs(), self.settings)
@@ -395,7 +402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=int(os.environ.get(ENV_SEED, "7")))
     ap.add_argument("--send-delay-ms", type=int, default=int(os.environ.get(ENV_SEND_DELAY, "0")))
     ap.add_argument("--out", default="")
-    ap.add_argument("--ws-path", default="", help="where the gateway is served (default: /ws)")
+    ap.add_argument("--ws-path", default="", help="k6's path; /ws and /api/v1/ws are always served")
     args = ap.parse_args(argv)
     with contextlib.redirect_stdout(sys.stderr):  # the handler binds stdout, the ready line's
         configure_logging(
