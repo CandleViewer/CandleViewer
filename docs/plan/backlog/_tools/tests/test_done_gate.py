@@ -6,6 +6,8 @@ import os
 import sys
 from typing import Any
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import done_gate as dg
 
@@ -15,6 +17,7 @@ QA_PASS = {
     "author": {"login": "qa"},
 }
 PENPOT = "https://design.penpot.app/#/workspace?team-id=t&file-id=f&page-id=p"
+PAGE_ID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 
 
 def owner(body: str) -> dict[str, Any]:
@@ -62,6 +65,89 @@ def test_design_absent_then_present() -> None:
 def test_design_merged_pr_counts_as_approval() -> None:
     pr = {"body": f"{PENPOT} ![x](a/img/x.png)", "mergedAt": "2026-10-02", "files": []}
     assert dg.evaluate(ticket([], ["type/design"]), issue([QA_PASS]), [pr])["ok"]
+
+
+def design_failures(ref: str) -> list[str]:
+    """Failing rules for a design ticket whose only Penpot evidence is `ref`."""
+    c = [QA_PASS, owner(f"approved. {ref} img/scr-1.png")]
+    return rules(dg.evaluate(ticket([], ["type/design"]), issue(c), []))
+
+
+def test_design_page_name_and_id_pass_without_workspace_link() -> None:
+    assert design_failures(f"Page `E42-D02` · id `{PAGE_ID}`") == []
+
+
+def test_design_page_name_without_page_id_still_fails() -> None:
+    assert design_failures("page **`E42-D02`**") == ["design"]
+
+
+def test_design_workspace_link_still_passes() -> None:
+    assert design_failures(PENPOT) == []
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        f"Page `E42-D02` · id `{PAGE_ID}`",  # the wording of the open design PRs
+        f"Page `E42-D02` — id `{PAGE_ID}`",
+        f"Page `E42-D02`: id {PAGE_ID}",
+        f"Page `E42-D02`, id {PAGE_ID}",
+        f"page: `E42-D02` (id {PAGE_ID})",
+        f"page **`E42-D02`**, page id `{PAGE_ID}`",
+        f"page id `{PAGE_ID}`",
+        f"page-id={PAGE_ID}",
+        f"page_id: {PAGE_ID}",
+        f"pageId: {PAGE_ID}",
+        f"page ids {PAGE_ID}",
+        f"Page ID: {PAGE_ID.upper()}",
+        f"page id {'-' * 11}{PAGE_ID}",  # exactly 12 separator characters
+        f"Page `{'x' * 60}` · id {PAGE_ID}",  # a 60-character name, the longest allowed
+        f"Page `E42-D02`{' ' * 6}id {PAGE_ID}",  # 6 characters between name and `id`
+        f"Page   `E42-D02` · id {PAGE_ID}",  # 3 blanks between `Page` and the name
+        PENPOT,  # the workspace link
+    ],
+)
+def test_has_penpot_reference_accepts_link_or_page_id(ref: str) -> None:
+    assert dg.has_penpot_reference(ref)
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "page **`E42-D02`**",  # a page name alone
+        "page id `E42-D02`",  # a label, no UUID
+        f"page id {PAGE_ID[:8]}",  # a label and an 8-hex run, not a UUID
+        PAGE_ID,  # a UUID alone
+        PAGE_ID[:8],  # an 8-hex run alone
+        f"team id {PAGE_ID}",
+        f"file id {PAGE_ID}",
+        f"homepage id {PAGE_ID}",  # `page` inside another word
+        f"webpage-id={PAGE_ID}",
+        f"page id pending (file `{PAGE_ID}`)",  # prose between label and UUID
+        f"page id TBD, file id `{PAGE_ID}`",
+        f"page id pending; board ids `{PAGE_ID}`",
+        f"board ids `{PAGE_ID}`, page id pending",
+        f"page\nid {PAGE_ID}",  # label split over two lines
+        f"page id {'-' * 12}{PAGE_ID}",  # 13 separator characters, one too many
+        f"page id TBD {PAGE_ID}",
+        f"page id\n{PAGE_ID}",  # a line break between label and UUID
+        f"page id\r{PAGE_ID}",  # a lone carriage return
+        f"page id{chr(0x0B)}{PAGE_ID}",  # a vertical tab
+        f"page id{chr(0x0C)}{PAGE_ID}",  # a form feed
+        f"page id{chr(0x85)}{PAGE_ID}",  # NEL
+        f"page id{chr(0x2028)}{PAGE_ID}",  # LINE SEPARATOR
+        f"Page `X`\nid {PAGE_ID}",  # a line break between the name and `id`
+        f"Page\n`E42-D02` · id {PAGE_ID}",  # a line break between `Page` and the name
+        f"Page    `E42-D02` · id {PAGE_ID}",  # 4 blanks between `Page` and the name
+        f"Page `{'x' * 61}` · id {PAGE_ID}",  # a 61-character name, one too long
+        f"Page `E42-D02`{' ' * 7}id {PAGE_ID}",  # 7 characters between name and `id`
+        f"Page `E42-D02` · id pending (file `{PAGE_ID}`)",
+        f"Page `E42-D02` · team id {PAGE_ID}",
+        "https://design.penpot.app/",  # a bare host mention is not a workspace link
+    ],
+)
+def test_has_penpot_reference_rejects_look_alikes(ref: str) -> None:
+    assert not dg.has_penpot_reference(ref)
 
 
 def test_perf_needs_number_or_exception() -> None:
@@ -141,7 +227,7 @@ def test_regress_1462_design_without_penpot_or_png() -> None:
     t = ticket(["- [x] hi-fi published"], ["type/design", "a11y"])
     res = dg.evaluate(t, issue([QA_PASS, owner("approved")]), [])
     details = " ".join(f["detail"] for f in res["failures"])
-    assert "Penpot" in details and "PNG" in details
+    assert "workspace link, or page name + page id" in details and "PNG" in details
 
 
 def test_regress_1803_spike_measurement_not_run() -> None:

@@ -1,7 +1,7 @@
 """Orchestrator merge step (runs in the main session, never in a sub-agent sandbox).
 Usage: python docs/plan/backlog/_tools/merge_ready.py <PR> <KEY> [--design]
 Gates, in order: latest verdicts APPROVE (reviews+comments, after last commit) → CI checks pass →
-verify_pr.py PASS → [design: Penpot link + embedded PNG] → squash-merge → In Test.
+verify_pr.py PASS → [design: Penpot link or page name + page id, and embedded PNG] → squash-merge → In Test.
 Exit 0 merged, 1 gate failed (reason printed), 2 error."""
 import json, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
@@ -39,8 +39,10 @@ r = subprocess.run([sys.executable, os.path.join(HERE, "verify_pr.py"), pr], cap
 print(r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-200:])
 if r.returncode: fail("verify_pr FAIL")
 if design:
+    from done_gate import has_penpot_reference  # only design merges need it
+
     body = d["body"] or ""
-    if "design.penpot.app" not in body or not re.search(r"!\[[^\]]*\]\([^)]*\.png", body): fail("design evidence missing (Penpot link and/or embedded PNG)")
+    if not has_penpot_reference(body) or not re.search(r"!\[[^\]]*\]\([^)]*\.png", body): fail("design evidence missing (Penpot workspace link or page name + page id, and/or embedded PNG)")
 if d["mergeable"] == "CONFLICTING": fail("CONFLICTING — needs rebase")
 m = gh("pr", "merge", pr, "--squash", "--delete-branch")
 if m.returncode: fail("merge: " + (m.stderr or m.stdout).strip()[-200:])

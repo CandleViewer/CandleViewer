@@ -33,13 +33,14 @@ Design agents work **Suggest → Apply-with-review**: they may build into the ti
 ticket only moves to **Done** when the owner has approved it. Concretely:
 
 1. Agent builds the frames on the ticket's page (naming per §Rules), exports PNGs, writes the spec PR.
-2. Agent sets Status **In Review**, and posts on the issue: Penpot page link + PNG exports + a ≤10-line summary of
+2. Agent sets Status **In Review**, and posts on the issue: Penpot page reference + PNG exports + a ≤10-line summary of
    decisions taken and open questions. It does **not** merge the spec PR.
 
 **Mandatory evidence on EVERY design ticket — no exceptions for "research" or "wireframe" tickets (owner decision
 2026-09-25).** A design PR without both of the following is incomplete and must be sent back:
 
-- **Penpot link** to the ticket's page, in the PR body _and_ the issue comment:
+- **Penpot reference** to the ticket's page, in the PR body _and_ the issue comment: the workspace link OR the page
+  name + page id (the self-hosted rule since 2026-10-21), e.g. `` Page `E42-D02` · id `<page-id>` ``. Link form:
   `https://design.penpot.app/#/workspace?team-id=<team>&file-id=<file>&page-id=<page-id>` — read `page.id` from the
   plugin API (`penpotUtils.getPageByName(...).id`); team/file ids are in §Topology.
 - **Screenshots**: one PNG per frame/state exported with `docs/design/_tools/penpot_export.py`, committed under
@@ -74,7 +75,7 @@ the same rule applies to them. Skills: the official `penpot-*` skill set (penpot
   3. Storybook stories for any `CMP-*` touched (`packages/ui`).
   4. For `CMP-*` tickets (and `SCR-*` tickets that change a component contract): the handoff checklist
      `docs/design/<epic>/<ticket>-handoff.md`, per `16-design-system-brief.md` §11.4 / §13.3 item 8.
-- Design sign-off = PR merge of the spec + exports; the Penpot file link goes in the ticket comment.
+- Design sign-off = PR merge of the spec + exports; the Penpot reference goes in the ticket comment.
 - `execute_code` runs arbitrary JS in the plugin sandbox: only mutate the file named in the ticket; never
   delete pages/components you did not create; export before and after large mutations.
 
