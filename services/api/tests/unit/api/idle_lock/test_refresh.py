@@ -16,7 +16,7 @@ from prometheus_client import REGISTRY
 
 from candleviewer.audit.models import Severity
 from candleviewer.auth.models import RefreshOutcome, UserStatus
-from candleviewer.auth.session_service import ABSOLUTE_LIFETIME
+from candleviewer.auth.session_service import ABSOLUTE_LIFETIME, SessionClass
 
 from ._world import _IDLE_S, _T0, World, _conforms, _cookie, _unlock
 
@@ -97,6 +97,21 @@ async def test_refresh_decides_before_the_lock(
     sid = str(minted.session_id)
     assert w.published == ([] if revoked is None else [(sid, revoked)])
     assert w.repo.rotation_next == {}
+
+
+async def test_an_expired_enrolment_only_session_is_refused_before_the_lock(w: World) -> None:
+    """The enrolment-only refusal (#2295) comes before the lock answer: an expired enrolment-only
+    session that is also idle-locked gets the uniform 401, never `session_idle_locked` (an unlock
+    screen it could not use), and nothing is audited or revoked."""
+    minted = await w.mint(await w.add_user())
+    w.auth.enrolment_gate_is_active, w.auth.verdict = True, SessionClass.ENROLMENT_ONLY_EXPIRED
+    w.lock()
+    before = _idle_locks_refused()
+    r = await _refresh(w, _cookie(minted))
+    assert (r.status_code, r.json().get("code")) == (401, None)
+    assert w.audit.writer.records == []
+    assert not (await w.row(minted)).is_revoked
+    assert _idle_locks_refused() == before
 
 
 async def test_a_rotated_token_is_reuse_even_once_its_successor_has_locked(w: World) -> None:

@@ -953,9 +953,9 @@ follows (compare its `auth.refresh_reuse_detected` row with that rotation's
 `auth.session_refreshed` row), is most likely a refresh response the user's own client lost: the
 client presented the old token again, the family was revoked, and the user signs in again. That is
 by design. Any re-presentation revokes the family, and there is no server grace window
-(ADR-0020 decision 5, contract `authRefresh`); the SPA's token client (#2712) is specified to
-coalesce its refreshes, so that one client does not present a token twice. Treat a hit from another
-address, or more than one, as a stolen token.
+(ADR-0020 decision 5, contract `authRefresh`). The SPA's token client (#2712) is expected to
+coalesce its refreshes, one at a time across its tabs, so that one client does not present a token
+twice. Treat a hit from another address, or more than one, as a stolen token.
 
 An `auth.refresh_reuse_detected` row at `warning`, with `after_state.family_revoked` `false`, is a
 different event, and `auth_refresh_reuse_total` does not count it: a rotated-out `cv_refresh` cookie
