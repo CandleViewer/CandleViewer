@@ -1,6 +1,6 @@
 {
   "id": "order",
-  "version": 3,
+  "version": 4,
   "strictConfig": true,
   "maxIterations": 500,
   "actionErrorPolicy": "rollback",
@@ -44,7 +44,8 @@
     "recon_deadline_us": null,
     "sl_reading": null,
     "outbox": [],
-    "discovered": false
+    "discovered": false,
+    "recorded_stop": false
   },
   "states": {
     "lifecycle": {
@@ -74,6 +75,12 @@
               "target": "#order.lifecycle.untracked",
               "actions": [
                 "record_discovered"
+              ]
+            },
+            "MATERIALISED": {
+              "target": "#order.lifecycle.submitted",
+              "actions": [
+                "record_materialised"
               ]
             },
             "KILL": {
@@ -212,7 +219,18 @@
             },
             "FAULT": {
               "target": "#order.lifecycle.quarantined"
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "triggered": {
@@ -252,7 +270,18 @@
               "actions": [
                 "adopt_remote_cancel"
               ]
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "partially_filled": {
@@ -303,7 +332,18 @@
               "actions": [
                 "adopt_remote_cancel"
               ]
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "cancel_pending": {
@@ -370,12 +410,20 @@
                 "adopt_remote_cancel"
               ]
             },
-            "KILL": {
-              "actions": [
-                "mark_halted_by_kill",
-                "audit_kill_cancel_in_flight"
-              ]
-            }
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "actions": [
+                  "mark_halted_by_kill",
+                  "audit_kill_cancel_in_flight"
+                ]
+              }
+            ]
           }
         },
         "amend_pending": {
@@ -446,7 +494,18 @@
               "actions": [
                 "adopt_remote_cancel"
               ]
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "unknown": {
@@ -501,7 +560,18 @@
               "actions": [
                 "record_mismatch"
               ]
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "quarantined": {
@@ -543,7 +613,18 @@
               "actions": [
                 "record_mismatch"
               ]
-            }
+            },
+            "KILL": [
+              {
+                "guard": "is_recorded_stop",
+                "actions": [
+                  "audit_kill_spared_recorded_stop"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.killed"
+              }
+            ]
           }
         },
         "untracked": {

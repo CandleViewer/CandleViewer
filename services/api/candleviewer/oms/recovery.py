@@ -8,8 +8,9 @@ events record, which the OMS facade replays to hydrate the order's machine
 
 The fold reads each event as B1's actions wrote it (`statechart.bindings.b01_order`):
 
-* the first (`seq` 0): the order `VALIDATE` or `DISCOVERED` named, its identity and terms, and for
-  a discovered order its exchange order id;
+* the first (`seq` 0): the order `VALIDATE`, `DISCOVERED` or `MATERIALISED` named, its identity
+  and terms, and for one created outside the placement path (a discovered order, a recorded
+  stop's TP/SL order) its exchange order id;
 * a `place` ack (`ack`): the exchange order id it bound, its own or its lookup's (`adopt_ack`);
 * a reconciliation finding (`reconcile_diff` into any state but `held`, or a fill that carries its
   execution): the exchange order id it names (`adopt_recon`);
@@ -57,8 +58,13 @@ __all__ = ["FINALS", "RebuiltOrder", "Replayed", "rebuild", "recorded_outcomes",
 FINALS: Final[frozenset[LifecycleState]] = frozenset(
     {"filled", "cancelled", "rejected", "expired", "killed"}
 )
-#: The first event's kind, and the state B1 creates the row in (24 Sec.8.4; S9).
-_FIRST: Final[Mapping[str, LifecycleState]] = {"local_create": "validated", "adopt": "untracked"}
+#: The first event's kind, and the state B1 creates the row in (24 Sec.8.4; S9; a recorded stop's
+#: row, Sec.8.3 rule 7). Each kind creates one state, so the pair names the first event's trigger.
+_FIRST: Final[Mapping[str, LifecycleState]] = {
+    "local_create": "validated",
+    "adopt": "untracked",
+    "exchange_push": "submitted",
+}
 _SIDES: Final = {"buy": "Buy", "sell": "Sell"}
 _TERMS: Final = ("price", "trigger_price", "take_profit", "stop_loss")
 #: B1's money as its actions keep it (C6 text that numeric(38,18) holds).
@@ -144,7 +150,8 @@ def _text(raw: object) -> str:
 
 
 def _created(first: OrderEventRow) -> dict[str, Any]:
-    """The order its first event names (`VALIDATE`'s or `DISCOVERED`'s `order`)."""
+    """The order its first event names (`VALIDATE`'s, `DISCOVERED`'s or `MATERIALISED`'s
+    `order`), with the exchange order id the latter two bind."""
     order = first.payload.get("order")
     if not isinstance(order, Mapping):
         raise OrderHistoryRefused("the first event does not name the order")
@@ -159,7 +166,7 @@ def _created(first: OrderEventRow) -> dict[str, Any]:
     side = _SIDES.get(str(order.get("side")))
     if side is None:
         raise OrderHistoryRefused("the first event names no side")
-    found = order.get("exchange_order_id") if first.kind == "adopt" else None
+    found = order.get("exchange_order_id") if _FIRST[first.kind] != "validated" else None
     return identity | {
         "order_link_id": _text(order.get("order_link_id")),
         "symbol": _text(order.get("symbol")),

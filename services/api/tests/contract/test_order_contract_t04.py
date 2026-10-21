@@ -6,8 +6,10 @@ sections 8.1 to 8.6, `28-statechart-catalogue.md`, the E29 threat model and the 
 models, never from a copy: no text derives the `orderLinkId` from the `Idempotency-Key`;
 `placeOrder`'s `202` and its permanent anchor (R3); the ruled order of the checks (R2); each
 answer where the route gives it (R4, R5, R7, R8, R12), the two rate refusals (#2877 ruling 4) and
-the profile's own refusal among them; `createTradeGroup`'s repeats; an order's provenance; and
-the pairing rule of the 2026-10-21 rulings on #3972 (28's text and the threat model's anchor).
+the profile's own refusal among them; `createTradeGroup`'s repeats; an order's provenance; the
+pairing rule of the 2026-10-21 rulings on #3972 (28's text and the threat model's anchor); and B1's
+entry of a recorded stop's row (CR-G6-R3-01 on #3972): 24 section 8.2's event kinds pinned to the
+chart and the step writer, and the texts that say the row exists.
 """
 
 from __future__ import annotations
@@ -28,7 +30,10 @@ from candleviewer.domain.order_link import EXT_ID, OUR_ID
 from candleviewer.domain.primitives import AccountId, GroupId
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.oms.order_link import OrderLinkIdParts
-from candleviewer.statechart.bindings.b01_order import map_reject_code
+from candleviewer.oms.order_machine import Legality
+from candleviewer.oms.order_steps import event_kind
+from candleviewer.statechart.bindings.b01_order import Step, map_reject_code
+from candleviewer.statechart.registry import Registry
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from tests.openapi_helpers import deref
 
@@ -687,6 +692,82 @@ def test_the_threat_model_routes_every_placement_through_its_permanent_anchor() 
         "materialises",
         "no E29-X03 re-pin (ruling C(f))",
     )
+
+
+def _kind_table() -> dict[str, tuple[str, str]]:
+    """24 section 8.2's "Event kinds" table: trigger -> (kind, source)."""
+    block = _INTERNAL_DOC.split("**Event kinds (E29-T03", 1)[1].split("**Recovery (E29-T03", 1)[0]
+    rows = re.findall(r"^\| `([\w.]+)` +\| `(\w+)` +\| `(\w+)` +\|$", block, re.MULTILINE)
+    return {trigger: (kind, source) for trigger, kind, source in rows}
+
+
+def test_24_names_the_kind_of_every_step_b1_writes_as_the_step_writer_records_it() -> None:
+    """CR-G6-R3-01 on #3972 (24 section 8.3 rule 7): section 8.2's "Event kinds" table names a
+    kind and source for every trigger of a `lifecycle` step the chart declares, but the fills and
+    the `place` results its text keeps apart, and the step writer records each one so.
+    `MATERIALISED`, a recorded stop's first row, is the exchange fact of its TP/SL order, from the
+    path that met it, and the diagram draws its one edge."""
+    table, legality = _kind_table(), Legality.of(Registry().get("order"))
+    triggers: set[str] = set().union(*legality.triggers.values())
+    apart = {
+        "EXEC",
+        "done.invoke.place",
+        *(f"error.platform.{i}" for i in ("place", "cancel", "amend")),
+    }
+    assert apart <= triggers and set(table) == triggers - apart
+    for trigger, want in table.items():
+        step = Step(None, None, None, "submitted", "submitted", trigger, {}, {})
+        assert event_kind(step) == want, trigger
+    assert table["MATERIALISED"] == ("exchange_push", "ws_private")
+    found = Step(None, None, None, None, "submitted", "MATERIALISED", {"source": "reconcile"}, {})
+    assert event_kind(found) == ("exchange_push", "reconcile")
+    edges = {edge for edge, names in legality.triggers.items() if "MATERIALISED" in names}
+    assert edges == {("draft", "submitted")}
+    machine = _INTERNAL_DOC.split("### 8.2 Order state machine", 1)[1].split(
+        "**Binding transition"
+    )[0]
+    assert not _missing(
+        machine,
+        "  Draft --> Submitted: a recorded stop's TP/SL order first seen, bound to its orderId, "
+        "nothing sent (§8.3 rule 7)\n",
+        "  note left of Submitted : a recorded stop's row is never killed: each live state audits "
+        "its KILL and sends nothing\n",
+    )
+    assert (
+        "`MATERIALISED`, a recorded stop's first row (§8.3 rule 7), is the exchange fact that its "
+        "TP/SL order exists: `exchange_push` from `ws_private`, or from `reconcile` when "
+        "reconciliation materialises it and its payload names that source; it is the one first "
+        "row into `submitted`, so recovery tells it apart"
+    ) in _between(_INTERNAL_DOC, "**Event kinds (E29-T03", "| Trigger")
+
+
+def test_the_catalogue_records_the_recorded_stop_entry_and_the_unkeepable_ack() -> None:
+    """28 B1, chart version 4: the entry's note with its snapshot migration, and B1.6's sentence
+    of ruling 3 on #3972: an ok `place` answer whose id B1 cannot keep lands in `unknown`."""
+    actions = _words(_CATALOGUE.split("### B1.6 Actions", 1)[1].split("| Action |", 1)[0])
+    assert (
+        "An ok `place` answer whose exchange order id B1 cannot keep (`text_id`) raises, so the "
+        "order lands in `unknown`, never `submitted` (ruling 3 on #3972; E29-T04's first slice "
+        "pins it in the binding)."
+    ) in actions
+    notes = _words(_CATALOGUE.split("### B1.8 Implementation notes", 1)[1].split("## B2 ", 1)[0])
+    note = notes.split("chart `version: 4`.**", 1)[1]
+    assert not _missing(
+        note,
+        "`MATERIALISED`, accepted only in `draft` as `VALIDATE` and `DISCOVERED` are, moves to "
+        "`submitted` with `record_materialised`",
+        "No service is invoked, so nothing is sent",
+        "(d) `CANCEL` and `AMEND` carry no guard: synchronous code enforces 24 §8.8 rule 6 "
+        "(C-2.21)",
+        "The facade's `command` refuses an `AMEND` of the row too, before any send "
+        "(`IllegalTransition`), as rule 6 refuses every one whatever the position; a `CANCEL` it "
+        "leaves to the cancel service, which reads the position",
+        "a snapshot sealed at version 3 (`6cdf8750e255…`) is refused on restore",
+        "nothing outside the tests builds an `order` machine and no `Persister` or `Restorer` is "
+        "wired for it yet (E50-T63), so no snapshot of it is written and no upcaster is "
+        "registered; B1 recovers from `order_events`",
+    )
+    assert "no snapshot store exists yet" not in note  # the stores landed (E50-T61, E50-T62)
 
 
 def test_place_order_names_the_bounds_the_validator_applies() -> None:

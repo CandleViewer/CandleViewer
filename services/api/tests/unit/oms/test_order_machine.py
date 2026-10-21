@@ -2325,6 +2325,7 @@ B1_RECORDS: dict[str, tuple[str, Outcome, Severity]] = {
     "kill_no_cancel_unverified_duplicate": ("orders.cancel", "denied", "warning"),
     "kill_ignored_terminal": ("orders.cancel", "denied", "info"),
     "kill_ignored_unowned": ("orders.cancel", "denied", "warning"),
+    "kill_spared_recorded_stop": ("orders.cancel", "denied", "info"),
     "kill_cancel_timeout": ("orders.cancel", "failure", "error"),
     "kill_cancel_failed": ("orders.cancel", "failure", "error"),
     "kill_cancel_lost": ("orders.cancel", "failure", "error"),

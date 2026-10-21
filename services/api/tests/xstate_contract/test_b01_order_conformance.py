@@ -327,6 +327,7 @@ SAMPLES: dict[str, dict[str, Any]] = {
     "RECON_FOUND_PARTIAL": {"exchange_order_id": "x1"}, "RECON_FOUND_FILLED": {},
     "RECON_FOUND_CANCELLED": {}, "RECON_MISS": {"pass_id": "p1"}, "ADOPT": {},
     "OPERATOR_RESOLVED": {"decided_by": "owner"}, "DISCOVERED": {}, "KILL": {"reason": "kill"},
+    "MATERIALISED": {"pass_id": "p1", "source": "reconcile"},
     "FIRST_FILL": {}, "SL_DEADLINE": {}, "SL_OBSERVED": {"updated_time": 9, "size": "1"},
     "SL_LOST": {"updated_time": 9, "size": "1"},
 }  # fmt: skip

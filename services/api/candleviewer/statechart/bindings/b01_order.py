@@ -1,5 +1,5 @@
 """candleviewer.statechart.bindings.b01_order — MachineLogic for B1 `order`
-(#1650, E50; E29-T03 #847). Chart: `machines/B01.order.machine.json`, version 3.
+(#1650, E50; E29-T03 #847). Chart: `machines/B01.order.machine.json`, version 4.
 
 Guards are pure, total and deny by default (catalogue A6). Statecharts record, synchronous code
 enforces (C-2.21): `VALIDATE` carries the verdicts of the checks run before it (`gates`) and the
@@ -39,7 +39,10 @@ KILL (owner decision #1778 item X, option a): root `lifecycle.on.KILL` lands in 
 then cancels through the OMS's audited cancel service (SR-E29-06), unless the order was never
 sent or is an unverified duplicate; `cancel_pending` keeps its in-flight cancel instead of sending
 a second one. The cancel outcome is not trusted here: reconciliation re-syncs the exchange (C-2.5).
-The `protection` region is untouched by KILL (C-2.6): it only audits.
+The `protection` region is untouched by KILL (C-2.6): it only audits. A recorded stop's row
+(`MATERIALISED`, 24 Sec.8.3 rule 7) is a position's protective stop, so KILL never cancels it: in
+each live state it can reach, the guarded `is_recorded_stop` arm, ahead of the cancelling one,
+consumes and audits the KILL and sends nothing.
 """
 
 from __future__ import annotations
@@ -242,8 +245,13 @@ _DUPLICATE: Final = OmsErrorCode.DUPLICATE_CLIENT_ID.value
 _AMBIGUOUS: Final = frozenset({"TRANSPORT_ERROR", "SERVICE_UNAVAILABLE", "UNKNOWN_STATE"})
 #: The invoking `lifecycle` states and the command each one's service sends.
 _INVOKES: Final = {"submitting": "place", "cancel_pending": "cancel", "amend_pending": "amend"}
-#: The states whose step creates the order's row: `validated` (24 Sec.8.4) and `untracked`.
-_FIRST_ROWS: Final = frozenset({"validated", "untracked"})
+#: The steps that create the order's row, each a state and the event that enters it from `draft`:
+#: `validated` (24 Sec.8.4), `untracked` (S9) and a recorded stop's `submitted` (Sec.8.3 rule 7).
+FIRST_ROWS: Final = {
+    "validated": "VALIDATE",
+    "untracked": "DISCOVERED",
+    "submitted": "MATERIALISED",
+}
 _READINGS: Final = ("SL_OBSERVED", "SL_LOST")
 #: The states an order enters only with a fill reported, whose entry always starts the stop.
 _FILL_STATES: Final = frozenset({"partially_filled", "filled"})
@@ -544,6 +552,14 @@ def adoption_allowed(context: dict[str, Any], event: Any) -> bool:
     return False
 
 
+def is_recorded_stop(context: dict[str, Any], event: Any) -> bool:
+    """The order is a recorded stop's TP/SL order (`MATERIALISED`, 24 Sec.8.3 rule 7): only
+    `record_materialised` sets `recorded_stop`, so a KILL on it is consumed and audited, never a
+    cancel of the position's protective stop (C-2.6, INV-B1-p). It records which row this is and
+    decides nothing else (C-2.21)."""
+    return _total("is_recorded_stop", lambda: context.get("recorded_stop") is True)
+
+
 def _reading(raw: object) -> dict[str, Any]:
     """A protection reading (B1.5) as context values: the position row's exchange time
     (`updated_time`, ms), its stop and its size; `ValueError` if malformed."""
@@ -631,11 +647,13 @@ def _step_payload(event: Any) -> dict[str, Any]:
 async def persist_event(i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """S8: the step's `order_events` row is committed before the machine moves on. Nothing is
     written in `draft`, nor for a step that leaves it with no row (`rejected`, `killed`): the
-    first row is `validated`'s (24 Sec.8.4) or `untracked`'s. A refused or timed-out write raises,
+    first row is `validated`'s (24 Sec.8.4), `untracked`'s, or a recorded stop's `submitted`, each
+    entered from `draft` by its own event (`FIRST_ROWS`). A refused or timed-out write raises,
     so `actionErrorPolicy: "rollback"` restores the configuration and context (S7, S11); a
     timed-out one raises `StepOutcomeUnknown`, as its row may have committed."""
     to_state, from_state = _leaf(i), context.get("persisted_state")
-    if to_state in (None, "draft") or (from_state is None and to_state not in _FIRST_ROWS):
+    first = FIRST_ROWS.get(str(to_state)) == _name(event)
+    if to_state in (None, "draft") or (from_state is None and not first):
         return
     if _ports.persist is None:
         raise PortMissingError("no write-ahead store is wired, so no step may commit (S7)")
@@ -999,6 +1017,26 @@ async def record_discovered(_i: Any, context: dict[str, Any], event: Any, _a: An
     context.update(found, exchange_order_id=order["exchange_order_id"], discovered=True)
 
 
+async def record_materialised(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """`MATERIALISED`: the TP/SL order of a stop the OMS recorded has appeared (24 Sec.8.3 rule 7,
+    Sec.8.8 rule 6). Its identity, terms and exchange order id are recorded as the matched order
+    shows them, bound at entry, and `recorded_stop` marks the row, so a KILL never cancels it
+    (`is_recorded_stop`). A TP/SL order only closes its position: one that is not reduce-only, or
+    that names no exchange order id B1 can keep (`text_id`), is refused, nothing is stamped and
+    its first row write refuses it (S7). The arm sends nothing: `submitted` invokes no service."""
+    order = _fields(event).get("order")
+    try:
+        if not isinstance(order, Mapping) or _id(order.get("exchange_order_id")) is None:
+            raise ValueError("the recorded stop's order names no exchange_order_id")
+        if order.get("reduce_only") is not True:
+            raise ValueError("a recorded stop's order only closes its position")
+        found = _order(order)
+    except Exception:  # A1: an order we cannot read stays unrecorded; its row write refuses it
+        logger().error("b01_recorded_stop_refused")
+        return
+    context.update(found, exchange_order_id=order["exchange_order_id"], recorded_stop=True)
+
+
 async def adopt_untracked(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
     """`ADOPT` passed `adoption_allowed` (deny-all until E45-S01 records D6), whose verdicts
     include a native stop attached (C-2.6): the order is managed from here as it was discovered,
@@ -1286,6 +1324,7 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "raise_unknown_alert": raise_unknown_alert,
     "record_cancel_refused": record_cancel_refused,
     "record_discovered": record_discovered,
+    "record_materialised": record_materialised,
     "record_mismatch": record_mismatch,
     "record_remote_state": record_remote_state,
     "record_sl_fact_ignored": record_sl_fact_ignored,
@@ -1301,6 +1340,7 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "stamp_validated": stamp_validated,
 }
 _AUDITED = "adoption_denied command_refused_unowned kill_ignored_unowned operator_resolved"
+_AUDITED += " kill_spared_recorded_stop"
 ACTIONS.update({f"audit_{name}": _audited(name) for name in _AUDITED.split()})
 
 GUARDS: dict[str, Callable[..., bool]] = {
@@ -1311,6 +1351,7 @@ GUARDS: dict[str, Callable[..., bool]] = {
     "is_duplicate_link_id": is_duplicate_link_id,
     "is_duplicate_link_id_full_match": is_duplicate_link_id_full_match,
     "is_link_id_mismatch": is_link_id_mismatch,
+    "is_recorded_stop": is_recorded_stop,
     "passes_all_gates": passes_all_gates,
     "ret_code_ok": ret_code_ok,
     "ret_code_ok_and_has_fills": ret_code_ok_and_has_fills,
@@ -1353,6 +1394,8 @@ _VERDICT: Final = {"enum": [PASSED, FAILED]}
 _SIDE: Final = {"enum": ["buy", "sell"]}
 #: Where an exchange fact came from, which its write-ahead row records (24 Sec.8.2 S8, OM-R02).
 _SOURCE: Final = {"enum": ["rest", "ws_private", "reconcile", "paper"]}
+#: Who meets a recorded stop's TP/SL order first: the private stream or reconciliation (Sec.8.2).
+_MATERIALISED_BY: Final = {"enum": ["ws_private", "reconcile"]}
 _TERMS: Final = {"qty": _MONEY_TEXT} | dict.fromkeys(TERMS, _MONEY_OR_NULL)
 #: The order as 24 Sec.8.1 names it: identity, terms and, for one found on the exchange, its id.
 _ORDER: Final = _closed(
@@ -1405,6 +1448,7 @@ SCHEMAS: Final[dict[str, dict[str, Any]]] = {
     "FAULT": _closed(reason=_TEXT, exec_id=_TEXT),
     "FIRST_FILL": _closed(),
     "KILL": _REASON,
+    "MATERIALISED": _closed(order=_ORDER, pass_id=_TEXT, source=_MATERIALISED_BY),
     "MISMATCH": _closed(exchange_order_id=_TEXT, pass_id=_TEXT),
     "OPERATOR_RESOLVED": _closed(decided_by=_TEXT, reason=_TEXT),
     "RECON_FOUND_CANCELLED": _FOUND,

@@ -842,6 +842,7 @@ _EXEC = fill_of(order_of(), "e1", "0.1")
 _SAMPLE: dict[str, dict[str, Any]] = {
     "VALIDATE": {"gates": {}, "order": _ORDER},
     "DISCOVERED": {"order": _ORDER | {"exchange_order_id": "x7"}},
+    "MATERIALISED": {"order": _ORDER | {"exchange_order_id": "x8", "reduce_only": True}},
     "SEND": {}, "CANCEL": {}, "ADOPT": {}, "AMEND": {"price": "64000"},
     "TRIGGERED": {"updated_time": 1}, "MISMATCH": {"exchange_order_id": "x9"},
     "AMEND_REJECTED": {"error_code": "PRICE_OUT_OF_BOUNDS"},
