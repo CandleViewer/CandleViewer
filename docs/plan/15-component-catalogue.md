@@ -744,6 +744,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.status.*`.
 - **Storybook**: AllStates.
 - **Tests**: unit, visual, axe, announcement-throttling test.
+- **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the chip follows the title's ≤ 1 / s slots and latch, never the transport; `latencyMs` ≤ 1 Hz, never in a live region — PROPOSED).
 
 ### CMP-077 ReconnectOverlay
 
@@ -762,6 +763,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.overlay.stale`.
 - **Storybook**: Fresh, Stale.
 - **Tests**: unit, visual, axe.
+- **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the 15 % panel dim settles once in and cuts out after a clearing window; the T2 `escalated` strip and lock cursor are cuts — PROPOSED).
 
 ### CMP-079 RbacGate (disabled-with-reason wrapper)
 
