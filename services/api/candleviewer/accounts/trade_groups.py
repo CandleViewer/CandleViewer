@@ -141,10 +141,14 @@ Note = Annotated[str, Field(max_length=MAX_NOTE_CHARS), AfterValidator(refuse_un
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 #: The microseconds of 9999-12-31T23:59:59.999999Z, the last instant a `datetime` holds.
 MAX_TS_US: Final = 253_402_300_799_999_999
-#: A time a writer sets: epoch microseconds from 1970-01-01 up to `MAX_TS_US`, so `from_us` always
-#: converts it. A time beyond that range is a `ValidationError` at the update, never an
-#: `OverflowError` out of the patch builder.
-WriterTs = Annotated[TsUs, Field(ge=0, le=MAX_TS_US)]
+#: A time a writer sets, in B1's range for an exchange time, `[0, MAX_EXCHANGE_US]`
+#: (`statechart/bindings/b01_order.py`; schema minimum 0): epoch microseconds up to `MAX_TS_US`, so
+#: `from_us` always converts it. The floor is the epoch because the writers' times are exchange
+#: times, which B1's schema never admits before 1970-01-01 (`from_us` alone would convert back to
+#: the year 1). A strict integer: a bool, a numeric string or a float is refused, not coerced. A
+#: time outside that range is a `ValidationError` at the update, never an `OverflowError` out of
+#: the patch builder.
+WriterTs = Annotated[StrictInt, Field(ge=0, le=MAX_TS_US)]
 
 #: 24 Sec.1.2's labels to the columns' (`tg_side`, `tg_entrytype`, `tg_trigby`), each a bijection
 #: with its inverse below (pinned by a unit test).
@@ -174,7 +178,8 @@ _TRIGGER_OF: Final[Mapping[ColumnTriggerBy, TriggerBy]] = {
 
 def from_us(us: TsUs) -> datetime:
     """The UTC-aware datetime of epoch microseconds: the inverse of `profiles.to_us`, exactly
-    (integer arithmetic, no float rounding)."""
+    (integer arithmetic, no float rounding). Raises `OverflowError` beyond `datetime`'s range
+    (years 1 to 9999); the update models keep a writer's time (`WriterTs`) inside it."""
     return _EPOCH + timedelta(microseconds=us)
 
 
@@ -196,7 +201,7 @@ def _check_entry(
 
 
 def _check_stop(status: LegStatus, resolved_sl_price: Decimal | None) -> None:
-    """`tgl_sl_px`: only a rejected, cancelled or failed leg may go without a native stop."""
+    """`tgl_sl_px`: only a `rejected`, `cancelled` or `error` leg may go without a native stop."""
     if status not in NO_STOP_LEG_STATUSES and not (
         resolved_sl_price is not None and resolved_sl_price > 0
     ):
@@ -384,9 +389,9 @@ class TradeGroupDraft(BaseModel):
 class LegDraft(BaseModel):
     """A leg to create with its group, built from the one `AccountProfile` it was sized from: the
     profile gives the leg its account, `account_profile_id`, `profile_version` and snapshot
-    (`leg_values`), so they cannot drift. A leg that is not rejected, cancelled or failed has a
-    native stop above zero (`tgl_sl_px`). The rejection texts are redacted by the store before
-    they are written."""
+    (`leg_values`), so they cannot drift. A leg whose status is not `rejected`, `cancelled` or
+    `error` has a native stop above zero (`tgl_sl_px`). The rejection texts are redacted by the
+    store before they are written."""
 
     model_config = _FROZEN
 

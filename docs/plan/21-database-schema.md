@@ -1460,13 +1460,13 @@ ALTER TABLE account_profile_revisions ENABLE ALWAYS TRIGGER trg_apr_no_truncate;
 
 #### 3.3.2 `trade_groups`
 
-A single ticket that fans out to N accounts. `client_group_ref` is the replay anchor: the request's `Idempotency-Key` (24 §8.3 rule 1), unique per creator (`UNIQUE (created_by, client_group_ref)`), never across users, so another user's key reads as a missing one; `client_body_sha256` fingerprints the request, so the same key with another body is told apart after the 24 h idempotency record has gone (G-6(b), #2876; SR-E29-07). A re-submitted ticket with the same key and body never creates a second group.
+A single ticket that fans out to N accounts. `client_group_ref` is the replay anchor: the request's `Idempotency-Key` (24 §8.3 rule 1), unique per creator (`UNIQUE (created_by, client_group_ref)`), never across users, so another user's key reads as a missing one; `client_body_sha256` is the request fingerprint the 24 h idempotency record keeps (24 §8.3 rule 1): the sha256 of the method, path and body (`request_fingerprint` in `api/idempotency.py`, the record's `digest`), so the same key on another request is told apart after that record has gone (G-6(b), #2876; SR-E29-07). A re-submitted ticket with the same key and body never creates a second group.
 
 | Column                    | Type               | Null | Default        | Constraints / notes                                                   |
 | ------------------------- | ------------------ | ---- | -------------- | --------------------------------------------------------------------- |
 | `id`                      | uuid               | no   | —              | PK                                                                    |
 | `client_group_ref`        | text               | no   | —              | Lower-case UUID; replay anchor, unique per creator; write-once        |
-| `client_body_sha256`      | sha256_hex         | no   | —              | Fingerprint of the request body; write-once                           |
+| `client_body_sha256`      | sha256_hex         | no   | —              | Request fingerprint (sha256 of method, path and body); write-once     |
 | `definition_id`           | uuid               | yes  | NULL           | FK → trade_group_definitions RESTRICT; set when fired from one        |
 | `env`                     | exchange_env       | no   | —              | Write-once; every leg's account is in it (`trg_tgl_env`)              |
 | `symbol`                  | symbol_code        | no   | —              | e.g. `BTCUSDT`                                                        |
@@ -1655,7 +1655,7 @@ CREATE INDEX ix_tgl_no_sl   ON trade_group_legs (trade_group_id) WHERE status IN
 CREATE INDEX ix_tgl_profile ON trade_group_legs (account_profile_id) WHERE account_profile_id IS NOT NULL;
 ```
 
-`ix_tgl_no_sl` powers the **safety alarm**: any open leg without a confirmed exchange-side SL is surfaced on the Risk Dashboard within one second and raises `system_events` severity `critical`. A `filled` leg is an open position, so the alarm covers it (C-2.6; 22 `native_sl_confirmed`: "a filled leg with false is an alertable condition"). `tgl_sl_px` is the leg's share of the native-stop floor (SR-E28-08): a leg carries a resolved stop unless it was rejected, cancelled or failed before it sent anything. `ix_tgl_open` covers the live statuses; `leg_status` has no `closing` (the B3 chart state is not stored). `tgl_finite` keeps NaN out of the leg's numbers.
+`ix_tgl_no_sl` powers the **safety alarm**: any open leg without a confirmed exchange-side SL is surfaced on the Risk Dashboard within one second and raises `system_events` severity `critical`. A `filled` leg is an open position, so the alarm covers it (C-2.6; 22 `native_sl_confirmed`: "a filled leg with false is an alertable condition"). `tgl_sl_px` is the leg's share of the native-stop floor (SR-E28-08): a leg carries a resolved stop unless it went `rejected`, `cancelled` or `error` before it sent anything. `ix_tgl_open` covers the live statuses; `leg_status` has no `closing` (the B3 chart state is not stored). `tgl_finite` keeps NaN out of the leg's numbers.
 
 Three triggers, all `ENABLE ALWAYS`, refuse with SQLSTATE 23514 naming themselves as the constraint and never a value; `trg_trade_group_legs_touch` (BEFORE UPDATE) is `set_updated_at()`:
 

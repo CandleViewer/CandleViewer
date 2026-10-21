@@ -671,6 +671,8 @@ class TradeGroupReads(Protocol):
         """The group with its legs when the scope sees it, else `None`. An `OwnerScope` call first
         checks the live owner role (`TradeGroupStoreScopeDeniedError` for anyone else) and sees
         every group; a `GrantScope` sees a group that has a leg and whose every leg account is
-        live, in the scope and under a live `can_view` grant that is not frozen. An empty
-        `GrantScope` runs no SQL."""
+        live, in the scope and under a live `can_view` grant that is not frozen. A `GrantScope`
+        read never yields a record without legs: the legs read is all or none (SR-E28-21), so a
+        scope that changes between the group and its legs reads as `None`. An empty `GrantScope`
+        runs no SQL."""
         ...

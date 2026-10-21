@@ -17,7 +17,9 @@ adapter or a model refuses, fails closed as `AccountsError("stored trade group u
 logged with the ids and the error class only (an error the write-ahead hook raises is never read
 as one). A `StorageError` passes unmapped: after `WriteAheadTimeout` nothing was written, and
 after any other (the tier unavailable, a failed query) the outcome of a write may be unknown, so
-the caller reconciles.
+the caller reconciles. An "unreadable" `AccountsError` after `create` or `update_*` does not mean
+the write failed either (the commit may have happened), so the caller reconciles as for a
+`StorageError`.
 
 The replay anchor is read only by its creator's `(created_by, client_group_ref)` (G-6(b),
 SR-E29-07): `find_replay`, and a `create` that meets an existing anchor, answer a `GroupReplay`
@@ -69,7 +71,7 @@ from candleviewer.accounts.trade_groups import (
 )
 from candleviewer.domain.primitives import GroupId, UserId
 from candleviewer.storage.errors import StorageError
-from candleviewer.storage.repositories.accounts import AccountScope
+from candleviewer.storage.repositories.accounts import AccountScope, GrantScope
 from candleviewer.storage.repositories.trade_groups import (
     ACCOUNT_NOT_LIVE,
     DEFINITION_NOT_LIVE,
@@ -318,10 +320,13 @@ class TradeGroupReader:
     async def get(self, scope: AccountScope, group_id: GroupId) -> ScopedTradeGroup:
         """The group when `scope` sees it (SR-E28-21): an Owner sees every group; anyone else a
         group that has a leg and whose every leg account is live and under their `can_view`
-        grant that is not frozen. Every miss is the same `AccountNotFoundError("trade_group")`;
-        an `OwnerScope` held by a non-owner is `AccountScopeDeniedError`."""
+        grant that is not frozen. Every miss is the same `AccountNotFoundError("trade_group")`,
+        and so is a grant's read the store answers without legs, which its all-or-none legs read
+        never does; an `OwnerScope` held by a non-owner is `AccountScopeDeniedError`."""
         record = await _call(self._store.get_group(scope, group_id), group_id=str(group_id))
         if record is None:
+            raise AccountNotFoundError("trade_group")
+        if isinstance(scope, GrantScope) and not record.legs:  # a grant sees a group by its legs
             raise AccountNotFoundError("trade_group")
         found = _read(record_from_rows, record, group_id=str(group_id))
         return ScopedTradeGroup(

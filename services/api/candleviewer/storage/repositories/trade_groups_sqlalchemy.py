@@ -13,12 +13,12 @@ client_group_ref) DO NOTHING`: a replay, or a create racing the first one, waits
 then writes nothing and answers `GroupExists`. The wait counts against the statement cap (below),
 so a replay racing a first create slower than the cap (by default 2 s, while the write-ahead hook
 alone may take 5 s) surfaces as the unknown-outcome `StorageQueryFailed('57014')`, having written
-nothing, and is retried by the client. Otherwise it locks `FOR SHARE`, in this order, the
-definition the group names, the leg accounts by id and the leg profiles by id; refuses
-(`TradeGroupStoreRefusedError`) a definition or account that is missing or soft-deleted and a
-profile that is not live at its leg's account and `profile_version` (SR-E28-15); inserts every leg
-in one statement; awaits the write-ahead hook (C-2.9) and commits. Any refusal rolls the group back
-with its legs.
+nothing, and is retried by the client. When the insert wrote the group, it locks `FOR SHARE`, in
+this order, the definition the group names, the leg accounts by id and the leg profiles by id;
+refuses (`TradeGroupStoreRefusedError`) a definition or account that is missing or soft-deleted
+and a profile that is not live at its leg's account and `profile_version` (SR-E28-15); inserts
+every leg in one statement; awaits the write-ahead hook (C-2.9) and commits. Any refusal rolls the
+group back with its legs.
 
 `update_leg` and `update_group` lock their row `FOR NO KEY UPDATE`, so orders and executions can
 still reference it, compare the status when asked (`TradeGroupStoreStaleError`) and set the patch's

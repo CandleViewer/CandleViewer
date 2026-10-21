@@ -13,7 +13,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 from uuid import UUID
 
 import pytest
@@ -448,17 +448,25 @@ async def test_create_sends_the_values_with_the_hook_and_returns_the_stored_grou
     assert created.legs[0].resolved_leverage == Decimal("5")
 
 
+@pytest.mark.parametrize("hook_is_async", [True, False], ids=["async-hook", "sync-hook"])
 @pytest.mark.parametrize(
     "raised", [ValueError(f"{_MARK} audit"), KeyError(_MARK)], ids=["value", "key"]
 )
-async def test_an_error_the_hook_raises_passes_as_it_is(raised: Exception) -> None:
+async def test_an_error_the_hook_raises_passes_as_it_is(
+    raised: Exception, hook_is_async: bool
+) -> None:
     """The store decodes the rows before it awaits the hook, so what the hook raises is its own
-    refusal: never read as an unreadable row, nor logged as one."""
+    refusal: never read as an unreadable row, nor logged as one. A plain function that raises
+    when it is called is the same refusal as a coroutine that raises when it is awaited."""
     store = _HookingStore(GroupCreated(record=_RECORD))
 
-    async def refuses(record: TradeGroupRecord) -> None:
+    async def refuses_awaited(record: TradeGroupRecord) -> None:
         raise raised
 
+    def refuses_called(record: TradeGroupRecord) -> NoReturn:
+        raise raised
+
+    refuses: GroupWriteAhead = refuses_awaited if hook_is_async else refuses_called
     with structlog.testing.capture_logs() as logs, pytest.raises(type(raised)) as exc:
         await TradeGroupRepository(store).create(_draft(), [_leg_draft()], write_ahead=refuses)
     assert exc.value is raised and logs == []
@@ -670,6 +678,19 @@ async def test_a_scoped_miss_is_not_found_and_a_false_owner_is_denied() -> None:
     with pytest.raises(AccountScopeDeniedError) as denied:
         await reader.get(_OWNER, GroupId(_GROUP))
     assert denied.value.__cause__ is None and denied.value.__suppress_context__
+
+
+async def test_a_grant_scoped_read_never_serves_a_group_without_legs() -> None:
+    """SR-E28-21: a grant sees a group through its legs, and the store's legs read is all or
+    none, so a group answered without legs (a store that regressed) reads as a miss, as an
+    ungranted one does. An Owner still sees a group that has no leg yet."""
+    bare = TradeGroupRecord(group=_GROUP_ROW, legs=())
+    grant = GrantScope(_USER, frozenset({_P.account_id}))
+    with structlog.testing.capture_logs() as logs, pytest.raises(AccountNotFoundError) as missing:
+        await TradeGroupReader(_Store(bare)).get(grant, GroupId(_GROUP))
+    assert missing.value.entity == "trade_group" and logs == []
+    owner = await TradeGroupReader(_Store(bare)).get(_OWNER, GroupId(_GROUP))
+    assert owner.record.legs == () and owner.shows_private_fields
 
 
 async def test_a_scoped_read_passes_storage_errors_and_fails_closed_on_a_bad_row() -> None:
