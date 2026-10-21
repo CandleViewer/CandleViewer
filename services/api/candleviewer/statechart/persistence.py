@@ -879,27 +879,31 @@ class Restorer:
         raise failure from None
 
     async def _bring_up(self, key: MachineKey, interp: Interpreter[Any]) -> None:
-        """`cv_bring_up_restored` once a restored `start()` settled (CV-C66'). A plugin's bring-up
-        that raises stops the machine, which would otherwise run with no owner and its rows
-        unreplayed, pages P1 by the error's type only and is raised again without its chain, as a
-        failed `_replay` is; a cancellation stops the machine and passes through (review round 2).
-        Containing each plugin's bring-up inside the factory is #414's slice 2c."""
+        """`cv_bring_up_restored` once a restored `start()` settled (CV-C66'). The factory tells
+        every plugin and returns each `cv_bring_up` that raised, logged by its type (#3988). Any
+        failure, or the step's own error, fails the restore, because one that returned would hand
+        its caller a machine whose plugins were not all brought up (E50-T63, as ruled): the
+        machine, which would otherwise run with no owner and its rows unreplayed, is stopped, one
+        P1 page names the errors' types only and the first is raised again without its chain, as
+        a failed `_replay` is; a cancellation stops the machine and passes through (round 2)."""
         try:
-            factory.cv_bring_up_restored(interp)  # CV-C66': a restored start() enters no state
-            return
+            failures = factory.cv_bring_up_restored(interp)  # CV-C66': start() enters no state
         except asyncio.CancelledError:
             await self._stop(key, interp)
             raise
         except Exception as exc:
-            failure = exc
+            failures = (exc,)
+        if not failures:
+            return
         stopped = await self._stop(key, interp)
+        types = ", ".join(type(f).__name__ for f in failures)
         await self._page(
             key,
             "restore bring-up failed",
-            f"restore bring-up failed ({type(failure).__name__}): the restored machine "
-            f"{_STOPPED[stopped]} and its rows stay unreplayed for the next restore",
+            f"restore bring-up failed ({types}): the restored machine {_STOPPED[stopped]} and its "
+            "rows stay unreplayed for the next restore",
         )
-        raise failure from None
+        raise failures[0] from None
 
     async def page_unclaimed(self, key: MachineKey) -> int:
         """The start of a machine without a verified snapshot (fresh, after a refused restore,
