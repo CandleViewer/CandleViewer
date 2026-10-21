@@ -394,7 +394,7 @@ INVALID_ORIGINS = [
     pytest.param(f"{HUB}/path", id="path"),
     pytest.param(f"{HUB}?part=x", id="query"),
     pytest.param(f"{HUB}#frag", id="fragment"),
-    pytest.param(f"https://user:{FAKE_TOKEN}@{HUB_HOST}", id="userinfo-with-token"),
+    pytest.param("https://user:" + FAKE_TOKEN + "@" + HUB_HOST, id="userinfo-with-token"),
     pytest.param(f"{HUB}@evil.example", id="userinfo-lookalike"),
     pytest.param(f"https://evil.example\\@{HUB_HOST}", id="backslash-lookalike"),
     pytest.param("https://", id="empty-host"),
