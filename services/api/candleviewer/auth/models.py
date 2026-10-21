@@ -14,9 +14,11 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from candleviewer.auth.view_as import ViewAsState
 from candleviewer.domain.text import refuse_unstorable_text
 
 
@@ -281,6 +283,17 @@ class SessionRecord(BaseModel):
     #: `refresh` and `require_active` refuse on `None` (fail closed), so those reads must
     #: always populate it (pinned on Postgres by the #2911 integration tests).
     user_status: UserStatus | None = None
+    #: #3085: the session's view-as context (`auth/view_as.py`). `None` reads as "no context", so
+    #: every read of a session row must select the view-as columns (S2a's read path does): a read
+    #: that left them out would turn a viewing session into a normal one, failing open.
+    view_as: ViewAsState | None = None
+
+    @model_validator(mode="after")
+    def _never_views_as_itself(self) -> Self:
+        """Mirrors the `sessions` CHECK of the #3085 migration: a target is never the row's user."""
+        if self.view_as is not None and self.view_as.target_user_id == self.user_id:
+            raise ValueError("a session must never view as its own user")
+        return self
 
     @property
     def is_revoked(self) -> bool:
