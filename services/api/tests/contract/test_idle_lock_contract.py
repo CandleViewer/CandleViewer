@@ -218,7 +218,8 @@ def test_refresh_contract_carries_the_idle_deadline_over(spec: dict[str, Any]) -
 
 
 def test_refresh_refused_while_locked_writes_no_refreshed_record(spec: dict[str, Any]) -> None:
-    # Review round 3 (gap G): today the route audits `auth.session_refreshed` before refusing.
+    # Review round 3 (gap G): the route answers the lock before its write-ahead record (#3331);
+    # the behaviour is pinned in `tests/unit/api/idle_lock/test_refresh.py`.
     refresh = _flat(_op(spec, "post", "/auth/refresh")["description"])
     assert "no `auth.session_refreshed` record is written" in refresh
 

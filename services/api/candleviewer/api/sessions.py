@@ -78,6 +78,8 @@ serve a locked session, identified by an access token inside its lifetime or els
 the current `cv_refresh` cookie (a cookie-identified write gets the SR-042 Origin
 and SR-041 checks here); every other operation of a locked session is refused by
 `api.idle_lock`, and a locked or cookie-identified logout ends only its own session.
+`POST /auth/refresh` answers a locked session `401 session_idle_locked` itself, before its
+write-ahead record (#3331).
 """
 
 from __future__ import annotations
@@ -143,6 +145,7 @@ from candleviewer.auth.session_service import (
     SessionClass,
     UnlockOutcome,
     UnlockWriteAhead,
+    refresh_refused_as_locked,
 )
 from candleviewer.auth.step_up import PasswordVerdict, grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
@@ -1032,6 +1035,10 @@ def make_session_router(
             refused = await _refresh_refusal(presented_record)
             if refused is not None:
                 return refused
+            if refresh_refused_as_locked(presented_record, now=now()):
+                # Contract "Idle lock" (#3331): before the write-ahead record, so nothing is
+                # audited, rotated or revoked, and the token refreshes after `POST /auth/unlock`.
+                return idle_lock.idle_locked_problem(presented_record.idle_deadline())
         # C-2.9 write-ahead: the audit record is written before `refresh()`
         # rotates or revokes anything; if the sink is down we refuse (503)
         # with no state change.
@@ -1087,7 +1094,11 @@ def make_session_router(
                 session_ids=(presented_record.id,),
             )
             return _unauthorized("refresh_token_invalid")
-        except (SessionNotFound, SessionRevoked, SessionIdleLocked):
+        except SessionIdleLocked as exc:
+            # A lock that engaged after the check above: the intent record is written, and nothing
+            # was rotated or revoked.
+            return idle_lock.idle_locked_problem(exc.idle_locked_at)
+        except (SessionNotFound, SessionRevoked):
             return _unauthorized("refresh_token_invalid")
         except asyncio.CancelledError:
             # The service commits a family's revocation before it publishes it to the sockets, so

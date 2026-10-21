@@ -217,6 +217,22 @@ def is_live_session(session: SessionRecord, *, now: datetime) -> bool:
     )
 
 
+def refresh_refused_as_locked(session: SessionRecord, *, now: datetime) -> bool:
+    """Read-only twin of `SessionService.refresh`'s idle-lock refusal: true exactly when
+    `refresh()` would raise `SessionIdleLocked` for *session* as `peek_refresh` read it. The checks
+    `refresh()` makes first come first here too: a revoked session (a rotated one included), one
+    past its absolute lifetime and one of a disabled or deleted user are never refused as locked,
+    so `POST /auth/refresh` can answer `session_idle_locked` before its write-ahead record without
+    hiding a reuse, an expiry or the backstop (#3331). No state change; `refresh()` keeps its own
+    checks, and a test pins the two together on every row (as #2264 pins `is_live_session`)."""
+    return (
+        not session.is_revoked
+        and not session.is_absolute_expired(now=now)
+        and session.user_status not in (UserStatus.DISABLED, None)
+        and session.is_idle_locked(now=now)
+    )
+
+
 def clamp_idle_timeout_s(idle_timeout_s: int) -> int:
     """Ticket "5-60 min idle lock" — the API edge and this service both
     clamp so a stored/requested value outside the documented range can

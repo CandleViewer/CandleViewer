@@ -18,6 +18,8 @@ Every one of the other 23 orders changes the outcome of at least one of them.
 
 `refresh()` checks the stored revocation and the expiry before the user's status, and the status
 before the idle lock, so it revokes a disabled user's session where `require_active` does (#3331).
+`refresh_refused_as_locked`, the read-only twin of its lock refusal that `POST /auth/refresh`
+answers before its write-ahead record (#3331, G2 of #2712), agrees with it on every row.
 
 One level up, `authenticate_access_token` checks the token's life before `require_active`: a
 disabled user's expired token is refused as expired, so a socket-only client's row stays live until
@@ -36,6 +38,7 @@ import pytest
 from prometheus_client import REGISTRY
 
 from candleviewer.auth.errors import (
+    RefreshReuseDetected,
     SessionIdleLocked,
     SessionNotFound,
     SessionRevoked,
@@ -43,7 +46,11 @@ from candleviewer.auth.errors import (
 )
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import SessionRecord, UserStatus
-from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, SessionService
+from candleviewer.auth.session_service import (
+    ACCESS_TOKEN_TTL,
+    SessionService,
+    refresh_refused_as_locked,
+)
 
 from .session_fakes import FakeSessionRepository
 
@@ -85,6 +92,27 @@ def _sample(name: str) -> float:
     return REGISTRY.get_sample_value(name) or 0.0
 
 
+def _condition(
+    repo: FakeSessionRepository,
+    sid: str,
+    *,
+    expired: bool = False,
+    revoked_as: str | None = None,
+    revoked_without_reason: bool = False,
+    idle: bool = False,
+) -> None:
+    """Set the given conditions on the row of *sid*. `revoked_without_reason` is a revoked row
+    with no stored `revoked_reason`."""
+    row: dict[str, Any] = {}
+    if expired:
+        row["expires_at"] = _NOW - timedelta(seconds=1)
+    if idle:
+        row["last_seen_at"] = _NOW - timedelta(hours=1)
+    if revoked_as is not None or revoked_without_reason:
+        row.update(revoked_at=_NOW - timedelta(minutes=1), revoked_reason=revoked_as)
+    repo.sessions[sid] = repo.sessions[sid].model_copy(update=row)
+
+
 async def _require_active(
     *,
     refresh: bool = False,
@@ -94,9 +122,8 @@ async def _require_active(
     disabled: bool = False,
     idle: bool = False,
 ) -> _Effects:
-    """Mint a live session, set the given conditions on its row, and call `require_active`, or
-    with *refresh* `refresh()` with its token. `revoked_without_reason` is a revoked row with no
-    stored `revoked_reason`."""
+    """Mint a live session, set the given conditions on its row (`_condition`), and call
+    `require_active`, or with *refresh* `refresh()` with its token."""
     repo, pushed = _RevokeSpy(), list[tuple[str, str]]()
 
     async def publish(session_id: str, reason: str) -> None:
@@ -108,14 +135,14 @@ async def _require_active(
     user = str(uuid.uuid4())
     minted = await service.mint(user)
     sid = str(minted.session_id)
-    row: dict[str, Any] = {}
-    if expired:
-        row["expires_at"] = _NOW - timedelta(seconds=1)
-    if idle:
-        row["last_seen_at"] = _NOW - timedelta(hours=1)
-    if revoked_as is not None or revoked_without_reason:
-        row.update(revoked_at=_NOW - timedelta(minutes=1), revoked_reason=revoked_as)
-    repo.sessions[sid] = repo.sessions[sid].model_copy(update=row)
+    _condition(
+        repo,
+        sid,
+        expired=expired,
+        revoked_as=revoked_as,
+        revoked_without_reason=revoked_without_reason,
+        idle=idle,
+    )
     if disabled:
         repo.user_statuses[user] = UserStatus.DISABLED
     breach, idle_locks = _sample(_BREACH), _sample(_IDLE_LOCKS)
@@ -201,6 +228,41 @@ async def test_refresh_order_pins_the_backstop(row: dict[str, Any], effects: _Ef
     revoked as `user_disabled` and counts one (never left locked), and a revoked one keeps its
     stored reason and is not revoked again."""
     assert await _require_active(refresh=True, disabled=True, **row) == effects
+
+
+@pytest.mark.parametrize("idle", [False, True], ids=["unlocked", "idle"])
+@pytest.mark.parametrize(
+    "status", [UserStatus.ACTIVE, UserStatus.DISABLED, None], ids=["active", "disabled", "gone"]
+)
+@pytest.mark.parametrize("expired", [False, True], ids=["live", "expired"])
+@pytest.mark.parametrize(
+    "revoked_as", [None, "rotated", "logout"], ids=["unrevoked", "rotated", "logout"]
+)
+async def test_refresh_refused_as_locked_exactly_when_refresh_refuses_as_locked(
+    revoked_as: str | None, expired: bool, status: UserStatus | None, idle: bool
+) -> None:
+    """#3331: on all 36 rows, the predicate on the row as `peek_refresh` reads it is true
+    exactly when `refresh()` raises `SessionIdleLocked`, so the route's early lock answer never
+    hides a reuse, a revocation, an expiry or a disabled user."""
+    repo = FakeSessionRepository()
+    service = SessionService(repo, Hasher(pepper=os.urandom(16).hex()), clock=lambda: _NOW)
+    user = str(uuid.uuid4())
+    minted = await service.mint(user)
+    _condition(repo, str(minted.session_id), expired=expired, revoked_as=revoked_as, idle=idle)
+    repo.user_statuses[user] = status
+    presented = await service.peek_refresh(minted.refresh_token)
+    assert presented is not None
+
+    try:
+        await service.refresh(minted.refresh_token)
+    except SessionIdleLocked:
+        locked = True
+    except (RefreshReuseDetected, SessionRevoked, UserDisabled):
+        locked = False
+    else:
+        locked = False  # rotated
+
+    assert refresh_refused_as_locked(presented, now=_NOW) is locked
 
 
 async def test_an_expired_access_token_of_a_disabled_user_is_refused_before_the_backstop() -> None:
