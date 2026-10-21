@@ -248,7 +248,8 @@ through `AuditWriter.ingest()`. It is a boundary of its own inside the backend (
   frame in `quarantine/`, the frames after it drained (S2a2).
 - **AC-LANE-09.** Replace `lane/` with an older copy, or edit the newest frame's `len` so it reads as torn.
   Expected: a lower head in the next `audit.lane_resumed` row and an `AuditLaneSeqRegressed` page; the `len`
-  edit also leaves a `torn_tail` row (S2a2, S4a).
+  edit also leaves a `torn_tail` row when the frame shares its segment, and a critical `seq_gap` row (§15.6
+  row 16) when it is alone in the newest segment (S2a2, S4a).
 
 **Residual risks** (to be accepted under RR-01, `04-security-program.md` §16.1, whose text S4b extends to the
 lane, and reviewed with it):

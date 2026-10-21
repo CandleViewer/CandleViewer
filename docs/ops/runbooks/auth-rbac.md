@@ -1223,7 +1223,11 @@ backend, which has no lane, and `AuditLaneDrainHeld` is a ticket until the Owner
 **When.** cv-api logs `audit lane held at boot` (critical) with `hold` as `[segment, offset]`: the
 lane met a frame under a key id or format version that no configured key knows (§15.6 Hold of
 `docs/plan/24-internal-schemas.md`). Every append is then refused (`held`) and each record falls
-back to the audit sink, so a sink outage fails closed again.
+back to the audit sink, so a sink outage fails closed again. A hold at the end of the data after a
+newest segment that no name follows (`seg-` and 20 nines) holds no frame: the command answers 6,
+and the remedy is to remove that segment with the Security engineer (§15.6 Hold, rows 13 and 16).
+If the marker already sits in that segment, the next boot reads it as ahead (§15.6 row 2) and
+writes a critical `marker_lost` row.
 
 1. **Prefer the key.** If the hold followed a key rotation, set `CV_AUDIT_LANE_PREVIOUS_KEY_FILE`
    to the old key and restart: the frames drain and nothing is lost. Release only frames no key

@@ -5125,3 +5125,4 @@ tracker).
 - **backend-platform**: the redaction filter and the bundle scan agree on where a label starts and on the whitespace between a label and its value (#415) (#3946)
 - **electron-shell**: the backend answers CORS for every origin in `CV_ALLOWED_ORIGINS` (the desktop origin once listed) only while the Owner-only `desktop.backend_connection` flag is on, and its CSRF refusals then carry the same answer; no origin is reflected and no check changes (#3519) (#3967)
 - **accounts-admin**: a feature-flag change whose reason, or whose evidence link in more of its forms, carries a credential is refused, and no flag-change record holds one (#3438) (#3943)
+- **auth-rbac**: the audit lane takes its lock through directory descriptors, and a damaged, empty or planted lane segment no longer stops the lane at boot or costs an acknowledged record: the lane stops rather than write where its drain cannot read (#3009) (#4005)

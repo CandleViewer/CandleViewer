@@ -12,7 +12,6 @@ own actions (R3) and a held lane takes no append. No log line carries the words 
 from __future__ import annotations
 
 import argparse
-import fcntl
 import functools
 import os
 import re
@@ -20,13 +19,13 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
-from pathlib import Path
 from typing import Any
 
 import structlog
 
 from candleviewer.audit import lane_journal as lj
-from candleviewer.audit.lane import LOCK_FILE, lane_dir
+from candleviewer.audit.lane import lane_dir
+from candleviewer.audit.lane_lock import LaneUnanchored, take_lane_lock
 from candleviewer.audit_lane_wiring import LaneKeyRefused, load_lane_keys
 from candleviewer.observability.logging import configure_logging
 from candleviewer.settings import Settings
@@ -64,25 +63,20 @@ class Released:
     size: int
 
 
-def lane_directory(audit_wal_path: str) -> Path:
-    """`lane/`, anchored by decision 9's rule as `lock_lane` does: absolute, no `..`, no link."""
-    raw, directory = Path(audit_wal_path), lane_dir(audit_wal_path)
-    linked = raw.parent.is_symlink() or directory.is_symlink()
-    if not raw.is_absolute() or ".." in raw.parts or linked:
-        raise ReleaseRefused(ReleaseExit.LANE_UNAVAILABLE, "the audit lane path is not anchored")
-    return directory
-
-
-def release(directory: Path, keys: lj.LaneKeys, hold: lj.Pos, words: tuple[str, ...]) -> Released:
-    """§15.6 Release under `lane.lock`, which it takes without waiting; closing it drops it."""
-    flags = os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
-    fd = os.open(directory / LOCK_FILE, flags, 0o600)
+def release(
+    audit_wal_path: str, keys: lj.LaneKeys, hold: lj.Pos, words: tuple[str, ...]
+) -> Released:
+    """§15.6 Release under `lane.lock`, taken without waiting through the audit directory's
+    descriptor (SEC-REM-03); a missing `lane/` is refused, never made. Closing the descriptor
+    drops the lock."""
     try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise ReleaseRefused(ReleaseExit.API_RUNNING, "lane.lock is held by cv-api") from None
-        return _release(lj.LaneFiles(directory), keys, hold, words)
+        fd = take_lane_lock(audit_wal_path, create=False)
+    except LaneUnanchored as exc:  # its rule's words, never the path
+        raise ReleaseRefused(ReleaseExit.LANE_UNAVAILABLE, str(exc)) from None
+    except BlockingIOError:
+        raise ReleaseRefused(ReleaseExit.API_RUNNING, "lane.lock is held by cv-api") from None
+    try:
+        return _release(lj.LaneFiles(lane_dir(audit_wal_path)), keys, hold, words)
     finally:
         os.close(fd)
 
@@ -97,10 +91,12 @@ def _release(
     seq = found.state.next_seq
     if not found.held or found.hold is None or found.lane is None or seq is None:
         raise ReleaseRefused(ReleaseExit.NOT_HELD, "the lane does not hold at a frame")
+    end, data = lj.held_span(keys, found.lane, names, read, found.hold)
+    if not data:  # held at the end of the data, no segment name left (rows 13 and 16)
+        raise ReleaseRefused(ReleaseExit.NOT_HELD, "the lane does not hold at a frame")
     if found.hold != hold:
         at = f"{found.hold[0]}:{found.hold[1]}"
         raise ReleaseRefused(ReleaseExit.HOLD_MISMATCH, f"the lane holds at {at}, not there")
-    end, data = lj.held_span(keys, found.lane, names, read, hold)
     files.quarantine(f"{lj.segment_name(hold[0])}.{hold[1]}", data)  # copy, then note
     note = lj.encode_note(keys, lane=found.lane, hold=hold, end=end, from_seq=seq, words=words)
     files.write_note(note)
@@ -149,7 +145,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
             raise ReleaseRefused(ReleaseExit.LANE_UNAVAILABLE, "no real audit backend, no lane")
         keys = lj.LaneKeys(material.current, material.previous)
         words = tuple(getattr(args, name) for name in lj.NOTE_WORDS)
-        done = release(lane_directory(config.audit_wal_path), keys, args.hold, words)
+        done = release(config.audit_wal_path, keys, args.hold, words)
         status, line = ReleaseExit.RELEASED, "the note is written; start cv-api to apply it"
     except ReleaseRefused as exc:
         status, line = exc.status, str(exc)

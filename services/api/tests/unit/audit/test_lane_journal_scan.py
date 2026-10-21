@@ -18,9 +18,11 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from candleviewer.audit import lane_journal
 from candleviewer.audit.lane_journal import (
     ZERO_MAC,
     Handover,
+    LaneError,
     LaneKeys,
     LaneMarker,
     LaneScan,
@@ -96,11 +98,11 @@ P3 = odd(3, mac(F[1]), key=OTHER)  # under a key nobody configured
 
 
 def run_scan(
-    segments: dict[int, bytes], mark: bytes | None = START, note: bytes | None = None
+    segments: dict[int, bytes], mark: bytes | None = START, note: bytes | None = None, **kw: bool
 ) -> LaneScan:
     files = {segment_name(first): data for first, data in segments.items()}
     names = [*files, "confirmed", "lane.lock", "seg-1.lane"]  # only `seg-<20 digits>.lane` count
-    return scan(KEYS, marker=mark, names=names, read=files.__getitem__, note=note)
+    return scan(KEYS, marker=mark, names=names, read=files.__getitem__, note=note, **kw)
 
 
 def outline(result: LaneScan) -> list[object]:
@@ -422,7 +424,150 @@ def test_lane_release_rows_keep_their_ids_when_a_boot_appends_before_the_marker_
     assert outline(first) == [1, 2, 3, ("released", 4, 3), ("seq_gap", 4, 6)]
     assert outline(second) == [*outline(first), 7]
     assert released_again == released and gap_again == replace(gap, end=gap_again.end)
+    assert gap_again.end == (7, 0)  # row 8 closes it at frame 7, the boot's own
     assert anomaly_id(KEYS, LANE, gap_again) == anomaly_id(KEYS, LANE, gap)
+
+
+@pytest.mark.parametrize("end", [HELD, (1, 0)], ids=["at_its_hold", "before_it"])
+def test_a_note_that_does_not_move_the_scan_forward_fails_fast(
+    monkeypatch: pytest.MonkeyPatch, end: tuple[int, int]
+) -> None:
+    """Should `_note` ever pass a note that ends at or before its hold, resuming there would
+    release the same frame again for ever, at a boot or in the offline release; the scan raises
+    instead. `_note` itself refuses such a note (`note_of(hold, hold)` above)."""
+    calls: list[object] = []
+
+    def note(*args: object) -> tuple[tuple[int, int], tuple[str, str, str]]:
+        calls.append(args)
+        assert len(calls) == 1, "the scan released the same hold again"
+        return end, ("owner", "#3009", "planted")
+
+    monkeypatch.setattr(lane_journal, "_note", note)
+    with pytest.raises(LaneError, match="past its hold"):
+        run_scan(NOTED, note=note_of(HELD, PAST_P3))
+
+
+T3 = F[2].replace(b'"n":3', b'"n":9')  # frame 3, its record changed: its MAC fails
+BOOT_GAP = {1: F[0] + F[1], 5: bump(F[4], 1)}  # seg-5 torn, and frames 3 and 4 gone
+
+
+@pytest.mark.parametrize(
+    ("segments", "run", "state"),
+    [
+        ({1: F[0] + F[1], 3: bump(F[2], 1)}, ("seq_gap", 3, 3), LaneState(4, mac(F[1]), False)),
+        ({1: F[0] + F[1], 3: T3}, ("frame_rejected", 3, 3), LaneState(4, mac(F[1]), False)),
+        (BOOT_GAP, ("seq_gap", 3, 5), LaneState(6, mac(F[1]), False)),
+        ({1: F[0] + F[1] + bump(F[2], 1)}, ("torn_tail", 3, None), LaneState(3, mac(F[1]), True)),
+    ],
+    ids=["torn", "mac", "named_past_next_seq", "named_below_it"],
+)
+def test_lane_boot_gives_the_run_at_the_end_the_name_it_took(
+    segments: dict[int, bytes], run: tuple[str, int, int | None], state: LaneState
+) -> None:
+    """Row 16 at boot (#3009 ruling (a)): a run that is all of the newest segment took the name
+    the boot's own segment needs, so it accounts for `next_seq` up to that name and joins
+    `seq_gap`, as in row 8 (a published segment never starts torn, so that is damage, never a
+    crash), and `next_seq` moves one past it. A name below `next_seq` is free; a running scan
+    keeps `to_seq` null, its appender being past the name."""
+    boot, running = run_scan(segments), run_scan(segments, trusted=True)
+
+    assert outline(boot) == [1, 2, run] and boot.state == state and boot.sealed
+    assert runs(running)[0].to_seq is None and running.state.next_seq == 3
+
+
+@pytest.mark.parametrize(
+    ("newest", "reason"),
+    [(bump(F[2], 1), "seq_gap"), (T3, "frame_rejected"), (b"", "seq_gap")],
+    ids=["torn", "mac", "empty"],
+)
+def test_lane_boot_run_keeps_its_id_when_a_boot_appends_before_the_marker_moves(
+    newest: bytes, reason: str
+) -> None:
+    """Row 16 at boot, as the release rows above: the boot that passed seg-3's taken name writes
+    its own frame 4 to seg-4, and a restart comes before the marker moves. The next scan meets
+    that frame (row 8) and makes the same run, reason and range included, under the same id: the
+    sink takes it once, and no second, more severe row contradicts the first."""
+    damaged = {1: F[0] + F[1], 3: newest}
+    first, second = run_scan(damaged), run_scan(damaged | {4: odd(4, mac(F[1]))})
+    (run,), (again,) = runs(first), runs(second)
+
+    assert outline(first) == [1, 2, (reason, 3, 3)] and outline(second) == [*outline(first), 4]
+    assert again == replace(run, end=again.end) and again.end == (4, 0)
+    assert anomaly_id(KEYS, LANE, again) == anomaly_id(KEYS, LANE, run)
+
+
+@pytest.mark.parametrize(
+    ("segments", "gap", "next_seq"),
+    [
+        ({1: F[0] + F[1], 3: b""}, ("seq_gap", 3, 3), 4),
+        ({1: F[0] + F[1], 5: b""}, ("seq_gap", 3, 5), 6),
+    ],
+    ids=["named_next_seq", "named_past_it"],
+)
+def test_lane_boot_gives_an_empty_newest_segments_name_a_seq_gap_run(
+    segments: dict[int, bytes], gap: tuple[str, int, int], next_seq: int
+) -> None:
+    """Row 16 at boot with no run open: an empty newest segment (only damage leaves one, since
+    `publish` links a written, fsynced frame) took its name, which the boot's own segment needed
+    at every boot. It is a `seq_gap` run without bytes up to that name, nothing to quarantine,
+    and `next_seq` passes it. A running scan, and an empty segment before the newest (row 8 at
+    the next frame), keep today's outline."""
+    boot, running = run_scan(segments), run_scan(segments, trusted=True)
+    (run,), older = runs(boot), {1: F[0] + F[1], 3: b"", 5: F[4]}
+
+    assert outline(boot) == [1, 2, gap] and (run.data, run.quarantined) == (b"", None)
+    assert boot.state == LaneState(next_seq, mac(F[1]), False) and boot.sealed
+    assert outline(running) == [1, 2] and running.state.next_seq == 3
+    assert outline(run_scan(older)) == [1, 2, ("seq_gap", 3, 4), 5]
+    assert outline(run_scan(older, trusted=True)) == outline(run_scan(older))
+
+
+LAST = 10**20 - 1  # `seg-` and 20 nines: the last name a segment can have
+
+
+@pytest.mark.parametrize(
+    ("newest", "note", "tail"),
+    [
+        (b"", None, []),
+        (b"junk\n", None, [("segment_corrupt", 4, None)]),
+        (bump(F[3], 1), None, [("torn_tail", 4, None)]),
+        (P3, note_of((LAST, 0), (LAST, len(P3)), from_seq=4), [("released", 4, 3)]),
+    ],
+    ids=["empty", "junk", "torn", "released"],
+)
+def test_lane_boot_holds_when_no_segment_name_follows_the_newest(
+    newest: bytes, note: bytes | None, tail: list[object]
+) -> None:
+    """No name left: a planted `seg-` with 20 nines took the last name, so passing it (rows 13
+    and 16) would set `next_seq` to 10**20, whose 21-digit name no scan reads: every frame after
+    it would be lost. The boot holds at the end of the data instead, a run there closing as at a
+    hold, and once the marker is there the next boot holds again, with nothing to hand over."""
+    layout, end = {1: F[0] + F[1] + F[2], LAST: newest}, (LAST, len(newest))
+    first, again = run_scan(layout, note=note), run_scan(layout, marker(end, 4, mac(F[2])))
+
+    assert outline(first) == [1, 2, 3, *tail] and first.held and first.hold == end
+    assert first.state.next_seq == 4 == again.state.next_seq and not first.note_ignored
+    assert again.held and again.hold == end and again.units == ()
+
+
+@pytest.mark.parametrize(
+    ("newest", "note", "tail"),
+    [
+        (b"", None, []),
+        (P3, note_of((LAST - 1, 0), (LAST - 1, len(P3)), from_seq=4), [("released", 4, 3)]),
+    ],
+    ids=["empty", "released"],
+)
+def test_lane_boot_passes_the_name_before_the_last(
+    newest: bytes, note: bytes | None, tail: list[object]
+) -> None:
+    """Rows 16 and 13 one name short of the last: a newest segment named 10**20 - 2 leaves the
+    last name, 20 nines, for the boot's own segment, so the boot passes it as it would any
+    other, `next_seq` becoming 10**20 - 1, and does not hold."""
+    result = run_scan({1: F[0] + F[1] + F[2], LAST - 1: newest}, note=note)
+
+    assert outline(result) == [1, 2, 3, *tail, ("seq_gap", 4, LAST - 1)] and not result.held
+    assert result.state.next_seq == LAST and result.hold is None
 
 
 _EDITS = st.tuples(

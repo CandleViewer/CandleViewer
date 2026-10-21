@@ -282,23 +282,39 @@ async def test_lane_torn_append_is_sealed_and_its_seq_goes_to_a_new_segment(
     assert segments(tmp_path) == [1, 3]
 
 
-async def test_lane_a_taken_segment_name_stops_the_lane(tmp_path: Path) -> None:
-    """R1: damage that takes the next segment's name (AC-LANE-09's `len` edit on a newest segment
-    of one frame) stops the lane, which writes nothing and never skips a `seq` on its own."""
+async def test_lane_a_taken_segment_name_is_passed_at_boot_and_stops_a_running_lane(
+    tmp_path: Path,
+) -> None:
+    """R1 and #3009 ruling (a): damage that took the next segment's name (AC-LANE-09's `len` edit
+    on a newest segment of one frame) is a run up to that name at boot, critical (`seq_gap`), so
+    the next segment has a free name; a name taken under the running appender stops the lane,
+    which never skips a `seq` on its own."""
     lane, _ = await boot(tmp_path, segment_max_bytes=1)  # one frame per segment
     for record in (STARTED, rec(1)):
         await lane.append(record)
     await lane.close()
     second = tmp_path / lj.segment_name(2)
     second.write_bytes(b"9" + second.read_bytes())  # its `len` gains a digit
-    lane, result = await boot(tmp_path)
+    lane, result = await boot(tmp_path, segment_max_bytes=1)
+    seq = await lane.append(rec(2))
+    (tmp_path / lj.segment_name(4)).write_bytes(b"")  # taken while the lane runs
     for _ in range(2):
         with pytest.raises(lj.LaneRefused) as stopped:
-            await lane.append(rec(2))
+            await lane.append(rec(3))
     await lane.close()
 
-    assert outline(result) == [1, ("torn_tail", 2, None)] and stopped.value.reason == "stopped"
-    assert sorted(os.listdir(tmp_path)) == ["confirmed", *map(lj.segment_name, (1, 2))]
+    assert outline(result) == [1, ("seq_gap", 2, 2)] and seq == 3
+    assert stopped.value.reason == "stopped" and segments(tmp_path) == [1, 2, 3, 4]
+
+
+def test_lane_publish_refuses_a_segment_name_no_scan_reads(tmp_path: Path) -> None:
+    """No name past the last, in depth: `seq` 10**20 has a 21-digit name, which no scan reads
+    (`seg-<20 digits>`), so every frame in it would be lost. `publish` refuses it before any file
+    operation with an `OSError`, which stops the lane as a taken name does."""
+    with pytest.raises(OSError) as refused:
+        lj.LaneFiles(tmp_path).publish(10**20, b"frame", lj.LANE_MAX_SEGMENTS, False)
+
+    assert refused.value.errno == errno.EOVERFLOW and os.listdir(tmp_path) == []
 
 
 async def scenario(files: lj.LaneFiles) -> None:
@@ -586,17 +602,24 @@ async def test_lane_quarantine_through_a_linked_directory_stops_the_lane(tmp_pat
     assert refusal == "stopped" and os.listdir(tmp_path / "target") == []
 
 
-@pytest.mark.parametrize("layout", ["marker_kid", "frame_kid", "no_lane"])
+@pytest.mark.parametrize("layout", ["marker_kid", "frame_kid", "no_lane", "last_name"])
 async def test_lane_a_held_boot_opens_no_segment_and_refuses_appends(
     tmp_path: Path, layout: str
 ) -> None:
-    """Hold: rows 1 and 12, and row 3 when no authentic frame sets the lane (reading 3)."""
+    """Hold: rows 1 and 12, row 3 when no authentic frame sets the lane (reading 3), and row 16
+    when the newest segment has the last name, so none is left for the boot's own."""
     start = lj.LaneMarker(LANE, (1, 0), 1, lj.ZERO_MAC, True)
     held = lj.encode_frame(OTHER_KEYS, lane=LANE, seq=1, prev=lj.ZERO_MAC, cls="shared", rec={})
+    first = lj.encode_frame(KEYS, lane=LANE, seq=1, prev=lj.ZERO_MAC, cls="reserved", rec=STARTED)
     files = {
         "marker_kid": {"confirmed": lj.encode_marker(OTHER_KEYS, start)},
         "frame_kid": {"confirmed": lj.encode_marker(KEYS, start), lj.segment_name(1): held},
         "no_lane": {lj.segment_name(1): b"junk\n"},
+        "last_name": {
+            "confirmed": lj.encode_marker(KEYS, start),
+            lj.segment_name(1): first,
+            lj.segment_name(10**20 - 1): b"",
+        },
     }[layout]
     for name, data in files.items():
         (tmp_path / name).write_bytes(data)
