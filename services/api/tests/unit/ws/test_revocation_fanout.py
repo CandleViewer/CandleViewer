@@ -532,6 +532,7 @@ async def test_a_stale_fan_out_is_refused_on_every_socket_and_never_undoes_the_n
             "action": "ws.permission_snapshot.refused",
             "actor_label": "ws",
             "actor_user_id": USER,
+            "session_id": s.session_id,  # #3085 (Q17): the socket's session, as every WS row
             "object_kind": "ws_connection",
             "object_id": s.connection_id,
             "outcome": AuditOutcome.DENIED,

@@ -277,6 +277,9 @@ _ENVELOPE = SCHEMAS["cv://ws/v1/envelope.schema.json"]["properties"]["t"]["enum"
 _DISPATCHED = {"hello", "auth", "ping", "pong", "sub", "unsub", "ctl", "resync"}
 _ACTIONS = ["order", "place_order", "cancel_order", "amend_order", "close_position", "kill_switch"]
 _REFUSED = [*sorted(set(_ENVELOPE) - _DISPATCHED), *_ACTIONS, "set_leverage", "withdraw"]
+#: #3085 S11 (§9.6): the viewing socket's tripwire, which refuses an action frame, the one other
+#: use of `kind` a review admitted. `ACTION_FRAME_TYPES` is empty, so it handles no type.
+_TRIPWIRE = {"kind in ACTION_FRAME_TYPES", "refuse_action_frame(conn, kind, fid)"}
 
 
 def _kind_uses(fn: ast.AsyncFunctionDef) -> tuple[set[str], list[str]]:
@@ -300,7 +303,7 @@ def _kind_uses(fn: ast.AsyncFunctionDef) -> tuple[set[str], list[str]]:
             and isinstance(use.comparators[0].value, str)
         ):
             compared.add(use.comparators[0].value)
-        elif ast.unparse(use) != "isinstance(kind, str)":
+        elif ast.unparse(use) not in {"isinstance(kind, str)", *_TRIPWIRE}:
             other.append(ast.unparse(use))
     return compared, other
 
@@ -309,7 +312,8 @@ def test_x02_the_gateway_dispatches_these_frame_types_and_no_action_frame() -> N
     """A pin on `dispatch`'s own source: a new branch on the frame's type is a new surface, for a
     security review (§6.3: a viewer's `orders` is read-only, and anything that acts comes over
     REST). It fails closed: no `match`, each use of `kind` is a `==`/`!=` against a string or
-    `isinstance(kind, str)` (so a table, an `in` or a call on it fails the pin too), and the key
+    `isinstance(kind, str)` (so a table, an `in` or a call on it fails the pin too) or S11's
+    action-frame tripwire, which refuses and handles no type (`_TRIPWIRE`), and the key
     `"t"` is read once, where `kind` is bound (so a second read of the type fails it as well). The
     test below covers each type of the envelope."""
     (fn,) = [

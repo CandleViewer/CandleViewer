@@ -412,7 +412,13 @@ from candleviewer.storage.retention.workspaces_tasks import (
 )
 from candleviewer.storage.service import StorageService
 from candleviewer.user_cascade_wiring import build_user_disable_service, build_users_purge_task
-from candleviewer.view_as_wiring import RoleChangeNotifier, SessionViewAs, build_view_as
+from candleviewer.view_as_wiring import (
+    IdentityLabels,
+    RoleChangeNotifier,
+    SessionViewAs,
+    SessionViewAsRefusals,
+    build_view_as,
+)
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
@@ -1666,6 +1672,16 @@ def create_app(
                     clock=auth_clock or (lambda: datetime.now(UTC)),
                 )
                 if ctx.auth.view_as_store_is_active
+                else None
+            ),
+            # §9.6: a viewing session's refused action frame is recorded by the recorder built
+            # below, read per call; none on the fake backend, which has no identity to label it.
+            view_as_refusals=(
+                SessionViewAsRefusals(
+                    lambda: getattr(app.state, "view_as_refusals", None),
+                    IdentityLabels(identity),
+                )
+                if identity is not None
                 else None
             ),
         ),

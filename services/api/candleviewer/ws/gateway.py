@@ -280,6 +280,30 @@ RefusalAudit = Callable[[str | None], Awaitable[None]]
 ViewAsRead = Callable[[str], Awaitable[ViewAsBinding | None]]
 
 
+#: §9.6 (#3085): the client frame types of §3.1; each reads or tunes the connection. A type added
+#: later that changes server-side state is an action frame unless the change that adds it lists
+#: it here; while its session views as another user, the gateway refuses an action frame.
+READ_FRAME_TYPES: Final = frozenset(
+    {"hello", "auth", "ping", "pong", "sub", "unsub", "ctl", "resync"}
+)
+ACTION_FRAME_TYPES: Final[frozenset[str]] = frozenset()
+
+
+class ViewAsFrameRefusals(Protocol):
+    """§9.6: writes a refused action frame's `admin.view_as_refused` (the viewer and the viewer's
+    session the actor, the frame type the object, never its payload) within the viewer's refusal
+    budget. True: written. `view_as_wiring.SessionViewAsRefusals` over S6's recorder."""
+
+    async def refuse_frame(
+        self,
+        *,
+        viewer_user_id: uuid.UUID,
+        viewer_session_id: str,
+        frame_type: str,
+        ip: str | None,
+    ) -> bool: ...
+
+
 def _context_of(binding: ViewAsBinding | None) -> str | None:
     return None if binding is None else str(binding.context_id)
 
@@ -1191,6 +1215,9 @@ def make_ws_router(
     # §9.6 (#3085): the view-as binding an `auth` reads (`ViewAsRead`). Without it no session is
     # bound to a context, as before view-as: the composition root wires it on the real backend.
     view_as: ViewAsRead | None = None,
+    # §9.6: the record of a viewing session's refused action frame. Without it the frame is still
+    # refused (`err`), with no record.
+    view_as_refusals: ViewAsFrameRefusals | None = None,
 ) -> APIRouter:
     """The gateway endpoint, served at `/ws` and `/api/v1/ws` (`include_ws_router`).
 
@@ -1430,6 +1457,24 @@ def make_ws_router(
             return "view_as_changed"
         return None
 
+    async def refuse_action_frame(conn: _Connection, kind: str, fid: Any) -> None:
+        """§9.6: a viewing session's action frame changes nothing: one refusal record within the
+        viewer's budget, bounded, then `err` `view_as_read_only` with the frame's `id`, whatever
+        the record did (one that fails is counted). No strike: the socket stays open."""
+        authz, session_id = conn.authz, conn.session_id
+        if view_as_refusals is not None and authz is not None and session_id is not None:
+            try:
+                async with asyncio.timeout(CLOSE_AUDIT_TIMEOUT_S):
+                    await view_as_refusals.refuse_frame(
+                        viewer_user_id=authz.actor_user_id,
+                        viewer_session_id=session_id,
+                        frame_type=kind,
+                        ip=_source_ip(conn.ws.scope),
+                    )
+            except Exception:
+                count_audit_failure()  # SR-E17-04: the `err` is sent anyway (§9.6)
+        conn.push(build_ws_error("view_as_read_only", id=_str_or_none(fid)))
+
     async def run_auth(conn: _Connection, frame: dict[str, Any]) -> None:
         body = frame.get("p")
         token = body.get("access_token") if isinstance(body, dict) else None
@@ -1458,8 +1503,10 @@ def make_ws_router(
             before = conn.view_as_context_id if reauth else _context_of(bound)
             if (refusal := view_as_refusal(bound, before)) is not None:
                 raise AuthRefused(refusal, ids={"session_id": session_id})
+            # §9.6: a live context's socket is served in its target's scope, the viewer acting
+            subject = user_id if bound is None else bound.target_user_id
             async with _auth_call("resolve", auth_call_timeout_s):
-                snap = await registry.resolve(user_id)  # versioned: never undoes a newer one
+                snap = await registry.resolve(subject)  # versioned: never undoes a newer one
             now, now_ms = conn.clock(), conn.wall_ms()
             if expires_ms <= now_ms:
                 failure = "token_expired"  # never `auth_ok` an identity that is already dead
@@ -1467,7 +1514,7 @@ def make_ws_router(
             if conn.closing:  # #415: closed while this auth was in flight: nothing to register
                 return
             if conn.authz is None:  # SR-189: register, then re-check, under the auth deadline
-                if snap.principal.user_id != user_id:  # #415: built from the token's user only
+                if snap.principal.user_id != subject:  # #415: built from the subject only
                     raise SnapshotUserMismatch("a permission snapshot of another user")
                 conn.authz = ConnectionAuthz(
                     snap.principal,
@@ -1475,6 +1522,7 @@ def make_ws_router(
                     connection_id=conn.connection_id,
                     version=snap.version,
                     clock=conn.clock,  # SR-193: the rebuild budget's window
+                    viewer_user_id=None if bound is None else user_id,  # §9.6: who acts
                 )
                 registry.register(conn.authz, conn.send, conn.evict, conn.closer)
                 conn.registered = conn.authz
@@ -1616,6 +1664,7 @@ def make_ws_router(
         view = kill_switch_view(killed(), principal)  # SR-188: as the `system` topic gives it
         payload = auth_ok_payload(
             principal,
+            user_id=str(user_id),  # §9.6: the session's own user, the target's scope
             session_id=session_id,
             token_expires_at_ms=expires_ms,
             **({} if view is None else {"kill_switch": view}),  # none for a principal with no role
@@ -1742,6 +1791,8 @@ def make_ws_router(
                 conn.close_with("not_authenticated")
             else:
                 conn.push(build_ws_error("not_authenticated", id=_str_or_none(fid)))
+        elif kind in ACTION_FRAME_TYPES and conn.authz is not None and conn.authz.viewing:
+            await refuse_action_frame(conn, kind, fid)
         elif kind == "sub" and conn.authz is not None:
             held = pending(conn.authz)
             await _handle_sub(conn.authz, frame, conn.send, now_ms=conn.wall_ms())
