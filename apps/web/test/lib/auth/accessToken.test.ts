@@ -342,7 +342,7 @@ describe("refresh ahead of expiry, one refresh at a time", () => {
     expect(toSignIn).not.toHaveBeenCalled();
   });
 
-  it("a CSRF re-issue that never answers is given up after 10 s: the refresh answers failed and lets the lock go", async () => {
+  it("a CSRF re-issue that never answers is given up after 10 s: the lock goes to the next tab", async () => {
     const locks = serialLocks();
     vi.stubGlobal("navigator", { locks });
     fetchMock
@@ -948,7 +948,7 @@ describe("a refresh no tab saw answered: its keepalive request outlives the lock
     await expect(reloaded).resolves.toBe("ok");
   });
 
-  it("a probe that never answers is given up after 10 s: the refresh answers failed, lets the lock go and presents nothing", async () => {
+  it("a probe that never answers is given up after 10 s: the lock goes to the next tab, nothing is presented, and the next ask probes again", async () => {
     await sentThenGone();
     const locks = serialLocks();
     vi.stubGlobal("navigator", { locks });
@@ -962,6 +962,9 @@ describe("a refresh no tab saw answered: its keepalive request outlives the lock
     await flush();
     expect(next).toHaveBeenCalledTimes(1);
     expect(presented()).toEqual(["csrf-0"]); // the cookie that refresh may have spent is not presented
+    void holder.getToken(); // a stalled probe is no 401: the session is not lost, so the next ask probes again
+    await flush();
+    expect(probes()).toHaveLength(2);
   });
 
   it("a document without storage refreshes all the same: the cookie goes once, and nothing escapes", async () => {

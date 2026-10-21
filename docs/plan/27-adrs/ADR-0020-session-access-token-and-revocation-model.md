@@ -43,10 +43,8 @@ schema documents (`docs/plan/spikes/E09-K01-session-model.md`).
    hashed at rest (`sessions.refresh_token_hash`, unchanged from `21-database-schema.md` §3.1.4). The
    **access token is a second opaque, server-issued handle**, returned in the `POST /auth/login` /
    `POST /auth/refresh` JSON body, held **only in an in-memory JS variable** (never `localStorage`,
-   never a second cookie) and passed as the WS `auth` frame's bearer value per `23-ws-protocol.md` §4.3.
-   _Amendment (2026-10-21, #2712): same-origin tabs of one browser share the bundle memory to memory
-   over the BroadcastChannel `cv.auth.token`, because each rotation revokes the previous access token;
-   never storage._
+   never a second cookie) and passed as the WS `auth` frame's bearer value per `23-ws-protocol.md` §4.3
+   _(same-origin tabs share it memory to memory: Amendment 1)_.
    Losing it (tab reload) means re-deriving it from the refresh cookie — an acceptable UX cost that
    keeps it out of any persistent, XSS-exfiltratable store. **At rest, the access-token handle is
    stored the same way as the existing refresh-token handle: hashed (never plaintext) in the
@@ -137,3 +135,14 @@ Negative / risks:
   environment) — re-run `test_lookup_p50_p99_under_budget`'s scenario against a seeded Postgres instance
   under E09-T01/S03 before the schema is load-tested for real, per `06-performance-and-load-standard.md`.
 - WebAuthn / device trust and any second access channel: explicitly out of scope (ticket "Out of scope").
+
+## Amendment 1 (2026-10-21, #2712)
+
+Refines decision 1; does not reverse it. The access token is still held in memory only, never in
+storage. Same-origin tabs of one browser share it memory to memory: a tab posts each token it receives
+(`{accessToken, expiresAtMs}`), or a `cleared` signal when its session ends, on the BroadcastChannel
+`cv.auth.token`. They share it because each rotation revokes the previous access token, so tabs that
+each kept their own would revoke one another at every refresh. A BroadcastChannel reaches only
+same-origin contexts of that browser (tabs, workers, iframes), so the channel gives no reader outside
+the origin. The only thing the client writes to storage is the send time of a refresh in flight
+(`cv.auth.refresh_sent_at`), never the token.

@@ -17,7 +17,7 @@ route tree, auth/RBAC guards and env badge are E10's scope.
   after `apiFetch` of the logout.
 - `meCache.ts`: the `/me` claims the route guards read.
 
-Known gaps, both server-side, tracked in #3331 (#2712 changes no server code):
+Known gaps, both server-side (#2712 changes no server code):
 
 - ADR-0020 decision 5 has no rotation leeway: a spent `cv_refresh` presented
   again revokes the whole session family. A refresh leaves
@@ -29,11 +29,16 @@ Known gaps, both server-side, tracked in #3331 (#2712 changes no server code):
   for an older one), where a spent cookie gets a `401` that revokes nothing.
   That narrows the window but cannot close it: the cookie of a refresh slower
   than that wait can still be presented again. A leeway for a token presented
-  soon after its own rotation would close it. A probe that finds the cookie
-  spent ends in sign-in with no revocation, and the server writes one WARNING
-  reuse-probe row for it (`auth.refresh_reuse_detected` with
-  `family_revoked: false`), which on-call should not read as an attack.
+  soon after its own rotation would close it; #3331 records the residual in
+  the auth runbook. A probe that finds the cookie spent ends in sign-in with
+  no revocation. For each such probe, within its audit budgets, the server
+  writes a WARNING `auth.refresh_reuse_detected` row with
+  `family_revoked: false`, and each page load probes again while the mark
+  stands. Rows like these from the user's own client after a lost refresh are
+  expected and are not by themselves a replay; the auth runbook owns their
+  triage.
 - `POST /auth/refresh` refuses an idle-locked session with
   `refresh_token_invalid`, not the contract's `session_idle_locked`, so a
   locked tab goes to sign-in at its next refresh instead of to unlock, and so
-  does every sibling tab that holds the token.
+  does every sibling tab that holds the token. #3331 makes it answer
+  `session_idle_locked`.
