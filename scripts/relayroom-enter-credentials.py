@@ -6,7 +6,14 @@ into `.claude/settings.local.json` -> "env", preserving everything else in that 
 
 Usage:  python scripts/relayroom-enter-credentials.py
 Refuses to run without a real TTY (so values cannot be piped or logged).
-Exit codes: 0 = written; 2 = refused (no TTY, missing file or an invalid value), nothing written.
+Exit codes: 0 = written; 2 = refused (no TTY, missing file, no or invalid hub origin, or an invalid
+value), nothing written.
+
+Hub origin: the one origin the connect code may be sent to is never a committed literal. Set it
+privately before running: the environment variable CANDLEVIEWER_RELAYROOM_ORIGIN, else the optional
+`hubOrigin` key of the git-ignored `.claude/relayroom/identity.local.json`, as a bare
+`https://host[:port]`. With neither (or an invalid value) the script refuses, fail closed; the value
+is never printed.
 
 The write goes through a temp file next to the target (`.claude/.settings.local.*.tmp`, listed in
 .gitignore) and `os.replace`; the temp file is removed on every failure path, so no copy of the
@@ -26,12 +33,19 @@ import os
 import re
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
+from typing import NoReturn
 from urllib.parse import quote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / ".claude" / "settings.local.json"
-ORIGIN = "https://relay.candleviewer.com"
+# The hub origin is the allowlist for where the connect code may be sent, so it is never a committed
+# literal: it comes from the operator's private configuration (see hub_origin()).
+ORIGIN_ENV = "CANDLEVIEWER_RELAYROOM_ORIGIN"
+ORIGIN_KEY = "hubOrigin"
+# Exactly `https://host[:port]`: no userinfo, path, query or fragment, so nothing secret can ride along.
+ORIGIN_RE = re.compile(r"https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?")
 PART = "main-orchestrator"
 DEFAULT_LABEL = "cv-main-desktop-win-l01"
 # The temp file name must match `.claude/.settings.local.*.tmp` in .gitignore.
@@ -39,9 +53,52 @@ TMP_PREFIX = ".settings.local."
 TMP_SUFFIX = ".tmp"
 
 
-def die(msg: str) -> None:
+def die(msg: str) -> NoReturn:
     print(f"refused: {msg}", file=sys.stderr)
     sys.exit(2)
+
+
+def load_identity(path: Path) -> dict[str, object] | None:
+    """The secret-free private descriptor as a dict; None if missing, unreadable or not an object."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _blank(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def parse_origin(value: object) -> str | None:
+    """The canonical (lower-case) `https://host[:port]` if `value` is exactly that, else None."""
+    text = value.strip() if isinstance(value, str) else ""
+    text = text.removesuffix("/")
+    return text.lower() if ORIGIN_RE.fullmatch(text) else None
+
+
+def hub_origin(identity: object, environ: Mapping[str, str] | None = None) -> tuple[str, str]:
+    """Resolve the hub origin and where it came from (never a committed literal, no default).
+
+    Order: env CANDLEVIEWER_RELAYROOM_ORIGIN, else the optional `hubOrigin` key of the private
+    descriptor `identity`; with neither, fail closed. Raises ValueError whose message never contains
+    the configured value (a mistyped value could be secret material); callers decide how to refuse.
+    """
+    env = os.environ if environ is None else environ
+    raw: object = env.get(ORIGIN_ENV)
+    source = f"env {ORIGIN_ENV}"
+    if _blank(raw):
+        raw = identity.get(ORIGIN_KEY) if isinstance(identity, dict) else None
+        source = f"identity.{ORIGIN_KEY}"
+    if _blank(raw):
+        raise ValueError(
+            f"not configured — set {ORIGIN_ENV} or `{ORIGIN_KEY}` in the private descriptor"
+        )
+    origin = parse_origin(raw)
+    if origin is None:
+        raise ValueError(f"invalid in {source} — expected https://host[:port] and nothing else")
+    return origin, source
 
 
 def atomic_write_json(target: Path, data: dict) -> None:
@@ -70,6 +127,12 @@ def main() -> None:
         die("a real TTY is required; do not pipe or redirect")
     if not TARGET.exists():
         die(f"{TARGET} does not exist")
+    # Before any secret is prompted for: an operator without a hub origin is refused up front.
+    identity = load_identity(TARGET.parent / "relayroom" / "identity.local.json")
+    try:
+        origin, _source = hub_origin(identity)
+    except ValueError as e:
+        die(f"hub origin {e}")
 
     print("RelayRoom credential entry for part=main-orchestrator (input is masked; nothing is echoed).")
     code = getpass.getpass("Project connect code (from the agent's Connect dialog, bypass OFF): ").strip()
@@ -89,9 +152,9 @@ def main() -> None:
         # dashboard supplies a bare code; percent-encode once as a path segment
         if "%" in code:
             die("connect code looks already URL-encoded; paste the raw code")
-    url = f"{ORIGIN}/mcp/{quote(code, safe='')}?part={PART}"
+    url = f"{origin}/mcp/{quote(code, safe='')}?part={PART}"
     u = urlsplit(url)
-    if f"{u.scheme}://{u.netloc}" != ORIGIN or u.query != f"part={PART}":
+    if f"{u.scheme}://{u.netloc}" != origin or u.query != f"part={PART}":
         die("assembled URL failed its own structure check")
 
     data = json.loads(TARGET.read_text(encoding="utf-8"))

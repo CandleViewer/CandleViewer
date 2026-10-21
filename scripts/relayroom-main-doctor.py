@@ -7,14 +7,22 @@ vs intended binding. Output is an allowlisted set of PASS/FAIL lines only.
 Usage:  python scripts/relayroom-main-doctor.py [--config-root PATH]
 Exit codes: 0 = ready to activate; 1 = at least one FAIL; 2 = the doctor itself crashed (it
 prints only the exception class name, never its message, which could echo a secret value).
+
+Hub origin: the one origin the connect code may be sent to is never a committed literal. The doctor
+resolves it from the environment variable CANDLEVIEWER_RELAYROOM_ORIGIN, else from the optional
+`hubOrigin` key of the private descriptor (`.claude/relayroom/identity.local.json`), as a bare
+`https://host[:port]`, and FAILs closed when neither is set or the value is invalid. Only the source
+is reported; the value is never printed.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -23,8 +31,13 @@ EXPECTED = {
     "part": "main-orchestrator",
     "persona": "Atlas",
     "mcpServer": "candleviewer-relayroom",
-    "origin": "https://relay.candleviewer.com",
 }
+# The hub origin is the allowlist for where the connect code may be sent, so it is never a committed
+# literal: it comes from the operator's private configuration (see hub_origin()).
+ORIGIN_ENV = "CANDLEVIEWER_RELAYROOM_ORIGIN"
+ORIGIN_KEY = "hubOrigin"
+# Exactly `https://host[:port]`: no userinfo, path, query or fragment, so nothing secret can ride along.
+ORIGIN_RE = re.compile(r"https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?")
 ENV_KEYS = (
     "CANDLEVIEWER_RELAYROOM_MCP_URL",
     "CANDLEVIEWER_RELAYROOM_API_KEY",
@@ -59,6 +72,40 @@ def load_json(p: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _blank(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def parse_origin(value: object) -> str | None:
+    """The canonical (lower-case) `https://host[:port]` if `value` is exactly that, else None."""
+    text = value.strip() if isinstance(value, str) else ""
+    text = text.removesuffix("/")
+    return text.lower() if ORIGIN_RE.fullmatch(text) else None
+
+
+def hub_origin(identity: object, environ: Mapping[str, str] | None = None) -> tuple[str, str]:
+    """Resolve the hub origin and where it came from (never a committed literal, no default).
+
+    Order: env CANDLEVIEWER_RELAYROOM_ORIGIN, else the optional `hubOrigin` key of the private
+    descriptor `identity`; with neither, fail closed. Raises ValueError whose message never contains
+    the configured value (a mistyped value could be secret material); callers decide how to report.
+    """
+    env = os.environ if environ is None else environ
+    raw: object = env.get(ORIGIN_ENV)
+    source = f"env {ORIGIN_ENV}"
+    if _blank(raw):
+        raw = identity.get(ORIGIN_KEY) if isinstance(identity, dict) else None
+        source = f"identity.{ORIGIN_KEY}"
+    if _blank(raw):
+        raise ValueError(
+            f"not configured — set {ORIGIN_ENV} or `{ORIGIN_KEY}` in the private descriptor"
+        )
+    origin = parse_origin(raw)
+    if origin is None:
+        raise ValueError(f"invalid in {source} — expected https://host[:port] and nothing else")
+    return origin, source
+
+
 def run(root: Path) -> int:
     """Run every check against `root`, print the allowlisted report, return the exit code."""
     # --- local MCP config (copied from docs/ops/relayroom-mcp.template.json) ---
@@ -89,8 +136,19 @@ def run(root: Path) -> int:
         check("identity.configRoot matches this checkout",
               isinstance(config_root, str) and config_root.strip() != ""
               and Path(config_root).resolve() == root)
-        secretish = json.dumps(ident).lower()
+        # `hubOrigin` has its own strict check below: a bare https origin cannot carry a secret.
+        secretish = json.dumps({k: v for k, v in ident.items() if k != ORIGIN_KEY}).lower()
         check("identity carries no token/url/connect-code", not any(s in secretish for s in ("bearer", "/mcp/", "token", "connect")))
+
+    # --- hub origin (private: env or identity.hubOrigin; only the source is printed, never the value) ---
+    origin: str | None
+    try:
+        origin, origin_source = hub_origin(ident)
+    except ValueError as e:
+        origin = None
+        check("hub origin resolved", False, str(e))
+    else:
+        check("hub origin resolved", True, f"via {origin_source}")
 
     # --- private credentials (presence/shape only; values never printed) ---
     sl_rel = ".claude/settings.local.json"
@@ -114,7 +172,8 @@ def run(root: Path) -> int:
         except ValueError:
             check("MCP URL parses", False)
         else:
-            check("MCP URL origin is the hub (https, exact host)", f"{u.scheme}://{u.netloc}" == EXPECTED["origin"])
+            check("MCP URL origin is the hub (https, exact host)",
+                  origin is not None and f"{u.scheme}://{u.netloc}" == origin)
             check("MCP URL path is the MCP prefix plus one connect-code segment", bool(re.fullmatch(r"/mcp/[^/]+", u.path)))
             check("MCP URL query is exactly part=main-orchestrator", u.query == "part=main-orchestrator")
             check("MCP URL connect code is not double-encoded", "%25" not in u.path)

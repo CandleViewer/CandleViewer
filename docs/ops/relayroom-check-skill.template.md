@@ -12,6 +12,8 @@ not a zero-side-effect check.
 
 1. Read `.claude/relayroom/identity.local.json` in the effective CandleViewer configuration root (or run
    `python scripts/relayroom-main-doctor.py`). Never open or print `.claude/settings.local.json`.
+   The doctor takes the hub origin from the private `CANDLEVIEWER_RELAYROOM_ORIGIN` or the
+   descriptor's optional `hubOrigin` key and fails closed without it; never print or report it.
    **If the descriptor is missing or ambiguous, stop and report** — do not assume Atlas / main-orchestrator.
 2. Discover the tools exposed by the MCP alias named in the descriptor (`candleviewer-relayroom`).
 3. Call `whoami`. Require `project == "candleviewer"`, `part == descriptor.part`, and
