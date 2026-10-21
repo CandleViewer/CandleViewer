@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript; the idle-lock activity paragraph was added 2026-10-21 for #4012. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript; the idle-lock activity paragraph was added 2026-10-21 for #4012; §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served). Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -23,7 +23,7 @@ Quick facts the procedures rely on:
 | Audit volume     | `cv-audit-data` at `/var/lib/candleviewer/audit`; back it up with Postgres          | `infra/compose/docker-compose.yml`, §3                                           |
 
 **What counts as activity for the idle lock (#4012).** The idle clock runs from the session's
-`last_seen_at`. A request re-stamps it only when its handler authenticates the bearer with
+`last_seen_at`. A request re-stamps it when its handler authenticates the bearer with
 `authenticate_access_token(touch=True)`: the `/me` routes (`GET /me`, `/me/preferences`,
 `/me/keymap`), `GET /auth/sessions`, MFA enrolment, and every route whose caller comes from a
 session-backed principal resolver (`SessionAuditPrincipalResolver`, `SessionSnapshotResolver`,
@@ -32,22 +32,21 @@ reads (`/market/bars`, `/market/trades`, `/market/orderbook`, `/instruments` and
 `/indicators`), drawings, workspaces, `POST /telemetry/frontend`, the rules, audit and admin
 routes, and owner user management. Find the resolvers with
 `grep -rn 'touch=True' services/api/candleviewer` and their routers in `candleviewer/app.py`
-(`audit_resolver`, `owner_resolver`). A successful `POST /auth/unlock` re-stamps it too.
+(`audit_resolver`, `owner_resolver`). `POST /auth/session/extend` re-stamps it through
+`SessionService.touch()`, after its write-ahead record, and so does a successful
+`POST /auth/unlock`.
 Nothing else does: not `GET /auth/session`, `DELETE /me/sessions/{sessionId}`, `POST /auth/logout`,
 the idle-lock middleware, the step-up and read-only guards, WS traffic, nor a token refresh, which
 carries the presented session's `last_seen_at` to its successor. A tab whose only traffic is its
 socket and its token refreshes (about every 11 minutes) therefore locks after its idle timeout, 15
 minutes by default: its next refresh is answered `401 session_idle_locked`, and its socket ends
-`token_expired` within one access-token lifetime. `POST /auth/unlock` is dark until #2300's last
-slice (§1), so until then the way out of a lock is `POST /auth/logout` and a new sign-in. The
-contract's "Activity is explicit" model, in which only `POST /auth/session/extend` and
-`POST /auth/unlock` count, is not what ships: `extend` is not served yet, and activity is implicit
-on the routes above.
+`token_expired` within one access-token lifetime. `POST /auth/unlock` with the password lifts
+the lock (§1); `POST /auth/logout` and a new sign-in end it instead. The contract's "Activity is
+explicit" model, in which only `POST /auth/session/extend` and `POST /auth/unlock` count, is not
+what ships yet: activity stays implicit on the routes above until #2300's last slice, which waits
+for the client (#1640).
 
 ## 1. Unlock a locked account (SR-016)
-
-`POST /auth/unlock` is dark until #2300's last slice wires it (2f, held for #1640): it answers `503`
-and checks no password, so what this section says of it holds from then on.
 
 **There is no unlock command, endpoint or CLI for this lock.** `POST /auth/unlock` (#2300) lifts a
 session's idle lock, never an account lock. A lock is `users.locked_until`, set by the shared
@@ -1207,8 +1206,14 @@ lane append or a durable WAL append can complete late), so check the trail. One 
 whichever of these it meets. It logs `auth.disabled_user_session_audit_failed` (or its
 `_slow` and `_failed_late` forms), not `outcome_lost`: reconcile it as section 4 says.
 
-While the sink refuses records, sign-out, session revocation and refresh answer `503` and change
-nothing (C-2.9): an access token lapses within 12 minutes and a longer refusal ends every session
+While the sink refuses records, sign-out, session revocation, refresh, extend and unlock answer
+`503` and change nothing (C-2.9), except unlock while the sink is up but its writer refuses (a full
+or unwritable WAL) for a lock B16's chart already holds: a wrong password still counts toward the
+five failed unlocks that revoke the session and toward the SR-016 lockout, which it can apply with
+no `auth.unlock_failed` or `auth.account_locked` row (only `auth_lockouts_total` moves), so ask
+users not to retry an unlock meanwhile. A lock the chart must still record (first seen meanwhile,
+or again after a restart) gets `503` at its `auth.idle_locked` record, before the password check,
+and counts nothing. An access token lapses within 12 minutes and a longer refusal ends every session
 and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). A refresh of an
 idle-locked session is answered `401 session_idle_locked` before its record, whether or not the
 sink accepts it, and changes nothing either (#3331). A lock that engages between the route's check
@@ -1223,8 +1228,9 @@ last loss, so a lone loss at night is not delivered and the page (more than 5 in
 not cover it (#2621, section 1): in the morning, read the counter and `outcome_lost` log lines.
 
 No page does not mean the sink is healthy: the page reads only outcome rows lost after an action,
-while a refusing sink makes every sign-out, revoke and refresh fail closed at its write-ahead record
-with a `503`. Those refusals show as `auth.session_audit.writer_refused` log lines (the alert
+while a refusing sink makes every sign-out, revoke, refresh, extend and unlock fail closed at its
+write-ahead record with a `503`.
+Those refusals show as `auth.session_audit.writer_refused` log lines (the alert
 runbook's third command greps them) and in `cv_audit_writer_refused_total{domain}`, which the
 AuditSinkRefusing ticket reads (§13). A page that has cleared is no
 better evidence: it sends no `[RESOLVED]` message and clears with its 15-minute window, so the test
