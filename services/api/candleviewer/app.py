@@ -2646,7 +2646,7 @@ def _alert_owner_skipped(facade: Metrics) -> Any:
     `stage`; identical re-registration returns the one metric."""
     return facade.counter(
         "cv_alert_owner_skipped_total",
-        "Alert firings and deliveries skipped: the owner is not active or unreadable.",
+        "Alert firings, disarms and deliveries skipped: the owner is not active or unreadable.",
         ("stage", "reason"),
         max_series=4,
     )

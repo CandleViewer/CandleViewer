@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from _dispatch_env import USER, Clock, MemStore
 from test_alert_dispatcher import FailingRelay, Metrics
@@ -50,6 +51,14 @@ async def test_dispatcher_inactive_owner_delivery_is_suppressed_on_every_channel
     assert all(o.processed for o in w.store.outbox.values()) and w.relay.keys == []
     assert w.changed == []  # final, and not announced on the `alerts` topic
     assert w.metrics.names().count((SKIPPED, ("dispatch", "inactive"))) == 3
+
+
+async def test_dispatcher_lost_settle_race_for_an_inactive_owner_counts_no_suppression() -> None:
+    w = _world(Directory())  # nobody is active
+    w.store.fire(["email"])
+    w.store.settle_suppressed = AsyncMock(return_value=False)  # another worker settled it first
+    await w.disp.run_once()
+    assert w.metrics.names() == [(SKIPPED, ("dispatch", "inactive"))]  # and no delivery count
 
 
 async def test_dispatcher_unreadable_owner_leaves_the_row_leased_for_a_retry() -> None:

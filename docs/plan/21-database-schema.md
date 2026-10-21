@@ -2422,7 +2422,7 @@ CREATE TRIGGER trg_ad_append BEFORE DELETE ON alert_deliveries
 ```
 
 `alert_deliveries` allows `UPDATE` (status transitions queued→sent→acked) but forbids `DELETE`; purging is done by the retention job running as `cv_owner`, which the trigger exempts via `session_user`.
-A delivery whose owner is not active (`users.status` other than `active`, or the user deleted) is never sent: the dispatcher settles it `suppressed` with `error_message` `owner_inactive` (`recipient_deleted` when `user_id` is NULL) and the evaluator records no firing for that owner (E40, #3349), while the `alerts` row is left as it was, so enabling the user again resumes it.
+Nothing starts leaving for an owner who is not active (`users.status` other than `active`, or the user deleted) after the disable: the dispatcher reads the status fresh before each send and settles the delivery `suppressed` with `error_message` `owner_inactive` (`recipient_deleted` when `user_id` is NULL), and the evaluator skips the owner's due alerts, seeing a disable within its 1 s owner cache (E40, #3349; `docs/security/threat-models/e42-user-lifecycle.md` UL-F8 names the windows left), while the `alerts` row is left as it was, so enabling the user again resumes it.
 
 ### 3.6 Recorder, retention, replay
 

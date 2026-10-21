@@ -377,8 +377,8 @@ class AlertDispatcher:
         return await self._retry_or_fail(job, d, out, attempt)
 
     async def _owner_skip(self, d: Delivery) -> SkipReason | None:
-        """Why the delivery's owner is skipped, if it is, asked fresh: nothing leaves on a channel
-        for a user disabled before this read. No owner row (`user_id IS NULL`) is no active one."""
+        """Why the delivery's owner is skipped, if it is, asked fresh: nothing starts leaving for a
+        user disabled before this read. No owner row (`user_id IS NULL`) is no active one."""
         if d.user_id is None:
             return "inactive"
         return (await self._owners.skipped({d.user_id}, fresh=True)).get(d.user_id)

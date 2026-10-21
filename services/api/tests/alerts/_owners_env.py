@@ -3,22 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 
 from candleviewer.alerts.owners import OwnerGate
 
 
 class Directory:
     """`OwnerDirectory` fake: the `active` owners (`everyone`: all of them), what each read raises
-    (`fail`) or whether it hangs, and `reads`, the set each read asked about."""
+    (`fail`) or whether it hangs, `reads`, the set each asked, and `on_read`, run as each starts."""
 
     def __init__(self, active: Iterable[str] = (), *, everyone: bool = False,
                  fail: BaseException | None = None, hang: bool = False) -> None:  # fmt: skip
         self.active, self.everyone, self.fail, self.hang = set(active), everyone, fail, hang
         self.reads: list[frozenset[str]] = []
+        self.on_read: Callable[[], None] = lambda: None
 
     async def active_users(self, user_ids: Collection[str]) -> frozenset[str]:
         self.reads.append(frozenset(user_ids))
+        self.on_read()
         if self.hang:
             await asyncio.Event().wait()
         if self.fail is not None:

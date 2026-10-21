@@ -1749,7 +1749,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "skips",
         ("stage", "reason"),
-        "Alert firings and deliveries skipped: the owner is not active or unreadable (#3349).",
+        "Alert firings, disarms and deliveries skipped: owner inactive or unreadable (#3349).",
         "dashboard only; unreadable > 0 is an identity-store fault (no rule yet)",
         _P,
         "E40",

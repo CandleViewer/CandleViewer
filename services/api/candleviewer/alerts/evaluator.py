@@ -328,7 +328,7 @@ class AlertEvaluator:
             snap = self._snapshots.build(sub.refs, now)
             lost = sorted(r.metric for r in sub.refs if snap.get(r).reason in SOURCE_LOST_REASONS)
             if lost:
-                for a in members:
+                for a in await self._active(members):
                     await self.disarm(a.id, lost[0])
                 continue
             state = sub.state.setdefault(tick.symbol or "*", InstanceState())
@@ -342,10 +342,10 @@ class AlertEvaluator:
                 await self._candidate(a, tick, now, values, start)
 
     async def _active(self, members: list[AlertState]) -> list[AlertState]:
-        """The members whose owner is active (#3349, UL-F8), asked once the condition holds, before
-        any gate and outside the firing lock. A skipped alert is left as it was (armed; no firing,
-        cooldown, `once` or bar memory used), so enabling the user again fires it. Each skip is
-        counted; an owner whose status cannot be read is skipped too (fail closed)."""
+        """The members whose owner is active (#3349, UL-F8), asked once the condition holds or a
+        source is lost, before any gate and outside the firing lock. A skipped alert is left as it
+        was (armed; no firing, disarm, cooldown, `once` or bar memory used), so enabling the user
+        again resumes it. Each skip is counted; an unreadable status skips too (fail closed)."""
         skipped = await self._owners.skipped({a.owner_user_id for a in members})
         for a in members:
             if (why := skipped.get(a.owner_user_id)) is not None:
@@ -470,6 +470,7 @@ class AlertEvaluator:
             if not force and now < st.window_end_ms:
                 continue
             del self._storms[user]
+            # no owner check: the dispatcher drops this summary if the owner is no longer active
             await self._store.record_firing(
                 alert_id=st.alert_id, user_id=user, channels=(SUMMARY_CHANNEL,),
                 status="queued", title=self.summary_title(st), body="",

@@ -1,6 +1,6 @@
 """E40 #3349 (E42-X01 UL-F8): the alerts of a disabled owner neither fire nor deliver. The evaluator
-skips an alert whose condition holds when its owner is not active, leaves all of its state alone,
-and counts the skip."""
+skips an alert whose condition holds, or whose source is lost, when its owner is not active, leaves
+all of its state alone, and counts the skip."""
 
 from __future__ import annotations
 
@@ -20,13 +20,14 @@ def _tick(trigger: str = "on_price_update") -> AlertTick:
     return AlertTick(trigger, T0, "BTCUSDT")
 
 
-async def test_evaluator_inactive_owner_alert_records_no_firing_and_is_counted() -> None:
+@pytest.mark.parametrize("lost", [False, True], ids=["condition_holds", "source_lost"])
+async def test_evaluator_inactive_owner_alert_commits_nothing_and_is_counted(lost: bool) -> None:
     audit, charts = AsyncMock(), AsyncMock()
     owners = OwnerGate(Directory())
     ev, store, src, _, m = make(row("a1"), owners=owners, audit=audit, charts=charts)
     await ev.warm_up()
-    src.set("price", 65500, T0)
-    await ev.process(_tick())
+    src.set("price", None if lost else 65500, T0, "source_unavailable" if lost else None)
+    await ev.process(_tick())  # a firing, or a loud disarm, would commit a row
     assert store.deliveries == [] and store.outbox == [] and store.rows["a1"] == row("a1")
     assert audit.mock_calls == [] and charts.mock_calls == []  # no audit record, no B10 event
     assert "a1" in ev.alerts  # still armed
