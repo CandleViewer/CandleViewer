@@ -269,14 +269,23 @@ def test_the_table_row_bound_takes_the_kth_newest_ts_of_the_whole_table_from_the
     assert default.endswith("LIMIT 499999, 500000")
 
 
-@pytest.mark.parametrize(
-    ("kind", "rows", "match"), [("time", 5, "kind"), ("ohlc", 5, "kind"), ("tick", 0, "rows")]
-)
-def test_the_table_row_bound_refuses_a_time_or_unknown_kind_and_no_rows(
+@pytest.mark.parametrize(("kind", "rows", "match"), [("ohlc", 5, "kind"), ("tick", 0, "rows")])
+def test_the_table_row_bound_refuses_an_unknown_kind_and_no_rows(
     kind: str, rows: int, match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
         build_tail_scan_bound_query(kind, T0, now_us=T0, rows=rows)
+
+
+def test_the_table_row_bound_reads_the_time_table_too() -> None:
+    """#399 R1: a time read's window reaches 400 d for its longer intervals, and `symbol` has no
+    index, so it takes the same bound over `bars_time`, within the time cap."""
+    sql, params = build_tail_scan_bound_query("time", T0, now_us=T0)
+    assert sql == "SELECT ts FROM bars_time WHERE ts >= $1 ORDER BY ts DESC LIMIT 499999, 500000"
+    assert params == (ts_param(T0),)
+    build_tail_scan_bound_query("time", NOW - MAX_TIME_WINDOW_US, now_us=NOW)  # at the cap
+    with pytest.raises(ValueError, match="window cap"):
+        build_tail_scan_bound_query("time", NOW - MAX_TIME_WINDOW_US - 1, now_us=NOW)
 
 
 def test_the_table_row_bound_refuses_a_window_beyond_the_sr_e12_02_cap() -> None:
@@ -340,7 +349,8 @@ def test_the_capped_time_window_holds_the_bar_counts_the_docs_quote(
 async def test_read_tail_binds_its_window_back_from_the_injected_clock() -> None:
     conn = _Conn([])
     tail = await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, SPEC, 4)
-    (sql, params), *_ = conn.calls
+    bound, (sql, params) = conn.calls
+    assert bound == build_tail_scan_bound_query("time", NOW - 8 * MIN, now_us=NOW)
     assert sql.endswith(" LIMIT 4") and params == (SYM, "1m", ts_param(NOW - 8 * MIN))
     assert tail == BarTail([], since_us=NOW - 8 * MIN)  # a series with no tape yet: fetched 0
 
@@ -369,7 +379,7 @@ async def test_read_tail_measures_back_from_the_wall_clock_by_default(
     monkeypatch.setattr(time, "time_ns", lambda: NOW * 1_000 + 999)
     conn = _Conn([])
     await BarReader(conn, _sched).read_tail(SYM, SPEC, 4)
-    assert conn.calls[0][1][2] == ts_param(NOW - 8 * MIN)
+    assert conn.calls[-1][1][2] == ts_param(NOW - 8 * MIN)
 
 
 K5 = T0 + 5 * MIN  # a table-row bound inside the window
@@ -510,8 +520,13 @@ async def test_a_row_written_after_the_table_bound_is_read_only_at_or_above_it(
     assert ([b.index for _, b in tail.bars], tail.since_us) == (indexes, T0 + 18 * MIN)
 
 
-def _bounded_reads() -> float:
-    return float(REGISTRY.get_sample_value("bars_tail_scan_bounded_total") or 0.0)
+def _bounded_reads(kind: str | None = None) -> float:
+    """`bars_tail_scan_bounded_total`, for one kind or summed over them all (#399 OD2)."""
+    kinds = [kind] if kind is not None else list(BUILD_VERSIONS)
+    return sum(
+        float(REGISTRY.get_sample_value("bars_tail_scan_bounded_total", {"kind": k}) or 0.0)
+        for k in kinds
+    )
 
 
 async def test_the_bound_counts_the_reads_it_started_later_than_their_window_only() -> None:
@@ -523,7 +538,7 @@ async def test_the_bound_counts_the_reads_it_started_later_than_their_window_onl
     at_start = BarReader(_Steps(_stamps(RSINCE), []), _sched, now_us=lambda: NOW)
     await at_start.read_tail(SYM, RSPEC, 3)  # the bound is the window start: moved nothing, not
     time_reader = BarReader(_Conn([_row(0)]), _sched, now_us=lambda: NOW)
-    await time_reader.read_tail(SYM, SPEC, 2)  # a time read: never bounded
+    await time_reader.read_tail(SYM, SPEC, 2)  # a time read on a table below k: not
     assert _bounded_reads() == before + 2
 
 
@@ -545,11 +560,42 @@ async def test_a_failed_statement_fails_the_read_with_no_fallback_and_no_count(
     assert _bounded_reads() == before
 
 
-async def test_a_time_read_stays_one_statement_from_its_window_start() -> None:
-    """A time window spans twice `limit` bars, which bounds its sort: no bound is taken first."""
+async def test_a_time_read_takes_its_table_bound_then_one_tail_statement() -> None:
+    """A time window spans twice `limit` bars, which bounds its sort, so it needs no series
+    bound; its table-row bound comes first (#399 R1), as a non-time read's does."""
     conn = _Conn([_row(1), _row(0)])
     await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, SPEC, 2)
-    assert conn.calls == [build_tail_query("time", SYM, "1m", 2, NOW - 4 * MIN, now_us=NOW)]
+    assert conn.calls == [
+        build_tail_scan_bound_query("time", NOW - 4 * MIN, now_us=NOW),
+        build_tail_query("time", SYM, "1m", 2, NOW - 4 * MIN, now_us=NOW),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kth", "start", "bounded"),
+    [([], NOW - 4 * MIN, False), ([NOW - 3 * MIN], NOW - 3 * MIN, True),
+     ([NOW - 4 * MIN], NOW - 4 * MIN, False), ([NOW - 9 * MIN], NOW - 4 * MIN, False)],
+    ids=["table-below-k", "bounded", "bound-at-the-window-start", "bound-below-the-window"],
+)  # fmt: skip
+async def test_a_time_read_starts_at_the_later_of_its_window_start_and_its_table_bound(
+    kth: list[int], start: int, bounded: bool
+) -> None:
+    """#399 R1: a sparse time series gets only its bars among the table's newest rows; the read
+    that the bound started later is counted, as a non-time one is."""
+    conn = _Steps(_stamps(*kth), [_row(1)])
+    before = _bounded_reads("time")
+    with capture_logs() as logs:
+        tail = await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, SPEC, 2)
+    assert conn.calls[1] == build_tail_query("time", SYM, "1m", 2, start, now_us=NOW)
+    assert (tail.since_us, tail.bounded) == (start, bounded)
+    assert _bounded_reads("time") - before == (1 if bounded else 0)
+    truncated = [e for e in logs if e["event"] == "bars_tail_scan_truncated"]
+    assert truncated == (
+        [{"event": "bars_tail_scan_truncated", "log_level": "info", "kind": "time",
+          "spec_hash": SPEC.spec_hash, "scanned_rows": MAX_TAIL_SCAN_ROWS,
+          "window_start_us": NOW - 4 * MIN, "since_us": start}]
+        if bounded else []
+    )  # fmt: skip
 
 
 async def test_read_tail_is_oldest_first_and_closed_only() -> None:

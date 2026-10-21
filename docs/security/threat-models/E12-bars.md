@@ -459,19 +459,23 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     the `history` maximum) on the rows it returns. The read always takes `MAX_TAIL`, whatever a subscriber's
     `history`; `history` only trims what is sent. SR-E12-02's 250 000 figure is REST's estimate gate only. As
     `symbol` has no index, each statement of a read filters every row of its kind's table from where it starts,
-    so a non-time read is also bounded by table rows (D2-M4, #2787; 21 §9.5): it first takes the `ts` of the
+    so every read is also bounded by table rows (D2-M4, #2787; time reads since #399 R1; 21 §9.5): it first takes the `ts` of the
     table's `MAX_TAIL_SCAN_ROWS`-th newest row in the window (of any series), a backward scan that stops
-    there, then the `ts` of the series' newest `MAX_TAIL` rows from the later of that `ts` and its window start
-    (D2-M2, #3688), then sorts only the rows from there, about `MAX_TAIL`. No statement visits more than
+    there; a non-time read then takes the `ts` of the series' newest `MAX_TAIL` rows from the later of that `ts`
+    and its window start (D2-M2, #3688) and sorts only the rows from there, about `MAX_TAIL`, while a time read,
+    whose window spans twice `MAX_TAIL` bars, sorts at most about twice that. No statement visits more than
     `MAX_TAIL_SCAN_ROWS` (500 000 as built) rows and those tied with the last; a sparse series' snapshot may start later than its
     window, or be empty (23 §6.1). The bound is global to the kind's table, so the depth of that snapshot
     depends on the write rate of every series in it, within the spec caps: accepted with the D2-M4 ruling
-    (#2787; owner E12-T06, revisited when `MAX_TAIL_SCAN_ROWS` is re-sized on the target host). A time read keeps one statement, over at most about twice the bars it asks for (fewer once the
-    400 d cap applies; 21 §9.5): bounded by span, not by rows, a residual, as `bars_time` also holds kline rows
-    and no row estimate of it exists. It is mitigated by the 2 s read timeout, 8 reads at once
-    (`MAX_CONCURRENT_TAIL_READS`) and the span cap, under BR-28's Medium residual (RSK-059). Its owner is E12-T06 (#399), whose flag checklist holds
-    `bars_enabled` off and lists this revisit: before the flag goes to production, or sooner when a row estimate
-    of `bars_time` exists (reviewed 2026-10-20). REST `/market/bars` reads are bounded by the window caps, the estimate gate and the
+    (#2787; owner E12-T06, revisited when `MAX_TAIL_SCAN_ROWS` is re-sized on the target host). The time read's
+    bound closes the revisit #399's flag checklist held (R1, 2026-10-21): its row estimate (#399,
+    issuecomment-6325977199) found that a 240 m or longer window reaches the 400 d cap and scans a year of every
+    interval's rows of every symbol, about 0.88 M a symbol, past G3's 100 ms mark at five symbols, and kline rows
+    add to that once they are written to `bars_time`. A read the bound starts later is counted by kind
+    (`bars_tail_scan_bounded_total{kind}`) and logged once with the rows it scanned (`bars_tail_scan_truncated`).
+    The ruled follow-on (OD2, 2026-10-21) is an index on `bars_time.symbol` (`ALTER COLUMN symbol ADD INDEX`,
+    a QuestDB migration), as a measured decision: its acceptance is a snapshot exact, with no table-row bound, at
+    25 ms or less for 20 symbols, and the index-write cost measured on the ingestion soak. REST `/market/bars` reads are bounded by the window caps, the estimate gate and the
     2 s timeout, not by rows. The read's cost is measured in D2-G3; `MAX_TAIL_SCAN_ROWS` is re-sized on the
     target host with the D2-M4 bench.
   - SR-E12-07's subscribe rate limit is built per connection (SR-193; #2293, built by #3301) and per user across a
