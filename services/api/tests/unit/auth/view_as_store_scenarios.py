@@ -123,6 +123,10 @@ def by_target(target: UUID = TARGET) -> Call:
     return Call("list_live_view_as_by_target", None, {"target_user_id": target}, unordered=True)
 
 
+def by_viewer(viewer: UUID = VIEWER) -> Call:
+    return Call("list_live_view_as_by_viewer", None, {"viewer_user_id": viewer}, unordered=True)
+
+
 def _one(sid: str, call: Call, expect: object, **rows: Row) -> Scenario:
     return Scenario(sid, rows, (call,), (expect,))
 
@@ -268,6 +272,8 @@ SCENARIOS: tuple[Scenario, ...] = (
         "live-earliest-expiry-first", _LISTED, (live(), live(2)), (("p", "a", "l"), ("p", "a"))
     ),
     Scenario("live-by-target", _LISTED, (by_target(), by_target(OTHER)), (("a", "p"), ("l",))),
+    # by viewer: every unrevoked, unended context of the viewer's sessions, unordered
+    Scenario("live-by-viewer", _LISTED, (by_viewer(), by_viewer(OTHER)), (("a", "l", "p"), ())),
 )
 
 
