@@ -308,6 +308,20 @@ def expect(op: Op, actor: str, state: str) -> Expected:
     return Expected("allow", records=graced + entered)
 
 
+#: The route's own step-up records (#3990); every other `auth.step_up_*` record is the exchange's,
+#: whose request (`POST /auth/step-up`) the sweeps send unstamped.
+ROUTE_STEP_UP = frozenset({"auth.step_up_required", "auth.step_up_grace_used"})
+
+
+def route_records(records: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
+    """The records of a cell's own request: all but the step-up exchange's (`ROUTE_STEP_UP`)."""
+    return [
+        r
+        for r in records
+        if not r["action"].startswith("auth.step_up") or r["action"] in ROUTE_STEP_UP
+    ]
+
+
 @dataclass(frozen=True)
 class Observed:
     status: int

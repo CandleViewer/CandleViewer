@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any
 
 from candleviewer.auth.models import SessionRecord
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.statechart import build
 from candleviewer.statechart.bindings import b16_session
 from candleviewer.statechart.factory import default_clock
@@ -107,7 +108,15 @@ class SessionChart:
         `receipt_is_conclusive` (CV-C06): an action error (e.g. audit down)
         fails loud; a deferred/no-op receipt is not an error here — the
         chart records, it never gates (C-2.21). An event in `_MUST_REACH`
-        also fails loud unless the chart reached its state (B16.7)."""
+        also fails loud unless the chart reached its state (B16.7). An event
+        that is not a replay carries the id of the request it happens in, a
+        UUID string, or none outside a request (#3990): B16's actions run in
+        the chart's own task, outside the request's context, so the id rides
+        on the payload and its audit record names it. It is always this
+        request's: no caller sets it."""
+        if not payload.get("replay"):
+            request_uuid = current_request_uuid()
+            payload["request_id"] = None if request_uuid is None else str(request_uuid)
         # Called from request handlers only - never from a B16 action - so the
         # CV-C51 self-receipt hang cannot arise (no action awaits this chart).
         receipt = await self._gateway.send(sid, {"type": event, **payload}, wait=_AWAIT_STEP)
