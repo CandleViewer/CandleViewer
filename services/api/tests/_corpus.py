@@ -63,8 +63,11 @@ def rest(rel: str, *, capture_date: str = CAPTURE_DATE) -> Any:
 
 
 def http_status(rel: str, *, capture_date: str = CAPTURE_DATE) -> int:
+    """The recorded HTTP status of a REST corpus file; a docs-transcribed file states none."""
     for entry in manifest(capture_date=capture_date)["fixtures"]:
         if entry["path"] == rel:
+            if entry["http_status"] is None:
+                raise ValueError(f"{rel} states no HTTP status: its source shows none")
             return int(entry["http_status"])
     raise KeyError(rel)
 

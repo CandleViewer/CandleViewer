@@ -208,11 +208,12 @@ _RECORDED = {"capture_date": "2026-10-19",
 #: #2877 ruling R2 (the #1778 group A pattern): order-path shapes no recording holds yet. Each
 #: file is its documentation page's Response Example, keys and values unchanged (for an error,
 #: its error-table row). E29-K01's recordings replace them;
-#: `tests/contract/bybit/test_contract_trading_drift.py` fails the moment one disagrees.
+#: `tests/contract/bybit/test_contract_trading_drift.py` fails the moment one disagrees. No page
+#: shows the HTTP status of its example, so none is stated (`http_status` null).
 _DOCS_URL = "https://bybit-exchange.github.io/docs/v5/"
 _DOCS_REF = "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921"
 _TRANSCRIBED = {"capture_date": "2026-10-21", "source": "docs-transcribed",
-                "retrieved": "2026-10-21"}  # fmt: skip
+                "retrieved": "2026-10-21", "http_status": None}  # fmt: skip
 #: name -> (stream, documentation page, symbol, what it shows)
 _DOCS_SHAPES: dict[str, tuple[str, str, str, str]] = {
     "trading-account-info": ("GET /v5/account/info", "account/account-info", "*",

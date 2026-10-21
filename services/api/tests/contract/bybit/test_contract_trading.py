@@ -25,7 +25,7 @@ from candleviewer.exchange.base.errors import (
 from candleviewer.exchange.bybit import trading_parse as tp
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.exchange.bybit.metrics import cv_bybit_unknown_fields_total
-from tests._corpus import manifest, rest
+from tests._corpus import http_status, manifest, rest
 from tests.unit.exchange.bybit._trading import account
 
 TRANSCRIBED = {
@@ -68,6 +68,12 @@ def test_every_transcription_is_listed_with_its_source() -> None:
         assert entry["source"] == "docs-transcribed" and entry["retrieved"] == "2026-10-21"
         assert entry["source_url"].startswith("https://bybit-exchange.github.io/docs/v5/")
         assert entry["source_ref"].startswith("github.com/bybit-exchange/docs@")
+        assert entry["http_status"] is None  # no documentation page shows its example's status
+
+
+def test_a_transcription_states_no_http_status_to_replay() -> None:
+    with pytest.raises(ValueError, match="states no HTTP status"):
+        http_status("rest/trading-create-reply.json")
 
 
 @pytest.mark.usefixtures("no_unknown_fields")

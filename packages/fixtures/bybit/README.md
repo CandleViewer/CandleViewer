@@ -13,8 +13,11 @@ own `capture_date` (the `recorded_*` files below).
 - `ws/*.jsonl` - raw public WS frames, one per line, exactly as received.
 - `rest/*.json` - REST response bodies (`http_status` is recorded in the manifest).
 - `manifest.json` - one entry per file: `path`, `symbol`, `stream`, `host`, `capture_date`,
-  `source`, `notable_event`, `http_status`, `size_cap_bytes`, and `window_ms` (first and last
-  frame `ts`) for a recorded capture. A unit test fails if a file is unlisted or over its cap.
+  `source`, `notable_event`, `http_status`, `size_cap_bytes`, `window_ms` (first and last frame
+  `ts`) for a recorded capture, and `retrieved`, `source_url` and `source_ref` for a
+  docs-transcribed file, whose `http_status` is null (no documentation page shows one). A REST
+  file's `stream` is `<METHOD> /v5/<path>`, the route it answers. A unit test fails if a file is
+  unlisted or over its cap.
 - `schema_expectations.json` - field path to JSON-type expectations used by the drift check.
 - `README.tickers.md`, `README.trades.md` - provenance notes from E08-S03/S04.
 
@@ -65,8 +68,11 @@ error, the code and text of its row in the error table, which shows nothing else
 gives each file's `source_url`, `retrieved` date and `source_ref` (the page's source file at
 `bybit-exchange/docs` commit `19518b90fb36`). They are evidence of the documented shapes only,
 never of live values. `tests/contract/bybit/test_contract_trading_drift.py` compares each one
-with every recording of the same stream and fails the moment one disagrees; the recording then
-replaces the transcription. Not documented, so not transcribed: a `10001` duplicate's text (E29
+with every recording of the same route (the method and path of its `stream` label) and return
+code, and fails the moment one disagrees; an error-row transcription is compared on its code and
+text only, and a REST recording whose label names no route fails the check. The PR that adds
+such a recording (E29-K01, #843) deletes the transcription it replaces: the file, its manifest
+entry and `build_corpus.py` row, and its line below. Not documented, so not transcribed: a `10001` duplicate's text (E29
 model O-1), a Partial-mode TP/SL order row, a REST `create-batch` reply with a refused item, and a
 linear position, wallet (USDT) or fee-rate row; strict-model unit tests alone cover those parsers.
 
