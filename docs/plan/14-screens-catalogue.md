@@ -1990,7 +1990,8 @@ Drag preview                Drop zones
 - **Sign-off:** [ ] REPLAY chrome cannot be confused with live [ ] gap handling designed [ ] coverage visualisation [ ] paper-fill isolation verified.
 - **Components:** CMP-028 Callout / Banner, CMP-035 Countdown / Timer text, CMP-170 ReplayScrubber, CMP-171 ReplaySpeedPicker, CMP-172 ReplayRangePicker, CMP-180 ChartRoot, CMP-196 MultiChartLinker.
 - **Stories:** US-RPL-001, US-RPL-002, US-RPL-003, US-RPL-004, US-RPL-005, US-RPL-007, US-RPL-008.
-- **Design sign-off acceptance checklist:** [ ] transport controls (play/pause, step bar, step tick, speed 0.25x-50x, jump to time) drawn [ ] the replay clock and the 'REPLAY' chrome variant are unmistakable and cannot be confused with live [ ] every order-flow panel is shown working under replay [ ] paper-trading controls drawn with 'simulated' labelling [ ] recorded-history bounds shown [ ] buffering/seek states drawn [ ] speed limits stated where the engine cannot sustain the requested rate
+- **UX research:** [replay-study-sessions.md](../research/ux/replay-study-sessions.md) (E26-D01; the canonical speed presets §4, the replay-vs-live signalling candidates §3.4, the seeking rungs §3.8, the D02 constraints §5).
+- **Design sign-off acceptance checklist:** [ ] transport controls (play/pause, step bar, step tick, speed presets 0.5x/1x/2x/4x/10x/25x/100x plus a custom value 0.1–100 — E26-D01, jump to time) drawn [ ] the replay clock and the 'REPLAY' chrome variant are unmistakable and cannot be confused with live [ ] every order-flow panel is shown working under replay [ ] paper-trading controls drawn with 'simulated' labelling [ ] recorded-history bounds shown [ ] buffering/seek states drawn [ ] speed limits stated where the engine cannot sustain the requested rate
 
 ### SCR-098 — Replay session setup modal
 
@@ -2001,6 +2002,7 @@ Drag preview                Drop zones
 - **A11y:** A form with labelled date-time range, symbol multiselect, speed and paper-account fields; the available-history statement is text next to the range field; validation errors name the field.
 - **Performance:** Session preparation streams from the cold tier; a 1-day, 1-symbol session is ready in <=10 s with progress shown; larger requests state the estimated preparation time before starting.
 - **Analytics/audit:** `replay.session_created` `{range, symbols, speed}`, `replay.session_deleted` (analytics); paper fills inside the session are always tagged `simulated=true` and never enter the trading audit stream.
+- **UX research:** [replay-study-sessions.md](../research/ux/replay-study-sessions.md) (E26-D01; recorder emptiness as the normal case and the coverage classes §3.5, the resume-first entry F32, the setup task T1 §6.3).
 - **Design sign-off acceptance checklist:** [ ] range, symbols, speed and paper-account setup drawn [ ] available-history bounds enforced with a clear message [ ] preparation progress and cancel [ ] 'paper trading only - nothing reaches the exchange' stated [ ] resume-existing-session path [ ] insufficient-history state
 
 ### SCR-099 — Replay paper-trading results
@@ -2011,6 +2013,7 @@ Drag preview                Drop zones
 - **A11y:** Results are a table plus a summary description list; every chart has a table alternative; the 'simulated' badge is in the heading, not only a chip.
 - **Performance:** Results are computed server-side at session end and fetched once; no live subscriptions remain open.
 - **Analytics/audit:** `replay.results_viewed`, `replay.results_exported`, `replay.results_promoted_to_journal` (the last writes journal entries flagged `simulated=true` - audited as `journal.simulated_import`).
+- **UX research:** [replay-study-sessions.md](../research/ux/replay-study-sessions.md) (E26-D01; paper trading in replay as the real ticket in a distinct state §3.7, the fill-model honesty finding F25).
 - **Design sign-off acceptance checklist:** [ ] every figure carries the 'simulated' framing [ ] fill-model assumptions are stated explicitly (queue position, latency, slippage model) [ ] per-trade list with entry/exit and R [ ] comparison against the same period's real trades is opt-in and clearly separated [ ] export [ ] 'these results are not a backtest guarantee' caveat
 
 ---
