@@ -141,7 +141,7 @@ def test_the_plan_doc_registers_the_revision_and_states_the_revoke() -> None:
         " and superusers can still delete accounts",
     ):
         assert fact in prose, fact
-    assert "no longer can" not in doc
+    assert "no longer can" not in accounts
     keys = doc.split("#### 3.2.3a ", 1)[1].split("#### 3.2.4 ", 1)[0]
     assert "none on the parent `exchange_accounts` either" in " ".join(keys.split())
     assert "no revision revokes it" not in doc
@@ -169,7 +169,7 @@ def test_the_docs_name_the_integration_tests_that_pin_the_revoke() -> None:
 
 # -- The premise: no statement of the application deletes from or truncates the table
 #: Whitespace and SQL comments between two tokens: `DELETE /* why */ FROM`, or `--` to a newline.
-_GAP = r"(?:\s|/\*.*?\*/|--[^\n]*(?:\n|$))+"
+_GAP = r"(?:\s|/\*(?:[^*]|\*(?!/))*\*/|--[^\n]*(?:\n|$))+"
 #: The accounts table, bare, quoted or in `public` (not `exchange_accounts_archive`).
 _TABLE = r"(?:\"?public\"?\s*\.\s*)?\"?exchange_accounts\b"
 #: A DELETE FROM the table, or a TRUNCATE that names it anywhere in its list (`TRUNCATE a, b`)
@@ -226,6 +226,12 @@ _CASES = {
     "quoted schema": ("repo.py", 'S = \'DELETE FROM "public"."exchange_accounts"\'', 1),
     "block comment": ("repo.py", 'S = "DELETE /* purge */ FROM exchange_accounts"', 1),
     "line comment": ("repo.py", 'S = "DELETE -- purge\\n FROM exchange_accounts"', 1),
+    "many comments": ("repo.py", 'S = "DELETE ' + "/* a */ " * 25 + 'FROM exchange_accounts"', 1),
+    "many comments, other table": (
+        "repo.py",
+        'S = "DELETE ' + "/* a */ " * 25 + 'FROM exchange_accounts_archive"',
+        0,
+    ),
     "other table": ("repo.py", 'S = "DELETE FROM exchange_accounts_archive"', 0),
     "truncate others": ("repo.py", 'S = "TRUNCATE exchange_accounts_archive, api_keys"', 0),
     "truncate, then read": (

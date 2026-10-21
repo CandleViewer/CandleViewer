@@ -27,8 +27,9 @@ grants cascading with it, and insert the id again: in another environment, which
   refused through the children: every foreign key into the table is ON UPDATE NO ACTION, every
   account has its Default profile (`trg_ea_default_profile`), and `cv_app` can neither re-point a
   profile or a key (the write-once guards, SQLSTATE 23514) nor delete one (0037, 0024: no DELETE),
-  so the UPDATE fails with SQLSTATE 23503 (the integration tests pin it). A foreign key declared
-  ON UPDATE CASCADE would re-open it; a write-once guard on `id` would close it directly.
+  so the UPDATE fails with SQLSTATE 23503 (the integration tests pin it). Only a way to detach or
+  remove the profile row would re-open it (a cascading key with the profile's write-once guard gone,
+  or a DELETE path on `account_profiles`); a write-once guard on `id` would close it directly.
 * Guarded like 0024 and 0032: each statement runs only where `pg_bootstrap.sql` created `cv_app`
   (a migration-only test cluster has none). The upgrade narrows one grant and widens none.
 * Residuals: the owner (`cv_owner`: migrations, and the alert purge when `CV_PG_OWNER_DSN` is set)
