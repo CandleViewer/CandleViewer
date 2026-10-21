@@ -24,6 +24,7 @@ from candleviewer.exchange.base.errors import (
     DuplicateClientIdError,
     ExchangeError,
     OmsErrorCode,
+    RateBudgetExceededError,
 )
 from candleviewer.exchange.base.models import (
     AccountRef,
@@ -119,9 +120,11 @@ type UnresolvedReason = Literal[
 class Unresolved:
     """No lookup settled the id: the caller moves the order to `unknown`, and only
     reconciliation resolves it (§8.2 S1). `not_found` is a duplicate-id rejection
-    neither lookup found; the others end `adopt_or_resend`, which sends nothing more. A
-    `resend_unconfirmed` re-send met by a duplicate means the exchange holds an order under
-    the id: reconciliation (E29-T06) binds it, after the full match of `Adopted`."""
+    neither lookup found; `lookup_failed` is a lookup that failed, after a duplicate-id
+    rejection or before a re-send (§8.3 rule 3); the others end `adopt_or_resend`, which
+    sends nothing more. A `resend_unconfirmed` re-send met by a duplicate means the exchange
+    holds an order under the id: reconciliation (E29-T06) binds it, after the full match of
+    `Adopted`."""
 
     order_link_id: OrderLinkId
     reason: UnresolvedReason = "not_found"
@@ -134,9 +137,14 @@ async def place_or_adopt(port: PlacementPort, request: PlaceOrderRequest) -> Pla
     """Send one create (rule 3): a duplicate-id rejection is adopted, not reported.
 
     The request goes out unchanged, so a retry sends the same `order_link_id`
-    and the same native stop-loss. Every other error propagates: a transport
-    failure after send (`AmbiguousResultError`) is the caller's `unknown`, never a
-    resend under a new id, and any later re-send goes through `adopt_or_resend`.
+    and the same native stop-loss. A lookup that fails after the duplicate is
+    `Unresolved(lookup_failed)`: the exchange already holds an order under the id,
+    so the failure (a refused rate token included, whose "nothing was sent" is the
+    lookup's, not the order's) is never the order's outcome (§8.3 rule 3); only
+    `AuthError` and `ClockDriftError` from it propagate, as they gate trading. Every
+    other error of the create propagates: a transport failure after send
+    (`AmbiguousResultError`) is the caller's `unknown`, never a resend under a new id,
+    and any later re-send goes through `adopt_or_resend`.
 
     The id must be one the generator produced (`OUR_ID`). An `ext-` key never
     goes on the wire (§8.3), and any other id would come back from the adapter
@@ -177,9 +185,11 @@ async def adopt_or_resend(
     The id found in open orders, then in history, is adopted. Only if neither shows
     it, and history still covers an id first sent at `created_at` (rule 6), is the
     request sent once more, unchanged (same id, same native stop). A failed lookup,
-    an expired id, or a re-send met by a duplicate or another ambiguous result is
-    `Unresolved`. Other errors of the re-send propagate, as in `place_or_adopt`, and
-    so do `AuthError` and `ClockDriftError` from a lookup: they gate trading.
+    an expired id, or a re-send met by a duplicate, another ambiguous result or a
+    refused rate token (`RateBudgetExceededError`: the re-send never left, so the
+    earlier create is as open as before, never "not placed") is `Unresolved`. Other
+    errors of the re-send propagate, as in `place_or_adopt`, and so do `AuthError` and
+    `ClockDriftError` from a lookup: they gate trading.
 
     For E29-T04: the only re-send after an ambiguous create (a restart re-driving the
     row, say), never from B1 `unknown` (INV-B1-e). The caller runs the synchronous gates
@@ -189,7 +199,9 @@ async def adopt_or_resend(
     order only on the SR-E29-03 full match (see `Adopted`), and audits as for
     `place_or_adopt`: the re-send intent ahead, its outcome after (C-2.9). One call is one
     attempt: a caller allowed several (a close retried with a lookup between, 24 §9.5.1)
-    calls it once per attempt.
+    calls it once per attempt. On live a history miss proves nothing past the venue's
+    24-hour and 7-day spans (24 §14.1), while `order_retention_days` is `None` there, so
+    the caller bounds a re-send by the row's age on live.
     """
     _require_our_id(request)
     link = request.order_link_id
@@ -207,7 +219,7 @@ async def adopt_or_resend(
         return _not_resent(link, "history_expired")
     try:
         ack = await port.place_order(request)
-    except (AmbiguousResultError, DuplicateClientIdError):
+    except (AmbiguousResultError, DuplicateClientIdError, RateBudgetExceededError):
         return _not_resent(link, "resend_unconfirmed")
     if ack.ok or ack.error_code != OmsErrorCode.DUPLICATE_CLIENT_ID:
         return Sent(ack)
@@ -220,11 +232,20 @@ def _require_our_id(request: PlaceOrderRequest) -> None:
 
 
 async def _adopt(port: PlacementPort, request: PlaceOrderRequest) -> Adopted | Unresolved:
-    found = await _find(port, request)
+    link = request.order_link_id
+    try:
+        found = await _find(port, request)
+    except (AuthError, ClockDriftError):
+        raise
+    except ExchangeError:
+        _log().warning(
+            "order_link_id_duplicate_unresolved", order_link_id=link, reason="lookup_failed"
+        )
+        return Unresolved(order_link_id=link, reason="lookup_failed")
     if found is not None:
         return _adopted(*found)
-    _log().warning("order_link_id_duplicate_unresolved", order_link_id=request.order_link_id)
-    return Unresolved(order_link_id=request.order_link_id)
+    _log().warning("order_link_id_duplicate_unresolved", order_link_id=link)
+    return Unresolved(order_link_id=link)
 
 
 async def _find(

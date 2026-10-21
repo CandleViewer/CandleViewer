@@ -81,7 +81,10 @@ def ext_key(exchange_order_id: str) -> OrderLinkId:
 
 
 def base62(value: int, width: int) -> str:
-    """`value` in base62, left-padded with `0` to `width` digits."""
+    """`value` in base62, left-padded with `0` to `width` digits. Total over the non-negative
+    values and widths it is meant for: anything else is refused (`ValueError`), never looped on."""
+    if value < 0 or width < 0:
+        raise ValueError("base62 takes a non-negative value and width")
     digits = ""
     while value:
         value, digit = divmod(value, 62)

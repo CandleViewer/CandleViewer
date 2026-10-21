@@ -509,8 +509,8 @@ CREATES: dict[str, Callable[[TradingPort, str], Awaitable[object]]] = {
 @pytest.mark.parametrize("create", sorted(CREATES))
 @pytest.mark.parametrize(
     "key",
-    [ext_key("x-1"), "linear-004", link(environment="live"), link(ACCOUNT_B)],
-    ids=["ext", "foreign", "other-environment", "other-account"],
+    [ext_key("x-1"), "linear-004", link(environment="live"), link(ACCOUNT_B), "cvp" + link()[3:]],
+    ids=["ext", "foreign", "other-environment", "other-account", "paper"],
 )
 async def test_both_refuse_a_create_without_a_generated_id_of_its_account(
     harness: Harness, create: str, key: str
