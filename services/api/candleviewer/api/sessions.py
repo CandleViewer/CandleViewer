@@ -128,6 +128,7 @@ from candleviewer.auth.metrics import (
     auth_audit_outcome_lost_total,
     auth_csrf_refused_total,
     auth_enrolment_refused_total,
+    auth_idle_locks_total,
     auth_session_fixation_attempts_total,
     auth_session_revoke_denied_total,
     normalise_outcome_action,
@@ -1038,6 +1039,7 @@ def make_session_router(
             if refresh_refused_as_locked(presented_record, now=now()):
                 # Contract "Idle lock" (#3331): before the write-ahead record, so nothing is
                 # audited, rotated or revoked, and the token refreshes after `POST /auth/unlock`.
+                auth_idle_locks_total.inc()  # as `require_active` counts its lock refusal
                 return idle_lock.idle_locked_problem(presented_record.idle_deadline())
         # C-2.9 write-ahead: the audit record is written before `refresh()`
         # rotates or revokes anything; if the sink is down we refuse (503)
@@ -1080,10 +1082,13 @@ def make_session_router(
             # The service already closed every family member's sockets (#2272).
             return _unauthorized("refresh_token_invalid")
         except UserDisabled:
-            # #2911: the user is disabled (or deleted); nothing was minted. The service revoked
-            # the session, counted and published it, and handed its record to the backstop's port
-            # (#3331). The intent record above is followed by the refusal, an outcome record like
-            # the reuse one: a lost record is counted and logged and the 401 stands.
+            # #2911: the user is disabled (or deleted); nothing was minted. Read with the row
+            # before the claim, the status made the service revoke the session as
+            # `user_disabled`, count and publish it, and hand its record to the backstop's port
+            # (#3331). Committed after the claim, the disable left the claimed row `rotated`,
+            # with no successor and nothing published. Either way the intent record above is
+            # followed by the refusal, an outcome record like the reuse one: a lost record is
+            # counted and logged and the 401 stands.
             await _audit_outcomes(
                 "auth.session_refreshed",
                 record=presented_record,
@@ -1097,6 +1102,7 @@ def make_session_router(
         except SessionIdleLocked as exc:
             # A lock that engaged after the check above: the intent record is written, and nothing
             # was rotated or revoked.
+            auth_idle_locks_total.inc()
             return idle_lock.idle_locked_problem(exc.idle_locked_at)
         except (SessionNotFound, SessionRevoked):
             return _unauthorized("refresh_token_invalid")

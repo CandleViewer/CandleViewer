@@ -957,6 +957,18 @@ by design. Any re-presentation revokes the family, and there is no server grace 
 coalesce its refreshes, so that one client does not present a token twice. Treat a hit from another
 address, or more than one, as a stolen token.
 
+An `auth.refresh_reuse_detected` row at `warning`, with `after_state.family_revoked` `false`, is a
+different event, and `auth_refresh_reuse_total` does not count it: a rotated-out `cv_refresh` cookie
+was presented outside `/auth/refresh`, for example to `GET /auth/session`. Nothing is revoked, the
+answer is the uniform `401`, and `auth_session_fixation_attempts_total{reason="rotated"}` counts it.
+Rows are written within a per-address and a global budget, and `reason="audit_throttled"` counts
+the attempts past them. The SPA's token client (#2712) writes such rows on purpose: after a refresh
+whose answer it lost, it asks `GET /auth/session` before it presents the possibly spent cookie, and
+it asks again on each page load until the user signs in again. A few of these rows from the user's
+own address, after that user's last `auth.session_refreshed` row, are expected. Rows from another
+address, or across many users' sessions, mean someone holds rotated-out cookies: treat them as
+stolen.
+
 A lone `auth_session_revoke_denied_total` hit is as likely a stale Sessions row (the caller's own
 session ended, for example by rotation) as a probe, and the series cannot tell them apart: look the
 audit row's `object_id` up in `sessions`; another user's row means a probe. A probe past the row
@@ -1140,9 +1152,9 @@ exception EX-07 (section 16.2), which ends when the journal-first lane (#3009) e
 While the sink refuses records, sign-out, session revocation and refresh answer `503` and change
 nothing (C-2.9): an access token lapses within 12 minutes and a longer refusal ends every session
 and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). A refresh of an
-idle-locked session is answered `401 session_idle_locked` before its record, sink or no sink, and
-changes nothing either (#3331); the unlock that follows writes its own record first, so it answers
-`503` until the sink recovers. The break-glass
+idle-locked session is answered `401 session_idle_locked` before its record, whether or not the
+sink accepts it, and changes nothing either (#3331); the unlock that follows writes its own record
+first, so it answers `503` until the sink recovers. The break-glass
 reset (section 3, E09-S11 #2119) is the Owner's emergency path: it runs only with cv-api stopped
 and journals to its own host file, never the sink. `AuthAuditOutcomeLost` is a
 `ticket`, muted 22:00-07:00 UTC by default (`CV_ALERT_QUIET_HOURS`) and active 15 minutes after the
