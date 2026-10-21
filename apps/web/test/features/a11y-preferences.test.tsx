@@ -10,6 +10,7 @@ import {
   resolveFlags,
   resolveTriState,
   shouldAnnounce,
+  type A11yPreferences,
   type EngineFlags,
 } from "../../src/features/a11y-preferences";
 
@@ -48,11 +49,21 @@ describe("pure model", () => {
     expect(resolveTriState("on", false)).toBe(true);
   });
   it("disable canvas animation clears every engine flag", () => {
-    const f = resolveFlags(
-      { ...DEFAULT_PREFERENCES, disable_canvas_animation: true },
-      { reducedMotion: false, highContrast: false },
-    );
+    const f = resolveFlags({ ...DEFAULT_PREFERENCES, disable_canvas_animation: true }, "safe");
     expect(f).toEqual({ animate: false, heatmapFade: false, inertia: false, flashOnTick: false });
+  });
+  it("the runtime's reduced motion clears every engine flag, and nothing else does", () => {
+    const calm = { animate: false, heatmapFade: false, inertia: false, flashOnTick: false };
+    const lively = { animate: true, heatmapFade: true, inertia: true, flashOnTick: true };
+    // disable_canvas_animation is off in both: the runtime's motion alone decides.
+    expect(resolveFlags(DEFAULT_PREFERENCES, "reduce")).toEqual(calm);
+    expect(resolveFlags(DEFAULT_PREFERENCES, "safe")).toEqual(lively);
+  });
+  it("takes the motion from the runtime alone, not from the raw reduced-motion preference", () => {
+    const lively = { animate: true, heatmapFade: true, inertia: true, flashOnTick: true };
+    // The runtime's word is final: a session override can leave it "safe" under a stored "on".
+    const stored: A11yPreferences = { ...DEFAULT_PREFERENCES, reduced_motion: "on" };
+    expect(resolveFlags(stored, "safe")).toEqual(lively);
   });
   it("rejects non-enum values", () => {
     expect(parsePreferences({ verbosity: "<x>", keyboard_only: "yes" })).toEqual(

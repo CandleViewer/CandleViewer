@@ -1,4 +1,5 @@
 /** Accessibility preference model (E47-S07, SCR-117). Closed enums only; presentation-only. */
+import type { MotionName } from "@candleviewer/ui";
 
 export type TriState = "system" | "on" | "off";
 export type AnnouncePrices = "off" | "significant" | "always";
@@ -43,8 +44,19 @@ export function resolveTriState(value: TriState, system: boolean): boolean {
   return value === "system" ? system : value === "on";
 }
 
-export function resolveFlags(p: A11yPreferences, media: SystemMedia): EngineFlags {
-  const calm = resolveTriState(p.reduced_motion, media.reducedMotion) || p.disable_canvas_animation;
+/**
+ * The engine flags. One decision serves the DOM and the canvas: `motion` is the theme runtime's resolved
+ * motion (`ThemeSnapshot.motion`, the value written to `data-motion`), so the OS query, the tri-state
+ * `accessibility.reduced_motion`, its boolean twin `appearance.reduce_motion` and the session override of
+ * 05-accessibility-standard.md §3.2 all reach the canvas through the one rule that reduces the DOM, and
+ * none of them is re-derived here (#3436). `disable_canvas_animation` is the one input that is not the
+ * runtime's: it can only calm the canvas, never un-calm one the runtime reduced.
+ */
+export function resolveFlags(
+  p: Pick<A11yPreferences, "disable_canvas_animation">,
+  motion: MotionName,
+): EngineFlags {
+  const calm = motion === "reduce" || p.disable_canvas_animation;
   return { animate: !calm, heatmapFade: !calm, inertia: !calm, flashOnTick: !calm };
 }
 
