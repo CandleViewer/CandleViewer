@@ -1143,6 +1143,7 @@ Drag preview                Drop zones
 - **Components:** CMP-011 Tag / Chip, CMP-049 Table, CMP-055 FilterBar, CMP-056 ColumnPicker, CMP-112 BigTradeBubble, CMP-227 EstimatedBadge.
 - **Stories:** US-BIG-001, US-BIG-002, US-BIG-003, US-BIG-004, US-BIG-006, US-MKT-006.
 - **Analytics/audit:** `tape.filter_changed` (size/side/aggregation), `tape.paused`, `tape.resumed`, `tape.print_clicked` (analytics).
+- **UX research (E22-D01):** [e22-tape-reading.md](../design/research/e22-tape-reading.md) — heuristic research, every default PROPOSED pending the owner's sessions: column set and order (Time · Price · Size · Notional · Side), compact density, reconstructed rows with a big-only preset, soft/hard pause, size tiers, area-linear bubble scaling (log as the switch) with an above-cap label, notional threshold per symbol class, the >20 % warning; `role="log"` / `aria-live="off"` grounded; contract gaps, contradictions and their owning E22 tickets listed in its §10.
 - **Design sign-off acceptance checklist:** [ ] row layout (time, price, size, side, aggressor) drawn at compact and comfortable density [ ] big-trade highlighting by size tier uses weight/glyph as well as colour [ ] bubble overlay variant drawn with its size-to-notional legend [ ] pause-on-hover and explicit pause control drawn [ ] filter chips (min notional, side, aggregated-vs-raw) [ ] stale/disconnected state
 
 ### SCR-054 — OI / funding / liquidations panel
