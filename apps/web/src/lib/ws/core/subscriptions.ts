@@ -62,6 +62,7 @@ function frozen<T>(value: T): T {
   ) as T;
 }
 const NO_OPTIONS: Readonly<Record<string, unknown>> = frozen({});
+/** A structured payload's own `stale` (`book` declares one, 14.1): the same flag as `meta.stale`, which it agrees with (7.2). A binary body has no such field. */
 const isStale = (body: DataBody): boolean =>
   body.e === "j" && isRecord(body.p) && body.p["stale"] === true;
 
@@ -183,6 +184,7 @@ interface Rec {
   effective: Readonly<Record<string, unknown>>;
   /** Ended by the server: nothing more is delivered to it, and no control frame reaches it. */
   revoked: boolean;
+  /** The baseline's `stale` (7.2, C21), held until the next complete `snap` decides it again: a `d` neither sets nor clears it. */
   stale: boolean;
   /** Chunk sets dropped for size since the last complete `snap`: it comes back the same, so a second in a row ends the asking. */
   overflows: number;
@@ -322,7 +324,12 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
       return;
     }
     seq.baseline(rec.key, result.seq);
-    rec.stale = result.bodies.some(isStale);
+    // 7.2, C21: `stale` is the snapshot's `meta.stale`, in either encoding (a CVWB body has no field for
+    // it); a chunked set is applied with its last chunk's frame, and every chunk repeats it (3.6). A
+    // structured payload may also declare its own (`book`, 14.1), and the two agree. Absent reads as
+    // `false`. It holds from this baseline until the stream's next `snap`: a `d` never carries it and
+    // never clears it, so `applyDelta` does not read it.
+    rec.stale = frame.meta?.stale === true || result.bodies.some(isStale);
     rec.overdue = false;
     rec.replay = replay;
     rec.voided = false;

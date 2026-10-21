@@ -13,7 +13,15 @@ import {
   type ControlType,
   type DataFrame,
 } from "../../../src/lib/ws/protocol/codec";
-import { b64, bars, bookDelta, bookSnapshot, FLAG_PARTIAL, FLAG_REPLAY } from "./support/cvwb";
+import {
+  b64,
+  bars,
+  bookDelta,
+  bookSnapshot,
+  cvwb,
+  FLAG_PARTIAL,
+  FLAG_REPLAY,
+} from "./support/cvwb";
 
 const BOOK = "book.BTCUSDT.50";
 const BARS = "bars.BTCUSDT.time.1";
@@ -122,6 +130,80 @@ describe("streams", () => {
     const whole = chunks.reduce((sum, chunk) => sum + chunk.size, 0);
     expect(take().map((f) => (f.kind === "reset" ? -1 : f.size))).toEqual([whole, next.size]);
     expect(next.size).toBeGreaterThan(wire({ rows: [1, 2, 3] }).length); // the whole frame, not its payload
+  });
+});
+
+// 7.2: `stale` is the snapshot's flag, and it travels in `meta` because a binary payload has no field
+// for it; every chunk of a set repeats it (3.6). The stream holds it from the `snap` that set its
+// baseline until its next `snap`: a `d` never carries it and never clears it.
+describe("snapshot staleness is meta.stale (7.2, C21)", () => {
+  const HEADER_BYTES = 24; // the CVWB common header (support/cvwb.ts); the one bar's record follows it
+  /** A kind-4 body of one bar; `partial` is the header bit of a chunk that has more after it (3.6). */
+  const barsBody = (partial = false) =>
+    binary(
+      cvwb(4, 2, 1, Array.from(bars(true).subarray(HEADER_BYTES)), partial ? FLAG_PARTIAL : 0),
+    );
+  const STALE = { reason: "initial", stale: true };
+  /** A binary bars `snap`, as a bars subscription's are (3.4): a chunk with `s: null` has the `partial` bit (3.6). */
+  const barsSnap = (s: number | null, meta: object, over: object = {}) =>
+    snap(s, { ch: BARS, meta, ...barsBody(s === null), ...over });
+  const barsDelta = (s: number, meta: object = { include_delta: true }) =>
+    delta(s, { ch: BARS, meta, ...barsBody() });
+
+  it("shows a structured snapshot's meta.stale as the stale status, though its payload says nothing", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec());
+    registry.onData(snap(100, { meta: STALE }), 1); // `p` is `{}`: the flag is the envelope's alone
+    expect(handle.status).toBe("stale");
+  });
+
+  it("shows a binary bars snapshot's meta.stale as the stale status: a CVWB body has no field for it", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec({ ch: BARS }));
+    registry.onData(barsSnap(1, STALE), 1);
+    expect(handle.status).toBe("stale");
+  });
+
+  it("shows it once a chunked set is complete, read from the frame that completes it: every chunk repeats it", () => {
+    const { registry, take } = setup();
+    const handle = registry.consume(spec({ ch: BARS }));
+    registry.onData(barsSnap(null, STALE, { id: "set-1" }), 1);
+    registry.onData(barsSnap(null, STALE, { id: "set-1" }), 1);
+    expect([handle.status, take(BARS)]).toEqual(["pending", []]); // an incomplete set applies nothing
+    registry.onData(barsSnap(7, STALE, { id: "set-1" }), 1);
+    expect([handle.status, kinds(take(BARS))]).toEqual(["stale", ["snap:7"]]);
+  });
+
+  it("holds it across deltas: a d does not clear it, whether or not it says stale itself", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec({ ch: BARS }));
+    registry.onData(barsSnap(1, STALE), 1);
+    registry.onData(barsDelta(2), 1);
+    expect(handle.status).toBe("stale");
+    // A delta never carries `stale` (7.2); one that says it is not read for it.
+    registry.onData(barsDelta(3, { include_delta: true, stale: false }), 1);
+    expect(handle.status).toBe("stale");
+  });
+
+  it("a d does not set it either: a stream whose snapshot did not say stale stays live", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec({ ch: BARS }));
+    registry.onData(barsSnap(1, { reason: "initial" }), 1);
+    registry.onData(barsDelta(2, { include_delta: true, stale: true }), 1);
+    expect(handle.status).toBe("live");
+  });
+
+  it("is decided again by each snapshot: one without the key clears it, one with it sets it", () => {
+    const { registry } = setup();
+    const handle = registry.consume(spec({ ch: BARS }));
+    registry.onData(barsSnap(1, STALE), 1);
+    expect(handle.status).toBe("stale");
+    registry.onData(barsSnap(5, { reason: "client_resync" }), 1); // an absent stale is false
+    expect(handle.status).toBe("live");
+    registry.onData(barsSnap(9, { reason: "upstream_desync", stale: true }), 1);
+    expect(handle.status).toBe("stale");
+    registry.onData(barsSnap(12, { reason: "client_resync", stale: false }), 1);
+    expect(handle.status).toBe("live");
   });
 });
 
