@@ -10,6 +10,7 @@ Never selects `password_hash` or any SECRET-classified column.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 import sqlalchemy as sa
@@ -43,6 +44,12 @@ _PERMS_SQL = sa.text("""
     WHERE u.id = CAST(:id AS uuid) AND u.status = 'active' AND u.deleted_at IS NULL
     ORDER BY p.code
     """)
+# #3349 (E42-X01 UL-F8, residual O7): which of these users may have alerts evaluated and delivered.
+# The permission readers' test (`_PERMS_SQL`, `scope_sqlalchemy._PERMS`), and ids only.
+_ACTIVE_USERS_SQL = sa.text(
+    "SELECT u.id::text FROM users u "
+    "WHERE u.id = ANY(CAST(:ids AS uuid[])) AND u.status = 'active' AND u.deleted_at IS NULL"
+)
 # `SessionInfo.account_scope`: the grant predicate of `Me.accounts` below and of
 # `auth.scopes.account_scope` (C-12.4): a view grant that is not frozen. `Me.accounts` also joins
 # the live account; this statement, as before, does not. The `/rules` and `/alerts` checks read it.
@@ -118,6 +125,16 @@ class SqlAlchemyIdentityProvider:
             "permissions": [str(r[0]) for r in perms],
             "account_scope": [str(r[0]) for r in scope],
         }
+
+    async def active_users(self, user_ids: Collection[str]) -> frozenset[str]:
+        """The ids among *user_ids* of users who are `active` and not deleted: the alerts module's
+        `OwnerDirectory` (#3349). One read by key, ids only. An id that is not a UUID raises (the
+        cast), which `OwnerGate` treats as an unreadable status, never as an active one."""
+        if not user_ids:
+            return frozenset()
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_ACTIVE_USERS_SQL, {"ids": sorted(user_ids)})).all()
+        return frozenset(str(r[0]) for r in rows)
 
     async def accounts(self, user_id: str) -> list[dict[str, Any]]:
         """The accounts `user_id` may read or trade, oldest first (`Me.accounts`).

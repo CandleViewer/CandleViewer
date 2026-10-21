@@ -9,7 +9,7 @@ the single firing transaction (21-database-schema.md §3.10.4): the
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -125,6 +125,15 @@ class WakingFiringStore:
             except Exception as exc:  # the next poll delivers them
                 _log().warning("alerts_dispatcher_wake_failed", error=type(exc).__name__)
         return ids
+
+
+class OwnerDirectory(Protocol):
+    """Which alert owners may still be served (#3349): the identity read path, ids only."""
+
+    async def active_users(self, user_ids: Collection[str]) -> frozenset[str]:
+        """The members of *user_ids* whose user is `active` and not deleted; raises when the store
+        cannot be read (`OwnerGate` fails closed)."""
+        ...
 
 
 class AuditSink(Protocol):

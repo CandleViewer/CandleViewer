@@ -16,6 +16,7 @@ from candleviewer.alerts.dispatcher import (
     default_adapters,
     idempotency_key,
 )
+from tests.alerts._owners_env import allow
 
 #: Key-shaped (18-36 alnum) value built at runtime so no secret-shaped literal is committed.
 _FAKE_TOKEN = "".join(chr(65 + i % 26) for i in range(24))
@@ -38,8 +39,12 @@ async def test_two_concurrent_pollers_send_each_row_exactly_once() -> None:
     store = MemStore(clock)
     ids = store.fire(["email"] * 20)
     relay = SlowRelay()
-    d1 = AlertDispatcher(store, default_adapters(relay), worker="a", now=clock, batch=5)
-    d2 = AlertDispatcher(store, default_adapters(relay), worker="b", now=clock, batch=5)
+    d1 = AlertDispatcher(
+        store, default_adapters(relay), worker="a", now=clock, batch=5, owners=allow()
+    )
+    d2 = AlertDispatcher(
+        store, default_adapters(relay), worker="b", now=clock, batch=5, owners=allow()
+    )
     for _ in range(6):
         await asyncio.gather(d1.run_once(), d2.run_once())
     assert sorted(relay.keys) == sorted(idempotency_key(i) for i in ids)
@@ -65,7 +70,7 @@ async def test_crash_after_final_failure_then_restart_one_notice_exactly_once() 
     await d.run_once()  # attempt 2 fails terminally, settle never commits
     assert store.rows[1].status == "queued"
     store.settle_failed = real  # type: ignore[method-assign]  # "restart"
-    d2 = AlertDispatcher(store, default_adapters(relay), worker="w2", now=clock)
+    d2 = AlertDispatcher(store, default_adapters(relay), worker="w2", now=clock, owners=allow())
     clock.advance(61)  # dead worker's lease expires
     for _ in range(3):
         await d2.run_once()
@@ -129,7 +134,7 @@ async def test_stop_cancels_after_grace_and_row_is_replayed_later() -> None:
             started.set()
             await asyncio.Event().wait()
 
-    d = AlertDispatcher(store, default_adapters(Hang()), worker="w", now=clock)
+    d = AlertDispatcher(store, default_adapters(Hang()), worker="w", now=clock, owners=allow())
     d.start()
     await started.wait()
     await d.stop(grace_s=0.01)

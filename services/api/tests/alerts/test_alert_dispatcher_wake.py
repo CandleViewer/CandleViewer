@@ -10,6 +10,7 @@ from typing import Any
 from _dispatch_env import Clock, MemStore
 
 from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
+from tests.alerts._owners_env import allow
 
 
 async def test_a_firing_that_commits_during_a_poll_is_polled_again_at_once() -> None:
@@ -34,7 +35,7 @@ async def test_a_firing_that_commits_during_a_poll_is_polled_again_at_once() -> 
     store.claim = claim  # type: ignore[method-assign]  # fault injection
     d = AlertDispatcher(
         store, default_adapters(None), worker="w", now=clock, rng=lambda: 1.0,
-        on_change=on_change, interval_s=3600,
+        on_change=on_change, interval_s=3600, owners=allow(),
     )  # fmt: skip
     d.start()
     try:

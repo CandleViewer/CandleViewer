@@ -15,6 +15,7 @@ from candleviewer.alerts.dispatcher import (
     check_transition,
     default_adapters,
 )
+from tests.alerts._owners_env import allow
 
 
 class FailingRelay:
@@ -54,7 +55,7 @@ class Metrics:
 
 def _disp(store: MemStore, clock: Clock, relay: Any = None, **kw: Any) -> AlertDispatcher:
     return AlertDispatcher(store, default_adapters(relay), worker="w1", now=clock,
-                           rng=lambda: 1.0, **kw)  # fmt: skip
+                           rng=lambda: 1.0, owners=allow(), **kw)  # fmt: skip
 
 
 async def _drain(d: AlertDispatcher, clock: Clock, rounds: int = 20) -> None:

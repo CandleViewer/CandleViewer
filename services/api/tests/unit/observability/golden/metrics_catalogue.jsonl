@@ -85,6 +85,7 @@
 ["cv_alert_eval_latency_seconds", "histogram", [], "planned", "E40"]
 ["cv_alert_eval_queue_depth", "gauge", [], "planned", "E40"]
 ["cv_alert_fires_total", "counter", ["trigger_mode"], "planned", "E40"]
+["cv_alert_owner_skipped_total", "counter", ["stage", "reason"], "planned", "E40"]
 ["cv_alert_subscriptions", "gauge", [], "planned", "E40"]
 ["cv_alert_suppressed_total", "counter", ["reason"], "planned", "E40"]
 ["cv_alerts_armed", "gauge", [], "planned", "E40"]

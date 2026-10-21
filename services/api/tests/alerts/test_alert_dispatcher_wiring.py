@@ -9,11 +9,14 @@ from _dispatch_env import Clock, MemStore
 
 from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
 from candleviewer.alerts.service import AlertsService
+from tests.alerts._owners_env import allow
 
 
 async def test_service_starts_dispatcher_before_evaluator_and_stops_it() -> None:
     clock = Clock()
-    disp = AlertDispatcher(MemStore(clock), default_adapters(None), worker="w", now=clock)
+    disp = AlertDispatcher(
+        MemStore(clock), default_adapters(None), worker="w", now=clock, owners=allow()
+    )
     seen: list[bool] = []
 
     async def factory() -> Any:

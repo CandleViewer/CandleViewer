@@ -14,6 +14,7 @@ from candleviewer.alerts.gating import StormSuppressor
 from candleviewer.rules.evaluator import MetricValue, metric_key
 from candleviewer.rules.ir.models import MetricRef
 from candleviewer.rules.vocabulary import default_registry
+from tests.alerts._owners_env import allow
 
 COMPILER = AlertCompiler(default_registry())
 T0 = 1_790_000_000_000  # ms, exchange time
@@ -154,5 +155,6 @@ class Metrics:
 def make(*rows: Row, **kw: Any) -> tuple[AlertEvaluator, FakeStore, Source, Clock, Metrics]:
     store, src, clock, m = FakeStore(*rows), Source(), Clock(), Metrics()
     kw.setdefault("storm", StormSuppressor())
+    kw.setdefault("owners", allow())
     ev = AlertEvaluator(store, src, metrics=AlertMetrics(m), clock=clock, **kw)
     return ev, store, src, clock, m

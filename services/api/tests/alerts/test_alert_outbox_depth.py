@@ -20,6 +20,7 @@ from candleviewer.alerts.dispatcher import (
     default_adapters,
 )
 from candleviewer.observability.metrics import Metrics as Facade
+from tests.alerts._owners_env import allow
 
 _GAUGE = "cv_outbox_depth"
 _TOPIC = ("alert.deliver",)
@@ -227,7 +228,7 @@ async def test_the_app_sink_serves_the_gauge_the_dispatcher_sets() -> None:
     facade, clock = Facade("dev"), Clock()
     store = DepthStore(clock)
     store.fire(["in_app", "email", "email"])
-    d = AlertDispatcher(store, default_adapters(None), worker="w", now=clock,
+    d = AlertDispatcher(store, default_adapters(None), worker="w", now=clock, owners=allow(),
                         metric=_alert_delivery_sink(facade))  # fmt: skip
     await d._sample_depth()
     assert (
