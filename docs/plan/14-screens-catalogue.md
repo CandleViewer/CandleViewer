@@ -1360,6 +1360,7 @@ Drag preview                Drop zones
 - **Audit:** `position.closed`, `position.reversed`, `order.cancelled`, `grid.exported`.
 - **Components:** CMP-049 Table, CMP-055 FilterBar, CMP-056 ColumnPicker, CMP-057 SplitButton, CMP-105 AccountMultiSelect, CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge, CMP-123 FlattenAllButton, CMP-129 PositionModeToggle.
 - **Stories:** US-POS-001, US-POS-002, US-POS-003, US-POS-006, US-POS-008, US-POS-009, US-ORD-010, US-POS-007.
+- **UX research:** [E29-D01.md](../design/E29/E29-D01.md) (E29-D01; heuristic, pending owner approval; proposes amendment AM-1, position mode in the account header, AM-2, `Ctrl+Delete` in place of the reserved `Ctrl+W` chords, and AM-5, the liquidation-proximity tiers; the D1–D14 decision table is appended here once approved).
 - **Design sign-off acceptance checklist:** [ ] positions, working orders, fills and algos tabs drawn [ ] full column set with units and side as text [ ] inline SL/TP edit and its confirmation drawn [ ] close-position (market/limit/%) controls with confirmation [ ] account filter and aggregate-vs-split view [ ] DEMO/LIVE badge per row when mixed environments are visible [ ] empty, loading, stale and 'position state unknown (feed down)' states drawn [ ] every mutating control confirmed to emit an audit event
 
 ### SCR-064 — Position SL/TP editor (modal)
@@ -1607,6 +1608,7 @@ Drag preview                Drop zones
 - **Stories:** US-POS-005, US-POS-009.
 - **Performance:** Fills stream on `executions`; the list is virtualised and coalesced to 5 Hz; a 1,000-fill session renders without exceeding 4 ms scripting per frame.
 - **Analytics/audit:** `execution.detail_viewed`, `execution.exported` (analytics); the fills themselves are immutable exchange records stored server-side and referenced from the audit trail.
+- **UX research:** [E29-D01.md](../design/E29/E29-D01.md) (E29-D01; heuristic, pending owner approval; fills typed by execution type and grouped by order, with millisecond UTC times and provisional fees, D14; proposes amendment AM-4, a Type column).
 - **Design sign-off acceptance checklist:** [ ] per-fill rows (time, price, qty, fee, fee currency, liquidity flag, order id, exec id) drawn [ ] aggregation to an average price with the maker/taker split [ ] slippage vs intended price shown where an intent exists [ ] fan-out grouping by account [ ] CSV export [ ] empty state
 
 ### SCR-079 — Account detail drawer (trading-side)
