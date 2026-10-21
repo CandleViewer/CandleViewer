@@ -828,16 +828,22 @@ def test_no_role_may_rewrite_profile_history(bootstrapped_dsn: str) -> None:
         assert not can("cv_app", "account_profiles", "DELETE")
 
 
-def test_the_app_role_removes_a_profile_only_with_its_account(bootstrapped_dsn: str) -> None:
+def test_a_profile_leaves_only_with_an_account_the_owner_deletes(bootstrapped_dsn: str) -> None:
     """A profile leaves by soft delete: `cv_app` cannot hard-delete one, which would leave no
-    revision (SEC-D01). Deleting the account still cascades, as the RI action runs as the table's
-    owner, and the history stays."""
+    revision (SEC-D01), nor the account it belongs to (0044, #2758). The owner's delete of the
+    account, the purge path, still cascades, as the RI action runs as the table's owner, and the
+    history stays."""
     app = re.sub(r"://[^@]+@", "://cv_app:cv_app_test_pw@", bootstrapped_dsn)
+    owner = re.sub(r"://[^@]+@", "://cv_owner:cv_owner_test_pw@", bootstrapped_dsn)
     with _conn(app) as c:
         account = _account(c)
         profile = _default_of(c, account)
         with pytest.raises(pgerr.InsufficientPrivilege):
             c.execute("DELETE FROM account_profiles WHERE id = %s", (profile,))
+        with pytest.raises(pgerr.InsufficientPrivilege):
+            c.execute("DELETE FROM exchange_accounts WHERE id = %s", (account,))
+        assert _one(c, "SELECT count(*) FROM account_profiles WHERE id = %s", profile) == 1
+    with _conn(owner) as c:
         c.execute("DELETE FROM exchange_accounts WHERE id = %s", (account,))
         assert _one(c, "SELECT count(*) FROM account_profiles WHERE id = %s", profile) == 0
         assert (
