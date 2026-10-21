@@ -7,15 +7,21 @@ Standalone, offline, stdlib only. Per fixture: prints, span, prints per second, 
 `OVERFLAG_MIN_SAMPLES` 20 are quoted from `orderflow/limits.py`, not imported, so this runs
 without the backend). Then the worked examples the memo quotes: prints per 60 Hz frame at
 50 / 500 / 2 000 prints per second against the rows a 600 px panel holds and the reading budget;
-the bubble radius under linear, sqrt and log scaling over the range that is actually drawn (the
-class's big threshold, where r_min sits, to its whale threshold at 4x, where r_max sits); and the
-WCAG contrast of every tape colour pair over the real token JSON, layered per `themes.json`
-(dark, light, high-contrast) with the formula of `contrast_check.py`. Provenance comes from
-metadata only: the corpus `manifest.json` `source` ("documented-shape" = assembled,
-"capture_fixture.py" = recorded), the conformance `MANIFEST.toml` (`synthetic = true`) and the
-big-trade golden README's `Source:` line, whose named corpus file's manifest entry decides (the
-README's own word is printed beside it). No assembled or synthetic number is market evidence;
-the rates 50 / 500 / 2 000 are US-BIG-001's, not measured.
+the row dwell with the two tape mitigations on (a "big only" preset at the dense tape's flagged
+fraction, and reconstructed rows at their best case of one row per side per 250 ms window); the
+bubble radius under linear, area-linear ("sqrt" in CMP-112 terms: r squared linear in notional
+between the anchors) and log scaling over the range that is actually drawn (the class's big
+threshold, where r_min sits, to its tier-2 threshold at 4x, where r_max sits), the area one
+threshold step adds, and the share of prints above the cap; the WCAG contrast of every tape
+colour pair over the real token JSON, layered per `themes.json` (dark, light, high-contrast)
+with the formula of `contrast_check.py`; and the same tape colours under the greyscale and
+deuteranopia simulation of `cvd_sim.py` (its Rec. 601 weights and Machado 2009 matrix, quoted
+so this stays stdlib), with the contrast each rendering leaves. Provenance comes from metadata
+only: the corpus `manifest.json` `source` ("documented-shape" = assembled, "capture_fixture.py"
+= recorded, anything else = unknown), the conformance `MANIFEST.toml` (`synthetic = true`) and
+the big-trade golden README's `Source:` line, whose named corpus file's manifest entry decides
+(the README's own word is printed beside it). No assembled or synthetic number is market
+evidence; the rates 50 / 500 / 2 000 are US-BIG-001's, not measured.
 
 Usage: python3 -I docs/design/_tools/e22_d01_tape_stats.py          (Markdown)
        python3 -I docs/design/_tools/e22_d01_tape_stats.py --json   (the boards' numbers)
@@ -40,13 +46,15 @@ GOLDEN = ROOT / "packages/fixtures/golden/bigtrade"
 BANK = ROOT / "packages/fixtures/golden/bars/conformance"
 TOKENS = ROOT / "packages/ui/tokens"
 OVERFLAG_FRACTION, OVERFLAG_MIN_SAMPLES = Decimal("0.20"), 20  # orderflow/limits.py (quoted)
-THRESHOLDS_USDT = (250_000, 100_000, 30_000, 10_000)  # 250 000 = the shipped default
+THRESHOLDS_USDT = (1_000_000, 250_000, 100_000, 30_000, 10_000)  # 250 000 = shipped; 1 M = the cap
 RATES = (50, 500, 2000)  # prints/s from US-BIG-001 and the ticket, not from the fixtures
 HZ, PANEL_PX, ROW_PX = 60, 600, {"compact": 24, "comfortable": 32}  # 16 §3 row heights
-WPM, TOKENS_FULL = 238, 5  # Brysbaert 2019; a full row = Time, Side, Size, Price, Notional
+WPM, TOKENS_FULL = 238, 5  # Brysbaert 2019; a full row = Time, Price, Size, Notional, Side
 READ_ROWS_PER_S = {"full": round(WPM / 60 / TOKENS_FULL, 1), "scan": 4.0}  # scan = heuristic
-R_MIN_PX, R_MAX_PX, WHALE_MULTIPLE = 3.0, 24.0, 4  # PROPOSED: r_min at big, r_max at whale (4x)
-MULTIPLES = (1, 1.5, 2, 3, 4)  # of the class's big threshold; 4x = the whale threshold = the cap
+R_MIN_PX, R_MAX_PX, WHALE_MULTIPLE = 3.0, 24.0, 4  # PROPOSED: r_min at big, r_max at tier 2 (4x)
+MULTIPLES = (1, 1.5, 2, 3, 4)  # of the class's big threshold; 4x = the tier-2 threshold = the cap
+RECON_WINDOW_S, RECON_SIDES = 0.25, 2  # US-BIG-004 250 ms / 1 tick; best case one row per side
+DENSE_TAPE = "btcusdt-2026-09-01.jsonl.gz"  # the synthetic dense tape the worked examples use
 CLASS_BIG = {"majors": 250_000, "mid-caps": 50_000}  # shipped value; memo 3.6 fallback (heuristic)
 NEWLIST_TAPE = "newlist-2026-09-04.jsonl.gz"  # the new-listing seed = its p99 on a 1-2-5 step
 CR5 = {  # E11-D02 §11.4 CR-5 `color.text.buy` / `color.text.sell`, requested, not yet a token (G7)
@@ -55,6 +63,32 @@ CR5 = {  # E11-D02 §11.4 CR-5 `color.text.buy` / `color.text.sell`, requested, 
     "high-contrast": ("palette.green.300", "palette.red.300"),
 }
 TEXT, NON_TEXT, DECOR = 4.5, 3.0, 0.0  # WCAG 1.4.3 text, 1.4.11 non-text, not gated
+DEUTERANOPIA = (  # cvd_sim.py: Machado, Oliveira & Fernandes 2009 sRGB-space matrix (quoted)
+    (0.367322, 0.860646, -0.227968),
+    (0.280085, 0.672501, 0.047413),
+    (-0.011820, 0.042940, 0.968881),
+)
+LUMA_601 = (0.299, 0.587, 0.114)  # cvd_sim.py: Rec. 601 greyscale weights (quoted)
+CVD_SWATCHES = (  # the colours the rows and bubbles carry (memo F4, F12, F16), simulated
+    "color.buy.default",
+    "color.sell.default",
+    "color.buy.subtle",
+    "color.sell.subtle",
+    "color.text.primary",
+    "color.text.tertiary",
+    "color.surface.raised",
+    "color.surface.canvas",
+)
+CVD_CHECKS = (  # (fg, bg, bar, use): bar 0 = a buy-vs-sell separation, informational
+    ("color.buy.default", "color.sell.default", DECOR, "buy hue vs sell hue (glyph, accent)"),
+    ("color.buy.subtle", "color.sell.subtle", DECOR, "buy fill vs sell fill (tier-2 row)"),
+    ("color.buy.default", "color.surface.raised", NON_TEXT, "buy glyph + accent on the row"),
+    ("color.sell.default", "color.surface.raised", NON_TEXT, "sell glyph + accent on the row"),
+    ("color.buy.default", "color.surface.canvas", NON_TEXT, "buy bubble disc on the chart"),
+    ("color.sell.default", "color.surface.canvas", NON_TEXT, "sell bubble ring on the chart"),
+    ("color.text.primary", "color.buy.subtle", TEXT, "row text on the tier-2 buy fill"),
+    ("color.text.primary", "color.sell.subtle", TEXT, "row text on the tier-2 sell fill"),
+)
 PAIRS = (  # (fg, bg, bar, use) — every colour pair the tape design (memo F4, F12, F15, F16) names
     ("color.text.primary", "color.surface.raised", TEXT, "row words and numerics, tiers 0-1"),
     ("color.text.primary", "color.buy.subtle", TEXT, "row text on the tier-2 buy fill"),
@@ -114,7 +148,10 @@ def step125(v: Decimal) -> int:
 
 
 def label(source: str) -> str:
-    return "recorded" if source.startswith("capture_fixture") else "assembled"
+    """Only the two documented manifest sources get a word; anything else stays "unknown"."""
+    if source.startswith("capture_fixture"):
+        return "recorded"
+    return "assembled" if source.startswith("documented-shape") else "unknown"
 
 
 def provenance() -> list[tuple[Path, str, str]]:
@@ -167,31 +204,47 @@ def file_stats(path: Path, prov: str, note: str) -> dict:
 
 
 def radius(k: float, mode: str) -> float:
-    """PROPOSED: r_min at 1x the class's big threshold, r_max at the whale (4x), clamped above.
+    """PROPOSED: r_min at 1x the class's big threshold, r_max at tier 2 (4x), clamped above.
 
-    With the cap at 4x big for every class, the radius depends only on the multiple k."""
+    With the cap at 4x big for every class, the radius depends only on the multiple k.
+    "sqrt" is the area-linear law: r = sqrt(r_min^2 + (r_max^2 - r_min^2) * x), so between the
+    anchors equal notional steps add equal area (r2's 3 + 21 * sqrt(x) did not: 4x notional gave
+    64x the area and the legend's "area proportional to notional" was false)."""
     x = min(1.0, max(0.0, (k - 1) / (WHALE_MULTIPLE - 1)))
     if mode == "log":
         x = min(1.0, math.log(max(k, 1.0)) / math.log(WHALE_MULTIPLE))
     elif mode == "sqrt":
-        x = math.sqrt(x)
+        return round(math.sqrt(R_MIN_PX**2 + x * (R_MAX_PX**2 - R_MIN_PX**2)), 1)
     return round(R_MIN_PX + x * (R_MAX_PX - R_MIN_PX), 1)
 
 
 def worked(files: list[dict]) -> dict:
     rows = {k: PANEL_PX // v for k, v in ROW_PX.items()}
+    dense = next(f for f in files if f["file"].endswith(DENSE_TAPE))
+    big_frac = float(dense["flagged"][str(CLASS_BIG["majors"])]["fraction"])  # 250k, shape only
+    recon_rows = RECON_SIDES / RECON_WINDOW_S  # best case: every print merges, one row per side
     rates = {
         str(r): {
             "prints_per_frame": round(r / HZ, 2),
             "row_dwell_ms": {k: round(1000 * v / r, 1) for k, v in rows.items()},
             "rate_over_reading": {k: round(r / v, 1) for k, v in READ_ROWS_PER_S.items()},
+            "mitigations": {  # T2 cells with a mitigation on (memo 4 row 10): rows/s and dwell
+                "big_only": {
+                    "rows_per_s": round(r * big_frac, 2),
+                    "dwell_s": {k: round(v / (r * big_frac), 1) for k, v in rows.items()},
+                },
+                "reconstructed_best_case": {
+                    "rows_per_s": recon_rows,
+                    "dwell_s": {k: round(v / recon_rows, 1) for k, v in rows.items()},
+                },
+            },
         }
         for r in RATES
     }
     newlist = next(f for f in files if f["file"].endswith(NEWLIST_TAPE))
     big = CLASS_BIG | {"new listing (seed)": step125(Decimal(newlist["notional_usdt"]["p99"]))}
     classes = {
-        k: {"big": v, "whale": v * WHALE_MULTIPLE, "at": {str(m): round(v * m) for m in MULTIPLES}}
+        k: {"big": v, "tier2": v * WHALE_MULTIPLE, "at": {str(m): round(v * m) for m in MULTIPLES}}
         for k, v in big.items()
     }
     radii = {str(m): {s: radius(m, s) for s in ("linear", "sqrt", "log")} for m in MULTIPLES}
@@ -199,15 +252,25 @@ def worked(files: list[dict]) -> dict:
         a + "-" + b: round(max(abs(v[a] - v[b]) for v in radii.values()), 1)
         for a, b in (("sqrt", "log"), ("linear", "sqrt"))
     }
+    cap = dense["flagged"][str(CLASS_BIG["majors"] * WHALE_MULTIPLE)]  # prints at or above 1 M
     bubble = {
         "r_min_px": R_MIN_PX,
         "r_max_px": R_MAX_PX,
-        "whale_multiple": WHALE_MULTIPLE,
+        "tier2_multiple": WHALE_MULTIPLE,  # a client-side multiple of the one threshold (G8)
         "newlist_p99_usdt": newlist["notional_usdt"]["p99"],
         "classes": classes,
         "radii_px": radii,
         "max_gap_px": gap,
         "ink_cap_over_floor": round((R_MAX_PX / R_MIN_PX) ** 2),  # the same under every law
+        # area-linear: each 1x step of the big threshold adds the same area (px^2), floor to cap
+        "area_per_step_px2": round(math.pi * (R_MAX_PX**2 - R_MIN_PX**2) / (WHALE_MULTIPLE - 1)),
+        # what "area proportional to notional" would need at the floor with r_max kept at the cap
+        "r_floor_if_area_proportional_px": round(R_MAX_PX / math.sqrt(WHALE_MULTIPLE), 1),
+        "above_cap_dense": {  # how often the above-cap treatment is needed (synthetic, shape only)
+            "count": round(float(cap["fraction"]) * dense["prints"]),
+            "fraction": cap["fraction"],
+            "max_usdt": dense["notional_usdt"]["max"],
+        },
     }
     reading = {"wpm": WPM, "tokens_full": TOKENS_FULL, "rows_per_s": READ_ROWS_PER_S}
     return {
@@ -267,6 +330,54 @@ def ratio(fg: str, bg: str) -> float:
     return round((max(lum) + 0.05) / (min(lum) + 0.05), 2)
 
 
+def _rgb(h: str) -> tuple[int, int, int]:
+    r, g, b = (int(h[i : i + 2], 16) for i in (1, 3, 5))
+    return r, g, b
+
+
+def simulate(h: str, rendering: str) -> str:
+    """cvd_sim.py's per-pixel maths on one hex: the matrix in sRGB space, or Rec. 601 luma."""
+    rgb = _rgb(h)
+    if rendering == "greyscale":
+        y = sum(c * w for c, w in zip(rgb, LUMA_601, strict=True))
+        out = (y, y, y)
+    elif rendering == "deuteranopia":
+        out = tuple(sum(c * m for c, m in zip(rgb, row, strict=True)) for row in DEUTERANOPIA)
+    else:
+        out = rgb
+    return "#" + "".join(f"{min(255, max(0, round(v))):02X}" for v in out)
+
+
+def cvd() -> dict:
+    """The tape colours under normal / greyscale / deuteranopia, and the contrast each leaves."""
+    pal = palette()
+    renderings = ("normal", "greyscale", "deuteranopia")
+    out: dict = {"swatches": {}, "checks": []}
+    for th, flat in pal.items():
+        out["swatches"][th] = {
+            name: {r: simulate(hexof(flat, name, th), r) for r in renderings}
+            for name in CVD_SWATCHES
+        }
+    for fg, bg, bar, use in CVD_CHECKS:
+        ratios = {
+            th: {
+                r: ratio(simulate(hexof(f, fg, th), r), simulate(hexof(f, bg, th), r))
+                for r in renderings
+            }
+            for th, f in pal.items()
+        }
+        failed = [
+            f"{th} {r}" for th, rs in ratios.items() for r, v in rs.items() if bar and v < bar
+        ]
+        verdict = (
+            "separation only" if not bar else ("FAIL " + ", ".join(failed) if failed else "PASS")
+        )
+        out["checks"].append(
+            {"fg": fg, "bg": bg, "bar": bar, "use": use, "ratio": ratios, "verdict": verdict}
+        )
+    return out
+
+
 def contrast() -> list[dict]:
     pal = palette()
     out = []
@@ -287,13 +398,17 @@ def main(argv: list[str]) -> int:
         "files": files,
         "worked": worked(files),
         "contrast": contrast(),
+        "cvd": cvd(),
         "reading_source": "Brysbaert 2019, 238 wpm",
     }
     if "--json" in argv:
         print(json.dumps(result, indent=2))
         return 0
-    print("| file | provenance | prints | span s | /s | gap p50/p90/max ms | notional p50/p99/max")
-    print("| flagged >=250k / >=10k / >=30k | p99 / p80 USDT | advisory at 30k |")
+    head = (
+        "file | provenance | prints | span s | /s | gap p50/p90/max ms | notional p50/p99/max | "
+        "flagged >=250k / >=10k / >=30k | p99 / p80 USDT | advisory at 30k"
+    )
+    print(f"| {head} |")  # one line: a header split over two lines is not a Markdown table
     print("|---|---|---:|---:|---:|---|---|---|---|---|")
     for f in files:
         g, nt, fl = f["gap_ms"] or {}, f["notional_usdt"], f["flagged"]
@@ -316,16 +431,32 @@ def main(argv: list[str]) -> int:
     print("|---:|---:|---|---|")
     for r, v in w["rates"].items():
         print(f"| {r} | {v['prints_per_frame']} | {v['row_dwell_ms']} | {v['rate_over_reading']} |")
+    print(
+        "\n| rate /s | big only rows/s | big only dwell s | reconstructed best rows/s | dwell s |"
+    )
+    print("|---:|---:|---|---:|---|")
+    for r, v in w["rates"].items():
+        bo, rc = v["mitigations"]["big_only"], v["mitigations"]["reconstructed_best_case"]
+        print(
+            f"| {r} | {bo['rows_per_s']} | {bo['dwell_s']} | {rc['rows_per_s']} | {rc['dwell_s']} |"
+        )
     b = w["bubble"]
     print(f"\nBubble radius px (PROPOSED): r {R_MIN_PX:g} at 1x the class's big threshold,")
-    print(f"{R_MAX_PX:g} at {WHALE_MULTIPLE}x = the whale threshold, clamped above; max gap px")
-    print(f"{b['max_gap_px']}; cap/floor ink {b['ink_cap_over_floor']}x under every law\n")
-    print("| class | big | whale | " + " | ".join(f"{m}x USDT" for m in b["radii_px"]) + " |")
+    print(f"{R_MAX_PX:g} at {WHALE_MULTIPLE}x = the tier-2 threshold, clamped above; max gap px")
+    print(
+        f"{b['max_gap_px']}; cap/floor ink {b['ink_cap_over_floor']}x under every law; area-linear"
+    )
+    print(f"adds {b['area_per_step_px2']} px^2 per 1x step; 'area proportional' would need r")
+    print(
+        f"{b['r_floor_if_area_proportional_px']} px at the floor; above the cap on the dense tape:"
+    )
+    print(f"{b['above_cap_dense']}\n")
+    print("| class | big | tier 2 | " + " | ".join(f"{m}x USDT" for m in b["radii_px"]) + " |")
     print("|---|---:|---:|" + "---:|" * len(MULTIPLES))
     for k, c in b["classes"].items():
         at = " | ".join(str(v) for v in c["at"].values())
-        print(f"| {k} | {c['big']} | {c['whale']} | {at} |")
-    print("\n| multiple of big | linear | sqrt | log |\n|---:|---:|---:|---:|")
+        print(f"| {k} | {c['big']} | {c['tier2']} | {at} |")
+    print("\n| multiple of big | linear | sqrt (area-linear) | log |\n|---:|---:|---:|---:|")
     for m, v in b["radii_px"].items():
         print(f"| {m}x | {v['linear']} | {v['sqrt']} | {v['log']} |")
     print("\n| pair (fg on bg) | use | bar | dark | light | hc | verdict |")
@@ -335,6 +466,18 @@ def main(argv: list[str]) -> int:
         print(
             f"| `{p['fg']}` on `{p['bg']}` | {p['use']} | {bar} | {r['dark']:.2f} | "
             f"{r['light']:.2f} | {r['high-contrast']:.2f} | {p['verdict']} |"
+        )
+    sw = result["cvd"]["swatches"]["dark"]
+    print("\n| token (dark) | normal | greyscale | deuteranopia |\n|---|---|---|---|")
+    for name, v in sw.items():
+        print(f"| `{name}` | {v['normal']} | {v['greyscale']} | {v['deuteranopia']} |")
+    print("\n| pair (dark) | use | bar | normal | greyscale | deuteranopia | verdict |")
+    print("|---|---|---:|---:|---:|---:|---|")
+    for c in result["cvd"]["checks"]:
+        r, bar = c["ratio"]["dark"], f"{c['bar']:g}:1" if c["bar"] else "-"
+        print(
+            f"| `{c['fg']}` vs `{c['bg']}` | {c['use']} | {bar} | {r['normal']:.2f} | "
+            f"{r['greyscale']:.2f} | {r['deuteranopia']:.2f} | {c['verdict']} |"
         )
     return 0
 
