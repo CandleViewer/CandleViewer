@@ -176,10 +176,10 @@ class Rig:
         self.seen = Observed()
         # `build_app_context`: the module; its health reads these clocks.
         self.svc = IngestionService(clock=self.clock, now_us=self.clock.now_us)
-        # `adapter.public_rest_client(env)`: the default client and governor.
+        # `adapter.public_rest_client(env)`: the default client and the process governor's
+        # default 600-per-5 s IP budget.
         config = RestClientConfig(base_url=STUB_BASE_URL)
         self.governor = TokenBucketGovernor(
-            ip_budget_per_5s=config.ip_budget_per_5s,
             clock=self.clock,
             sleep=self.clock.sleep,  # 10018 IP hold (#1908) runs on virtual time
         )

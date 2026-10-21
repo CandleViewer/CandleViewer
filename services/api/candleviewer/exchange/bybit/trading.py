@@ -3,8 +3,9 @@
 The order path's invariants (`docs/security/threat-models/E29-oms.md` §11.1, #2877), each
 pinned by a test under `tests/unit/exchange/bybit/test_trading_*.py`:
 
-1. The `orderLinkId` guard covers creates only (the REST client, OM-D09); cancel, `cancel-all`
-   and an amend by `orderId` go on the order class in the `critical` lane (AC-31, SR-E29-14).
+1. The `orderLinkId` guard covers creates only (the REST client, OM-D09); cancel and
+   `cancel-all` go on the order class in the `critical` lane, and an amend by `orderId` on the
+   order class in its request's lane, `critical` when the OMS sets it (AC-31, SR-E29-14).
 2. Every account's client draws on the process's one governor (OM-D08, ruling R5); each
    attempt of a call takes its own token, and the lane's wait bounds the whole call, retries
    included (T04's rate step, 24 §8.7).
@@ -49,7 +50,7 @@ from candleviewer.exchange.base.errors import (
     TransportError,
     UnknownStateError,
 )
-from candleviewer.exchange.base.fakes import (
+from candleviewer.exchange.base.guards import (
     check_create_id,
     check_exit_ids,
     check_lookup_id,
