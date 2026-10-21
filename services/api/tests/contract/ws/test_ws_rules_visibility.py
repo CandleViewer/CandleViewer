@@ -25,12 +25,11 @@ def _send(w: World, row: RuleRow) -> int:
     return int(w.call(lambda: w.hub.publish("rules", body, account=ACC_A, viewer=viewer)))
 
 
-def test_rules_update_withholds_an_owners_rule_from_a_manager_and_follows_their_grants() -> None:
+def test_rules_update_withholds_an_owners_rule_from_a_manager() -> None:
     w = World()
-    theirs, bare = _row(OWNER, ACC_A), _row(OWNER)
-    mine, on_a = _row(USER, ACC_A, ACC_B), _row(USER, ACC_A)
+    theirs, bare, mine = _row(OWNER, ACC_A), _row(OWNER), _row(USER, ACC_A)
     with connect(w) as c:
-        ids = sorted(r.id for r in (theirs, bare, mine, on_a))
+        ids = sorted(r.id for r in (theirs, bare, mine))
         opts = {"exchange_account_ids": [str(ACC_A)], "rule_ids": ids}
         result = c.sub({"ch": "rules", "opts": opts})["p"]["results"][0]
         assert result["ok"] and result["effective"]["rule_ids"] == ids  # no id told apart
@@ -38,10 +37,19 @@ def test_rules_update_withholds_an_owners_rule_from_a_manager_and_follows_their_
         assert [_send(w, r) for r in (theirs, bare, mine)] == [0, 0, 1]
         d = c.recv()  # the two withheld spent no sequence number
         assert (d["s"], d["p"]["rules"][0]["id"]) == (2, mine.id)
+
+
+def test_rules_update_ends_for_a_rule_naming_a_withdrawn_grant() -> None:
+    w, both, on_a = World(), _row(USER, ACC_A, ACC_B), _row(USER, ACC_A)
+    with connect(w) as c:
+        c.sub({"ch": "rules", "opts": {"exchange_account_ids": [str(ACC_A)]}})
+        assert c.recv()["t"] == "snap"
+        assert _send(w, both) == 1  # readable while A and B are both granted
+        assert c.recv()["p"]["rules"][0]["id"] == both.id
         w.grants = (AccountGrant(ACC_A, True, False, False),)  # account B is withdrawn
         w.call(w.registry.grants_changed, USER)
         c.next_of("permission_change")
-        assert [_send(w, r) for r in (mine, on_a)] == [0, 1]
+        assert [_send(w, r) for r in (both, on_a)] == [0, 1]
         assert c.recv()["p"]["rules"][0]["id"] == on_a.id
 
 
@@ -60,7 +68,7 @@ def test_rules_publish_without_a_viewer_is_refused_before_any_frame() -> None:
                 w.call(refused)
         assert _send(w, mine) == 1
         d = c.recv()  # the next frame: nothing went out before it, and no number was spent
-        assert (d["ch"], d["s"]) == ("rules", 2)
+        assert (d["ch"], d["s"], [r["id"] for r in d["p"]["rules"]]) == ("rules", 2, [mine.id]), d
 
 
 class _OwnerRole(World):
