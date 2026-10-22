@@ -29,10 +29,10 @@ name: perf-bars-memdiag
 #
 # The allocator variables are set here, before the interpreter starts (it reads PYTHONMALLOC and
 # glibc's MALLOC_* only then): any already set are dropped first, and the leg records what it saw
-# and checks pymalloc against it. LD_PRELOAD and PYTHONDEVMODE are left alone: no leg sets them, and
-# memdiag refuses a leg that inherits either (exit 2, naming it), so a host that sets them is seen
-# and fixed. Every input reaches the script through env and is checked first; the checkout drops
-# its token.
+# and checks pymalloc against it. LD_PRELOAD, LD_AUDIT and PYTHONDEVMODE are left alone: no leg
+# sets them, and memdiag refuses a leg that inherits any of them, or starts with tracemalloc already
+# on (exit 2, naming it), so a host that sets them is seen and fixed. Every input reaches the script
+# through env and is checked first; the checkout drops its token.
 on:
   workflow_dispatch:
     inputs:
