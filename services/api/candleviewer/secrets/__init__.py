@@ -39,7 +39,13 @@ from candleviewer.secrets.service import (
     prove_kek_possession,
 )
 from candleviewer.secrets.signing import KEY_ID_SLOT, RequestSignature
-from candleviewer.secrets.store import AuditSink, AuthKeyStore, CredentialStore, KcvStore
+from candleviewer.secrets.store import (
+    AuditSink,
+    AuthKeyStore,
+    CredentialStore,
+    ExportKeyStore,
+    KcvStore,
+)
 
 __all__ = [
     "KEY_ID_SLOT",
@@ -50,6 +56,7 @@ __all__ = [
     "CredentialBorrower",
     "CredentialStore",
     "CredentialUnavailable",
+    "ExportKeyStore",
     "KcvStore",
     "KekCheckResult",
     "KekRotationError",
