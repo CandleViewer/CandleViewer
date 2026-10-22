@@ -52,9 +52,14 @@ def test_rule_5_gives_the_loosening_override_to_the_owner_alone() -> None:
         "another role's loosening on `setPositionTpSl` is refused with `403 risk_limit_breached` "
         "before any send, its refusal audited write-ahead (`sl.loosen_refused`, with the actor, "
         "role, account, and the stop before and after)",
+        "the owner's without the step-up answers `403 step_up_required` "
+        "(`action_class: risk_caps`)",
         "`amendOrder` and `amendTradeGroup` refuse a looser stop outright",
         "so the override exists on `setPositionTpSl` alone",
-        "a rule-engine trail or breakeven (§10.7) only ever tightens, and has no override",
+        "a rule action never loosens a stop: a trail or breakeven (§10.7) only ever tightens",
+        "and a rule action that would widen one (§11.6: `modify_stop_loss` with "
+        "`only_tighten=false`, or `widen_stop`) is refused at the writer like any other "
+        "loosening, whatever permission the rule holds",
     ):
         assert phrase in rule, phrase
 
@@ -62,14 +67,28 @@ def test_rule_5_gives_the_loosening_override_to_the_owner_alone() -> None:
 def test_rule_5_puts_one_synchronous_check_at_the_recorded_stop_writer() -> None:
     rule = _rule_5()
     for phrase in (
-        "A stop is looser when its trigger is further from the market on the position's side "
-        "(lower for a long, higher for a short), or, in Partial mode, when its size is smaller",
+        "its trigger is further from the market on the position's side (lower for a long, higher "
+        "for a short)",
+        "in Partial mode, its size covers less than the lesser of the record's size and the "
+        "position's size at the write, so a position that shrank",
+        "for a native trail, its distance is greater, or the trigger it would set",
         "The check is synchronous (C-2.21) and sits once, at the recorded-stop writer (rule 6)",
+        "every stop request, from every writer, is compared with the record in force before its "
+        "own record is written",
         "so before B8's `LOOSEN_SL` and before any send",
         "No route or rule keeps a copy of the check",
-        "A tightening is never refused by it (§8.10, C-2.6)",
+        "A tightening is never refused by it (§8.10, C-2.6), and neither is attaching a stop where "
+        "the exchange shows none",
     ):
         assert phrase in rule, phrase
+
+
+def test_a_rule_action_that_widens_a_stop_is_refused_at_the_writer() -> None:
+    """Section 11.6's vocabulary no longer lets a rule permission loosen a stop."""
+    section = _INTERNAL_DOC.split("\n### 11.6 ", 1)[1].split("\n### 11.7 ", 1)[0]
+    row = next(line for line in section.splitlines() if line.startswith("| `modify_stop_loss`"))
+    assert "`only_tighten=false` is refused at the writer (§8.8 rule 5)" in row
+    assert "rules.loosen_stop" not in row
 
 
 def test_both_loosening_actions_are_in_the_closed_audit_vocabulary() -> None:
@@ -80,6 +99,10 @@ def test_both_loosening_actions_are_in_the_closed_audit_vocabulary() -> None:
     assert "Both are written ahead, the loosening before its request leaves and the refusal " in (
         text
     )
+    assert (
+        "with the actor, role and account, the position as the object, and the stop before and "
+        "after (trigger price, and the size in Partial mode). A refusal is outcome `denied`."
+    ) in text
     assert "`amendOrder` and `amendTradeGroup` refuse a looser stop as their own" in text
 
 
@@ -93,6 +116,7 @@ def test_set_position_tp_sl_lets_only_the_owner_loosen_under_a_step_up() -> None
         "and any other role `403 risk_limit_breached`, its refusal audited "
         "(`sl.loosen_refused`), with nothing sent",
         "The owner's loosening is audited before it is sent (`sl.loosened`)",
+        "or a wider `trailing_stop`",
         "a tightening is never refused by it (C-2.6)",
     ):
         assert phrase in text, phrase
