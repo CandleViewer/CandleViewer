@@ -217,6 +217,24 @@ def test_a_symbol_entry_is_a_symbol_or_an_anchored_suffix_pattern(pattern: str) 
 
 
 @pytest.mark.parametrize(
+    ("field", "entry", "bound"),
+    [
+        ("tp_ladder", {"qty_pct": "0.05", "r": "1"}, 10),
+        ("allowed_symbols", "BTCUSDT", 500),
+        ("denied_symbols", "BTCUSDT", 500),
+    ],
+)
+def test_a_list_holds_at_most_the_bound_the_rest_contract_sets(
+    field: str, entry: Any, bound: int
+) -> None:
+    """The REST `maxItems`; no column bounds a jsonb ladder or a `text[]` (24 Sec.9.2)."""
+    assert len(getattr(_profile(**{field: [entry] * bound}), field)) == bound
+    with pytest.raises(ValidationError) as refused:
+        _profile(**{field: [entry] * (bound + 1)})
+    assert [(e["loc"], e["type"]) for e in refused.value.errors()] == [((field,), "too_long")]
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [
         ("pct_equity", "0.123456789"),  # 12.3456789 % needs 7 places; the column keeps 6
@@ -414,11 +432,12 @@ def test_a_value_out_of_any_columns_range_is_refused_not_trapped() -> None:
     ("change", "error", "message"),
     [
         ({"allowed_symbols": ("btcusdt",)}, ValidationError, "allowed_symbols"),
+        ({"allowed_symbols": ("BTCUSDT",) * 501}, ValidationError, "allowed_symbols"),
         ({"size_fixed_qty": None}, ValidationError, "sizing"),
         ({"tp_ladder": (LadderRung(Decimal("NaN"), Decimal("1")),)}, ValueError, "finite"),
         ({"fallback_sl_offset_pct": Decimal("1E-1000")}, ValueError, "out of range"),
     ],
-    ids=["symbol", "sizing-drift", "nan-rung", "out-of-range"],
+    ids=["symbol", "symbol-count", "sizing-drift", "nan-rung", "out-of-range"],
 )
 def test_a_stored_row_the_model_refuses_raises_rather_than_reads(
     change: dict[str, Any], error: type[Exception], message: str

@@ -2279,7 +2279,7 @@ class AccountProfile(BaseModel):
     fallback_sl_offset_pct: Decimal               # 0 < v < 1 (column default 2 %, so 0.02); used when ATR is unavailable
     tp_offset_value: Decimal | None               # set together with its unit
     tp_offset_unit: Literal["ticks","percent","r_multiple","atr"] | None
-    tp_ladder: tuple[TakeProfitRung, ...] = ()
+    tp_ladder: tuple[TakeProfitRung, ...] = ()    # at most 10 rungs
     # risk caps (server-enforced, regardless of what the manager asks for; one gate each)
     max_position_notional: Notional | None
     max_position_pct_equity: Decimal | None       # 0..1
@@ -2291,8 +2291,8 @@ class AccountProfile(BaseModel):
     max_orders_per_minute: int                    # 1..600
     # symbols
     all_symbols: bool                             # explicit; then allowed_symbols is empty
-    allowed_symbols: tuple[SymbolPattern, ...] = ()    # empty without all_symbols allows nothing
-    denied_symbols: tuple[SymbolPattern, ...] = ()     # applied after the allow-list
+    allowed_symbols: tuple[SymbolPattern, ...] = ()    # at most 500; empty without all_symbols allows nothing
+    denied_symbols: tuple[SymbolPattern, ...] = ()     # at most 500; applied after the allow-list
     # order defaults
     reduce_only_default: bool
     time_in_force_default: Literal["GTC","IOC","FOK","PostOnly"]
@@ -2305,6 +2305,59 @@ Risk caps are **server-side and non-negotiable** — a manager cannot exceed the
 **As built (E28-T01, #905).** The model lives in `candleviewer.accounts.profiles` (M13) and repeats the rules of the `account_profiles` CHECKs and triggers (`21-database-schema.md` §3.2.4; SR-E28-08: the floor holds at every layer), so a leg's frozen copy is always a profile the database could hold. It is stricter in two places: a value its column would round, and a symbol entry that is neither a symbol nor an anchored suffix pattern. `profile_from_row` and `profile_values` are the one adapter to the stored row: percentages are percents (0–100) there and fractions here, an offset in `percent` included; a ladder rung's `pct` is `qty_pct`; `denied_symbols` is the column `blocked_symbols`; an empty tuple is a NULL list; `updated_at` is µs. Refusing a value its column would round means every valid profile round-trips with `Decimal` equality (a property test). `SymbolPattern` is a listed symbol or an anchored suffix pattern (`*USDT`, never a bare `*`), expanded against the instrument cache at evaluation time (E28-T04, SR-E28-06). Each cap maps to one enforcing gate in `candleviewer.accounts.profile_caps` (SR-E28-10). A ladder rung is relative (`TakeProfitRung`); `TakeProfitLeg` (§9.1), with its absolute `price`, is the resolved form of a rung; nothing stores it.
 
 **Reads and writes (E28-T01, #905).** `candleviewer.accounts.profile_repository.ProfilesRepository` is the domain facade over the M10 `AccountProfileStore` (`storage/repositories/account_profiles_sqlalchemy.py`): reads take the caller's account scope and writes an owner scope, both applied in SQL (SR-051); a write is addressed by the path's account and profile ids, and a body naming others reads as missing like any path mismatch; it passes the client's `If-Match` as `expected_version` and never writes `version` (the database bumps it and records the revision); only `set_default_profile` moves the default, and the default is never deleted. Each write takes an optional `write_ahead` hook, awaited in the write's transaction before it commits (C-2.9), once per row it changed, with that row before and after in stored units (`profile_from_row` reads them); E28-T02 wires the profile's audit records through it, and its own failure is a typed refusal, since a raw `OSError` from it reads as the database's. `candleviewer.accounts.profile_cache.EffectiveProfiles` is the order path's read: `get_effective_profile(account_id, profile_id | None)` (`None` is the account's default), cached per profile for at most 30 s, loaded single-flight, and invalidated by every write before it returns, so no older version is served after a narrowing write (SR-E28-15); a store failure, a timeout, a stored row that cannot be decoded or a read overtaken twice by writes raises `ProfileUnavailableError`, on which the order path fails closed (SR-E28-24). `peek()` is its synchronous, cache-only form.
+
+**REST projection (E28-T02, #906).** `AccountProfileInput` (`22-api-openapi.yaml`) is the profile a client writes, and `AccountProfile` answers it as `profile`, with the read-only members beside it. The table maps each REST member to one field of this model and one `account_profiles` column (21 §3.2.4), both ways; `—` marks the only exceptions. REST values are the stored ones: a percent is the percent a user sees, which `profile_from_row` and `profile_values` turn into this model's fraction and back, and an empty list is a NULL column. A member that a create or a replace leaves out takes its column's default. Writable members are named by their path in `AccountProfileInput`, the path `errors[].field` uses. `services/api/tests/contract/test_account_profiles_contract.py` reads this table.
+
+| REST member                           | Domain field              | Column                      | Note                                                  |
+| ------------------------------------- | ------------------------- | --------------------------- | ----------------------------------------------------- |
+| `id` (read-only)                      | `profile_id`              | `id`                        |                                                       |
+| `exchange_account_id` (read-only)     | `account_id`              | `exchange_account_id`       | the path's `accountId`                                |
+| `version` (read-only)                 | `version`                 | `version`                   | set by `trg_ap_version`; `ProfileETag` names it       |
+| `created_at` (read-only)              | —                         | `created_at`                |                                                       |
+| `updated_at` (read-only)              | `updated_at`              | `updated_at`                | RFC 3339 there, µs here                               |
+| `warnings` (read-only)                | —                         | —                           | computed for each answer                              |
+| `name`                                | `name`                    | `name`                      |                                                       |
+| `is_default`                          | `is_default`              | `is_default`                | moved only by `set_default_profile` (D7)              |
+| `enabled`                             | `enabled`                 | `enabled`                   |                                                       |
+| `trading_enabled`                     | `trading_enabled`         | `trading_enabled`           |                                                       |
+| `leverage`                            | `leverage`                | `leverage`                  |                                                       |
+| `margin_mode`                         | `margin_mode`             | `margin_mode`               |                                                       |
+| `position_mode`                       | `position_mode`           | `position_mode`             |                                                       |
+| `sizing.mode`                         | `sizing_mode`             | `sizing_mode`               |                                                       |
+| `sizing.qty`                          | `fixed_qty`               | `size_fixed_qty`            |                                                       |
+| `sizing.notional_usd`                 | `fixed_notional`          | `size_fixed_notional_usd`   |                                                       |
+| `sizing.pct`                          | `pct_equity`              | `size_pct_equity`           | percent; a fraction here                              |
+| `sizing.risk_per_trade_pct`           | `risk_pct_equity`         | `risk_pct_equity`           | percent; a fraction here                              |
+| `sizing.risk_per_trade_usd`           | `risk_fixed_amount`       | `risk_fixed_amount_usd`     |                                                       |
+| `sizing.min_leg_notional_usd`         | `min_leg_notional`        | `min_leg_notional_usd`      |                                                       |
+| `stop_loss.unit`                      | `sl_offset_unit`          | `sl_offset_unit`            |                                                       |
+| `stop_loss.value`                     | `sl_offset_value`         | `sl_offset_value`           | in unit `percent`, a fraction here                    |
+| `stop_loss.atr_period`                | `sl_atr_period`           | `sl_atr_period`             |                                                       |
+| `stop_loss.atr_multiple`              | `sl_atr_multiple`         | `sl_atr_multiple`           |                                                       |
+| `stop_loss.fallback_pct`              | `fallback_sl_offset_pct`  | `fallback_sl_offset_pct`    | percent; a fraction here                              |
+| `take_profit.unit`                    | `tp_offset_unit`          | `tp_offset_unit`            | `take_profit: null` is both NULL                      |
+| `take_profit.value`                   | `tp_offset_value`         | `tp_offset_value`           | in unit `percent`, a fraction here                    |
+| `take_profit_ladder`                  | `tp_ladder`               | `tp_ladder`                 |                                                       |
+| `take_profit_ladder[].qty_pct`        | `tp_ladder[].qty_pct`     | `tp_ladder[].pct`           | percent; a fraction here                              |
+| `take_profit_ladder[].r`              | `tp_ladder[].r`           | `tp_ladder[].r`             |                                                       |
+| `risk_caps.max_position_notional_usd` | `max_position_notional`   | `max_position_notional_usd` |                                                       |
+| `risk_caps.max_position_pct_equity`   | `max_position_pct_equity` | `max_position_pct_equity`   | percent; a fraction here                              |
+| `risk_caps.max_daily_loss_usd`        | `max_daily_loss`          | `max_daily_loss_usd`        |                                                       |
+| `risk_caps.max_daily_loss_pct`        | `max_daily_loss_pct`      | `max_daily_loss_pct`        | percent, 0.1 to 50 on REST (SCR-131); a fraction here |
+| `risk_caps.max_open_positions`        | `max_open_positions`      | `max_open_positions`        |                                                       |
+| `risk_caps.max_concurrent_orders`     | `max_concurrent_orders`   | `max_concurrent_orders`     |                                                       |
+| `risk_caps.max_leverage_cap`          | `max_leverage_cap`        | `max_leverage_cap`          |                                                       |
+| `risk_caps.max_orders_per_minute`     | `max_orders_per_minute`   | `max_orders_per_minute`     |                                                       |
+| `all_symbols`                         | `all_symbols`             | `all_symbols`               | D11: explicit                                         |
+| `allowed_symbols`                     | `allowed_symbols`         | `allowed_symbols`           | D11: empty without `all_symbols` allows nothing       |
+| `blocked_symbols`                     | `denied_symbols`          | `blocked_symbols`           |                                                       |
+| `require_native_stop`                 | `require_native_sl`       | `require_native_sl`         | always `true`                                         |
+| `default_time_in_force`               | `time_in_force_default`   | `time_in_force_default`     |                                                       |
+| `reduce_only_default`                 | `reduce_only_default`     | `reduce_only_default`       |                                                       |
+| `slippage_tolerance_bps`              | `slippage_tolerance_bps`  | `slippage_tolerance_bps`    |                                                       |
+| —                                     | `qty_rounding`            | —                           | always `floor`; neither stored nor sent               |
+
+**Two bounds no column states (E28-T02, #906).** `take_profit_ladder` holds at most 10 rungs, and `allowed_symbols` and `blocked_symbols` at most 500 entries each. `tp_ladder` is `jsonb` and the symbol lists are `text[]`, so no column bounds their length; the REST contract (`maxItems`) and this model (`max_length`) do, so a longer list is refused at the API boundary (`422 validation_failed`) and a stored row that holds one is refused on read (`profile_from_row`). They are set before any route serves them because tightening a bound after the routes are mounted would be breaking: a body or a stored profile that was valid would be refused, where loosening one is not.
 
 ### 9.3 Sizing algorithm
 
@@ -5453,3 +5506,8 @@ The minors and nits of G-6's last review round (#3972 delta 3: CR-G6-R4-01 to -0
 
 - New §15.7 owns the export file's bytes: the header line, which names the environment and the signing key, one line per `audit_log` row in the chain's own renderings, the deterministic gzip, the signed message (`cv.audit.export.v1:` and the file's SHA-256) and the verification procedure, with the key's validity window and the Owner's chain cross-check.
 - `22-api-openapi.yaml` gains `listAuditSigningKeys`, `rotateAuditSigningKey`, `AuditSigningKey` and the manifest's `public_key`, and names the export's limits as settings, its `503 signing_unavailable` and the codes its job fails with; the `501` stays until S10.
+
+### 19.24 2026-10-21 — §9.2 the REST projection of `AccountProfile` (E28-T02, #906)
+
+- §9.2 gains the table that maps `AccountProfileInput` and `AccountProfile` (`22-api-openapi.yaml`) to this model and to `account_profiles`; `account_profiles` does not change. The REST shape changes to match them, on operations no route serves yet (breaking on paper): it gains `is_default` (writable, decision D7), `enabled`, `trading_enabled`, `margin_mode`, `position_mode`, `all_symbols`, `blocked_symbols`, `reduce_only_default`, `slippage_tolerance_bps`, `sizing.min_leg_notional_usd`, the stop's `atr_multiple` and `fallback_pct`, `take_profit_ladder`, three caps, and the read-only `version` and `warnings` (`ProfileWarning`); it loses the members with no column (`trailing_stop`, `default_tpsl_mode`, `sizing.round_to_lot` and `max_notional_usd`, the offset's `atr_bar_type` and `atr_param`, `risk_caps.max_consecutive_losses` and `lockout_minutes_after_breach`) and the read-only `is_active`; and a stored profile's writable members move under `AccountProfile.profile`. `AccountProfileInput` refuses unknown members (C-6.3). Two bounds no column states, at most 10 `take_profit_ladder` rungs and at most 500 entries in each of `allowed_symbols` and `blocked_symbols`, are held by that contract (`maxItems`) and by `AccountProfile` (`max_length`), the model's one change.
+- Decision D11 reaches the contract: `all_symbols` is explicit and an empty `allowed_symbols` allows nothing. US-PROF-003 (`11-user-stories.md`) says so.
