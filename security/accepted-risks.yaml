@@ -16,9 +16,8 @@
 #                       security_gate.py reports as `finding_id`.
 #                       An entry matches on id and tool only, never on the
 #                       package: an npm-audit entry (a GHSA id) covers that
-#                       advisory on every module pnpm reports it for (e.g.
-#                       GHSA-82fw-gwwq-j7x9 on vitest and @vitest/mocker),
-#                       a module that starts reporting it later included.
+#                       advisory on every module pnpm reports it for, a module
+#                       that starts reporting it later included.
 #                       No `package` scope: it could not tell a dev path from
 #                       a runtime path of the same module (#3558).
 #   tool:      str   — one of: codeql, semgrep, bandit, pip-audit, npm-audit,
@@ -126,7 +125,7 @@ entries:
   # open Dependabot alerts. 30-release-roadmap.md §4.4 R0 wants a dated entry per Medium. No
   # pnpm advisory has a fix short of a major upgrade; tauri's (2.11.1) is in its installed major
   # but needs cargo and a harness re-run. Each is accepted for one release cycle, past C-12.3's
-  # 30 days for the three Mediums and past the next release (R0, cut 2026-10-22) for the esbuild
+  # 30 days for the two Mediums and past the next release (R0, cut 2026-10-22) for the esbuild
   # Low: that deviation is exception EX-09 (04-security-program.md §16.2), for the owner to
   # ratify on #2701. They expire when S09 starts, so the re-decision comes before the R1 cut,
   # not on it.
@@ -135,17 +134,7 @@ entries:
   # check_accepted_risk_expiry.py enforces their dates.
   # #269 (Storybook 10) dropped addon-actions and its uuid@9: GHSA-w5hq-g745-h8pq's entry is gone.
   # #1819: react-router 7.18, the first fixed release, is in apps/web; both react-router entries
-  # are gone.
-  # #269 (E05-T03) adds vitest browser mode (packages/ui's Storybook a11y gate); its C-10.2 security
-  # review covers the reason's new last clause, for the owner to ratify on #2701. packages/ui's
-  # vitest.config.mjs sets that clause's two flags; test/storybook/vitest-project.test.ts pins them.
-  - id: "GHSA-82fw-gwwq-j7x9"
-    tool: npm-audit
-    severity: MEDIUM
-    reason: "vitest and @vitest/mocker 3.2.7, test-only, never shipped; fixed only in 4.1.11, a major (#1819 test-stack step). Reached without authentication through the public mocker plugins on a dev server's socket, which no package uses. packages/ui's browser-mode project (#269) registers mocks over vitest's token-authenticated browser RPC on a localhost-bound server, with the browser API's file writes and exec off. Also covers Dependabot alerts 35, 37, 41, 43, 45, 47 and 49"
-    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
-    expires: "2026-11-20"
-    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"
+  # are gone. vitest 4.1.12 is in every package that runs tests, and its entry is gone too.
   - id: "GHSA-hp3w-g68c-fv3c"
     tool: npm-audit
     severity: MEDIUM

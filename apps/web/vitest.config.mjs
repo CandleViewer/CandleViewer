@@ -11,6 +11,10 @@ export default defineConfig({
     __CV_ALLOW_FAULT_INJECTION__: JSON.stringify(process.env.CV_ALLOW_FAULT_INJECTION === "1"),
   },
   resolve: {
+    // Vitest resolves this jsdom project with node-style conditions, where react-router's `node`
+    // export falls through to its CommonJS `default` while the dom entry's own import loads ESM
+    // via `module-sync`: two router copies. Adding `module-sync` selects the ESM build for both.
+    conditions: ["module-sync"],
     alias: [
       // Exact match for the entry only: `@candleviewer/ui/theme.css` and the token CSS must resolve through
       // the package `exports` (built files), not turn into `src/index.ts/theme.css`.

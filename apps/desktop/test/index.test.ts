@@ -22,16 +22,19 @@ vi.mock("electron", () => ({
     commandLine: { appendSwitch: vi.fn() },
     isPackaged: false,
   },
-  BrowserWindow: vi.fn().mockImplementation(() => ({
-    webContents: {
-      setWindowOpenHandler: vi.fn(),
-      on: vi.fn(),
-    },
-    once: vi.fn(),
-    show: vi.fn(),
-    loadURL: vi.fn(),
-    loadFile: vi.fn(),
-  })),
+  // The shell runs `new BrowserWindow(...)`: a constructed mock needs a `function`, not an arrow.
+  BrowserWindow: vi.fn().mockImplementation(function () {
+    return {
+      webContents: {
+        setWindowOpenHandler: vi.fn(),
+        on: vi.fn(),
+      },
+      once: vi.fn(),
+      show: vi.fn(),
+      loadURL: vi.fn(),
+      loadFile: vi.fn(),
+    };
+  }),
   session: {
     defaultSession: {
       webRequest: { onHeadersReceived: vi.fn() },

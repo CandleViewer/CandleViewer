@@ -32,7 +32,7 @@ export function fakeTokens(ttlMs = 600_000) {
           expiresAtMs: Date.now() + ttlMs,
         },
     ),
-    invalidate: vi.fn(),
+    invalidate: vi.fn<() => void>(),
   };
 }
 
@@ -47,10 +47,10 @@ export function connectionHarness(
   onTestFinished(() => assertEngineOrder(events)); // the order the reducer relies on, in every test
   const frames: Inbound[] = [];
   const hooks = {
-    ready: vi.fn(),
-    down: vi.fn(),
+    ready: vi.fn<ConnectionHooks["ready"]>(),
+    down: vi.fn<ConnectionHooks["down"]>(),
     frame: vi.fn((frame: Inbound) => void frames.push(frame)),
-    malformed: vi.fn(),
+    malformed: vi.fn<ConnectionHooks["malformed"]>(),
   } satisfies ConnectionHooks;
   const connection = createConnection({
     url: URL,

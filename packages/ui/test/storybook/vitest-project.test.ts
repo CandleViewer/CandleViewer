@@ -27,7 +27,7 @@ async function storybookProject(perf: string | undefined) {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("the storybook Vitest project", () => {
-  it("turns the browser API's file writes and exec off, as the GHSA-82fw register reason says", async () => {
+  it("turns the browser API's file writes and exec off", async () => {
     const { project } = await storybookProject(undefined);
     expect(project?.test.browser?.api).toEqual({ allowWrite: false, allowExec: false });
   });
