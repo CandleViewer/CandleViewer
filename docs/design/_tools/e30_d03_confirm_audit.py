@@ -342,7 +342,11 @@ PAIRS = (
     "dialog / drawer body, restatement values, class line|text.primary|surface.overlay|text",
     "dialog labels; reason text under a disabled control|text.secondary|surface.overlay|text",
     "countdown caption, captions, struck leg row|text.tertiary|surface.overlay|text",
-    "env pill, code pill, leg-status chip, T2 pill text|text.primary|surface.raised|text",
+    "env pill, code pill, leg-status chip|text.primary|surface.raised|text",
+    (
+        "T2 label + lock glyph (E09-D09 §2.2; its §11 :292 reports the same 5.62 / 5.92 / 11.21)"
+        "|text.tertiary|surface.raised|text"
+    ),
     "non-binding limit rows; chip secondary text|text.secondary|surface.raised|text",
     "selector selected row / active preset text|text.primary|surface.selected|text",
     "selector hovered row text|text.primary|surface.hover|text",
@@ -356,10 +360,6 @@ PAIRS = (
     "env pill text, 7:1 stretch (05 section 5 item 3)|text.primary|surface.raised|hc-text",
     "Confirm BUY label AAA stretch (gated in hc only)|text.inverse|buy.default|hc-text",
     "Confirm SELL label AAA stretch (gated in hc only)|text.inverse|sell.default|hc-text",
-    (
-        "disabled control label — the rate-limited submit and Replay before the retry time"
-        " (SCR-158; state-gated, not T2)|text.disabled|surface.raised|exempt"
-    ),
     "LIVE pill border + dot and the 2 px rule on the dialog|env.live|surface.overlay|non-text",
     "DEMO pill border + dot and the 2 px rule on the dialog|env.demo|surface.overlay|non-text",
     "LIVE border + dot on the raised pill (CMP-106 env dot)|env.live|surface.raised|non-text",
