@@ -47,11 +47,12 @@ account's order never reaches a live client, nor the reverse. Decimal throughout
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from decimal import InvalidOperation
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Protocol
 
+from candleviewer.accounts.profiles import SymbolScope
 from candleviewer.exchange.policy import FilterViolation, FilterViolationCode, InstrumentPolicy
 
 from .errors import (
@@ -202,25 +203,9 @@ class Validator:
 def symbol_allowed(profile: AccountProfile, instrument: Instrument) -> bool:
     """D11 and SR-E28-06: `all_symbols`, or a listed symbol, or an anchored suffix pattern that
     matches only a trading USDT perpetual; then no entry of the deny list, whose patterns match
-    any symbol (the deny side fails closed). An empty allow-list allows nothing."""
-    symbol = instrument.symbol
-    eligible = (
-        instrument.status == "trading"
-        and instrument.quote_coin == "USDT"
-        and instrument.settle_coin == "USDT"
-    )
-    allowed = profile.all_symbols or _listed(symbol, profile.allowed_symbols, wildcard=eligible)
-    return allowed and not _listed(symbol, profile.denied_symbols, wildcard=True)
-
-
-def _listed(symbol: str, patterns: Iterable[str], *, wildcard: bool) -> bool:
-    for pattern in patterns:
-        if pattern == symbol:
-            return True
-        suffix = pattern.removeprefix("*")
-        if wildcard and suffix != pattern and len(symbol) > len(suffix) and symbol.endswith(suffix):
-            return True
-    return False
+    any symbol (the deny side fails closed). An empty allow-list allows nothing. `SymbolScope`
+    judges it, as it judges a profile save, so the two never disagree (PF-T07)."""
+    return SymbolScope.of(profile).allows(instrument)
 
 
 def _policy_error(violation: FilterViolation) -> FieldError:

@@ -16,11 +16,15 @@ read, and the frozen copy a trade-group leg keeps (ADR-0008 rule 3). `profile_fr
 The model repeats the database's rules (SR-E28-08: the floor holds at every layer): the native
 stop is mandatory and never defined in R, the sizing fields match `sizing_mode`, the ladder takes
 at most the whole leg, and a trading-enabled profile bounds every cap (SR-E28-01, decision D11).
+
+`SymbolScope` reads the symbol lists for the order path and a profile save alike, so the two never
+disagree on a wildcard (E28-T02, PF-T07).
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Context, Decimal, Inexact, InvalidOperation
 from typing import Annotated, Literal
@@ -28,6 +32,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Notional, Qty, TsUs
 from candleviewer.storage.repositories.account_profiles import (
     AccountProfileRow,
@@ -354,3 +359,69 @@ def profile_from_row(row: AccountProfileRow) -> AccountProfile:
             "updated_at": to_us(row.updated_at),
         }
     )
+
+
+def is_trading_usdt_perpetual(instrument: Instrument) -> bool:
+    """A listed, trading linear USDT perpetual (SR-E28-06): the only instrument a pattern matches
+    and the only one the second pass judges. The catalogue labels every linear instrument a
+    perpetual, so the coins decide (a USDC perpetual is not one)."""
+    return (
+        instrument.status == "trading"
+        and instrument.quote_coin == "USDT"
+        and instrument.settle_coin == "USDT"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolEntries:
+    """One symbol list, compiled: the entries that name a symbol, and the suffix of each pattern
+    (`*USDT` is `USDT`). A pattern is anchored: it matches a symbol longer than its suffix that
+    ends with it, never a substring and never the whole symbol (SR-E28-06)."""
+
+    exact: frozenset[str]
+    suffixes: frozenset[str]
+
+    @classmethod
+    def of(cls, entries: Iterable[str]) -> SymbolEntries:
+        listed = tuple(entries)
+        return cls(
+            exact=frozenset(e for e in listed if not e.startswith("*")),
+            suffixes=frozenset(e[1:] for e in listed if e.startswith("*")),
+        )
+
+    def matches(self, symbol: str, *, wildcard: bool) -> bool:
+        """An entry names `symbol`, or, with `wildcard`, a pattern's suffix is a proper suffix of
+        it: one set lookup per character, whatever the list's length."""
+        if symbol in self.exact:
+            return True
+        return wildcard and any(symbol[cut:] in self.suffixes for cut in range(1, len(symbol) + 1))
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolScope:
+    """A profile's symbol lists, the one matcher of the order path (`oms.validator`) and of a
+    profile save, so the two never disagree on a wildcard (PF-T07): `all_symbols`, else the
+    allow-list, whose patterns match only a trading USDT perpetual; then the block list, whose
+    patterns match any symbol, so it fails closed. An empty allow-list without `all_symbols`
+    admits nothing (D11)."""
+
+    all_symbols: bool
+    allowed: SymbolEntries
+    denied: SymbolEntries
+
+    @classmethod
+    def of(cls, profile: AccountProfile) -> SymbolScope:
+        return cls(
+            all_symbols=profile.all_symbols,
+            allowed=SymbolEntries.of(profile.allowed_symbols),
+            denied=SymbolEntries.of(profile.denied_symbols),
+        )
+
+    def admits(self, instrument: Instrument) -> bool:
+        """The allow side alone, before the block list."""
+        wildcard = is_trading_usdt_perpetual(instrument)
+        return self.all_symbols or self.allowed.matches(instrument.symbol, wildcard=wildcard)
+
+    def allows(self, instrument: Instrument) -> bool:
+        """The allow side, then the block list."""
+        return self.admits(instrument) and not self.denied.matches(instrument.symbol, wildcard=True)
