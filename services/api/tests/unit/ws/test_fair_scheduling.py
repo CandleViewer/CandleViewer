@@ -275,6 +275,7 @@ async def test_each_cap_refusal_keeps_its_code_message_field_metric_and_audit_ro
             "severity": Severity.WARNING,
             "reason": "subscription_limit",
             "after_state": {"connection_id": authz.connection_id},
+            "request_id": authz.request_id,  # its socket's upgrade id (#3990)
         }
     ]
     assert len(authz.by_id) == len(held)  # nothing subscribed past the cap

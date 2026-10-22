@@ -7,6 +7,7 @@ frame is validated."""
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any
 
 import pytest
@@ -153,6 +154,7 @@ def test_ac31_a_user_s_first_refusal_in_each_window_is_audited_once(offer: list[
     w.registry.services.audit = sink
     with connect(w, offer) as c:
         ((authz, _, _),) = w.registry._conns[USER]  # the socket the rows name (#415, E17-R-16)
+        authz.request_id = uuid.uuid4()  # as its upgrade's id would be (this world binds none)
         c.sub(BOOK)  # the user's one draw
         for i, paused in enumerate((True, False)):  # the resume is refused, the first
             c.send({"t": "ctl", "id": f"k{i}", "ch": BOOK, "p": {"paused": paused}})
@@ -186,6 +188,7 @@ def test_ac31_a_user_s_first_refusal_in_each_window_is_audited_once(offer: list[
         "reason": "user",
         "session_id": w.session,  # the socket's session and connection, as the denial row's
         "after_state": {"connection_id": authz.connection_id},
+        "request_id": authz.request_id,  # its socket's (#3990)
     }
 
 

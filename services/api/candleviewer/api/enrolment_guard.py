@@ -300,8 +300,8 @@ class EnrolmentRefusals:
                 severity=Severity.WARNING,
                 reason="mfa_enrollment_required",
                 after_state=fields,
-                # #3990: the HTTP request's id; a WS refusal's record stays as it was
-                request_id=current_request_uuid() if channel == "http" else None,
+                # #3990: the HTTP request's id, or the socket's, which its upgrade bound
+                request_id=current_request_uuid(),
             ),
             on_lost=lost,
             late_failure_event="auth.enrolment_only.audit_failed_late",

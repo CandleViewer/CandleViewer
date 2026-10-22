@@ -243,6 +243,7 @@ _ROW = {
     "object_kind": "ws_topic",
     "outcome": AuditOutcome.DENIED,
     "severity": Severity.WARNING,
+    "request_id": None,  # the socket's upgrade id (#3990); these sockets have none
 }
 
 

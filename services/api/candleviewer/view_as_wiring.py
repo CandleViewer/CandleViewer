@@ -122,6 +122,7 @@ class SessionViewAsRefusals:
         viewer_session_id: str,
         frame_type: str,
         ip: str | None,
+        request_id: UUID | None = None,
     ) -> bool:
         recorder = self._recorder()
         if recorder is None:
@@ -130,7 +131,7 @@ class SessionViewAsRefusals:
         if label is None:
             return False
         viewer = Viewer(viewer_user_id, UUID(viewer_session_id), label)
-        return await recorder.refuse_frame(viewer, frame_type, ip=ip)
+        return await recorder.refuse_frame(viewer, frame_type, ip=ip, request_id=request_id)
 
 
 class SessionViewAs:

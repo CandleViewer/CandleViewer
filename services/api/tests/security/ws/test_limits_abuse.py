@@ -38,7 +38,14 @@ from tests.contract.ws._harness import WIRE_SUBPROTOCOL, Client, current_offer, 
 from tests.contract.ws._support import Clock
 from tests.security.auth import _stack
 from tests.security.auth._stack import ORIGIN, Grants, Stack, open_stack
-from tests.security.ws._raw import SOURCE, RawWorld, authenticated, delta, raw_connect
+from tests.security.ws._raw import (
+    CONNECTION_REQUEST_ID,
+    SOURCE,
+    RawWorld,
+    authenticated,
+    delta,
+    raw_connect,
+)
 from tests.unit.audit.audit_fakes import FakeAuditRepository
 from tests.unit.auth.auth_fakes import make_user
 from tests.unit.ws._seq_support import ACC_A
@@ -348,7 +355,7 @@ def test_x02_ac_11_300_frames_a_minute_end_the_socket_4429_and_the_window_slides
     assert (errors(), closes()) == (1, 1)
     connection = c.seen[0]["p"]["connection_id"]  # the `welcome`'s
     row = _closed(login.user_id, login.minted.session_id, connection, SOURCE, "client_rate_limited")
-    assert world.audit.of(CLOSED) == [row | {"request_id": None}]
+    assert world.audit.of(CLOSED) == [row | {"request_id": str(CONNECTION_REQUEST_ID)}]
 
 
 def _near_cap_sub(c: Client) -> dict[str, Any]:
@@ -445,6 +452,7 @@ def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing
     row |= {"object_kind": "ws_topic", "object_id": "orders", "outcome": "denied"}
     row |= {"severity": "warning", "reason": "forbidden", "session_id": named["session_id"]}
     row |= {"after_state": json.dumps(after, sort_keys=True)}
+    row |= {"request_id": str(named["request_id"])}  # the socket's upgrade (#3990)
     order = {"actor_label": "oms", "object_kind": "order", "outcome": "success", "severity": "info"}
     orders = [order | {"action": "orders.submit", "object_id": f"o{s}"} for s in ordered]
     assert [r for r in rows if r["action"] == DENIED] == [row] * BUDGET  # one a frame, 20 a minute

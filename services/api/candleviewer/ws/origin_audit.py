@@ -3,7 +3,8 @@
 An upgrade refused by the SR-042 / SR-183 `Origin` check is closed `4403` before `accept`. Each
 refusal also writes one `auth.ws_origin_refused` record (C-2.9): `actor_ip` is the source address
 MeshOnly admitted, `reason` the bounded check (`OriginRefusal`), `object_kind` `ws_upgrade`,
-outcome `failure`, severity `warning`. It never carries a header value.
+outcome `failure`, severity `warning`, and `request_id` the refused upgrade's (#3990). It never
+carries a header value.
 
 The writes are bounded as the REST CSRF refusals are (C-2.18, `api/csrf.py`):
 
@@ -29,6 +30,7 @@ import structlog
 
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.ws.lifecycle import OriginRefusal
 from candleviewer.ws.metrics import count_audit_failure
 from candleviewer.ws.permissions import AuditSink
@@ -105,6 +107,7 @@ class OriginRefusalAudit:
                 outcome=AuditOutcome.FAILURE,
                 severity=Severity.WARNING,
                 reason=check.value,
+                request_id=current_request_uuid(),  # the refused upgrade's (#3990)
             )
         )
         try:

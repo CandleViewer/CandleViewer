@@ -9,6 +9,8 @@ counted, and the refusals are audited as `auth.ws_origin_refused` up to the per-
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
@@ -37,10 +39,12 @@ def test_ac_csrf_11_cross_site_socket_flood_is_refused_counted_and_audited_withi
     codes: list[int] = []
     with open_stack(monkeypatch) as stack:
         closes = _closes()
-        for _ in range(flood):
+        ids = [uuid.uuid4() for _ in range(flood)]
+        for request_id in ids:
+            headers = CROSS_SITE | {"x-correlation-id": str(request_id)}
             with pytest.raises(WebSocketDisconnect) as exc:
                 with stack.client.websocket_connect(
-                    path, subprotocols=["cv.v1.json"], headers=CROSS_SITE
+                    path, subprotocols=["cv.v1.json"], headers=headers
                 ):
                     pass
             codes.append(int(exc.value.code))
@@ -56,4 +60,5 @@ def test_ac_csrf_11_cross_site_socket_flood_is_refused_counted_and_audited_withi
         "severity": Severity.WARNING,
         "reason": "cross_site",
     }
-    assert rows == [row] * REFUSAL_AUDITS_PER_WINDOW  # capped; never a header value
+    named = [row | {"request_id": i} for i in ids[:REFUSAL_AUDITS_PER_WINDOW]]
+    assert rows == named  # capped; each names its upgrade (#3990), never a header

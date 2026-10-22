@@ -23,6 +23,7 @@ from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.upstream import UpstreamRefs
 from tests.contract.ws._harness import Client
 from tests.security.ws._raw import (
+    CONNECTION_REQUEST_ID,
     RawWorld,
     answers,
     authenticated,
@@ -162,6 +163,7 @@ def test_x02_ac_13_a_withdrawn_grants_queued_frames_are_dropped_before_permissio
         m1.user_id,
     )
     assert row["after_state"]["removed_accounts"] == [str(ACC_B)]
+    assert row["request_id"] == CONNECTION_REQUEST_ID  # its socket's (#3990)
 
 
 class _Gated:
@@ -249,6 +251,7 @@ def test_x02_ac_14_a_second_withdrawal_during_the_handshake_recheck_is_in_its_au
     assert naming(c.seen, ACC_B) == [] and naming(c.seen, ACC_C) == []
     (row,) = world.audit.of("ws.permission_snapshot.refused")
     assert (row["reason"], row["after_state"]["event"]) == ("stale", "handshake")
+    assert row["request_id"] == CONNECTION_REQUEST_ID  # its socket's (#3990)
 
 
 @_FLAG
@@ -282,3 +285,4 @@ def test_x02_ac_14_a_grant_withdrawn_during_a_reauth_keeps_the_withdrawal(
     assert revoked() == 2 and len(world.audit.of("ws.subscription.revoked")) == 2
     (row,) = world.audit.of("ws.permission_snapshot.refused")
     assert (row["reason"], row["after_state"]["event"]) == ("stale", "reauth")
+    assert row["request_id"] == CONNECTION_REQUEST_ID

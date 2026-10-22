@@ -534,7 +534,8 @@ async def _drop(frame: dict[str, Any]) -> None:
 
 #: The fields a Manager can read about their own rows (SR-067): the same for every reason.
 _DENIED = {"action": "ws.subscribe.denied", "actor_label": "ws", "object_kind": "ws_topic",
-           "outcome": AuditOutcome.DENIED, "severity": Severity.WARNING}  # fmt: skip
+           "outcome": AuditOutcome.DENIED, "severity": Severity.WARNING,
+           "request_id": None}  # fmt: skip  # its socket's upgrade id: none here
 
 
 @pytest.mark.parametrize(
