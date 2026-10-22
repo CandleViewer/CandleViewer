@@ -427,6 +427,35 @@ async def test_production_dials_with_bounded_frames_and_a_logger_that_shows_no_f
     assert (conn.sent, conn.state, conn.aborts) == (["frame"], State.CLOSED, 0)
 
 
+async def test_the_private_streams_connector_takes_1_mib_frames_and_reads_ahead_4(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """G-8b (#3963, ruling 9): the private stream dials as the probe does (no redirect, no proxy,
+    certifi's roots, the quiet logger, no library pings: the stream pings itself), with frames up
+    to 1 MiB, read twice-bounded, and at most 4 read ahead, never the library's default."""
+    conn = Conn(URLS["live"])
+    seen = dial_into(monkeypatch, conn)
+    caplog.set_level(logging.DEBUG)
+    socket = await key_ws_probe.connect_private_stream(URLS["live"])
+    assert await socket.recv(len(OK)) == OK
+    await socket.close()
+    assert not seen.pop("logger").isEnabledFor(logging.DEBUG)
+    expected = {"url": URLS["live"], "open_timeout": 5.0, "close_timeout": 0.5, "proxy": None}
+    stream = {"ping_interval": None, "max_size": 1_048_576, "max_queue": 4}
+    assert seen == {**expected, **stream, "ssl": key_ws_probe._TLS}
+    assert (key_ws_probe.STREAM_FRAME_BYTES, key_ws_probe.STREAM_MAX_QUEUE) == (1_048_576, 4)
+
+
+async def test_the_streams_connector_aborts_a_handshake_that_reached_another_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = Conn(URLS["live"])
+    dial_into(monkeypatch, conn)
+    with pytest.raises(ConnectionError, match="left the requested stream"):
+        await key_ws_probe.connect_private_stream(URLS["demo"])
+    assert conn.aborts == 1
+
+
 @pytest.mark.parametrize(
     "url",
     [*PRIVATE_WS_URLS.values(), f"{URLS['demo']}?max_active_time=60s"],

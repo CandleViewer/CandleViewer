@@ -62,6 +62,10 @@ OPENS_PER_WINDOW: Final = 10
 WINDOW_S: Final = 300.0
 #: Every read's bound: an `auth` reply is a few dozen bytes.
 MAX_FRAME_BYTES: Final = 4096
+#: G-8b (#3963, ruling 9): the private stream's frames, at most 1 MiB, and at most this many read
+#: but not yet taken (so 64 streams buffer 256 MiB at worst, never the library's default).
+STREAM_FRAME_BYTES: Final = 1_048_576
+STREAM_MAX_QUEUE: Final = 4
 #: The probe's vocabulary, a subset of `key_info.PROBE_ERRORS` (a test pins it).
 WsProbeError = Literal[
     "auth_error", "timeout", "transport_error", "exchange_unknown", "rate_limited"
@@ -149,12 +153,32 @@ async def connect_private_ws(url: str) -> PrivateSocket:
     socket lives for one reply), small frames, the library's close bound inside the probe's, and
     the quiet logger above. As `rest.py`'s `_assert_same_host`, defence in depth: a handshake
     that did not go to `url` itself is aborted before anything is sent on it."""
+    return await _dial(url, max_size=MAX_FRAME_BYTES)
+
+
+async def connect_private_stream(url: str) -> PrivateSocket:
+    """G-8b (#3963): the private stream's connector, the probe's in every other respect (no
+    redirect, no proxy, certifi's roots, the handshake check, the quiet logger, no library
+    pings: the stream pings for itself, 24 §14.2 rule 13): frames up to `STREAM_FRAME_BYTES`,
+    and at most `STREAM_MAX_QUEUE` of them read ahead."""
+    return await _dial(url, max_size=STREAM_FRAME_BYTES, max_queue=STREAM_MAX_QUEUE)
+
+
+async def _dial(url: str, *, max_size: int, max_queue: int | None = None) -> PrivateSocket:
+    """One dial of either connector: the probe's leaves the library's read-ahead as it is."""
     wanted = urlsplit(url)
-    conn = await _NoRedirectConnect(
-        url, open_timeout=PROBE_TIMEOUT_S, close_timeout=_LIBRARY_CLOSE_TIMEOUT_S,
-        ping_interval=None, max_size=MAX_FRAME_BYTES, logger=_SOCKET_LOG, proxy=None,
-        ssl=_TLS if wanted.scheme == "wss" else None,
-    )  # fmt: skip
+    tls = _TLS if wanted.scheme == "wss" else None
+    if max_queue is None:
+        conn = await _NoRedirectConnect(
+            url, open_timeout=PROBE_TIMEOUT_S, close_timeout=_LIBRARY_CLOSE_TIMEOUT_S,
+            ping_interval=None, max_size=max_size, logger=_SOCKET_LOG, proxy=None, ssl=tls,
+        )  # fmt: skip
+    else:
+        conn = await _NoRedirectConnect(
+            url, open_timeout=PROBE_TIMEOUT_S, close_timeout=_LIBRARY_CLOSE_TIMEOUT_S,
+            ping_interval=None, max_size=max_size, max_queue=max_queue, logger=_SOCKET_LOG,
+            proxy=None, ssl=tls,
+        )  # fmt: skip
     request = conn.request
     resource = f"{wanted.path}?{wanted.query}" if wanted.query else wanted.path
     asked = None if request is None else (request.headers.get("Host"), request.path)

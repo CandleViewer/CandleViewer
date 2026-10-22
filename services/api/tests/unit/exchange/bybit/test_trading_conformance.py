@@ -3,11 +3,14 @@ port, over transcribed replies (ruling R2), and `FakeTradingPort`. Each case ask
 the OMS relies on: what they refuse, before anything is sent, and how they answer. Every ack
 either port returns in any case here is checked as it leaves (the orchestrator's ruling 3 on
 #3972): one that is `ok` names the exchange's order and its `order_link_id`, and only a stop
-write, or the one ack of a cancel-all that cancelled nothing, names none.
+write, or the one ack of a cancel-all that cancelled nothing, names none. The private stream
+(G-8b, #3963) is held to one contract too: the exchange's on a fake venue and a virtual clock
+(`_private_venue.py`), the fake's by what a test pushes.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -25,11 +28,14 @@ from candleviewer.exchange.base.models import (
     CancelOrderRequest,
     Order,
     OrderAck,
+    PrivateStreamStatus,
     TradingStopRequest,
 )
 from candleviewer.exchange.bybit.trading import ENDPOINTS
 from tests._corpus import rest
 from tests._signing import CREDENTIAL_ID
+from tests.chaos.ingestion._clock import VirtualClock
+from tests.unit.exchange.bybit._private_venue import PrivateVenue, make_streams
 from tests.unit.exchange.bybit._trading import (
     ACCOUNT_B,
     NOW_US,
@@ -80,6 +86,9 @@ class Harness:
     prime_batch: Callable[[list[str]], None]
     prime_empty_cancel_all: Callable[[], None]
     prime_position_writes: Callable[[], None]
+    #: G-8b: let the private streams run a while; end every open one with its `closed` status.
+    advance: Callable[[], Awaitable[None]]
+    end_private: Callable[[], Awaitable[None]]
     acks: list[tuple[str, tuple[OrderAck, ...]]] = field(default_factory=list)
 
 
@@ -115,6 +124,9 @@ def check_acks_name_their_orders(seen: Sequence[tuple[str, Sequence[OrderAck]]])
 
 def _exchange() -> Harness:
     venue, governor = Venue(), RecordingGovernor()
+    clock = VirtualClock()
+    private = PrivateVenue(clock)
+    streams = make_streams(private)
 
     def prime_create(order_link_id: str) -> None:
         created = with_result(rest("rest/trading-create-reply.json"), orderLinkId=order_link_id)
@@ -171,8 +183,8 @@ def _exchange() -> Harness:
         venue.on("/v5/position/set-leverage", rest("rest/trading-set-leverage-reply.json"))
 
     harness = Harness(
-        port=make_port(venue, governor=governor),
-        sent=lambda: len(venue.sent) + len(governor.acquired),
+        port=make_port(venue, governor=governor, private_streams=streams),
+        sent=lambda: len(venue.sent) + len(governor.acquired) + len(private.dialled),
         lanes=lambda: [lane for _, _, lane, _ in governor.acquired],
         prime_create=prime_create,
         prime_ext_cancel=prime_ext_cancel,
@@ -184,6 +196,8 @@ def _exchange() -> Harness:
         prime_batch=prime_batch,
         prime_empty_cancel_all=prime_empty_cancel_all,
         prime_position_writes=prime_position_writes,
+        advance=lambda: clock.advance(1),
+        end_private=streams.aclose,
     )
     _watch(harness.port, harness.acks)
     return harness
@@ -223,9 +237,19 @@ def _fake() -> Harness:
         prime_batch=lambda _links: None,  # the fake places every new id
         prime_empty_cancel_all=lambda: None,  # the fake holds no order
         prime_position_writes=lambda: None,  # the fake writes to whatever position it holds
+        advance=lambda: asyncio.sleep(0),
+        end_private=lambda: _end_fake_streams(port),
     )
     _watch(harness.port, harness.acks)
     return harness
+
+
+async def _end_fake_streams(port: FakeTradingPort) -> None:
+    """What the exchange's port does on shutdown, pushed: the account's `closed` status."""
+    status = PrivateStreamStatus(
+        account_id=account().account_id, state="closed", reason="shutdown", epoch=0, ts=NOW_US
+    )
+    port.push(status)
 
 
 def _order(order_link_id: str, exchange_order_id: str) -> Order:
@@ -685,3 +709,40 @@ async def test_the_fakes_lanes_are_the_exchange_ports_endpoint_table() -> None:
     for name, lane in LANES.items():
         assert recorded[name] == (lane or "critical"), name
         assert ENDPOINTS[name].lane == lane, name
+
+
+# -- the private stream (G-8b, #3963; 24 §14.1, §14.2 rule 13) -----------------------------------
+
+
+async def test_both_refuse_another_environments_private_stream_before_anything(
+    harness: Harness,
+) -> None:
+    with pytest.raises(ValueError, match="another environment"):
+        await harness.port.subscribe_private(account(environment="live"))
+    await harness.advance()
+    assert harness.sent() == 0
+
+
+async def test_both_give_an_account_one_private_stream_at_a_time(harness: Harness) -> None:
+    """SR-E29-02: one consumer per account; closing the stream, even unread, frees it."""
+    stream = await harness.port.subscribe_private(account())
+    with pytest.raises(ValueError, match="already has a private stream"):
+        await harness.port.subscribe_private(account())
+    await stream.aclose()
+    again = await harness.port.subscribe_private(account())
+    await again.aclose()
+    await harness.end_private()
+
+
+async def test_both_end_a_private_stream_after_its_closed_status(harness: Harness) -> None:
+    stream = await harness.port.subscribe_private(account())
+    await harness.advance()
+    await harness.end_private()
+    async with asyncio.timeout(5):  # a guard only: every item is queued before the reads
+        seen = [item async for item in stream]
+    last = seen[-1]
+    assert isinstance(last, PrivateStreamStatus)
+    assert (last.state, last.reason) == ("closed", "shutdown")
+    assert not [i for i in seen[:-1] if isinstance(i, PrivateStreamStatus) and i.state == "closed"]
+    with pytest.raises(StopAsyncIteration):
+        await stream.__anext__()

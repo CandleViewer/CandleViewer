@@ -9,7 +9,8 @@ pinned by a test under `tests/unit/exchange/bybit/test_trading_*.py`:
 2. Every account's client draws on the process's one governor (OM-D08, ruling R5); each
    attempt of a call takes its own token, and the lane's wait bounds the whole call, retries
    included (T04's rate step, 24 §8.7).
-3. Orders go over REST only: this module holds no trade socket (C-2.11, SR-040a).
+3. Orders go over REST only: this module holds no trade socket (C-2.11, SR-040a); the private
+   stream it hands out (G-8b, `private_stream.py`) reads and never trades.
 4. `category` is `linear`, written on every call that takes it (SR-054).
 5. Replies are parsed strictly and every row is checked against the call's account (E8-8,
    SR-E29-02, ruling R12).
@@ -118,6 +119,7 @@ from candleviewer.secrets import KekUnavailable, SecretsError
 
 if TYPE_CHECKING:
     from candleviewer.exchange.base.ports import PrivateStream, RateHeadroomPort, TradingPort
+    from candleviewer.exchange.bybit.private_stream import PrivateStreams
     from candleviewer.secrets import SigningCapability
 
 __all__ = [
@@ -268,6 +270,13 @@ def _lane(endpoint: Endpoint, requested: RateLane | None) -> RateLane:
     raise ValueError(f"{endpoint.path}: its lane is the endpoint table's or its request's")
 
 
+def _rest_offset(provider: Callable[[], int | None] | None) -> Callable[[], int] | None:
+    """The REST client's offset: the measured one, the host's (0) while unmeasured."""
+    if provider is None:
+        return None
+    return lambda: provider() or 0
+
+
 def _windows(start: TsUs, end: TsUs) -> list[tuple[int, int]]:
     """`[start, end]` in ms as consecutive windows of at most 7 days, the venue's longest."""
     low, high = start // 1000, -(-end // 1000)
@@ -284,9 +293,11 @@ def _windows(start: TsUs, end: TsUs) -> list[tuple[int, int]]:
 class BybitTradingPort:
     """`TradingPort` for one environment, over one signed client per account.
 
-    Built only by `ExchangeBybitService.trading_port` (the process's environment and its one
-    governor). Each method refuses an account of another environment before a client exists,
-    a token is taken or anything is signed (C-2.11).
+    Built only by `ExchangeBybitService.trading_port` (the process's environment, its one
+    governor and its private streams). Each method refuses an account of another environment
+    before a client exists, a token is taken or anything is signed (C-2.11). `clock_offset_ms`
+    is the exchange clock's measured offset, `None` while unmeasured: REST signs on the host's
+    clock then, and the private stream counts no `auth` refusal (G-8b OQ-4).
     """
 
     def __init__(
@@ -296,12 +307,13 @@ class BybitTradingPort:
         credentials: SigningCapability,
         governor: TokenBucketGovernor,
         transport: httpx.AsyncBaseTransport | None,
-        clock_offset_ms: Callable[[], int] | None = None,
+        clock_offset_ms: Callable[[], int | None] | None = None,
         entry_wait_s: float = DEFAULT_ENTRY_WAIT_S,
         max_retries: int = 3,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         now_us: Callable[[], TsUs] = _wall_us,
+        private_streams: PrivateStreams | None = None,
     ) -> None:
         self.capabilities: ExchangeCapabilities = capabilities_for(environment)
         self.environment: Environment = self.capabilities.environment
@@ -319,6 +331,7 @@ class BybitTradingPort:
             {"critical": CRITICAL_WAIT_S, "entry": entry_wait_s, "poll": POLL_WAIT_S}
         )
         self._clients: dict[AccountId, tuple[str, BybitRestClient]] = {}
+        self._streams = private_streams
 
     async def aclose(self) -> None:
         clients, self._clients = self._clients, {}
@@ -346,7 +359,7 @@ class BybitTradingPort:
             uid=account.uid,
             signer=signer,
             governor=self._governor,
-            clock_offset_ms_provider=self._clock_offset_ms,
+            clock_offset_ms_provider=_rest_offset(self._clock_offset_ms),
             transport=self._transport,
             sleep=self._sleep,
             monotonic=self._monotonic,
@@ -820,8 +833,14 @@ class BybitTradingPort:
         return to_account_info(result, account)
 
     async def subscribe_private(self, account: AccountRef) -> PrivateStream:
-        """The private stream is G-8b's (#3963, ruling R1): until it lands this refuses."""
-        raise NotImplementedError("G-8b")
+        """G-8b (#3963): the account's private stream (24 §14.1, §14.2 rule 13), from the
+        adapter's one registry. Another environment's account is refused first, a port built
+        with no registry refuses every account; the registry's own refusals come before anything
+        is signed, dialled or built, and once returned the stream raises nothing."""
+        self._check_environment(account)
+        if self._streams is None:
+            raise RuntimeError("no private stream is wired")
+        return await self._streams.open(account, clock_offset_ms=self._clock_offset_ms)
 
     # -- the rate budget, read (RateHeadroomPort) -------------------------------------------------
 

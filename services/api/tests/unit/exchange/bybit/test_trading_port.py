@@ -38,7 +38,12 @@ from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.exchange.bybit.signer import BybitSigner
-from candleviewer.exchange.bybit.trading import CRITICAL_WAIT_S, ENDPOINTS, BybitTradingPort
+from candleviewer.exchange.bybit.trading import (
+    CRITICAL_WAIT_S,
+    ENDPOINTS,
+    BybitTradingPort,
+    _rest_offset,
+)
 from tests._corpus import rest
 from tests._signing import CREDENTIAL_ID, Call, fake_capability
 from tests.unit.exchange.bybit._trading import (
@@ -735,9 +740,42 @@ async def test_every_cancel_all_sends_the_order_filter(symbol: str | None, scope
 # -- R1, R13 and the client cache ---------------------------------------------------------------
 
 
-async def test_subscribe_private_waits_for_g8b() -> None:
-    with pytest.raises(NotImplementedError, match="G-8b"):
-        await make_port(Venue()).subscribe_private(account())
+async def test_subscribe_private_is_refused_when_no_stream_is_wired() -> None:
+    """G-8b (#3963): a port built without the adapter's registry opens no stream; another
+    environment's account is refused first, as on every call."""
+    port = make_port(Venue())
+    with pytest.raises(ValueError, match="another environment"):
+        await port.subscribe_private(account(environment="live"))
+    with pytest.raises(RuntimeError, match="no private stream is wired"):
+        await port.subscribe_private(account())
+
+
+async def test_subscribe_private_opens_from_the_adapters_registry_on_its_clock() -> None:
+    """The port delegates to the registry with the exchange clock's offset it was built with,
+    which the stream signs `auth` on and counts refusals by (OQ-4)."""
+    opened: list[tuple[object, object]] = []
+    stream = object()
+
+    class Registry:
+        async def open(self, ref: object, *, clock_offset_ms: object = None) -> object:
+            opened.append((ref, clock_offset_ms))
+            return stream
+
+    def offset() -> int | None:
+        return None
+
+    port = make_port(Venue(), private_streams=Registry(), clock_offset_ms=offset)
+    returned: object = await port.subscribe_private(account())
+    assert returned is stream
+    assert opened == [(account(), offset)]
+
+
+def test_rest_signs_on_the_measured_offset_and_on_the_hosts_clock_while_unmeasured() -> None:
+    """The offset is `None` while unmeasured (G-8b OQ-4): REST then stamps the host's clock."""
+    assert _rest_offset(None) is None
+    unmeasured, measured = _rest_offset(lambda: None), _rest_offset(lambda: -1500)
+    assert unmeasured is not None and measured is not None
+    assert (unmeasured(), measured()) == (0, -1500)
 
 
 @pytest.mark.parametrize(
