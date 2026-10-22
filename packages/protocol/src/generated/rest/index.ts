@@ -1320,6 +1320,9 @@ export interface paths {
      * @description Alerts reuse the rule IR condition language but may only use notification actions —
      *     an alert can never place an order. `trigger_mode` is `once` (fire and disable),
      *     `every_time`, or `once_per_bar`. Channels are `in_app`, `desktop`, `email`, `webhook`.
+     *     A name the owner already uses for a live alert answers `409 conflict`. A `422` is
+     *     `rule_ir_invalid` (the condition) or `validation_failed`: the body, or a value the
+     *     stored alert's own rules refuse (#2748).
      */
     post: operations["createAlert"];
     delete?: never;
@@ -1339,7 +1342,11 @@ export interface paths {
     };
     /** Get an alert */
     get: operations["getAlert"];
-    /** Replace an alert */
+    /**
+     * Replace an alert
+     * @description A name the owner already uses for another live alert answers `409 conflict`. A `422`
+     *     is `rule_ir_invalid` or `validation_failed`, as for `createAlert` (#2748).
+     */
     put: operations["updateAlert"];
     post?: never;
     /** Delete an alert */
@@ -12469,7 +12476,8 @@ export interface operations {
         };
       };
       403: components["responses"]["CsrfTokenInvalid"];
-      422: components["responses"]["RuleIrInvalid"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -12535,7 +12543,9 @@ export interface operations {
         };
       };
       403: components["responses"]["CsrfTokenInvalid"];
+      409: components["responses"]["Conflict"];
       412: components["responses"]["PreconditionFailed"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

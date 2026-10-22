@@ -7059,6 +7059,9 @@ paths:
         Alerts reuse the rule IR condition language but may only use notification actions —
         an alert can never place an order. `trigger_mode` is `once` (fire and disable),
         `every_time`, or `once_per_bar`. Channels are `in_app`, `desktop`, `email`, `webhook`.
+        A name the owner already uses for a live alert answers `409 conflict`. A `422` is
+        `rule_ir_invalid` (the condition) or `validation_failed`: the body, or a value the
+        stored alert's own rules refuse (#2748).
       x-rbac: { permissions: [alerts:write], scope: self }
       x-idempotency: recommended
       parameters:
@@ -7110,7 +7113,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Alert" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
-        "422": { $ref: "#/components/responses/RuleIrInvalid" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/{alertId}:
@@ -7134,6 +7138,9 @@ paths:
       tags: [alerts]
       operationId: updateAlert
       summary: Replace an alert
+      description: |
+        A name the owner already uses for another live alert answers `409 conflict`. A `422`
+        is `rule_ir_invalid` or `validation_failed`, as for `createAlert` (#2748).
       x-rbac: { permissions: [alerts:write], scope: self }
       parameters:
         [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
@@ -7149,7 +7156,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Alert" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [alerts]
