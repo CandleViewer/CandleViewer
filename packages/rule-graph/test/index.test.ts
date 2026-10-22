@@ -5,7 +5,7 @@ import type { RuleGraphErrorCode, RuleIr } from "../src/index.js";
 // The public entry is the package's contract: pin what it exports at runtime. The RuleIr and
 // RuleGraphErrorCode types are erased, so only the values show.
 describe("the public entry", () => {
-  it("exports exactly the error contract and the canonical mirror", async () => {
+  it("exports exactly the error contract, the canonical mirror and the graph adapter", async () => {
     expect(Object.keys(await import("../src/index.js")).sort()).toEqual([
       "RULE_GRAPH_ERROR_CODES",
       "RuleGraphError",
@@ -13,6 +13,10 @@ describe("the public entry", () => {
       "compareWithServer",
       "hash",
       "isRuleGraphError",
+      "nodesNeedingLayout",
+      "readLayout",
+      "toGraph",
+      "toIr",
     ]);
   });
 
@@ -25,6 +29,7 @@ describe("the public entry", () => {
       | "ORPHAN_NODE"
       | "NOT_FORM_REPRESENTABLE"
       | "SCHEMA_VIOLATION"
+      | "MULTIPLE_SINKS"
     >();
   });
 });
