@@ -143,6 +143,10 @@
           },
           "type": "array"
         },
+        "git_sha": {
+          "description": "The exact build (CV_GIT_SHA), sent only after authentication (E09-X02 F-8; §4.3).",
+          "type": "string"
+        },
         "kill_switch": {
           "$ref": "cv://ws/v1/system.schema.json#/$defs/killSwitch"
         },
@@ -4266,6 +4270,7 @@
           "type": "object"
         },
         "git_sha": {
+          "description": "Not sent (E09-X02 F-8): the exact build comes only after authentication, as auth_ok.git_sha (§4.3). Kept declared and optional, as cv.v1 admits it.",
           "type": "string"
         },
         "heartbeat": {
