@@ -67,6 +67,24 @@ async def _send_action(refusals: _Refusals, *, viewing: bool) -> tuple[dict[str,
     return reply, rig
 
 
+class _Hangs:
+    async def refuse_frame(self, **kwargs: Any) -> bool:
+        await asyncio.Event().wait()  # never set: only the bound ends it
+        return True
+
+
+async def test_a_refusal_record_that_never_returns_is_cut_at_its_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-2.18: the reader waits for the record at most `CLOSE_AUDIT_TIMEOUT_S`, so a hung
+    recorder never stalls the socket: the `err` is sent past the bound, and the next frame
+    is served."""
+    monkeypatch.setattr(gateway, "ACTION_FRAME_TYPES", frozenset({"act"}))
+    monkeypatch.setattr(gateway, "CLOSE_AUDIT_TIMEOUT_S", 0.01)
+    reply, _ = await _send_action(cast(Any, _Hangs()), viewing=True)
+    assert (reply["t"], reply["p"]["code"]) == ("err", "view_as_read_only")
+
+
 async def test_a_viewing_sessions_action_frame_is_refused_recorded_and_the_socket_stays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

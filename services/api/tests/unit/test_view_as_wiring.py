@@ -27,6 +27,7 @@ from candleviewer.view_as_wiring import (
     IdentityLabels,
     RoleChangeNotifier,
     SessionViewAs,
+    SessionViewAsRefusals,
     build_view_as,
 )
 from candleviewer.ws import gateway
@@ -226,6 +227,32 @@ def test_create_app_gives_the_socket_no_view_as_read_on_the_fake_backend(
     create_app(Settings())
     (kwargs,) = seen
     assert kwargs["view_as"] is None
+
+
+def test_create_app_gives_the_socket_the_apps_refusal_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§9.6: a viewing socket's refused action frame is recorded by the app's one recorder,
+    labelled through the identity provider."""
+    seen = _spy_on_the_ws_router(monkeypatch)
+    app = create_app(_real())
+    (kwargs,) = seen
+    refusals = kwargs["view_as_refusals"]
+    assert isinstance(refusals, SessionViewAsRefusals)
+    assert refusals._recorder() is app.state.view_as_refusals
+
+
+def test_the_sockets_refusal_record_fails_when_the_app_has_no_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read as S7's guard reads it: a missing recorder fails the record, which the gateway
+    counts (SR-E17-04), never records nothing in silence."""
+    seen = _spy_on_the_ws_router(monkeypatch)
+    app = create_app(_real())
+    (kwargs,) = seen
+    del app.state.view_as_refusals
+    with pytest.raises(AttributeError):
+        kwargs["view_as_refusals"]._recorder()
 
 
 def test_the_sockets_read_fails_when_the_app_has_no_service(

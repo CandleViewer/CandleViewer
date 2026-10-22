@@ -838,6 +838,30 @@ async def test_user_disabled_first_closer_raises_second_socket_closed_and_one_fa
     assert close_failures() == before + 1
 
 
+async def test_user_disabled_whose_bye_cannot_be_built_still_closes_the_other_sockets(
+    close_failures: Callable[[], float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each socket's `bye` is built inside its own guard (#3635): a fault there is that
+    close's failure, counted, and the user's next socket is still closed."""
+    first, survivor = _Socket(), _Socket()
+    registry = _user_registry(_Clock())
+    _connect(registry, first.close)
+    _connect(registry, survivor.close)
+    reads = iter([_NOW_MS, None, _NOW_MS])  # the memory's instant, then one per socket
+
+    def clock_ms() -> int:
+        if (now := next(reads)) is None:
+            raise OverflowError("the wall clock failed")
+        return now
+
+    monkeypatch.setattr(registry, "_clock_ms", clock_ms)
+    before = close_failures()
+    with capture_logs():
+        assert await registry.user_disabled(_USER) == 2
+    assert (first.closes, len(survivor.closes)) == ([], 1)
+    assert close_failures() == before + 1
+
+
 async def test_user_disabled_closer_cut_off_at_bound_counts_one_failure(
     close_failures: Callable[[], float],
 ) -> None:

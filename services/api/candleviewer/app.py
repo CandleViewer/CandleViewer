@@ -1675,10 +1675,11 @@ def create_app(
                 else None
             ),
             # §9.6: a viewing session's refused action frame is recorded by the recorder built
-            # below, read per call; none on the fake backend, which has no identity to label it.
+            # below, read per call as S7's guard reads it, so a missing one fails the refusal's
+            # record; none on the fake backend, which has no identity to label it.
             view_as_refusals=(
                 SessionViewAsRefusals(
-                    lambda: getattr(app.state, "view_as_refusals", None),
+                    lambda: app.state.view_as_refusals,
                     IdentityLabels(identity),
                 )
                 if identity is not None

@@ -1141,7 +1141,12 @@ class ConnectionAuthz:
             return None
         self.principal, self.version = new.principal, new.version
         frames: list[dict[str, Any]] = [
-            {"t": "permission_change", "ts": now_ms, "p": auth_ok_payload(new.principal)}
+            {
+                "t": "permission_change",
+                "ts": now_ms,
+                # §9.5: the identity `auth_ok` gave, the session's own user when viewing.
+                "p": auth_ok_payload(new.principal, user_id=str(self.actor_user_id)),
+            }
         ]
         affected: list[Subscription] = []
         for sub in sorted(self.by_id.values(), key=lambda s: (s.ch, s.sub_id)):
@@ -1666,12 +1671,12 @@ class ConnectionRegistry:
             for authz, _send, close in entries:
                 closer = self._closers.pop(id(authz), None)
                 authz.release_all()
-                if authz.viewing:  # §9.6: the viewed target is gone, the viewer is not
-                    bye = lifecycle_bye("view_as_expired", now_ms=self._clock_ms())
-                else:
-                    ws_revoked_total.labels(reason="user_disabled").inc()
-                    bye = user_disabled_bye(self._clock_ms())
                 try:
+                    if authz.viewing:  # §9.6: the viewed target is gone, the viewer is not
+                        bye = lifecycle_bye("view_as_expired", now_ms=self._clock_ms())
+                    else:
+                        ws_revoked_total.labels(reason="user_disabled").inc()
+                        bye = user_disabled_bye(self._clock_ms())
                     async with asyncio.timeout(self.send_timeout_s):
                         if closer is not None:
                             await closer(bye, 4403)

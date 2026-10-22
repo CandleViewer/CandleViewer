@@ -56,6 +56,32 @@ async def test_auth_ok_names_the_session_with_the_targets_scope_and_registers_th
         await handler
 
 
+async def test_a_viewing_sockets_flag_push_is_resolved_for_its_target() -> None:
+    """Its flags are its subject's, with the subject's roles, as REST resolves them (plan
+    §1.5): never the viewer's overrides or rollout bucket."""
+    rig, sock = _viewing(), Sock()
+    async with asyncio.timeout(DEADLINE_S):
+        handler = await rig.open(sock)
+        assert (await rig.auth(sock, "good-1"))["t"] == "auth_ok"
+        ((user_id, roles, _push),) = rig.hub.system_sessions()
+        assert (user_id, roles) == (_TARGET, frozenset({"viewer"}))
+        hang_up(sock)
+        await handler
+
+
+async def test_a_viewing_sockets_permission_change_names_the_session_as_auth_ok_did() -> None:
+    """§9.5: its identity is a subset of `auth_ok`'s, which names the session's own user."""
+    rig, sock = _viewing(), Sock()
+    async with asyncio.timeout(DEADLINE_S):
+        handler = await rig.open(sock)
+        assert (await rig.auth(sock, "good-1"))["t"] == "auth_ok"
+        await rig.registry.roles_changed(_TARGET)
+        change = await sock.sent.get()
+        assert (change["t"], change["p"]["user_id"]) == ("permission_change", str(_VIEWER))
+        hang_up(sock)
+        await handler
+
+
 async def test_a_disable_of_the_viewed_target_ends_the_view_not_the_viewer() -> None:
     rig, sock = _viewing(), Sock()
     async with asyncio.timeout(DEADLINE_S):

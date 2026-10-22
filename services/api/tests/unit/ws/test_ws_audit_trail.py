@@ -159,6 +159,15 @@ async def test_a_sub_frame_writes_one_granted_row_for_its_new_private_subscripti
     assert sink.sent_before == {DENIED: [], GRANTED: ["sub_ok"]}  # after the reply is queued
 
 
+async def test_a_viewing_sockets_granted_row_names_the_viewer() -> None:
+    """§9.6: the viewer acts; the scope is the target's, the row's actor the viewer."""
+    authz, sent, sink = _connection()
+    authz.viewer_user_id = viewer = uuid.uuid4()
+    await _sub(authz, sent, _acc("orders", A))
+    (row,) = sink.rows
+    assert row["actor_user_id"] == viewer
+
+
 @pytest.mark.parametrize(
     "topics", [["trades.BTCUSDT"], [_acc("orders", C)]], ids=["public", "private_refused"]
 )

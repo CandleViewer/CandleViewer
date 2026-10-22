@@ -480,9 +480,10 @@ class GatewayHub:
     def system_sessions(
         self,
     ) -> list[tuple[uuid.UUID, frozenset[str], Callable[[dict[str, Any]], None]]]:
-        """Each authenticated socket's user, roles and `system` push (the feature-flag push)."""
+        """Each authenticated socket's subject, roles and `system` push (the feature-flag
+        push). A viewing socket's subject is its target (§9.6), whose flags REST resolves."""
         return [
-            (c.user_id, c.authz.principal.roles, c.push_system)
+            (c.authz.principal.user_id, c.authz.principal.roles, c.push_system)
             for c in self._authenticated()
             if c.user_id is not None and c.authz is not None
         ]

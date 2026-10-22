@@ -327,6 +327,9 @@ def test_x02_the_gateway_dispatches_these_frame_types_and_no_action_frame() -> N
     # The key "t" is read once, to bind `kind`; a branch on `frame.get("t")` would read it again.
     assert sum(isinstance(n, ast.Constant) and n.value == "t" for n in ast.walk(fn)) == 1
     assert compared == _DISPATCHED and _DISPATCHED <= set(_ENVELOPE)
+    # §9.6: every dispatched type is a read frame or an action frame, so a viewing socket
+    # acts on none it was not classified for.
+    assert compared == gateway.READ_FRAME_TYPES | gateway.ACTION_FRAME_TYPES
 
 
 @pytest.mark.parametrize("kind", _REFUSED)
