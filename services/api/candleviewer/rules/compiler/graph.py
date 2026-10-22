@@ -23,8 +23,11 @@ from candleviewer.rules.compiler.common import (
     MAX_DEPTH,
     MAX_GRAPH_EDGES,
     MAX_GRAPH_NODES,
+    MAX_ITEMS,
+    bounds_error,
     build_rule,
     check_bounds,
+    count_values,
 )
 from candleviewer.rules.ir import (
     ArithmeticNode,
@@ -202,18 +205,43 @@ def _wellformed(by_id: dict[str, dict[str, Any]], edges: list[dict[str, Any]]) -
     return roots[0], ins
 
 
+def _copy_values(n: dict[str, Any], port: dict[str, list[str]]) -> int:
+    """The values one copy of `n` adds to the expanded conditions, as `check_bounds` counts them:
+    its object, each data value it keeps, its node id and the list holding its inputs. Each input
+    charges its own copy."""
+    data, t = n.get("data", {}), n["type"]
+    if t == "operand":
+        return 1 + sum(count_values(v) for v in data.values())
+    if t == "comparison":
+        set_keys = {p for p in _OPERAND_PORTS if port.get(p)}
+    else:
+        set_keys = {"child" if t == "temporal" else "children" if t == "boolean" else "operands"}
+    kept = sum(count_values(v) for k, v in data.items() if k != "node_id" and k not in set_keys)
+    return 2 + kept + (t not in ("comparison", "temporal"))
+
+
 def compile_graph(model: dict[str, Any], rule_id: Any = None) -> Rule:
-    """Compile a graph-editor model to the canonical IR; structural faults raise (no IR)."""
+    """Compile a graph-editor model to the canonical IR; structural faults raise (no IR). The
+    graph compiler charges shared-node copies against the document bounds: every copy is charged
+    before it is built, so an expansion past `MAX_ITEMS` values is refused, never materialised."""
     check_bounds(model, "graph model")
     by_id, edges = _index(model)
     root, ins = _wellformed(by_id, edges)
+    budget = MAX_ITEMS  # the values the expanded conditions may still add
+    costs: dict[str, int] = {}  # one copy's own values, per node
 
     def build(nid: str, depth: int) -> dict[str, Any]:
+        nonlocal budget
         if depth > MAX_DEPTH:
             raise _fail(
                 _err("schema_error", f"nodes.{nid}", "The graph is nested too deeply.", nid)
             )
         n = by_id[nid]
+        if nid not in costs:
+            costs[nid] = _copy_values(n, ins[nid])
+        budget -= costs[nid]
+        if budget < 0:
+            raise bounds_error("graph model")
         if n["type"] == "operand":  # metric ref / {const}: a leaf with no node_id of its own
             return dict(n.get("data", {}))
         out: dict[str, Any] = {**n.get("data", {}), "node_id": nid}

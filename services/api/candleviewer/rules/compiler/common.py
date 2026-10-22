@@ -20,6 +20,26 @@ MAX_GRAPH_NODES = 1_000
 MAX_GRAPH_EDGES = 4_000
 
 
+def bounds_error(what: str) -> RuleCompileError:
+    """The refusal of a document over the bounds: one `schema_error` naming both limits."""
+    limits = f"(limit {MAX_ITEMS} values, {MAX_DEPTH} levels)"
+    text = f"The {what} is too large or too deeply nested to compile {limits}."
+    return RuleCompileError([Issue("$", "schema_error", text, klass="syntax")])
+
+
+def count_values(doc: Any) -> int:
+    """The values in `doc` as `check_bounds` counts them, for a document already within them."""
+    stack, count = [doc], 0
+    while stack:
+        cur = stack.pop()
+        count += 1
+        if isinstance(cur, dict):
+            stack.extend(cur.values())
+        elif isinstance(cur, (list, tuple)):
+            stack.extend(cur)
+    return count
+
+
 def check_bounds(doc: Any, what: str) -> None:
     """Reject over-sized or over-deep documents before walking them. Every value stacked and every
     child of the one at hand is still to be counted, so a container is refused by its length
@@ -31,17 +51,7 @@ def check_bounds(doc: Any, what: str) -> None:
         count += 1
         wide = len(cur) if isinstance(cur, (dict, list, tuple)) else 0
         if count + len(stack) + wide > MAX_ITEMS or depth > MAX_DEPTH:
-            raise RuleCompileError(
-                [
-                    Issue(
-                        "$",
-                        "schema_error",
-                        f"The {what} is too large or too deeply nested to compile "
-                        f"(limit {MAX_ITEMS} values, {MAX_DEPTH} levels).",
-                        klass="syntax",
-                    )
-                ]
-            )
+            raise bounds_error(what)
         if isinstance(cur, dict):
             stack.extend((v, depth + 1) for v in cur.values())
         elif isinstance(cur, (list, tuple)):
