@@ -432,7 +432,7 @@ describe("a consumer that cannot keep up (C-2.18)", () => {
     await t.advance(61_000); // the votes leave the window, and with them their chs
     a.say({ t: "resync", id: "new" });
     expect(t.host.counters.rejectedMessages).toBe(1);
-  });
+  }, 20_000); // 512 fills and 61 s of fake time: past 5 s on loaded CI runners (#4154), not a performance budget
 });
 
 describe("what the tabs show decides how the topics run (C8)", () => {
@@ -557,7 +557,7 @@ describe("what a tab may ask", () => {
       consumers: MAX_CONSUMERS_PER_TAB,
       rejectedMessages: 4,
     });
-  });
+  }, 20_000); // the same 512-consumer fill (#4154): slow on a busy machine, not a performance budget
 
   it("a name taken is refused while there is room, and the consumer that holds it is left as it was", async () => {
     const { t, tabs, conn } = await watching();
