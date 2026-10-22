@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -28,9 +29,26 @@ from tests.unit.auth.test_step_up import PASSWORD
 
 class _InvAuth:
     invites_is_active = True
+    sessions_is_active = False  # no session to name a refusal's (`_SessionAuth`: one)
 
     def __init__(self, svc: InviteService) -> None:
         self.invites = svc
+
+
+class _SessionAuth(_InvAuth):
+    """`_InvAuth` with the session read a refusal's record names (#4174)."""
+
+    sessions_is_active = True
+
+    def __init__(self, svc: InviteService) -> None:
+        super().__init__(svc)
+        self.sessions = self
+
+    async def peek_access_token(self, token: str) -> Any:
+        return SimpleNamespace(id=_SESSION)
+
+
+_SESSION = uuid.UUID(int=4174)
 
 
 class _Resolver:
@@ -42,7 +60,7 @@ class _Resolver:
 
 
 async def _setup(
-    role: str = "owner", audit_ok: bool = True
+    role: str = "owner", audit_ok: bool = True, auth: type[_InvAuth] = _InvAuth
 ) -> tuple[TestClient, _Emitter, Any, Any, FakeRepo, Any]:
     c, em, seed, clock, user = await _build()
     repo = FakeRepo()
@@ -52,7 +70,7 @@ async def _setup(
         roles=frozenset({role}),
         permissions=frozenset({Permission.USERS_WRITE}) if role == "owner" else frozenset(),
     )
-    router = make_invites_router(_InvAuth(svc), em, _Resolver(snap), audit_ready=lambda: audit_ok)
+    router = make_invites_router(auth(svc), em, _Resolver(snap), audit_ready=lambda: audit_ok)
     c.app.include_router(router)  # type: ignore[attr-defined]
     return c, em, seed, clock, repo, svc
 
@@ -320,3 +338,13 @@ async def test_the_invitee_records_carry_the_minted_id_when_the_request_names_no
     assert r.status_code == 404
     (rejected,) = [x for x in em.calls if x["action"] == "users.invite_rejected"]
     assert str(rejected["request_id"]) == r.headers["x-correlation-id"]
+
+
+async def test_the_owner_check_denial_names_the_callers_session() -> None:
+    """#4174: as the `users:read` refusal names it."""
+    c, em, seed, clock, _, _ = await _setup(role="viewer", auth=_SessionAuth)
+    _elevate(c, seed, clock)
+    r = c.post("/users", headers=_H, json=_BODY)
+    assert r.status_code == 403
+    (denied,) = [x for x in em.calls if x["action"] == "rbac.denied"]
+    assert denied["session_id"] == _SESSION

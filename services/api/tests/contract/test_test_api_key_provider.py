@@ -65,10 +65,27 @@ class OwnerOnly(Reads):
         return await super().get_account(scope, account_id)
 
 
+class SessionAuth:
+    """The session read a refusal's record names (#4174): every bearer names `SESSION`."""
+
+    sessions_is_active = True
+
+    def __init__(self) -> None:
+        self.sessions = self
+
+    async def peek_access_token(self, token: str) -> Any:
+        return SimpleNamespace(id=SESSION)
+
+
+SESSION = UUID(int=4174)
+
+
 class Route:
     """The router over `flow` (`None`: the fake backend), `w` its audit sink."""
 
-    def __init__(self, w: World | None = None, flow: Any = ..., resolved: bool = True) -> None:
+    def __init__(
+        self, w: World | None = None, flow: Any = ..., resolved: bool = True, auth: Any = None
+    ) -> None:
         self.w = World(target()) if w is None else w
         self.flow = flow_of(self.w, OwnerOnly()) if flow is ... else flow
         app = FastAPI()
@@ -76,7 +93,7 @@ class Route:
         app.include_router(
             make_exchange_keys_router(
                 None, self.w, Resolver() if resolved else None, egress_ip=EGRESS,
-                rotation=KeyRotationPolicy(), tests=self.flow,
+                rotation=KeyRotationPolicy(), tests=self.flow, auth=auth,
             )
         )  # fmt: skip
         transport = httpx.ASGITransport(app=app)
@@ -235,6 +252,14 @@ async def test_the_store_gates_refusal_is_audited_as_enforce_audits_its_own() ->
     assert (by_store["object_id"], by_store["reason"]) == (
         str(ACCT), "not_owner:keys:read:granted_accounts",
     )  # fmt: skip
+
+
+async def test_each_layers_refusal_names_the_callers_session() -> None:
+    """#4174: `enforce`'s and the store gate's, as the `users:read` refusal names it."""
+    route = Route(auth=SessionAuth())
+    answer(await route.post("manager"), 403, _PROBLEM)  # `enforce`: no keys:read
+    answer(await route.post("reader"), 403, _PROBLEM)  # the store's live-owner gate
+    assert [e[2]["session_id"] for e in route.w.of("audit")] == [SESSION, SESSION]
 
 
 @pytest.mark.parametrize(

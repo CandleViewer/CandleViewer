@@ -62,6 +62,10 @@ class _Auth:
             raise self.session_error
         return SimpleNamespace(id=SESSION, user_id=CALLER)
 
+    async def peek_access_token(self, token: str) -> Any:
+        """A refusal's read of its session (#4174): it authorises nothing."""
+        return SimpleNamespace(id=SESSION, user_id=CALLER)
+
     async def require_elevation(self, session_id: str, action_class: str) -> None:
         self.log.append("step_up")
         if not self.elevated:
@@ -251,6 +255,42 @@ def test_forbidden_manager_viewer_audited(
         ("user", str(MISSING)),
     ]
     assert {c["reason"] for c in w.calls} == {"missing_permission:users:write:none"}
+
+
+@pytest.mark.parametrize(
+    ("role", "target", "reason"),
+    [("manager", TARGET, "missing_permission:users:write:none"), ("owner", CALLER, "self_target")],
+    ids=["role", "self"],
+)
+def test_the_guards_refusal_names_the_callers_session(
+    role: str, target: uuid.UUID, reason: str, spec: dict[str, Any]
+) -> None:
+    """#4174: the session the refused request came from, as the `users:read` refusal names it."""
+    w = _World()
+    _client(w, _principal(role, spec)).delete(_PATH.format(target))
+    (denied,) = w.calls
+    assert (denied["action"], denied["reason"], denied["session_id"]) == (
+        "rbac.denied",
+        reason,
+        SESSION,
+    )
+
+
+def test_the_cascade_is_given_the_elevated_session(
+    spec: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#4174: a refusal the cascade itself records names the session the step-up elevated."""
+    w = _World()
+    given: list[uuid.UUID | None] = []
+    disable = w.svc.disable
+
+    async def recording(user_id: uuid.UUID, **kwargs: Any) -> Any:
+        given.append(kwargs.get("session_id"))
+        return await disable(user_id, **kwargs)
+
+    monkeypatch.setattr(w.svc, "disable", recording)
+    r = _client(w, _principal("owner", spec)).delete(_PATH.format(TARGET))
+    assert r.status_code == 204 and given == [SESSION]
 
 
 def test_self_target_403(spec: dict[str, Any]) -> None:

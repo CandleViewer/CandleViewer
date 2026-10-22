@@ -377,6 +377,32 @@ async def test_store_self_target_is_the_audited_403() -> None:
     assert [(c["action"], c["reason"]) for c in w.calls] == [("rbac.denied", "self_target")]
 
 
+_SESSION = uuid.UUID(int=4174)  # the caller's session, which each refusal names (#4174)
+
+
+@pytest.mark.parametrize(
+    ("actor", "target", "reason"),
+    [(_OWNER, _OWNER.user_id, "self_target"), (_MANAGER, _TARGET, "forbidden_role")],
+    ids=["self", "role"],
+)
+@pytest.mark.parametrize("call", ["authorize", "disable"])
+async def test_a_guard_refusal_names_the_callers_session(
+    call: str, actor: PrincipalSnapshot, target: uuid.UUID, reason: str
+) -> None:
+    w = _World()
+    with pytest.raises(errors.LifecycleForbiddenError, match=reason):
+        await getattr(w.svc, call)(target, actor=actor, session_id=_SESSION)
+    (denied,) = w.calls
+    assert (denied["action"], denied["session_id"]) == ("rbac.denied", _SESSION)
+
+
+async def test_the_stores_self_target_refusal_names_the_callers_session() -> None:
+    w = _World(store=SimpleNamespace(disable=AsyncMock(side_effect=UserSelfTargetError("self"))))
+    with pytest.raises(errors.LifecycleForbiddenError, match="self_target"):
+        await w.disable(session_id=_SESSION)
+    assert [(c["reason"], c["session_id"]) for c in w.calls] == [("self_target", _SESSION)]
+
+
 @pytest.mark.parametrize(
     ("actor", "target"), [(_OWNER, _OWNER.user_id), (_MANAGER, _TARGET)], ids=["self", "role"]
 )

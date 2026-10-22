@@ -25,6 +25,7 @@ from candleviewer.admin.errors import KekRewrapError
 from candleviewer.admin.models import KekRewrapResult
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
+from candleviewer.api.refusal_session import NamesSession, SessionsLike
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -95,9 +96,14 @@ async def _body(request: Request) -> api.KekRewrapRequest | JSONResponse:
 
 
 def make_admin_kek_router(
-    admin: KekRewrapper, emitter: _Emitter, principal_resolver: SnapshotResolver | None
+    admin: KekRewrapper,
+    emitter: _Emitter,
+    principal_resolver: SnapshotResolver | None,
+    *,
+    auth: SessionsLike | None = None,
 ) -> APIRouter:
-    """`principal_resolver=None` (no identity provider: the fake backend) fails closed with 501."""
+    """`principal_resolver=None` (no identity provider: the fake backend) fails closed with 501.
+    A refusal's `rbac.denied` names the caller's session, read through `auth` (#4174)."""
     router = APIRouter(tags=["admin"])
 
     @router.post("/admin/keys/kek-rewrap")
@@ -113,12 +119,13 @@ def make_admin_kek_router(
             return body
         ip = source_ip(request.scope)
         who: dict[str, Any] = {"actor_ip": ip, "request_id": current_request_uuid()}
+        denials = NamesSession(emitter, auth, request)
         try:
             await enforce(
-                principal, Permission.KEYS_MANAGE, scope=Scope.NONE, emitter=emitter, **who
+                principal, Permission.KEYS_MANAGE, scope=Scope.NONE, emitter=denials, **who
             )
             if not principal.is_owner:  # the RBAC seed gives `keys:manage` to the Owner alone
-                await emitter.emit(
+                await denials.emit(
                     "rbac.denied",
                     actor_label=str(principal.user_id),
                     actor_user_id=principal.user_id,

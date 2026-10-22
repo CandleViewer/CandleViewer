@@ -26,6 +26,7 @@ from candleviewer.storage.errors import WriteAheadTimeout
 
 OWNER = uuid.uuid4()
 TARGET = uuid.uuid4()
+SESSION = uuid.UUID(int=4174)  # the session behind `Bearer tok`
 _Hook = Callable[[frozenset[str]], Awaitable[None]]
 
 
@@ -100,7 +101,11 @@ class _Sessions:
     async def authenticate_access_token(self, token: str) -> Any:
         if token != "tok":  # noqa: S105
             raise SessionNotFound("x")
-        return SimpleNamespace(id=uuid.uuid4(), user_id=OWNER)
+        return SimpleNamespace(id=SESSION, user_id=OWNER)
+
+    async def peek_access_token(self, token: str) -> Any:
+        """A refusal's read of its session (#4174): it authorises nothing."""
+        return SimpleNamespace(id=SESSION) if token == "tok" else None  # noqa: S105
 
 
 class _Auth:
@@ -659,3 +664,50 @@ def test_put_roles_owner_floor_refusal_carries_the_minted_request_id() -> None:
     (denied,) = em.calls
     assert (denied["action"], denied["reason"]) == ("rbac.denied", "owner_floor")
     assert str(denied["request_id"]) == r.headers["x-correlation-id"]
+
+
+# ---- #4174: every record of the route names the caller's session --------------------------------
+
+
+def test_put_roles_rbac_refusal_names_the_session_and_the_target() -> None:
+    em = _Emitter()
+    _correlated(_Store({"viewer"}, 1), _manager(), em, _Notifier()).put(
+        f"/users/{TARGET}/roles", json={"roles": ["owner"]}
+    )
+    (denied,) = em.calls
+    assert (denied["action"], denied["session_id"]) == ("rbac.denied", SESSION)
+    assert (denied["object_kind"], denied["object_id"]) == ("user", str(TARGET))
+
+
+def test_put_roles_self_target_refusal_names_the_session() -> None:
+    em = _Emitter()
+    _correlated(_Store({"owner"}, 2), _admin(), em, _Notifier()).put(
+        f"/users/{OWNER}/roles", json={"roles": ["viewer"]}
+    )
+    (denied,) = em.calls
+    assert (denied["reason"], denied["session_id"]) == ("self_target", SESSION)
+
+
+def test_put_roles_owner_floor_refusal_names_the_session_and_the_address() -> None:
+    em = _Emitter()
+    _correlated(_Store({"owner"}, 1), _admin(), em, _Notifier()).put(
+        f"/users/{TARGET}/roles", json={"roles": ["viewer"]}
+    )
+    (denied,) = em.calls
+    assert (denied["reason"], denied["session_id"], denied["actor_ip"]) == (
+        "owner_floor",
+        SESSION,
+        "100.64.0.9",
+    )
+
+
+def test_put_roles_grant_and_revoke_records_name_the_session_and_the_address() -> None:
+    em = _Emitter()
+    r = _correlated(_Store({"viewer"}, 2), _admin(), em, _Notifier()).put(
+        f"/users/{TARGET}/roles", json={"roles": ["manager"]}
+    )
+    assert r.status_code == 200
+    assert sorted((c["action"], c["session_id"], c["actor_ip"]) for c in em.calls) == [
+        ("roles.grant", SESSION, "100.64.0.9"),
+        ("roles.revoke", SESSION, "100.64.0.9"),
+    ]

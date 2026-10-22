@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from candleviewer.api.csrf import source_ip
+from candleviewer.api.refusal_session import NamesSession, SessionsLike
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -63,7 +64,7 @@ class _Emitter(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
 
 
-class InviteAuthLike(Protocol):
+class InviteAuthLike(SessionsLike, Protocol):
     @property
     def invites_is_active(self) -> bool: ...
 
@@ -163,7 +164,7 @@ def make_invites_router(
                 principal,
                 Permission.USERS_WRITE,
                 scope=Scope.NONE,
-                emitter=emitter,
+                emitter=NamesSession(emitter, auth, request),  # #4174
                 actor_ip=_actor_ip(request),
                 request_id=current_request_uuid(),
             )
