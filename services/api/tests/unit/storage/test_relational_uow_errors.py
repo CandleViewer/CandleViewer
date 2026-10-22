@@ -600,7 +600,7 @@ async def test_a_unit_of_work_starts_with_its_statement_timeout_and_application_
     assert session.calls == ["connection", "close"]
 
 
-# -- a cancellation outranks a cleanup that fails; the pool logs no row (#2748 slice 3b) -----------
+# -- a cancellation outranks an ordinary cleanup error; the pool logs no row (#2748 slice 3b) ------
 
 
 def _lost() -> Exception:
@@ -633,6 +633,7 @@ async def test_a_cancelled_start_still_leaves_cancelled_when_its_close_fails(
         async with pending:
             pytest.fail("the unit of work must not start")
     assert raised.value.__context__ is lost and session.calls == ["connection", "close"]
+    assert raised.value.__cause__ is None and not raised.value.__suppress_context__  # implicit
     assert _P1 not in _rendered(raised.value)
 
 
@@ -648,6 +649,7 @@ async def test_a_cancelled_block_still_leaves_cancelled_when_its_cleanup_fails(
         async with _uow(session):
             raise failure
     assert raised.value.__context__ is lost and session.calls == ["rollback", "close"]
+    assert raised.value.__cause__ is None and not raised.value.__suppress_context__  # implicit
     assert _P1 not in _rendered(raised.value)
 
 
@@ -666,6 +668,20 @@ async def test_an_exit_from_the_cleanup_itself_still_leaves(
         async with relational._PendingUnitOfWork(cast(Any, lambda: session), "test"):
             raise first
     assert raised.value is second and raised.value.__context__ is first
+    assert raised.value.__cause__ is None and not raised.value.__suppress_context__  # implicit
+
+
+@pytest.mark.parametrize("at", ["connection", "started"], ids=["start", "block"])
+async def test_a_cancellation_from_the_cleanup_leaves_over_an_ordinary_error(at: str) -> None:
+    """A cancel that lands in the close after a refused write leaves, so a shutdown is never
+    swallowed; the write's stripped error is its context (#4150's round 2, N1)."""
+    first, cancel = _unique(), asyncio.CancelledError()
+    session = _StartingSession(at, first, cancel)
+    with pytest.raises(asyncio.CancelledError) as raised:
+        async with relational._PendingUnitOfWork(cast(Any, lambda: session), "test"):
+            raise first
+    assert raised.value is cancel and raised.value.__context__ is first
+    assert _P1 not in _rendered(raised.value)
 
 
 async def test_a_cancellation_over_a_plain_close_error_leaves_with_no_cycle() -> None:
