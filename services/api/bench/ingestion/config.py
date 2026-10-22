@@ -1,8 +1,9 @@
 """Scenario configs: one checked-in JSON per scenario with a `full` and a `smoke` profile.
 
 `full` is the 06-performance §9 definition (nightly / on-demand lane). `smoke` is the scaled
-PR-lane variant that runs the *same* assertion set; its `scaling` note says exactly what was
-scaled, and the report prints it beside every verdict.
+PR-lane variant that runs the *same* assertion set, except that it reports Budget #13's 150 ms
+without gating it (#399); its `scaling` note says exactly what was scaled, and the report prints
+it beside every verdict.
 """
 
 from __future__ import annotations

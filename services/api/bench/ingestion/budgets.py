@@ -1,7 +1,8 @@
 """Pure pass/fail logic for the E08-Q04 scenarios (no I/O, no clock — unit-tested on fake samples).
 
 Budgets are 06-performance-and-load-standard §2 rows; each `Check` carries the measured number
-beside the budget so the report can print both (AC 1). Hard vs soft follows the §2 table.
+beside the budget so the report can print both (AC 1). Hard vs soft follows the §2 table, except
+that the smoke profile reports Budget #13's 150 ms without gating it (#399).
 
 Budget #8 is per symbol (06 §2: book state, bar builders, rolling aggregation buffers):
 `rss_per_symbol_mb` is the RSS the lanes add, i.e. the sample minus the RSS taken before they were
@@ -433,7 +434,8 @@ def check_rest(
     """Budget #13's 150 ms per route, and the klines cache speed-up. `budget_hard=False` reports
     the 150 ms rows without failing the verdict: `06` measures #13 with k6 on the bench runner
     (the full profile), never the smoke's in-process driver on a shared runner (#399). The
-    speed-up stays hard, and an unmeasured (NaN) cold or warm p95 fails it, never `inf`."""
+    speed-up stays hard, and an unmeasured (NaN) cold or warm p95, or a warm one of 0 ms, fails
+    it: never `inf` (#2825)."""
     soft = "" if budget_hard else "reported, not gated, in the smoke profile (#399)"
     out = [
         Check(
@@ -448,10 +450,10 @@ def check_rest(
         )
         for r, p in sorted(p95_by_route.items())
     ]
-    if math.isnan(cold_p95) or math.isnan(warm_p95):
+    if math.isnan(cold_p95) or math.isnan(warm_p95) or warm_p95 <= 0:
         speedup = math.nan  # a cold or warm route not measured: never a pass
     else:
-        speedup = cold_p95 / warm_p95 if warm_p95 > 0 else math.inf
+        speedup = cold_p95 / warm_p95
     out.append(
         Check(
             "klines_cache_speedup",

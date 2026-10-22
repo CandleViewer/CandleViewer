@@ -16,8 +16,9 @@ import socket
 import subprocess
 import tempfile
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import httpx
 
@@ -67,8 +68,46 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
+#: k6's exit codes that leave a reading: 0 (passed) and 99 (a threshold crossed). The script arms
+#: two kinds of threshold: each route's p95 under Budget #13's 150 ms, which `verdict` judges
+#: itself, and `checks` (each response a 200), which `k6_reading` judges: one failed check refuses
+#: the run, as the in-process driver refuses a non-200. Any other code is a script, configuration
+#: or run error (#2825).
+K6_READING_EXITS: Final = frozenset({0, 99})
+
+
+def k6_reading(returncode: int, text: str) -> dict[str, list[float]]:
+    """Route -> [p95] from k6's `--summary-export` text ("" when k6 wrote none). The run is refused
+    unless k6 exited 0 or 99 and wrote a readable summary with no failed check. A 99 must be
+    explained by a route's p95 at or over 150 ms; otherwise the `checks` threshold failed, even
+    where the summary has no `checks` count. A route with no samples (`count` 0, or a `p(95)`
+    not above 0.0) has no reading, so `verdict` fails it by name, never a 0.0 that passes (#2825).
+    """
+    if returncode not in K6_READING_EXITS:
+        raise RuntimeError(f"k6 exited {returncode}: the run is invalid, not a reading (#2825)")
+    if not text:
+        raise RuntimeError("k6 wrote no summary: the run is invalid (#2825)")
+    try:
+        metrics: Mapping[str, Any] = json.loads(text).get("metrics", {})
+    except ValueError as exc:
+        raise RuntimeError("k6 wrote an unreadable summary: the run is invalid (#2825)") from exc
+    fails = metrics.get("checks", {}).get("fails", 0)
+    if fails != 0:
+        raise RuntimeError(f"k6 counted {fails!r} failed checks: the run is invalid (#2825)")
+    out: dict[str, list[float]] = {}
+    for route in requests_plan():
+        m = metrics.get(f"route_{route}_ms", {})
+        p95 = float(m.get("p(95)", 0.0))
+        if p95 > 0.0 and m.get("count") != 0:
+            out[route] = [p95]
+    if returncode == 99 and all(p < budgets.B13_READ_P95_MS for [p] in out.values()):
+        raise RuntimeError("k6 exited 99 with no route's p95 over 150 ms: a check failed (#2825)")
+    return out
+
+
 def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
-    """Full profile: real sockets, k6 load. Returns route -> [p95] (k6 aggregates for us)."""
+    """Full profile: real sockets, k6 load. Returns route -> [p95] (k6 aggregates for us). Raises
+    `RuntimeError` when the fixture app does not start, or when `k6_reading` refuses the run."""
     import uvicorn
 
     k6 = shutil.which("k6")
@@ -87,15 +126,17 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
 
         th = threading.Thread(target=server.run, daemon=True)
         th.start()
-        for _ in range(200):
-            if server.started:
-                break
-            time.sleep(0.05)  # bench process, not a test: wait for the socket to listen
-        plan = Path(tmp) / "plan.json"
-        plan.write_text(json.dumps(requests_plan()), encoding="utf-8")
-        summary = Path(tmp) / "summary.json"
         try:
-            subprocess.run(  # noqa: S603 - fixed argv, loopback target asserted above
+            for _ in range(200):
+                if server.started:
+                    break
+                time.sleep(0.05)  # bench process, not a test: wait for the socket to listen
+            if not server.started:
+                raise RuntimeError("the fixture app did not start: no reading (#2825)")
+            plan = Path(tmp) / "plan.json"
+            plan.write_text(json.dumps(requests_plan()), encoding="utf-8")
+            summary = Path(tmp) / "summary.json"
+            ran = subprocess.run(  # noqa: S603 - fixed argv, loopback target asserted above
                 [
                     k6,
                     "run",
@@ -115,16 +156,11 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
                 check=False,
                 timeout=3600,
             )
-            data = json.loads(summary.read_text(encoding="utf-8"))
+            text = summary.read_text(encoding="utf-8") if summary.exists() else ""
         finally:
             server.should_exit = True
             th.join(timeout=10)
-    out: dict[str, list[float]] = {}
-    for route in requests_plan():
-        m = data.get("metrics", {}).get(f"route_{route}_ms", {})
-        if "p(95)" in m:
-            out[route] = [float(m["p(95)"])]
-    return out
+    return k6_reading(ran.returncode, text)
 
 
 def verdict(sc: Scenario, lat: dict[str, list[float]]) -> budgets.Verdict:
