@@ -257,12 +257,18 @@ async def test_other_database_errors_are_not_retried(
     assert rel.opened == 1 and _unchained(err.value)
 
 
-async def test_an_outage_is_logged_by_its_sqlstate_alone() -> None:
+async def test_an_outage_is_logged_by_its_class_and_sqlstate_alone() -> None:
+    """Its own event, not the edge's `drawings_store_unavailable`: one write outage, one each."""
     rel = _Rel(DBAPIError("stmt", {}, _Driver("57014")))
     with capture_logs() as logs, pytest.raises(StorageTierUnavailable):
         await _write(rel, "create")
     assert logs == [
-        {"event": "drawings_store_unavailable", "sqlstate": "57014", "log_level": "warning"}
+        {
+            "event": "drawings_write_outage",
+            "error": "DBAPIError",
+            "sqlstate": "57014",
+            "log_level": "warning",
+        }
     ]
 
 

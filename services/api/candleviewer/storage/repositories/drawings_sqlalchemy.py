@@ -360,7 +360,7 @@ def _refusal(
         return DrawingLayoutNotFoundError(layout_fields)
     if is_outage(exc):  # which outage it was, by its facts alone (C-12.6)
         structlog.get_logger(__name__).warning(
-            "drawings_store_unavailable", sqlstate=sqlstate_of(exc)
+            "drawings_write_outage", error=type(exc).__name__, sqlstate=sqlstate_of(exc)
         )
         return StorageTierUnavailable("the drawings store cannot serve the write")
     return query_failure(sqlstate_of(exc), constraint_of(exc))
