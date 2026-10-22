@@ -9,6 +9,7 @@ self-check).
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ import pytest
 from bench.ingestion import HARNESS_VERSION as E08_HARNESS_VERSION
 from bench.ingestion import gate
 from bench.ingestion.budgets import Check, Verdict
-from bench.ws import HARNESS_VERSION, budgets, w5
+from bench.ws import HARNESS_VERSION, budgets, profiles, w5
 from bench.ws.budgets import Facts, Scrape
 
 PROFILE: dict[str, Any] = {
@@ -283,25 +284,74 @@ def test_a_raw_only_skew_says_in_its_message_that_it_was_not_corrected() -> None
     ]
 
 
-def test_the_selfcheck_profile_judges_the_raw_skew_so_it_still_fails_budget_6() -> None:
-    """25 ms of send delay holds the welcome after the server's stamp: 1 ms raw, 13 ms corrected."""
-    from bench.ws import profiles
-
+def test_the_selfcheck_profile_fails_budget_6_on_a_rig_whose_hello_transit_is_13_ms() -> None:
+    """On cv-bench-01 the raw hello transit is 10 to 33 ms (run A) and the 25 ms send delay holds
+    the welcome after the server's stamp: raw 13 ms on a 45 ms round trip. Not judged: budget 6 is
+    the server's own histogram, which no clock skew touches."""
     prof = profiles.resolve(profiles.load(), "selfcheck") | {"name": "selfcheck"}
     slow = scrape({0.01: 100, 0.02: 400, 0.03: 900, 0.05: 3200})
-    skew = hello_skew(raw=1.0, corrected=13.0, rtt_p50=27.0, rtt_max=29.0)
+    skew = hello_skew(raw=13.0, corrected=9.5, rtt_p50=45.0, rtt_max=47.0)
     res = evaluate(summary(**skew), slow, prof)
     ok, text = budgets.expect_failure(res, prof["expect_fail"])
-    assert (res.status, ok) == ("FAIL", True), text
+    assert (res.status, res.invalid, ok) == ("FAIL", [], True), text
 
 
-def test_a_send_delay_run_with_a_real_raw_skew_is_invalid_and_says_raw_was_judged() -> None:
+def test_a_send_delay_run_reports_its_skew_and_is_never_invalid_for_it() -> None:
     skew = hello_skew(raw=6.0, corrected=8.5, rtt_p50=27.0, rtt_max=29.0)
     res = evaluate(summary(**skew), prof=PROFILE | {"send_delay_ms": 25})
-    assert res.invalid == [
-        "clock_skew: raw max 6.0 ms against 5 ms (max over 6 hellos of |raw|; "
-        "send delay 25 ms injected: raw judged; hello RTT p50 27.0 ms / max 29.0 ms)"
-    ]
+    assert (res.status, res.invalid) == ("PASS", [])
+    assert res.clock_skew is not None and res.clock_skew.text == (
+        "raw max 6.0 ms (max over 6 hellos of |raw|; send delay 25 ms injected: reported, not "
+        "judged; hello RTT p50 27.0 ms / max 29.0 ms)"
+    )
+
+
+def test_a_single_hello_is_not_pluralised_in_the_skew_line() -> None:
+    res = evaluate(summary(cv_clock_skew_ms=trend(6.0, n=1)))
+    assert "(max over 1 hello of |raw|;" in res.invalid[0]
+
+
+# -- a /metrics scrape that times out is a budget line ---------------------------------------
+
+
+def scraped(*timed_out_ms: float, attempted: int = 8, missing: tuple[str, ...] = ()) -> Facts:
+    """`FACTS` with a steady state of `attempted` scrapes, those of `timed_out_ms` timed out."""
+    tally = budgets.Scrapes(15.0, attempted, list(timed_out_ms), list(missing))
+    return replace(FACTS, scrapes=tally)
+
+
+def test_a_run_whose_scrapes_all_answered_passes_the_scrape_line() -> None:
+    res = evaluate(summary(), facts=scraped())
+    row = next(c for c in res.verdict.checks if c.name == "scrape.metrics_timeout")
+    assert (res.status, row.passed) == ("PASS", True)
+    assert row.note == "all 8 scrapes answered within 15 s"
+
+
+def test_one_scrape_in_eight_that_timed_out_fails_the_run_with_the_cause_not_invalid() -> None:
+    res = evaluate(summary(), facts=scraped(15002.0))
+    assert (res.status, res.failed(), res.invalid) == ("FAIL", ["scrape.metrics_timeout"], [])
+    row = next(c for c in res.verdict.checks if c.name == "scrape.metrics_timeout")
+    assert row.note == "backend did not answer /metrics within 15 s, 1 of 8 scrapes"
+
+
+@pytest.mark.parametrize("boundary", ["t0", "t1"])
+def test_a_lost_boundary_scrape_fails_the_scrape_line_and_leaves_the_deltas_unjudged(
+    boundary: str,
+) -> None:
+    gone: Scrape = {}  # the scrape that never answered leaves an empty file
+    drop = 'cv_ws_overflow_total{env="demo",reason="drop"} 2'  # a FAIL, were it read as a delta
+    t0, t1 = (gone, scrape(extra=drop)) if boundary == "t0" else (None, gone)
+    res = evaluate(summary(), t1, t0=t0, facts=scraped(15002.0, attempted=2, missing=(boundary,)))
+    assert (res.status, res.failed(), res.invalid) == ("FAIL", ["scrape.metrics_timeout"], [])
+    said = "not judged (boundary scrape timed out)"
+    assert res.not_judged == [f"{b}: {said}" for b in budgets.SCRAPE_BUDGETS]
+    assert not any(c.name.startswith("budget6") for c in res.verdict.checks)
+
+
+def test_a_run_saved_before_the_scrape_counts_keeps_its_verdict_and_has_no_scrape_line() -> None:
+    res = evaluate(summary())
+    assert "scrape.metrics_timeout" not in {c.name for c in res.verdict.checks}
+    assert (res.status, res.not_judged) == ("PASS", [])
 
 
 RELEASE, TICK = "cv_release_decode_ms_trades", "cv_tick_decode_ms_trades"

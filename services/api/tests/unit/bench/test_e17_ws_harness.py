@@ -19,17 +19,18 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import AsyncIterator, MutableMapping
+from collections.abc import AsyncIterator, Callable, MutableMapping
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 import structlog
 import websockets
 
+from bench.ws import budgets, fixture_app, profiles, runner, w5
 from bench.ws import feeder as feed
-from bench.ws import fixture_app, profiles, runner, w5
 from bench.ws.feeder import Feeder, Tier, scale_int, tier_plan
 from candleviewer.bars.leases import CAP_PER_USER
 from candleviewer.bus.bus import Bus
@@ -633,7 +634,7 @@ def test_result_json_keeps_the_skew_the_rtt_and_same_host_in_the_run_metadata(
     body = json.loads((run / "result.json").read_text(encoding="utf-8"))
     assert body["facts"]["same_host"] is True
     assert body["result"]["clock_skew"] == {
-        "judged": 3.0,
+        "max_ms": 3.0,
         "raw": 13.0,
         "rtt_p50": 20.0,
         "rtt_max": 33.0,
@@ -907,6 +908,146 @@ def test_execute_writes_the_profiles_own_length_the_loop_and_the_host_to_run_jso
     assert backend.poll() is not None  # stopped, not left running
 
 
+# -- a /metrics scrape that times out is recorded, and the run goes on ----------------------------
+
+
+def get_that(*answers: object) -> Callable[[int, str], str]:
+    """A stand-in for `runner.get`: each call gives the next answer, or raises an exception."""
+    queue = iter(answers)
+
+    def get(port: int, path: str) -> str:
+        answer = next(queue)
+        if isinstance(answer, BaseException):
+            raise answer
+        return str(answer)
+
+    return get
+
+
+def test_a_periodic_scrape_that_times_out_is_a_sample_and_the_next_scrape_goes_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticks = iter([10.0, 25.002, 30.0])  # the first request began, it timed out, the next began
+    monkeypatch.setattr(runner, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    answers = get_that(TimeoutError(), "process_resident_memory_bytes 5\n")
+    monkeypatch.setattr(runner, "get", answers)
+    tally = budgets.Scrapes(15.0)
+    assert runner.scrape_sample(1, tally) == {"scrape_timeout_ms": 15002}
+    assert runner.scrape_sample(1, tally)["rss"] == 5.0
+    assert (tally.attempted, tally.timed_out_ms, tally.missing) == (2, [15002], [])
+
+
+@pytest.mark.parametrize(
+    ("retry", "text", "missing"),
+    [("ok\n", "ok\n", []), (TimeoutError(), None, ["t0"])],
+    ids=["retry answers", "retry times out"],
+)
+def test_a_boundary_scrape_that_times_out_is_tried_once_more_and_still_counted(
+    monkeypatch: pytest.MonkeyPatch, retry: object, text: str | None, missing: list[str]
+) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr(runner, "time", SimpleNamespace(monotonic=lambda: 0.0, sleep=slept.append))
+    monkeypatch.setattr(runner, "get", get_that(TimeoutError(), retry))
+    tally = budgets.Scrapes(15.0)
+    assert runner.scrape(1, tally, "t0") == text
+    assert (tally.attempted, len(tally.timed_out_ms), tally.missing) == (1, 1, missing)
+    assert slept == [runner.BOUNDARY_RETRY_S]
+
+
+def test_a_refused_connection_is_not_a_timeout_and_still_ends_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "time", SimpleNamespace(monotonic=lambda: 0.0))
+    monkeypatch.setattr(runner, "get", get_that(ConnectionRefusedError()))
+    with pytest.raises(ConnectionRefusedError):
+        runner.scrape(1, budgets.Scrapes(15.0))
+
+
+def fake_proc(poll: Callable[[], int | None]) -> SimpleNamespace:
+    """A process stand-in for `execute`: `poll()` says when it has exited."""
+    return SimpleNamespace(
+        pid=os.getpid(), returncode=0, stdout=None, stderr=None, poll=poll,
+        wait=lambda timeout=None: 0, terminate=lambda: None, kill=lambda: None,
+    )  # fmt: skip
+
+
+def execute_virtually(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[object], duration_s: float
+) -> Path:
+    """`runner.execute` in virtual time, no sleeps, k6 and the backend stood in: each `/metrics`
+    request takes the next of `answers` (an exception takes the 15 s it waits); k6 is gone once
+    they are used up."""
+    clock = [1_000.0]
+    queue = iter(answers)
+    asked: list[str] = []
+
+    def advance(seconds: float) -> None:
+        clock[0] += seconds
+        assert clock[0] < 5_000.0, "the run never ended"  # a regression fails, it does not hang
+
+    def get(port: int, path: str) -> str:
+        asked.append(path)
+        answer = next(queue)
+        if isinstance(answer, BaseException):
+            advance(runner.SCRAPE_TIMEOUT_S)
+            raise answer
+        return str(answer)
+
+    k6 = fake_proc(lambda: None if len(asked) < len(answers) else 0)
+    virtual = SimpleNamespace(time=lambda: clock[0], monotonic=lambda: clock[0], sleep=advance)
+    popen = SimpleNamespace(Popen=lambda *a, **kw: k6, TimeoutExpired=subprocess.TimeoutExpired)
+    monkeypatch.setattr(runner, "time", virtual)
+    monkeypatch.setattr(runner, "subprocess", popen)
+    monkeypatch.setattr(runner, "start_backend", lambda p: (fake_proc(lambda: 0), 1, os.getpid()))
+    busy = itertools.count(0, 1000)  # the machine's busy seconds: 0 at t0, 1000 at t1
+    for name, stand_in in (
+        ("get", get), ("_commit", lambda: "c" * 40), ("_cgroup_count", lambda *a: 0),
+        ("_busy_s", lambda text: float(next(busy))), ("BASELINES", tmp_path / "none"),
+    ):  # fmt: skip
+        monkeypatch.setattr(runner, name, stand_in)
+    p = runner.plan(TABLE, args(duration_s=duration_s, warmup_s=0.0), "A", tmp_path / "out")
+    return runner.execute(p, "k6")
+
+
+@pytest.mark.parametrize("boundary", ["t0", "t1"])
+def test_a_run_whose_boundary_scrape_never_answers_still_leaves_a_run_json_and_a_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    """The backend answers neither a steady-window boundary scrape nor its retry: `execute` still
+    writes run.json; the verdict reads FAIL naming the scrape, not INVALID, and the budgets that
+    read the counter deltas are not judged."""
+    never, ok = TimeoutError("timed out"), "process_cpu_seconds_total 600\n"
+    answers = [never, never, ok] if boundary == "t0" else [ok, never, never]
+    out = execute_virtually(tmp_path, monkeypatch, answers, duration_s=30.0)
+    facts = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    tally = {"timeout_s": 15.0, "attempted": 2, "timed_out_ms": [15000], "missing": [boundary]}
+    assert facts["scrapes"] == tally and facts["variance"]["other_cores"] == 0.0
+    shutil.copy(make_run(tmp_path / "ref") / "summary.json", out / "summary.json")  # k6's summary
+    assert runner.finish(out, 0.10) == 1
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert "backend did not answer /metrics within 15 s, 1 of 2 scrapes" in report
+    assert "budget6.cv_ws_fanout_seconds.p95: not judged (boundary scrape timed out)" in report
+    result = json.loads((out / "result.json").read_text(encoding="utf-8"))["result"]
+    assert result["invalid"] == [] and "backend_cpu_s_per_s" not in result["metrics"]
+    assert result["not_judged"][0].startswith("budget6.cv_ws_fanout_seconds.p95: not judged")
+
+
+def test_a_periodic_scrape_that_times_out_leaves_a_sample_and_the_run_goes_to_its_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ok = "cv_ws_connections_in_use 6\n"
+    answers = [ok, ok + "process_resident_memory_bytes 5000000\n", TimeoutError("timed out"), ok]
+    out = execute_virtually(tmp_path, monkeypatch, answers, duration_s=130.0)  # t0, 60 s, 120 s, t1
+    facts = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    tally = facts["scrapes"]
+    assert (tally["attempted"], tally["timed_out_ms"], tally["missing"]) == (4, [15000], [])
+    assert facts["rss_bytes"] == 5_000_000  # read from the sample that answered
+    lines = (out / "series.jsonl").read_text(encoding="utf-8").splitlines()
+    series = [json.loads(x) for x in lines]
+    assert [x.get("scrape_timeout_ms") for x in series] == [None, 15000]
+    assert series[0]["rss"] == 5_000_000
+
+
 def test_a_phase_keeps_its_own_length_unless_the_cli_gives_one(tmp_path: Path) -> None:
     phase = {"rtt_delay_ms": 700, "duration_s": 600, "warmup_s": 60, "families": ["book"]}
     own = runner.plan(TABLE, args(), "W5", tmp_path, **phase)
@@ -962,6 +1103,31 @@ def test_w5_gives_every_phase_the_cli_window_and_refuses_a_pong_delay(
     answer = json.loads((tmp_path / "dry" / "w5.json").read_text(encoding="utf-8"))
     assert answer["recommendation"] == "per_family" and answer["skipped"] == []
     assert code == 0 and "W5: per_family" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("lost", "skipped"), [("mixed-lagging", ["mixed-lagging"]), ("idle", [])])
+def test_a_w5_phase_that_lost_a_boundary_scrape_is_left_out_and_the_dispatch_is_red(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    lost: str,
+    skipped: list[str],
+) -> None:
+    def execute(p: runner.Plan, k6: str) -> Path:
+        out = w5_phase(p)
+        if p.out.name == lost:  # no steady-window delta to read
+            facts = json.loads((out / "run.json").read_text(encoding="utf-8"))
+            tally = {"timeout_s": 15.0, "attempted": 2, "timed_out_ms": [15000], "missing": ["t1"]}
+            (out / "run.json").write_text(json.dumps(facts | {"scrapes": tally}), encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(runner, "execute", execute)
+    monkeypatch.setattr(runner, "k6_binary", lambda: "k6")
+    assert runner.cmd_w5(args(out_dir=tmp_path, duration_s=30.0, warmup_s=10.0)) == 1
+    answer = json.loads((tmp_path / "w5.json").read_text(encoding="utf-8"))
+    note = f"phase {lost}: a boundary scrape timed out, left out"
+    assert answer["skipped"] == skipped and note in answer["notes"]
+    assert f"  {note}" in capsys.readouterr().out
 
 
 def test_a_baseline_taken_on_another_event_loop_is_not_compared(

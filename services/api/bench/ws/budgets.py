@@ -47,11 +47,20 @@ MAX_CLOCK_SKEW_MS: Final = 5.0
 #: the server's `clock_skew_ms` as it came: with k6 and the backend on one clock it is the hello's
 #: transit and queueing, not drift. The guard judges the corrected one, which takes half the hello's
 #: round trip off first. Raw is judged instead for a summary from before the correction (raw trend
-#: only) and for a run that injects a send delay (the self-check): the delay holds the welcome after
-#: the server's stamp, so the correction would read it as drift.
+#: only). A run that injects a send delay (the self-check) only reports the skew: the delay holds
+#: the welcome after the server's stamp, so no reading of it means anything, and budget #6, which
+#: the self-check is about, is the server's own histogram.
 SKEW_RAW: Final = "cv_clock_skew_ms"
 SKEW_CORRECTED: Final = "cv_clock_skew_corrected_ms"
 HELLO_RTT: Final = "cv_hello_rtt_ms"
+#: What reads the server's counter deltas, so is not judged when a boundary scrape never answered.
+SCRAPE_BUDGETS: Final = (
+    "budget6.cv_ws_fanout_seconds.p95",
+    "backpressure and sequence series",
+    "event-loop lag",
+    "feeder ratio",
+    "connections held at steady start",
+)
 MAX_K6_CPU_FRAC: Final = 0.8
 REPRO_TOLERANCE: Final = 0.15
 #: k6 times in whole milliseconds: a latency it reports moving by that much has not changed.
@@ -138,6 +147,19 @@ def fraction_le(d: Scrape, name: str, edge: float) -> tuple[float, float]:
     return (at / count if count else 0.0), count
 
 
+@dataclass(slots=True)
+class Scrapes:
+    """The steady state's `/metrics` scrapes as the runner tallies them (`run.json`: `scrapes`):
+    `attempted` counts the periodic ones and the two boundary ones (`t0`, `t1`), `timed_out_ms` how
+    long each scrape that timed out waited, and `missing` the boundary scrapes that never answered,
+    which leaves the counter deltas unread."""
+
+    timeout_s: float
+    attempted: int = 0
+    timed_out_ms: list[float] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+
+
 @dataclass(frozen=True, slots=True)
 class Facts:
     """What the runner measured around k6 and the backend (all optional: a unit test omits them)."""
@@ -148,6 +170,7 @@ class Facts:
     mem_max_bytes: int | None = None
     oom_events: int = 0
     cpu_s: float | None = None  # backend CPU seconds over the steady window
+    scrapes: Scrapes | None = None  # None: a run saved before the counts
 
 
 def _ms(value: float | None) -> str:
@@ -156,31 +179,38 @@ def _ms(value: float | None) -> str:
 
 @dataclass(frozen=True, slots=True)
 class ClockSkew:
-    """The hello's clock skew k6 measured, in absolute ms: the figure the guard judges, and why."""
+    """The hello's clock skew k6 measured, in absolute ms: the figure the guard reads, and why."""
 
-    judged: float  # the max over the hellos, compared with `MAX_CLOCK_SKEW_MS`
+    max_ms: float  # the max over the hellos; compared with `MAX_CLOCK_SKEW_MS` when `judged`
     raw: float | None  # the max of the server's own `clock_skew_ms`
     rtt_p50: float | None  # the hello-to-welcome round trip
     rtt_max: float | None
-    hellos: int  # the samples behind `judged`
-    rtt_corrected: bool  # `judged` is RTT-corrected; False: raw was judged (see `clock_skew`)
-    send_delay_ms: float = 0.0  # the run's injected send delay, why raw was judged
+    hellos: int  # the samples behind `max_ms`
+    rtt_corrected: bool  # `max_ms` is RTT-corrected; False: it is the raw max (see `clock_skew`)
+    send_delay_ms: float = 0.0  # the run's injected send delay: the skew is reported, not judged
+
+    @property
+    def judged(self) -> bool:
+        return self.send_delay_ms <= 0
 
     @property
     def text(self) -> str:
-        """What the guard judged, for the INVALID line and the report: `corrected max 3.0 ms against
+        """What the guard read, for the INVALID line and the report: `corrected max 3.0 ms against
         5 ms (max over 6 hellos of |raw - RTT/2|; raw max 13.0 ms; hello RTT p50 20.0 ms / ...)`."""
         if self.rtt_corrected:
             kind, of, note = "corrected", "|raw - RTT/2|", f"raw max {_ms(self.raw)}"
         else:
             kind, of = "raw", "|raw|"
             note = f"not RTT-corrected: the summary has no {SKEW_CORRECTED}"
-            if self.send_delay_ms > 0:
-                note = f"send delay {self.send_delay_ms:g} ms injected: raw judged"
-        parts = [f"max over {self.hellos} hellos of {of}", note]
+            if not self.judged:
+                note = f"send delay {self.send_delay_ms:g} ms injected: reported, not judged"
+        hellos = f"{self.hellos} hello{'s' if self.hellos > 1 else ''}"
+        parts = [f"max over {hellos} of {of}", note]
         if self.rtt_max is not None:
             parts.append(f"hello RTT p50 {_ms(self.rtt_p50)} / max {_ms(self.rtt_max)}")
-        head = f"{kind} max {self.judged:.1f} ms against {MAX_CLOCK_SKEW_MS:g} ms"
+        head = f"{kind} max {self.max_ms:.1f} ms"
+        if self.judged:
+            head += f" against {MAX_CLOCK_SKEW_MS:g} ms"
         return f"{head} ({'; '.join(parts)})"
 
 
@@ -189,7 +219,8 @@ class Result:
     verdict: Verdict
     invalid: list[str] = field(default_factory=list)
     informational: list[Check] = field(default_factory=list)
-    clock_skew: ClockSkew | None = None  # what the clock-skew guard judged, reported beside it
+    clock_skew: ClockSkew | None = None  # what the clock-skew guard read, reported beside it
+    not_judged: list[str] = field(default_factory=list)  # budgets a lost boundary scrape left out
 
     @property
     def status(self) -> str:
@@ -208,6 +239,7 @@ class Result:
             "invalid": self.invalid,
             "informational": [asdict(c) for c in self.informational],
             "clock_skew": asdict(self.clock_skew) if self.clock_skew else None,
+            "not_judged": self.not_judged,
             "not_measurable": list(NOT_MEASURABLE),
         }
 
@@ -240,25 +272,26 @@ def _scalar(value: float, n: float = 1.0) -> dict[str, float]:
 
 
 def clock_skew(summ: Mapping[str, Any], send_delay_ms: float = 0.0) -> ClockSkew | None:
-    """The hello's clock skew from the k6 summary: the corrected trend is judged. Raw is judged
+    """The hello's clock skew from the k6 summary: the corrected trend is read. The raw one is read
     instead when the run injects a send delay (it holds the welcome after the server's stamp, which
     breaks the correction's even split of the round trip) and for a summary from before the
     correction. `None` when no welcome was timed."""
     raw, corrected = _stat(summ, SKEW_RAW, "max"), _stat(summ, SKEW_CORRECTED, "max")
     rtt_corrected = corrected is not None and send_delay_ms <= 0
-    judged = corrected if rtt_corrected else raw
-    if judged is None:
+    read = corrected if rtt_corrected else raw
+    if read is None:
         return None
     hellos = int(_stat(summ, SKEW_CORRECTED if rtt_corrected else SKEW_RAW, "count") or 0)
     rtt_p50, rtt_max = _stat(summ, HELLO_RTT, "p50"), _stat(summ, HELLO_RTT, "max")
-    return ClockSkew(judged, raw, rtt_p50, rtt_max, hellos, rtt_corrected, send_delay_ms)
+    return ClockSkew(read, raw, rtt_p50, rtt_max, hellos, rtt_corrected, send_delay_ms)
 
 
 def evaluate(
     prof: Mapping[str, Any], summ: Mapping[str, Any], t0: Scrape, t1: Scrape, facts: Facts
 ) -> Result:
     """The run's verdict. `prof` is the resolved profile (`flag`, `gate_on`, `probe`, `name`)."""
-    d = delta(t0, t1)
+    lost = bool(facts.scrapes and facts.scrapes.missing)  # a boundary scrape never answered
+    d = {} if lost else delta(t0, t1)
     v = Verdict(str(prof["name"]))
     res = Result(v)
     counters: Mapping[str, float] = summ.get("counters", {})
@@ -266,10 +299,19 @@ def evaluate(
     hours = facts.steady_s / 3600.0
     m = v.metrics
 
+    if (sc := facts.scrapes) and sc.attempted:  # a run saved before the counts has none
+        n, within = len(sc.timed_out_ms), f"within {sc.timeout_s:g} s"
+        note = f"all {sc.attempted} scrapes answered {within}"
+        if n:
+            note = f"backend did not answer /metrics {within}, {n} of {sc.attempted} scrapes"
+        v.add(Check("scrape.metrics_timeout", "ticket", n, 0.0, "scrapes", n == 0, True, note))
+
     # budget #6, from the server's own histogram
     share, count = fraction_le(d, "cv_ws_fanout_seconds", B6_FANOUT_S)
     p95s = quantile(d, "cv_ws_fanout_seconds", B6_QUANTILE)
-    if count < MIN_FANOUT_SAMPLES * SAMPLE_EVERY:
+    if lost:  # the budgets that read the scrape deltas have no window to read
+        res.not_judged = [f"{b}: not judged (boundary scrape timed out)" for b in SCRAPE_BUDGETS]
+    elif count < MIN_FANOUT_SAMPLES * SAMPLE_EVERY:
         res.invalid.append(
             f"fanout_samples: {count / SAMPLE_EVERY:.0f} sampled frames, need {MIN_FANOUT_SAMPLES}"
         )
@@ -441,7 +483,7 @@ def evaluate(
         res.invalid.append(f"feeder_behind: published {pub:.0f} of {sched:.0f} scheduled slots")
     skew = clock_skew(summ, float(prof.get("send_delay_ms") or 0))
     res.clock_skew = skew
-    if skew is not None and skew.judged > MAX_CLOCK_SKEW_MS:
+    if skew is not None and skew.judged and skew.max_ms > MAX_CLOCK_SKEW_MS:
         res.invalid.append(f"clock_skew: {skew.text}")
     lag95 = _stat(summ, "cv_client_lag_ms", "p95")
     if lag95 is not None and lag95 >= CLIENT_LAG_P95_MS:
@@ -453,7 +495,7 @@ def evaluate(
             res.invalid.append(f"{name}: {counters[name]:.0f}")
     planned = int(prof["users"]) * int(prof["connections"]) + int(bool(prof.get("probe")))
     up, held = counters.get("cv_connections_up", 0.0), total(t0, "cv_ws_connections_in_use")
-    if up < planned or held < planned:  # a lighter load than the profile names proves nothing
+    if up < planned or (held < planned and not lost):  # a lighter load proves nothing
         res.invalid.append(
             f"connections_short: {up:.0f} authenticated and {held:.0f} held at steady start, "
             f"{planned} planned"
