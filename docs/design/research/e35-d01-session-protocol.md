@@ -1,12 +1,10 @@
 # E35-D01 — Session protocol: deciding to trust an automated rule
 
-- **Companion to:** `docs/design/research/e35-rule-arming-trust.md` (issue #860), "the report", whose ids (F-n, SC-n,
-  OQ-n, CA-n, DJ) and sections ("report §n") are cited; "§n" is this file; `NN` is `docs/plan/NN-*`; AC1–AC3 are the
-  ticket's three acceptance scenarios.
+- **Companion to:** `e35-rule-arming-trust.md` in this folder, "the report", whose ids and sections ("report §n") are
+  cited; "§n" is this file; `NN` is `docs/plan/NN-*`; AC1–AC3 are the ticket's three acceptance scenarios.
 - **Status:** not yet run. **No participant, session, timing, score or quote exists**; durations are allocations in a
-  45-minute session (ticket Technical notes); results go into a dated addendum to the report (§5). This file owns the
-  session order, the correct answers written before any session (ticket Test plan), the codes K1–K11 and FB1–FB13 and
-  the choice rule; the report cites them, and a change after S1 voids the scores.
+  45-minute session (ticket Technical notes). This file owns the session order, the correct answers written before S1,
+  the codes K1–K11 and FB1–FB13 and the choice rule; the report cites them, and a change after S1 voids the scores.
 - **Roles.** A neutral moderator: never the person who drafted the copy under test (ticket Technical notes), never the
   participant. The owner, a participant, does not moderate their own session: a manager who has done their own
   moderates it, else it runs **self-moderated**, a tagged exception to "never the participant"; a manager session the
@@ -24,8 +22,7 @@ knowing whether a stop is exchange-native or app-managed (and therefore whether 
   crashes"), **2.4 engine down** (the server up) and **2.5 feed stale**.
 - **Probe 3**: what "(estimated)" on a detector metric means, and whether it changes arming (report §4).
 - **Probe 4**: two rules that want the stop (SCR-086; report §5).
-- **Journey** (report §6; `17` §1.5), **Terms** (trigger, condition, action, scope, simulate, arm, disarm; report §7)
-  and the **keyboard pass** (K) of SCR-085.
+- **Journey** (report §6; `17` §1.5), **Terms** (report §7's seven terms) and the **keyboard pass** (K) of SCR-085.
 
 **Locked, not tested** (report "Locked, not relitigated"; sessions test how to say these): the native stop-loss on
 every position-opening order, rule-engine stops being "_additional_, never substitutes" (C-2.6, C-4.14); rules run on
@@ -35,12 +32,13 @@ only (`30` §7); risk controls first (US-RULE-011); `(estimated)` and true histo
 
 ## 2. Participants, consent and data handling
 
-**Participants.** The closed user set of `10` §2–§3: the owner (P1) and the account managers (P2a/P2b, remote per
-`10` §3), in 5–6 recorded sessions of 45 minutes, one per person (ticket Scope, Technical notes); no outsiders (ticket
-Out of scope); with fewer than five people, run all and note it on #860. Record per person: role, automation used, any
-rule armed, assistive setup (screen reader, magnifier or zoom, high contrast, keyboard only), colour vision. If anyone
-uses an assistive setup, one session runs on it (ticket Accessibility notes); a participant who reports keyboard-only
-use takes the keyboard pass (`10` names none; §3 assumes a manager with a colour-vision deficiency), else the owner's
+**Participants.** The closed user set of `10` §2–§3: the owner (P1) and the account managers (P2a/P2b, remote per `10`
+§3), in 5–6 recorded sessions of 45 minutes, one per person (ticket Scope, Technical notes); no outsiders (ticket Out
+of scope); with fewer than five people, run all; record the headcount on #860 before S1; with ≤ 2 managers the choice
+rule is provisional by construction and OQ-1 is the owner's. Record per person: role, automation used, any rule armed,
+assistive setup (screen reader, magnifier or zoom, high contrast, keyboard only), colour vision. If anyone uses an
+assistive setup, one session runs on it (ticket Accessibility notes); a participant who reports keyboard-only use
+takes the keyboard pass (`10` names none; §3 assumes a manager with a colour-vision deficiency), else the owner's
 session runs it. The owner approves this file and the report first (§6): an **informed** session, reported apart.
 
 **Consent (verbatim; record yes/no for the recording and for public quotes).** "We are testing wording and screens,
@@ -93,14 +91,13 @@ only the catalogue's fictional accounts "Main" and "sub_001" and BTCUSDT's 0.10 
 ## 4. Session script (45 minutes)
 
 Budget: opening 4 · Probe 2 12 · Probe 1 6 · Probe 3 4 · Probe 4 6 · Journey 6 · Terms 4 · debrief 3 = **45 min**;
-whoever takes K (§2) runs it (6) instead of the Journey. Probes 1–4 are never cut (AC1 needs every score); if late,
-cut 4c, then J-a to three cards, then Terms to arm, disarm, simulate. Rotation (S1/S4, S2/S5, S3/S6): events after 2.3
-run 2.1-2.2-2.4-2.5, 2.2-2.4-2.5-2.1, 2.4-2.5-2.1-2.2; 2b's texts run plan-A-B, A-B-plan, B-plan-A; 1b/1c run B-C in
-odd sessions, C-B in even. **Moderator rules:** explain nothing about where rules run, where stops live, "(estimated)"
-or a term before the debrief (questions go on a parking card); neutral prompts only; never correct an answer in
-session; think-aloud only in J-b and K; sorts need no dragging (`05` §3.1 rule 6). **Opening (4 min).** Consent (§2),
-which says the screens are mock-ups; no primer on how CandleViewer works. Warm-up: "When did you last let software act
-on a trade for you? What did you check?"
+whoever takes K (§2) runs it (6), not the Journey. Probes 1–4 are never cut (AC1 needs every score); if late, cut 4c,
+then J-a to three cards, then Terms to arm, disarm, simulate. Rotation (S1/S4, S2/S5, S3/S6): events after 2.3 run
+2.1-2.2-2.4-2.5, 2.2-2.4-2.5-2.1, 2.4-2.5-2.1-2.2; 2b's texts run plan-A-B, A-B-plan, B-plan-A; 1b/1c run B-C in odd
+sessions, C-B in even. **Moderator rules:** explain nothing about where rules run, where stops live, "(estimated)" or
+a term before the debrief (questions go on a parking card); neutral prompts only; never correct an answer in session;
+think-aloud only in J-b and K; sorts need no dragging (`05` §3.1 rule 6). **Opening (4 min).** Consent (§2); no primer
+on how CandleViewer works. Warm-up: "When did you last let software act on a trade for you? What did you check?"
 
 **Probe 2 (12 min), first and cold.** **2a (6 min):** read ST1, then card 2.3. Ask (1) "While this lasts, what happens
 to the two rules?" (2) "And to your position and its stop-loss?" (3) "The stop-loss: (a) stays and still protects ·
@@ -131,22 +128,23 @@ the trail move the stop?" Coded only: "At 13:20 only the trail wants to tighten.
 built-in cards: "Which of these act before your own rules, whatever the order?"
 
 **Journey (6 min).** **J-a (3 min):** cards: restatement · accounts and symbols · Demo or Live · simulation and its
-covered days · simulate-mode record · places orders or flattens · estimated detectors · conflicts · if the server
-stops · the position's stop-loss · engine running · limits · firing log · how to switch it off · blank. "Before you
-switch 'ATR trail 2x' on in Demo, which do you need, in the order you would look? Which more before Live? How would
-you check them without a mouse?" (ticket Accessibility notes). **J-b (3 min), think-aloud:** the prototype from the
-rules list to a Demo arm, blocked (CA-16), then ready, pending (CA-18), armed: "Stop me where you would give up, and
-why." Record the point, the reason, what was read before confirming, whether pending was seen.
+covered days · simulate-mode record · places orders or flattens · asks before acting or dry run · first check and open
+positions · estimated detectors · conflicts · if the server stops · the position's stop-loss · engine running · limits
+· firing log · how to switch it off · blank. "Before you switch 'ATR trail 2x' on in Demo, which do you need, in the
+order you would look? Which more before Live? How would you check them without a mouse?" (ticket Accessibility notes).
+**J-b (3 min), think-aloud:** the prototype from the rules list to a Demo arm, blocked (CA-16), then ready, pending
+(CA-18), armed: "Stop me where you would give up, and why." Record the point, the reason, what was read before
+confirming, whether pending was seen.
 
 **Keyboard pass, K (6 min), mouse unplugged or the participant's own setup;** ask throughout "What are you checking,
 and what is hard to reach?" (1) Reach "ATR trail 2x" and open its arm action. (2) Focus opens inside the dialog, the
 restatement read as its description (`role="alertdialog"`, E35-D04; report §9d: on Cancel). (3) Arrow to LIVE; find
-the confirmation fields by visible label and format hint (E35-S08 "Keyboard-only arming"; CA-17, SCR-006); `Enter` on
-SCR-085's radios or rule-name field must not arm (in SCR-006 `Enter` submits the code, E09-D06 §5); a manager reaches
-a disabled LIVE's reason. (4) Is the conflict warning announced? (5) `Esc` closes without arming; focus returns to the
-row (`05` §3.4 item 4). (6) Arm in Demo: is pending perceivable without sight or motion until armed arrives (E35-S08
-"Armed state is never optimistic")? Record per step: done, Tab stops, unreachable controls, announcements, focus
-return, any time limit (`05` §3.1 rule 4; WCAG 2.2.1).
+SCR-006's password, TOTP and a typed LIVE (frame `no-grace-live-enable`; CA-17) by visible label and format hint
+(E35-S08 "Keyboard-only arming"); `Enter` on SCR-085's radios must not arm (in SCR-006 `Enter` submits, E09-D06 §5); a
+manager reaches a disabled LIVE's reason. (4) Is the conflict warning announced? (5) `Esc` closes without arming and
+says nothing was sent (CA-35); focus returns to the row (`05` §3.4 item 4). (6) Arm in Demo: is pending perceivable
+without sight or motion until armed arrives (E35-S08 "Armed state is never optimistic")? Record per step: done, Tab
+stops, unreachable controls, announcements, focus return, any time limit (`05` §3.1 rule 4; WCAG 2.2.1).
 
 **Terms (4 min).** Cards in their catalogue context (SCR-081's "Scope", "Trigger [on bar close v]", "Conditions (all
 of)", "Actions", "[ Simulate ]", "[ Arm... ]"; SCR-080's "disarm"), one at a time: "What does this word mean here?"
@@ -159,14 +157,13 @@ server", answer the parking card and correct every false belief coded (§5): the
 
 **Correct answers, written before S1 (ticket Test plan).** A **pass** has the listed codes in the participant's own
 words and no false belief (FB) of the probe; a **partial** (one code, no FB) is not a pass; the rest **fail**. **Probe
-1** (AC1 step 1b). The result shows what this version of the rule would have done on the recorded days, with
-modelled fills; it does not forecast what the rule will do or earn, and the day left out was not tested (SCR-084 Type
-and "Caveat copy (required)"; `24` §11.9; E35-S05: "a rule-behaviour preview, not a backtester"; C-2.14). **K1** past,
-recorded data: what the rule would have done, not what it will do. **K2** fills and money figures are modelled (coded
-only). **K3** the day left out was not tested: no data, not "no fires" (09-07 where the stimulus names it).
-Pass = K1 + K3. **FB1** it forecasts results, profit or R, or live will match it. **FB2** the fills or the PnL were
-real. **FB3** the day left out had no fires, or all 14 days are covered. **FB4** it placed orders. **Probe 2** (AC1
-step: 2.3 in 2a; AC2: 2b), per event:
+1** (AC1 step 1b). The result shows what this version of the rule would have done on the recorded days, with modelled
+fills; it does not forecast what the rule will do or earn, and the day left out was not tested (SCR-084 Type and
+"Caveat copy (required)"; `24` §11.9; E35-S05; C-2.14). **K1** past, recorded data: what the rule would have done, not
+what it will do. **K2** fills and money figures are modelled (coded only). **K3** the day left out was not tested: no
+data, not "no fires" (09-07 where the stimulus names it). Pass = K1 + K3. **FB1** it forecasts results, profit or R,
+or live will match it. **FB2** the fills or the PnL were real. **FB3** the day left out had no fires, or all 14 days
+are covered. **FB4** it placed orders. **Probe 2** (AC1 step: 2.3 in 2a; AC2: 2b), per event:
 
 | Event                      | The rules (K4)                                                              | The position and its stop (K5)                        | Return (K6, scored apart)                                                                                                                            | Sources                                                                  |
 | -------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
@@ -215,19 +212,19 @@ and its median rank; a card most need before Demo shows on SCR-084/085 without a
 point two or more name is a finding, matched to report §9c's events. K: per step, for E35-D04.
 
 **AC2 and the choice rule.** Per tested slot (the SCR-085 sentence, the SCR-084 caveat) count passes per text as k of
-n, n counting participants other than the informed owner, with cold passes (text seen first) beside them; a majority
-is more than half of n (2 of 3, 3 of 4, 3 of 5; DJ). The read-out states, for the plan's SCR-085 sentence, how many of
-n met row 2.3's K4 + K5 in Q-a with no FB (AC2) and recommends revised copy unless that is a majority. The text with
-most full passes (Q-a and Q-b) wins, a tie going to the shorter; it is **binding** only with n ≥ 3, a majority of
-passes and no critical fail (FB1 for SCR-084; FB5, FB6 or FB7 for SCR-085), else **provisional** and the owner decides
-on #860 (OQ-1); a text retested on people already seen yields signals only. The read-out notes if cold passes alone
-pick another text. A required sentence changes only by the owner's decision on #860 (SC-16, OQ-1), and E35-D05's copy
-deck then freezes it ("a product decision requiring design and security review"). **AC3.** A finding contradicts the
-planned design when a plan text fails this rule, a probe's AC1 passes are not a majority, a majority's cold answer
-(2a, 4a) differs from the plan's behaviour, or a majority abandon at a step the design adds. Each goes on #860 before
-E35-D02/D03 start (if they have, the day the read-out confirms it and before their sign-off, linked from their issues;
-OQ-14) with the finding id, the evidence (counts, quote ids), the plan text it contradicts, the decision (keep,
-change, defer), who decided and the consuming ticket; a declined finding is posted with its reason.
+n, n counting participants other than the informed owner (in a flagged column), with cold passes (text seen first)
+beside them; a majority is more than half of n (2 of 3, 3 of 4, 3 of 5; DJ). The read-out states, for the plan's
+SCR-085 sentence, how many of n met row 2.3's K4 + K5 in Q-a with no FB (AC2) and recommends revised copy unless that
+is a majority. The text with most full passes (Q-a and Q-b) wins, a tie going to the shorter; it is **binding** only
+with n ≥ 3, a majority of passes and no critical fail (FB1 for SCR-084; FB5, FB6 or FB7 for SCR-085), else
+**provisional** and the owner decides on #860 (OQ-1); a text retested on people already seen yields signals only. The
+read-out notes if cold passes alone pick another text. A required sentence changes only by the owner's decision
+on #860 (SC-16, OQ-1), and E35-D05's copy deck then freezes it. **AC3.** A finding contradicts the planned design when
+a plan text fails this rule, a probe's AC1 passes are not a majority, a majority's cold answer (2a, 4a) differs from
+the plan's behaviour, or a majority abandon at a step the design adds. Each goes on #860 before E35-D02/D03 start (if
+they have, the day the read-out confirms it and before their sign-off, linked from their issues; OQ-14) with the
+finding id, the evidence (counts, quote ids), the plan text it contradicts, the decision (keep, change, defer), who
+decided and the consuming ticket; a declined finding is posted with its reason.
 
 **Feature requests and analysis.** When a participant judges what the engine can do rather than what the screen
 says, the moderator says once, "Noted for the product list; for now, what does this screen tell you?", and the
