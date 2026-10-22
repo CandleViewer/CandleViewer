@@ -1,25 +1,39 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { KeymapHost, registerCommand } from "../src/keymap/KeymapHost";
-import { HotkeyEditor } from "../src/keymap/HotkeyEditor";
-import { Cheatsheet } from "../src/keymap/Cheatsheet";
-import { setAuditSink, type AuditRecord } from "../src/keymap/audit";
-import { getBindings, resetBindings, setBindings } from "../src/keymap/profile";
+import type { AuditRecord } from "../src/keymap/audit";
+
+/**
+ * The keymap modules keep state at module level: the audit sink and outbox, the live bindings and
+ * their listeners, the registered command handlers, the editor's pending bindings. Every test loads
+ * its own copy after a reset, so none sees another's state or depends on the order they run in, and
+ * the components under test and the functions the assertions call are the same instance. (A static
+ * import is bound once, at file load, so after the reload test below resets the registry it is a
+ * different copy from every later import.)
+ */
+const load = async () => ({
+  ...(await import("../src/keymap/KeymapHost")),
+  ...(await import("../src/keymap/HotkeyEditor")),
+  ...(await import("../src/keymap/Cheatsheet")),
+  ...(await import("../src/keymap/audit")),
+  ...(await import("../src/keymap/profile")),
+});
+let mods: Awaited<ReturnType<typeof load>>;
 
 beforeEach(async () => {
-  const { flushAuditOutbox } = await import("../src/keymap/audit");
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
-  await flushAuditOutbox();
-  vi.unstubAllGlobals();
+  // The profile and the audit outbox persist in localStorage, and a module reads it when it loads.
+  window.localStorage.clear();
+  vi.resetModules();
+  mods = await load();
 });
 
 afterEach(() => {
-  resetBindings();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
 describe("inert press explains itself (wired host)", () => {
   it("toasts once per 5s, executes nothing", () => {
+    const { KeymapHost, registerCommand } = mods;
     const run = vi.fn();
     const off = registerCommand("dom.cancel_all", run, () => false);
     render(
@@ -39,6 +53,7 @@ describe("inert press explains itself (wired host)", () => {
     off();
   });
   it("executes when valid", () => {
+    const { KeymapHost, registerCommand } = mods;
     const run = vi.fn();
     const off = registerCommand("dom.cancel_all", run);
     render(
@@ -56,6 +71,7 @@ describe("inert press explains itself (wired host)", () => {
 
 describe("SCR-113 editor", () => {
   it("refuses conflict naming both, refuses reserved with platform, audits destructive rebind", () => {
+    const { HotkeyEditor, getBindings, setAuditSink } = mods;
     const audits: AuditRecord[] = [];
     setAuditSink((r) => audits.push(r));
     render(<HotkeyEditor />);
@@ -80,6 +96,7 @@ describe("SCR-113 editor", () => {
     expect(audits[0]).toMatchObject({ action: "hotkey.trading_binding_changed", after: "Q" });
   });
   it("import applies safe, lists unsafe", () => {
+    const { HotkeyEditor, getBindings } = mods;
     render(<HotkeyEditor />);
     const ta = screen.getByLabelText("Import keymap JSON") as HTMLTextAreaElement;
     fireEvent.change(ta, {
@@ -93,6 +110,7 @@ describe("SCR-113 editor", () => {
 
 describe("SCR-013 cheatsheet", () => {
   it("renders real tables and flags conflicts", () => {
+    const { Cheatsheet, getBindings, setBindings } = mods;
     act(() => setBindings(new Map(getBindings()).set("chart.delete_drawing", "Esc")));
     render(<Cheatsheet />);
     expect(screen.getAllByRole("table").length).toBeGreaterThan(3);
@@ -106,13 +124,14 @@ describe("SCR-013 cheatsheet", () => {
 
 describe("wiring (review fixes)", () => {
   it("Ctrl+/ opens the cheatsheet through the registered command", () => {
+    const { KeymapHost } = mods;
     render(<KeymapHost />);
     fireEvent.keyDown(window, { key: "/", ctrlKey: true });
     expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
   });
   it("default audit transport reaches the outbox", async () => {
-    const { applyRebind, auditOutbox, flushAuditOutbox, setAuditSink } =
-      await import("../src/keymap/audit");
+    const { KeymapHost, applyRebind, auditOutbox, flushAuditOutbox, getBindings, setAuditSink } =
+      mods;
     setAuditSink((r) => window.dispatchEvent(new CustomEvent("cv:audit", { detail: r })));
     render(<KeymapHost />);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
@@ -130,7 +149,7 @@ describe("wiring (review fixes)", () => {
 
 describe("audit is transmitted server-side", () => {
   it("POSTs hotkey.trading_binding_changed fields to /settings/hotkey-audit", async () => {
-    const { applyRebind, recordAudit, auditOutbox } = await import("../src/keymap/audit");
+    const { applyRebind, auditOutbox, recordAudit, setAuditSink } = mods;
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", fetchMock);
     setAuditSink(recordAudit);
@@ -147,10 +166,25 @@ describe("audit is transmitted server-side", () => {
     });
     vi.unstubAllGlobals();
   });
+  it("a persisted outbox is read back when the audit module loads", async () => {
+    // Key and record shape as audit.ts persists them (STORE_KEY there; it is not exported).
+    const record: AuditRecord = {
+      action: "hotkey.trading_binding_changed",
+      commandId: "dom.cancel_all",
+      before: "Ctrl+Shift+X",
+      after: "Q",
+      acknowledgedUnsafe: true,
+    };
+    window.localStorage.setItem("cv.hotkey-audit-outbox.v1", JSON.stringify([record]));
+    vi.resetModules();
+    const { auditOutbox } = await import("../src/keymap/audit");
+    expect(auditOutbox()).toEqual([record]);
+  });
 });
 
 describe("profile persistence + Rules-context inert explanation", () => {
   it("rebinds survive a module reload (localStorage)", async () => {
+    const { getBindings, setBindings } = mods;
     act(() => setBindings(new Map(getBindings()).set("dom.cancel_all", "Q")));
     vi.resetModules();
     const fresh = await import("../src/keymap/profile");
@@ -163,6 +197,7 @@ describe("profile persistence + Rules-context inert explanation", () => {
   });
 
   it("explains an inert Rules command when the editor context is not valid", () => {
+    const { KeymapHost, registerCommand } = mods;
     const off = registerCommand("rules.save_draft", vi.fn(), () => false);
     render(
       <div data-keymap-context="Rules">
