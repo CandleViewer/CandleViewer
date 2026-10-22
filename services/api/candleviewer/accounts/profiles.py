@@ -58,6 +58,9 @@ _MONEY, _PERCENT, _LEVERAGE, _MULTIPLE = (38, 18), (9, 6), (10, 2), (10, 4)
 
 Fraction = Annotated[Decimal, Field(gt=0, le=1)]
 Positive = Annotated[Decimal, Field(gt=0)]
+#: At most 500 symbol entries and 10 ladder rungs, the REST `maxItems`: no column bounds a `text[]`
+#: or a jsonb ladder, so tightening either later would be breaking (24 Sec.9.2).
+SymbolList = Annotated[tuple[SymbolPattern, ...], Field(max_length=500)]
 
 
 class TakeProfitRung(BaseModel):
@@ -67,6 +70,9 @@ class TakeProfitRung(BaseModel):
 
     qty_pct: Fraction
     r: Positive
+
+
+Ladder = Annotated[tuple[TakeProfitRung, ...], Field(max_length=10)]
 
 
 class AccountProfile(BaseModel):
@@ -103,7 +109,7 @@ class AccountProfile(BaseModel):
     fallback_sl_offset_pct: Annotated[Decimal, Field(gt=0, lt=1)]
     tp_offset_value: Positive | None
     tp_offset_unit: OffsetUnit | None
-    tp_ladder: tuple[TakeProfitRung, ...] = ()
+    tp_ladder: Ladder = ()
     # risk caps, server-enforced (one gate each: `profile_caps.PROFILE_CAPS`)
     max_position_notional: Annotated[Notional, Field(gt=0)] | None
     max_position_pct_equity: Fraction | None
@@ -115,8 +121,8 @@ class AccountProfile(BaseModel):
     max_orders_per_minute: Annotated[int, Field(ge=1, le=600)]
     # symbols: `all_symbols` is explicit; an empty allow-list without it allows nothing (D11)
     all_symbols: bool
-    allowed_symbols: tuple[SymbolPattern, ...] = ()
-    denied_symbols: tuple[SymbolPattern, ...] = ()
+    allowed_symbols: SymbolList = ()
+    denied_symbols: SymbolList = ()
     # order defaults
     reduce_only_default: bool
     time_in_force_default: TimeInForce

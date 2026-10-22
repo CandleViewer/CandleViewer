@@ -789,7 +789,7 @@ class Sizing(BaseModel):
             "fixed_qty", "fixed_notional", "pct_equity", "risk_based", "pct_position", "profile"
         ],
         Field(
-            description="How a request expresses order size.\n\n**Persistence contract.** The Postgres type `sizing_mode`\n(`21-database-schema.md` §Enums) holds only the four *resolved* modes\n`fixed_qty | fixed_notional | pct_equity | risk_based`. The two extra API values are\n**request-time sugar that never reaches the database**; the OMS resolves them before\nany row is written, and `orders.requested_qty_mode` / `account_profiles.sizing_mode`\ntherefore always contain a resolved value:\n\n| API value | Resolution | Stored as |\n|---|---|---|\n| `pct_position` | `pct` % of the *current open position* qty on that symbol/account (scale-out, flatten-partial). Rejected with `validation_failed` if no position is open. | `fixed_qty` |\n| `profile` | Inherit the active `AccountProfile.sizing` block verbatim. | whatever the profile's own mode resolves to |\n\nContract test `enum_parity_sizing_mode` asserts (a) the DB enum equals this enum minus\n`x-db-enum-superset`, and (b) no persisted row ever holds a superset value.\n"
+            description="How a request expresses order size.\n\n**Persistence contract.** The Postgres type `sizing_mode`\n(`21-database-schema.md` §Enums) holds only the four *resolved* modes\n`fixed_qty | fixed_notional | pct_equity | risk_based`. The two extra API values are\n**request-time sugar that never reaches the database**; the OMS resolves them before\nany row is written, and `orders.requested_qty_mode` / `account_profiles.sizing_mode`\ntherefore always contain a resolved value:\n\n| API value | Resolution | Stored as |\n|---|---|---|\n| `pct_position` | `pct` % of the *current open position* qty on that symbol/account (scale-out, flatten-partial). Rejected with `validation_failed` if no position is open. | `fixed_qty` |\n| `profile` | Inherit the active `AccountProfile.profile.sizing` block verbatim. | whatever the profile's own mode resolves to |\n\nContract test `enum_parity_sizing_mode` asserts (a) the DB enum equals this enum minus\n`x-db-enum-superset`, and (b) no persisted row ever holds a superset value.\n"
         ),
     ]
     qty: Annotated[
@@ -1024,6 +1024,31 @@ class ProfileRiskCaps(BaseModel):
     max_orders_per_minute: Annotated[int | None, Field(ge=1, le=600)] = 30
 
 
+class ProfileWarning(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Annotated[
+        Literal["all_symbols", "no_symbols", "sizing_below_min_order", "stop_beyond_liquidation"],
+        Field(
+            description="`all_symbols`: every listed symbol is allowed, by the flag or by a pattern that matches every listed symbol (`*USDT`); consider restricting. `no_symbols`: no symbol is allowed, so the profile sizes nothing (decision D11). `sizing_below_min_order`: at the account's current equity the sizing gives less than `symbol`'s minimum order, and `message` works the example. `stop_beyond_liquidation`: the stop lies beyond the estimated liquidation distance at `leverage` (SR-E28-26). Open-ended for readers: a client shows a code it does not know by its `message` (C-6.3).\n"
+        ),
+    ]
+    message: str
+    field: Annotated[str | None, Field(description="The JSON path of the member it is about.")] = (
+        None
+    )
+    symbol: Annotated[
+        str | None,
+        Field(
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ] = None
+    estimated: Annotated[bool | None, Field(description="Derived from an estimate (C10).")] = False
+
+
 class AccountProfileInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1110,6 +1135,7 @@ class AccountProfile(BaseModel):
     version: Annotated[int, Field(ge=1)]
     created_at: AwareDatetime
     updated_at: AwareDatetime
+    warnings: list[ProfileWarning]
     profile: AccountProfileInput
 
 

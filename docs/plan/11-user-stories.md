@@ -572,9 +572,12 @@ Scenario: Allowed
 Scenario: Server enforcement
   When a crafted request submits a DOGEUSDT order for account B
   Then the server rejects with 403 and audits the attempt
-Scenario: Empty list means all
-  Given the allowed list is empty
-  Then all USDT linear perpetuals are permitted (documented in the field's help text)
+Scenario: Empty list allows nothing
+  Given the allowed list is empty and "all symbols" is not set
+  Then no symbol is permitted, and the profile is flagged as allowing no symbol (decision D11)
+Scenario: All symbols is explicit
+  Given "all symbols" is set, with no allowed list
+  Then every listed USDT linear perpetual is permitted, and the profile is flagged "allows all symbols"
 ```
 
 NFR: symbol list validated against the instrument cache; wildcard patterns supported (`*USDT`).

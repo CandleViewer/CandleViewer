@@ -5737,6 +5737,7 @@ export interface components {
       /** Format: date-time */
       updated_at: string;
       version: number;
+      warnings: components["schemas"]["ProfileWarning"][];
     };
     /**
      * @description A per-account profile as written; 24-internal-schemas.md section 9.2 maps each member to
@@ -8791,6 +8792,23 @@ export interface components {
      * @enum {string}
      */
     ProfileTargetUnit: "ticks" | "percent" | "r_multiple" | "atr";
+    /** @description Advice that never blocks a save (SCR-130's `(!)` marker). A write's answer carries every warning; a read recomputes only `all_symbols` and `no_symbols`, which need no exchange data. */
+    ProfileWarning: {
+      /**
+       * @description `all_symbols`: every listed symbol is allowed, by the flag or by a pattern that matches every listed symbol (`*USDT`); consider restricting. `no_symbols`: no symbol is allowed, so the profile sizes nothing (decision D11). `sizing_below_min_order`: at the account's current equity the sizing gives less than `symbol`'s minimum order, and `message` works the example. `stop_beyond_liquidation`: the stop lies beyond the estimated liquidation distance at `leverage` (SR-E28-26). Open-ended for readers: a client shows a code it does not know by its `message` (C-6.3).
+       * @enum {string}
+       */
+      code: "all_symbols" | "no_symbols" | "sizing_below_min_order" | "stop_beyond_liquidation";
+      /**
+       * @description Derived from an estimate (C10).
+       * @default false
+       */
+      estimated: boolean;
+      /** @description The JSON path of the member it is about. */
+      field?: string;
+      message: string;
+      symbol?: components["schemas"]["Symbol"];
+    };
     PublicTrade: {
       /** @description Number of raw prints merged when clustering is on. */
       cluster_size?: number;
@@ -9862,7 +9880,7 @@ export interface components {
      *     | API value | Resolution | Stored as |
      *     |---|---|---|
      *     | `pct_position` | `pct` % of the *current open position* qty on that symbol/account (scale-out, flatten-partial). Rejected with `validation_failed` if no position is open. | `fixed_qty` |
-     *     | `profile` | Inherit the active `AccountProfile.sizing` block verbatim. | whatever the profile's own mode resolves to |
+     *     | `profile` | Inherit the active `AccountProfile.profile.sizing` block verbatim. | whatever the profile's own mode resolves to |
      *
      *     Contract test `enum_parity_sizing_mode` asserts (a) the DB enum equals this enum minus
      *     `x-db-enum-superset`, and (b) no persisted row ever holds a superset value.
