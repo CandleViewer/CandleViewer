@@ -133,6 +133,10 @@ replies below, which tests derive from the granted ones (E29-K01, #843, records 
 - refused `auth` reply (`op auth`, `success` false): no public example — K01.
 - refused `subscribe` reply (`op subscribe`, `success` false): no public example — K01.
 
+A K01 recording of a private push has its envelope `id` redacted before it is committed: its
+first segment is the account's UID (C-13.5), as in the documented `386825804_BTCUSDT_...`
+sample. The drift check compares keys and types, never values, so the redacted id still pairs.
+
 Each line: file; source; date; symbol; env; redaction. Every env is none (a documentation
 example, from no account), and no redaction is needed: no file holds a key, a signature or an
 account id.

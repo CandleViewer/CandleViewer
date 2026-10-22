@@ -661,7 +661,7 @@ class BybitTradingPort:
         """Both sides go in one call (24 §8.9): the OMS sends the unchanged side's value; a side
         left `None` is not sent."""
         self._check_environment(req.account)
-        check_stop(req.stop_loss, req.sl_size, req.tp_size)
+        check_stop(req.stop_loss, req.sl_size, req.tp_size, req.trailing_distance)
         body = _stop_body(req)
         answer = await self._trade("set_trading_stop", req.account, body=body)
         fields = rec.request_fields(body)

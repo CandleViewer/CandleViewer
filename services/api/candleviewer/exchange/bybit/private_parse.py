@@ -34,7 +34,6 @@ from pydantic import BeforeValidator, Field
 
 from candleviewer.domain.order_link import OUR_ID
 from candleviewer.domain.primitives import Symbol, TsUs
-from candleviewer.exchange.base.errors import UnknownStateError
 from candleviewer.exchange.base.frame_guard import MAX_TS_MS, json_depth_exceeds
 from candleviewer.exchange.base.models import (
     AccountRef,
@@ -399,14 +398,11 @@ def _parse[M: _Venue](model: type[M], raw: Mapping[str, Any]) -> M:
 
 def _order(raw: Mapping[str, Any], account: AccountRef) -> Order:
     row = _parse(OrderPushRow, raw)
-    order: Order | None = None
-    try:
-        order = to_order(row, account)
-    except UnknownStateError:  # a limit order without a price: counted by G-8's mapper
-        pass
-    if order is None:
+    # A limit order without a price is a malformed push, refused here before G-8's mapper,
+    # which would count it as a REST reply of unknown outcome (SEC-G8B-B-01).
+    if row.orderType == "Limit" and row.price <= 0:
         raise FrameRejected("malformed")
-    return order
+    return to_order(row, account)
 
 
 def _fast(row: FastExecutionRow, account: AccountRef) -> FastExecution:

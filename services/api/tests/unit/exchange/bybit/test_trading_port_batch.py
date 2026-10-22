@@ -637,8 +637,9 @@ def test_the_default_clock_reads_the_wall_in_microseconds() -> None:
     [
         (Decimal("1E+2"), "100", Decimal("1E+2"), "100"),
         (Decimal("1E-7"), "0.0000001", Decimal("1E-7"), "0.0000001"),
-        # A stop-loss is never 0 (C-2.6; the orchestrator's ruling 2 on #2877): zero's exponent
-        # form goes through every other field, and the stop takes another exponent form.
+        # A stop-loss or a trail is never 0 (C-2.6; the orchestrator's ruling 2 on #2877, and
+        # its ruling on SEC-G8B-A-01): zero's exponent form goes through every other field, and
+        # the stop and the trail take another exponent form.
         (Decimal("0E-8"), "0.00000000", Decimal("5.8E+4"), "58000"),
     ],
     ids=["positive-exponent", "negative-exponent", "zero-exponent"],
@@ -662,11 +663,11 @@ async def test_a_decimal_goes_on_the_wire_as_plain_text_never_in_exponent_form(
             symbol="BTCUSDT",
             stop_loss=stop,
             take_profit=value,
-            trailing_distance=value,
+            trailing_distance=stop,  # a trail of 0 is refused like a stop-loss (SEC-G8B-A-01)
             active_price=value,
         )
     )
     create, stop_write = venue.bodies()
     assert [create[k] for k in ("qty", "price", "takeProfit")] == [wire] * 3
-    assert [stop_write[k] for k in ("takeProfit", "trailingStop", "activePrice")] == [wire] * 3
-    assert create["stopLoss"] == stop_write["stopLoss"] == stop_wire
+    assert [stop_write[k] for k in ("takeProfit", "activePrice")] == [wire] * 2
+    assert create["stopLoss"] == stop_write["stopLoss"] == stop_write["trailingStop"] == stop_wire

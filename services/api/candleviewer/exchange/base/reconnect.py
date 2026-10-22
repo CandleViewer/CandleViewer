@@ -169,7 +169,9 @@ class ConnectionBudget:
     def _reserve(self, cap: int) -> float:
         """Schedule one open of a lane capped at `cap`: the earliest time at which, counting every
         open after it less one window (those scheduled ahead too), the lane stays within `cap`.
-        Counting the scheduled ones keeps every window, earlier or later, within the limit."""
+        Counting the scheduled ones keeps every window, earlier or later, within the limit. The
+        slot is booked when scheduled, so an open cancelled while it waits (a KILL, a SHUTDOWN)
+        keeps its slot for one window: the budget is under-used, never exceeded."""
         now = self._clock()
         self._prune(now)
         start = now

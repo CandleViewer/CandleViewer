@@ -499,7 +499,7 @@ class FakeTradingPort:
         return acks or [_ack(None, None)]  # accepted, nothing cancelled: names no order
 
     async def set_trading_stop(self, req: TradingStopRequest) -> OrderAck:
-        check_stop(req.stop_loss, req.sl_size, req.tp_size)
+        check_stop(req.stop_loss, req.sl_size, req.tp_size, req.trailing_distance)
         self._enter("set_trading_stop", req.account, req, "critical")
         outcome = self._outcome("set_trading_stop")
         if isinstance(outcome, FakeReject):

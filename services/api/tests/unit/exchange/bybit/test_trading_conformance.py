@@ -703,6 +703,12 @@ STOP_PATHS: dict[str, Callable[[TradingPort, Decimal], Awaitable[object]]] = {
     ),
     "sl_size": lambda port, v: port.set_trading_stop(_sized("sl", v)),
     "tp_size": lambda port, v: port.set_trading_stop(_sized("tp", v)),
+    # The ruling on SEC-G8B-A-01: a `trailingStop` of `0` cancels the trail at the venue.
+    "trailing_distance": lambda port, v: port.set_trading_stop(
+        TradingStopRequest(
+            account=account(), symbol="BTCUSDT", stop_loss=Decimal("58000"), trailing_distance=v
+        )
+    ),
 }
 
 
@@ -725,7 +731,9 @@ async def test_both_still_send_a_positive_stop_on_every_path(harness: Harness, p
     harness.prime_batch([link(seq=1), link(seq=2)])
     harness.prime_amend(link())
     harness.prime_position_writes()
-    value = Decimal("0.01") if path.endswith("_size") else Decimal("58000")
+    value = Decimal(
+        {"sl_size": "0.01", "tp_size": "0.01", "trailing_distance": "100"}.get(path, "58000")
+    )
     await STOP_PATHS[path](harness.port, value)
     assert harness.sent() > 0
 

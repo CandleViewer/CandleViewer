@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.models import Execution, FastExecution, Order, Position, Wallet
 from candleviewer.exchange.bybit import private_parse as pp
 from candleviewer.exchange.bybit import trading_parse as tp
@@ -297,6 +298,17 @@ def test_a_row_the_stream_cannot_read_rejects_its_whole_frame(rows: list[dict[st
     with pytest.raises(pp.FrameRejected) as info:
         _read(push("order.linear", *rows))
     assert info.value.reason == "malformed"
+
+
+def test_a_limit_push_without_a_price_never_counts_as_a_rest_reply_of_unknown_outcome() -> None:
+    """SEC-G8B-B-01: the parser refuses it as malformed before G-8's mapper, whose own refusal
+    feeds `exchange_errors_total{class="UNKNOWN_STATE"}`, the REST order-outcome counter."""
+    unknown = exchange_errors_total.labels(**{"class": "UNKNOWN_STATE"})
+    before = unknown._value.get()
+    with pytest.raises(pp.FrameRejected) as info:
+        _read(push("order.linear", linear_order(orderType="Limit", price="0")))
+    assert info.value.reason == "malformed"
+    assert unknown._value.get() == before
 
 
 def test_a_wallet_the_stream_cannot_read_rejects_its_frame() -> None:

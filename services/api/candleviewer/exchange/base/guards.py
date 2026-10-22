@@ -70,14 +70,17 @@ def check_exit_ids(link: str | None, exchange_order_id: str | None) -> None:
 
 
 def check_stop(*values: Decimal | None) -> None:
-    """C-2.6, the orchestrator's ruling 2 on #2877: a stop-loss, or a stop's size, that a call
-    sends is a positive number. The venue reads a stop-loss of `0` as "cancel the stop", so a
-    zero, negative or non-finite one is refused here, before any token is taken or anything is
-    signed, whatever built the request: a stop is never removed implicitly. A value left `None`
-    is not sent."""
+    """C-2.6, the orchestrator's ruling 2 on #2877: a stop-loss, a stop's size or a trailing
+    distance that a call sends is a positive number. The venue reads a stop-loss of `0` as
+    "cancel the stop", and a `trailingStop` of `0` as "cancel the trail" (the ruling on
+    SEC-G8B-A-01), so a zero, negative or non-finite one is refused here, before any token is
+    taken or anything is signed, whatever built the request: a protective layer is never
+    removed implicitly. A value left `None` is not sent."""
     for value in values:
         if value is not None and (not value.is_finite() or value <= 0):
-            raise ValueError("a stop-loss or a stop size must be a positive number")
+            raise ValueError(
+                "a stop-loss, a stop size or a trailing distance must be a positive number"
+            )
 
 
 def check_lookup_id(link: OrderLinkId | None) -> None:
