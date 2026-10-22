@@ -119,7 +119,9 @@ and close codes, never an internal class. The automated half lives in `services/
 | E17-TC-D04 | authenticated                           | 51 topics in one `sub`                                   | The whole frame refused: one `err too_many_topics` (`field: topics`); nothing subscribed (#2292)          | S1      | `test_s1_a_sub_over_the_cap_is_refused_whole_and_is_no_strike`; behaviour: `test_gateway_limits::test_sub_frame_with_too_many_topics_is_refused_whole`     |
 | E17-TC-D05 | authenticated                           | A queued backlog, then session revocation                | Queued frames dropped, `bye` still delivered                                                              | S11     | `test_s11_a_sealed_close_drops_queued_frames_but_still_delivers_bye`                                                                                       |
 
-Chaos (60 s non-reading client, 5 000 msg/s burst, upstream kill) is E17-Q02. Load is E17-Q03 (#568):
+Chaos (60 s non-reading client, 5 000 msg/s burst, upstream kill) is E17-Q02: its suite is
+`services/api/tests/chaos/ws/` (catalogued in its `SCENARIOS.md`), and its results are in
+`docs/qa/perf/e17-ws-chaos-report.md`. Load is E17-Q03 (#568):
 
 - **Harness.** `services/api/bench/ws/` (loopback backend, feeder, verdict, runner) and `tests/load/ws/` (the k6
   client and `profiles.json`). Profile A is the roadmap 5.4 gate (5 clients x 10 symbols, 1 h), B the §16.4
