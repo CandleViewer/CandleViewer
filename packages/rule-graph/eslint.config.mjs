@@ -48,8 +48,9 @@ export default tseslint.config(
               "react-dom",
               "@xyflow/react",
               "@xyflow/system",
-              // Bare built-in names ("fs", "fs/promises"); `node:*` is a pattern below.
-              ...builtinModules.filter((name) => !name.startsWith("_")),
+              // Bare built-in names ("fs", "fs/promises"), the deprecated `_`-prefixed aliases
+              // (`_http_agent`, `_stream_readable`, ...) too; `node:*` is a pattern below.
+              ...builtinModules,
             ].map((name) => ({ name, message: PURE })),
           ],
           patterns: [
