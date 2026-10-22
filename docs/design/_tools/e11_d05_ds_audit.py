@@ -29,9 +29,11 @@ What it prints, with a source label on every row:
    MISSING (the seven `color.chart.*` slots, `font.mono`, `color.text.muted`, `color.status.warn`,
    `color.chart.background`, `color.chart.grid` and `color.marker.*` are expected MISSING;
    `elevation.3` resolves as a primitive and is flagged: the semantic alias is
-   `elevation.popover`);
-6. which spec pairs `tools/contrast/pairs.mjs` registers (a text scan of its `fg` / `bg` literals),
-   which `exemptions.json` exempts, which are PROPOSED, and whether `encodings.json` carries an
+   `elevation.popover`); the nine entries' Tokens fields are read back from `15` and every name
+   they bind must be in the list below, or the run fails (the list cannot drift from the entries);
+6. which spec pairs `tools/contrast/pairs.mjs` registers (a text scan of its `fg` / `bg` literals
+   and of its `HEATMAP_RAMP` block, which registers every heatmap stop on the canvas), which
+   `exemptions.json` exempts, which are PROPOSED, and whether `encodings.json` carries an
    `estimated`, `gap` or `reduced-detail` row;
 7. the counts the Penpot boards quote.
 
@@ -57,6 +59,7 @@ TOKENS = ROOT / "packages" / "ui" / "tokens"
 PAIRS_MJS = ROOT / "tools" / "contrast" / "pairs.mjs"
 EXEMPTIONS = ROOT / "tools" / "contrast" / "exemptions.json"
 ENCODINGS = ROOT / "tools" / "contrast" / "encodings.json"
+CATALOGUE = ROOT / "docs" / "plan" / "15-component-catalogue.md"
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -522,9 +525,9 @@ ramp.delta endpoint +1 = color.buy.default | color.buy.default | color.surface.c
 ramp.delta endpoint -1 = color.sell.default | color.sell.default | color.surface.canvas | non-text
   | data-ink-lib.mjs delta.negative
 ramp.delta first visible stop +ε = color.heatmap.bid.1 | color.heatmap.bid.1 |
-  color.surface.canvas | non-text | data-ink-lib.mjs; exemptions.json
+  color.surface.canvas | non-text | data-ink-lib.mjs; pairs.mjs HEATMAP_RAMP; exemptions.json
 ramp.delta first visible stop -ε = color.heatmap.ask.1 | color.heatmap.ask.1 |
-  color.surface.canvas | non-text | data-ink-lib.mjs; exemptions.json
+  color.surface.canvas | non-text | data-ink-lib.mjs; pairs.mjs HEATMAP_RAMP; exemptions.json
 ramp.delta CVD-safe first visible stop +ε = color.cvd.heatmap.bid.1 | color.cvd.heatmap.bid.1 |
   color.surface.canvas | non-text | E47-S06
 ramp.delta CVD-safe first visible stop -ε = color.cvd.heatmap.ask.1 | color.cvd.heatmap.ask.1 |
@@ -532,13 +535,13 @@ ramp.delta CVD-safe first visible stop -ε = color.cvd.heatmap.ask.1 | color.cvd
 ramp.intensity zero stop = color.heatmap.zero (no data; exempted by design) | color.heatmap.zero |
   color.surface.canvas | non-text | exemptions.json
 ramp.intensity.bid stop 2 = color.heatmap.bid.2 | color.heatmap.bid.2 | color.surface.canvas |
-  non-text | 16 section 2.1; pairs.mjs
+  non-text | 16 section 2.1; pairs.mjs HEATMAP_RAMP
 ramp.intensity.bid stop 3 = color.heatmap.bid.3 | color.heatmap.bid.3 | color.surface.canvas |
-  non-text | 16 section 2.1; pairs.mjs
+  non-text | 16 section 2.1; pairs.mjs HEATMAP_RAMP
 ramp.intensity.bid stop 4 = color.heatmap.bid.4 | color.heatmap.bid.4 | color.surface.canvas |
-  non-text | 16 section 2.1; pairs.mjs
+  non-text | 16 section 2.1; pairs.mjs HEATMAP_RAMP
 ramp.intensity.bid stop 5 = color.heatmap.bid.5 | color.heatmap.bid.5 | color.surface.canvas |
-  non-text | 16 section 2.1; pairs.mjs
+  non-text | 16 section 2.1; pairs.mjs HEATMAP_RAMP
 ramp.intensity.bid CVD-safe stop 2 = color.cvd.heatmap.bid.2 | color.cvd.heatmap.bid.2 |
   color.surface.canvas | non-text | E47-S06; pairs.mjs
 ramp.intensity.bid CVD-safe stop 3 = color.cvd.heatmap.bid.3 | color.cvd.heatmap.bid.3 |
@@ -548,13 +551,13 @@ ramp.intensity.bid CVD-safe stop 4 = color.cvd.heatmap.bid.4 | color.cvd.heatmap
 ramp.intensity.bid CVD-safe stop 5 = color.cvd.heatmap.bid.5 | color.cvd.heatmap.bid.5 |
   color.surface.canvas | non-text | E47-S06; pairs.mjs
 ramp.intensity.ask stop 2 = color.heatmap.ask.2 | color.heatmap.ask.2 | color.surface.canvas |
-  non-text | 16 section 2.1; pairs.mjs
+  non-text | 16 section 2.1; pairs.mjs HEATMAP_RAMP
 ramp.intensity.ask stop 3 = color.heatmap.ask.3 | color.heatmap.ask.3 | color.surface.canvas |
-  non-text | 16 section 2.1; pairs.mjs
+  non-text | 16 section 2.1; pairs.mjs HEATMAP_RAMP
 ramp.intensity.ask stop 4 = color.heatmap.ask.4 | color.heatmap.ask.4 | color.surface.canvas |
-  non-text | 16 section 2.1; pairs.mjs
+  non-text | 16 section 2.1; pairs.mjs HEATMAP_RAMP
 ramp.intensity.ask stop 5 = color.heatmap.ask.5 | color.heatmap.ask.5 | color.surface.canvas |
-  non-text | 16 section 2.1; pairs.mjs
+  non-text | 16 section 2.1; pairs.mjs HEATMAP_RAMP
 ramp.intensity.ask CVD-safe stop 2 = color.cvd.heatmap.ask.2 | color.cvd.heatmap.ask.2 |
   color.surface.canvas | non-text | E47-S06; pairs.mjs
 ramp.intensity.ask CVD-safe stop 3 = color.cvd.heatmap.ask.3 | color.cvd.heatmap.ask.3 |
@@ -930,6 +933,7 @@ BOUND: list[tuple[str, str]] = [  # (name, where it is bound)
     ("color.footprint.imbalance", "pattern.outline.imbalance"),
     ("color.focus.ring", "CMP-039 ring, cursor column"),
     ("color.action.primary.default", "pane focus bar, go-to-date marker"),
+    ("color.text.on-action", "go-to-date pill text (CMP-189)"),
     ("color.status.warning.subtle", "CMP-226 warn fill; Paused pill"),
     ("color.status.warning.strong", "warn glyphs"),
     ("color.buy.default", "ramp.delta +1"),
@@ -985,8 +989,16 @@ def base_name(token: str) -> str:
 
 
 def registered_pairs() -> set[tuple[str, str]]:
+    """The `pairs.mjs` registrations: `fg` / `bg` literals plus `HEATMAP_RAMP`, stop by stop."""
     text = PAIRS_MJS.read_text(encoding="utf-8")
-    return set(re.findall(r'fg:\s*"([^"]+)",\s*bg:\s*"([^"]+)"', text))
+    pairs = set(re.findall(r'fg:\s*"([^"]+)",\s*bg:\s*"([^"]+)"', text))
+    ramp = re.search(r"export const HEATMAP_RAMP = \{(.*?)\n\};", text, re.DOTALL)
+    if ramp:
+        bg = re.search(r'bg:\s*"([^"]+)"', ramp.group(1))
+        stops = re.search(r"stops:\s*\[(.*?)\]", ramp.group(1), re.DOTALL)
+        if bg and stops:
+            pairs.update((stop, bg.group(1)) for stop in re.findall(r'"([^"]+)"', stops.group(1)))
+    return pairs
 
 
 def exempted_pairs() -> set[str]:
@@ -1083,6 +1095,50 @@ def bindings() -> list[TokenRow]:
         if name == "color.axis.text":
             status = "resolves; CR-2: alias of color.text.tertiary or retired (E05 owner)"
         out.append({"name": name, "where": where, "values": values, "status": status})
+    return out
+
+
+TOKEN_CATEGORIES = (
+    "color",
+    "type",
+    "font",
+    "space",
+    "size",
+    "radius",
+    "elevation",
+    "opacity",
+    "motion",
+    "border",
+)
+
+
+def entry_token_names() -> set[str]:
+    """Every token name the nine `15` entries' Tokens fields bind (backticked and dotted)."""
+    text = CATALOGUE.read_text(encoding="utf-8")
+    names: set[str] = set()
+    for cmp in ENTRIES:
+        start = text.index(f"\n### {cmp} ")
+        end = text.find("\n### CMP-", start + 1)
+        block = text[start : end if end > 0 else len(text)]
+        for line in block.splitlines():
+            if not line.startswith("- **Tokens**"):
+                continue
+            for name in re.findall(r"`([a-z][a-z0-9]*(?:\.[a-z0-9*-]+)+)`", line):
+                if name.split(".")[0] in TOKEN_CATEGORIES:
+                    names.add(name)
+    return names
+
+
+def uncovered_entry_tokens(tokens: list[TokenRow]) -> list[str]:
+    """Names the entries bind that BOUND lacks (a `.*` name is covered by any name under it)."""
+    bound = {t["name"] for t in tokens}
+    out: list[str] = []
+    for name in sorted(entry_token_names()):
+        if name.endswith(".*"):
+            if not any(b.startswith(name[:-1]) for b in bound):
+                out.append(name)
+        elif name not in bound:
+            out.append(name)
     return out
 
 
@@ -1301,7 +1357,9 @@ def print_ramps(ramps: dict[str, object], n: int) -> None:
             )
 
 
-def print_rest(tokens: list[TokenRow], enc: dict[str, bool], nums: dict[str, int]) -> None:
+def print_rest(
+    tokens: list[TokenRow], enc: dict[str, bool], nums: dict[str, int], uncovered: list[str]
+) -> None:
     print("\n## E. CVD pairs (ΔE76 under each deficiency; JND 5.0)\n")
     print("| pair | theme | normal | protan | deutan | tritan | verdict |")
     print("|---|---|---|---|---|---|---|")
@@ -1353,6 +1411,10 @@ def print_rest(tokens: list[TokenRow], enc: dict[str, bool], nums: dict[str, int
             tk["status"],
         ]
         print("| " + " | ".join(cells) + " |")
+    print(
+        f"\n- the nine entries' Tokens fields vs this list: {len(uncovered)} names outside it"
+        + (" (" + ", ".join(uncovered) + ")" if uncovered else "")
+    )
     print("\n## I. Stories (PROPOSED)\n")
     for group, names in STORIES.items():
         print(f"- {group} ({len(names)}): {', '.join(names)}")
@@ -1385,11 +1447,13 @@ def main(argv: list[str]) -> int:
     enc = encodings_rows()
     nums = counts(pairs, tokens, n)
     ok = checks_ok(checks)
+    uncovered = uncovered_entry_tokens(tokens)
     if "--json" in argv:
         out = {
             "counts": nums,
             "pairs": pairs,
             "tokens": tokens,
+            "entry_tokens_uncovered": uncovered,
             "oklab_checks": checks,
             "oklab_checks_ok": ok,
             "ramps": ramps,
@@ -1410,14 +1474,16 @@ def main(argv: list[str]) -> int:
             print(f"- {name}: {value:.3e}")
         print(f"- all self-checks within tolerance: {ok}")
         print_ramps(ramps, n)
-        print_rest(tokens, enc, nums)
+        print_rest(tokens, enc, nums, uncovered)
         failing = nums["pairsFailing"]
+        good = not failing and ok and not uncovered
         print(
-            f"\n{'OK' if not failing and ok else 'FAIL'}: {nums['pairsGated']} gated rows over 3 "
+            f"\n{'OK' if good else 'FAIL'}: {nums['pairsGated']} gated rows over 3 "
             f"themes, {failing} failing; OkLab self-checks {'pass' if ok else 'FAIL'}; "
-            f"{nums['tokensMissing']} names MISSING (expected drift and slots)"
+            f"{nums['tokensMissing']} names MISSING (expected drift and slots); "
+            f"{len(uncovered)} entry token names outside BOUND"
         )
-    return 0 if failing_count(nums) == 0 and ok else 1
+    return 0 if failing_count(nums) == 0 and ok and not uncovered else 1
 
 
 def failing_count(nums: dict[str, int]) -> int:
