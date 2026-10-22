@@ -47,14 +47,22 @@ def test_unbuffered_output_and_the_scenario_input_through_env() -> None:
     # YAML 1.1 reads the `on` key as True
     scenario = doc[True]["workflow_dispatch"]["inputs"]["scenario"]
     assert scenario["type"] == "string" and scenario["default"] == "all"
-    assert _step("pack")["env"] == {"SCENARIO": "${{ inputs.scenario }}"}
-    # no input is interpolated into a script
+    for sid in ("scenario", "pack"):  # the check, then the pack it lets run (no `if:`)
+        assert _step(sid)["env"] == {"SCENARIO": "${{ inputs.scenario }}"}
+    assert "if" not in _step("pack")
+    # no input is interpolated into a script or a step's title
     assert all("${{" not in s.get("run", "") for s in _job()["steps"])
+    assert all("inputs." not in s.get("name", "") for s in _job()["steps"])
+    # a refused name fails the check, not the pack, so no "pack failed" issue is filed
+    assert _job()["outputs"]["failed"] == "${{ steps.pack.outcome == 'failure' }}"
     upload = next(s for s in _job()["steps"] if "upload-artifact@" in s.get("uses", ""))
     assert upload["if"] == "always()"  # a cancelled pack still uploads what it wrote
 
 
-def _pack(tmp_path: Path, scenario: str) -> tuple[int, list[list[str]]]:
+def _pack(
+    tmp_path: Path, scenario: str, locale: str = "C.UTF-8"
+) -> tuple[int, list[list[str]]]:
+    """The check step, then the pack step if the check passed, each under `bash -e`."""
     bash = shutil.which("bash") or ""
     if not bash:  # CI runs these fail-closed proofs
         (pytest.fail if os.environ.get("CI") else pytest.skip)("bash runs the step")
@@ -63,23 +71,24 @@ def _pack(tmp_path: Path, scenario: str) -> tuple[int, list[list[str]]]:
     uv.write_text(f"#!{sys.executable}\n{FAKE_UV}", encoding="utf-8")
     uv.chmod(0o755)
     log = tmp_path / "uv.log"
-    done = subprocess.run(
-        [bash, "-e", "-c", _step("pack")["run"]],
-        cwd=tmp_path,
-        env={
-            "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
-            "UV_LOG": str(log),
-            "SCENARIO": scenario,
-        },
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    env = {
+        "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
+        "UV_LOG": str(log),
+        "SCENARIO": scenario,
+        "LC_ALL": locale,  # the runner's own locale may not be C
+    }
+    code = 0
+    for sid in ("scenario", "pack"):
+        run = [bash, "-e", "-c", _step(sid)["run"]]
+        code = subprocess.run(
+            run, cwd=tmp_path, env=env, timeout=60, check=False
+        ).returncode
+        if code:
+            break
     calls = [
         json.loads(x) for x in (log.read_text().splitlines() if log.exists() else [])
     ]
-    return done.returncode, calls
+    return code, calls
 
 
 @pytest.mark.parametrize("scenario", ["all", "soak_bars", "soak_bars_frozen"])
@@ -95,10 +104,18 @@ def test_a_scenario_name_reaches_the_runner_as_one_argument(
 
 @pytest.mark.parametrize(
     "scenario",
-    ["", "soak_bars --record-baseline", "soak_bars;id", "$(id)", "../x", "ALL"],
+    ["", "soak_bars --record-baseline", "soak_bars;id", "$(id)", "../x", "ALL", "a\nb"],
 )
 def test_anything_but_a_name_is_refused_before_the_runner_starts(
     tmp_path: Path, scenario: str
 ) -> None:
     code, calls = _pack(tmp_path, scenario)
+    assert code == 2 and calls == []
+
+
+@pytest.mark.parametrize("scenario", ["soak_barß", "\uff41ll"])  # ß; a fullwidth "a"
+def test_a_letter_outside_ascii_is_refused_whatever_the_runners_locale(
+    tmp_path: Path, scenario: str
+) -> None:
+    code, calls = _pack(tmp_path, scenario, locale="en_US.UTF-8")  # matches [a-z] there
     assert code == 2 and calls == []

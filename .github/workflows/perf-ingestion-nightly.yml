@@ -110,15 +110,20 @@ jobs:
       - uses: grafana/setup-k6-action@43b9fc21641a76002687994433dd586f56e791b1 # v1.2.2
       - id: sync
         run: uv sync --project services/api
-      - name: E08-Q04 perf pack, full profile (${{ inputs.scenario }})
+      - name: Check the scenario name (its own step, so a refused name files no pack issue)
+        id: scenario
+        env:
+          SCENARIO: ${{ inputs.scenario }}
+        run: |
+          export LC_ALL=C # [a-z] is ASCII only in the C locale
+          [[ "$SCENARIO" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || { echo "scenario must be all or a scenario name" >&2; exit 2; }
+          echo "scenario: $SCENARIO"
+      - name: E08-Q04 perf pack, full profile, the scenario checked above
         id: pack
         working-directory: services/api
         env:
           SCENARIO: ${{ inputs.scenario }}
-        run: |
-          set -euo pipefail
-          [[ "$SCENARIO" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || { echo "scenario must be all or a scenario name" >&2; exit 2; }
-          uv run python -m bench.ingestion.runner "$SCENARIO" --profile full --out-dir bench/reports
+        run: uv run python -m bench.ingestion.runner "$SCENARIO" --profile full --out-dir bench/reports
       - name: Hand the gate diff to the issue job
         id: handoff
         if: failure()

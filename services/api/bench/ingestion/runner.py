@@ -227,11 +227,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     def write(pending: Sequence[str]) -> None:
         a.out_dir.mkdir(parents=True, exist_ok=True)
-        text = report.render(runs, profile, started, datetime.now(UTC), a.grafana_url)
+        partial = ""  # until the last scenario, both markdown reports open with this banner
         if pending:
             done = f"{len(runs)} of {len(runs) + len(pending)} scenarios have finished"
-            text = f"> **Partial:** {done}; not run yet: {', '.join(pending)}.\n\n{text}"
-        _replace(md, text)
+            partial = f"> **Partial:** {done}; not run yet: {', '.join(pending)}.\n\n"
+        rendered = report.render(runs, profile, started, datetime.now(UTC), a.grafana_url)
+        _replace(md, partial + rendered)
         verdicts = [
             {
                 "verdict": v.as_dict(),
@@ -245,12 +246,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             for _, v, g in runs
         ]
         _replace(md.with_suffix(".json"), json.dumps(verdicts, indent=2) + "\n")
-        _replace(
-            a.out_dir / "gate-diff.md",
-            "\n\n".join(
-                f"### {sc.name} ({g.status})\n\n{gate.render_diff(g)}" for sc, _, g in runs
-            ),
-        )
+        diffs = (f"### {sc.name} ({g.status})\n\n{gate.render_diff(g)}" for sc, _, g in runs)
+        _replace(a.out_dir / "gate-diff.md", partial + "\n\n".join(diffs))
 
     for i, name in enumerate(names):
         sc = load(name, a.profile)

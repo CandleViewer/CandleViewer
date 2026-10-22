@@ -69,7 +69,8 @@ def test_reports_are_on_disk_after_each_scenario_and_marked_partial_until_the_la
     md = _md(tmp_path)
     assert md.startswith("# E08-Q04 ingestion performance report") and "Partial" not in md
     assert _scenarios(tmp_path) == list(NAMES)
-    assert "### ratelimit_headroom" in (tmp_path / "gate-diff.md").read_text(encoding="utf-8")
+    diff = (tmp_path / "gate-diff.md").read_text(encoding="utf-8")
+    assert diff.startswith("### soak_steady") and "### ratelimit_headroom" in diff
     assert not list(tmp_path.glob("*.tmp"))  # every report was renamed into place
 
 
@@ -82,3 +83,6 @@ def test_a_pack_stopped_part_way_keeps_the_reports_of_what_finished(
     assert pack.started == list(NAMES)
     assert _md(tmp_path).startswith("> **Partial:** 1 of 2 scenarios have finished; not run yet:")
     assert _scenarios(tmp_path) == ["soak_steady"]
+    # the gate diff is the issue body of a failed pack: it says it is partial too
+    diff = (tmp_path / "gate-diff.md").read_text(encoding="utf-8")
+    assert diff.startswith("> **Partial:** 1 of 2") and "### soak_steady" in diff
