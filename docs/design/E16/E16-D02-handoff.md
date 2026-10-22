@@ -40,7 +40,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
       row introduces in `tools/contrast/pairs.mjs` (status `.strong` icons and `danger.default` on
       `color.surface.raised`; `text.secondary` and the four state icons, `success.default`, `warning.strong`,
       `danger.default` and `info.strong`, on `color.surface.sunken`, which the stale rows use). That is a security-owned `tools/` change,
-      which lands with the implementation ticket (E16-S05) or a small tools PR. The CVD simulation is attached with
+      which lands with the CMP-177 build (E16-S01) or a small tools PR. The CVD simulation is attached with
       the boards
 - [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — on the PR
 - [ ] **Sign-off** — owner `approved` comment or merged spec PR
