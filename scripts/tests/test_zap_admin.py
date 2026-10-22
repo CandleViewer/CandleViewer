@@ -329,7 +329,7 @@ def test_the_template_holds_no_credential_and_scans_the_admin_surface_only() -> 
     assert context["includePaths"] == ["${ZAP_TARGET}/admin(/.*)?", "${ZAP_TARGET}/users(/.*)?"]
     assert context["excludePaths"] == ["${ZAP_TARGET}/auth/logout.*", "${ZAP_TARGET}/me/sessions.*"]
     script = SESSION_SCRIPT.read_text(encoding="utf-8")
-    names = {"ZAP_TARGET", "ZAP_AUTH_TOKEN", "ZAP_CSRF_TOKEN"}
+    names = {"ZAP_TARGET", "ZAP_AUTH_TOKEN", "ZAP_CSRF_TOKEN", "ZAP_PROFILE"}
     assert set(re.findall(r'getenv\("(\w+)"\)', script)) == names
     assert set(re.findall(r'setHeader\("([\w-]+)"', script)) == {
         "Authorization",
@@ -337,7 +337,8 @@ def test_the_template_holds_no_credential_and_scans_the_admin_surface_only() -> 
         "Cookie",
     }
     # the whole guard: with any value missing nothing is added, and only the target's own host
-    assert 'if (!TARGET || !BEARER || !CSRF || url.indexOf(TARGET + "/") !== 0) return;' in script
+    guard = "if (!SURFACE || !TARGET || !BEARER || !CSRF || "
+    assert guard + 'url.indexOf(TARGET + "/") !== 0) return;' in script
     assert "if (!SURFACE.test(rest) || DOT_SEGMENT.test(rest)) return;" in script  # both rules
     (active,) = [job for job in TEMPLATE["jobs"] if job["type"] == "activeScan"]
     rules = {rule["id"] for rule in active["policyDefinition"]["rules"]}
@@ -372,7 +373,7 @@ def _session_rule(name: str) -> re.Pattern[str]:
 def test_the_session_goes_only_to_the_admin_surface_and_the_liveness_check(
     path: str, sent: bool
 ) -> None:
-    assert bool(_session_rule("SURFACE").search(path)) is sent
+    assert bool(_session_rule("ADMIN").search(path)) is sent
 
 
 @pytest.mark.parametrize(
@@ -386,6 +387,12 @@ def test_the_session_goes_only_to_the_admin_surface_and_the_liveness_check(
         ("/admin/..?x=1", False),
         ("/admin/%2e%2E/auth/logout", False),  # a URI may write a dot as %2e
         ("/admin/.%2e", False),
+        ("/admin/..%2Fauth/logout", False),  # an encoded separator around the dots (#3991)
+        ("/admin/%2e%2e%2fauth/logout", False),
+        ("/admin/x%2F..%2Fauth/logout", False),
+        ("/admin/..%5Cauth/logout", False),
+        ("/admin/..\\auth/logout", False),
+        ("/admin/..;/auth/logout", False),  # a path parameter after the dots
         ("/admin/audit?path=../../etc/passwd", True),  # the scan's traversal payloads: a query
         ("/admin/audit?next=/../x", True),
         ("/admin/v1.0/audit..json", True),  # dots in a name are no dot segment
@@ -398,7 +405,7 @@ def test_the_session_is_withheld_from_a_path_with_a_dot_segment_and_from_nothing
 ) -> None:
     """`/admin/../auth/logout` is on the surface by its prefix, and a server that resolved the dots
     would send it elsewhere: no session goes along a dot segment of the path, not of the query."""
-    surface, dots = _session_rule("SURFACE"), _session_rule("DOT_SEGMENT")
+    surface, dots = _session_rule("ADMIN"), _session_rule("DOT_SEGMENT")
     assert bool(surface.search(path) and not dots.search(path)) is sent
 
 
