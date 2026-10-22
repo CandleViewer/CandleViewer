@@ -88,7 +88,7 @@ def test_dispatch_only_read_only_pinned_and_one_soak_at_a_time_on_the_bench_runn
     assert (
         job["env"]["CV_BENCH_MACHINE_PROFILE"] == pack_env["CV_BENCH_MACHINE_PROFILE"]
     )
-    # every leg runs at one commit: the first step refuses a dispatch from anything but a tag
+    # every leg runs at one commit: the first step refuses all but a bench/ tag dispatch
     first = job["steps"][0]
     assert set(first) == {"name", "if", "run"} and "exit 1" in first["run"]
     assert (

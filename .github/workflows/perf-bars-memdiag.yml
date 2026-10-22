@@ -13,7 +13,7 @@ name: perf-bars-memdiag
 # All four legs, and any re-run, run at one commit: `judge` compares a leg with the default only at
 # the same head. So dispatch each from the tag bench/r4-legs-1 (one `main` commit, left in place as
 # the evidence anchor): `gh workflow run perf-bars-memdiag.yml --ref bench/r4-legs-1 -f leg=<leg>`.
-# The first step refuses a dispatch from anything but a tag.
+# The first step refuses a dispatch from anything but a bench/ tag.
 #
 # One leg a dispatch, never two at once, and never beside the 24 h full pack: concurrent legs
 # contend for memory and CPU and distort the very RSS and lag figures they read. This job and
@@ -23,9 +23,9 @@ name: perf-bars-memdiag
 # (cancel-in-progress is false). So dispatch the next leg only when none is queued (a running leg is
 # fine), and never while the pack is queued or running: check `gh run list --workflow` for
 # perf-bars-memdiag.yml, perf-ingestion-nightly.yml and perf-ws-load.yml (whose guard doesn't know
-# this job yet; #568's lane extends it). Any dispatch or re-run of either job, a branch dispatch this
-# job then refuses included, takes the queued slot; until a night shows a queued leg survives the
-# 03:37Z scheduled run, don't leave one queued across it.
+# this job yet; #568's lane extends it). Any dispatch or re-run of either job, a dispatch this job
+# then refuses included, takes the queued slot; until a night shows a queued leg survives a nightly
+# run that skips the pack (the 03:37Z schedule, a smoke dispatch), don't leave one queued across it.
 #
 # The allocator variables are set here, before the interpreter starts (it reads PYTHONMALLOC and
 # glibc's MALLOC_* only then): any already set are dropped first, and the leg records what it saw

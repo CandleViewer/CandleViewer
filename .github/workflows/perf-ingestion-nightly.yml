@@ -100,7 +100,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.profile == 'full'
     runs-on: [self-hosted, bench]
     # shared with perf-bars-memdiag.yml's leg: one soak at a time on cv-bench-01 (#399); a pack
-    # dispatched while a leg is queued replaces that leg (one pending run per group)
+    # dispatched while a leg is queued replaces that leg (one pending run per group); a run that
+    # skips this job may too (unverified)
     concurrency:
       group: cv-bench-01
       cancel-in-progress: false
