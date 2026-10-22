@@ -16,6 +16,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from candleviewer.domain.text import UNPAIRED_SURROGATE, escape_unpaired, unpaired_surrogate
 from candleviewer.rules.errors import RulesError
 from candleviewer.rules.ir.models import Rule
 
@@ -27,8 +28,6 @@ IR_HASH_VERSION = 1
 PRESENTATION_KEYS = frozenset({"graph_layout", "editor"})
 METADATA_KEYS = frozenset({"created_by", "created_at", "updated_at"})
 _EXCLUDED = PRESENTATION_KEYS | METADATA_KEYS
-#: JSON's ``"\ud800"`` escape decodes to a lone UTF-16 surrogate, which UTF-8 cannot encode.
-_UNPAIRED = "Text holds an unpaired surrogate code point"
 
 
 class IrValueError(RulesError, ValueError):
@@ -117,20 +116,10 @@ def _renumber(doc: Any) -> Any:
     return rewrite(doc)
 
 
-def _unpaired(s: str) -> bool:
-    """``s`` holds a lone surrogate (no UTF-8 form). Callers skip ASCII text first: ``isascii()``
-    is O(1) and true for most of the IR."""
-    try:
-        s.encode()
-    except UnicodeEncodeError:
-        return True
-    return False
-
-
 def _normalise(o: Any) -> Any:
     if isinstance(o, str):
-        if not o.isascii() and _unpaired(o):
-            raise IrValueError((), _UNPAIRED)
+        if not o.isascii() and unpaired_surrogate(o):  # ASCII, most IR text, skips the call
+            raise IrValueError((), UNPAIRED_SURROGATE)
         return o
     if isinstance(o, bool) or o is None:
         return o
@@ -147,9 +136,9 @@ def _normalise(o: Any) -> Any:
     if isinstance(o, dict):
         out: dict[Any, Any] = {}
         for k, v in o.items():
-            if isinstance(k, str) and not k.isascii() and _unpaired(k):
+            if isinstance(k, str) and not k.isascii() and unpaired_surrogate(k):
                 # a refused key is named escaped, so the path prints as UTF-8
-                raise IrValueError((k.encode(errors="backslashreplace").decode(),), _UNPAIRED)
+                raise IrValueError((escape_unpaired(k),), UNPAIRED_SURROGATE)
             try:
                 out[k] = _normalise(v)
             except IrValueError as exc:  # the path is built on failure only
@@ -177,7 +166,7 @@ def _utf8(text: str) -> bytes:
     try:
         return text.encode()
     except UnicodeEncodeError as exc:
-        raise IrValueError((), _UNPAIRED) from exc
+        raise IrValueError((), UNPAIRED_SURROGATE) from exc
 
 
 def canonicalize(ir: Rule | dict[str, Any]) -> bytes:

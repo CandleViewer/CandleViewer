@@ -160,6 +160,8 @@ def targeted() -> dict[str, str]:
         "refused/action-param-key-surrogate": dump(edited(act={SLOT: "x"}), '"\\ud800"'),
         "refused/action-param-surrogate": dump(edited(act={"note": SLOT}), '"\\udc00"'),
         "refused/metric-param-surrogate": dump(edited(left={"n": SLOT}), '"\\ud800"'),
+        "refused/node-id-surrogate": dump(edited(conditions={**cmp, "node_id": SLOT}), '"\\ud800"'),
+        "refused/layout-surrogate": dump(edited(graph_layout={SLOT: 1}), '"\\udc00"'),
         "refused/unknown-key": dump(edited(variables={})),
     }
 

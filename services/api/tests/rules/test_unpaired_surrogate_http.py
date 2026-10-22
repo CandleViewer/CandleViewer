@@ -39,6 +39,9 @@ _CASES = {
     "action param key": ("\\ud800", "actions[0].params", "/actions/0/params/\\ud800"),
     "action param value": ("\\udc00", "actions[0].params.note", "/actions/0/params/note"),
     "metric param": ("\\udbff", "conditions.left.params.source", "/conditions/left/params/source"),
+    "node id": ("\\ud800", "conditions.comparison.node_id", "/conditions/comparison/node_id"),
+    "layout": ("\\udc00", "graph_layout", "/graph_layout"),
+    "trigger metric": ("\\udfff", "trigger.metric", "/trigger/metric"),
 }
 
 
@@ -50,6 +53,12 @@ def _ir(where: str) -> dict[str, Any]:
         act[_SLOT] = "x"
     elif where == "action param value":
         act["note"] = _SLOT
+    elif where == "node id":
+        doc["conditions"]["node_id"] = _SLOT
+    elif where == "layout":
+        doc["graph_layout"] = {_SLOT: {"x": 0, "y": 0}}
+    elif where == "trigger metric":
+        doc["trigger"] = {"type": "on_metric_change", "metric": _SLOT}
     else:
         doc["conditions"]["left"]["params"]["source"] = _SLOT
     doc["actions"][0]["params"] = act
@@ -100,7 +109,7 @@ def test_compile_lone_surrogate_in_ir_text_is_422_rule_ir_invalid_naming_the_fie
 
 @pytest.mark.parametrize("where", sorted(_CASES))
 def test_compile_lone_surrogate_in_counterpart_model_is_422_rule_ir_invalid(where: str) -> None:
-    graph = to_graph_model(Rule.model_validate(json.loads(_raw(_ir(where), "ok"))))
+    graph = to_graph_model(Rule.model_validate(json.loads(_raw(_ir(where), "price"))))
     r = _compile({"editor": "graph", "model": graph, "counterpart_model": _ir(where)}, where)
     assert (r.status_code, r.json()["code"]) == (422, "rule_ir_invalid"), r.text
     assert [e["field"] for e in r.json()["errors"]] == [_CASES[where][1]]
@@ -124,10 +133,21 @@ def test_update_lone_surrogate_in_ir_text_is_422_rule_ir_invalid_and_adds_no_ver
     where: str,
 ) -> None:
     c = _crud()
-    made = c.post("/rules", content=_raw({"ir": _ir(where)}, "ok"), headers=_JSON)
+    made = c.post("/rules", content=_raw({"ir": _ir(where)}, "price"), headers=_JSON)
     assert made.status_code == 201, made.text
     rid, sent = made.json()["id"], _raw({"ir": _ir(where)}, _CASES[where][0])
     r = c.put(f"/rules/{rid}", content=sent, headers={**_JSON, "If-Match": "1"})
     assert (r.status_code, r.json()["code"]) == (422, "rule_ir_invalid"), r.text
     assert r.json()["path"] == _CASES[where][2]
     assert c.get(f"/rules/{rid}").json()["latest_version"] == 1
+
+
+def test_compile_graph_refusal_naming_a_lone_surrogate_node_id_is_422_with_it_escaped() -> None:
+    """The graph editor's own refusal names the node: its id goes back escaped, never a 500."""
+    nodes = [{"id": _SLOT, "type": "comparison", "data": {"op": "gt"}},  # no operands: refused
+             {"id": "a1", "type": "action", "data": _BASE["actions"][0]}]  # fmt: skip
+    model = {**_BASE, "nodes": nodes, "edges": [{"from": _SLOT, "to": "a1", "port": "when"}]}
+    r = _compile({"editor": "graph", "model": model}, "node id")
+    assert (r.status_code, r.json()["code"]) == (422, "rule_ir_invalid"), r.text
+    assert {n for e in r.json()["errors"] for n in e["node_ids"]} == {"\\ud800"}
+    assert "nodes.\\ud800" in {e["field"] for e in r.json()["errors"]}

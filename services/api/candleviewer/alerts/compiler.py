@@ -32,6 +32,7 @@ from pydantic import ValidationError
 from candleviewer.alerts.errors import AlertIrInvalid, AlertIssue, RejectReason
 from candleviewer.alerts.models import AlertCondition, CompiledAlert
 from candleviewer.domain.primitives import RuleId
+from candleviewer.domain.text import escape_unpaired
 from candleviewer.rules.ir import Action, Rule, RuleLimits, RuleScope
 from candleviewer.rules.ir.canonical import IrValueError, condition_hash
 from candleviewer.rules.ir.models import (
@@ -99,7 +100,10 @@ _VARIABLE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,48}$")
 
 
 def _reject(reason: RejectReason, field: str, rule: str, msg: str, node_id: str | None) -> None:
-    raise AlertIrInvalid(reason, [AlertIssue(field, rule, msg, node_id)])
+    """Text it names (a key, an op, a node id) goes with a lone surrogate escaped: it encodes."""
+    nid = None if node_id is None else escape_unpaired(node_id)
+    issue = AlertIssue(escape_unpaired(field), rule, escape_unpaired(msg), nid)
+    raise AlertIrInvalid(reason, [issue])
 
 
 def _not_permitted(path: str, msg: str, node_id: str | None) -> None:

@@ -10,6 +10,7 @@ import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
 
+from candleviewer.domain import text as domain_text
 from candleviewer.domain.text import UNSTORABLE_TEXT, refuse_unstorable_text
 
 #: Text Postgres stores: everything but U+0000 and surrogates (other controls included).
@@ -35,3 +36,14 @@ def test_refuse_unstorable_text_returns_storable_text_unchanged(text: str) -> No
 @pytest.mark.parametrize("value", [None, 1, b"\x00", ["\x00"]])
 def test_refuse_unstorable_text_returns_a_value_that_is_not_a_str_unchanged(value: Any) -> None:
     assert refuse_unstorable_text(value) is value
+
+
+@pytest.mark.parametrize(("value", "unpaired", "escaped"), [
+    ("ok", False, "ok"), ("caf\xe9 \U0001f600", False, "caf\xe9 \U0001f600"),
+    (chr(0xD800), True, "\\ud800"), ("a" + chr(0xDC00) + "b", True, "a\\udc00b"),
+    (chr(0xDC00) + chr(0xD800), True, "\\udc00\\ud800")])  # fmt: skip
+def test_unpaired_surrogate_is_found_and_escaped_and_other_text_is_untouched(
+    value: str, unpaired: bool, escaped: str
+) -> None:
+    assert (domain_text.unpaired_surrogate(value), domain_text.escape_unpaired(value)) == (
+        unpaired, escaped)  # fmt: skip
