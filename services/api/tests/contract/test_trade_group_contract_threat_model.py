@@ -41,6 +41,15 @@ _DEFINITIONS = {
     "DELETE /trade-group-definitions/{definitionId}": "deleteTradeGroupDefinition",
 }
 _ACTORS = ("owner", "manager_with_grant", "manager_without_grant", "viewer")
+_WRITES = {  # route -> (its responses, its x-idempotency)
+    "POST /trade-group-definitions": ({"201", "400", "403", "409", "422", "503"}, "recommended"),
+    "PUT /trade-group-definitions/{definitionId}": (
+        {"200", "400", "403", "404", "409", "412", "422", "503"},
+        "optional",
+    ),
+    "DELETE /trade-group-definitions/{definitionId}": ({"204", "403", "404", "503"}, "optional"),
+}
+_READS = ("GET /trade-group-definitions", "GET /trade-group-definitions/{definitionId}")
 
 
 def _words(text: str) -> str:
@@ -64,29 +73,76 @@ def test_definitions_have_their_own_paths_and_post_trade_groups_stays_the_execut
     assert "each leg's account is checked against the caller's grants at that use" in text
 
 
-@pytest.mark.parametrize("route", _DEFINITIONS)
-def test_only_the_owner_writes_a_definition_and_a_reader_sees_only_granted_ones(route: str) -> None:
-    """D8 (open, Owner), SR-E28-02, PF-E02: a write is Owner-only after a `risk_caps` step-up.
-    SR-E28-21: a read takes `accounts:read`, and an ungranted member hides the definition."""
-    op, write = _ROUTES[route], not route.startswith("GET ")
-    permission = "accounts:write" if write else "accounts:read"
-    assert op["x-rbac"] == {"permissions": [permission], "scope": "granted_accounts"}
+@pytest.mark.parametrize("route", _WRITES)
+def test_only_the_owner_writes_a_definition_after_a_risk_caps_step_up(route: str) -> None:
+    """D8 (open, Owner), SR-E28-02, PF-E02: a write is Owner-only after a `risk_caps` step-up,
+    which the step-up sweep reads from this text once the route is mounted."""
+    op = _ROUTES[route]
+    responses, idempotency = _WRITES[route]
+    assert op["x-rbac"] == {"permissions": ["accounts:write"], "scope": "granted_accounts"}
+    assert (set(op["responses"]), op["x-idempotency"]) == (responses, idempotency)
     assert op["responses"]["403"] == _ref("responses", "Forbidden")
-    allowed = ("owner",) if write else _ACTORS
-    outcomes = {actor: "allow" if actor in allowed else "403" for actor in _ACTORS}
+    outcomes = {actor: "allow" if actor == "owner" else "403" for actor in _ACTORS}
     assert _MATRIX["operations"][route]["outcomes"] == {**outcomes, "unauthenticated": "401"}
-    if write:  # the step-up sweep reads the class from this text once the route is mounted
-        text = _words(op["description"])
-        assert all(word in text for word in ("Owner-only", "step-up", "`risk_caps`", "D8"))
-        assert _ref("parameters", "CsrfToken") in op["parameters"]
-        roles = _SPEC["x-permissions"]
-        assert permission not in roles["manager"] + roles["viewer"]
-    else:  # the list leaves such a definition out; by id it is answered as a missing one
-        param = _SPEC["components"]["parameters"]["TradeGroupDefinitionId"]["description"]
-        by_id = "{definitionId}" in route
-        text = _words(param if by_id else op["description"])
-        assert re.search(r"(?:does|did) not exist \(SR-E28-21\)", text) and "oft-deleted" in text
-        assert op["responses"].get("404") == (_ref("responses", "NotFound") if by_id else None)
+    text = _words(op["description"])
+    assert all(word in text for word in ("Owner-only", "step-up", "`risk_caps`", "D8"))
+    assert _ref("parameters", "CsrfToken") in op["parameters"]
+    roles = _SPEC["x-permissions"]
+    assert "accounts:write" not in roles["manager"] + roles["viewer"]
+
+
+@pytest.mark.parametrize("route", _READS)
+def test_a_reader_sees_only_definitions_whose_every_member_is_granted(route: str) -> None:
+    """SR-E28-21: a read takes `accounts:read`; an ungranted member hides the definition, from
+    the list, its count and a read by id alike."""
+    op = _ROUTES[route]
+    assert op["x-rbac"] == {"permissions": ["accounts:read"], "scope": "granted_accounts"}
+    assert op["responses"]["403"] == _ref("responses", "Forbidden")
+    outcomes = dict.fromkeys(_ACTORS, "allow")
+    assert _MATRIX["operations"][route]["outcomes"] == {**outcomes, "unauthenticated": "401"}
+    by_id = "{definitionId}" in route
+    param = _SPEC["components"]["parameters"]["TradeGroupDefinitionId"]["description"]
+    text = _words(param if by_id else op["description"]).lower()
+    assert re.search(r"(?:does|did) not exist \(sr-e28-21\)", text) and "soft-deleted" in text
+    assert op["responses"].get("404") == (_ref("responses", "NotFound") if by_id else None)
+    if not by_id:
+        assert "`meta.total`, when present, counts only the definitions the caller may read" in (
+            _words(op["description"])
+        )
+
+
+def test_a_definition_is_replaced_only_over_the_version_its_writer_read() -> None:
+    """A PUT replaces the whole member set: `If-Match` keeps a stale session from putting back a
+    member the Owner removed, and every answer carrying a definition carries its `ETag`."""
+    update = _OPS["updateTradeGroupDefinition"]
+    assert _ref("parameters", "IfMatch") in update["parameters"]
+    assert update["responses"]["412"] == _ref("responses", "PreconditionFailed")
+    assert "a stale session cannot put back a member the Owner removed" in _words(
+        update["description"]
+    )
+    for op, status in (("getTradeGroupDefinition", "200"), ("updateTradeGroupDefinition", "200")):
+        assert _OPS[op]["responses"][status]["headers"]["ETag"] == _ref("headers", "ETag")
+    created = _OPS["createTradeGroupDefinition"]["responses"]["201"]
+    assert created["headers"]["ETag"] == _ref("headers", "ETag")
+
+
+def test_the_capability_matrix_names_the_definition_rows() -> None:
+    """04 section 7.2.2 (Security-owned): the reads scoped to granted members, the writes the
+    Owner's alone and only after a step-up (D8)."""
+    rows = capability_rows()
+    _, cell, owner, manager, viewer = rows["20a"]
+    assert grants(cell) == (
+        {"accounts:read"},
+        {"listTradeGroupDefinitions", "getTradeGroupDefinition"},
+    )
+    assert (owner, manager, viewer) == ("✔", "✔(every member granted)", "✔(every member granted)")
+    for row, ops in (
+        ("21a", {"createTradeGroupDefinition", "updateTradeGroupDefinition"}),
+        ("21b", {"deleteTradeGroupDefinition"}),
+    ):
+        _, cell, owner, manager, viewer = rows[row]
+        assert grants(cell) == ({"accounts:write"}, ops)
+        assert (owner, manager, viewer) == ("✔(step-up)", "✖", "✖")
 
 
 def test_a_definition_body_is_closed_stored_and_in_one_environment() -> None:
@@ -101,6 +157,10 @@ def test_a_definition_body_is_closed_stored_and_in_one_environment() -> None:
     assert set(body) == {"name", "environment", "members"}
     assert set(member) == {"exchange_account_id", "enabled"}
     assert set(stored) == {"id", "created_at", "updated_at", "definition"}
+    assert _SCHEMAS["TradeGroupDefinitionInput"]["required"] == ["name", "environment", "members"]
+    assert _SCHEMAS["TradeGroupDefinitionMember"]["required"] == ["exchange_account_id"]
+    assert _SCHEMAS["TradeGroupDefinition"]["required"] == list(stored)
+    assert body["environment"] == _ref("schemas", "Environment")  # explicit, never inferred
     assert (body["name"]["minLength"], body["name"]["maxLength"]) == (1, 80)
     assert "CONSTRAINT tgd_name CHECK (char_length(name) BETWEEN 1 AND 80)" in _TABLES
     assert member["enabled"]["default"] is True
@@ -108,6 +168,8 @@ def test_a_definition_body_is_closed_stored_and_in_one_environment() -> None:
     assert (body["members"]["minItems"], body["members"]["maxItems"]) == (1, 20)
     create = _words(_OPS["createTradeGroupDefinition"]["description"])
     assert "`rule: environment_mismatch` per such member, and nothing is written" in create
+    assert "refuse one, `403 account_scope_denied` (SR-E29-13)" in create
+    assert "compared case-insensitively, is `409 conflict`" in create
     update = _words(_OPS["updateTradeGroupDefinition"]["description"])
     assert "`environment` is write-once (`trg_tgd_write_once`)" in update
     assert "`rule: write_once`" in update and "(`trg_tgdm_env` checks it again" in create
@@ -146,6 +208,8 @@ def test_the_preview_takes_the_submits_permission_and_nothing_else() -> None:
     row = _MATRIX["operations"]["POST /trade-groups/preview"]
     assert (row["permissions"], row["outcomes"]["viewer"]) == (["orders:write"], "403")
     assert _ref("parameters", "ArmToken") not in preview["parameters"]
+    assert _ref("parameters", "CsrfToken") in preview["parameters"]
+    assert preview["responses"]["403"] == _ref("responses", "Forbidden")
     assert preview.get("x-idempotency") != "required"
     text = _words(preview["description"])
     assert "so a caller who cannot submit, a Viewer included, gets `403 forbidden`" in text
@@ -161,5 +225,6 @@ def test_adr_0008_records_p1a() -> None:
         "2. **At most 20 legs, one per account.**",
         "3. **The preview takes the submit's permission**, `orders:write`",
         "This breaks the `/v1` contract (C-6.3) before any route serves it",
+        "so no single group reaches all of them; a larger bound needs SR-E28-17 amended first",
     ):
         assert decision in amendment

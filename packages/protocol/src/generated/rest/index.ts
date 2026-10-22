@@ -4944,27 +4944,27 @@ export interface paths {
     };
     /**
      * List trade-group definitions (named sets of accounts)
-     * @description A definition is listed only when every member account is in the caller's grants; any other is left out as if it did not exist (SR-E28-21). Soft-deleted ones are never listed.
+     * @description A definition is listed only when every member account is in the caller's grants; any other is left out as if it did not exist (SR-E28-21). Soft-deleted ones are never listed. `meta.total`, when present, counts only the definitions the caller may read.
      */
     get: operations["listTradeGroupDefinitions"];
     put?: never;
     /**
-     * Define a trade group, a named set of accounts (Owner, step-up)
+     * Create a trade-group definition, a named set of accounts (Owner, step-up)
      * @description A definition is a named set of accounts that a ticket fans out to (SR-E28-31;
      *     `21-database-schema.md` section 3.3.3a). It places nothing: `POST /trade-groups` is the
      *     execution. It grants nothing either: a ticket names each member it targets as a leg, and
      *     each leg's account is checked against the caller's grants at that use.
      *
-     *     Owner-only (`accounts:write`) with a fresh step-up of class `risk_caps`, until the Owner
-     *     decides otherwise (decision D8 of the E28 threat model, queued on #2701; SR-E28-02,
-     *     PF-E02): without the step-up, `403 step_up_required`. Every member is in the
-     *     definition's `environment` (C-2.11, SR-E28-16): a member from another environment is
-     *     refused with `400 validation_failed`, one `errors[]` entry with
-     *     `rule: environment_mismatch` per such member, and nothing is written (`trg_tgdm_env`
-     *     checks it again in the database). A member account that does not exist is refused as
-     *     the order routes refuse one, `403 account_scope_denied` (SR-E29-13). A name that a live
-     *     definition holds, compared case-insensitively, is `409 conflict`. The write is audited
-     *     with the membership before and after (E28 threat model section 8.1, SR-E28-20).
+     *     Owner-only (`accounts:write`) with a live step-up elevation of class `risk_caps`, until the
+     *     Owner decides otherwise (decision D8 of the E28 threat model, queued on #2701; SR-E28-02,
+     *     PF-E02): without the step-up, `403 step_up_required`. Every member is in the definition's
+     *     `environment` (C-2.11, SR-E28-16): a member from another environment is refused with
+     *     `400 validation_failed`, one `errors[]` entry with `rule: environment_mismatch` per such
+     *     member, and nothing is written (`trg_tgdm_env` checks it again in the database). A member
+     *     account that does not exist is refused as the order routes refuse one,
+     *     `403 account_scope_denied` (SR-E29-13). A name that a live definition holds, compared
+     *     case-insensitively, is `409 conflict`. The write is audited with the membership before and
+     *     after (E28 threat model section 8.1, SR-E28-20).
      */
     post: operations["createTradeGroupDefinition"];
     delete?: never;
@@ -4978,16 +4978,19 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on a write, a member account the body names (`createTradeGroupDefinition`). */
+        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
         definitionId: components["parameters"]["TradeGroupDefinitionId"];
       };
       cookie?: never;
     };
-    /** Get a trade-group definition */
+    /**
+     * Get a trade-group definition
+     * @description `ETag` versions the definition, members included; send it as `If-Match` on `updateTradeGroupDefinition`.
+     */
     get: operations["getTradeGroupDefinition"];
     /**
      * Replace a trade-group definition's name and members (Owner, step-up)
-     * @description Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8), audited. `environment` is write-once (`trg_tgd_write_once`): another value is `400 validation_failed` with `rule: write_once`.
+     * @description Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8), audited. `environment` is write-once (`trg_tgd_write_once`): another value is `400 validation_failed` with `rule: write_once`. The body replaces the whole member set, so a client sends the `ETag` of its read as `If-Match`: a definition changed since is `412`, and a stale session cannot put back a member the Owner removed.
      */
     put: operations["updateTradeGroupDefinition"];
     post?: never;
@@ -10971,7 +10974,7 @@ export interface components {
     TemplateId: string;
     /** @description Exclusive end of the time window (RFC 3339 UTC). Defaults to now. */
     To: string;
-    /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on a write, a member account the body names (`createTradeGroupDefinition`). */
+    /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
     TradeGroupDefinitionId: string;
     /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
     TradeGroupId: string;
@@ -19073,6 +19076,7 @@ export interface operations {
       /** @description Definition created. */
       201: {
         headers: {
+          ETag: components["headers"]["ETag"];
           [name: string]: unknown;
         };
         content: {
@@ -19091,7 +19095,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on a write, a member account the body names (`createTradeGroupDefinition`). */
+        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
         definitionId: components["parameters"]["TradeGroupDefinitionId"];
       };
       cookie?: never;
@@ -19101,6 +19105,7 @@ export interface operations {
       /** @description Definition. */
       200: {
         headers: {
+          ETag: components["headers"]["ETag"];
           [name: string]: unknown;
         };
         content: {
@@ -19118,6 +19123,8 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -19128,7 +19135,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
-        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on a write, a member account the body names (`createTradeGroupDefinition`). */
+        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
         definitionId: components["parameters"]["TradeGroupDefinitionId"];
       };
       cookie?: never;
@@ -19142,6 +19149,7 @@ export interface operations {
       /** @description Replaced. */
       200: {
         headers: {
+          ETag: components["headers"]["ETag"];
           [name: string]: unknown;
         };
         content: {
@@ -19152,6 +19160,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -19172,7 +19181,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
-        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on a write, a member account the body names (`createTradeGroupDefinition`). */
+        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
         definitionId: components["parameters"]["TradeGroupDefinitionId"];
       };
       cookie?: never;

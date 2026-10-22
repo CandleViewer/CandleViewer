@@ -5545,6 +5545,7 @@ paths:
       description: >
         A definition is listed only when every member account is in the caller's grants; any
         other is left out as if it did not exist (SR-E28-21). Soft-deleted ones are never listed.
+        `meta.total`, when present, counts only the definitions the caller may read.
       x-rbac: { permissions: [accounts:read], scope: granted_accounts }
       parameters:
         - $ref: "#/components/parameters/Cursor"
@@ -5567,23 +5568,23 @@ paths:
     post:
       tags: [trading]
       operationId: createTradeGroupDefinition
-      summary: Define a trade group, a named set of accounts (Owner, step-up)
+      summary: Create a trade-group definition, a named set of accounts (Owner, step-up)
       description: |
         A definition is a named set of accounts that a ticket fans out to (SR-E28-31;
         `21-database-schema.md` section 3.3.3a). It places nothing: `POST /trade-groups` is the
         execution. It grants nothing either: a ticket names each member it targets as a leg, and
         each leg's account is checked against the caller's grants at that use.
 
-        Owner-only (`accounts:write`) with a fresh step-up of class `risk_caps`, until the Owner
-        decides otherwise (decision D8 of the E28 threat model, queued on #2701; SR-E28-02,
-        PF-E02): without the step-up, `403 step_up_required`. Every member is in the
-        definition's `environment` (C-2.11, SR-E28-16): a member from another environment is
-        refused with `400 validation_failed`, one `errors[]` entry with
-        `rule: environment_mismatch` per such member, and nothing is written (`trg_tgdm_env`
-        checks it again in the database). A member account that does not exist is refused as
-        the order routes refuse one, `403 account_scope_denied` (SR-E29-13). A name that a live
-        definition holds, compared case-insensitively, is `409 conflict`. The write is audited
-        with the membership before and after (E28 threat model section 8.1, SR-E28-20).
+        Owner-only (`accounts:write`) with a live step-up elevation of class `risk_caps`, until the
+        Owner decides otherwise (decision D8 of the E28 threat model, queued on #2701; SR-E28-02,
+        PF-E02): without the step-up, `403 step_up_required`. Every member is in the definition's
+        `environment` (C-2.11, SR-E28-16): a member from another environment is refused with
+        `400 validation_failed`, one `errors[]` entry with `rule: environment_mismatch` per such
+        member, and nothing is written (`trg_tgdm_env` checks it again in the database). A member
+        account that does not exist is refused as the order routes refuse one,
+        `403 account_scope_denied` (SR-E29-13). A name that a live definition holds, compared
+        case-insensitively, is `409 conflict`. The write is audited with the membership before and
+        after (E28 threat model section 8.1, SR-E28-20).
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: recommended
       parameters:
@@ -5597,6 +5598,8 @@ paths:
       responses:
         "201":
           description: Definition created.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TradeGroupDefinition" }
@@ -5612,10 +5615,15 @@ paths:
       tags: [trading]
       operationId: getTradeGroupDefinition
       summary: Get a trade-group definition
+      description: >
+        `ETag` versions the definition, members included; send it as `If-Match` on
+        `updateTradeGroupDefinition`.
       x-rbac: { permissions: [accounts:read], scope: granted_accounts }
       responses:
         "200":
           description: Definition.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TradeGroupDefinition" }
@@ -5629,11 +5637,14 @@ paths:
       description: >
         Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8),
         audited. `environment` is write-once (`trg_tgd_write_once`): another value is
-        `400 validation_failed` with `rule: write_once`.
+        `400 validation_failed` with `rule: write_once`. The body replaces the whole member set,
+        so a client sends the `ETag` of its read as `If-Match`: a definition changed since is
+        `412`, and a stale session cannot put back a member the Owner removed.
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
         - $ref: "#/components/parameters/CsrfToken"
       requestBody:
         required: true
@@ -5643,6 +5654,8 @@ paths:
       responses:
         "200":
           description: Replaced.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TradeGroupDefinition" }
@@ -5650,6 +5663,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
@@ -13876,8 +13890,8 @@ components:
         not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same
         title and `detail` shape, so the answer never tells whether the id exists. `403` on
         these routes is never a scope answer for the definition: it refuses the caller's
-        capability (permission, session state, step-up) or fails CSRF, or, on a write, a
-        member account the body names (`createTradeGroupDefinition`).
+        capability (permission, session state, step-up) or fails CSRF, or, on
+        `updateTradeGroupDefinition`, a member account the body names.
       schema: { type: string, format: uuid }
     PositionId:
       name: positionId
