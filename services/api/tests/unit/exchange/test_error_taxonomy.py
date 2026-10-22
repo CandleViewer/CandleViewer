@@ -16,6 +16,7 @@ from candleviewer.exchange.base.errors import (
     InsufficientMarginError,
     NotFoundError,
     OmsErrorCode,
+    RateBudgetExceededError,
     RateLimitError,
     ServiceUnavailableError,
     TransportError,
@@ -64,6 +65,16 @@ def test_the_venues_outage_is_a_transport_level_error_never_a_rate_limit() -> No
     err = ServiceUnavailableError("boom", exchange_ret_code=10016)
     assert isinstance(err, TransportError) and not isinstance(err, RateLimitError)
     assert not isinstance(err, AmbiguousResultError)
+
+
+def test_a_refused_budget_names_which_budget_refused() -> None:
+    """24 §14.4 (G-8b, OQ-2): a refused token and a private stream refused at the cap are both
+    `RATE_BUDGET_EXCEEDED` and retryable, and `reason` tells them apart for metrics and audit."""
+    token = RateBudgetExceededError("no token")
+    cap = RateBudgetExceededError("no stream", reason="stream_cap")
+    assert (token.reason, cap.reason) == ("token_bucket", "stream_cap")
+    assert token.code == cap.code == OmsErrorCode.RATE_BUDGET_EXCEEDED
+    assert token.retryable and cap.retryable
 
 
 def test_instrument_filter_error_carries_filter_name() -> None:

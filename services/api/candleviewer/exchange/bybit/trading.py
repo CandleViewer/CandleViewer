@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from types import MappingProxyType
@@ -72,7 +72,6 @@ from candleviewer.exchange.base.models import (
     OrderAck,
     PlaceOrderRequest,
     Position,
-    PrivateEvent,
     RateHeadroom,
     RateLane,
     TradingStopRequest,
@@ -118,7 +117,7 @@ from candleviewer.exchange.bybit.trading_parse import (
 from candleviewer.secrets import KekUnavailable, SecretsError
 
 if TYPE_CHECKING:
-    from candleviewer.exchange.base.ports import RateHeadroomPort, TradingPort
+    from candleviewer.exchange.base.ports import PrivateStream, RateHeadroomPort, TradingPort
     from candleviewer.secrets import SigningCapability
 
 __all__ = [
@@ -820,7 +819,7 @@ class BybitTradingPort:
         result = parse(AccountInfoResult, reply.get("result"), "account-info")
         return to_account_info(result, account)
 
-    async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]:
+    async def subscribe_private(self, account: AccountRef) -> PrivateStream:
         """The private stream is G-8b's (#3963, ruling R1): until it lands this refuses."""
         raise NotImplementedError("G-8b")
 

@@ -48,6 +48,7 @@ from .models import (
     PlaceOrderRequest,
     Position,
     PrivateEvent,
+    PrivateStreamStatus,
     RateHeadroom,
     RateLane,
     RiskLimitTier,
@@ -58,7 +59,7 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from .ports import RateHeadroomPort, TradingPort
+    from .ports import PrivateStream, RateHeadroomPort, TradingPort
 
 __all__ = [
     "CANCEL_ALL_LIMIT",
@@ -232,6 +233,8 @@ class LandedThenAmbiguous:
 
 
 type FakeOutcome = BaseException | FakeReject | LandedThenAmbiguous
+#: What an account's private queue holds; `None` ends the stream (`end_stream`).
+type _Pushed = PrivateEvent | PrivateStreamStatus | None
 
 
 def fake_capabilities(
@@ -285,11 +288,13 @@ class FakeTradingPort:
     an exception is raised (a transport error before the send, an auth, clock or rate error,
     `RateBudgetExceededError`), a `FakeReject` comes back as `OrderAck(ok=False)`, and
     `LandedThenAmbiguous` lands a create and raises `AmbiguousResultError`. `subscribe_private`
-    replays the seeded events of the account, then what `push` queues for it, until
-    `end_stream`: each account has its own bounded queue, so one account's event never reaches
-    another account's subscriber (one subscriber per account, as the exchange's private stream
-    has one stream per account). It does not model a refusal the venue gives on its own (a stop
-    on a flat position, a margin shortfall): script it."""
+    replays the seeded events of the account, then what `push` queues for it, statuses included
+    (24 §14.2 rule 13), until a `closed` status, which it yields last, or `end_stream`: each
+    account has its own bounded queue, so one account's event never reaches another account's
+    subscriber, and an account has one subscriber at a time, as the exchange's private stream
+    has one stream per account (a second is refused until the first is closed or ends). It does
+    not model a refusal the venue gives on its own (a stop on a flat position, a margin
+    shortfall): script it."""
 
     def __init__(
         self,
@@ -326,7 +331,8 @@ class FakeTradingPort:
         self._next_id = 0
         self._events = list(private_events)
         self._queue_size = queue_size
-        self._pushed: dict[AccountId, asyncio.Queue[PrivateEvent | None]] = {}
+        self._pushed: dict[AccountId, asyncio.Queue[_Pushed]] = {}
+        self._subscribed: set[AccountId] = set()
         self._ended = False
         self._headroom: dict[tuple[AccountId, RateLane], RateHeadroom] = {}
 
@@ -375,15 +381,16 @@ class FakeTradingPort:
         """What `headroom` reads for the account's lane (`reading.lane`) until set again."""
         self._headroom[(account_id, reading.lane)] = reading
 
-    def push(self, event: PrivateEvent) -> None:
-        """Queue one private event for its account's `subscribe_private` (bounded per account:
-        `QueueFull` when that account's queue is full)."""
+    def push(self, event: PrivateEvent | PrivateStreamStatus) -> None:
+        """Queue one private event or status for its account's `subscribe_private` (bounded per
+        account: `QueueFull` when that account's queue is full). A `closed` status ends the
+        account's stream once it has been yielded."""
         self._queue(event.account_id).put_nowait(event)
 
     def end_stream(self) -> None:
         """End every account's `subscribe_private` iteration once its queued events are drained,
-        every subscriber of the account and one opened later included (after its seeded
-        events). The end is sticky, and a full queue drains first: it takes no end marker."""
+        a subscriber opened later included (after its seeded events). The end is sticky, and a
+        full queue drains first: it takes no end marker."""
         self._ended = True
         for queue in self._pushed.values():
             if not queue.full():
@@ -595,9 +602,20 @@ class FakeTradingPort:
         self._outcome("account_info")
         return _seeded(self._infos, account.account_id, "account info")
 
-    async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]:
+    async def subscribe_private(self, account: AccountRef) -> PrivateStream:
+        """Refuses another environment's account and a second subscriber of the account, as the
+        exchange's port does, before anything is recorded (24 §14.1)."""
         self._check_environment(account)
-        return self._stream(account.account_id)
+        if account.account_id in self._subscribed:
+            raise ValueError("the account already has a private stream")
+        self._subscribed.add(account.account_id)
+        seeded = [e for e in self._events if e.account_id == account.account_id]
+        queue = self._queue(account.account_id)
+        return _FakeStream(seeded, queue, self._subscribed, account, self._has_ended)
+
+    def _has_ended(self) -> bool:
+        """Whether `end_stream` was called: the end is sticky, for every account."""
+        return self._ended
 
     def headroom(self, account: AccountRef, lane: RateLane) -> RateHeadroom:
         """What `set_headroom` scripted for the account's lane, else a fresh budget. Like the
@@ -608,19 +626,7 @@ class FakeTradingPort:
             return scripted
         return RateHeadroom(lane=lane, tokens=FRESH_HEADROOM_TOKENS, wait_s=0.0)
 
-    async def _stream(self, account_id: AccountId) -> AsyncIterator[PrivateEvent]:
-        for seeded in self._events:
-            if seeded.account_id == account_id:
-                yield seeded
-        queue = self._queue(account_id)
-        while not (self._ended and queue.empty()):
-            pushed = await queue.get()
-            if pushed is None:
-                queue.put_nowait(None)  # sticky: the account's other subscribers end too
-                return
-            yield pushed
-
-    def _queue(self, account_id: AccountId) -> asyncio.Queue[PrivateEvent | None]:
+    def _queue(self, account_id: AccountId) -> asyncio.Queue[_Pushed]:
         """The account's own queue, made on first use: once the stream has ended, a reader of an
         empty one ends at once."""
         queue = self._pushed.get(account_id)
@@ -707,6 +713,56 @@ class FakeTradingPort:
         return order
 
 
+class _FakeStream:
+    """One subscriber's private stream (`FakeTradingPort.subscribe_private`): the seeded events,
+    then what `push` queues, ending after a `closed` status (yielded last) or `end_stream`, whose
+    end is sticky: once it is called, the stream ends when its queue is empty. Its end, or its
+    `aclose()` even before it was read, frees the account for a new subscriber."""
+
+    def __init__(
+        self,
+        seeded: Sequence[PrivateEvent],
+        queue: asyncio.Queue[_Pushed],
+        subscribed: set[AccountId],
+        account: AccountRef,
+        ended: Callable[[], bool],
+    ) -> None:
+        self._seeded = deque(seeded)
+        self._queue = queue
+        self._subscribed = subscribed
+        self._account_id = account.account_id
+        self._ended = ended
+        self._done = False
+
+    def __aiter__(self) -> _FakeStream:
+        return self
+
+    async def __anext__(self) -> PrivateEvent | PrivateStreamStatus:
+        if self._done:
+            raise StopAsyncIteration
+        if self._seeded:
+            return self._seeded.popleft()
+        if self._ended() and self._queue.empty():  # a full queue took no end marker
+            self._finish()
+            raise StopAsyncIteration
+        item = await self._queue.get()
+        if item is None:
+            self._queue.put_nowait(None)  # sticky: the account's next subscriber ends too
+            self._finish()
+            raise StopAsyncIteration
+        if isinstance(item, PrivateStreamStatus) and item.state == "closed":
+            self._finish()
+        return item
+
+    async def aclose(self) -> None:
+        self._finish()
+
+    def _finish(self) -> None:
+        if not self._done:
+            self._done = True
+            self._subscribed.discard(self._account_id)
+
+
 _ACKING: Final = frozenset(
     {
         "place_order",
@@ -774,3 +830,4 @@ def _seeded[K, V](table: dict[K, V], key: K, what: str) -> V:
 if TYPE_CHECKING:  # CI's mypy checks the signatures, which the runtime protocol check cannot
     _TRADING: type[TradingPort] = FakeTradingPort
     _HEADROOM: type[RateHeadroomPort] = FakeTradingPort
+    _STREAM: type[PrivateStream] = _FakeStream

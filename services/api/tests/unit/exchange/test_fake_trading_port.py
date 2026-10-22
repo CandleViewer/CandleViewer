@@ -7,7 +7,7 @@ file covers what only the fake has: scripted outcomes, venue-like state and the 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from decimal import Decimal
 from uuid import UUID
 
@@ -47,10 +47,14 @@ from candleviewer.exchange.base.models import (
     PlaceOrderRequest,
     Position,
     PrivateEvent,
+    PrivateStreamReason,
+    PrivateStreamState,
+    PrivateStreamStatus,
     RateHeadroom,
     TradingStopRequest,
     Wallet,
 )
+from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_link_resolution import Adopted, place_or_adopt
 
@@ -451,13 +455,18 @@ def _event(account_id: AccountId, seq: int) -> PrivateEvent:
     )
 
 
+def _seq(item: PrivateEvent | PrivateStreamStatus) -> int | None:
+    assert isinstance(item, PrivateEvent)
+    return item.seq
+
+
 async def test_the_private_stream_replays_the_seeded_then_the_pushed_events() -> None:
     port = FakeTradingPort(private_events=[_event(ACCOUNT, 1), _event(OTHER, 2)])
     port.push(_event(OTHER, 3))
     port.push(_event(ACCOUNT, 4))
     port.end_stream()
     stream = await port.subscribe_private(_ref())
-    seen = [event.seq async for event in stream]
+    seen = [_seq(event) async for event in stream]
     assert seen == [1, 4]
 
 
@@ -472,8 +481,8 @@ async def test_each_account_has_its_own_private_queue_and_every_stream_ends() ->
         port.push(_event(account_id, seq))
     port.end_stream()
     async with asyncio.timeout(5):  # a guard only: every event is queued before the reads
-        seen_theirs = [event.seq async for event in theirs]
-        seen_mine = [event.seq async for event in mine]
+        seen_theirs = [_seq(event) async for event in theirs]
+        seen_mine = [_seq(event) async for event in mine]
     assert (seen_mine, seen_theirs) == ([3, 5], [1, 2, 4])
 
 
@@ -481,7 +490,7 @@ async def test_a_stream_opened_after_the_end_replays_its_seeded_events_and_ends(
     port = FakeTradingPort(private_events=[_event(ACCOUNT, 1)])
     port.end_stream()
     async with asyncio.timeout(5):
-        seen = [event.seq async for event in await port.subscribe_private(_ref())]
+        seen = [_seq(event) async for event in await port.subscribe_private(_ref())]
     assert seen == [1]
 
 
@@ -493,6 +502,71 @@ async def test_the_private_stream_is_bounded_and_refuses_another_environment() -
     live = _ref().model_copy(update={"environment": "live"})
     with pytest.raises(ValueError, match="another environment"):
         await port.subscribe_private(live)
+
+
+def _status(
+    account_id: AccountId, state: PrivateStreamState, reason: PrivateStreamReason, epoch: int = 1
+) -> PrivateStreamStatus:
+    return PrivateStreamStatus(
+        account_id=account_id, state=state, reason=reason, epoch=epoch, ts=T0
+    )
+
+
+def _shown(item: PrivateEvent | PrivateStreamStatus) -> str:
+    return f"{item.state}:{item.reason}" if isinstance(item, PrivateStreamStatus) else str(item.seq)
+
+
+async def test_the_private_stream_interleaves_statuses_with_events_in_push_order() -> None:
+    """G-8b (24 §14.2 rule 13): a stream's statuses arrive in order with its events, per account;
+    the other account's never reach it."""
+    port = FakeTradingPort(private_events=[_event(ACCOUNT, 1)])
+    stream = await port.subscribe_private(_ref())
+    for item in (
+        _status(ACCOUNT, "heartbeat", "evidence"),
+        _status(OTHER, "down", "socket_closed"),
+        _status(ACCOUNT, "resyncing", "connected"),
+        _event(ACCOUNT, 2),
+        _status(ACCOUNT, "down", "pong_timeout"),
+        _status(ACCOUNT, "resyncing", "reconnected", epoch=2),
+        _event(ACCOUNT, 3),
+    ):
+        port.push(item)
+    port.end_stream()
+    async with asyncio.timeout(5):  # a guard only: every item is queued before the reads
+        seen = [_shown(item) async for item in stream]
+    expected = ["1", "heartbeat:evidence", "resyncing:connected", "2", "down:pong_timeout"]
+    assert seen == [*expected, "resyncing:reconnected", "3"]
+
+
+async def test_a_closed_status_is_the_streams_last_item() -> None:
+    port = FakeTradingPort()
+    stream = await port.subscribe_private(_ref())
+    port.push(_event(ACCOUNT, 1))
+    port.push(_status(ACCOUNT, "closed", "key_revoked"))
+    port.push(_event(ACCOUNT, 2))
+    async with asyncio.timeout(5):
+        seen = [_shown(item) async for item in stream]
+    assert seen == ["1", "closed:key_revoked"]
+
+
+async def test_an_account_has_one_subscriber_until_its_stream_is_closed_or_ends() -> None:
+    """One consumer per account (SR-E29-02), as the exchange's port refuses a second stream: an
+    `aclose()`, even before a read, frees the account, and so does a stream that ended."""
+    port = FakeTradingPort()
+    first = await port.subscribe_private(_ref())
+    with pytest.raises(ValueError, match="already has a private stream"):
+        await port.subscribe_private(_ref())
+    other = await port.subscribe_private(_ref(OTHER))  # another account is free
+    await first.aclose()
+    second = await port.subscribe_private(_ref())
+    port.push(_status(ACCOUNT, "closed", "shutdown"))
+    async with asyncio.timeout(5):
+        assert [_shown(item) async for item in second] == ["closed:shutdown"]
+    third = await port.subscribe_private(_ref())
+    await third.aclose()
+    with pytest.raises(StopAsyncIteration):
+        await third.__anext__()  # a closed stream yields nothing more
+    await other.aclose()
 
 
 def test_the_headroom_reads_what_was_scripted_else_a_fresh_budget_and_records_no_call() -> None:
@@ -679,26 +753,27 @@ async def test_a_second_subscription_after_the_end_replays_its_seeded_events_and
     port = FakeTradingPort(private_events=[_event(ACCOUNT, 1)])
     port.end_stream()
     async with asyncio.timeout(5):  # a guard only: the streams end at once
-        first = [event.seq async for event in await port.subscribe_private(_ref())]
-        again = [event.seq async for event in await port.subscribe_private(_ref())]
+        first = [_seq(event) async for event in await port.subscribe_private(_ref())]
+        again = [_seq(event) async for event in await port.subscribe_private(_ref())]
     assert first == again == [1]
 
 
-async def _seqs(stream: AsyncIterator[PrivateEvent]) -> list[int]:
-    return [event.seq async for event in stream]
+async def _seqs(stream: PrivateStream) -> list[int | None]:
+    return [_seq(event) async for event in stream]
 
 
-async def test_two_subscribers_waiting_on_one_account_both_end() -> None:
-    """One end marker ends every subscriber of the account, however many wait on its queue:
-    the reader that takes it puts it back for the next."""
+async def test_a_waiting_subscriber_ends_and_the_accounts_next_one_ends_at_once() -> None:
+    """The end marker ends the subscriber waiting on the account's queue, and the end is
+    sticky: the reader that takes it puts it back, so the next subscriber, which the account
+    admits once the first has ended (one at a time, G-8b), ends at once too."""
     port = FakeTradingPort()
-    streams = [await port.subscribe_private(_ref()) for _ in range(2)]
-    readers = [asyncio.ensure_future(_seqs(stream)) for stream in streams]
+    reader = asyncio.ensure_future(_seqs(await port.subscribe_private(_ref())))
     port.push(_event(ACCOUNT, 1))
-    await asyncio.sleep(0)  # a yield: the first reader takes the event, then both wait
+    await asyncio.sleep(0)  # a yield: the reader takes the event, then waits
     port.end_stream()
     async with asyncio.timeout(5):  # a guard only: both end at once
-        assert await asyncio.gather(*readers) == [[1], []]
+        assert await reader == [1]
+        assert await _seqs(await port.subscribe_private(_ref())) == []
 
 
 async def test_ending_a_full_stream_raises_nothing_and_each_ends_once_drained() -> None:
@@ -708,8 +783,8 @@ async def test_ending_a_full_stream_raises_nothing_and_each_ends_once_drained() 
     port.push(_event(OTHER, 2))
     port.end_stream()
     async with asyncio.timeout(5):  # a guard only: the streams end at once
-        mine = [event.seq async for event in await port.subscribe_private(_ref())]
-        theirs = [event.seq async for event in await port.subscribe_private(_ref(OTHER))]
+        mine = [_seq(event) async for event in await port.subscribe_private(_ref())]
+        theirs = [_seq(event) async for event in await port.subscribe_private(_ref(OTHER))]
     assert (mine, theirs) == ([1], [2])
 
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import StrEnum
+from typing import Literal
 
 
 class OmsErrorCode(StrEnum):
@@ -115,17 +116,26 @@ class RateLimitError(ExchangeError):
         super().__init__(message, **kwargs)  # type: ignore[arg-type]
 
 
+type RateBudgetReason = Literal["token_bucket", "stream_cap"]
+"""Which local budget refused (24 §14.4): a rate token, or the private stream cap (rule 13)."""
+
+
 class RateBudgetExceededError(ExchangeError):
     """The local rate budget had no token within the wait its lane allows (§8.7,
     `20-architecture.md` §4.3): **nothing was sent**, so the outcome is known and the order
     never becomes `unknown` on this account. Not a venue answer: it carries no exchange code.
-    Retryable, as nothing left; `retry_after_s` is the wait the token needed, when known."""
+    Retryable, as nothing left; `retry_after_s` is the wait the token needed, when known.
+    `reason` tells a refused token (`token_bucket`) from a private stream refused at the
+    adapter's cap (`stream_cap`, G-8b), so metrics and audit can tell them apart."""
 
     code = OmsErrorCode.RATE_BUDGET_EXCEEDED
 
-    def __init__(self, message: str, **kwargs: object) -> None:
+    def __init__(
+        self, message: str, *, reason: RateBudgetReason = "token_bucket", **kwargs: object
+    ) -> None:
         kwargs.setdefault("retryable", True)
         super().__init__(message, **kwargs)  # type: ignore[arg-type]
+        self.reason: RateBudgetReason = reason
 
 
 class InsufficientMarginError(ExchangeError):
