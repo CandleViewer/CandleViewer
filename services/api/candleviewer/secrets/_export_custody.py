@@ -33,7 +33,7 @@ from candleviewer.secrets import _envelope as env
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._export_key import SealedExportKey, check_key, fingerprint, generate
 from candleviewer.secrets._kek import LoadedKek
-from candleviewer.secrets.broker import _IO_TIMEOUT_S
+from candleviewer.secrets.broker import _IO_TIMEOUT_S, _failure_reason
 from candleviewer.secrets.errors import CredentialUnavailable
 from candleviewer.secrets.signing import scrub_frames
 from candleviewer.secrets.store import ExportKeyStore
@@ -150,15 +150,16 @@ async def _destroy_retired(store: ExportKeyStore, env_name: str) -> None:
     held = await _io(store.count_retired_with_seed(env_name))
     if held:
         _log().error("secrets.export_key_retired_with_seed", retired_with_seed=held)
-        fields = {**_ACTOR, "env": env_name, "destroyed": str(held)}
-        fields["retired_material_destroyed"] = "true"
-        await _io(store.destroy_retired_seeds(env_name, audit=(DESTROYED, fields)))
+        fields = {**_ACTOR, "env": env_name, "retired_material_destroyed": "true"}
+        await _io(store.destroy_retired_seeds(env_name, audit=(DESTROYED, fields)))  # names them
 
 
 def _failed(step: str, exc: Exception) -> None:
-    """Step 1 or 3 failed: it degrades nothing, so it is counted for an alert (#889 S6b)."""
+    """Step 1 or 3 failed: it degrades nothing, so it is counted for an alert (#889 S6b), and
+    logged with its class and its bounded reason, an M2 refusal's code: constants only."""
     m.export_key_boot_failures_total.labels(step=step).inc()
-    _log().error("secrets.export_key_boot_step_failed", step=step, error=type(exc).__name__)
+    error, code = type(exc).__name__, _failure_reason(exc)
+    _log().error("secrets.export_key_boot_step_failed", step=step, error=error, code=code)
 
 
 async def open_at_boot(store: ExportKeyStore, kek: LoadedKek, prev: LoadedKek | None) -> str | None:

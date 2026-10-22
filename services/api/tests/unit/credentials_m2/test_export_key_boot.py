@@ -197,6 +197,7 @@ async def test_a_retired_key_still_holding_its_seed_loses_it_at_boot_with_its_re
     """Q3, at the rotation boot: the finding is logged, and the destroy and the re-wrap each
     commit with their record, as every production call to them must (S6a-1's security lens, F1)."""
     keys, store = await _retired_with_seed()
+    v1 = (keys.rows[0]["key_id"], keys.rows[0]["fingerprint_sha256"])
     with capture_logs() as logs:
         svc, _ = await _booted(keys, _Src(KEK_V2, 2), _Src(KEK_V1, 1), store=store)
     assert [r["sealed_seed"] is None for r in keys.rows] == [True, False]
@@ -204,6 +205,7 @@ async def test_a_retired_key_still_holding_its_seed_loses_it_at_boot_with_its_re
     assert (destroyed, rewrapped, fields["destroyed"], fields["retired_material_destroyed"]) == (
         custody.DESTROYED, custody.REWRAPPED, "1", "true"
     )  # fmt: skip
+    assert (fields["key_ids"], fields["fingerprints_sha256"]) == v1  # S6b, security F3
     found = [
         (e["log_level"], e["retired_with_seed"])
         for e in logs
@@ -258,17 +260,18 @@ async def test_a_wrap_not_proven_to_open_stores_no_key(monkeypatch: pytest.Monke
 
 
 @pytest.mark.parametrize(
-    ("change", "error"),
+    ("change", "error", "code"),
     [
-        ({"dek_ref": "ek1:" + "00" * 60}, "InvalidTag"),
-        ({"sealed_seed": bytes(60)}, "CredentialUnavailable"),
+        ({"dek_ref": "ek1:" + "00" * 60}, "InvalidTag", "error"),
+        ({"sealed_seed": bytes(60)}, "CredentialUnavailable", "credential_unavailable"),
     ],
     ids=["wrap", "seal"],
 )
 async def test_a_key_the_rotation_boot_cannot_open_is_neither_moved_nor_used(
-    change: dict[str, Any], error: str
+    change: dict[str, Any], error: str, code: str
 ) -> None:
-    """Q3's step fails too: each failed step is counted and logged by its error's class alone."""
+    """Q3's step fails too: each failed step is counted and logged by its error's class and its
+    bounded reason, an M2 refusal's code, alone."""
     keys, store = await _first()
     keys.rows[0] |= change
     setattr(keys, "count_retired_with_seed", _down_io)  # noqa: B010 -- Q3's step fails too
@@ -278,10 +281,9 @@ async def test_a_key_the_rotation_boot_cannot_open_is_neither_moved_nor_used(
     assert keys.rows[0]["kek_version"] == 1
     assert _down(svc, ctx) == ("export_key_unopenable", False, 1)
     assert _steps_failed() == (before[0] + 1, before[1] + 1)
-    failed = [
-        (e["step"], e["error"]) for e in logs if e["event"] == "secrets.export_key_boot_step_failed"
-    ]
-    assert failed == [("destroy", "RuntimeError"), ("rewrap", error)]
+    events = [e for e in logs if e["event"] == "secrets.export_key_boot_step_failed"]
+    failed = [(e["step"], e["error"], e["code"]) for e in events]
+    assert failed == [("destroy", "RuntimeError", "error"), ("rewrap", error, code)]
 
 
 async def test_a_key_whose_seed_derives_another_public_key_is_a_mismatch() -> None:

@@ -26,6 +26,8 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | AuditVerifyNotPassing | page | 0m | `docs/plan/07-release-and-prr.md#alert-auditverifynotpassing` | synthetic | | | | | | pending |
 | BackupLastSuccessStale | ticket | 15m | `docs/plan/07-release-and-prr.md#alert-backuplastsuccessstale` | synthetic | | | | | | pending (promtool: a daily kind past 26 h fires once held 15 min and is silent a minute before; `config_bundle` past 26 h but under 8 days is silent, and past 8 days fires once held 15 min: `infra/prometheus/tests/system_alerts.test.yml`. Inert until a backup engine records runs, #3319, so the real drill waits for it. A ticket until the owner approves the page, #2701) |
 | KekUnavailable | page | 0m | `docs/ops/runbooks/kek-custody.md#alert-kekunavailable` | synthetic | | | | | | pending |
+| AuditSigningKeyUnavailable | page | 0m | `docs/ops/runbooks/kek-custody.md#alert-auditsigningkeyunavailable` | synthetic | | | | | | pending |
+| AuditSigningKeyBootStepFailed | ticket | 0m | `docs/ops/runbooks/kek-custody.md#alert-auditsigningkeybootstepfailed` | synthetic | | | | | | pending (promtool: fires on the first evaluation after the counter steps from 0 to 1, by `step`, still firing at 9 h 49 m, resolved at 9 h 52 m; a flat count is silent) |
 | SyntheticAlert | page | 1m | `docs/plan/07-release-and-prr.md#alert-syntheticalert` | synthetic | | | | | | pending |
 | PublicWsDown | ticket | 1m | `docs/plan/07-release-and-prr.md#alert-publicwsdown` | real+synthetic | | | | | | pending |
 | BookResyncHigh | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-bookresynchigh` | synthetic | | | | | | pending |

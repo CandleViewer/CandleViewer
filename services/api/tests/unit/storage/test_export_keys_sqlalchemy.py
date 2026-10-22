@@ -62,6 +62,8 @@ def test_the_adapters_copies_of_m2s_rules_have_not_drifted() -> None:
     assert m._rotation(dict(new), dict(old)) == m2._rotation(new, old)
     assert m._KEY == tuple(k for k in m2.EXPORT_KEY_SEALED if k != "fingerprint_sha256")
     assert m2._RequestTaken.code == ExportKeyRequestTaken.code  # the fake's error is M10's
+    gone = [(m1.key_id(1), "a" * 64), (m1.key_id(2), "b" * 64)]
+    assert m._destroyed({"env": "demo"}, gone) == m2._destroyed({"env": "demo"}, gone)  # S6b, F3
     ref = "0193F2BB-0000-4000-8000-0000000000A1"
     refs = [ref, "{" + ref + "}", "urn:uuid:" + ref, ref.replace("-", "")]
     assert [m._canonical(r) for r in refs] == [m2._canonical(r) for r in refs] == [ref.lower()] * 4
@@ -108,10 +110,12 @@ class _Tx:
         self.old, self.refused, self.recorded, self.moved = old, refused, recorded, moved
         self.log: list[str] = []
         self.at: list[datetime] = []
+        self.built: list[dict[str, str]] = []
         self.store = m.SqlAlchemyExportKeyStore(cast(Any, self), env="demo", audit_row=self.build)
 
     def build(self, action: str, fields: dict[str, str]) -> dict[str, Any]:
         self.log.append("BUILD")
+        self.built.append(fields)
         return RECORD
 
     @asynccontextmanager
@@ -126,6 +130,7 @@ class _Tx:
             count = self.moved if stmt in (m._REWRAP, m._DESTROY) else self.recorded
             res = SimpleNamespace(rowcount=count, one=lambda: row, one_or_none=lambda: row)
             res.mappings, res.scalar_one = lambda: res, lambda: self.old["version"]
+            res.all = lambda: DESTROYED_ROWS[:count]  # the destroy's RETURNING, newest first
             return res
 
         async def commit() -> None:
@@ -204,11 +209,16 @@ async def test_a_naive_record_time_is_refused_before_any_io() -> None:
             await call(adapter)
 
 
+#: What a destroy of `moved` keys returns, in no order the store relies on (#889 S6b, F3).
+DESTROYED_ROWS = [{"key_id": m1.key_id(v), "fingerprint_sha256": f"{v:064x}"} for v in (3, 1)]
+GONE = sorted((r["key_id"], r["fingerprint_sha256"]) for r in DESTROYED_ROWS)
 REWRAP, DESTROY = (
     lambda s: s.rewrap(m1.key_id(1), **m1.MOVE),  # with its record, `m1.REWRAPPED`
     lambda s: s.destroy_retired_seeds("demo", audit=m1.DESTROYED),
 )
 RECORDED = ["BUILD", "UPDATE", "LOCK", "INSERT"]
+#: A destroy's record is built before any I/O, then again naming what its UPDATE returned.
+NAMED = ["BUILD", "UPDATE", "BUILD", "LOCK", "INSERT"]
 
 
 @pytest.mark.parametrize(
@@ -217,14 +227,14 @@ RECORDED = ["BUILD", "UPDATE", "LOCK", "INSERT"]
         (REWRAP, {}, True, [*RECORDED, "COMMIT"]),
         (REWRAP, {"moved": 0}, False, ["BUILD", "UPDATE", "COMMIT"]),  # stale: no record
         (REWRAP, {"recorded": 0}, ExportKeyAuditNotWritten, [*RECORDED, "ROLLBACK"]),
-        (DESTROY, {"moved": 2}, 2, [*RECORDED, "COMMIT"]),
-        (DESTROY, {"moved": 0}, 0, ["BUILD", "UPDATE", "COMMIT"]),  # none held: no record
-        (DESTROY, {"moved": 2, "recorded": 0}, ExportKeyAuditNotWritten, [*RECORDED, "ROLLBACK"]),
+        (DESTROY, {"moved": 2}, GONE, [*NAMED, "COMMIT"]),
+        (DESTROY, {"moved": 0}, [], ["BUILD", "UPDATE", "COMMIT"]),  # none held: no record
+        (DESTROY, {"moved": 2, "recorded": 0}, ExportKeyAuditNotWritten, [*NAMED, "ROLLBACK"]),
     ],
     ids=["rewrap", "rewrap_stale", "rewrap_record", "destroy", "destroy_none", "destroy_record"],
 )
 async def test_a_rewrap_and_a_destroy_commit_with_their_record_or_not_at_all(
-    call: m1.Call, uow: dict[str, Any], outcome: type[Exception] | int, log: list[str]
+    call: m1.Call, uow: dict[str, Any], outcome: type[Exception] | list[Any] | bool, log: list[str]
 ) -> None:
     tx = _Tx(**uow)
     if isinstance(outcome, type):
@@ -233,3 +243,13 @@ async def test_a_rewrap_and_a_destroy_commit_with_their_record_or_not_at_all(
     else:
         assert await call(tx.store) == outcome
     assert tx.log == log
+
+
+async def test_a_destroys_record_names_the_keys_its_update_returned() -> None:
+    tx = _Tx(moved=2)
+    assert await DESTROY(tx.store) == GONE
+    named = {"destroyed": "2", "key_ids": ",".join(k for k, _ in GONE)}
+    assert tx.built == [
+        m1.DESTROYED[1],
+        m1.DESTROYED[1] | named | {"fingerprints_sha256": ",".join(f for _, f in GONE)},
+    ]

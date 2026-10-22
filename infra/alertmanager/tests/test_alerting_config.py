@@ -95,6 +95,8 @@ def test_required_rules_present() -> None:
         "AuthBreakGlassUsed",  # #2496 SR-023
         "AuthBreakGlassAttempted",  # #2496 SR-023, a run that changed nothing
         "AuthBreakGlassStateReadFailing",  # #2496 SR-125, the two pages above going blind
+        "AuditSigningKeyUnavailable",  # #889 ADR-0039 decision 2: export alone, a page
+        "AuditSigningKeyBootStepFailed",  # #889 S6a-2's security F1: a step that degraded nothing
     }
     assert required <= names
 

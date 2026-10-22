@@ -95,7 +95,7 @@ _RETAINED = sa.text(
 )
 _DESTROY = sa.text(
     "UPDATE audit_signing_keys SET sealed_seed = NULL WHERE env = CAST(:env AS exchange_env) "
-    "AND status = 'retired' AND sealed_seed IS NOT NULL"
+    "AND status = 'retired' AND sealed_seed IS NOT NULL RETURNING key_id, fingerprint_sha256"
 )
 
 _KEY = ("id", "env", "version", "key_id", "public_key", "sealed_seed", "dek_ref", "kek_version")
@@ -117,6 +117,12 @@ def _fits(pattern: re.Pattern[str], value: object) -> bool:
 def _canonical(ref: object) -> str:
     """An `Idempotency-Key` as `ask_client_ref` stores it; `ValueError` for no UUID."""
     return str(UUID(str(ref)))
+
+
+def _destroyed(fields: dict[str, str], gone: list[tuple[str, str]]) -> dict[str, str]:
+    """Q3's destroy record as M2's fake builds it (`secrets/store.py`; a unit test pins the two)."""
+    named = {"destroyed": str(len(gone)), "key_ids": ",".join(k for k, _ in gone)}
+    return {**fields, **named, "fingerprints_sha256": ",".join(f for _, f in gone)}
 
 
 def _rotation(new: dict[str, Any], old: dict[str, Any]) -> dict[str, Any]:
@@ -321,6 +327,23 @@ class SqlAlchemyExportKeyStore:
         self._own(env)
         return int((await self._exec(_RETAINED, env=env))[0]["count"])
 
-    async def destroy_retired_seeds(self, env: str, *, audit: tuple[str, dict[str, str]]) -> int:
+    async def destroy_retired_seeds(
+        self, env: str, *, audit: tuple[str, dict[str, str]]
+    ) -> list[tuple[str, str]]:
+        """The UPDATE's RETURNING names the keys its record names (#889 S6b, F3). The record is
+        built once before any I/O, so a refused one reaches no database, then again with them."""
         self._own(env)
-        return await self._update(_DESTROY, {"env": env}, audit)
+        self._audit_row(*audit)
+        try:
+            async with self._rel.unit_of_work() as uow:
+                res: Any = await uow.session.execute(_DESTROY, {"env": env})
+                gone = sorted((r["key_id"], r["fingerprint_sha256"]) for r in res.mappings().all())
+                if gone:
+                    await _record(
+                        uow.session, self._audit_row(audit[0], _destroyed(audit[1], gone))
+                    )
+                await uow.commit()
+                return gone
+        except DBAPIError as exc:
+            state = sqlstate_of(exc)
+        raise StorageQueryFailed(state)  # the SQLSTATE alone, nothing chained (C-12.6)

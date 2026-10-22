@@ -98,14 +98,17 @@ version = 3`); a version number alone matches every lineage.
 Recovery: fix custody, then restart cv-api **via the launcher**. There is no runtime reload; a passing
 mesh self-check never clears the KEK latch.
 
+<a id="alert-auditsigningkeyunavailable"></a>
+
 ## Symptom: `secrets` degraded with an `export_key_*` reason
 
 The audit export signing key (ADR-0039) cannot be used while the KEK is up: export is refused,
-trading is not, and nothing latches order entry. Signals: `/readyz` `degraded` with a failing
+trading is not, and nothing latches order entry. Signals: `cv_audit_signing_key_unavailable_state`
+= 1 pages `AuditSigningKeyUnavailable`, never `KekUnavailable`; `/readyz` `degraded` with a failing
 `secrets` check; `/health/report` shows the `secrets` component `down`, as for a KEK failure, since
-its probe reads every M2 degrade as `down` (S6b's paging rule settles what pages);
-`cv_audit_signing_key_unavailable_state` = 1; a critical `secrets.export_key_unavailable` log; and
-`security.audit_signing_key_unavailable` at error.
+its probe reads every M2 degrade as `down`; a critical `secrets.export_key_unavailable` log; and
+`security.audit_signing_key_unavailable` at error. The page has its own component,
+`audit_signing`, so it hides no `secrets` ticket while it stands.
 
 | reason                                         | Check                                                                                                                                                                                        |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -115,9 +118,16 @@ its probe reads every M2 degrade as `down` (S6b's paging rule settles what pages
 | `export_key_unopenable`, `export_key_mismatch` | the key's wrap or seal does not open, or its seed is not its public key's: a custody or tampering incident (AD-D13). Never edit the row; no recovery until S7's rotation ships (ADR-0039 Q4) |
 | `export_key_inactive`                          | keys exist and none is active (an out-of-band retire); boot never generates over them, and the recovery is open (ADR-0039 Q4)                                                                |
 
+<a id="alert-auditsigningkeybootstepfailed"></a>
+
 A failed Q3 destroy or re-wrap at boot degrades nothing: `cv_audit_signing_key_boot_failures_total`
-counts it by `step`, `secrets.export_key_boot_step_failed` names the step and the error's class,
-and the KEK re-wrap stays incomplete (`export_left`) until a boot moves the key (rotation step 2).
+counts it by `step`, which raises the `AuditSigningKeyBootStepFailed` ticket, and
+`secrets.export_key_boot_step_failed` names the step, the error's class and its `code`. The KEK
+re-wrap stays incomplete (`export_left`) until a boot moves the key (rotation step 2), and a
+retired key's seed stays until a boot destroys it: restart once the store or the audit writer is
+fixed, and read the destroy's record, which names the keys it destroyed. The ticket sees a failure
+only as an increase over a clean sample under 15 minutes old: the same failure at the next boot, or
+after a longer outage, raises nothing, so read that log line after every restart.
 
 ## KEK rotation (owner-run, per environment)
 
