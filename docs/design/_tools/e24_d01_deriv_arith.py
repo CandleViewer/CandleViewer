@@ -107,12 +107,12 @@ PAIRS = (  # (foreground token, background token, bar, what the memo uses the pa
 )
 
 
-def text(rel: str) -> str:
+def read_text(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
 def grab(rel: str, pattern: str) -> str | None:
-    m = re.search(pattern, text(rel), re.DOTALL)
+    m = re.search(pattern, read_text(rel), re.DOTALL)
     return re.sub(r"\s+", " ", m.group(1)).strip() if m else None
 
 
@@ -175,7 +175,7 @@ def token_keys() -> set[str]:
     """Every token name declared in packages/ui/tokens (the four files), for the F30 bindings."""
     keys: set[str] = set()
     for name in TOKEN_FILES:
-        keys.update(json.loads(text(f"packages/ui/tokens/{name}.tokens.json")))
+        keys.update(json.loads(read_text(f"packages/ui/tokens/{name}.tokens.json")))
     return keys
 
 
@@ -197,7 +197,7 @@ def tokens(theme: str) -> dict[str, str]:
     """Primitives + the dark set + the theme's overlay (light and hc are partial sets), resolved."""
     merged: dict[str, object] = {}
     for name in ("primitives", "semantic-dark", f"semantic-{theme}"):
-        merged.update(json.loads(text(f"packages/ui/tokens/{name}.tokens.json")))
+        merged.update(json.loads(read_text(f"packages/ui/tokens/{name}.tokens.json")))
 
     def resolve(key: str, depth: int = 0) -> str:
         raw = merged.get(key)
@@ -225,7 +225,7 @@ def sprints() -> dict[str, str]:
 
 def fixtures() -> dict[str, object]:
     recorded = [
-        json.loads(ln) for ln in text(FIX + "ws/recorded_tickers_BTCUSDT.jsonl").splitlines()
+        json.loads(ln) for ln in read_text(FIX + "ws/recorded_tickers_BTCUSDT.jsonl").splitlines()
     ]
     d = recorded[0].get("data", {})
     oi = [float(r["data"]["openInterest"]) for r in recorded if r["data"].get("openInterest")]
@@ -239,7 +239,7 @@ def fixtures() -> dict[str, object]:
         for r in recorded
         if r["data"].get("singleOpenInterest")
     ]
-    manifest = json.loads(text(FIX + "manifest.json"))["fixtures"]
+    manifest = json.loads(read_text(FIX + "manifest.json"))["fixtures"]
     files = {e["path"]: e["source"] for e in manifest if re.search(r"funding|tickers", e["path"])}
     names = [p.name.lower() for p in (ROOT / "packages/fixtures").rglob("*")]
     first_ts, next_ms = int(recorded[0]["ts"]), int(d.get("nextFundingTime", 0))
@@ -330,7 +330,7 @@ def definitions() -> dict[str, object]:
             m for m in members if m in ("funding_basis", "liquidation_intensity")
         ],
         "deriv_keys_in_E24_json": sorted(
-            set(re.findall(r"deriv\.[a-z_]+(?:\.[a-z_]+)+", text(PLAN + "backlog/E24.json")))
+            set(re.findall(r"deriv\.[a-z_]+(?:\.[a-z_]+)+", read_text(PLAN + "backlog/E24.json")))
         ),
         "probed_keys": PROBED,
         "deriv_in_22_settings_schema": "deriv" in settings_block,
@@ -338,7 +338,7 @@ def definitions() -> dict[str, object]:
             PLAN + "21-database-schema.md", r"st_key_fmt CHECK \(key ~ '([^']+)'\)"
         ),
         "stale_after_2s_in_14": "after 2 s without an expected update"
-        in text(PLAN + "14-screens-catalogue.md"),
+        in read_text(PLAN + "14-screens-catalogue.md"),
         "scr054_in_estimated_labelling_row": "054" in row,
         "estimated_labelling_row": row.strip(),
         "liq_history_sentence_21": grab(
@@ -370,13 +370,13 @@ def definitions() -> dict[str, object]:
         "scr054_announce_rule": grab(
             PLAN + "14-screens-catalogue.md", r"(the funding countdown is announced at [^.]+)"
         ),
-        "ticker_fields_have_interval": "fundingIntervalHour" in text(TICKER_DELTA_PY),
-        "ticker_fields_have_cap": "fundingCap" in text(TICKER_DELTA_PY),
+        "ticker_fields_have_interval": "fundingIntervalHour" in read_text(TICKER_DELTA_PY),
+        "ticker_fields_have_cap": "fundingCap" in read_text(TICKER_DELTA_PY),
     }
 
 
 def build() -> dict[str, object]:
-    settled = json.loads(text(FIX + "rest/funding_history_BTCUSDT_8h.json"))["result"]["list"]
+    settled = json.loads(read_text(FIX + "rest/funding_history_BTCUSDT_8h.json"))["result"]["list"]
     notional = CHARGE / RATE
     c = CASCADE
     total, buckets = c["prints_per_s"] * c["seconds"], c["seconds"] * 1000 // c["bucket_ms"]
@@ -395,7 +395,7 @@ def build() -> dict[str, object]:
         "annualisation": {
             "formula": "rate x (525600 / interval_min) x 100",
             "constant_in_funding_py": f"MINUTES_PER_YEAR: Final[int] = {MINUTES_PER_YEAR:_}"
-            in text(FUNDING_PY),
+            in read_text(FUNDING_PY),
             "rows": [
                 {
                     "rate": str(RATE),
