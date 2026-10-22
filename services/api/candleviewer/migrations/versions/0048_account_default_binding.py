@@ -17,9 +17,10 @@ matches after it, even once the default is back on the same profile (the 2026-10
   an unset alone, an insert and every other edit do not. Its function pins `search_path` and is
   no SECURITY DEFINER: `cv_app` holds UPDATE on `exchange_accounts`.
 * Residual: the owner role, superusers and a `cv_app` session can still rewind the version, or move
-  the default without a bump by unsetting it and inserting a profile as the default. A rewind
-  leaves no trace in the database until #906 D2's records carry `binding_version`; the nearest
-  threat-model row is PF-T08, which does not yet name this column.
+  the default without a bump by unsetting it and then inserting a profile as the default, or by
+  un-deleting one that still carries `is_default`. A rewind leaves no trace in the database until
+  #906 D2's records carry `binding_version`; the nearest threat-model row is PF-T08, which does
+  not yet name this column.
 * No GRANT (`cv_app`'s table-level DML covers the column) and no comment tag (P0).
 * `lock_timeout = 5s` both ways (C-5.6): the ALTER waits for ACCESS EXCLUSIVE on
   `exchange_accounts`, the trigger for SHARE ROW EXCLUSIVE on `account_profiles`; the downgrade's
