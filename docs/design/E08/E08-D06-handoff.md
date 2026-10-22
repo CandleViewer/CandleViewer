@@ -22,7 +22,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none (shared table)
 - [ ] **Tokens used** — the entry cites `space.row.*`, which resolves (`space.row.height.compact` / `.comfortable` in `semantic-dark.tokens.json`, density aliases per `packages/ui/tokens/themes.json`), and `font.size.body/label`, which do not exist; patch A-2 binds `size.row.height` (the density-resolved alias `themes.json` names), `type.ui.body`, `type.num.base`, `type.ui.caption`, `color.text.primary` / `.secondary` / `.tertiary` and the `color.data-confidence.stale.*` set
 - [x] **Data contract confirmed** — `InstrumentDetail` fields (spec §4.1), and `TickerUpdate` fields (`ticker.{symbol}`) with the `getTicker` bootstrap (§4.2, §11.2), as decimal strings (spec F1); confirmed against `22` / `23` as shipped; fields the server leaves empty are drawn as their §4.1 / §4.2 fallbacks: 24 h high and low (CR-11), risk-limit tiers (CR-4), no WS producer yet (H-7)
-- [ ] **Contrast and CVD** — PENDING `cvd_sim.py` on the exports (boards step); computed (spec §13: values, labels, units on `surface.overlay` and `surface.sunken`); the pairs go into `tools/contrast/pairs.mjs` in PR #4085, `contrast:gate` green there
+- [ ] **Contrast and CVD** — PENDING `cvd_sim.py` on the exports (boards step); computed (spec §13: values, labels, units on `surface.overlay` and `surface.sunken`); the pairs went into `tools/contrast/pairs.mjs` in PR #4085 (merged), `contrast:gate` green there
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING: the owner's `approved` on #174 or the merge of the spec PR
 
