@@ -1,21 +1,24 @@
-"""A profile body's schema refusals and its mapper to the domain profile (E28-T02 #906, slice B1a).
+"""A profile body's schema refusals, its first validation pass and its mapper to the domain profile
+(E28-T02 #906, slices B1a and B1b).
 
 M13 may not import `candleviewer.api`, so the router hands this module the decoded body. A member
 left out, or `null`, takes its contract default, never the stored value (R1C-08). Decimals are read
 exactly: a percent moves its exponent and trailing zeros go first, so `profiles._fits` never strips
-a long run. A broken precondition is a `TypeError` naming the member, never its value.
+a long run. The first pass bounds every decimal by its column, whole digits and places alike (the
+13:26Z rulings), so a body it accepts maps, and the store takes it, with no 500 on the way. A
+broken precondition is a `TypeError` naming the member, never its value.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
 from uuid import UUID
 
-from candleviewer.accounts.profiles import AccountProfile
+from candleviewer.accounts.profiles import AccountProfile, exact_sum
 from candleviewer.domain.primitives import TsUs
 
 #: The validated body: `AccountProfileInput.model_dump(mode="json", exclude_unset=True)`.
@@ -64,6 +67,11 @@ _NULL_CAPS: Final = ProfileFieldError(
 #: The rules `schema_errors` can answer with, each in the contract's or the model's own words.
 SCHEMA_RULES: Final = frozenset(
     e.rule for e in (_NATIVE_STOP_OFF, _NOT_TRUE, _STOP_IN_R, _NULL_STOP, _NULL_CAPS)
+)
+#: The rules `check_profile_input` can answer with (`ProfileRejected`'s first pass).
+FIRST_PASS_RULES: Final = frozenset(
+    "required not_allowed range precision ladder_sum above_leverage_cap cap_unbounded "
+    "default_has_own_operation".split()
 )
 
 
@@ -190,3 +198,187 @@ def map_profile_input(
             "updated_at": updated_at,
         }
     )
+
+
+# -- The first pass (slice B1b; spec B1 sections 4.2, 4.3 and 7) ---------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _Bound:
+    """A decimal member's `range` and `precision`: above `low` (at least, unless `above`), below
+    `high` (at most, unless `below`), and at most `places` decimal places."""
+
+    low: Decimal
+    high: Decimal
+    places: int
+    above: bool = True
+    below: bool = True
+
+
+_E20, _HUNDRED = Decimal("1E+20"), Decimal(100)
+#: numeric(38,18): whole digits below 1E+20 (the 13:26Z ruling (a)); a rung's `r` alike (b).
+_MONEY = _Bound(Decimal(0), _E20, 18)
+_PERCENT = _Bound(Decimal(0), _HUNDRED, 6, below=False)  # numeric(9,6), a percent of equity
+_LEVERAGE = _Bound(Decimal(1), _HUNDRED, 2, above=False, below=False)  # numeric(10,2)
+#: Each decimal member in the pass's order, read as sent: a percent stays a percent here.
+_DECIMALS: Final = (
+    ("leverage", _LEVERAGE),
+    ("sizing.qty", _MONEY),
+    ("sizing.notional_usd", _MONEY),
+    ("sizing.pct", _PERCENT),
+    ("sizing.risk_per_trade_pct", _PERCENT),
+    ("sizing.risk_per_trade_usd", _MONEY),
+    ("sizing.min_leg_notional_usd", _Bound(Decimal(0), _E20, 18, above=False)),
+    ("stop_loss.value", _MONEY),  # in whole ticks when the unit is `ticks`
+    ("stop_loss.atr_multiple", _Bound(Decimal(0), Decimal("1E+6"), 4)),  # numeric(10,4), (a)
+    ("stop_loss.fallback_pct", _Bound(Decimal(0), _HUNDRED, 6)),
+    ("take_profit.value", _MONEY),  # never whole ticks: it rounds to tick at submission (c)
+    ("risk_caps.max_position_notional_usd", _MONEY),
+    ("risk_caps.max_position_pct_equity", _PERCENT),
+    ("risk_caps.max_daily_loss_usd", _MONEY),
+    ("risk_caps.max_daily_loss_pct", _Bound(Decimal("0.1"), Decimal(50), 6, False, False)),
+    ("risk_caps.max_leverage_cap", _LEVERAGE),
+)
+#: A rung's members, stored in jsonb: 18 places on both, and `r` below 1E+20 (ruling (b)).
+_RUNG: Final = (("qty_pct", _Bound(Decimal(0), _HUNDRED, 18, below=False)), ("r", _MONEY))
+#: Each sizing mode's amounts (P4 to P6); `risk_based` takes one of its two.
+_AMOUNTS: Final = {
+    "fixed_qty": ("qty",),
+    "fixed_notional": ("notional_usd",),
+    "pct_equity": ("pct",),
+    "risk_based": ("risk_per_trade_pct", "risk_per_trade_usd"),
+}
+_STOP_MEMBER: Final = {"atr": "atr_multiple", "ticks": "value", "percent": "value"}  # P8, P9
+#: P13's loss bounds, in order; a pair is open when both its members are null or absent.
+_LOSS_BOUNDS: Final = (
+    ("position size", ("max_position_notional_usd", "max_position_pct_equity")),
+    ("daily loss", ("max_daily_loss_usd", "max_daily_loss_pct")),
+    ("open positions", ("max_open_positions",)),
+    ("concurrent orders", ("max_concurrent_orders",)),
+    ("leverage", ("max_leverage_cap",)),
+)
+#: P14 (the 13:26Z rider): the C0 controls. Postgres `text` holds no U+0000: a 500, not a 422.
+_C0: Final = re.compile(r"[\x00-\x1f]")
+_OWN_OPERATION: Final = ProfileFieldError(
+    "is_default", "default_has_own_operation", "The default binding has its own operation."
+)
+_CONTROL_IN_NAME: Final = ProfileFieldError(
+    "name", "not_allowed", "name takes no control character (U+0000 to U+001F)."
+)
+_NEEDS_STOP: Final = ProfileFieldError(
+    "stop_loss", "required", "risk_based sizing needs a stop_loss: the stop defines the risk."
+)
+_LISTED_TOO: Final = ProfileFieldError(
+    "allowed_symbols",
+    "not_allowed",
+    "all_symbols allows every listed symbol, so allowed_symbols stays empty.",
+)
+_PAST_THE_LEG: Final = ProfileFieldError(
+    "take_profit_ladder",
+    "ladder_sum",
+    "The take-profit rungs take at most the whole leg: their qty_pct sum to at most 100.",
+    _HUNDRED,
+)
+
+
+def _decimals(body: ProfileBody) -> Iterator[tuple[str, Decimal | None, _Bound]]:
+    """Each decimal member's path, its value as sent (`None` when absent) and its bound."""
+    for path, bound in _DECIMALS:
+        parent, _, key = path.rpartition(".")
+        yield path, _dec((_obj(body, parent) or {}) if parent else body, key), bound
+    for i, rung in enumerate(_rungs(body)):
+        yield from ((f"take_profit_ladder[{i}].{key}", _dec(rung, key), b) for key, b in _RUNG)
+
+
+def _range(path: str, word: str, limit: Decimal) -> ProfileFieldError:
+    return ProfileFieldError(path, "range", f"{path} must be {word} {limit:f}.", limit)
+
+
+def _out_of_bounds(
+    path: str, value: Decimal, bound: _Bound, places: int
+) -> list[ProfileFieldError]:
+    """P2 and P3 for one member; a message names the bound broken, never the value."""
+    broken = []
+    if value < bound.low or (bound.above and value == bound.low):
+        broken.append(_range(path, "above" if bound.above else "at least", bound.low))
+    elif value > bound.high or (bound.below and value == bound.high):
+        broken.append(_range(path, "below" if bound.below else "at most", bound.high))
+    if -int(value.as_tuple().exponent) > places:  # `_dec` dropped the trailing zeros first
+        message = f"{path} takes at most {places} decimal places."
+        broken.append(ProfileFieldError(path, "precision", message, Decimal(places)))
+    return broken
+
+
+def _sizing(sizing: ProfileBody) -> tuple[list[ProfileFieldError], set[str]]:
+    """P4 to P6 on the amounts sent, and the paths of those they refuse (P2 and P3 skip them)."""
+    mode = str(sizing.get("mode"))
+    own = _AMOUNTS.get(mode)
+    if own is None:
+        raise TypeError("sizing.mode is not a sizing mode")
+    sent = [m for amounts in _AMOUNTS.values() for m in amounts if sizing.get(m) is not None]
+    paths = [f"sizing.{m}" for m in own]
+    found = []
+    if not set(own) & set(sent):
+        message = f"{mode} sizing needs {' or '.join(paths)}."
+        found.append(ProfileFieldError(paths[0], "required", message))
+    others = [f"sizing.{m}" for m in sent if m not in own]
+    found += [ProfileFieldError(p, "not_allowed", f"{mode} sizing takes no {p}.") for p in others]
+    if len(set(own) & set(sent)) > 1:  # `risk_based` with both of its amounts
+        message = f"{mode} sizing takes one of {' and '.join(paths)}."
+        found.append(ProfileFieldError(paths[1], "not_allowed", message))
+        others.append(paths[1])
+    return found, set(others)
+
+
+def check_profile_input(
+    body: ProfileBody, *, stored_is_default: bool | None
+) -> list[ProfileFieldError]:
+    """The first pass over the `exclude_unset` dump of a body the schema phase passed: every
+    failure, in the spec's order (section 7). `stored_is_default` is `None` on a create and the
+    stored profile's `is_default` on a replace. Each rule reads what the client sent, never a
+    default, and a rule across members waits until they pass `range` and `precision`."""
+    errors: list[ProfileFieldError] = []
+    if bool(body.get("is_default")) != bool(stored_is_default):  # P1: a create counts as false
+        errors.append(_OWN_OPERATION)
+    name = body.get("name")
+    if not isinstance(name, str):
+        raise TypeError("name is not a string")
+    if _C0.search(name):  # P14
+        errors.append(_CONTROL_IN_NAME)
+    sizing, stop = _obj(body, "sizing") or {}, _obj(body, "stop_loss")
+    shape, refused = _sizing(sizing)
+    in_ticks = stop is not None and stop.get("unit") == "ticks"
+    valid: dict[str, Decimal] = {}
+    for path, value, bound in _decimals(body):  # P2 and P3
+        if value is None or path in refused:
+            continue
+        places = 0 if in_ticks and path == "stop_loss.value" else bound.places  # whole ticks
+        broken = _out_of_bounds(path, value, bound, places)
+        errors += broken
+        if not broken:
+            valid[path] = value
+    errors += shape
+    if stop is None and sizing.get("mode") == "risk_based":  # P7
+        errors.append(_NEEDS_STOP)
+    elif stop is not None:
+        unit = str(stop.get("unit"))
+        member = _STOP_MEMBER.get(unit)
+        if member is not None and stop.get(member) is None:  # P8, P9: as sent, not its default
+            message = f"A stop in {unit} needs stop_loss.{member}."
+            errors.append(ProfileFieldError(f"stop_loss.{member}", "required", message))
+    if body.get("all_symbols") and body.get("allowed_symbols"):  # P10
+        errors.append(_LISTED_TOO)
+    shares = [f"take_profit_ladder[{i}].qty_pct" for i in range(len(_rungs(body)))]
+    if all(p in valid for p in shares) and exact_sum(valid[p] for p in shares) > _HUNDRED:
+        errors.append(_PAST_THE_LEG)  # P11, on the exact sum
+    leverage, cap = valid.get("leverage"), valid.get("risk_caps.max_leverage_cap")
+    if leverage is not None and cap is not None and leverage > cap:  # P12, audited
+        message = "leverage must be at most risk_caps.max_leverage_cap."
+        errors.append(ProfileFieldError("leverage", "above_leverage_cap", message, cap))
+    caps = _obj(body, "risk_caps") or {}
+    for what, members in _LOSS_BOUNDS if body.get("trading_enabled") else ():  # P13, audited
+        if all(caps.get(m) is None for m in members):
+            needed = " or ".join(f"risk_caps.{m}" for m in members)
+            message = f"A trading-enabled profile caps {what}: set {needed}."
+            errors.append(ProfileFieldError(f"risk_caps.{members[0]}", "cap_unbounded", message))
+    return errors
