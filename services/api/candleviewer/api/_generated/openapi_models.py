@@ -1031,7 +1031,7 @@ class ProfileWarning(BaseModel):
     code: Annotated[
         Literal["all_symbols", "no_symbols", "sizing_below_min_order", "stop_beyond_liquidation"],
         Field(
-            description="`all_symbols`: every listed symbol is allowed, by the flag or by a pattern that matches every listed symbol (`*USDT`); consider restricting. `no_symbols`: no symbol is allowed, so the profile sizes nothing (decision D11). `sizing_below_min_order`: at the account's current equity the sizing gives less than `symbol`'s minimum order, and `message` works the example. `stop_beyond_liquidation`: the stop lies beyond the estimated liquidation distance at `leverage` (SR-E28-26). Open-ended for readers: a client shows a code it does not know by its `message` (C-6.3).\n"
+            description="`all_symbols`: every listed symbol is allowed, by the flag or by the pattern `*USDT`; a write, which reads the instrument list, also flags any other pattern that matches every listed symbol. Consider restricting. `no_symbols`: no symbol is allowed, so the profile sizes nothing (decision D11). `sizing_below_min_order`: at the account's current equity the sizing gives less than `symbol`'s minimum order, and `message` works the example. `stop_beyond_liquidation`: the stop lies beyond the estimated liquidation distance at `leverage` (SR-E28-26). Open-ended for readers: a client shows a code it does not know by its `message` (C-6.3).\n"
         ),
     ]
     message: str

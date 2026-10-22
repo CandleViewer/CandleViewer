@@ -352,7 +352,7 @@ def test_warnings_are_advice_in_a_set_open_to_readers() -> None:
     assert warning["required"] == ["code", "message"]
     text = " ".join(code["description"].split())
     assert "Open-ended for readers" in text
-    assert "by a pattern that matches every listed symbol (`*USDT`)" in text  # `all_symbols` too
+    assert "or by the pattern `*USDT`;" in text and "also flags any other pattern" in text
     profile = _SCHEMAS["AccountProfile"]
     assert "warnings" in profile["required"]
     assert profile["properties"]["warnings"]["items"] == {"$ref": f"{_REF}ProfileWarning"}
