@@ -94,6 +94,8 @@ def test_a_change_of_uid_or_kind_meets_a_whole_row_trigger_replica_mode_cannot_s
     assert "IF NEW.exchange_uid IS DISTINCT FROM OLD.exchange_uid THEN" in sql
     assert "IF NEW.kind IS DISTINCT FROM OLD.kind THEN" in sql and "RETURN NEW;" in sql
     assert "NEW.env" not in sql  # `env` keeps 0041's own guard
+    # It never rewrites NEW, so sorting after 0041's guard changes nothing that guard judges.
+    assert not re.search(r"\bNEW\.\w+\s*:=", sql)
 
 
 def test_each_refusal_names_its_trigger_and_column_and_never_a_value() -> None:

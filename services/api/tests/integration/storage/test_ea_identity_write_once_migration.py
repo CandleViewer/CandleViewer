@@ -11,6 +11,7 @@ restores it, with no row changed either way. `testcontainers` in CI; the offline
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -104,8 +105,10 @@ def _identity(c: Conn, account: str) -> tuple[str, str, str | None]:
 
 def _refused(c: Conn, statement: LiteralString, params: tuple[object, ...], column: str) -> None:
     """`statement` meets the guard: SQLSTATE 23514, the trigger as the constraint, the column in
-    the message and no value."""
-    with pytest.raises(pgerr.CheckViolation) as exc:
+    the message and no value. It runs under a savepoint (`c.transaction()` nests one inside an
+    open transaction), so a test that holds a transaction for `SET LOCAL` reads on after it
+    instead of meeting a failed transaction (25P02)."""
+    with pytest.raises(pgerr.CheckViolation) as exc, c.transaction():
         c.execute(statement, params)
     assert exc.value.sqlstate == "23514"
     assert exc.value.diag.constraint_name == "trg_ea_identity_write_once"
@@ -198,6 +201,13 @@ def test_the_write_once_guards_are_the_last_before_update_row_triggers(pg_dsn: s
         config = c.execute(
             "SELECT proconfig FROM pg_proc WHERE oid = 'ea_identity_write_once()'::regprocedure"
         ).fetchone()
+        bodies = [
+            str(row[0])
+            for row in c.execute(
+                "SELECT prosrc FROM pg_proc WHERE oid IN "
+                "('ea_env_write_once()'::regprocedure, 'ea_identity_write_once()'::regprocedure)"
+            ).fetchall()
+        ]
     assert [row[0] for row in order] == [
         "trg_ea_env_in_use", "trg_ea_env_parent", "trg_ea_env_write_once",
         "trg_ea_identity_write_once",
@@ -208,6 +218,8 @@ def test_the_write_once_guards_are_the_last_before_update_row_triggers(pg_dsn: s
         "FOR EACH ROW EXECUTE FUNCTION ea_identity_write_once()",
     )
     assert config == (["search_path=pg_catalog, pg_temp"],)
+    # Neither guard rewrites NEW, so the order between the two cannot change what either judges.
+    assert len(bodies) == 2 and not any(re.search(r"\bNEW\.\w+\s*:=", body) for body in bodies)
 
 
 def test_a_uid_rewritten_behind_another_column_is_refused(pg_dsn: str) -> None:

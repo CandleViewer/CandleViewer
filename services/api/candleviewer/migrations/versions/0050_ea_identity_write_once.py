@@ -18,7 +18,8 @@ sub-account or back, once it exists.
   `search_path` and refuses with SQLSTATE 23514 naming the trigger as the constraint (`USING
   CONSTRAINT`), and the column, never a value. An insert takes any UID and kind, under the table's
   CHECKs (`ea_uid_fmt`, `ea_parent_shape`).
-* `env` keeps its own guard: 0041's DDL, its constraint name and its tests stay as they are.
+* `env` keeps its own guard: 0041's DDL and its constraint name stay as they are, and so do its
+  tests, but for the trigger-order test, which now allows this guard after it.
 * Postgres fires same-event BEFORE triggers in name order. This one sorts after
   `trg_ea_env_write_once` and becomes the last; neither guard rewrites NEW, so both judge NEW as
   every trigger that could rewrite it left it (the integration test pins the order).
@@ -27,8 +28,11 @@ sub-account or back, once it exists.
   accounts store maps a refusal to its typed rule error (unit tests pin all three).
 * Residuals, as for `env`: the guard covers UPDATE only, and `cv_app` can neither delete an
   account (0044) nor free its id by rewriting it (its profile's and keys' foreign keys refuse
-  that), so no UPDATE-free path re-creates an account with another identity. The owner
-  (`cv_owner`, migrations only) and superusers can still disable or drop the trigger.
+  that), so no UPDATE-free path re-creates an account with another identity.
+  `parent_account_id` is not write-once: a sub-account can be re-pointed at any other account of
+  its environment, as only the store's INSERT requires a main parent. The owner (`cv_owner`:
+  migrations, and the alert purge when `CV_PG_OWNER_DSN` is set) and superusers can still disable
+  or drop the trigger.
 
 Additive (C-5.1) and reversible (C-5.2): `downgrade()` drops the trigger and its function. No row
 changes in either direction, so an empty or a seeded database round-trips (C-5.5). The downgrade
