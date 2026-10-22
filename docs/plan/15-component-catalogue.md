@@ -1610,10 +1610,10 @@ Both the form/condition-list editor and the visual node-graph editor compile to 
 
 ### CMP-140 RuleConditionRow
 
-- **Tier**: Molecule (rule engine) · **Purpose**: one condition line in the form/condition-list editor — metric, operator, value/reference, boolean-join to the next row.
-- **Props**: `metric: string` (from the metric vocabulary, e.g. `unrealized_r_multiple`, `atr(n)`, `spread_bps`) · `operator: ">"|">="|"<"|"<="|"=="|"!="|"crosses_above"|"crosses_below"` · `value: number | MetricRef` · `joinToNext?: "AND"|"OR"` · `onChange` · `onRemove` · `invalid?: string`.
-- **A11y**: FormField (CMP-040) composition per sub-control; join-operator toggle is CMP-003; remove is a labelled IconButton; row order reflects evaluation order and is announced when reordered.
-- **Tokens**: `font.mono` (numeric literals), `color.border.invalid`.
+- **Tier**: Molecule (rule engine) · **Purpose**: one condition line in the form/condition-list editor — metric, operator, value/reference, boolean-join to the next row. **E36-D03 —** the join is CMP-141's (the group reads "and" / "either … or …", DCR-4); the row is metric · operator · value form · row menu, with its sentence fragment beneath (E36-D02 §5).
+- **Props**: **E36-D03 —** `metric: string` (a vocabulary id rendered as its `display_name`, never shown raw) · `operator`: one of the vocabulary's 15 operator ids (`OPERATORS` in `rules/vocabulary/catalogue.py`), rendered as its verb (`gte` → "is at least"; arity 1 / 2 / 3 and the unit class filter the list) · `value: number | MetricRef` · `right2?` (`between` / `outside`) · `setValues?: string[]` (`in_set` / `not_in_set`) · `tolerance?` · `sustainedForMs?` ("for at least {w}") · `onChange` · `onRemove` · `diagnostics?: Diagnostic[]` (CMP-234's shape, anchored by the row id — memo G11); `joinToNext` is dropped (DCR-5).
+- **A11y**: FormField (CMP-040) composition per sub-control; remove is a labelled IconButton; row order reflects evaluation order and is announced when reordered. **E36-D03 —** the row is a `group` named "Condition N of M", described by its fragment; the CMP-227 chip follows the metric title when the metric is estimated; an unavailable metric reads "(not available — {reason} · Start recording)" inline (P9); `Shift+F10` opens the row menu (move up / down, duplicate, remove); `aria-invalid` + the message when invalid.
+- **Tokens**: **E36-D03 —** `font.family.mono` via `type.num.sm` (numeric literals), `color.status.danger.default` at `border.thick` (the invalid outline), `color.status.danger.strong` (the invalid glyph); `font.mono` and `color.border.invalid` do not exist in `packages/ui/tokens` (E36-D02 §15 request 1).
 - **API sketch**:
 
 ```ts
@@ -1628,51 +1628,52 @@ interface RuleConditionRowProps {
 }
 ```
 
-- **Storybook**: Default, MetricRefValue, JoinAnd, JoinOr, Invalid.
+- **Storybook**: **E36-D03 —** Default, MetricRefValue, Between, InSet, Predicate, Estimated, Unavailable, Invalid, ReadOnly (the API sketch above is the pre-amendment shape; the Props line supersedes it until E36-T01 types the interface).
 - **Tests**: unit (metric/operator compatibility validation, e.g. `crosses_above` invalid for boolean metrics), visual, axe, keyboard.
 
 ### CMP-141 RuleConditionGroup
 
-- **Tier**: Molecule (rule engine) · **Purpose**: groups CMP-140 rows under one boolean mode (implicit AND, `any_of` OR, or nested AND+OR "Advanced"), up to the documented 4-condition DeepCharts-parity default (configurable higher in CandleViewer, since it targets live execution not just visual flags).
-- **Props**: `rows: RuleConditionRowProps[]` · `mode: "and"|"or"|"advanced"` · `onAddRow` · `onChangeMode`.
-- **A11y**: `fieldset`/`legend` grouping (CMP-065 FormSection base), nesting depth communicated via indentation + `aria-level` on a tree-like structure for "Advanced" mode.
-- **Tokens**: `space.rulegroup.indent`.
-- **Storybook**: And, Or, AdvancedNested.
+- **Tier**: Molecule (rule engine) · **Purpose**: groups CMP-140 rows under one boolean mode. **E36-D03 —** two levels, said aloud (DCR-4, memo R3 DECIDED by the shipped form subset): a root "all of" of comparisons and `any_of` groups of comparisons, or a root "any of" of comparisons, or a single comparison; up to 32 children (`MAX_BOOLEAN_CHILDREN`); no nested "Advanced" mode — a graph-only subtree renders as the read-only card in place (E36-D02 §4, §6).
+- **Props**: **E36-D03 —** `rows: RuleConditionRowProps[]` · `mode: "and"|"or"` · `onAddRow` · `onAddAnyOfGroup` · `onChangeMode`.
+- **A11y**: **E36-D03 —** `fieldset`/`legend` grouping (CMP-065 FormSection base); the group's accessible name is "Condition group — either {A} or {B}" with the legend "any of"; its rows are indented and joined by a 2 px bracket in `color.text.tertiary` (≥3:1 non-text), attached flush; a count "12 of 32" in the legend from 24 children.
+- **Tokens**: **E36-D03 —** `space.inset.lg` (the group indent, 16 px, as E36-D02 §16 names it) with `space.rulegroup.indent` PROPOSED as a Tier-2 alias → `{space.6}` (24 px) in both densities so the bracket column is one square target (E36-D03 §9; the token lands by the DS CODEOWNER per `16` §11.2); `color.text.tertiary` (the bracket ink).
+- **Storybook**: **E36-D03 —** And, Or, WithAnyOfGroup, ReadOnlyCard.
 - **Tests**: unit, visual, axe.
 
 ### CMP-142 RuleActionRow
 
-- **Tier**: Molecule (rule engine) · **Purpose**: one action line — action type + params (from the action vocabulary: `place_order`, `modify_stop_loss`, `move_to_breakeven`, `scale_out`, `flatten_all_positions`, `halt_new_orders`, etc.).
-- **Props**: `actionType: string` · `params: Record<string,unknown>` · `onChange` · `onRemove`.
-- **A11y**: dynamic param form rendered via CMP-040 FormField per action-type schema.
-- **Tokens**: inherits CMP-140.
+- **Tier**: Molecule (rule engine) · **Purpose**: one action line — action type + params. **E36-D03 —** the action picker shows the 25 `ActionSpec` `display_name`s of `rules/vocabulary/catalogue.py` with their `notes` as the second line; each row ends with its sentence fragment (memo §5.6); the six named parameter forms are E36-D02 §8's (`place_order`, `modify_stop_loss`, `move_to_breakeven`, `scale_out`, `flatten_all_positions`, `halt_new_orders`); the native stop field of `place_order` is non-emptiable (E32-D01 §5.2 Arm A) and every stop-management row carries E32-D01's `sl.note` sentence; a stop row ends "The stop only ever tightens." and offers **no loosening control for any role** — a rule fire never loosens a stop (#4137); `available: false` / `simulate_only` actions are disabled-with-reason (E09-D09 T2), never hidden; the destructive class (`places_orders` ∪ `flatten_*`) carries a `color.status.danger.strong` glyph + the word "places orders" / "flattens".
+- **Props**: **E36-D03 —** `actionType: string` (an `ActionSpec` id, rendered as its `display_name`) · `params: Record<string,unknown>` (per the spec's `params_schema`) · `onChange` · `onRemove` · `available?: boolean` · `simulateOnly?: boolean` · `restriction?: string` (shown in the details disclosure, the T2 sentence mapped client-side — E36-D02 G14).
+- **A11y**: **E36-D03 —** a `group` named "Action N of M", described by its fragment; the parameter form is CMP-040 fields per `params_schema`; `on_error`, `targets` and `dry_run_only` sit in an "Advanced" disclosure (CMP-068).
+- **Tokens**: inherits CMP-140. **E36-D03 —** `color.status.danger.strong` (the destructive-class glyph), `color.status.info.subtle` (the `sl.note` note).
 - **API sketch**: `interface RuleActionRowProps { actionType: string; params: Record<string, unknown>; onChange: (p: Record<string,unknown>) => void; onRemove: () => void; }`
-- **Storybook**: PlaceOrder, ModifyStopLoss, MoveToBreakeven, ScaleOut, FlattenAll, HaltNewOrders.
+- **Storybook**: **E36-D03 —** PlaceOrder, ModifyStopLoss, MoveToBreakeven, ScaleOut, FlattenAll, HaltNewOrders, SimulateOnlyDisabled, ReadOnly.
 - **Tests**: unit (per-action-type param validation), visual, axe.
 
 ### CMP-143 RuleTriggerPicker
 
-- **Tier**: Molecule (rule engine) · **Purpose**: choose the rule's trigger (`on_price_update`, `on_bar_close`, `on_order_fill`, `on_timer`, `on_indicator`) and timeframe.
-- **Props**: `trigger: string` · `timeframe?: string` · `onChange`.
+- **Tier**: Molecule (rule engine) · **Purpose**: choose the rule's trigger and its parameter. **E36-D03 —** the vocabulary's 13 triggers (`TRIGGERS` in `rules/vocabulary/catalogue.py`) with their `description`s as the second line — there is no `on_indicator` (DCR-8 / memo C14); one trigger per rule; the parameter per `required_fields` (timeframe, interval, cron "(UTC)", metric); `debounce_ms` as "at most once every {d}".
+- **Props**: **E36-D03 —** `trigger: string` (a trigger id, rendered by its description) · `timeframe?: string` · `intervalMs?: number` · `cron?: string` · `metric?: string` · `debounceMs?: number` · `onChange`.
 - **Tokens**: inherits CMP-009.
-- **Storybook**: OnBarClose, OnFill, OnTimer, OnIndicator.
+- **Storybook**: **E36-D03 —** OnBarClose, OnPriceUpdate, OnPositionChange, OnTimer, OnSchedule, OnMetricChange, OnBookUpdate.
 - **Tests**: unit, visual, axe.
 
 ### CMP-144 RuleScopeSelector
 
-- **Tier**: Molecule (rule engine) · **Purpose**: choose what the rule applies to — symbol, account(s), `open_positions`/`pending_orders`/`account` scope.
-- **Props**: `symbol?` · `accounts: string[]` · `appliesTo: "open_positions"|"pending_orders"|"account"`.
+- **Tier**: Molecule (rule engine) · **Purpose**: choose what the rule applies to — symbol, account(s), the `RuleScope` level and `applies_to`. **E36-D03 —** `environments` is shown as the scope chip's segment ("2 accounts · BTCUSDT · demo") and the chrome's band, never a local badge; the chip is the compact form on SCR-080 rows (US-RULE-007).
+- **Props**: **E36-D03 —** `symbol?` · `accounts: string[]` · `level: "global"|"account"|"symbol"|"position"|"trade_group"` · `appliesTo: "open_positions"|"pending_orders"|"account"|"any"` (`any` is the shipped default, `24` §11.2; E36-D02 C7) · `environments: ("demo"|"live")[]`.
 - **Tokens**: inherits CMP-105 AccountMultiSelect (reused).
-- **Storybook**: SingleAccount, MultiAccount, AccountScope.
+- **Storybook**: **E36-D03 —** SingleAccount, MultiAccount, AccountScope, AppliesToAny, LiveEnvironment.
 - **Tests**: unit, visual, axe.
 
 ### CMP-145 RuleFormEditor (organism)
 
-- **Tier**: Organism (rule engine) · **Purpose**: full structured-form rule editor composing Trigger/Scope/Conditions/Actions + arm/simulate controls.
-- **Props**: `rule: RuleDraft` · `onChange` · `onSimulate` · `onSave` · `armMode: "disarmed"|"simulate-only"|"live-armed"` · `onArmModeChange`.
-- **A11y**: `live-armed` transition gated by ConfirmDialog (CMP-044, `variant="typed"`, must type the rule name) — arming a live rule is a destructive-class action per safety framing.
-- **Tokens**: inherits FormSection (CMP-065).
-- **Storybook**: Draft, SimulateOnly, LiveArmed, ValidationErrors.
+- **Tier**: Organism (rule engine) · **Purpose**: full structured-form rule editor composing Trigger/Scope/Conditions/Actions + arm/simulate controls. **E36-D03 —** the header carries the round-trip indicator (its home per E36-D02 §16): a focusable chip, glyph + word + fill, never colour alone.
+- **Props**: `rule: RuleDraft` · `onChange` · `onSimulate` · `onSave` · `armMode: "disarmed"|"simulate-only"|"live-armed"` · `onArmModeChange`. **E36-D03 —** `roundTrip: {result: "identical"|"graph_only_construct"|"mismatch"|"unverified", checking: boolean, staleSince?: string}` · `onViewDiff()` (→ SCR-088's Diff segment) · `onResolve(choice: "keep_form"|"keep_graph")` (E36-D02 §4; `result` is derived client-side from `compileRule`'s `round_trip`, E36-D02 G13); `armMode` keeps its three values — the wire's `RuleMode` is `disabled | simulate | armed` with live = `armed` and `scope.environments` including `live` (a note, E36-D03 C10).
+- **States**: **E36-D03 —** draft · validating · valid · invalid · armed · vocabulary-unavailable (the six `14` SCR-081 states, E36-D02 §3) × the indicator's RoundTripsOk · GraphOnlyConstruct · Mismatch · NotVerified · Checking · Stale (E36-D02 §4); the Arm button is disabled-with-reason (E09-D09 T2) while the new-rule gate, validation, the role or a mismatch holds.
+- **A11y**: `live-armed` transition gated by ConfirmDialog (CMP-044, `variant="typed"`, must type the rule name) — arming a live rule is a destructive-class action per safety framing. **E36-D03 —** the typed confirm is SCR-085 (E35-D02's dialog); the indicator is `role="status"` for the word, one polite announcement per `result` change; CMP-158 is pinned above the action bar (E36-D02 §2).
+- **Tokens**: inherits FormSection (CMP-065). **E36-D03 —** the indicator's fills `color.status.success.subtle` / `color.status.warning.subtle` / `color.status.danger.subtle` / `color.surface.hover` with their `.strong` glyphs and `color.text.primary` words (E36-D02 §15).
+- **Storybook**: **E36-D03 —** Draft, Validating, Valid, Invalid, Armed, VocabularyUnavailable, RoundTripsOk, GraphOnlyConstruct, Mismatch, NotVerified, Checking, Stale.
 - **Tests**: unit, visual, axe, keyboard, interaction (arm-confirm flow).
 
 ### CMP-146 NodeGraphCanvas
@@ -1778,11 +1779,11 @@ interface NodeGraphCanvasProps {
 
 ### CMP-155 RuleListRow
 
-- **Tier**: Molecule (rule engine) · **Purpose**: one row in the rules list screen — name, symbol/scope, arm-state, last-fired, enable toggle.
-- **Props**: `rule: RuleSummary` · `onToggleEnabled` · `onEdit` · `onDuplicate` · `onDelete`.
-- **A11y**: arm-state (disarmed/simulate-only/live-armed) shown via CMP-011 tag variant, never colour-only; enable Toggle (CMP-004) is `critical` styled when the rule is live-armed.
-- **Tokens**: inherits CMP-049 row pattern.
-- **Storybook**: Disarmed, SimulateOnly, LiveArmed, RecentlyFired.
+- **Tier**: Molecule (rule engine) · **Purpose**: one row in the rules list screen (SCR-080). **E36-D03 —** eight cells: name · scope chip · trigger summary (the sentence's first clause plus the CMP-227 chip when a metric is estimated; the full sentence on hover / focus — memo Q3) · state (the status word + glyph: DRAFT · SIMULATING · ARMED-DEMO · ARMED-LIVE · DISARMED · PAUSED · OFF · DONE · ERROR, with its reason line — E36-D03 §3, PROPOSED) · environment (the DEMO / LIVE pill, E11-D02 row 415) · last fired (UTC) · author · active version; **no one-click arm**: arming needs the server's gate (`22` `setRuleMode`) and surfaces SCR-085 from the row menu.
+- **Props**: **E36-D03 —** `rule: Rule` (`22`'s list item) · `onOpen` · `onArm` (→ SCR-085) · `onDisarm` (CMP-044 `standard`) · `onEdit` · `onEditGraph` · `onDuplicate` · `onSimulate` · `onExport` · `onDelete` · `onFireHistory` · `selected` · `onSelect`; `onToggleEnabled` and the enable toggle are removed (E36-D03 C11).
+- **A11y**: **E36-D03 —** the state is text + glyph, the word in `color.text.primary` with the hue on the glyph, never colour-only (the CMP-011 tag and the `critical` Toggle are gone); the row is a roving `row` named "{name}, {state word}, last fired {HH:MM:SS} UTC" and described by the full sentence; `Shift+F10` opens the nine-item row menu whose gated items are `aria-disabled` with a reason (E09-D09 T2), never hidden; a state flip is announced once, politely; every timestamp reads UTC.
+- **Tokens**: inherits CMP-049 row pattern. **E36-D03 —** `color.status.success.strong` / `color.status.info.strong` / `color.status.warning.strong` / `color.status.danger.strong` and `color.text.secondary` (the state glyphs), `color.env.demo` / `color.env.live` (the pill border on `color.surface.raised`), `color.border.selected` (the current row), `type.num.sm` + `font.family.mono` (timestamps, counts), `size.row.height`, `size.target.min`.
+- **Storybook**: **E36-D03 —** Draft, Simulating, ArmedDemo, ArmedLive, Disarmed, PausedDegraded, Off, Done, Error, Estimated.
 - **Tests**: unit, visual, axe.
 
 ### CMP-156 RuleEvaluationTimeline
@@ -1795,28 +1796,29 @@ interface NodeGraphCanvasProps {
 
 ### CMP-157 MetricPickerCombobox
 
-- **Tier**: Molecule (rule engine) · **Purpose**: searchable picker for the metric vocabulary (`price`, `atr(n)`, `cvd_divergence`, `iceberg_present_at_level`, etc.) used inside CMP-140/148.
-- **Props**: `value` · `onChange` · `category?: "price"|"position"|"orderflow"|"risk"|"detector"`.
-- **A11y**: extends CMP-048 Combobox; metrics sourced from heuristic detectors are tagged `(estimated)` in the option list itself, not just after selection.
+- **Tier**: Molecule (rule engine) · **Purpose**: searchable picker for the metric vocabulary used inside CMP-140/148. **E36-D03 —** options are grouped under seven categories derived from the signal's scope and inputs (memo R2, DCR-10): `price` · `orderflow` · `book` · `derivatives` · `position` · `account` · `replay` (last); "(estimated)" is a CMP-227 tag on the option, never a category; the option reads `display_name` · unit, with the `description` as the second line, and an unavailable option reads "(not available — {reason} · Start recording)" (E36-D02 §7).
+- **Props**: **E36-D03 —** `value` · `onChange` · `category?: "price"|"orderflow"|"book"|"derivatives"|"position"|"account"|"replay"` · per option `estimated`, `available`, `unavailableReason`, `recorderAction`.
+- **A11y**: extends CMP-048 Combobox; metrics sourced from heuristic detectors are tagged `(estimated)` in the option list itself, not just after selection. **E36-D03 —** the chip inside an option is a second roving stop reached by `→`; the results count is announced politely per query.
 - **Tokens**: inherits CMP-048.
-- **Storybook**: Default, FilteredByCategory, EstimatedMetricTagged.
+- **Storybook**: **E36-D03 —** Default, SevenCategories, EstimatedMetricTagged, UnavailableWithStartRecording, NoResults.
 - **Tests**: unit, visual, axe.
 
 ### CMP-158 SafetyInvariantNotice ("native SL always attached")
 
-- **Tier**: Atom (rule engine, safety-critical) · **Purpose**: persistent, non-dismissible notice inside both rule editors reminding the author that emulated rule-engine stops never replace the mandatory native exchange-side SL (safety invariant, `24-owner-decisions.md` §3).
+- **Tier**: Atom (rule engine, safety-critical) · **Purpose**: persistent, non-dismissible notice inside both rule editors reminding the author that emulated rule-engine stops never replace the mandatory native exchange-side SL (safety invariant, `24-owner-decisions.md` §3). **E36-D03 —** placement and sentence per E36-D02 §2 (PROPOSED): pinned directly above the action bar so it is in view at the moment of Arm; the sentence "Every position keeps a native stop — you can move it, not delete it. Rules can tighten it, never remove it — the stop is held by the exchange, not by this app." (the first sentence is `14` SCR-064 Validation / E32-D01 `sl.note`; the second keeps `sl.note`'s holder clause).
 - **Props**: none (static content component).
-- **A11y**: `role="note"`, always visible in both CMP-145 and CMP-146 layouts.
+- **A11y**: `role="note"`, always visible in both CMP-145 and CMP-146 layouts. **E36-D03 —** CMP-028 `tone="info"`, not in the Tab order; `color.text.primary` on `color.status.info.subtle`.
 - **Tokens**: inherits CMP-028 Callout.
 - **Storybook**: Default.
 - **Tests**: visual, axe, presence test (fails if removed from either editor's composition).
 
 ### CMP-159 RuleConflictWarning
 
-- **Tier**: Molecule (rule engine) · **Purpose**: flags two enabled rules with overlapping scope/contradictory actions (e.g. one tightens SL while another widens it) at save time.
-- **Props**: `conflicts: {ruleAId,ruleBId,description}[]`.
-- **Tokens**: inherits CMP-028 `tone="warning"`.
-- **Storybook**: SingleConflict, MultipleConflicts.
+- **Tier**: Molecule (rule engine) · **Purpose**: flags two armed rules that target the same position / scope with overlapping actions (e.g. two rules move the same stop). **E36-D03 —** detected at arming time (US-RULE-011 sc. 1) and on save (`14` SCR-086), and surfaced on SCR-080 before arming as a CMP-028 `tone="warning"` banner — "2 rules target the same position — resolve precedence" with a second line naming the two rules — whose action **Set priority** opens SCR-086 (E35); a list row is never amber.
+- **Props**: **E36-D03 —** `conflicts: {ruleA: {id, name}, ruleB: {id, name}, target: string, actions: [string, string]}[]` (the names are shown, the ids never — P1; no conflict shape exists on `Rule` / `RuleUpdate` yet, E36-D03 G8) · `onSetPriority(conflict)`.
+- **A11y**: **E36-D03 —** `role="status"` on SCR-080 (`14` SCR-080 A11y); one polite announcement on arrival; the action is a button in the Tab order; the second line is `color.text.secondary` on the amber fill (never `color.text.tertiary`).
+- **Tokens**: inherits CMP-028 `tone="warning"`. **E36-D03 —** `color.status.warning.subtle` (fill), `color.status.warning.strong` (glyph), `color.text.primary` / `color.text.secondary`, `color.focus.ring`.
+- **Storybook**: **E36-D03 —** SingleConflict, MultipleConflicts, OnList.
 - **Tests**: unit, visual, axe.
 
 ---
@@ -2709,19 +2711,19 @@ This band was added during the cross-document traceability reconciliation (see `
 
 ### CMP-233 RuleOptions
 
-- **Tier**: Molecule (rule engine) · **Purpose**: the non-condition settings block of a rule — name, enabled, priority, cooldown, max fires per day, simulate-vs-armed mode, conflict precedence.
-- **Props**: `options: RuleOptions` · `onChange` · `mode: "simulate"|"armed"` · `conflictsWith?: RuleRef[]`.
-- **A11y**: a labelled `<fieldset>` per group; switching to `armed` is a deliberate control that surfaces SCR-085 rather than toggling silently; declared conflicts are listed in text with links.
+- **Tier**: Molecule (rule engine) · **Purpose**: the non-condition settings block of a rule. **E36-D03 —** every `RuleLimits` field with its default, unit and phrase (DCR-7, memo §5.6): `once` / `once_per`, `cooldown_ms`, `max_fires_per_hour` / `max_fires_per_day` (caps 600 / 5 000; above the default owner-only, above the cap refused — SR-104), `max_actions_per_fire`, `max_notional_per_fire` / `max_daily_notional`, `require_confirmation`, `evaluation_timeout_ms`, `kill_switch_on_error_count`; the two always-said lines "No rule notional cap — your account's risk caps still apply." and "Turns itself off after 5 errors in a row — you re-arm it."; no rule-level "only tighten" box (memo C12) — the ratchet is a per-action read-out; `name` and `description` live in the header (E36-D02 §9).
+- **Props**: **E36-D03 —** `options: RuleLimits` · `onChange` · `mode: "disabled"|"simulate"|"armed"` (`RuleMode`) · `conflictsWith?: {id, name}[]` (per CMP-159).
+- **A11y**: a labelled `<fieldset>` per group; switching to `armed` is a deliberate control that surfaces SCR-085 rather than toggling silently; declared conflicts are listed in text with links. **E36-D03 —** each field is labelled with its default in the help text; the always-said lines are text, not live regions.
 - **Tokens**: `space.4`, `color.surface.sunken`.
-- **Storybook**: SimulateMode, ArmedMode, WithConflicts.
+- **Storybook**: **E36-D03 —** Defaults, Changed, OwnerOnlyAboveDefault, AboveCap, WithConflicts.
 - **Tests**: unit, visual, axe.
 
 ### CMP-234 ValidationPanel
 
 - **Tier**: Organism (rule engine) · **Purpose**: the shared validation surface for **both** rule editors (form mode SCR-081 and graph mode SCR-082) — errors, warnings and IR-compilation diagnostics, each anchored to the offending condition row or node.
-- **Props**: `diagnostics: {id,severity:"error"|"warning"|"info",message,anchor:{kind:"row"|"node"|"edge",id},fixHint?}[]` · `onFocusAnchor`.
-- **A11y**: a `role="log"` list ordered errors-first; each entry is a button that moves focus to the offending row/node (the sole mechanism by which a keyboard user navigates graph diagnostics); the error count is announced on every recompile.
-- **Tokens**: `color.status.danger`, `color.status.warn`, `space.3`.
+- **Props**: `diagnostics: {id,severity:"error"|"warning"|"info",message,anchor:{kind:"row"|"node"|"edge",id},fixHint?}[]` · `onFocusAnchor`. **E36-D03 —** `anchor` is populated with the form model's row ids by E36-T01 (memo G11: no validator diagnostic names a row today); the primary message speaks rows ("Row 2 — …"), the shipped validator text sits in a details disclosure (P10); **SCR-088's Issues segment reuses this component** (E36-D03 §5).
+- **A11y**: a `role="log"` list ordered errors-first; each entry is a button that moves focus to the offending row/node (the sole mechanism by which a keyboard user navigates graph diagnostics); the error count is announced on every recompile. **E36-D03 —** the count change is a text swap, never a background flash (the 300 ms debounce would exceed 3 flashes / s).
+- **Tokens**: **E36-D03 —** `color.status.danger.default` / `color.status.danger.strong`, `color.status.warning.default` / `color.status.warning.strong`, `space.3`; `color.status.warn` and the bare `color.status.danger` do not exist in `packages/ui/tokens`.
 - **Data contract**: diagnostics come from `POST /rules/validate` against the shared rule IR, so form and graph modes report **identical** diagnostics for the same rule (the round-trip invariant, OD#11).
 - **Storybook**: Valid, WithErrors, WithWarnings, GraphAnchored, FormAnchored.
 - **Tests**: unit, visual, axe, interaction (focus-to-anchor in both modes), contract test (same IR ⇒ same diagnostics in both editors).
@@ -2730,9 +2732,9 @@ This band was added during the cross-document traceability reconciliation (see `
 
 - **Tier**: Molecule (rule engine, safety-relevant) · **Purpose**: switch a rule between form and node-graph editing, carrying the shared IR across without loss (OD#11).
 - **Props**: `mode: "form"|"graph"` · `onChange` · `lossyWarning?: {constructs: string[]}` · `dirty: boolean`.
-- **A11y**: CMP-003 SegmentedControl semantics; if the current rule contains constructs the target editor cannot represent, switching is **blocked with a named explanation** listing those constructs rather than degrading the rule silently.
+- **A11y**: CMP-003 SegmentedControl semantics. **E36-D03 —** the switch is **allowed** (memo C10, E36-D02 §4): a construct the target editor cannot represent renders in place as the read-only card with the lead-in "Authored in the graph editor: {sentence}. Open in the graph editor to change this.", and `lossyWarning.constructs` becomes the per-construct list; the rule is never degraded silently; the round-trip indicator lives on CMP-145 (E36-D02 §16), not here.
 - **Tokens**: inherits CMP-003.
-- **Storybook**: FormActive, GraphActive, LossyWarning, DirtyUnsaved.
+- **Storybook**: **E36-D03 —** FormActive, GraphActive, LossyWarning, DirtyUnsaved, ReadOnlyCardInPlace.
 - **Tests**: unit, visual, axe, interaction; round-trip test (form → graph → form yields an identical IR).
 
 ### CMP-236 NodePalette
