@@ -12,35 +12,23 @@ under `MAX_RULE_BODY_BYTES` (413 `payload_too_large`) before anything parses the
 from __future__ import annotations
 
 import inspect
-import json
-import re
 from collections.abc import Awaitable, Callable
-from typing import Any, Final
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from candleviewer.api.rule_body import MAX_RULE_BODY_BYTES, read_object
 from candleviewer.domain.text import refuse_unstorable_text
-from candleviewer.rules.compiler.common import MAX_DEPTH, MAX_ITEMS
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.ir.models import RuleScope
 from candleviewer.rules.manager import Actor, RuleError, RulesManager
 from candleviewer.rules.scope import ScopeResolver
-from candleviewer.ws.limits import json_depth_exceeds
 
 _READ = "rules:read"
 _WRITE = "rules:write"
-#: The body ceiling of the rule write routes, from the document bounds every save applies
-#: (`check_bounds`): `MAX_ITEMS` values at 100 bytes each. The densest corpus rule takes a fifth
-#: of that per value as compact JSON and under a third indented, so a rule at the bounds fits.
-MAX_RULE_BODY_BYTES: Final = MAX_ITEMS * 100
-#: The deepest body a rule within the bounds needs: `MAX_DEPTH + 1` nested objects and arrays (a
-#: value at depth `MAX_DEPTH` may be one) inside the body's own object.
-_MAX_JSON_DEPTH: Final = MAX_DEPTH + 2
-_LENGTH: Final = re.compile(r"[0-9]{1,19}")  # a usable `Content-Length`, as `api/drawings.py`
-_TOO_LARGE: Final = "Request body or batch exceeds the operation's size ceiling"
 
 
 def _problem(status: int, code: str, title: str, detail: str, **extra: Any) -> JSONResponse:
@@ -76,25 +64,6 @@ def _doc(body: dict[str, Any]) -> dict[str, Any] | None:
     if "scope" not in doc and isinstance(body.get("scope"), str):
         doc["scope"] = {"level": body["scope"]}
     return doc
-
-
-def _declared_length(raw: str) -> int | None:
-    """`Content-Length` when it is 1..19 ASCII digits, else None (only the streamed count then)."""
-    return int(raw) if _LENGTH.fullmatch(raw) else None
-
-
-async def _read_capped(request: Request, cap: int) -> bytes | None:
-    """The raw body, or None past `cap` bytes, before it is buffered whole: a declared length over
-    `cap` is refused unread and a stream stops one chunk past it, as in `api/drawings.py`."""
-    declared = _declared_length(request.headers.get("content-length", ""))
-    if declared is not None and declared > cap:
-        return None
-    raw = bytearray()
-    async for chunk in request.stream():
-        raw += chunk
-        if len(raw) > cap:
-            return None
-    return bytes(raw)
 
 
 def make_rules_crud_router(
@@ -149,18 +118,7 @@ def make_rules_crud_router(
 
     async def _body(request: Request) -> dict[str, Any] | JSONResponse | None:
         """The JSON object sent (else None), or the 413 or 400 for a body too large or too deep."""
-        raw = await _read_capped(request, MAX_RULE_BODY_BYTES)
-        if raw is None:
-            detail = f"The request body exceeds {MAX_RULE_BODY_BYTES} bytes."
-            return _problem(413, "payload_too_large", _TOO_LARGE, detail)
-        try:
-            text = raw.decode("utf-8")
-            if json_depth_exceeds(text, _MAX_JSON_DEPTH):  # as `api/drawings.py`
-                return _bad(f"JSON nesting is deeper than {_MAX_JSON_DEPTH} levels.")
-            body = json.loads(text)
-        except ValueError:  # not UTF-8 JSON
-            return None
-        return body if isinstance(body, dict) else None
+        return await read_object(request, _bad)
 
     def _unstorable(body: dict[str, Any], field: str) -> JSONResponse | None:
         """400 when `field` holds text Postgres cannot store, naming the field, never its value."""
