@@ -4,12 +4,14 @@ Compile and `POST /rules/validate` hold a document to `check_bounds` (`MAX_ITEMS
 `MAX_DEPTH` levels). Every save applies the same bounds before the schema walks the document and
 answers as it answers a schema error (422 `rule_ir_invalid`), storing nothing. The write routes
 read the body under `MAX_RULE_BODY_BYTES` (413 `payload_too_large`) before it is buffered whole.
+A note or a reason Postgres cannot store, and a body nested deeper than a rule needs, are 400s.
 Inputs are built from those constants.
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import AsyncIterator
 from decimal import Decimal
 from pathlib import Path
@@ -17,8 +19,10 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from candleviewer.api import rules_crud
+from candleviewer.domain.text import UNSTORABLE_TEXT
 from candleviewer.rules.compiler.common import MAX_DEPTH, MAX_ITEMS
 from candleviewer.rules.manager import RuleError, is_reserved_name
 from tests.rules.test_rules_manager import OWNER, _mgr
@@ -37,6 +41,9 @@ KINDS = pytest.mark.parametrize("kind", ["values", "depth"])
 BOUNDS = [("$", "schema_error", "syntax")]
 LIMITS = f"(limit {MAX_ITEMS} values, {MAX_DEPTH} levels)"
 JSON = {"content-type": "application/json"}
+#: A body nested past what the JSON decoder can recurse, from the interpreter's own limit.
+NESTING = 100 * sys.getrecursionlimit()
+WRITES = pytest.mark.parametrize("route", ["", "/{rid}", "/{rid}/active-version", "/{rid}/mode"])
 
 
 def _values(doc: Any) -> int:
@@ -95,11 +102,15 @@ def _padded(size: int) -> bytes:
 
 def _too_large(r: httpx.Response) -> None:
     assert r.status_code == 413, r.text[:300]
-    body, cap = r.json(), rules_crud.MAX_RULE_BODY_BYTES
-    assert (body["code"], body["detail"]) == (
-        "payload_too_large",
-        f"The request body exceeds {cap} bytes.",
-    )
+    detail = f"The request body exceeds {rules_crud.MAX_RULE_BODY_BYTES} bytes."
+    assert (r.json()["code"], r.json()["detail"]) == ("payload_too_large", detail)
+
+
+def _write(c: TestClient, route: str, rid: str, content: bytes) -> httpx.Response:
+    """POST `/rules`, or a PUT to the write `route` names; raw bytes, so `\\u` escapes survive."""
+    hdr = {**JSON, "If-Match": "1", "Idempotency-Key": "k"}
+    url = "/rules" + route.format(rid=rid)
+    return c.request("PUT" if route else "POST", url, content=content, headers=hdr)
 
 
 # ----- the manager: every save -------------------------------------------------------------
@@ -214,6 +225,39 @@ def test_put_rule_body_over_the_ceiling_is_413_and_changes_nothing(route: str) -
     assert [a for a, _ in e.audits] == ["rule.created"]
 
 
+@pytest.mark.parametrize("ch", [chr(0xD800), chr(0xDC00), chr(0)], ids=["high", "low", "nul"])
+@pytest.mark.parametrize(
+    ("route", "field", "sent"),
+    [("", "note", {"ir": _ir("2", name="other")}), ("/{rid}", "note", {"ir": _ir("2")}),
+     ("/{rid}/active-version", "note", {}), ("/{rid}/mode", "reason", {"mode": "simulate"})],
+    ids=["create", "update", "active-version", "mode"],
+)  # fmt: skip
+def test_rule_write_unstorable_note_or_reason_is_400_and_changes_nothing(
+    route: str, field: str, sent: dict[str, Any], ch: str
+) -> None:
+    e = _Env()
+    rid, before = e.create(), e.c.get("/rules").json()
+    body = {**sent, field: f"a{ch}b"}
+    if route.endswith("active-version"):
+        body["version_id"] = before["items"][0]["active_version_id"]
+    r = _write(e.c, route, rid, json.dumps(body).encode())
+    assert r.status_code == 400, r.text[:300]
+    want = ("validation_failed", f"'{field}' {UNSTORABLE_TEXT}")
+    assert (r.json()["code"], r.json()["detail"]) == want
+    assert e.c.get("/rules").json() == before and [a for a, _ in e.audits] == ["rule.created"]
+
+
+@WRITES
+def test_rule_write_body_nested_past_the_decoder_is_400_not_500(route: str) -> None:
+    e = _Env()
+    rid, c = e.create(), TestClient(e.c.app, raise_server_exceptions=False)
+    body = ('{"ir":' + "[" * NESTING + "]" * NESTING + "}").encode()
+    r = _write(c, route, rid, body)
+    assert len(body) <= rules_crud.MAX_RULE_BODY_BYTES and r.status_code == 400, r.text[:300]
+    assert r.json()["code"] == "validation_failed"
+    assert [a for a, _ in e.audits] == ["rule.created"]
+
+
 # ----- C-12.4: the forbidden-role and cross-account answers stay first ---------------------
 
 
@@ -230,8 +274,7 @@ def test_rule_writes_forbidden_role_keep_their_403_over_a_bound_or_the_ceiling()
         viewer.c.put(f"/rules/{rid}", **big),
     ):
         assert (r.status_code, r.json()["detail"]) == (403, "requires rules:write")
-    assert owner.c.get("/rules").json()["meta"]["count"] == 1
-    assert owner.c.get(f"/rules/{rid}").json()["latest_version"] == 1
+    assert [i["latest_version"] for i in owner.c.get("/rules").json()["items"]] == [1]
     assert [a for a, _ in owner.audits] == ["rule.created"]
 
 
