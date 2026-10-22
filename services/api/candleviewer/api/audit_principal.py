@@ -23,6 +23,7 @@ from typing import Any, Protocol
 from fastapi import Request
 
 from candleviewer.api.csrf import source_ip
+from candleviewer.api.view_as_subject import view_as_stamp, view_as_subject
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import SessionIdleLocked, SessionNotFound, SessionRevoked
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -75,19 +76,23 @@ class SessionAuditPrincipalResolver:
             return None
         try:
             record = await self._sessions().authenticate_access_token(token, touch=True)
-            user = await self._identity.user(str(record.user_id))
-            info = await self._identity.session_info(str(record.user_id))
+            subject = view_as_subject(request, record)  # the target on a live view (#3085)
+            user = await self._identity.user(str(subject))
+            info = await self._identity.session_info(str(subject))
         except (RuntimeError, SessionNotFound, SessionRevoked, SessionIdleLocked, LookupError):
             return None
-        if user.get("status") != "active":
+        if user.get("status") != "active":  # a locked target's view has no scope (Q11)
             return None
+        stamp = view_as_stamp(request) if subject != record.user_id else None
         return AuditPrincipal(
-            user_id=record.user_id,
+            user_id=subject,
             username=str(user["username"]),
             permissions=frozenset(str(p) for p in info.get("permissions", ())),
-            is_owner=_is_owner(record.user_id, user.get("roles") or ()),
+            is_owner=_is_owner(subject, user.get("roles") or ()),
             last_step_up_at=_last_step_up_at(record),
             session_id=record.id,
             ip=source_ip(request.scope),
             request_id=current_request_uuid(),
+            actor_user_id=None if stamp is None else stamp.viewer_user_id,
+            actor_username=None if stamp is None else stamp.viewer_label,
         )

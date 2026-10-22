@@ -47,6 +47,7 @@ from candleviewer.api.csrf import (
 )
 from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.api.storage_outage import is_storage_outage
+from candleviewer.api.view_as_subject import view_as_subject
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.errors import AuditError
@@ -827,7 +828,9 @@ def make_step_up_router(
             return _problem(501, "not_implemented", "Not implemented", "no principal resolver")
         got = principal_resolver.resolve(request)
         principal = await got if inspect.isawaitable(got) else got
-        if principal is None or principal.user_id != record.user_id:
+        # The principal's user is the subject: the target on a live view (#3085), so a viewer
+        # is refused 403 below, never 401 here.
+        if principal is None or principal.user_id != view_as_subject(request, record):
             return _problem(401, "unauthorized", "Unauthorized", "authentication required")
         try:
             await enforce(

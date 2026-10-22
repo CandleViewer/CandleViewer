@@ -60,6 +60,8 @@ from candleviewer.api.view_as_refusals import (
     ViewAsRefusalRecorder,
     ViewAsRefusalUnrecorded,
 )
+from candleviewer.api.view_as_subject import STATE_KEY as STATE_KEY
+from candleviewer.api.view_as_subject import ViewAsUnstamped as ViewAsUnstamped
 from candleviewer.auth.errors import AuthError, SessionReadOnly
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import (
@@ -71,9 +73,6 @@ from candleviewer.auth.view_as import (
 )
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
-
-#: Where a passing request carries its context (plan 1.3), beside the `bound_view_as` contextvar.
-STATE_KEY: Final = "cv.view_as"
 
 _DETAILS: Final[dict[str, str]] = {
     "view_as_read_only": "This session is viewing as another user and changes nothing; "
@@ -115,6 +114,11 @@ def _problem(code: ErrorCode, status: int) -> JSONResponse:
 def _unavailable(read: str, exc: BaseException) -> JSONResponse:
     _log().error("auth.view_as_guard_failed", read=read, error=type(exc).__name__)
     return _problem(ErrorCode.STORE_UNAVAILABLE, 503)
+
+
+async def view_as_unstamped_handler(request: Request, exc: Exception) -> Response:
+    """`ViewAsUnstamped` -> `503 store_unavailable` (fail closed)."""
+    return _unavailable("stamp", exc)
 
 
 def make_view_as_guard(

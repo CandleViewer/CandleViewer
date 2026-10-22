@@ -25,6 +25,7 @@ from typing import Any, Protocol
 
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.metrics import authz_denied_total, normalise_permission
+from candleviewer.auth.view_as import current_view_as
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope, OwnerScope
 
 #: Mirrors the database `role_name` ENUM (`'owner','manager','viewer'`,
@@ -221,6 +222,15 @@ class ForbiddenError(Exception):
         super().__init__(f"forbidden: {deny.reason.value} ({deny.permission.value})")
 
 
+def _actor_of(principal: PrincipalSnapshot) -> uuid.UUID:
+    """Who acts for `principal`: the viewer while the running request views as it (#3085, Q2),
+    so a denial record never names the target as its actor; else the principal."""
+    ctx = current_view_as()
+    if ctx is not None and ctx.is_viewing_as_target and ctx.target_user_id == principal.user_id:
+        return ctx.viewer_user_id
+    return principal.user_id
+
+
 async def enforce(
     principal: PrincipalSnapshot,
     permission: Permission,
@@ -256,10 +266,11 @@ async def enforce(
     # SR-125: counted before the audit write, so a denial is never lost to an audit failure.
     authz_denied_total.labels(permission=normalise_permission(decision.permission)).inc()
     if emitter is not None:
+        actor = _actor_of(principal)
         await emitter.emit(
             "rbac.denied",
-            actor_label=str(principal.user_id),
-            actor_user_id=principal.user_id,
+            actor_label=str(actor),
+            actor_user_id=actor,
             actor_ip=actor_ip,
             session_id=session_id,
             object_kind=str(exchange_account_id) if exchange_account_id else None,

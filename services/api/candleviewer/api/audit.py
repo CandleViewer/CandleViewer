@@ -295,15 +295,16 @@ def _no_store[**P, R: Response](
 
 def _budget_actor(principal: AuditPrincipal) -> BudgetActor:
     # The Owner's cap and tracked entry follow the resolved `is_owner` only
-    # (`PrincipalSnapshot.is_owner`, SR-017), never a role name or a grant.
+    # (`PrincipalSnapshot.is_owner`, SR-017), never a role name or a grant. The budget is the
+    # actor's (#3085): a viewer never spends the target's.
     owner = principal.is_owner
-    return BudgetActor(str(principal.user_id), principal.username, principal.user_id, owner)
+    return BudgetActor(str(principal.actor_id), principal.actor_name, principal.actor_id, owner)
 
 
 def _request_fields(principal: AuditPrincipal) -> dict[str, Any]:
     return {
-        "actor_label": principal.username,
-        "actor_user_id": principal.user_id,
+        "actor_label": principal.actor_name,
+        "actor_user_id": principal.actor_id,
         "actor_ip": principal.ip,
         "session_id": principal.session_id,
         "object_kind": "audit_log",
@@ -449,7 +450,7 @@ def make_audit_router(
         except BudgetWriteFailed as exc:
             raise _HttpProblem(_unavailable()) from exc
         except AuditAccessDenied as exc:
-            raise _HttpProblem(_forbidden(str(principal.user_id), emitter, str(exc))) from exc
+            raise _HttpProblem(_forbidden(str(principal.actor_id), emitter, str(exc))) from exc
         return audit_service, principal, view
 
     @router.get("")
@@ -551,7 +552,7 @@ def make_audit_router(
             )
         except BudgetWriteFailed:
             return _unavailable()
-        return _forbidden(str(principal.user_id), emitter, "filter not permitted for this caller")
+        return _forbidden(str(principal.actor_id), emitter, "filter not permitted for this caller")
 
     async def _record_cross_actor(
         emitter: BudgetedEmitter, principal: AuditPrincipal, requested: str
@@ -569,7 +570,7 @@ def make_audit_router(
             )
         except BudgetWriteFailed:
             return _unavailable()
-        return _over_cap(str(principal.user_id)) if emitter.suppressed else None
+        return _over_cap(str(principal.actor_id)) if emitter.suppressed else None
 
     async def _run_query(
         service: AuditServiceLike,
@@ -580,7 +581,7 @@ def make_audit_router(
         plan: ReadReservation,
         recorded: dict[str, Any],
     ) -> JSONResponse:
-        key = str(principal.user_id)
+        key = str(principal.actor_id)  # the actor's limit (#3085)
         if plan.action == "refuse":
             return _over_cap(key)
         if plan.action == "unwritable":
@@ -708,7 +709,7 @@ def make_audit_router(
             emit, fields, outcome=_SUCCESS, severity=_INFO, reason="started", after_state=span
         ):
             return _unavailable()
-        verify_limits.record_start(str(principal.user_id))  # only a run that starts counts
+        verify_limits.record_start(str(principal.actor_id))  # only a run that starts counts
         try:
             result = await service.query.run_verify(plan, deadline_s=verify_deadline_s)
         except VERIFY_STOP_ERRORS as exc:

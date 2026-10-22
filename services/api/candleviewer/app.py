@@ -171,7 +171,11 @@ from candleviewer.api.users import (
     make_users_router,
 )
 from candleviewer.api.view_as import make_view_as_router
-from candleviewer.api.view_as_guard import make_view_as_guard
+from candleviewer.api.view_as_guard import (
+    ViewAsUnstamped,
+    make_view_as_guard,
+    view_as_unstamped_handler,
+)
 from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
@@ -194,6 +198,7 @@ from candleviewer.auth.session_service import (
     access_token_expires_at,
 )
 from candleviewer.auth.testnet_clock import audit_test_clock_enabled, build_test_clock
+from candleviewer.auth.view_as import current_view_as
 from candleviewer.backups_wiring import (
     build_admin_backups,
     build_backup_deletion,
@@ -516,16 +521,35 @@ class AppContext:
     mesh_system_topic_publisher: SystemTopicPublisher
 
 
+class TargetNamedAsActor(RuntimeError):
+    """A record written while a request views as another user names that user as its actor
+    (#3085, Q2): the viewer acts, so the site that wrote it is a defect. Refused before the write,
+    so the caller's audit failure path answers (fail closed)."""
+
+
+def _refuse_target_as_actor(action: str, fields: dict[str, Any]) -> None:
+    """The tripwire behind every audit write (#3085 S8): while a view-as context is bound, no
+    record may name its target as the actor."""
+    ctx = current_view_as()
+    actor = fields.get("actor_user_id")
+    if ctx is not None and actor is not None and str(actor) == str(ctx.target_user_id):
+        structlog.get_logger(__name__).error("audit.view_as_target_named_actor", action=action)
+        raise TargetNamedAsActor(action)
+
+
 class _LazyAuditEmitter:
-    """Resolves `audit.writer` per call: it only exists once `AuditService.start()` ran."""
+    """Resolves `audit.writer` per call: it only exists once `AuditService.start()` ran. Every
+    write passes the view-as tripwire first (`_refuse_target_as_actor`)."""
 
     def __init__(self, audit: AuditHandle) -> None:
         self._audit = audit
 
     async def emit(self, action: str, **kwargs: Any) -> None:
+        _refuse_target_as_actor(action, kwargs)
         await self._audit.writer.emit(action, **kwargs)
 
     async def emit_keyed(self, action: str, name: str, **kwargs: Any) -> None:
+        _refuse_target_as_actor(action, kwargs)
         await self._audit.writer.emit_keyed(action, name, **kwargs)  # #3085: one per context
 
 
@@ -1345,6 +1369,7 @@ def create_app(
     app.add_exception_handler(GatewayOverloadedError, gateway_overloaded_handler)
     app.add_exception_handler(GatewayDegradedError, gateway_overloaded_handler)  # E50-T63
     app.add_exception_handler(AdminAreaRefused, admin_area_refused_handler)
+    app.add_exception_handler(ViewAsUnstamped, view_as_unstamped_handler)  # #3085 S8: 503
     install_error_redaction(app)  # E43-T06: no secret echo via 422/500 bodies
     audit = _build_audit(resolved)
     bundle = secrets_bundle or _build_secrets(resolved, audit)
