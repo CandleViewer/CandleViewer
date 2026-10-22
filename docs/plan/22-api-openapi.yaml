@@ -1373,7 +1373,10 @@ paths:
         record is written, and the same token refreshes again after `POST /auth/unlock`.
         Refresh is not activity: the rotated session inherits `last_seen_at` as well as
         `expires_at`, so `session.idle_deadline` is unchanged (see "Idle lock"); only
-        `POST /auth/session/extend` and `POST /auth/unlock` move it.
+        `POST /auth/session/extend` and `POST /auth/unlock` move it. The rotated session also
+        inherits the step-up penalty, `step_up_failures` and `readonly_until` (SR-025): a
+        refresh never lifts a read-only downgrade or forgets a strike, and it never carries a
+        step-up grant or a pending step-up challenge (the successor starts with neither).
       security:
         - refreshCookie: []
         - {}

@@ -217,6 +217,16 @@ def test_refresh_contract_carries_the_idle_deadline_over(spec: dict[str, Any]) -
     assert "`POST /auth/refresh` carries it over unchanged" in _flat(deadline)
 
 
+def test_refresh_contract_keeps_the_step_up_penalty(spec: dict[str, Any]) -> None:
+    # #2914 (comment 6325457810): since #4060 (#4051, SR-025) a refresh carries the step-up
+    # penalty to the rotated session and never a grant; pinned in SessionService.mint().
+    refresh = _flat(_op(spec, "post", "/auth/refresh")["description"])
+    assert "The rotated session also inherits the step-up penalty" in refresh
+    assert "`step_up_failures` and `readonly_until` (SR-025)" in refresh
+    assert "never lifts a read-only downgrade or forgets a strike" in refresh
+    assert "it never carries a step-up grant or a pending step-up challenge" in refresh
+
+
 def test_refresh_refused_while_locked_writes_no_refreshed_record(spec: dict[str, Any]) -> None:
     # Review round 3 (gap G): the route answers the lock before its write-ahead record (#3331);
     # the behaviour is pinned in `tests/unit/api/idle_lock/test_refresh.py`.
