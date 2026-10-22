@@ -2,10 +2,10 @@
 
 Compile and `POST /rules/validate` hold a document to `check_bounds` (`MAX_ITEMS` values,
 `MAX_DEPTH` levels). Every save applies the same bounds before the schema walks the document and
-answers as it answers a schema error (422 `rule_ir_invalid`), storing nothing. The write routes
-read the body under `MAX_RULE_BODY_BYTES` (413 `payload_too_large`) before it is buffered whole.
-A note or a reason Postgres cannot store, and a body nested deeper than a rule needs, are 400s.
-Inputs are built from those constants.
+answers as it answers a schema error (422 `rule_ir_invalid`), storing nothing. The write routes,
+validate and compile read the body under `MAX_RULE_BODY_BYTES` (413 `payload_too_large`) before it
+is buffered whole. A note or a reason Postgres cannot store, and a body nested deeper than a rule
+needs, are 400s. Inputs are built from those constants.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from candleviewer.rules.manager import RuleError, is_reserved_name
 from tests.rules.test_rules_manager import OWNER, _mgr
 from tests.rules.test_rules_routes import A1, A2, _Env, _ir, _scoped
 from tests.rules.test_scope_crud import C, _setup
+from tests.rules.test_validator_endpoints import RULE_ID, _client
 
 CORPUS = Path(__file__).parents[1] / "fixtures/rule_corpus"
 GOLDEN = json.loads((CORPUS / "golden_hashes.json").read_text(encoding="utf-8"))["hashes"]
@@ -44,6 +45,7 @@ JSON = {"content-type": "application/json"}
 #: A body nested past what the JSON decoder can recurse, from the interpreter's own limit.
 NESTING = 100 * sys.getrecursionlimit()
 WRITES = pytest.mark.parametrize("route", ["", "/{rid}", "/{rid}/active-version", "/{rid}/mode"])
+CHECKS = pytest.mark.parametrize("path", ["/rules/validate", f"/rules/{RULE_ID}/compile"])
 
 
 def _values(doc: Any) -> int:
@@ -256,6 +258,23 @@ def test_rule_write_body_nested_past_the_decoder_is_400_not_500(route: str) -> N
     assert len(body) <= rules_crud.MAX_RULE_BODY_BYTES and r.status_code == 400, r.text[:300]
     assert r.json()["code"] == "validation_failed"
     assert [a for a, _ in e.audits] == ["rule.created"]
+
+
+@CHECKS
+def test_rule_validation_body_over_the_ceiling_is_413_with_or_without_a_length(path: str) -> None:
+    c, body = _client(), _padded(rules_crud.MAX_RULE_BODY_BYTES + 1)
+    _too_large(c.post(path, content=body, headers=JSON))
+    r = c.post(path, content=iter([body]), headers=JSON)  # streamed: no `Content-Length`
+    assert "content-length" not in r.request.headers
+    _too_large(r)
+
+
+@CHECKS
+def test_rule_validation_body_nested_past_the_decoder_is_400_not_500(path: str) -> None:
+    c = TestClient(_client().app, raise_server_exceptions=False)
+    body = ('{"ir":' + "[" * NESTING + "]" * NESTING + "}").encode()
+    r = c.post(path, content=body, headers=JSON)
+    assert len(body) <= rules_crud.MAX_RULE_BODY_BYTES and r.status_code == 400, r.text[:300]
 
 
 # ----- C-12.4: the forbidden-role and cross-account answers stay first ---------------------
