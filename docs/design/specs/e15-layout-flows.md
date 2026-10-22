@@ -111,7 +111,7 @@ flowchart TD
   E5 -->|yes| F5["Confirm with the measured and the estimated cost, Cancel focused"]
   F5 -->|Cancel| A5
   F5 -->|Pop out anyway| G5
-  E5 -->|no| G5["Window opens at its remembered bounds: DOM, BTCUSDT, LIVE badge, sync badge, Keep on top"]
+  E5 -->|no| G5["Window opens at its remembered bounds: DOM, BTCUSDT, LIVE badge, feed chip, sync badge, Pin on top"]
   G5 --> H5["Leaf removed, pane kept, layout dirty. Polite: DOM popped out to its own window."]
   H5 --> I5{"How does it come back?"}
   I5 -->|Return to workspace, or the window's close| J5{"Is its old place still in the tree?"}
