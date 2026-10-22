@@ -851,6 +851,100 @@ CREATE TRIGGER trg_auth_keys_touch BEFORE UPDATE ON auth_keys
   downgrade refuses while any `auth_keys` row exists (C-5.2): from the first boot on, new seeds and
   digests depend on these keys.
 
+#### 3.1.5b `audit_signing_keys` (#889 S4, migration `0046_audit_signing_keys`)
+
+The audit export signing keys of each environment (ADR-0039, ADR-0009 Amendment 8): one Ed25519 key per row, at most
+one `active` per environment, the retired ones kept so that the exports they signed keep verifying. M2 generates the
+first key at boot and each later one at a rotation (`rotateAuditSigningKey`), which retires the active key in the same
+transaction. The seed is stored only sealed under the row's own DEK, the DEK only wrapped under the KEK of
+`(env, kek_version)`; the public key, its fingerprint and the key id are public. Data class: S for `sealed_seed` and
+`dek_ref`, P0 for the rest (§12). M2 writes the rows from #889 S6.
+
+```sql
+-- 0046_audit_signing_keys: the next slot after 0045_audit_chain_hardening in the single-head queue (C-5.3)
+CREATE TABLE audit_signing_keys (
+  id                 uuid PRIMARY KEY,
+  env                exchange_env NOT NULL,  -- no default: the process environment (as kek_versions.env)
+  version            integer NOT NULL,       -- N of the key id: the key's own version, not the KEK's
+  key_id             text NOT NULL,          -- cv-audit-export-v<N>:<first 16 hex of the fingerprint>
+  public_key         bytea NOT NULL,         -- the raw 32-byte Ed25519 public key (public)
+  fingerprint_sha256 sha256_hex NOT NULL,    -- SHA-256 of public_key: what a verifier pins
+  sealed_seed        bytea,                  -- SECRET: the seed sealed under the row's DEK; NULL once destroyed
+  dek_ref            text NOT NULL,          -- SECRET: the row's DEK wrapped under the KEK
+  kek_version        integer NOT NULL,
+  status             text NOT NULL,          -- active | retired
+  valid_from         timestamptz NOT NULL,   -- when the key became active
+  valid_until        timestamptz,            -- the event_ts of the rotation that retired it
+  retired_reason     text,                   -- scheduled | compromise | unrecoverable
+  created_by         uuid REFERENCES users(id) ON DELETE RESTRICT,  -- the rotating Owner
+  client_ref         text,                   -- that rotation's Idempotency-Key
+  client_body_sha256 sha256_hex,             -- that rotation's request fingerprint
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ask_version        CHECK (version >= 1),
+  CONSTRAINT ask_kek_version    CHECK (kek_version >= 1),
+  CONSTRAINT ask_public_key     CHECK (octet_length(public_key) = 32),
+  CONSTRAINT ask_fingerprint    CHECK (fingerprint_sha256 = encode(sha256(public_key), 'hex')),
+  CONSTRAINT ask_key_id         CHECK (key_id = 'cv-audit-export-v' || version::text || ':'
+                                       || left(fingerprint_sha256, 16)),
+  CONSTRAINT ask_sealed_seed    CHECK (octet_length(sealed_seed) = 60),
+  CONSTRAINT ask_dek_ref        CHECK (dek_ref ~ '^ek1:[0-9a-f]{120}$'),
+  CONSTRAINT ask_status         CHECK (status IN ('active','retired')),
+  CONSTRAINT ask_retired_reason CHECK (retired_reason IN ('scheduled','compromise','unrecoverable')),
+  CONSTRAINT ask_lifecycle      CHECK (CASE status
+    WHEN 'active' THEN sealed_seed IS NOT NULL AND valid_until IS NULL AND retired_reason IS NULL
+    ELSE valid_until IS NOT NULL AND retired_reason IS NOT NULL END),
+  CONSTRAINT ask_request        CHECK (num_nonnulls(created_by, client_ref, client_body_sha256) IN (0, 3)),
+  CONSTRAINT ask_client_ref     CHECK (client_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+  CONSTRAINT ask_env_version     UNIQUE (env, version),
+  CONSTRAINT ask_env_key_id      UNIQUE (env, key_id),
+  CONSTRAINT ask_env_fingerprint UNIQUE (env, fingerprint_sha256),
+  CONSTRAINT ask_env_request     UNIQUE (env, created_by, client_ref)
+);
+CREATE UNIQUE INDEX ux_ask_active ON audit_signing_keys (env) WHERE status = 'active';
+COMMENT ON COLUMN audit_signing_keys.sealed_seed IS 'SECRET: Ed25519 seed sealed under the row''s DEK';
+COMMENT ON COLUMN audit_signing_keys.dek_ref IS 'SECRET: the row''s DEK wrapped under the KEK of (env, kek_version)';
+-- trg_audit_signing_keys_write_once and REVOKE DELETE FROM cv_app: see "Privileges and triggers" below
+```
+
+- **Formats.** `sealed_seed` is `nonce(12) ‖ ciphertext(32) ‖ tag(16)`, 60 bytes, under the row's DEK with AAD
+  `cv-export-seed-v1 ‖ environment ‖ key_id ‖ public_key`, each part preceded by its length as a u16 big-endian
+  (`export_seed_aad`, `secrets/_envelope.py`; no KEK version).
+  `dek_ref` is `ek1:` plus the lower-case hex of `nonce(12) ‖ ciphertext(32) ‖ tag(16)` (120 digits): the DEK under
+  the KEK of `(env, kek_version)`, with an AAD under its own label, `cv-export-dek-v1`, whose parts S6 sets, so a KEK
+  rotation re-wraps only the DEK. `ask_sealed_seed` and `ask_dek_ref` admit nothing else, so no plaintext seed or DEK
+  is stored, even by a buggy caller; Postgres still echoes a refused row in its error `DETAIL`, which the store drops
+  (C-12.6), and the server log keeps only the message (`log_error_verbosity = terse`, #2748). `ask_fingerprint` and
+  `ask_key_id` derive the fingerprint and the key id, so the three never disagree.
+- **Lifecycle.** A key is inserted `active`, with its seed. The rotation that inserts its successor retires it:
+  `status` `retired`, `valid_until` the `event_ts` of the rotation's `security.audit_signing_key_rotated` record, which
+  is also the successor's `valid_from`, `retired_reason` the rotation's `reason`, and `sealed_seed` NULL (ADR-0039
+  Q3). A retired row still holding a seed is Q3's `retired_with_seed` finding until its destroy is retried. No CHECK
+  orders `valid_until` after `valid_from`: a clock stepped back between a key's creation and its rotation must not
+  refuse a compromise rotation, and the store takes both ends from the rotation record's `event_ts`.
+- **The rotation's idempotency record** (ADR-0039 decision 5). A rotated key's row carries its request's durable
+  record: `created_by`, the acting Owner; `client_ref`, the `Idempotency-Key` as canonical lower-case UUID text; and
+  `client_body_sha256`, its fingerprint (`request_fingerprint`, `api/idempotency.py`). The boot key has none
+  (`ask_request`: all three or none). It is read by `(env, created_by, client_ref)` (`ask_env_request`; the operation
+  is the table's one, `rotateAuditSigningKey`), never by the key alone (SR-E29-07): another user's or environment's key
+  is a missing one. No row is deleted, so a repeat at any age, the 24 h record gone too, rebuilds the rotation's own
+  `200` from this row and the one it retired (`version` one lower): the new key as it was then, `active`, even if it
+  has retired since.
+- **Privileges and triggers.** Trigger `trg_audit_signing_keys_write_once` (BEFORE UPDATE, per row, `ENABLE ALWAYS`;
+  function `audit_signing_keys_write_once_check()`, its `search_path` pinned) permits the retire (`active` to
+  `retired`, `valid_until` and `retired_reason` each set once), the seed's destroy (to NULL, in the retire's UPDATE or
+  a later one, never set again) and the KEK re-wrap (`dek_ref` and `kek_version` together, on a row holding its seed).
+  Any other change is refused with SQLSTATE 23514, naming the trigger as the constraint and the column, never a value:
+  `trg_audit_signing_keys_write_once: refused a change to audit_signing_keys.<column> (ADR-0039)`. That holds for
+  the trigger's own refusals; a change it permits but a CHECK refuses (clearing an active key's seed, say) is 23514
+  from the constraint, with the row in `DETAIL`, as under **Formats**. It is the only BEFORE UPDATE row trigger and
+  must stay last. The revision revokes DELETE from `cv_app` where the role exists, as `0024` does; the owner role and
+  superusers can bypass both. There is no BEFORE TRUNCATE guard, unlike `idempotency_anchors`: `cv_app` is never
+  granted TRUNCATE, so the revoked DELETE suffices, as for `auth_keys`.
+- **Backup, restore, migration.** The sealed seed is in the Postgres backups as ciphertext only, the KEK outside them
+  (§8.1). A rotation is revocation-class state: a restore re-applies one recorded after `covers_to`, never re-arming
+  the retired key (`e42-admin.md` §6 step 8, #3084). Additive (C-5.1); the downgrade refuses while any row exists
+  (C-5.2).
+
 ### 3.2 Exchange accounts, API keys, profiles
 
 #### 3.2.1 `exchange_accounts`
@@ -4151,6 +4245,7 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | `incidents` (PG)                      | ∞ while open       | —                                      | 24 mo         | drop                         | Resolved rows only; from `last_seen_at`                                           |
 | `outbox` processed (PG)               | 7 d                | —                                      | 7 d           | drop                         | Dead-lettered rows kept 90 d                                                      |
 | `backups` (PG)                        | ∞                  | —                                      | ∞             | —                            | Metadata only                                                                     |
+| `audit_signing_keys` (PG)             | ∞                  | —                                      | ∞             | —                            | No row is deleted: a retired key verifies the exports it signed (§3.1.5b)         |
 | `risk_*`, `kill_switch_state` (PG)    | ∞                  | —                                      | ∞             | —                            | Part of the accountability trail (§3.11)                                          |
 
 Changing any retention value is a dangerous action: it requires the `recording:write` permission with step-up (04 §7.2.2 row 9), writes a `retention.change` audit entry with before/after, and the UI shows the computed volume delta before confirmation.
@@ -4167,7 +4262,8 @@ Changing any retention value is a dangerous action: it requires the `recording:w
 | Postgres (logical)                                                           | `pg_dump -Fc` per schema                                                   | Daily 01:30 UTC                      | 14 days                              | 24 h          | ≤ 15 min (single table restore) |
 | QuestDB                                                                      | `SNAPSHOT PREPARE` → filesystem/ZFS snapshot → rsync → `SNAPSHOT COMPLETE` | Daily 02:00 UTC                      | 7 days                               | 24 h          | ≤ 60 min                        |
 | Parquet lake                                                                 | rsync/restic to the backup volume, incremental, content-addressed          | Daily 03:30 UTC after compaction     | 30 days of restic snapshots          | 24 h          | hours (large)                   |
-| Secrets (KEK, audit signing key)                                             | Manual, offline, encrypted, **never** in the repo or DB                    | On change                            | 3 generations                        | n/a           | manual                          |
+| Secrets (KEK, the audit checkpoint signing key of #1238)                     | Manual, offline, encrypted, **never** in the repo or DB                    | On change                            | 3 generations                        | n/a           | manual                          |
+| Audit export signing key: `audit_signing_keys.sealed_seed` (§3.1.5b)         | In the Postgres backups above, sealed only; the KEK is kept outside them   | With Postgres                        | As Postgres                          | As Postgres   | As Postgres (needs the KEK)     |
 | Config bundle (compose files, postgresql.conf, questdb.conf, launch scripts) | git + tarball into backups                                                 | On change + weekly                   | 12 weeks                             | n/a           | minutes                         |
 
 All backup artefacts are encrypted at rest (restic repository password / age recipient), and every run writes a `backups` row (§3.10.3). A failed or missing daily backup raises a `critical` system event and blocks the next release per the PRR gate in `07-release-and-prr.md`.
@@ -4330,6 +4426,7 @@ NAMING_CONVENTION = {
 | `0042_sessions_view_as`         | `sessions.view_as_*` (eight nullable columns), CHECKs `sessions_view_as_shape` and `sessions_view_as_end_reason`, the target FK `ON DELETE RESTRICT`, three partial indexes (§3.1.4) — **#3085 S2a**; the downgrade refuses while a row names a context                                    |
 | `0044_account_no_hard_delete`   | `REVOKE DELETE ON exchange_accounts FROM cv_app` (§3.2.1): no hard delete of an account, the last item of the `api_keys` write-once guarantee — **#2758**; the downgrade (rollback only) grants DELETE back                                                                                |
 | `0045_audit_chain_hardening`    | `audit_chain()` gets its own `search_path` and draws `audit_log.id` under the chain lock (§3.10.1), so no session's path or insert path forks the chain while `CACHE 1` and READ COMMITTED hold — **#889 S3** (SR-E42-10), **#4032**; the downgrade restores 0003's function               |
+| `0046_audit_signing_keys`       | `audit_signing_keys`, the audit export signing keys (§3.1.5b, ADR-0039): sealed seeds, KEK-wrapped DEKs, one active key per environment, trigger `trg_audit_signing_keys_write_once`, no DELETE for `cv_app` — **#889 S4**; the downgrade refuses while any row exists                     |
 | `NNNN_idempotency_anchors`      | `idempotency_anchors`, its six CHECKs, `ux_ia_principal_ref`, its two triggers, no `DELETE` or `TRUNCATE` for `cv_app` (§3.3.10), `orders.provenance` (§3.3.4) — **E29-T04 #913**, planned: the next free revision when its implementation lands, re-parented per merge order (C-5.3)      |
 
 ---
@@ -4645,6 +4742,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `mfa_challenges`                                       | `nonce`                                 | S          | SHA-256 hex digest of `mfa_token` (UTF-8 bytes) | 24 h TTL; raw token never stored                                                                                                                |
 | `recovery_codes`                                       | `code_hash`                             | S          | HMAC-SHA256 under the KEK-wrapped recovery key  | Plaintext shown once at generation; new digests bind the user (§3.1.5a); deleted when the user is purged (O6, below)                            |
 | `auth_keys`                                            | `dek_ref`                               | S          | AES-256-GCM wrap under the environment's KEK    | Unwrapped only inside M2; the key never leaves `secrets` and is never logged, returned or exported; useless without the KEK                     |
+| `audit_signing_keys`                                   | `sealed_seed`, `dek_ref`                | S          | AES-256-GCM seal; DEK wrapped by the env KEK    | The seed opens only inside M2, for one signing call, zeroed after it; never logged, returned or exported; destroyed at retirement (§3.1.5b)     |
 | `api_keys`                                             | `key_id_enc`, `secret_enc`              | S          | AES-256-GCM, DEK wrapped by external KEK        | Only the credential broker may decrypt; every decryption writes `api_key.reveal_attempt`-class telemetry; **no API endpoint ever returns them** |
 | `api_keys`                                             | `enc_nonce`, `dek_ref`                  | S          | —                                               | Useless alone but treated as secret                                                                                                             |
 | `api_keys`                                             | `key_id_last4`                          | P0         | plaintext                                       | Safe display tail                                                                                                                               |

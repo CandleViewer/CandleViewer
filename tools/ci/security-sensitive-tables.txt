@@ -7,6 +7,7 @@
 # One table name per line; '#' starts a comment; blank lines ignored.
 api_keys
 auth_keys
+audit_signing_keys
 exchange_accounts
 account_profiles
 account_profile_revisions

@@ -6,8 +6,8 @@ and the public key, as `cred_aad` binds an exchange key's fields. Every open bui
 the process environment, the KEK's, which the caller passes, and refuses a row that names another
 (C-2.11). The KEK version is bound only in the DEK's own wrap under the KEK, which S6 adds under a
 label of its own (e.g. `cv-export-dek-v1`), like `dek_aad`: a KEK rotation re-wraps only the DEK,
-the sealed seed never changes once created, and S4's write-once trigger need allow only the
-re-wrap's DEK columns and Q3's destroy. The DEK is a 32-byte `bytearray` the caller zeroes; every
+the sealed seed never changes once created, and S4's write-once trigger allows only the retire, Q3's
+destroy and the re-wrap's DEK columns. The DEK is a 32-byte `bytearray` the caller zeroes; every
 call here drops its own name for it, so no frame of a refusal holds it, as `broker._borrow` drops
 its plaintext (C-12.6).
 
