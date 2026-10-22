@@ -933,6 +933,8 @@ COMMENT ON COLUMN audit_signing_keys.dek_ref IS 'SECRET: the row''s DEK wrapped 
   Q3). A retired row still holding a seed is Q3's `retired_with_seed` finding until its destroy is retried. No CHECK
   orders `valid_until` after `valid_from`: a clock stepped back between a key's creation and its rotation must not
   refuse a compromise rotation, and the store takes both ends from the rotation record's `event_ts`.
+  If that `event_ts` precedes the retired key's `valid_from`, the store still writes both ends at it, never refusing
+  or clamping, and logs a warning, `audit.export_key.clock_anomaly`, naming only the environment and the two key ids.
 - **The rotation's idempotency record** (ADR-0039 decision 5). A rotated key's row carries its request's durable
   record: `created_by`, the acting Owner; `client_ref`, the `Idempotency-Key` as canonical lower-case UUID text; and
   `client_body_sha256`, its fingerprint (`request_fingerprint`, `api/idempotency.py`). The boot key has none
@@ -4957,7 +4959,7 @@ Enforcement:
 
 - A CI check parses the migration DDL and asserts every column listed above carries a matching `COMMENT ON COLUMN` tag (`PII:` / `SECRET:`).
 - A column outside the table above is class P0. In the three statechart persistence tables (24 §17.6) every such column carries a `P0:` comment with its meaning, so each of their columns declares its class; the CI check above still asserts only the `PII:` and `SECRET:` tags of the listed columns.
-- A Semgrep rule forbids `SELECT *` on `users`, `api_keys`, `auth_keys`, `mfa_methods`, `sessions`, `alerts` in application code.
+- A Semgrep rule forbids `SELECT *` on `users`, `api_keys`, `auth_keys`, `audit_signing_keys`, `mfa_methods`, `sessions`, `alerts` in application code.
 - The structured logger has a deny-list of field names; a unit test asserts that logging a model instance containing a secret field emits `[redacted]`.
 - Parquet exports of OMS tables exclude every S-class column by explicit projection, and the exporter test asserts the written schema contains none of them.
 - Purging a user never rewrites audit rows (decision O6, C-5.7, C-12.8). `audit_log.actor_label` is retained verbatim: `trg_audit_append` refuses `UPDATE`/`DELETE` and the label is hashed into `entry_hash`, so a row keeps the name it was written with (`auth.login` the typed identifier, an invite the username). After the purge the user's own row holds the surrogate, so `actor_user_id` still groups the user's history and anything that names the actor by joining `users` on it gets the surrogate. The lifecycle records (`users.disable`, `users.delete`, `users.anonymise`) carry ids, status and times only.

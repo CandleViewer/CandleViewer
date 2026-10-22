@@ -275,6 +275,19 @@ class RewrapAuditNotWritten(StorageError):
     code = "STORAGE_REWRAP_AUDIT_NOT_WRITTEN"
 
 
+class ExportKeyAuditNotWritten(StorageError):
+    """An audit export signing key's generation or rotation record was not written (its
+    `record_id` is stored already), so the key's change rolled back with it (#889 S4b, C-2.9)."""
+
+    code = "STORAGE_EXPORT_KEY_AUDIT_NOT_WRITTEN"
+
+
+class ExportKeyRequestTaken(StorageError):
+    """A rotation's request is stored already (`ask_env_request`, 23505): a retry that raced."""
+
+    code = "STORAGE_EXPORT_KEY_REQUEST_TAKEN"
+
+
 class BackupWriteOnceViolation(StorageError):
     """`0032`'s guard refused an update of a `backups` row (SQLSTATE 23514, no constraint named): a
     write-once column, or a set-once one set again. Nothing changed; never the driver's text."""
@@ -367,6 +380,8 @@ ERROR_CODES: dict[type[StorageError], str] = {
     HotReplayReadTimeout: HotReplayReadTimeout.code,
     RewrapAuditNotWired: RewrapAuditNotWired.code,
     RewrapAuditNotWritten: RewrapAuditNotWritten.code,
+    ExportKeyAuditNotWritten: ExportKeyAuditNotWritten.code,
+    ExportKeyRequestTaken: ExportKeyRequestTaken.code,
     BackupWriteOnceViolation: BackupWriteOnceViolation.code,
     BackupCheckViolation: BackupCheckViolation.code,
     KcvEnrolmentNotAudited: KcvEnrolmentNotAudited.code,
