@@ -175,9 +175,9 @@ def _patch_decimal_money_type(source: str) -> str:
     pattern = _DECIMAL_PATTERN_RE.search(block.group(0))
     if pattern is None:
         raise RuntimeError(
-            "generate_protocol_models: the Decimal RootModel carries no pattern, so there is "
-            "no C6 pattern for the validator to enforce — restore `pattern` on the contract's "
-            "`Decimal` schema, or update _DECIMAL_PATTERN_RE."
+            "generate_protocol_models: the Decimal RootModel carries no pattern (or its literal "
+            "is not double-quoted), so there is no C6 pattern for the validator to enforce — "
+            "restore `pattern` on the contract's `Decimal` schema, or update _DECIMAL_PATTERN_RE."
         )
     replacement = _C6_DECIMAL_SOURCE.replace("__C6_PATTERN__", pattern.group(1))
     patched = source[: block.start()] + replacement + source[block.end() :]

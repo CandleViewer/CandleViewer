@@ -36,6 +36,10 @@ _REFUSED: dict[str, object] = {
     "padded": "  7 ",
     "trailing_newline": "7\n",
     "underscore": "7_000",
+    "plus_sign": "+5",
+    "no_whole_digits": ".5",
+    "no_fraction_digits": "5.",
+    "bare_minus": "-",
     "arabic_indic_digit": "\u0663",
     "nan": "NaN",
     "infinity": "Infinity",
@@ -165,6 +169,8 @@ async def test_post_with_a_bad_decimal_answers_the_project_422_with_a_bounded_bo
     assert [error["field"] for error in problem["errors"]] == ["body.max_position_notional_usd"]
     assert len(response.content) < 4096
     assert re.search(r"(.)\1{9999}", response.text) is None
+    # The message is the validator's constant one: it never echoes what the client sent.
+    assert not isinstance(bad, str) or bad[:20] not in response.text
 
 
 @pytest.mark.parametrize("sent", ["12.5", None])
