@@ -54,7 +54,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **A11y**: role `button` (native `<button>`), `aria-disabled` + `aria-describedby` pointing at the always-rendered reason text when disabled-with-reason (never the `disabled` attribute for an RBAC deny, so the control stays focusable and the reason reachable; a CMP-016 tooltip may echo it on hover and focus but is never the only copy), `aria-busy` when loading. Keyboard: `Enter`/`Space` activates; focus ring 2px offset.
 - **Tokens**: `color.action.*`, `color.buy`, `color.sell`, `radius.sm`, `space.button.*`, `elevation.0`.
 - **Storybook**: Default, AllVariants, AllSizes, Loading, DisabledWithReason, IconOnly, BuySellPair.
-- **Tests**: unit (variant/state matrix), visual regression (all variants × dark/light), axe, keyboard activation, RBAC-disabled-tooltip interaction test.
+- **Tests**: unit (variant/state matrix), visual regression (all variants × dark/light), axe, keyboard activation, RBAC-disabled-reason interaction test (reason text in the DOM at mount and referenced by `aria-describedby`; control stays focusable; activation does nothing; a tooltip echo, if present, is not the only copy).
 
 ### CMP-002 IconButton
 
@@ -767,7 +767,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Props**: `allowed: boolean` · `reason: string` (required when `allowed` is false; a key of the vocabulary in `docs/design/E09/E09-D09.md` §3) · `children` (any interactive component).
 - **A11y**: propagates `disabledReason` to the wrapped atom's native prop (CMP-001/002/004 etc. all accept it) rather than overlaying a separate non-semantic layer.
 - **Tokens**: n/a (behavioural wrapper).
-- **Storybook**: Allowed, Denied(Permission), Denied(OwnerOnly), Denied(Account), Denied(Env), Denied(ReadOnly), Denied(ViewAs), Denied(EnvMismatch).
+- **Storybook**: Allowed, Denied(Permission), Denied(OwnerOnly), Denied(Account), Denied(AccountReadOnly), Denied(Env), Denied(ReadOnly), Denied(ViewAs), Denied(EnvMismatch).
 - **Tests**: unit, visual, axe, RBAC-matrix interaction test (per role × action fixture).
 
 ### CMP-080 DockPanel (dockable container)
