@@ -121,7 +121,8 @@ def test_viewer_scope_is_every_source_it_holds_on_its_granted_accounts(env: Env)
 
 
 #: What a Viewer and a Manager hold of the sources' read and write permissions (`alerts`, `rules`,
-#: `orders`, `positions`), and nothing: none of these reaches a system row.
+#: `orders`, `positions`), and nothing: none of these reaches the system stream, only the system
+#: rows addressed to the caller.
 _ROLE_PERMS = {
     "viewer": VIEWER,
     "manager": VIEWER | {"rules:write", "alerts:write", "orders:write", "positions:write"},
@@ -138,6 +139,16 @@ def test_no_one_but_the_owner_gets_system_rows(env: Env, roles: str) -> None:
     assert env.scope(kind=["system"]).system is False
 
 
+@pytest.mark.parametrize("roles", sorted(_ROLE_PERMS))
+def test_every_caller_gets_the_system_rows_addressed_to_them(env: Env, roles: str) -> None:
+    """Row 34b's one exception (#3085): a row addressed to the caller, a view-as target's notice,
+    is theirs whatever they hold; it needs no permission, as the operation needs none."""
+    env.actor = Actor(USER, "s", _ROLE_PERMS[roles], frozenset({ACCT}))
+    assert env.scope().system_addressed is True
+    assert env.scope(kind=["system"]).system_addressed is True
+    assert env.scope(kind=["alert"]).system_addressed is False
+
+
 def test_a_user_without_orders_read_gets_no_order_source(env: Env) -> None:
     """Ticket security note: no order events for a viewer lacking `orders:read`."""
     env.actor = Actor(USER, "s", VIEWER - {"orders:read"}, frozenset({ACCT}))
@@ -148,7 +159,8 @@ def test_each_source_needs_its_own_permission(env: Env) -> None:
     env.actor = Actor(USER, "s", frozenset(), frozenset({ACCT}))
     s = env.scope()
     assert (s.alerts, s.rules, s.orders, s.system) == (False, False, False, False)
-    assert s.empty and env.rule_calls == 0  # no `rules:read`: the predicate is not even asked
+    assert env.rule_calls == 0  # no `rules:read`: the predicate is not even asked
+    assert s.system_addressed and not s.empty  # the caller's own notices need no permission
 
 
 def test_owner_scope_is_every_account_the_listed_rules_and_the_system_stream(env: Env) -> None:
@@ -204,6 +216,8 @@ def test_scope_is_pure_over_the_actor() -> None:
     assert notification_scope(a, ("alert",), frozenset()).alerts is True
     owner = Actor(USER, "s", frozenset(), frozenset(), is_owner=True)
     assert notification_scope(owner, ("system",), frozenset()).system is True
+    assert notification_scope(a, ("system",), frozenset()).system_addressed is True
+    assert notification_scope(a, ("alert",), frozenset()).system_addressed is False
 
 
 # --- the read ----------------------------------------------------------------------------

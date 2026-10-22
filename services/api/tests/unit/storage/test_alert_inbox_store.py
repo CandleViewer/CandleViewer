@@ -218,7 +218,7 @@ async def test_list_binds_the_scope_and_fetches_one_extra_row() -> None:
     assert p["limit"] == 3 and p["unread_only"] is True and p["user"] == "u1"
     assert (p["rules"], p["rule_ids"]) == (True, ["r1", "r2"])
     assert (p["all_accounts"], p["accounts"]) == (False, ["acc"])
-    assert (p["system"], p["env"]) == (False, "demo")
+    assert (p["system"], p["system_addressed"], p["env"]) == (False, False, "demo")
     assert p["rule_kinds"] == list(RULE_EVENT_KINDS) and p["order_kinds"] == list(ORDER_EVENT_KINDS)
     assert (p["after_ts"], p["after_src"], p["after_id"]) == (None, None, None)
 
@@ -229,6 +229,25 @@ async def test_the_owner_scope_binds_every_account_and_the_system_stream() -> No
     assert await repo.list_page(owner) == ([], None)
     p = rel.calls[0][1]
     assert p["all_accounts"] is True and p["accounts"] == [] and p["system"] is True
+
+
+async def test_an_addressed_scope_binds_the_caller_and_reads_only_their_system_rows() -> None:
+    """#3085 S13a: a caller without the stream reads the system rows addressed to them, by
+    their own id, and no other user's."""
+    repo, rel = _union(_Result([]))
+    addressed = NotificationScope(user_id="u1", system_addressed=True)
+    assert await repo.list_page(addressed) == ([], None)
+    ((sql, p),) = rel.calls
+    assert (p["system"], p["system_addressed"], p["user"]) == (False, True, "u1")
+    assert (
+        "WHERE (CAST(:system AS boolean) OR (CAST(:system_addressed AS boolean) "
+        "AND se.recipient_user_id = CAST(:user AS uuid))) "
+    ) in sql
+
+
+def test_a_scope_holding_only_the_addressed_rows_is_not_empty() -> None:
+    assert not NotificationScope(user_id="u1", system_addressed=True).empty
+    assert NotificationScope(user_id="u1").empty
 
 
 async def test_a_cursor_binds_the_keyset() -> None:
@@ -266,7 +285,8 @@ async def test_the_union_applies_each_sources_own_filter() -> None:
     assert "o.exchange_account_id = ANY(CAST(:accounts AS uuid[]))" in sql
     assert "oe.kind::text = ANY(CAST(:order_kinds AS text[]))" in sql
     assert "ret_msg" not in sql and "payload" not in sql
-    # system: the Owner's alone (the scope says so: no role-filtered path exists), no `details`
+    # system: the stream for the Owner, the rows addressed to the caller for anyone (the scope
+    # says which; no role-filtered path exists), no `details`
     assert "CAST(:system AS boolean)" in sql and "component" not in sql
     assert "details" not in sql
     # C-2.11: every account-bound branch (rule, order, system) is this environment's only
