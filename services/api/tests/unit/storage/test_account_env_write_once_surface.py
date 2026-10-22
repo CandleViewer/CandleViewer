@@ -5,8 +5,9 @@ database. These tests hold the same premise in code, as `tests/unit/credentials_
 test_write_once_surface.py` does for `api_keys`: after the INSERT that creates an account, no SQL
 string under `candleviewer/` assigns `env` in an UPDATE or upsert of `exchange_accounts`, and none
 MERGEs into it; the `exchange_accounts` Table is named in code only where it is defined, to read
-it by the modules in `_READERS` (the profiles and trade-group stores), and as a dict key by the
-pinned table of guarded privileges (#3998); and the PATCH body of
+it by the modules in `_READERS` (the profiles and trade-group stores), and, in the pinned table of
+guarded privileges (#3998), as a `str` key of the dict display it assigns to `GUARDED_PRIVILEGES`
+(any other reference there, a second dict's key included, is flagged); and the PATCH body of
 `/exchange-accounts/{accountId}` carries no environment. The store's own patch and its typed error
 for a refusal are pinned in `test_accounts_store_sqlalchemy.py`. They stop an honest regression,
 not a deliberate bypass: the trigger is the enforcement.
@@ -51,9 +52,10 @@ _READERS = frozenset(
     }
 )
 _READS = frozenset({"import", "columns", "select_from"})
-#: The pinned table of what the revisions revoke from `cv_app` (#3998) names the table as a dict
-#: key only (`key`), which the boot check binds as a `has_table_privilege` parameter: no row is
-#: read or written. Any other reference in it is still flagged.
+#: The pinned table of what the revisions revoke from `cv_app` (#3998) names the table only as a
+#: `str` key of the dict display it assigns to `GUARDED_PRIVILEGES` (`key`), which the boot check
+#: binds as a `has_table_privilege` parameter: no row is read or written. Any other reference in
+#: it, a second dict's key or a Name or attribute key included, is still flagged.
 _PRIVILEGE_TABLE = Path("storage/guarded_privileges.py")
 _ENVIRONMENT = ("env", "environment")
 
@@ -208,11 +210,34 @@ def test_the_scan_passes_a_string_that_cannot_change_env(
 
 
 # -- The Table, which Core and the ORM write through with no SQL string
-def _shape(node: ast.AST, parent: ast.AST | None) -> str | None:
+def _pinned_keys(tree: ast.Module) -> set[ast.expr]:
+    """The `str` keys of the dict display that a module-level `GUARDED_PRIVILEGES = ...` (plain or
+    annotated) assigns, through a `MappingProxyType(...)` call or not; nothing else is exempt."""
+    keys: set[ast.expr] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(isinstance(t, ast.Name) and t.id == "GUARDED_PRIVILEGES" for t in targets):
+            continue
+        value = node.value
+        match value:
+            case ast.Call(func=ast.Name(id="MappingProxyType"), args=[inner]):
+                value = inner
+            case ast.Call(func=ast.Attribute(attr="MappingProxyType"), args=[inner]):
+                value = inner
+        if isinstance(value, ast.Dict):
+            keys |= {
+                k for k in value.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            }
+    return keys
+
+
+def _shape(node: ast.AST, parent: ast.AST | None, pinned: set[ast.expr]) -> str | None:
     """How `node` names the Table: `import`, `columns` (`exchange_accounts.c`), `select_from`
-    (its argument), `key` (a dict key), `other` (`sa.update(exchange_accounts)`,
-    `exchange_accounts.insert()`, an ORM `__tablename__`, a reflected `Table(...)`), or None when
-    it does not name it."""
+    (its argument), `key` (one of the `pinned` keys of `GUARDED_PRIVILEGES`), `other`
+    (`sa.update(exchange_accounts)`, `exchange_accounts.insert()`, an ORM `__tablename__`, a
+    reflected `Table(...)`, any other dict key), or None when it does not name it."""
     match node:
         case ast.alias(name=name, asname=asname) if _TABLE in (name.rpartition(".")[2], asname):
             return "import"
@@ -224,7 +249,7 @@ def _shape(node: ast.AST, parent: ast.AST | None) -> str | None:
                     return "select_from"
             return "other"
         case ast.Constant(value="exchange_accounts"):
-            return "key" if isinstance(parent, ast.Dict) and node in parent.keys else "other"
+            return "key" if node in pinned else "other"
         case _:
             return None
 
@@ -234,21 +259,28 @@ def _table_uses(root: Path = _PKG) -> list[tuple[Path, int, str]]:
     `migrations/versions` (DDL); docstrings are prose and skipped."""
     found: list[tuple[Path, int, str]] = []
 
-    def walk(node: ast.AST, parent: ast.AST | None, rel: Path, prose: set[ast.expr]) -> None:
-        if node not in prose and (shape := _shape(node, parent)) is not None:
+    def walk(
+        node: ast.AST,
+        parent: ast.AST | None,
+        rel: Path,
+        prose: set[ast.expr],
+        pinned: set[ast.expr],
+    ) -> None:
+        if node not in prose and (shape := _shape(node, parent, pinned)) is not None:
             found.append((rel, int(getattr(node, "lineno", 0)), shape))
         for child in ast.iter_child_nodes(node):
-            walk(child, node, rel, prose)
+            walk(child, node, rel, prose, pinned)
 
     for rel, tree in _modules(root):
-        walk(tree, None, rel, _prose(tree))
+        pinned = _pinned_keys(tree) if rel == _PRIVILEGE_TABLE else set()
+        walk(tree, None, rel, _prose(tree), pinned)
     return found
 
 
 def _table_writers(root: Path = _PKG) -> list[str]:
     """`path:line` of each reference that could write the Table: any outside its definition, the
     readers and the privilege table, in a reader any but a read, in the privilege table any but a
-    dict key."""
+    `str` key of `GUARDED_PRIVILEGES`."""
     return [
         f"{rel.as_posix()}:{line}"
         for rel, line, shape in _table_uses(root)
@@ -265,6 +297,10 @@ def test_only_the_definition_and_the_listed_readers_name_the_accounts_table() ->
 
 
 _IN_READER = min(_READERS).as_posix()
+#: The privilege table's own shape: an annotated assignment through `MappingProxyType(...)`.
+_PINNED = (
+    "GUARDED_PRIVILEGES: Final = MappingProxyType({'exchange_accounts': frozenset({'DELETE'})})"
+)
 #: `(module, source, path:line flagged)`: a reference that could write the Table.
 _TABLE_WRITES = {
     "any use elsewhere": (
@@ -304,6 +340,21 @@ _TABLE_WRITES = {
         [f"{_PRIVILEGE_TABLE.as_posix()}:1"],
     ),
     "a dict key elsewhere": ("repo.py", "P = {'exchange_accounts': 1}", ["repo.py:1"]),
+    "privilege table second dict": (
+        _PRIVILEGE_TABLE.as_posix(),
+        _PINNED + "\nOTHER = {'exchange_accounts': 1}",
+        [f"{_PRIVILEGE_TABLE.as_posix()}:2"],
+    ),
+    "privilege table attribute key": (
+        _PRIVILEGE_TABLE.as_posix(),
+        "GUARDED_PRIVILEGES = {models.exchange_accounts: frozenset()}",
+        [f"{_PRIVILEGE_TABLE.as_posix()}:1"],
+    ),
+    "privilege table name key": (
+        _PRIVILEGE_TABLE.as_posix(),
+        "GUARDED_PRIVILEGES = {exchange_accounts: frozenset()}",
+        [f"{_PRIVILEGE_TABLE.as_posix()}:1"],
+    ),
 }
 #: `(module, source)`: names the Table only to read it, or does not name it in code.
 _TABLE_READS = {
@@ -315,9 +366,10 @@ _TABLE_READS = {
     "foreign key": ("repo.py", "fk = ForeignKey('exchange_accounts.id')"),
     "read-only SQL": ("repo.py", "q = sa.text('SELECT id FROM exchange_accounts WHERE id = :id')"),
     "docstring": ("repo.py", '"""exchange_accounts"""'),
-    "privilege table key": (
+    "privilege table key": (_PRIVILEGE_TABLE.as_posix(), _PINNED),
+    "privilege table plain dict": (
         _PRIVILEGE_TABLE.as_posix(),
-        "P = {'exchange_accounts': frozenset({'DELETE'})}",
+        "GUARDED_PRIVILEGES = {'exchange_accounts': frozenset({'DELETE'})}",
     ),
     "its definition": (
         _DEFINITION.as_posix(),

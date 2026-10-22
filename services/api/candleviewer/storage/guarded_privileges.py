@@ -10,15 +10,19 @@ grants back. A column grant (`GRANT UPDATE (replayed_at)`, 0033) gives no table 
 
 `check_guarded_privileges` runs once at start-up, from `StorageService.start()` on the real
 backend once the tiers answer, on the storage tier's own connection, so it reads the role the app
-runs as. One statement asks `has_table_privilege(current_user, ...)` for every pinned pair
-(`repositories.guarded_privileges_sqlalchemy`). In `live`, a held pair, or a check that cannot
-run, refuses the start (`GuardedPrivilegesHeld`: fail closed). Elsewhere it is logged at ERROR and
-counted in `cv_db_guarded_privileges_held`, where a check that cannot run counts every pair, and
+runs as. One statement asks `has_table_privilege(current_user, ...)` for every pinned pair, each
+table looked up in schema `public` whatever the login's `search_path`
+(`repositories.guarded_privileges_sqlalchemy`). In `live`, a held pair, a pinned table missing
+from `public` (its pairs cannot be checked) or a check that cannot run refuses the start
+(`GuardedPrivilegesHeld`: fail closed). Elsewhere each is logged at ERROR and counted in
+`cv_db_guarded_privileges_held`, where a pair that could not be checked counts as held, the
+counts go to `StorageService.tier_health()` (`/readyz` is degraded while either is above 0) and
 the start goes on. A superuser, or the owner of a table (the dev compose `cv` login, a test
-container's superuser, `cv_owner`), holds every privilege there: that is reported once, and
-outside `live` it is not a violation. The log lines and the error name tables and privileges,
-never the role, the DSN or a driver's message (C-12.6). No driver import: the tripwire and the
-check read this module without a database.
+container's superuser, `cv_owner`), holds every privilege there: outside `live` that is logged
+once with `exempt=True` and is not a violation. The log lines and the error name tables and
+privileges, never the role, the DSN or a driver's message (C-12.6); `login_kind` says only
+whether the login is a superuser, an owner or the runtime role. No driver import: the tripwire
+and the check read this module without a database.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Final
 import structlog
 
 from candleviewer.storage.errors import GuardedPrivilegesHeld
+from candleviewer.storage.health import GuardedPrivilegesHealth
 
 if TYPE_CHECKING:
     from candleviewer.observability.metrics import MetricChild
@@ -83,11 +88,17 @@ class HeldPrivilege:
 
 @dataclass(frozen=True, slots=True)
 class PrivilegeReport:
-    """What one read found: the pinned pairs the role holds, and whether it is a superuser
-    (known once it holds one)."""
+    """What one read found: whether the role is a superuser, the pinned pairs it holds, and the
+    pinned tables missing from schema `public`, whose pairs it could not check."""
 
     superuser: bool
     held: tuple[HeldPrivilege, ...]
+    missing: tuple[str, ...]
+
+    @property
+    def tables_present(self) -> int:
+        """How many pinned tables the read found in `public`."""
+        return len(GUARDED_PRIVILEGES) - len(self.missing)
 
 
 async def check_guarded_privileges(
@@ -96,35 +107,60 @@ async def check_guarded_privileges(
     live: bool,
     gauge: MetricChild | None,
     timeout_s: float,
-) -> None:
-    """Read once within `timeout_s` and judge (see the module docstring). Raises
-    `GuardedPrivilegesHeld` in `live` only; a cancellation propagates."""
+) -> GuardedPrivilegesHealth:
+    """Read once within `timeout_s` and judge (see the module docstring); return what it counted.
+    Raises `GuardedPrivilegesHeld` in `live` only; a cancellation propagates."""
     try:
         async with asyncio.timeout(timeout_s):
             report = await read()
     except Exception as exc:  # TimeoutError too; by type only: a driver's text can name a host
         _log().error("storage_guarded_privileges_unchecked", error=type(exc).__name__, refused=live)
-        _publish(gauge, len(GUARDED_PAIRS))
-        if live:
-            raise GuardedPrivilegesHeld("the guarded privileges could not be checked") from None
-        return
+        unchecked = "the guarded privileges could not be checked"
+        return _judged(gauge, len(GUARDED_PAIRS), 0, live=live, problem=unchecked)
     owned = any(h.via_owner for h in report.held)
-    role = "superuser" if report.superuser else "owner" if owned else "runtime"
-    if owned and not live:  # a dev or test cluster: reported once, not a violation
-        _log().warning("storage_guarded_privileges_privileged_role", role=role)
-    found = report.held if live else tuple(h for h in report.held if not h.via_owner)
-    _publish(gauge, len(found))
-    if not found:
-        _log().info("storage_guarded_privileges_checked", pairs=len(GUARDED_PAIRS))
-        return
-    names = [f"{h.table}.{h.privilege}" for h in found]
-    _log().error("storage_guarded_privileges_held", held=names, role=role, refused=live)
-    if live:
-        raise GuardedPrivilegesHeld(
-            "the runtime role holds guarded privileges: " + ", ".join(names)
+    login_kind = "superuser" if report.superuser else "owner" if owned else "runtime"
+    exempt = (report.superuser or owned) and not live  # a dev or test cluster: no violation
+    present = report.tables_present
+    if exempt:
+        _log().warning(
+            "storage_guarded_privileges_privileged_role",
+            login_kind=login_kind,
+            exempt=True,
+            tables_present=present,
         )
+    found = report.held if live else tuple(h for h in report.held if not h.via_owner)
+    problems: list[str] = []
+    if found:
+        names = [f"{h.table}.{h.privilege}" for h in found]
+        _log().error(
+            "storage_guarded_privileges_held", held=names, login_kind=login_kind, refused=live
+        )
+        problems.append("the runtime role holds guarded privileges: " + ", ".join(names))
+    if report.missing:
+        missing = list(report.missing)
+        _log().error(
+            "storage_guarded_privileges_tables_missing",
+            missing=missing,
+            tables_present=present,
+            refused=live,
+        )
+        problems.append("pinned tables missing from schema public: " + ", ".join(missing))
+    if not (exempt or problems):
+        _log().info(
+            "storage_guarded_privileges_checked", pairs=len(GUARDED_PAIRS), tables_present=present
+        )
+    unchecked_pairs = sum(len(GUARDED_PRIVILEGES.get(t, frozenset())) for t in report.missing)
+    held = len(found) + unchecked_pairs
+    return _judged(gauge, held, len(report.missing), live=live, problem="; ".join(problems))
 
 
-def _publish(gauge: MetricChild | None, held: int) -> None:
+def _judged(
+    gauge: MetricChild | None, held: int, missing: int, *, live: bool, problem: str
+) -> GuardedPrivilegesHealth:
+    """Publish `held`; in `live` refuse when there is a `problem`; else return the counts. The
+    refusal drops the context a failed read would chain to it: a driver's text can name a host."""
     if gauge is not None:
         gauge.set(held)
+    if live and problem:
+        raise GuardedPrivilegesHeld(problem) from None
+    return GuardedPrivilegesHealth(held=held, missing=missing)

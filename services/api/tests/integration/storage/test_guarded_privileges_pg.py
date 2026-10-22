@@ -5,9 +5,11 @@ Bootstrapped with the shipped `infra/scripts/pg_bootstrap.sql` and migrated to h
 the check passes in `live`. `GRANT DELETE ON exchange_accounts TO cv_app` is the violation it names
 and refuses in `live`; the test revokes it again. `cv_owner` holds every pinned privilege as the
 tables' owner and the container's superuser as a superuser: each is reported, and is no violation
-outside `live`. A database migrated to head before the roles exist (the guards' no-op branch)
-keeps every relation's ACL at its default. `testcontainers` in CI only; the unit tests are
-`tests/unit/storage/test_guarded_privileges.py`.
+outside `live`. On an empty database every pinned table is missing from `public`, so nothing can
+be checked and `live` refuses; a `search_path` set on the `cv_app` login hides no table, since
+each is looked up in `public`. A database migrated to head before the roles exist (the guards'
+no-op branch) keeps every relation's ACL at its default. `testcontainers` in CI only; the unit
+tests are `tests/unit/storage/test_guarded_privileges.py`.
 """
 
 from __future__ import annotations
@@ -30,10 +32,12 @@ from testcontainers.postgres import PostgresContainer
 from candleviewer.storage.errors import GuardedPrivilegesHeld
 from candleviewer.storage.guarded_privileges import (
     GUARDED_PAIRS,
+    GUARDED_PRIVILEGES,
     HeldPrivilege,
     PrivilegeReport,
     check_guarded_privileges,
 )
+from candleviewer.storage.health import GuardedPrivilegesHealth
 from candleviewer.storage.repositories.guarded_privileges_sqlalchemy import (
     SqlAlchemyGuardedPrivileges,
 )
@@ -46,6 +50,7 @@ pytestmark = pytest.mark.integration
 _ROOT = Path(__file__).resolve().parents[3]
 _BOOTSTRAP = _ROOT.parents[1] / "infra" / "scripts" / "pg_bootstrap.sql"
 _ROLELESS = "roleless"
+_EMPTY = "empty"
 _GRANT = "GRANT DELETE ON exchange_accounts TO cv_app"
 _REVOKE = "REVOKE DELETE ON exchange_accounts FROM cv_app"
 
@@ -76,11 +81,13 @@ def _alembic_head(dsn: str) -> None:
 @pytest.fixture(scope="module")
 def pg_dsn() -> Iterator[str]:
     """Superuser DSN of `candleviewer`, set up like production: `pg_bootstrap.sql`, then head as
-    `cv_owner`. First, before the roles exist, `roleless` is migrated to head as the superuser."""
+    `cv_owner`. First, before the roles exist, `roleless` is migrated to head as the superuser;
+    `empty` is never migrated."""
     with PostgresContainer("postgres:16-alpine", dbname="candleviewer") as container:
         dsn = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+asyncpg")
         with _conn(dsn) as c:
-            c.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(_ROLELESS)))
+            for name in (_ROLELESS, _EMPTY):
+                c.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
         _alembic_head(_database(dsn, _ROLELESS))
         info = psycopg.conninfo.conninfo_to_dict(dsn.replace("postgresql+asyncpg", "postgresql"))
         psql = shutil.which("psql")
@@ -109,7 +116,7 @@ async def _read_as(dsn: str) -> AsyncIterator[SqlAlchemyGuardedPrivileges]:
 
 async def test_cv_app_at_head_holds_no_guarded_privilege_and_live_starts(pg_dsn: str) -> None:
     async with _read_as(_login(pg_dsn, "cv_app")) as reader:
-        assert await reader.held() == PrivilegeReport(False, ())
+        assert await reader.held() == PrivilegeReport(False, (), ())
         await check_guarded_privileges(reader.held, live=True, gauge=None, timeout_s=10.0)
 
 
@@ -119,7 +126,7 @@ async def test_a_delete_granted_back_is_named_and_refused_in_live(pg_dsn: str) -
         try:
             async with _read_as(_login(pg_dsn, "cv_app")) as reader:
                 held = (HeldPrivilege("exchange_accounts", "DELETE", via_owner=False),)
-                assert await reader.held() == PrivilegeReport(False, held)
+                assert await reader.held() == PrivilegeReport(False, held, ())
                 with pytest.raises(GuardedPrivilegesHeld, match=r"exchange_accounts\.DELETE$"):
                     await check_guarded_privileges(
                         reader.held, live=True, gauge=None, timeout_s=10.0
@@ -136,13 +143,43 @@ async def test_an_owner_or_superuser_holds_every_pair_and_is_refused_only_in_liv
 ) -> None:
     async with _read_as(pg_dsn if superuser else _login(pg_dsn, "cv_owner")) as reader:
         report = await reader.held()
-        assert report.superuser is superuser
+        assert report.superuser is superuser and report.missing == ()
         assert sorted((h.table, h.privilege, h.via_owner) for h in report.held) == [
             (table, privilege, True) for table, privilege in GUARDED_PAIRS
         ]
         await check_guarded_privileges(reader.held, live=False, gauge=None, timeout_s=10.0)
         with pytest.raises(GuardedPrivilegesHeld):
             await check_guarded_privileges(reader.held, live=True, gauge=None, timeout_s=10.0)
+
+
+async def test_an_empty_database_misses_every_pinned_table_and_live_refuses(pg_dsn: str) -> None:
+    async with _read_as(_database(_login(pg_dsn, "cv_app"), _EMPTY)) as reader:
+        assert await reader.held() == PrivilegeReport(False, (), tuple(sorted(GUARDED_PRIVILEGES)))
+        counted = await check_guarded_privileges(
+            reader.held, live=False, gauge=None, timeout_s=10.0
+        )
+        assert counted == GuardedPrivilegesHealth(
+            held=len(GUARDED_PAIRS), missing=len(GUARDED_PRIVILEGES)
+        )
+        with pytest.raises(
+            GuardedPrivilegesHeld, match=r"^pinned tables missing from schema public"
+        ):
+            await check_guarded_privileges(reader.held, live=True, gauge=None, timeout_s=10.0)
+
+
+async def test_a_search_path_on_the_login_hides_no_pinned_table(pg_dsn: str) -> None:
+    """Before the fix the statement resolved each name through the session's path, so with
+    `search_path = pg_catalog` a held DELETE read as no table at all, and as a pass."""
+    with _conn(pg_dsn) as superuser, _conn(_login(pg_dsn, "cv_owner")) as owner:
+        superuser.execute("ALTER ROLE cv_app SET search_path = pg_catalog")
+        try:
+            owner.execute(_GRANT)
+            async with _read_as(_login(pg_dsn, "cv_app")) as reader:
+                held = (HeldPrivilege("exchange_accounts", "DELETE", via_owner=False),)
+                assert await reader.held() == PrivilegeReport(False, held, ())
+        finally:
+            owner.execute(_REVOKE)
+            superuser.execute("ALTER ROLE cv_app RESET search_path")
 
 
 def test_head_on_a_cluster_without_the_roles_leaves_every_relation_acl_untouched(

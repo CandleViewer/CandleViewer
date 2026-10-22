@@ -119,14 +119,20 @@ def make_health_router(
                 ok = rep.status is HealthStatus.OK
                 checks.append(ReadyCheck(name="accounts", ok=ok, detail=rep.detail))
         if storage_health is not None:  # #3874: one check per real tier, its latest probe
+            storage = storage_health()
             checks.extend(
                 ReadyCheck(
                     name=f"storage_{t.tier}",
                     ok=t.state is TierState.OK,
                     detail="" if t.state is TierState.OK else t.state.value,
                 )
-                for t in storage_health().tiers
+                for t in storage.tiers
             )
+            # #3998: the start's guarded-privilege check; `live` refuses to start rather than count
+            if (privileges := storage.guarded_privileges) is not None:
+                ok = privileges.held == 0 and privileges.missing == 0
+                detail = "" if ok else f"held={privileges.held} missing={privileges.missing}"
+                checks.append(ReadyCheck(name="storage_guarded_privileges", ok=ok, detail=detail))
         degraded = any(not c.ok for c in checks)
         return ReadinessResponse(
             status="degraded" if degraded else "ok",

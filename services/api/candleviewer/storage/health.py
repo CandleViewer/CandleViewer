@@ -35,12 +35,26 @@ class TierHealth(BaseModel):
     detail: str = ""
 
 
+class GuardedPrivilegesHealth(BaseModel):
+    """What the start's guarded-privilege check counted (#3998, `storage.guarded_privileges`):
+    `held`, the pinned pairs counted against the login as `cv_db_guarded_privileges_held` counts
+    them (a pair that could not be checked too), and `missing`, the pinned tables not in schema
+    `public`. Either above 0 makes `/readyz` degraded; `live` refuses to start instead."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    held: int
+    missing: int
+
+
 class StorageHealthReport(BaseModel):
     """`StorageService.health()`'s return value: one `TierHealth` per tier."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     tiers: tuple[TierHealth, ...]
+    #: The start's guarded-privilege check on the real backend (#3998); None until it has run.
+    guarded_privileges: GuardedPrivilegesHealth | None = None
 
     def overall_ok(self) -> bool:
         """`True` only if every tier reports `ok` (used by readiness gates

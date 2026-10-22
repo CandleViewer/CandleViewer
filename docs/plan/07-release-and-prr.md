@@ -145,6 +145,7 @@ A drill run that exceeds either the RPO or RTO figure above for the system under
 - [ ] SAST (CodeQL/Semgrep/Bandit), SCA (Dependabot/pip-audit/npm audit), secrets scanning, DAST (OWASP ZAP), and container scan (Trivy) all clean or have accepted-risk sign-off with expiry dates for re-check.
 - [ ] STRIDE threat models for all Epics in this train's scope reviewed as a set (not just individually at Epic-close) for cross-Epic interaction risks.
 - [ ] Audit log verified append-only and complete for the actions in scope (account/key changes, rule changes, RBAC changes).
+- [ ] **The guarded-privilege boot check passes as `cv_app` in demo (#3998):** on staging the API's `CV_PG_DSN` names `cv_app`, its start logs `storage_guarded_privileges_checked` with every pinned table present, `cv_db_guarded_privileges_held` reads 0 and `/readyz`'s `storage_guarded_privileges` check is ok. Demo exempts an owner or superuser login, so this is the only run before `live` that holds the app's role to the pinned table (`20-architecture.md`, "Guarded privileges at boot").
 - [ ] API keys confirmed envelope-encrypted at rest; withdrawal permission confirmed OFF on all configured exchange keys (spot-check at least one account's key config in the admin screen during the review).
 
 ### 5.6 Rollback rehearsal

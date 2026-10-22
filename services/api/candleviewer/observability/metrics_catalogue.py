@@ -1433,8 +1433,9 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "privileges",
         (),
         "Pinned (table, privilege) pairs a revision revoked from cv_app that the app's login "
-        "holds, as the start checked them (storage.guarded_privileges, #3998); every pair while "
-        "the check could not run, and 0 for a superuser or table owner outside live.",
+        "holds, as the start checked them (storage.guarded_privileges, #3998); a pair it could "
+        "not check counts too (its table is missing from schema public, or the check could not "
+        "run), and 0 for a superuser or table owner outside live.",
         "> 0 = a guarded revoke did not apply (live refuses to start instead)",
         _L,
         "E07",
