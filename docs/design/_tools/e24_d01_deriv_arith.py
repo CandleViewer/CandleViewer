@@ -10,8 +10,10 @@ imminent-settlement charge with its pay / receive sign; (3) the countdown wordin
 remaining time in the one recorded ticker capture, the settlement restart taken from the ticker's
 next_funding_time_ms and never from the interval; (4) the cascade arithmetic of SCR-054's 500
 prints/s target against the 250 ms client bucket, Bybit's 500 ms batching (a cadence, not a loss)
-and the WS topic cadence read from `ws/topics.py`, and the covered span of the header readout when
-the recorder's coverage is shorter than its window; (5) the quadrant, OI-delta and basis definitions
+and the WS topic cadence read from `ws/topics.py`, the covered span of the header readout when
+the recorder's coverage is shorter than its window, and board 04's illustrative feed row (size x
+the recorded mark as the bankruptcy price = notional; no recorded print exists); (5) the quadrant,
+OI-delta and basis definitions
 per source, the two names of the quadrant metric code, the OI unit the classification runs on, the
 liquidation wire's note / batching / side sentences per source (23, 24, 22, research 06 and 08), the
 `22` `MetricCode` members the derivatives descriptors lack and the component token bindings F30
@@ -55,6 +57,9 @@ RESTART_MS = 28_800_000  # ticker next_funding_time_ms minus the settlement inst
 COVERAGE_WINDOW_MIN = 60  # memo F25: the header readout "Liq 1 h"
 COVERAGE_START_UTC = "09:14"  # the recorder's first available timestamp in the memo's example
 COVERAGE_READ_AT_UTC = "09:48"  # when the readout is read in that example
+FEED_SIZE = Decimal("0.498")  # Bookmap's aggregate (memo 3.7): board 04's illustrative feed row
+FEED_EVENTS = 8  # Bookmap: "8 separate liquidation events"; the illustrative row's cluster count
+FEED_TIME_UTC = "09:14:02"  # two seconds after the coverage start of the memo's example (F27)
 DERIV_24 = [  # 24 section 7.2 Derivatives table, in order
     "open_interest",
     "open_interest_value",
@@ -120,6 +125,15 @@ def annualised_pct(rate: Decimal, interval_min: int) -> str:
 def at_cap(rate: Decimal, cap: Decimal) -> str:
     """One magnitude for both limits (memo F9): compare |rate| with the cap and keep the sign."""
     return "within cap" if abs(rate) < cap else ("at upper cap" if rate > 0 else "at lower cap")
+
+
+def single_ratio(d: dict[str, str]) -> str:
+    """singleOpenInterest / openInterest on a frame (memo F2); "NOT FOUND" when either is absent."""
+    single, both = d.get("singleOpenInterest"), d.get("openInterest")
+    if not single or not both:
+        return "NOT FOUND"
+    ratio = (Decimal(single) / Decimal(both)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    return str(ratio)
 
 
 def hms(ms: int) -> str:
@@ -220,6 +234,11 @@ def fixtures() -> dict[str, object]:
         for r in recorded
         if r["data"].get("openInterestValue")
     ]
+    soi = [
+        float(r["data"]["singleOpenInterest"])
+        for r in recorded
+        if r["data"].get("singleOpenInterest")
+    ]
     manifest = json.loads(text(FIX + "manifest.json"))["fixtures"]
     files = {e["path"]: e["source"] for e in manifest if re.search(r"funding|tickers", e["path"])}
     names = [p.name.lower() for p in (ROOT / "packages/fixtures").rglob("*")]
@@ -237,6 +256,11 @@ def fixtures() -> dict[str, object]:
         "recorded_oi_min_max": [min(oi), max(oi)],
         "recorded_oi_value_min_max": [min(oiv), max(oiv)],
         "recorded_implied_price": round(oiv[0] / oi[0], 1),
+        "recorded_single_oi_frames": len(soi),
+        "recorded_single_oi_min_max": [min(soi), max(soi)] if soi else "NOT FOUND",
+        "recorded_single_oi": d.get("singleOpenInterest", "NOT FOUND"),
+        "recorded_single_oi_value": d.get("singleOpenInterestValue", "NOT FOUND"),
+        "recorded_single_to_both_oi_ratio": single_ratio(d),
         "recorded_mark_price": str(mark),
         "recorded_index_price": str(index),
         "recorded_last_price": d.get("lastPrice"),
@@ -360,6 +384,8 @@ def build() -> dict[str, object]:
     h0, m0 = (int(x) for x in COVERAGE_START_UTC.split(":"))
     h1, m1 = (int(x) for x in COVERAGE_READ_AT_UTC.split(":"))
     covered = min(COVERAGE_WINDOW_MIN, (h1 * 60 + m1) - (h0 * 60 + m0))
+    fx = fixtures()
+    mark = Decimal(str(fx["recorded_mark_price"]))
     pairs = []
     for fg, bg, bar, use in PAIRS:
         ratios = {t: contrast(themes[t][fg], themes[t][bg]) for t in themes}
@@ -433,8 +459,20 @@ def build() -> dict[str, object]:
             "rule": "covered span < window: state the span and carry the chip; "
             "no coverage in the window: not recorded",
         },
+        "illustrative_print": {
+            "recorded_print": False,
+            "note": "illustrative values: no recorded liquidation print exists (memo section 3.6)",
+            "time_utc": FEED_TIME_UTC,
+            "liquidated_side": "Long liquidated",
+            "size": str(FEED_SIZE),
+            "bankruptcy_price": str(mark),
+            "notional_usdt": str(
+                (FEED_SIZE * mark).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            ),
+            "cluster_events": FEED_EVENTS,
+        },
         "definitions": definitions(),
-        "fixtures": fixtures(),
+        "fixtures": fx,
         "sprints": sprints(),
         "contrast": pairs,
     }
