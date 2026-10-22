@@ -5,9 +5,10 @@ make, where a venue or a socket could echo them: the `auth` reply's text and con
 grant and three refusals), the subscribe acknowledgements, the pongs, a pushed row's fields
 known and unknown, a dropped socket's error and a failed dial's. None of it may reach an item
 the stream yields, an exception it raises (its text, chain or traceback), a structlog event, a
-stdlib log record (the `websockets` and `xstate_statemachine` loggers at DEBUG included) or the
-metric exposition. The stream masks its own values in every frame before reading it, as the REST
-client masks its answers, and raises bare fixed texts only.
+stdlib log record (the `xstate_statemachine` logger at DEBUG included; the real connector's
+`websockets` logger never enables DEBUG, `test_key_ws_probe.py`) or the metric exposition. The
+stream masks its own values in every frame before reading it, as the REST client masks its
+answers, and raises bare fixed texts only.
 """
 
 from __future__ import annotations
@@ -40,7 +41,15 @@ _KEY_IDS = st.text(
     alphabet="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789", min_size=18, max_size=36
 )
 _WHERE = st.sampled_from(
-    ["auth-reply", "refused-auth", "subscribe-reply", "pong", "push-fields", "socket-error"]
+    [
+        "auth-reply",
+        "refused-auth",
+        "subscribe-reply",
+        "pong",
+        "push-fields",
+        "socket-error",
+        "dial-error",
+    ]
 )
 
 
@@ -68,6 +77,12 @@ class _Echo(PrivateVenue):
             sock.push(_reply("pong", req_id=self.seeded, args=[self.seeded]))
             return
         super().answer(sock, message)
+
+    async def connect(self, url: str) -> VenueSocket:
+        if self.where == "dial-error" and self.seeded:  # each redial fails, the echo its text
+            self.dialled.append(url)
+            raise ConnectionRefusedError(self.seeded)
+        return await super().connect(url)
 
 
 def _reply(name: str, **fields: Any) -> str:
@@ -102,6 +117,8 @@ async def _run(key_id: str, where: str, calls: list[Call]) -> list[str]:
     elif where == "socket-error":
         venue.socket.drop_text = venue.seeded  # the failed read carries the echo
         venue.socket.drop()
+    elif where == "dial-error":
+        venue.socket.drop()  # the redials fail, their errors carrying the echo
     await clock.advance(60)
     out = [item.model_dump_json() for item in consumer.items]
     out += [repr(item) for item in consumer.items]

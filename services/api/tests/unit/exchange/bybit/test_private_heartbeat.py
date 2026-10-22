@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from candleviewer.exchange.base.models import PrivateStreamStatus
 from candleviewer.exchange.bybit.private_stream import WATCHDOG_S, PrivateStreams
 from tests.chaos.ingestion._clock import VirtualClock
 from tests.unit.exchange.bybit._private import raw
@@ -92,3 +93,33 @@ async def test_the_deadline_is_absolute_held_outside_the_chart_and_pong_never_se
     assert sent == []
     conn._interp.send = real
     await _end(streams, consumer)
+
+
+async def test_a_stalled_consumer_finds_one_heartbeat_pending_and_at_most_five_statuses() -> None:
+    """CR-G8B-C-02, ruling 9: four pongs into an unread stream leave one `heartbeat` pending, not
+    five; and an epoch's statuses never pile up behind the next one's, as the redial waits until
+    the `down` is read, so the consumer finds at most five statuses unread."""
+    clock = VirtualClock()
+    venue = PrivateVenue(clock)
+    streams = make_streams(venue)
+    stream = await streams.open(account())
+    await clock.advance(21)  # live at once, then four pongs; nothing read
+    [conn] = streams._conns.values()
+
+    def unread() -> list[str]:
+        items = conn.queue._items
+        return [f"{i.state}:{i.reason}" for i in items if isinstance(i, PrivateStreamStatus)]
+
+    assert unread() == ["heartbeat:evidence", "resyncing:connected"]
+    venue.socket.push("not json")  # `resyncing(rejected_frame)`
+    venue.socket.drop()  # `down`, which holds the redial until it is read
+    await clock.advance(120)
+    held = ["resyncing:rejected_frame", "down:socket_closed"]
+    assert unread() == ["heartbeat:evidence", "resyncing:connected", *held]
+    assert len(unread()) <= 5 and len(venue.sockets) == 1
+    consumer = Consumer(stream)
+    await until(
+        clock, lambda: "resyncing:reconnected:2" in consumer.statuses(), within_s=60, what="2"
+    )
+    await consumer.stop()
+    await streams.aclose()

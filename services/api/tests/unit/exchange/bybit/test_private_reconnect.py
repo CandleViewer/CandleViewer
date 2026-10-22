@@ -19,7 +19,11 @@ from candleviewer.exchange.bybit.metrics import (
     bybit_private_ws_auth_total,
     bybit_private_ws_disconnects_total,
 )
-from candleviewer.exchange.bybit.private_stream import REQUIRED_OPS, STABLE_RESET_S
+from candleviewer.exchange.bybit.private_stream import (
+    DIAL_TIMEOUT_S,
+    REQUIRED_OPS,
+    STABLE_RESET_S,
+)
 from tests._signing import Call
 from tests.chaos.ingestion._clock import VirtualClock
 from tests.unit.exchange.bybit._private import raw
@@ -207,5 +211,20 @@ async def test_a_dial_the_consumer_never_held_is_not_counted_as_waited() -> None
     )
     assert "down:socket_closed:1" in consumer.statuses()
     assert _waited() == before
+    await consumer.stop()
+    await streams.aclose()
+
+
+async def test_a_dial_that_never_answers_is_let_go_at_5_s_and_the_stream_dials_again() -> None:
+    """CR-G8B-C-01: the dial's bound (`DIAL_TIMEOUT_S`) on the injected clock: a dial the venue
+    never answers is let go at 5 s, and the stream backs off, dials again and goes live."""
+    clock = VirtualClock()
+    venue = PrivateVenue(clock, stall_dials=1)
+    streams = make_streams(venue)
+    consumer = Consumer(await streams.open(account()))
+    await clock.advance(DIAL_TIMEOUT_S * 0.98)
+    assert len(venue.dialled) == 1 and venue.sockets == []
+    await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
+    assert len(venue.dialled) == 2 and clock.now >= DIAL_TIMEOUT_S
     await consumer.stop()
     await streams.aclose()

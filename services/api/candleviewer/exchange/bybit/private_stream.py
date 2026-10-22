@@ -45,7 +45,7 @@ import structlog
 from candleviewer.domain.primitives import AccountId, Environment, TsUs
 from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.errors import AuthError, ExchangeError, RateBudgetExceededError
-from candleviewer.exchange.base.guards import check_key_ref
+from candleviewer.exchange.base.guards import check_key_ref, key_ref_id
 from candleviewer.exchange.base.models import (
     AccountRef,
     PrivateEvent,
@@ -59,6 +59,7 @@ from candleviewer.exchange.base.reconnect import (
     ws_conn_budget_refused_total,
 )
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
+from candleviewer.exchange.bybit.errors import FrameTooLarge
 from candleviewer.exchange.bybit.metrics import (
     bybit_private_frames_rejected_total,
     bybit_private_reconnect_waited_total,
@@ -214,6 +215,7 @@ class _Queue:
         self._no_down.set()
         self.heartbeat_pending = False
         self.rejected_pending = False
+        self._ended = False
 
     def fits(self, count: int) -> bool:
         return self._events + count <= DATA_SLOTS
@@ -238,8 +240,17 @@ class _Queue:
             self._no_down.clear()
         self._ready.set()
 
-    async def get(self) -> _Item:
+    def end(self) -> None:
+        """The consumer closed the stream: a read waiting now, in any task, or any later one finds
+        the stream over."""
+        self._ended = True
+        self._ready.set()
+
+    async def get(self) -> _Item | None:
+        """The next item in arrival order, or `None` once the consumer closed the stream."""
         while not self._items:
+            if self._ended:
+                return None
             self._ready.clear()
             await self._ready.wait()
         item = self._items.popleft()
@@ -302,6 +313,7 @@ class _PrivateConn:
         self._stop = False
         self._closed = False
         self._machine_stopping = False
+        self._closing: asyncio.Task[None] | None = None
         self._pending: list[PrivateEvent] = []
         self._session: list[asyncio.Task[Any]] = []
         self._timer: asyncio.Task[None] | None = None
@@ -351,12 +363,15 @@ class _PrivateConn:
 
     async def open_socket(self) -> None:
         """Take a private slot of the budget, waiting its delay out, then dial this environment's
-        private stream under its bound. A failed dial leaves as one fixed text."""
+        private stream under its bound, unless the stream began closing meanwhile. A failed dial
+        leaves as one fixed text."""
         if self._stop:
             raise _bare(ConnectionError("the private stream is closing"))
         delay = self._owner.budget.lane("private").reserve()
         if delay > 0:
             await self._owner.sleep(delay)
+            if self._stop:  # closed while it waited: nothing is dialled
+                raise _bare(ConnectionError("the private stream is closing"))
         sock = await self._owner.dial()
         if self._stop:
             await self._owner.close_quietly(sock)
@@ -390,7 +405,11 @@ class _PrivateConn:
         elif result == "key_unusable":
             self._terminal = "key_unusable"
         logger().warning(
-            "bybit_private_auth_failed", result=result, refusals=self._refusals, epoch=self._epoch
+            "bybit_private_auth_failed",
+            account_id=str(self.account.account_id),
+            result=result,
+            refusals=self._refusals,
+            epoch=self._epoch,
         )
         raise _bare(ConnectionError("the private stream's auth was not granted"))
 
@@ -485,7 +504,10 @@ class _PrivateConn:
             self._status("down", self._down_reason)
             bybit_private_ws_disconnects_total.labels(reason=self._down_reason).inc()
             logger().warning(
-                "bybit_private_stream_down", reason=self._down_reason, epoch=self._epoch
+                "bybit_private_stream_down",
+                account_id=str(self.account.account_id),
+                reason=self._down_reason,
+                epoch=self._epoch,
             )
 
     async def teardown_session(self) -> None:
@@ -520,11 +542,22 @@ class _PrivateConn:
         for task in self._session:
             task.cancel()
 
+    def close_soon(self, reason: ClosedReason) -> asyncio.Task[None]:
+        """Stop at once and close the stream in a task the registry owns, started once, by the
+        first to ask, whose `reason` is the one queued: a caller cancelled while it awaits the
+        close never leaves the stream stopped with its socket open (SR-E27-17)."""
+        if self._closing is None:
+            self.halt()
+            self._closing = self._owner.spawn(self._close(reason), "private-ws-close")
+        return self._closing
+
     async def close(self, reason: ClosedReason) -> None:
-        """End the stream: stop, close the socket within `CLOSE_TIMEOUT_S`, queue `closed` (not
-        for the consumer's own close, which reads nothing more), and hand B13's stop to a task
-        the registry owns. Returns once the socket is closed (SR-E27-17)."""
-        self.halt()
+        """`close_soon(reason)`, returning once the socket is closed (SR-E27-17)."""
+        await asyncio.shield(self.close_soon(reason))
+
+    async def _close(self, reason: ClosedReason) -> None:
+        """Close the socket within `CLOSE_TIMEOUT_S`, queue `closed` (not for the consumer's own
+        close, which reads nothing more), and hand B13's stop to a task the registry owns."""
         tasks, self._session = self._session, []
         await asyncio.gather(*tasks, return_exceptions=True)
         self._pending = []
@@ -563,7 +596,12 @@ class _PrivateConn:
         if reason == "auth_refused":
             self._owner.mark_refused(self.key_ref)
         bybit_private_ws_disconnects_total.labels(reason=reason).inc()
-        logger().warning("bybit_private_stream_closed", reason=reason, epoch=self._epoch)
+        logger().warning(
+            "bybit_private_stream_closed",
+            account_id=str(self.account.account_id),
+            reason=reason,
+            epoch=self._epoch,
+        )
 
     # -- internals ---------------------------------------------------------------------------------
 
@@ -623,7 +661,7 @@ class _PrivateConn:
         # Signed just before it is sent, and bound to no name here: no traceback holds it.
         await sock.send(await self._auth_frame(signer, offset_ms))
         while True:
-            item = self._classify(await sock.recv(FRAME_BYTES))
+            item = self._classify(await self._frame(sock))
             if isinstance(item, Reply) and item.op == "auth":
                 if item.granted is None:
                     return "unknown"
@@ -658,7 +696,7 @@ class _PrivateConn:
         that cannot be read is counted (the coming `resyncing` covers it)."""
         await sock.send(json.dumps({"op": "subscribe", "args": list(topics)}))
         while True:
-            item = self._classify(await sock.recv(FRAME_BYTES))
+            item = self._classify(await self._frame(sock))
             if isinstance(item, Reply):
                 if item.op == "subscribe":
                     return "granted" if item.granted is True else "refused"
@@ -672,12 +710,22 @@ class _PrivateConn:
                 return "overflow"
             self._pending.extend(events)
 
+    async def _frame(self, sock: StreamSocket) -> str:
+        """The next frame, of at most `FRAME_BYTES`. One above it ends the socket, counted as
+        `oversize`, whether the socket refused it (`FrameTooLarge`: production's library closes
+        it 1009 first) or handed it over whole."""
+        try:
+            frame: str | None = await sock.recv(FRAME_BYTES)
+        except FrameTooLarge:
+            frame = None  # raised below, outside this handler: no socket error rides on it
+        if frame is None or len(frame) > FRAME_BYTES:
+            bybit_private_frames_rejected_total.labels(reason="oversize").inc()
+            raise _bare(ConnectionError("a private frame above the read bound"))
+        return frame
+
     def _classify(self, frame: str) -> Reply | Push | None:
         """The frame read, our own key id and signature masked first, or `None` when it is
         rejected (counted)."""
-        if len(frame) > FRAME_BYTES:
-            bybit_private_frames_rejected_total.labels(reason="oversize").inc()
-            raise _bare(ConnectionError("a private frame above the read bound"))
         for value in self._masks:
             frame = frame.replace(value, _MASK)
         try:
@@ -698,7 +746,7 @@ class _PrivateConn:
         are queued whole, a frame it cannot read is followed by `resyncing`. It returns, ending
         the socket, when an event finds the queue full (`slow_consumer`)."""
         while True:
-            frame = await sock.recv(FRAME_BYTES)
+            frame = await self._frame(sock)
             self._deadline = self._owner.monotonic() + WATCHDOG_S
             item = self._classify(frame)
             if isinstance(item, Reply):
@@ -742,8 +790,9 @@ class _PrivateConn:
 
 class _Stream:
     """What `subscribe_private` returns (`PrivateStream`): the account's items in arrival order,
-    ending after its `closed` status. `aclose()`, even before a read, or the consumer's task
-    being cancelled mid-read closes the stream and frees the account for a new one."""
+    ending after its `closed` status. `aclose()`, even before a read or from another task
+    (a read waiting there ends), or the consumer's task being cancelled mid-read closes the
+    stream, in a task the registry owns, and frees the account once the socket is closed."""
 
     def __init__(self, owner: PrivateStreams, conn: _PrivateConn) -> None:
         self._owner = owner
@@ -761,28 +810,34 @@ class _Stream:
         except asyncio.CancelledError:
             self._abandon()
             raise
+        if item is None:  # the consumer closed the stream, from another task
+            raise StopAsyncIteration
         if isinstance(item, PrivateStreamStatus) and item.state == "closed":
             self._done = True
             self._owner.release(self._conn)
         return item
 
     async def aclose(self) -> None:
+        """Close the stream; idempotent. Returns once the socket is closed; should this call be
+        cancelled first, the registry's task still finishes the close and frees the account."""
         if not self._done:
             self._done = True
-            await self._conn.close("consumer_closed")
+            await asyncio.shield(self._close())
         self._owner.release(self._conn)
 
     def _abandon(self) -> None:
         """Cancelled mid-read: stop now, with no await, and let the registry finish the close."""
-        if self._done:
-            return
-        self._done = True
-        self._conn.halt()
-        self._owner.spawn(self._close_released(), "private-ws-abandoned")
+        if not self._done:
+            self._done = True
+            self._close()
 
-    async def _close_released(self) -> None:
-        await self._conn.close("consumer_closed")
-        self._owner.release(self._conn)
+    def _close(self) -> asyncio.Task[None]:
+        """The consumer's own close: the queue ends at once, the close runs in the registry's
+        task, and the account is freed once it is done."""
+        self._conn.queue.end()
+        closing = self._conn.close_soon("consumer_closed")
+        closing.add_done_callback(lambda _: self._owner.release(self._conn))
+        return closing
 
 
 class PrivateStreams:
@@ -861,12 +916,12 @@ class PrivateStreams:
                 clock=default_clock(),
                 lane="platform",
             )
+            conn.bind(built.interpreter)
+            await built.interpreter.send("CONNECT")
         except BaseException:
             conn.halt()
             self.release(conn)
             raise
-        conn.bind(built.interpreter)
-        await built.interpreter.send("CONNECT")
         return _Stream(self, conn)
 
     def release(self, conn: _PrivateConn) -> None:
@@ -886,15 +941,20 @@ class PrivateStreams:
         their accounts for the caller's audit. The key is tombstoned first, so no dial or `auth`
         uses it from then on and a stream on it is refused (`AuthError`); each stream stops at
         once, its socket closes within `CLOSE_TIMEOUT_S`, `closed(reason)` is its last item, and
-        B13's stop is a task this registry owns (it is not awaited here)."""
+        B13's stop is a task this registry owns (it is not awaited here). Each close runs in a
+        task this registry owns, so a caller cancelled meanwhile leaves no stream stopped with its
+        socket open, and a stream already closing for another reason is waited for, not named. A
+        `key_ref` that is no `api_keys` id is refused (`ValueError`) before anything is done."""
+        key_ref_id(key_ref)
         _remember(self._closed_keys, key_ref, reason)
-        conns = [c for c in self._conns.values() if c.key_ref == key_ref and not c.stopping]
-        for conn in conns:
-            conn.halt()  # every stream at once, before any socket's close is awaited
-        await asyncio.gather(*(conn.close(reason) for conn in conns))
-        if conns:
-            logger().warning("bybit_private_key_closed", reason=reason, streams=len(conns))
-        return tuple(conn.account.account_id for conn in conns)
+        conns = [c for c in self._conns.values() if c.key_ref == key_ref]
+        started = [c for c in conns if not c.stopping]
+        closes = [c.close_soon(reason) for c in conns]  # each stops before any close is awaited
+        if closes:
+            await asyncio.wait(closes)
+        if started:
+            logger().warning("bybit_private_key_closed", reason=reason, streams=len(started))
+        return tuple(conn.account.account_id for conn in started)
 
     def reopen(self, key_ref: str) -> bool:
         """An operator's action (ruling 10): a key three `auth` refusals marked may open streams
@@ -921,10 +981,13 @@ class PrivateStreams:
     # -- the connection's I/O, bounded on the injected clock ---------------------------------------
 
     async def dial(self) -> StreamSocket:
-        """This environment's private stream, within `DIAL_TIMEOUT_S`; any failure is one text."""
+        """This environment's private stream, within `DIAL_TIMEOUT_S`; any failure is one text.
+        A socket dialled past the bound, or as the caller was cancelled, is closed, never left
+        open with no owner."""
         sock: StreamSocket | None = None
         try:
-            sock = await self.bounded(self._connect(self._url), DIAL_TIMEOUT_S)
+            dialling = self._connect(self._url)
+            sock = await self.bounded(dialling, DIAL_TIMEOUT_S, leftover=self.close_quietly)
         except Exception:  # every failed dial leaves as one fixed text, raised outside this handler
             sock = None
         if sock is None:
@@ -937,19 +1000,38 @@ class PrivateStreams:
         with contextlib.suppress(Exception):
             await self.bounded(sock.close(), CLOSE_TIMEOUT_S)
 
-    async def bounded[T](self, work: Awaitable[T], seconds: float) -> T:
-        """`work` within `seconds` on the injected clock, else `TimeoutError` (`work` cancelled)."""
+    async def bounded[T](
+        self,
+        work: Awaitable[T],
+        seconds: float,
+        *,
+        leftover: Callable[[T], Coroutine[Any, Any, None]] | None = None,
+    ) -> T:
+        """`work` within `seconds` on the injected clock, else `TimeoutError` (`work` cancelled).
+        What `work` yields that the caller never takes (past the bound, or as the caller was
+        cancelled) goes to `leftover`, in a task this registry owns."""
         task = spawn(_awaited(work), name="private-ws-bounded")
         timer = spawn(_awaited(self.sleep(seconds)), name="private-ws-bound")
+        taken = False
         try:
             done, _ = await asyncio.wait({task, timer}, return_when=asyncio.FIRST_COMPLETED)
+            if task in done:
+                taken = True
+                return task.result()
         finally:
             timer.cancel()
             if not task.done():
                 task.cancel()
-        if task in done:
-            return task.result()
+            if not taken and leftover is not None:
+                discard = leftover
+                task.add_done_callback(lambda ended: self._discard(ended, discard))
         raise TimeoutError
+
+    def _discard[T](
+        self, ended: asyncio.Task[T], leftover: Callable[[T], Coroutine[Any, Any, None]]
+    ) -> None:
+        if not ended.cancelled() and ended.exception() is None:
+            self.spawn(leftover(ended.result()), "private-ws-leftover")
 
     def spawn(self, coro: Coroutine[Any, Any, Any], name: str) -> asyncio.Task[Any]:
         """A task this registry owns: kept until it ends, its failure logged by type only."""

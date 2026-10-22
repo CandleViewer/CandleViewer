@@ -18,7 +18,9 @@ from structlog.testing import capture_logs
 from candleviewer.exchange.base.models import PrivateStreamStatus
 from candleviewer.exchange.bybit import private_stream as ps
 from candleviewer.exchange.bybit.metrics import bybit_private_subscribe_refused_total
+from candleviewer.observability.context import spawn
 from candleviewer.secrets import CredentialBorrower, RequestSignature
+from candleviewer.statechart import build
 from tests._signing import CREDENTIAL_ID, Call, fake_capability
 from tests.chaos.ingestion._clock import VirtualClock
 from tests.unit.exchange.bybit._private import push, raw, row
@@ -305,6 +307,96 @@ async def test_an_owned_task_that_fails_is_logged_by_its_type_only() -> None:
     assert logged["error"] == "ValueError" and "detail" not in str(logs)
 
 
+async def test_a_stream_closed_during_the_budgets_wait_dials_nothing() -> None:
+    """SEC-G8B-C-03: an open that waited out the budget's delay checks the stream again before it
+    dials, so a revoke during the wait dials nothing."""
+    clock = VirtualClock()
+    venue = PrivateVenue(clock)
+    streams = make_streams(venue)
+    for _ in range(480):  # the window is full: the next open waits for a slot
+        streams.budget.lane("private").reserve()
+    conn = _conn(streams)
+    opening = spawn(conn.open_socket(), name="open")
+    await clock.advance(10)
+    conn.halt()  # a revoke lands during the wait
+    await clock.advance(300)
+    with pytest.raises(ConnectionError, match="closing"):
+        await opening
+    assert venue.dialled == []
+
+
+async def test_a_socket_dialled_as_its_caller_is_cancelled_is_closed_not_dropped() -> None:
+    """CR-G8B-C-09: a dial that finished as the open was cancelled hands its socket to the
+    registry, which closes it: no socket is left open with no owner."""
+    clock = VirtualClock()
+    venue = PrivateVenue(clock)
+    streams = make_streams(venue)
+    real = venue.connect
+    caller: list[asyncio.Task[Any]] = []
+
+    async def connect(url: str) -> VenueSocket:
+        sock = await real(url)
+        caller[0].cancel()  # the open is cancelled as its dial finishes
+        return sock
+
+    streams._connect = connect  # the registry dials through it
+    caller.append(spawn(streams.dial(), name="dial"))
+    with pytest.raises(asyncio.CancelledError):
+        await caller[0]
+    await streams.drain()
+    assert venue.socket.closed
+
+
+async def test_a_chart_that_refuses_connect_frees_the_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-G8B-C-04: should the built chart refuse `CONNECT`, the open raises and the account has
+    no stream, so a later open builds one."""
+
+    async def refusing(*args: Any, **kwargs: Any) -> Any:
+        built = await build(*args, **kwargs)
+
+        async def refuse(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("the chart refused the event")
+
+        monkeypatch.setattr(built.interpreter, "send", refuse)
+        return built
+
+    clock = VirtualClock()
+    venue = PrivateVenue(clock)
+    streams = make_streams(venue)
+    monkeypatch.setattr(ps, "build", refusing)
+    with pytest.raises(RuntimeError, match="refused the event"):
+        await streams.open(account())
+    await streams.drain()
+    assert streams.count() == 0
+    monkeypatch.setattr(ps, "build", build)
+    consumer = Consumer(await streams.open(account()))
+    await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
+    await consumer.stop()
+    await streams.aclose()
+
+
+async def test_aclose_from_another_task_ends_the_read_waiting_there_and_frees_the_account() -> None:
+    """CR-G8B-C-06: a read waiting in the consumer's task ends (`StopAsyncIteration`) when another
+    task closes the stream, and the account is freed once the registry's close is done, even
+    though that `aclose()` was cancelled first."""
+    clock = VirtualClock()
+    venue = PrivateVenue(clock)
+    streams = make_streams(venue)
+    stream = await streams.open(account())
+    consumer = Consumer(stream)
+    await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
+    venue.socket.stall_close = True
+    closing = spawn(stream.aclose(), name="aclose")
+    await clock.settle()
+    assert consumer.task.done() and streams.count() == 1  # the read ended; the close is pending
+    closing.cancel()
+    await clock.advance(ps.CLOSE_TIMEOUT_S * 1.5)
+    assert closing.cancelled() and streams.count() == 0 and venue.sockets[0].closed
+    await streams.aclose()
+
+
 def test_the_key_marks_are_bounded_oldest_first() -> None:
     streams = make_streams(PrivateVenue(VirtualClock()))
     for n in range(ps.KEYS_REMEMBERED + 1):
@@ -315,7 +407,7 @@ def test_the_key_marks_are_bounded_oldest_first() -> None:
 
 async def test_closing_a_key_with_no_stream_closes_nothing() -> None:
     streams = make_streams(PrivateVenue(VirtualClock()))
-    assert await streams.close_key("no-such-key", reason="key_revoked") == ()
+    assert await streams.close_key(account().key_ref, reason="key_revoked") == ()
 
 
 async def test_the_status_bound_is_made_visible_if_it_is_ever_exceeded() -> None:

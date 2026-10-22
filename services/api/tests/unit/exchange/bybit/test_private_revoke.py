@@ -19,6 +19,8 @@ import pytest
 
 from candleviewer.exchange.base.errors import AuthError
 from candleviewer.exchange.base.models import PrivateStreamStatus
+from candleviewer.exchange.bybit.private_stream import CLOSE_TIMEOUT_S
+from candleviewer.observability.context import spawn
 from candleviewer.secrets import CredentialBorrower, RequestSignature
 from tests._signing import Call, fake_capability
 from tests.chaos.ingestion._clock import VirtualClock
@@ -140,3 +142,64 @@ async def test_the_adapter_closes_a_keys_streams_and_reopens_through_its_hooks()
     assert isinstance(last, PrivateStreamStatus) and last.reason == "key_rotated"
     await stream.aclose()
     await adapter.stop(5.0)
+
+
+async def test_a_close_the_peer_never_finishes_holds_close_key_1_s_at_most() -> None:
+    """CR-G8B-C-01, SR-E27-17: a socket's close is bounded (`CLOSE_TIMEOUT_S`): a peer that never
+    finishes it holds the revoke 1 s at most, and `closed(key_revoked)` is still the last item."""
+    clock = VirtualClock()
+    venue = PrivateVenue(clock)
+    streams = make_streams(venue)
+    consumer = Consumer(await streams.open(account()))
+    await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
+    venue.socket.stall_close = True
+    revoke = spawn(streams.close_key(account().key_ref, reason="key_revoked"), name="revoke")
+    await clock.advance(CLOSE_TIMEOUT_S * 0.9)
+    assert not revoke.done()
+    await clock.advance(CLOSE_TIMEOUT_S * 0.2)
+    assert revoke.done() and revoke.result() == (ACCOUNT_A,)
+    assert consumer.statuses()[-1] == "closed:key_revoked:1"
+    await streams.aclose()
+
+
+async def test_a_revoke_cancelled_mid_close_still_closes_the_stream() -> None:
+    """CR-G8B-C-05, SR-E27-17: the close runs in a task the registry owns, so a caller cancelled
+    while the socket's close is pending leaves no stopped stream with its socket open:
+    `closed(key_revoked)` is still queued, and a second `close_key` waits for that same close
+    without naming the account again."""
+    clock = VirtualClock()
+    venue = PrivateVenue(clock)
+    streams = make_streams(venue)
+    consumer = Consumer(await streams.open(account()))
+    await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
+    venue.socket.stall_close = True
+    revoke = spawn(streams.close_key(account().key_ref, reason="key_revoked"), name="revoke")
+    await clock.advance(CLOSE_TIMEOUT_S / 2)
+    revoke.cancel()
+    again = spawn(streams.close_key(account().key_ref, reason="key_revoked"), name="again")
+    await clock.settle()
+    assert revoke.cancelled() and not again.done()  # the close in flight is waited for
+    await clock.advance(CLOSE_TIMEOUT_S)
+    assert again.done() and again.result() == ()
+    assert venue.sockets[0].closed and consumer.statuses()[-1] == "closed:key_revoked:1"
+    await streams.aclose()
+
+
+@pytest.mark.parametrize(
+    "key_ref",
+    [account().key_ref.upper(), "{" + account().key_ref + "}", "not-a-key", ""],
+    ids=["upper-case", "braced", "not-a-uuid", "empty"],
+)
+async def test_close_key_refuses_a_key_ref_that_is_no_api_keys_id(key_ref: str) -> None:
+    """CR-G8B-C-04: a key named in any other shape would tombstone no stream's key and close
+    nothing, a silent fail-open on SR-E27-17; it is refused before anything is done."""
+    clock = VirtualClock()
+    venue = PrivateVenue(clock)
+    streams = make_streams(venue)
+    consumer = Consumer(await streams.open(account()))
+    await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
+    with pytest.raises(ValueError, match="not an api_keys id"):
+        await streams.close_key(key_ref, reason="key_revoked")
+    assert not streams._closed_keys and not venue.sockets[0].closed
+    await consumer.stop()
+    await streams.aclose()

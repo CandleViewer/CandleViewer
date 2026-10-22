@@ -115,9 +115,17 @@ async def test_a_full_queue_ends_the_epoch_as_a_slow_consumer_then_resyncs() -> 
     await streams.aclose()
 
 
-async def test_an_oversize_frame_recycles_the_socket() -> None:
+@pytest.mark.parametrize("max_size", [FRAME_BYTES, None], ids=["socket-refuses", "stream-refuses"])
+async def test_an_oversize_frame_recycles_the_socket_counted_as_oversize(
+    max_size: int | None,
+) -> None:
+    """SEC-G8B-C-01: production's socket refuses a frame above 1 MiB (its library closes the
+    socket 1009 and the read raises `FrameTooLarge`, `test_key_ws_probe_real_socket.py`); a
+    socket that hands one over whole meets the stream's own bound. Either way the socket recycles
+    and the frame counts as `oversize`, and every read is bounded by `FRAME_BYTES`
+    (CR-G8B-C-10)."""
     clock = VirtualClock()
-    venue = PrivateVenue(clock)
+    venue = PrivateVenue(clock, max_size=max_size)
     streams, consumer = await _live(venue)
     before = _value(bybit_private_frames_rejected_total, reason="oversize")
     venue.socket.push("x" * (FRAME_BYTES + 1))
@@ -126,6 +134,7 @@ async def test_an_oversize_frame_recycles_the_socket() -> None:
     )
     assert "down:socket_closed:1" in consumer.statuses()
     assert _value(bybit_private_frames_rejected_total, reason="oversize") == before + 1
+    assert set(venue.bounds) == {FRAME_BYTES}
     await consumer.stop()
     await streams.aclose()
 

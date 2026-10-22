@@ -30,6 +30,7 @@ __all__ = [
     "check_stop",
     "check_stop_mode",
     "check_window",
+    "key_ref_id",
 ]
 
 
@@ -37,11 +38,17 @@ def check_key_ref(account: AccountRef) -> UUID:
     """Ruling R13: `key_ref` is the canonical form of the account's active key's `api_keys.id`
     (lower-case 8-4-4-4-12), its id returned; any other shape is refused with `ValueError`
     before anything is taken, signed or sent, by every call that names the account."""
+    return key_ref_id(account.key_ref)
+
+
+def key_ref_id(key_ref: object) -> UUID:
+    """`check_key_ref` for a bare `key_ref`, as a call that names a key and no account takes it
+    (a private stream's `close_key`): its id, or `ValueError` for any other shape."""
     try:
-        parsed = UUID(account.key_ref)
+        parsed = UUID(key_ref)  # type: ignore[arg-type]  # any shape: refused below
     except (ValueError, AttributeError, TypeError):
         parsed = None
-    if parsed is None or str(parsed) != account.key_ref:
+    if parsed is None or str(parsed) != key_ref:
         raise ValueError("key_ref is not an api_keys id")
     return parsed
 

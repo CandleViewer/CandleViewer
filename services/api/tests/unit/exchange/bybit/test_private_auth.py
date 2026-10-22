@@ -185,3 +185,17 @@ async def test_the_key_vault_being_down_only_backs_off() -> None:
     )
     await consumer.stop()
     await streams.aclose()
+
+
+async def test_a_timeout_between_refusals_does_not_reset_the_streak() -> None:
+    """CR-G8B-C-03, OQ-C: only a grant resets the count. Refused, no reply (the 5 s bound),
+    refused, refused is three refusals in a row, so the fourth dial's refusal ends the stream."""
+    clock, calls = VirtualClock(), list[Call]()
+    venue = PrivateVenue(clock)
+    venue.auth.extend([REFUSED_AUTH, None, REFUSED_AUTH, REFUSED_AUTH])
+    streams = make_streams(venue, calls=calls)
+    consumer = Consumer(await streams.open(account(), clock_offset_ms=_measured()))
+    await until(clock, lambda: consumer.task.done(), within_s=300, what="closed")
+    assert consumer.statuses() == ["closed:auth_refused:4"]
+    assert (len(calls), len(venue.dialled)) == (4, 4)
+    await streams.aclose()

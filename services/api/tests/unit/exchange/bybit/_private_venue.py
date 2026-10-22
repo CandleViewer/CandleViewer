@@ -20,6 +20,9 @@ from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.exchange.base.reconnect import ConnectionBudget, ReconnectPolicy
 
 # nosemgrep: cv-adapter-isolation reason=G-8b-harness owner=@CandleViewer/security review=2027-03-25
+from candleviewer.exchange.bybit.errors import FrameTooLarge
+
+# nosemgrep: cv-adapter-isolation reason=G-8b-harness owner=@CandleViewer/security review=2027-03-25
 from candleviewer.exchange.bybit.private_stream import MAX_STREAMS, PrivateStreams
 from candleviewer.observability.context import spawn
 from candleviewer.secrets import CredentialBorrower
@@ -43,7 +46,8 @@ UNKNOWN_AUTH = reply("auth-ok", success="no")
 @dataclass
 class VenueSocket:
     """One private socket: what the adapter sent (`sent`, with the virtual second it was sent
-    at), what the venue queued for it to read (`push`), and whether it was closed."""
+    at), what the venue queued for it to read (`push`), and whether it was closed. A close that
+    `stall_close` holds never finishes, as a peer that never answers it."""
 
     venue: PrivateVenue
     url: str
@@ -52,6 +56,7 @@ class VenueSocket:
     closed: bool = False
     #: What the read that meets a drop fails with: the peer's text, as a library error carries it.
     drop_text: str = "the peer dropped the connection"
+    stall_close: bool = False
 
     async def send(self, frame: str) -> None:
         if self.closed:
@@ -65,11 +70,17 @@ class VenueSocket:
         frame = await self.inbox.get()
         if frame == DROP:
             raise ConnectionResetError(self.drop_text)
+        limit = self.venue.max_size
+        if limit is not None and len(frame) > limit:  # as production's library: closed, 1009
+            self.closed = True
+            raise FrameTooLarge("private ws frame above the read bound")
         return frame
 
     async def close(self) -> None:
         self.closed = True
         self.inbox.put_nowait(DROP)
+        if self.stall_close:
+            await asyncio.Event().wait()
 
     def push(self, *frames: str) -> None:
         for frame in frames:
@@ -86,7 +97,10 @@ class VenueSocket:
 class PrivateVenue:
     """The private stream's venue: each dial a new `VenueSocket`. Replies come from the queues a
     test scripts (`auth`, `subscribe`: a frame, or `None` for no reply), else the transcribed
-    grants; a ping is answered with the transcribed pong unless `pongs` is off."""
+    grants; a ping is answered with the transcribed pong unless `pongs` is off. `max_size` bounds
+    a frame as production's connector does (the library closes the socket, the read raises
+    `FrameTooLarge`); `None` hands any frame over whole. The first `stall_dials` dials never
+    answer."""
 
     clock: VirtualClock
     sockets: list[VenueSocket] = field(default_factory=list)
@@ -96,9 +110,14 @@ class PrivateVenue:
     subscribe: deque[str | None] = field(default_factory=deque)
     pongs: bool = True
     fail_dials: int = 0
+    stall_dials: int = 0
+    max_size: int | None = None
 
     async def connect(self, url: str) -> VenueSocket:
         self.dialled.append(url)
+        if self.stall_dials:
+            self.stall_dials -= 1
+            await asyncio.Event().wait()
         if self.fail_dials:
             self.fail_dials -= 1
             raise ConnectionRefusedError("the stream refused the connection")

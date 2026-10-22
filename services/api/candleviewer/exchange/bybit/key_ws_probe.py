@@ -39,12 +39,14 @@ from uuid import UUID
 import httpx
 from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as ws_connect
-from websockets.exceptions import WebSocketException
+from websockets.exceptions import ConnectionClosedError, WebSocketException
+from websockets.frames import CloseCode
 from websockets.protocol import State
 
 from candleviewer.exchange.base.reconnect import PROBE_CAP, ConnectionBudget
 from candleviewer.exchange.base.reconnect import WINDOW_S as BUDGET_WINDOW_S
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
+from candleviewer.exchange.bybit.errors import FrameTooLarge
 from candleviewer.exchange.bybit.signer import BybitSigner
 
 if TYPE_CHECKING:
@@ -123,11 +125,17 @@ class _Socket:
         await self._conn.send(frame)
 
     async def recv(self, max_bytes: int) -> str:
-        """The library refuses a frame above `max_size` before buffering it; this bound holds
-        whatever that is. A frame that is not UTF-8 decodes leniently and then fails as JSON."""
-        frame = await self._conn.recv(decode=False)
-        if len(frame) > max_bytes:
-            raise ConnectionError("private ws frame above the read bound")
+        """A frame of at most `max_bytes`, else `FrameTooLarge`: the library refuses one above
+        `max_size` before buffering it and closes the socket (1009), and this bound holds whatever
+        that is. A frame that is not UTF-8 decodes leniently and then fails as JSON."""
+        try:
+            frame: bytes | None = await self._conn.recv(decode=False)
+        except ConnectionClosedError as closed:
+            if closed.sent is None or closed.sent.code != CloseCode.MESSAGE_TOO_BIG:
+                raise
+            frame = None  # raised below, outside this handler: no library error rides on it
+        if frame is None or len(frame) > max_bytes:
+            raise FrameTooLarge("private ws frame above the read bound")
         return frame.decode("utf-8", "replace")
 
     async def close(self) -> None:
