@@ -543,6 +543,11 @@ _UNRESOLVED_CASES = {
     "followed_by_space": 'op.execute(f"delete from {t} where 1=1")',
     "truncate": 'op.execute(f"TRUNCATE {t}")',
     "grant_list": 'op.execute(f"GRANT SELECT, DELETE ON {t} TO cv_app")',
+    "after_a_prefix": 'op.execute(f"UPDATE audit_{t} SET note = 1")',
+    "inside_a_name": 'op.execute(f"UPDATE audit_{t}_log SET note = 1")',
+    "quoted_after_a_prefix": """op.execute(f'DELETE FROM "audit_{t}"')""",
+    "qualified_and_quoted": """op.execute(f'TRUNCATE "public"."audit_{t}"')""",
+    "grant_after_a_prefix": 'op.execute(f"GRANT DELETE ON audit_{t} TO cv_app")',
 }
 
 
@@ -1307,6 +1312,12 @@ _UNRESOLVED_OP = (
         _UNRESOLVED_OP.format("op.drop_column(t, 'x')  # cv:contract-phase: R2"),
         _UNRESOLVED_OP.format("op.drop_constraint('c', t)  # cv:contract-phase: R2"),
         _UNRESOLVED_OP.format("op.execute(sa.Table(t, sa.MetaData()).delete())"),
+        _UNRESOLVED_OP.format("op.execute(sa.table('audit_' + t).delete())"),
+        _UNRESOLVED_OP.format("op.execute(sa.table(f'audit_{t}').delete())"),
+        _UNRESOLVED_OP.format("op.execute(sa.table(cfg.table).delete())"),
+        _UNRESOLVED_OP.format("op.execute(sa.table(names[0]).delete())"),
+        _UNRESOLVED_OP.format("op.execute(sa.table(name_of()).delete())"),
+        _UNRESOLVED_OP.format("op.drop_table('audit_' + t)  # cv:contract-phase: R2"),
     ],
     ids=[
         "a-drop",
@@ -1321,6 +1332,12 @@ _UNRESOLVED_OP = (
         "a-drop-column",
         "a-drop-constraint-by-position",
         "a-core-Table",
+        "a-core-table-built-with-plus",
+        "a-core-table-from-an-f-string",
+        "a-core-table-from-an-attribute",
+        "a-core-table-from-a-subscript",
+        "a-core-table-from-a-call",
+        "a-drop-built-with-plus",
     ],
 )
 def test_an_operation_whose_table_the_rule_cannot_resolve_is_refused(
@@ -1381,6 +1398,8 @@ def test_a_name_another_binding_may_rebind_does_not_resolve(
         "op.drop_index(t)  # cv:contract-phase: R2",  # an index name, no table
         "op.execute(sa.table('orders').delete())",
         "op.execute(sa.table(name='orders').delete())",
+        "op.execute(sa.select(sa.func.now()))",
+        "op.execute(sa.table('orders' '_archive').delete())",
     ],
 )
 def test_an_operation_whose_table_resolves_to_another_is_not_flagged(
@@ -2189,6 +2208,11 @@ _SETTING = "a setting set through set_config() or under a computed name"
         " SET {name} = replica AS $$ SELECT 1 $$')",
         "op.execute('CREATE OR REPLACE PROCEDURE p() LANGUAGE sql"
         " SET {} TO replica AS $$ SELECT 1 $$'.format(name))",
+        "op.execute('SET session_{} = replica'.format(name))",
+        "op.execute('SET session_%s = replica' % name)",
+        "op.execute('ALTER ROLE cv_app SET session_{} TO replica'.format(name))",
+        "op.execute('CREATE FUNCTION f() RETURNS void LANGUAGE sql"
+        " SET session_{} = replica AS $$ SELECT 1 $$'.format(name))",
     ],
     ids=[
         "an-f-string",
@@ -2202,6 +2226,10 @@ _SETTING = "a setting set through set_config() or under a computed name"
         "an-alter-procedure",
         "a-routine-header",
         "a-procedure-header-format-field",
+        "a-format-field-after-a-prefix",
+        "a-percent-field-after-a-prefix",
+        "an-alter-role-field-after-a-prefix",
+        "a-routine-header-field-after-a-prefix",
     ],
 )
 def test_a_setting_python_computes_the_name_of_is_flagged(
@@ -2211,6 +2239,49 @@ def test_a_setting_python_computes_the_name_of_is_flagged(
         f"from alembic import op\n\n\ndef upgrade(name: str) -> None:\n    {body}\n"
     )
     hits = _audit_hits(tmp_path, source)
+    assert hits and all(_SETTING in hit for hit in hits)
+
+
+@pytest.mark.parametrize(
+    ("body", "target"),
+    [
+        (
+            "op.execute(sa.select(sa.func.set_config("
+            "'session_replication_role', 'replica', False)))",
+            _SETTING,
+        ),
+        (
+            "f = sa.func.set_config\n    op.execute(sa.select("
+            "f('session_replication_role', 'replica', False)))",
+            _TRIGGERS_OFF,
+        ),
+    ],
+    ids=["through-core", "through-a-name"],
+)
+def test_a_setting_python_sets_past_the_sql_reader_is_flagged(
+    tmp_path: Path, body: str, target: str
+) -> None:
+    """`set_config` through SQLAlchemy Core, and the name of the setting that turns the
+    tables' triggers off wherever Python passes it, as SQL would be read (#4032)."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert hits and all(target in hit for hit in hits)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DO $$ BEGIN EXECUTE format('SET session_%s = replica', 'replication_role'); END $$",
+        "DO $$ BEGIN EXECUTE format('CREATE FUNCTION f() RETURNS void LANGUAGE sql"
+        " SET session_%s = replica AS $x$ SELECT 1 $x$', 'replication_role'); END $$",
+    ],
+    ids=["a-set", "a-routine-header"],
+)
+def test_a_setting_dynamic_sql_completes_after_a_prefix_is_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    """The placeholder may follow the literal start of the setting's name: the rule
+    cannot read the name either way (#4032)."""
+    hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
     assert hits and all(_SETTING in hit for hit in hits)
 
 

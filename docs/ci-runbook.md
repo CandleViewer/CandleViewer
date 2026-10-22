@@ -759,8 +759,9 @@ index alone, removing nothing.
     reassigned role's objects, the `pgcrypto` extension dropped or
     altered, a role's or a database's `search_path`, and an event trigger;
   - a statement that disables triggers for a session, and a setting the
-    rule cannot read: one set through `set_config()` or under a computed
-    name. Set a setting with `SET LOCAL <name> = <value>`.
+    rule cannot read: one set through `set_config()`, in SQL or through
+    SQLAlchemy Core, or under a computed name, wholly or after a literal
+    prefix. Set a setting with `SET LOCAL <name> = <value>`.
 
   It is fail-closed: a mutating statement that names an audit table
   anywhere counts, so these are refused as well, each with its rewrite:
@@ -778,9 +779,12 @@ index alone, removing nothing.
     table or calls a guard function: a statement runs from the previous
     `;`, so the header counts with the statement it opens. Read the
     condition into a variable first;
-  - a Python name bound to more than one value (assigned twice, a loop
-    target, a parameter) where a table goes, in SQL, an Alembic operation
-    or a Core table: give each table its own literal or constant;
+  - anything but a literal, or a Python name bound to one value, where a
+    table goes, in SQL, an Alembic operation or a Core table: a name
+    assigned twice, a loop target, a parameter, an expression (`+`, an
+    f-string, an attribute, a subscript, a call), or a name completed by a
+    placeholder after a literal prefix. Give each table its own literal or
+    constant;
   - a message or a value that opens with `Set` and one word, read as a
     setting under a name the rule cannot read: reword it.
 

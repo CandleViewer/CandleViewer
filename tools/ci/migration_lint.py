@@ -82,15 +82,15 @@ _TABLE_QUALIFIER = r"(?:\"?\w+\"?\.)?\"?'?"
 # Sentinel substituted for an f-string placeholder whose value could not be
 # resolved to a string constant at lint time. Never matches a real table name
 # (NUL cannot appear in Python source), so it only trips the dedicated
-# dynamic-table check below and never the static per-table patterns. NUL is not
-# a word character, so the pattern ends in `(?!\w)` — a trailing `\b` would
-# silently never match at end-of-string or before whitespace.
+# dynamic-table check below and never the static per-table patterns. A target
+# counts when its name holds the sentinel anywhere: after literal characters
+# (`audit_{suffix}`), quoted or qualified, as well as alone (#4032).
 _UNRESOLVED_PLACEHOLDER = "\x00"
 _DYNAMIC_MUTATION_RE = re.compile(
     rf"\b(?:DELETE\s+FROM|UPDATE|DROP\s+TABLE|TRUNCATE(?:\s+TABLE)?|ALTER\s+TABLE)"
-    rf"\s+{_TABLE_QUALIFIER}{re.escape(_UNRESOLVED_PLACEHOLDER)}(?!\w)"
+    rf"\s+{_TABLE_QUALIFIER}\w*{re.escape(_UNRESOLVED_PLACEHOLDER)}"
     rf"|\bGRANT\s+(?:ALL(?:\s+PRIVILEGES)?|[A-Za-z, ]*?\b(?:UPDATE|DELETE|TRUNCATE)\b[A-Za-z, ]*?)"
-    rf"\s+ON\s+{_TABLE_QUALIFIER}{re.escape(_UNRESOLVED_PLACEHOLDER)}(?!\w)",
+    rf"\s+ON\s+{_TABLE_QUALIFIER}\w*{re.escape(_UNRESOLVED_PLACEHOLDER)}",
     re.IGNORECASE,
 )
 
@@ -361,12 +361,13 @@ _PLACEHOLDER_RE = re.compile(r"%[IsL]|\$\d+")
 _SETS = frozenset({"SET", "RESET"})
 #: A setting set under a name the rule cannot read: a placeholder (`%I`, `$1`, a
 #: `str.format` field), a Python value it cannot resolve (`_UNRESOLVED_PLACEHOLDER`),
-#: or a name its fragment ends on, which the code may go on to build. A routine's own
-#: `SET` clause counts too: its body runs under it.
+#: or a name its fragment ends on, which the code may go on to build. The placeholder
+#: may follow literal characters (`session_{}`). A routine's own `SET` clause counts
+#: too: its body runs under it.
 _DYNAMIC_SETTING_RE = re.compile(
     r"\s*(?:SET(?:\s+(?:SESSION|LOCAL))?|(?:ALTER\s+(?:ROLE|USER|DATABASE|SYSTEM"
     r"|FUNCTION|PROCEDURE|ROUTINE)|CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE))"
-    r"\b.*?\bSET)\s+(?:[%$\x00{]|[\w.\"]*\s*\Z)",
+    r"\b.*?\bSET)\s+[\w.\"]*(?:[%$\x00{]|\s*\Z)",
     re.IGNORECASE | re.DOTALL,
 )
 #: The revision that creates the audit tables and their guard functions (21 §3.10).
@@ -833,9 +834,12 @@ def _run_time_tables(tree: ast.AST) -> dict[int, str]:
     names = _resolve_simple_name_constants(tree)
 
     def unresolved(node: ast.expr | None) -> bool:
-        return isinstance(node, ast.Starred) or (
-            isinstance(node, ast.Name) and node.id not in names
-        )
+        """A table slot holding anything but a literal or a name bound to one: a
+        rebound name, a parameter, a starred list, or an expression (`+`, an f-string,
+        an attribute, a subscript, a call) may name an audit table at run time."""
+        if node is None or isinstance(node, ast.Constant):
+            return False
+        return not isinstance(node, ast.Name) or node.id not in names
 
     hits: dict[int, str] = {}
     for node in ast.walk(tree):
@@ -868,6 +872,30 @@ def _core_table_name(node: ast.Call) -> ast.expr | None:
     if node.args:
         return node.args[0]
     return next((kw.value for kw in node.keywords if kw.arg == "name"), None)
+
+
+def _python_settings(tree: ast.AST) -> dict[int, str]:
+    """`{line: reach}` of a setting Python sets past the SQL reader (#4032): a call of
+    `set_config` (`sa.func.set_config(...)`), and a string that is the name of the
+    setting that turns the tables' triggers off, wherever Python passes it."""
+    hits: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            callee = (
+                func.attr
+                if isinstance(func, ast.Attribute)
+                else getattr(func, "id", "")
+            )
+            if str(callee).lower() == "set_config":
+                hits.setdefault(node.lineno, "reach:set_config")
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.strip().strip('"').lower() == "session_replication_role"
+        ):
+            hits.setdefault(node.lineno, "reach:replication_role")
+    return hits
 
 
 def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
@@ -1181,12 +1209,16 @@ def _audit_findings(path: Path, forbidden_tables: frozenset[str]) -> list[LintFi
         tree, frozenset({"rename_table", "alter_column"}), forbidden_tables
     )
     operations = {
+        **_python_settings(tree),
         **_run_time_tables(tree),
         **reshapes,
         **_core_mutations(tree, forbidden_tables),
     }
     for line, table in sorted(operations.items()):
-        target = table if table == _RUN_TIME else f"append-only table '{table}'"
+        if table in _REACHES:
+            target = _REACHES[table]
+        else:
+            target = table if table == _RUN_TIME else f"append-only table '{table}'"
         findings.append(
             LintFinding(
                 code="CI-MIG-003",
