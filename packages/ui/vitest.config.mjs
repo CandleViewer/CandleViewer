@@ -1,5 +1,6 @@
 import { env } from "node:process";
 import { defineConfig } from "vitest/config";
+import { playwright } from "@vitest/browser-playwright";
 import { storybookTest } from "@storybook/addon-vitest/vitest-plugin";
 import { vitestPreset } from "@candleviewer/config/vitest";
 
@@ -42,11 +43,11 @@ export default defineConfig({
           browser: {
             enabled: true,
             headless: true,
-            provider: "playwright",
+            provider: playwright(),
             instances: [{ browser: "chromium" }],
-            // No file writes or exec through the browser API (the GHSA-82fw-gwwq-j7x9 register
-            // reason). Vitest turns both on for a localhost server, and addon-vitest's own switch-off
-            // reads the root config's browser block, which this projects layout leaves unset.
+            // No file writes or exec through the browser API (vitest-project.test.ts pins both).
+            // Vitest turns both on for a localhost server, and addon-vitest's own switch-off reads
+            // the root config's browser block, which this projects layout leaves unset.
             api: { allowWrite: false, allowExec: false },
           },
         },

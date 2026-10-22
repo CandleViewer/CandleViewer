@@ -16,11 +16,18 @@ def test_tar_override_pinned_past_critical_advisory() -> None:
 
 
 def test_vitest_not_on_vulnerable_major() -> None:
+    # 4.1.12 is the first release past every finding on vitest and @vitest/mocker; a later 4.x
+    # patch (the three packages peer one exact version, so they move together) passes.
+    seen = 0
     for pkg in list(ROOT.glob("apps/*/package.json")) + list(ROOT.glob("packages/*/package.json")):
         dev = json.loads(pkg.read_text(encoding="utf-8")).get("devDependencies", {})
-        for name in ("vitest", "@vitest/coverage-v8"):
+        for name in ("vitest", "@vitest/coverage-v8", "@vitest/browser-playwright"):
             if name in dev:
-                assert dev[name] == "^3.2.6", (pkg, name)
+                assert dev[name].startswith("^"), (pkg, name)
+                version = tuple(int(part) for part in dev[name][1:].split("."))
+                assert version[0] == 4 and version >= (4, 1, 12), (pkg, name)
+                seen += 1
+    assert seen, "no manifest declares vitest"
 
 
 def test_dependabot_sla_labels_present() -> None:
@@ -340,14 +347,11 @@ def _locked_versions(name: str) -> set[tuple[int, ...]]:
     return {tuple(int(part) for part in key.split(".")) for key in keys}
 
 
-def test_tinypool_and_source_map_js_overrides_clear_their_advisories() -> None:
-    # #3494 (policy §8.4): tinypool <2.1.2 is Critical twice and source-map-js <1.2.2 is High.
-    # vitest 3.2.7 asks for tinypool ^1.1.1 and no 1.x is fixed, so only the override fixes it.
-    # postcss (^1.2.1) and magicast (^1.2.0) already accept source-map-js 1.2.2: that override
-    # is a floor, without which a lockfile that pins 1.2.1 keeps it.
+def test_source_map_js_override_floors_the_locked_version() -> None:
+    # #3494 (policy §8.4): source-map-js <1.2.2 is rated High. postcss (^1.2.1) and magicast
+    # (^1.2.1) accept 1.2.2, so the override is a floor, without which a lockfile that pins
+    # 1.2.1 keeps it. (The tinypool override left with vitest 3: vitest 4 has no tinypool.)
     overrides = yaml.safe_load((ROOT / "pnpm-workspace.yaml").read_text(encoding="utf-8"))
-    assert overrides["overrides"]["tinypool"] == ">=2.1.2 <3"
     assert overrides["overrides"]["source-map-js"] == ">=1.2.2 <2"
-    tinypool, source_map_js = _locked_versions("tinypool"), _locked_versions("source-map-js")
-    assert tinypool and min(tinypool) >= (2, 1, 2)
+    source_map_js = _locked_versions("source-map-js")
     assert source_map_js and min(source_map_js) >= (1, 2, 2)
