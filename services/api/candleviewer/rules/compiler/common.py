@@ -21,13 +21,16 @@ MAX_GRAPH_EDGES = 4_000
 
 
 def check_bounds(doc: Any, what: str) -> None:
-    """Reject over-sized or over-deep documents before walking them."""
+    """Reject over-sized or over-deep documents before walking them. Every value stacked and every
+    child of the one at hand is still to be counted, so a container is refused by its length
+    before its children are stacked, and the stack never holds more than `MAX_ITEMS`."""
     stack: list[tuple[Any, int]] = [(doc, 0)]
     count = 0
     while stack:
         cur, depth = stack.pop()
         count += 1
-        if count > MAX_ITEMS or depth > MAX_DEPTH:
+        wide = len(cur) if isinstance(cur, (dict, list, tuple)) else 0
+        if count + len(stack) + wide > MAX_ITEMS or depth > MAX_DEPTH:
             raise RuleCompileError(
                 [
                     Issue(

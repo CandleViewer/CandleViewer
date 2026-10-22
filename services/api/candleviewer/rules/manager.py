@@ -392,6 +392,7 @@ class RulesManager:
     async def import_rule(self, bundle: dict[str, Any], actor: Actor) -> dict[str, Any]:
         """Always lands disabled. Every account id anywhere in the bundle must be granted to
         the importer (refused + audited otherwise); they are then dropped, never remapped."""
+        self.check_document(bundle.get("ir", {}))  # the bounds, before the copy and walks below
         raw = copy.deepcopy(bundle.get("ir", {}))
         refs = collect_account_ids(raw)
         denied = [] if actor.is_owner else [a for a in refs if a not in actor.granted_accounts]
@@ -514,11 +515,17 @@ class RulesManager:
             out["ir"] = copy.deepcopy(v.ir)
         return out
 
-    def _validated(self, ir: dict[str, Any], rule_id: str) -> tuple[Rule, str]:
-        try:  # the bounds compile and validate apply, before the schema walks the document
-            check_bounds(ir, "rule")
+    @staticmethod
+    def check_document(doc: Any) -> None:
+        """The bounds compile and validate apply (`check_bounds`), first on every save and for any
+        caller about to walk the document itself: the same 422 `rule_ir_invalid` as `_validated`."""
+        try:
+            check_bounds(doc, "rule")
         except RuleCompileError as exc:
             raise _ir_invalid(exc.issues) from exc
+
+    def _validated(self, ir: dict[str, Any], rule_id: str) -> tuple[Rule, str]:
+        self.check_document(ir)  # before the schema walks the document
         try:
             rule = Rule.model_validate({**ir, "rule_id": rule_id})
         except ValidationError as exc:

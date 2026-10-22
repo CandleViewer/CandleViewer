@@ -121,9 +121,13 @@ def make_rules_crud_router(
         return await read_object(request, _bad)
 
     def _unstorable(body: dict[str, Any], field: str) -> JSONResponse | None:
-        """400 when `field` holds text Postgres cannot store, naming the field, never its value."""
+        """400 when `field` is not a string or holds text Postgres cannot store, naming the field,
+        never its value."""
+        value = body.get(field, "")
+        if not isinstance(value, str):
+            return _bad(f"'{field}' must be a string")
         try:
-            refuse_unstorable_text(body.get(field, ""))
+            refuse_unstorable_text(value)
         except ValueError as exc:
             return _bad(f"'{field}' {exc}")
         return None
@@ -169,6 +173,10 @@ def make_rules_crud_router(
             return _bad("body needs an 'ir' object")
         if (refused := _unstorable(body, "note")) is not None:
             return refused
+        try:
+            mgr.check_document(doc)  # the bounds first: the scope check below reads the scope
+        except RuleError as exc:
+            return _from_error(exc)
         denied = await _scope_check(actor, doc.get("scope"), arming=False)
         if denied is not None:
             return denied
@@ -208,8 +216,10 @@ def make_rules_crud_router(
         if (refused := _unstorable(body, "note")) is not None:
             return refused
         try:
-            # The stored rule first (owner, every version's accounts), then the submitted scope.
+            # The stored rule first (owner, every version's accounts), then the bounds, then the
+            # submitted scope.
             await mgr.require_visible(str(ruleId), actor, "update")
+            mgr.check_document(doc)
             denied = await _scope_check(actor, doc.get("scope"), arming=False)
             if denied is not None:
                 return denied
