@@ -80,6 +80,11 @@ Cluster settings that this schema assumes (documented in `infra/postgres/postgre
 | `statement_timeout`                   | `30s` (app role), `0` (migration role) | Protects API from runaway scans            |
 | `idle_in_transaction_session_timeout` | `60s`                                  | Prevents OMS lock leaks                    |
 | `lock_timeout`                        | `5s` (app role)                        | Fail fast rather than queue behind DDL     |
+| `log_error_verbosity`                 | `terse`                                | Row values stay out of the server log      |
+| `log_parameter_max_length_on_error`   | `0`                                    | Bound parameters stay out of it too        |
+
+The two `log_*` settings are set on the Postgres command line in `infra/compose/docker-compose.yml`
+(#2748; `docs/ops/runbooks/postgres-logging.md`).
 
 Roles & grants:
 
@@ -809,7 +814,7 @@ CREATE TRIGGER trg_auth_keys_touch BEFORE UPDATE ON auth_keys
   AAD `cv-akey-v1 ‖ environment ‖ purpose ‖ id ‖ kek_version`, where `id` is the row's own id. A
   wrap moved to another row, purpose, environment or `kek_version` fails authentication, and so does
   an `api_keys` `v2:` wrap.
-  `ak_dek_ref` stores nothing else, so a plaintext key cannot be written even by a buggy caller; Postgres still echoes the refused row in its error `DETAIL` and server log, which the store drops (C-12.6).
+  `ak_dek_ref` stores nothing else, so a plaintext key cannot be written even by a buggy caller; Postgres still echoes the refused row in its error `DETAIL`, which the store drops (C-12.6); the server log keeps only the message (`log_error_verbosity = terse`, #2748).
 - **TOTP seeds** (`mfa_methods.secret_enc`, §3.1.5). A new seal is `nonce(12) ‖ ciphertext ‖ tag(16)`
   of the raw seed (20 bytes today) under the environment's `totp_seal` key, with AAD
   `cv-totp-v1 ‖ environment ‖ user_id`, where `user_id` is the method row's `user_id`. It stores
