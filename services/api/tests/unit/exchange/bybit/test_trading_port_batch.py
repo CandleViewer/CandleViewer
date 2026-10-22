@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -502,6 +502,8 @@ async def test_a_stop_write_sends_both_sides_and_answers_with_no_order() -> None
         active_price=Decimal("61000"),
         tpsl_mode="partial",
         position_idx=1,
+        tp_size=Decimal("0.01"),
+        sl_size=Decimal("0.01"),
     )
     ack = await make_port(venue).set_trading_stop(request)
     [body] = venue.bodies()
@@ -512,12 +514,43 @@ async def test_a_stop_write_sends_both_sides_and_answers_with_no_order() -> None
         "positionIdx": 1,
         "takeProfit": "65000",
         "tpTriggerBy": "LastPrice",
+        "tpSize": "0.01",
         "stopLoss": "58000",
         "slTriggerBy": "MarkPrice",
+        "slSize": "0.01",
         "trailingStop": "150",
         "activePrice": "61000",
     }
     assert (ack.ok, ack.order_link_id, ack.exchange_order_id) == (True, None, None)
+
+
+@pytest.mark.parametrize(
+    ("mode", "size", "sent"),
+    [
+        ("partial", Decimal("0.5"), {"slSize": "0.5"}),
+        ("full", None, {}),
+    ],
+    ids=["partial", "full"],
+)
+async def test_a_stop_writes_its_size_beside_its_side_in_partial_mode_only(
+    mode: Literal["full", "partial"], size: Decimal | None, sent: dict[str, str]
+) -> None:
+    """G-8b (24 §8.9, §14.4): `slSize` goes beside `stopLoss` in Partial mode, and a Full-mode
+    stop, which covers the whole position, sends neither size."""
+    venue = Venue().on("/v5/position/trading-stop", rest("rest/trading-trading-stop-reply.json"))
+    request = TradingStopRequest(
+        account=account(),
+        symbol="BTCUSDT",
+        stop_loss=Decimal("58000"),
+        tpsl_mode=mode,
+        sl_size=size,
+    )
+    ack = await make_port(venue).set_trading_stop(request)
+    [body] = venue.bodies()
+    assert {key: body[key] for key in ("tpSize", "slSize") if key in body} == sent
+    assert body["tpslMode"] == mode.capitalize() and ack.ok
+    assert ack.record is not None and ack.record.request_redacted is not None
+    assert ack.record.request_redacted.sl_size == sent.get("slSize")
 
 
 async def test_a_stop_write_with_one_side_sends_that_side_only() -> None:
@@ -600,16 +633,19 @@ def test_the_default_clock_reads_the_wall_in_microseconds() -> None:
 
 
 @pytest.mark.parametrize(
-    ("value", "wire"),
+    ("value", "wire", "stop", "stop_wire"),
     [
-        (Decimal("1E+2"), "100"),
-        (Decimal("1E-7"), "0.0000001"),
-        (Decimal("0E-8"), "0.00000000"),
+        (Decimal("1E+2"), "100", Decimal("1E+2"), "100"),
+        (Decimal("1E-7"), "0.0000001", Decimal("1E-7"), "0.0000001"),
+        # A stop-loss or a trail is never 0 (C-2.6; the orchestrator's ruling 2 on #2877, and
+        # its ruling on SEC-G8B-A-01): zero's exponent form goes through every other field, and
+        # the stop and the trail take another exponent form.
+        (Decimal("0E-8"), "0.00000000", Decimal("5.8E+4"), "58000"),
     ],
     ids=["positive-exponent", "negative-exponent", "zero-exponent"],
 )
 async def test_a_decimal_goes_on_the_wire_as_plain_text_never_in_exponent_form(
-    value: Decimal, wire: str
+    value: Decimal, wire: str, stop: Decimal, stop_wire: str
 ) -> None:
     """Sizing code can hand over `Decimal("1E+2")`; the venue refuses exponent text, and a
     refused stop write is the costly case. Every money field of a create and a stop write goes
@@ -620,19 +656,18 @@ async def test_a_decimal_goes_on_the_wire_as_plain_text_never_in_exponent_form(
         .on("/v5/position/trading-stop", rest("rest/trading-trading-stop-reply.json"))
     )
     port = make_port(venue)
-    await port.place_order(place(qty=value, price=value, stop_loss=value, take_profit=value))
+    await port.place_order(place(qty=value, price=value, stop_loss=stop, take_profit=value))
     await port.set_trading_stop(
         TradingStopRequest(
             account=account(),
             symbol="BTCUSDT",
-            stop_loss=value,
+            stop_loss=stop,
             take_profit=value,
-            trailing_distance=value,
+            trailing_distance=stop,  # a trail of 0 is refused like a stop-loss (SEC-G8B-A-01)
             active_price=value,
         )
     )
-    create, stop = venue.bodies()
-    assert [create[k] for k in ("qty", "price", "stopLoss", "takeProfit")] == [wire] * 4
-    assert [stop[k] for k in ("stopLoss", "takeProfit", "trailingStop", "activePrice")] == [
-        wire
-    ] * 4
+    create, stop_write = venue.bodies()
+    assert [create[k] for k in ("qty", "price", "takeProfit")] == [wire] * 3
+    assert [stop_write[k] for k in ("takeProfit", "activePrice")] == [wire] * 2
+    assert create["stopLoss"] == stop_write["stopLoss"] == stop_write["trailingStop"] == stop_wire

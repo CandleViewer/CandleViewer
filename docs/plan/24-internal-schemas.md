@@ -2107,7 +2107,7 @@ Binding (owner decision; ADR-0008): **every position opened by CandleViewer carr
 | `tp_trigger_by` / `sl_trigger_by` | `tpTriggerBy` / `slTriggerBy` | SL defaults to `MarkPrice` (avoids wick-driven stop-outs) |
 | `tpsl_mode`                       | `tpslMode`                    | `full→Full`, `partial→Partial`                            |
 
-`TradingStopRequest` → `POST /v5/position/trading-stop`: `take_profit→takeProfit`, `stop_loss→stopLoss` (`"0"` cancels), `trailing_distance→trailingStop` (**price distance, not percent** — a %-trailing UX must be translated client-side), `active_price→activePrice`, `tpsl_mode→tpslMode` (`full→Full`, `partial→Partial`), `tp_size`/`sl_size` (Partial mode, must match position size rules), `tp_limit_price`/`sl_limit_price`, `tp_order_type`/`sl_order_type`, `positionIdx`.
+`TradingStopRequest` → `POST /v5/position/trading-stop`: `take_profit→takeProfit`, `stop_loss→stopLoss` (the venue reads `"0"` as "cancel the stop", so no port sends a stop-loss that is not positive, §14.4), `trailing_distance→trailingStop` (**price distance, not percent** — a %-trailing UX must be translated client-side; never `0`, which the venue reads as cancelling the trail, §14.4), `active_price→activePrice`, `tpsl_mode→tpslMode` (`full→Full`, `partial→Partial`), `tp_size→tpSize`/`sl_size→slSize` (Partial mode only, each beside its side's price and equal when both are sent, as the venue requires; they must match the position size rules, and §14.4's `TradingStopRequest` refuses any other use), `tp_limit_price`/`sl_limit_price`, `tp_order_type`/`sl_order_type`, `positionIdx`.
 
 **Caveat (documented in code):** one-sided TP/SL modification via `trading-stop` breaks Bybit's OCO pairing. Our UX therefore always writes **both** TP and SL in a single `trading-stop` call, sending the unchanged side's current value explicitly.
 
@@ -3935,7 +3935,12 @@ class TradingPort(Protocol):
     async def wallet(self, account: AccountRef) -> Wallet: ...
     async def fee_rate(self, account: AccountRef, symbol: Symbol) -> FeeRate: ...
     async def account_info(self, account: AccountRef) -> AccountInfo: ...
-    async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]: ...
+    async def subscribe_private(self, account: AccountRef) -> PrivateStream: ...
+
+class PrivateStream(Protocol):            # what subscribe_private returns (§14.2 rule 13)
+    def __aiter__(self) -> PrivateStream: ...
+    async def __anext__(self) -> PrivateEvent | PrivateStreamStatus: ...
+    async def aclose(self) -> None: ...    # the consumer closes it (contextlib.aclosing)
 
 @runtime_checkable
 class RateHeadroomPort(Protocol):          # beside TradingPort, not in it: no exchange call
@@ -3973,7 +3978,9 @@ class ExchangeCapabilities(BaseModel):
     has_public_ws: bool                    # demo: uses mainnet public
 ```
 
-The id filters are keyword-only (#846 ruling Q5, §8.5): an implementation sends them, filters the rows again itself, and refuses an `ext-` key as a filter. The exchange's implementation is `exchange/bybit/trading.py` (G-8, #2877), with capability records for live and demo and none for testnet; `FakeTradingPort` (`exchange/base/fakes.py`) is the in-memory one, and one conformance suite runs against both. `subscribe_private` raises until G-8b (#3963).
+The id filters are keyword-only (#846 ruling Q5, §8.5): an implementation sends them, filters the rows again itself, and refuses an `ext-` key as a filter. The exchange's implementation is `exchange/bybit/trading.py` (G-8, #2877), with capability records for live and demo and none for testnet; `FakeTradingPort` (`exchange/base/fakes.py`) is the in-memory one, and one conformance suite runs against both.
+
+`subscribe_private` (G-8b, #3963) refuses before anything is signed, dialled or built: an account of another environment or a `key_ref` that is no `api_keys` id (`ValueError`), a second stream for an account that has one (`ValueError`: one consumer per account, SR-E29-02), a key that `close_private_streams` closed or that three `auth` refusals marked (`AuthError`), and a stream past the cap of 64 (`RateBudgetExceededError`, `reason` `stream_cap`); a port built with no stream registry, and an adapter that has stopped (`stop()`, after which a later `start()` opens none again), refuse every account (`RuntimeError`). Once it returns, the stream (`PrivateStream`: an async iterator the consumer can close) raises nothing: it yields `PrivateEvent`s and `PrivateStreamStatus`es in arrival order, never reordered, and ends after its `closed` status (§14.2 rule 13). The consumer closes it (`contextlib.aclosing`): its `aclose()`, even before a read, or its task's cancellation, closes the socket. `FakeTradingPort` yields the account's seeded events and then what a test pushes for it, statuses included, ends after a `closed` status or `end_stream()`, and refuses a second subscriber as the exchange's port does.
 
 `RateHeadroomPort` is a separate small protocol, not a `TradingPort` method: it reads the adapter's local rate budget for an account's lane, takes no token and sends nothing (§8.7; #2877 ruling 4), so the venue-call surface and its conformance suite stay as they are, and E34-T02's `reserve()` can replace it without touching `TradingPort`. The exchange's port and `FakeTradingPort` both satisfy it (the fake answers what a test scripts, else a fresh budget), and the OMS's own `RateHeadroom` port binds to it (E29-T04).
 
@@ -3990,7 +3997,7 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
 3. **Capabilities drive behaviour, not conditionals.** No `if exchange == "bybit"` and no `if env == "demo"` outside the adapter package — lint-enforced (§17.4).
 4. Adapters publish **normalized events only**. Raw payloads go to the recorder's raw log for forensics, with secrets redacted.
 5. Every adapter ships a contract-test suite run against recorded fixtures, plus an opt-in live smoke test (`pytest -m exchange_smoke`).
-6. Adapters own reconnect, resubscribe and heartbeat; consumers see only a continuous event stream plus `FeedHealthEvent`.
+6. Adapters own reconnect, resubscribe and heartbeat; consumers see only a continuous event stream plus `FeedHealthEvent` (public market data) or `PrivateStreamStatus` (a private stream, rule 13).
 7. Adapters never persist and never touch Postgres. They are pure I/O plus mapping.
 8. All adapter methods are cancellable (`asyncio.CancelledError` propagates cleanly, connections close).
 9. **Adapter metrics (E08-T06).** Adapter series are declared in the ingestion registry
@@ -4000,9 +4007,17 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
    `bybit_rate_limit_remaining{scope,endpoint_class}` (`scope` ∈ `public|account` — **never a UID**,
    which is an account identifier), `bybit_rate_limited_total{code}`, `exchange_errors_total{class}`,
    `bybit_rows_refused_total{reason}` (a trading read's row set aside, rule 12) and
-   `cv_bybit_unknown_fields_total{model}` (reply fields the strict trading models do not know, #2877
-   ruling R7). Clock thresholds in §14.3 are unchanged: warn > 500 ms, block > 2000 ms
-   (`recv_window/2`).
+   `cv_bybit_unknown_fields_total{model}` (reply and push fields the strict trading models do not
+   know, #2877 ruling R7). The private stream adds (rule 13): `bybit_private_rows_refused_total{topic,reason}`
+   (a pushed row dropped; G-8b ruling 7, its own series, never an account label),
+   `bybit_private_frames_rejected_total{reason}`, `bybit_private_ws_auth_total{result}`,
+   `bybit_private_ws_disconnects_total{reason}`, `bybit_private_subscribe_refused_total{topic}`,
+   `bybit_private_reconnect_waited_total` (a dial that waited for the consumer to read the last
+   `down`) and the gauge `bybit_private_ws_streams`; `exchange.base` adds
+   `ws_conn_budget_remaining{scope}` (`scope` a budget lane or `probe`: what it could open now)
+   and `ws_conn_budget_refused_total{scope}` (`scope` a lane, for an open no slot within one
+   window admits, `probe` for a refused key probe, or `streams` for the private stream cap).
+   Clock thresholds in §14.3 are unchanged: warn > 500 ms, block > 2000 ms (`recv_window/2`).
 10. **Ingest-boundary validation (#1889 / #1890 / #1892).** Parsers check market plausibility
     _before_ building a domain event; checks are O(1) per field (no regex per frame, C-2.20).
     Shared primitives live in `exchange/base/frame_guard.py`; a failure raises
@@ -4092,6 +4107,104 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
     perpetual, or a dated future such as `BTC-27MAR26`), counted as `not_usdt` and logged with
     its symbol, rather than return it as a USDT record or fail the read on a field of its own.
 
+13. **Private streams (G-8b, #3963).** `subscribe_private` opens one socket per account on the
+    private stream of the account's environment (`PRIVATE_WS_URLS`; demo's is `stream-demo`, and
+    the stream never branches on the environment), authenticated with the account's active key
+    (`AccountRef.key_ref`). Its lifecycle is B13 (`ws_conn`, lane `platform`), built through
+    `statechart.factory`. The adapter sends B13 its lifecycle events only (`CONNECT`,
+    `BACKOFF_DUE`, `BUDGET_RECHECK`, `SOCKET_CLOSED`, `PONG_DEADLINE`, `SHUTDOWN`, `KILL`), each
+    only while the socket that raised it is current; frames, pings and the watchdog are plain tasks
+    that never query the interpreter (C-2.20, INV-B13-d).
+    - **Ops.** Only `auth`, `subscribe` and `ping` are ever sent (SR-040a: no order entry over
+      WS). Every dial signs a fresh `auth` through M2 under `sign_ws_auth` (C-2.7): `expires` is
+      10 s ahead of the exchange clock (the measured offset; the host's while unmeasured), and the
+      frame is signed just before it is sent, bound to no name, and never sent once the stream is
+      closing. The dial, the `auth` reply and each `subscribe` acknowledgement are bounded at 5 s.
+    - **Subscriptions.** Three `subscribe` ops, one at a time, each acknowledged before the next:
+      `order.linear`, `execution.linear` and `position.linear`; then `wallet`; then
+      `execution.fast.linear`, which is optional: its refusal is counted and the socket stays
+      (G-8b ruling 2; whether demo serves it is unverified until E29-K01). A refused or unanswered
+      required op recycles the socket (`down`, `subscribe_refused`): B13 has no partial-subscribe
+      edge, so a partial subscription never reaches `live` (INV-B13-c), and the optional op is
+      outside the topics INV-B13-c requires.
+    - **Statuses.** A `PrivateStreamStatus` (§14.4) carries a `state`, a `reason` from that state's
+      closed set and an `epoch`, the count of sockets the stream has opened. Within an epoch:
+      `heartbeat` (`evidence`) after the granted `auth` and on each pong, at most one pending
+      (`AccountHealth.ws_heartbeat`; every event is evidence too); `resyncing` (`connected` on the
+      stream's first `live`, `reconnected` after) once every required op is acknowledged and before
+      any row of the epoch, as private topics send no snapshot (C-2.5), so the consumer reconciles
+      over REST; a mid-epoch `resyncing` (`rejected_frame`) after a frame the adapter could not
+      read, at most one pending; and `down` (`socket_closed`, `pong_timeout`, `subscribe_refused`
+      or `slow_consumer`) after the epoch's last row, only for an epoch that authenticated, with
+      nothing of that epoch after it (`AccountHealth.ws_dropped`). `closed` comes last and ends the
+      stream: `shutdown` (the adapter stops), `key_revoked`, `key_rotated`, `key_unusable` or
+      `auth_refused`; `consumer_closed` names the consumer's own close and is never yielded. A
+      closed stream is down.
+    - **Heartbeat and backoff.** A dedicated task pings (`{"op":"ping"}`) every 5 s; any frame
+      received re-arms an absolute 10 s deadline held outside the chart (INV-B13-e), and past it B13
+      takes `PONG_DEADLINE` (`down`, `pong_timeout`). Backoff is 0.5 s doubling to 30 s with full
+      jitter, and the attempt count resets only once an epoch has stayed `live` for 30 s. A new
+      dial waits until the consumer has read the last epoch's `down`, so a stalled consumer holds
+      one epoch's statuses at most; a dial that has to wait is counted once in
+      `bybit_private_reconnect_waited_total`, so a consumer that stalls reconnects shows on a
+      dashboard. These are fixed values, not knobs (G-8b ruling 4, §16.1): #848's
+      `CV_PRIVATE_WS_HEARTBEAT_S` and `CV_PRIVATE_WS_RESUB_BACKOFF` are retired.
+    - **Rows.** Every row takes the stream's account, never the payload's (SR-E29-02), and its
+      `order_link_id` normalised (rule 11): an empty or foreign one is kept as `ext_key(orderId)`. A
+      row is dropped, counted in `bybit_private_rows_refused_total{topic,reason}` and logged with
+      its id, never raised, when it carries one of our ids of another environment or account
+      (`environment`, `account`), a category other than `linear` (`category`), a symbol outside
+      USDT linear perpetuals (`symbol`: C-1.2, the REST reads' settle coin), an account type other
+      than `UNIFIED` (`account_type`) or no USDT row (`no_settle_coin`, a wallet), or is an
+      execution that fills no order or has no `exec_type` (`not_a_fill`, `unmapped_type`, as rule
+      12); one that does not state what these checks read rejects its frame. Each order,
+      execution and fast-execution event carries one allow-listed `ExchangeRecord`
+      (`transport` `ws_private`, the push's `topic`, the row's own fields only: never a `ret_msg`, a
+      `conn_id`, an `auth` frame or a URL; SR-E29-08); position and wallet events carry none.
+    - **Frames and the queue.** A frame above 1 MiB recycles the socket (`down`,
+      `socket_closed`) and counts as `oversize`. A frame nested deeper than 32, holding more than
+      1,000 rows, malformed, or neither a documented reply nor a push of a private topic
+      (categorised, as the adapter subscribes them, or all-in-one, as the documentation's samples
+      name them) is rejected whole: no event of it
+      is yielded, it is counted in `bybit_private_frames_rejected_total{reason}`, and `resyncing`
+      (`rejected_frame`) follows. The stream's queue holds 2,048 events and 8 statuses; an event
+      that finds it full ends the epoch (`down`, `slow_consumer`), so no event is dropped
+      unannounced and the next `resyncing` covers the gap.
+    - **`auth` refusals (G-8b ruling 10).** Three consecutive exchange refusals of `auth`
+      (`success` false), each while the exchange clock offset is measured, close the stream
+      (`closed`, `auth_refused`) and mark the key: a later stream on it is refused (`AuthError`)
+      before anything is signed or dialled, until `reopen_private_streams(key_ref)` (an operator's
+      action) or a new key. A granted `auth` resets the count; a timeout, an unreadable reply, a
+      transport error and a refusal while the offset is unmeasured count nothing, so a skewed host
+      clock never becomes a verdict on the key. M2's refusal to sign (`credential_unavailable`,
+      `key_withdraw_permission`, `snapshot_invalid` or any other code) closes the stream at once
+      (`closed`, `key_unusable`); `kek_unavailable` only backs off (§14.4). The consumer (E29-T05)
+      reports `auth_refused` and `key_unusable` to the key standing through #913's wiring
+      (`CredentialRejections.credential_rejected`, §8.6); the frame carries no venue code, so which
+      refusal it reports is that wiring's choice, not this rule's.
+    - **Revocation and rotation (SR-E27-17, KV-E13).** `close_private_streams(key_ref, reason)`
+      closes every stream on the key before it returns, and returns their accounts: it tombstones
+      the key (bounded), closes each socket within 1 s, queues `closed` with `key_revoked` or
+      `key_rotated`, and hands B13's stop to a task the adapter owns; a stream on that key is
+      refused afterwards (`AuthError`). E27-S04 (#898) calls it on revoke, force-disable,
+      mark-compromised and account-disable, and with `key_rotated` at the start of a rotation's
+      overlap, after which the consumer resubscribes with the new key (AC-35). M2 is the backstop: a
+      destroyed key's next `auth` borrow is refused (`key_unusable`).
+    - **Connection budget (C-12.7, OM-D07; G-8b ruling 5).** The adapter holds one
+      `ConnectionBudget` (`exchange.base`): 480 opens in any 300 s, of which public opens take at
+      most 420, so 60 stay for private ones; `testApiKey`'s key probe counts in it, at most 10 per
+      300 s and never in those 60 (SR-E27-05, KV-D01). An open counts only against the windows
+      that hold it, so opens booked ahead never take those 60 from an open now. A lane books an
+      open at most 300 s ahead and refuses one it cannot fit by then, with nothing booked
+      (`RateBudgetExceededError`, `reason` `token_bucket`, counted in
+      `ws_conn_budget_refused_total` under the lane), so the budget holds two windows of opens
+      at most: B13 then backs off, and the public stream skips that book resubscribe, which the
+      book's snapshot timeout asks for again. The venue allows 500 new connections per 5
+      minutes, counted per WebSocket domain: one window over every domain is the conservative
+      reading. At most 64 private streams are open; the next is refused (`RateBudgetExceededError`,
+      `reason` `stream_cap`, also counted in `ws_conn_budget_refused_total{scope="streams"}`), which
+      metrics and audit tell apart from a refused token (`reason` `token_bucket`).
+
 ### 14.3 Bybit implementation notes
 
 **Endpoints.** Base URLs are **configuration, never hardcoded** — Bybit operates regional hosts (`api.bybit.nl/.tr/.kz/.ae/.eu/.id`, `api.bytick.com`) and blocks US/Mainland-China IPs with 403.
@@ -4102,10 +4215,10 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
 | Auth (WS)      | `{"op":"auth","args":[key, expires_ms, HMAC("GET/realtime"+expires)]}`                                                                                                                                                          |
 | Clock          | `GET /v5/market/time` every 60 s; offset >2 s blocks trading (§2.8). NTP/chrony on the host is the primary fix; WSL drifts after host sleep                                                                                     |
 | Subscriptions  | ≤10 topics per `subscribe` request, ≤~21 000 chars of args — the adapter chunks automatically                                                                                                                                   |
-| Connections    | ≤500 new connections/5 min/IP, ≤1000 concurrent/IP per category; exponential backoff with jitter, never reconnect churn                                                                                                         |
-| Heartbeat      | `{"op":"ping"}` every 20 s from a **dedicated task**, never inline in the message loop (GC or backpressure must not starve the ping)                                                                                            |
-| Private topics | Use the categorised form (`order.linear`, `position.linear`, `execution.linear`, `wallet`); all-in-one and categorised forms cannot be mixed in one subscribe                                                                   |
-| Fills          | Prefer `execution.fast` for latency, reconcile against `execution` for completeness; one message may bundle multiple fills                                                                                                      |
+| Connections    | ≤500 new connections/5 min/IP (per WS domain), ≤1000 concurrent/IP per category; one adapter budget of 480 per 300 s with 60 kept for private opens, ≤64 private streams (§14.2 rule 13); backoff with jitter, no churn         |
+| Heartbeat      | `{"op":"ping"}` from a **dedicated task**, never inline in the message loop (GC or backpressure must not starve the ping): every 20 s on public streams, every 5 s with a 10 s watchdog on private ones (§14.2 rule 13)         |
+| Private topics | Use the categorised form (`order.linear`, `position.linear`, `execution.linear`, `wallet`); all-in-one and categorised forms cannot be mixed in one subscribe; `execution.fast.linear` in a third, optional op (rule 13)        |
+| Fills          | Prefer `execution.fast` for latency (`FastExecution`: no fee, no `exec_type`), reconcile against `execution` for completeness; one message may bundle multiple fills                                                            |
 | Book           | No checksum → drop-and-resubscribe on any `u` gap (§2.2)                                                                                                                                                                        |
 | Kline          | Gate "closed" on `confirm`                                                                                                                                                                                                      |
 | Liquidations   | `allLiquidation.{symbol}` only; legacy `liquidation` 404s                                                                                                                                                                       |
@@ -4153,7 +4266,7 @@ class ReconCapabilities(BaseModel):
 | `private_ws_supported`         | yes           | yes (`stream-demo`) | yes (`stream-testnet`)                                                                                                                           |
 | `private_ws_stability`         | `production`  | `production`        | **`best_effort`** — testnet is a shared sandbox with frequent maintenance windows, silent disconnects and occasional multi-minute stream outages |
 | `ws_order_entry`               | yes           | **no**              | yes                                                                                                                                              |
-| `execution_fast_topic`         | yes           | yes                 | yes, but may lag                                                                                                                                 |
+| `execution_fast_topic`         | yes           | unverified, E29-K01 | yes, but may lag                                                                                                                                 |
 | `full_sweep_interval_s`        | 300           | 300                 | **60**                                                                                                                                           |
 | `unknown_order_grace_s`        | 30            | 30                  | **120**                                                                                                                                          |
 
@@ -4162,7 +4275,7 @@ class ReconCapabilities(BaseModel):
 - **live** — the baseline of §8.5: WS `order`/`execution` is the primary truth, the 5-minute REST sweep is the backstop, and any order older than the retention window is irrelevant because retention is effectively unbounded.
 - **demo** — identical to live in mechanism, with two adjustments: (a) because order history is pruned after **7 days**, the "resolve an unknown order by id" step (§8.5 step 3) must treat a `/v5/order/history` miss on an order whose `created_at` is older than 7 days as **`expired_from_history`**, not as `unknown`; such orders are closed out against our own persisted record and flagged `authoritative_source="local"` in the journal rather than raising a divergence alert. (b) Because `ws_order_entry=False`, every submission is REST, so the reconciler never has to match a WS-ack-without-REST-response case.
 - **testnet** — testnet exists in CandleViewer **only for connectivity smoke tests** (see the table above and the brief); it never carries user positions, never runs rules, and is never selectable as a trading environment in the UI (enforced by `environment_allowlist` in §16.1). Its reconciliation differences are therefore about _tolerating a flaky sandbox without generating false alarms_, not about protecting capital:
-  1. **Private WS is `best_effort`.** The reconciler does not treat a private-WS gap on testnet as a divergence. `FeedHealthEvent(degraded)` on a testnet private stream logs at `info` and raises **no** `critical` alert; the same event on live/demo pages the owner.
+  1. **Private WS is `best_effort`.** The reconciler does not treat a private-WS gap on testnet as a divergence. A testnet private stream's `down` (`PrivateStreamStatus`, §14.2 rule 13) logs at `info` and raises **no** `critical` alert; the same status on live/demo pages the owner.
   2. **REST is the primary truth on testnet**, inverting the live precedence. The full sweep runs every **60 s** (not 300 s) precisely because the stream cannot be trusted, and the sweep result — not the WS-derived state — wins any conflict. On live and demo, a REST/WS conflict is resolved in favour of the newer `updated_at` and audited as `oms.reconcile`; on testnet the REST snapshot simply overwrites.
   3. **`unknown_order_grace_s` is 120 s** (vs 30 s) so a testnet outage does not immediately mark orders `unknown` and trigger the unknown-order workflow.
   4. **No auto-remediation.** The remediation actions (§8.5 step 5's auto-attach fallback SL and restore of the recorded stop, auto-cancel orphaned children, adopt untracked positions, and the lockout that either caller of §8.10 opens on an order or fill with no OMS intent, the private-stream consumer and reconciliation) are **disabled** on testnet: `capabilities.auto_remediate=False`, which the one setter honours for both callers. A smoke-test environment must report drift, not silently act on it, otherwise a sandbox glitch produces order traffic that pollutes the smoke-test signal. Divergences are recorded to the smoke-test report and fail the CI job; they do not page anyone.
@@ -4216,6 +4329,23 @@ class AmendOrderRequest(BaseModel):        # an ext- order by exchange_order_id 
     take_profit: Px | None = None
     stop_loss: Px | None = None
     lane: Literal["critical","entry"] = "entry"
+
+class TradingStopRequest(BaseModel):       # §8.9: both sides in one call; a side None is not sent
+    account: AccountRef
+    symbol: Symbol
+    position_idx: Literal[0,1,2] = 0
+    take_profit: Px | None = None
+    stop_loss: Px | None = None
+    trailing_distance: Px | None = None    # a price distance, never a percent
+    active_price: Px | None = None
+    tp_trigger_by: Literal["last","mark","index"] = "last"
+    sl_trigger_by: Literal["last","mark","index"] = "mark"
+    tpsl_mode: Literal["full","partial"] = "full"
+    tp_size: Qty | None = None             # Partial mode only, beside take_profit (tpSize)
+    sl_size: Qty | None = None             # Partial mode only, beside stop_loss (slSize)
+    # Refused at construction (ValueError), before anything is signed: a size in Full mode, which
+    # covers the whole position; in Partial mode, a size without its side's price or a price
+    # without its size; a size <= 0; and two sizes that differ (the venue requires them equal).
 
 class OrderAck(BaseModel):
     ok: bool
@@ -4305,13 +4435,43 @@ class RateHeadroom(BaseModel):             # §14.1 RateHeadroomPort; read witho
     wait_s: float                          # the next request's wait for its token, an IP hold
                                            # included; 0 when one is spare now
 
-class PrivateEvent(BaseModel):
-    kind: Literal["order","execution","position","wallet"]
-    account_id: AccountId
-    payload: Order | Execution | Position | Wallet
-    ts_event: TsUs
+class FastExecution(BaseModel):            # an `execution.fast` row: a trade fill, no fee or type
+    exec_id: str
+    exchange_order_id: str                 # the exchange's orderId, never empty
+    order_link_id: OrderLinkId             # normalised, §14.2 rule 11
+    account_id: AccountId                  # the stream's account, never the payload's
+    symbol: Symbol
+    side: Side
+    price: Px
+    qty: Qty
+    is_maker: bool
+    ts_exec: TsUs
+    seq: int | None = None
+
+class PrivateEvent(BaseModel):             # §14.2 rule 13
+    kind: Literal["order","execution","execution_fast","position","wallet"]
+    account_id: AccountId                  # the stream's account, never the payload's
+    payload: Order | Execution | FastExecution | Position | Wallet   # its kind's; same account
+    ts_event: TsUs                         # the push's creationTime
     ts_ingest: TsUs
-    seq: int
+    seq: int | None = None                 # the venue's cross sequence; None where it has none
+    record: ExchangeRecord | None = None   # one per order, execution or execution_fast row
+                                           # (SR-E29-08); position and wallet carry none
+
+PrivateStreamState = Literal["resyncing","heartbeat","down","closed"]
+PrivateStreamReason = Literal[             # each within its state, below
+    "connected","reconnected","rejected_frame",                          # resyncing
+    "evidence",                                                           # heartbeat
+    "socket_closed","pong_timeout","subscribe_refused","slow_consumer",   # down
+    "shutdown","key_revoked","key_rotated","key_unusable","auth_refused",
+    "consumer_closed"]                                                    # closed
+
+class PrivateStreamStatus(BaseModel):      # §14.2 rule 13: in arrival order with the events
+    account_id: AccountId
+    state: PrivateStreamState
+    reason: PrivateStreamReason
+    epoch: int                             # >= 0: the sockets the stream has opened
+    ts: TsUs
 
 class Wallet(BaseModel):
     account_id: AccountId
@@ -4342,9 +4502,11 @@ class RiskLimitTier(BaseModel):
     max_leverage: Decimal
 ```
 
-`RateBudgetExceededError` (`RATE_BUDGET_EXCEEDED`, §8.6) is the adapter's local refusal when no token comes within the lane's wait before anything was sent (§8.7), so the order never becomes `unknown` for it. Error surface (#2877 ruling 11): a venue answer with a return code is `OrderAck(ok=False)`, which B1 records as a rejection, except a create's duplicate (`DuplicateClientIdError`, rule 2) and a create's open outcome (an unmapped code, `110079`, `10016` or `10019`), which raise, and the venue's outage on any other call (`10016` or `10019` after the client's attempts, `SERVICE_UNAVAILABLE`, §8.6, #2863), which raises too because whether the venue applied the call is open: B1 takes a cancel's or an amend's order to `unknown`, and an attach that raises leaves its stop missing; a transport fault and a local refusal raise; a read raises on every failure; `set_leverage`, the one trade call that answers no ack, raises a venue refusal as its taxonomy error, `110043` (leverage not modified) included; and no exception leaves the adapter with its cause, context or traceback, which can hold the signed request, nor with reply content or transport text in its message. Every taxonomy error the adapter raises, a refused token and a reply it cannot read included, is counted in `exchange_errors_total{class}` and logged without reply content. M2's refusal to sign is a local one, nothing sent: a key M2 will not use (`credential_unavailable`, `key_withdraw_permission`, `snapshot_invalid` or any other code) is `AUTH_ERROR`, and the key vault being unavailable (`kek_unavailable`) is a retryable `TRANSPORT_ERROR`, no verdict on the key. A create's success answer that names no order of its id (no `orderId`, no result, or another order's `orderLinkId`) is an open outcome too and raises `AmbiguousResultError`, so an `ok` ack always carries `exchange_order_id` (the orchestrator's ruling 3 on #3972); a position-level stop write, which names no order, is the one `ok` ack without it.
+`RateBudgetExceededError` (`RATE_BUDGET_EXCEEDED`, §8.6) is the adapter's local refusal when no token comes within the lane's wait before anything was sent (§8.7), so the order never becomes `unknown` for it; its `reason` is `token_bucket` then, and `stream_cap` for a private stream refused at the cap (§14.2 rule 13), so metrics and audit tell the two apart. Error surface (#2877 ruling 11): a venue answer with a return code is `OrderAck(ok=False)`, which B1 records as a rejection, except a create's duplicate (`DuplicateClientIdError`, rule 2) and a create's open outcome (an unmapped code, `110079`, `10016` or `10019`), which raise, and the venue's outage on any other call (`10016` or `10019` after the client's attempts, `SERVICE_UNAVAILABLE`, §8.6, #2863), which raises too because whether the venue applied the call is open: B1 takes a cancel's or an amend's order to `unknown`, and an attach that raises leaves its stop missing; a transport fault and a local refusal raise; a read raises on every failure; `set_leverage`, the one trade call that answers no ack, raises a venue refusal as its taxonomy error, `110043` (leverage not modified) included; and no exception leaves the adapter with its cause, context or traceback, which can hold the signed request, nor with reply content or transport text in its message. Every taxonomy error the adapter raises, a refused token and a reply it cannot read included, is counted in `exchange_errors_total{class}` and logged without reply content. M2's refusal to sign is a local one, nothing sent: a key M2 will not use (`credential_unavailable`, `key_withdraw_permission`, `snapshot_invalid` or any other code) is `AUTH_ERROR`, and the key vault being unavailable (`kek_unavailable`) is a retryable `TRANSPORT_ERROR`, no verdict on the key. A create's success answer that names no order of its id (no `orderId`, no result, or another order's `orderLinkId`) is an open outcome too and raises `AmbiguousResultError`, so an `ok` ack always carries `exchange_order_id` (the orchestrator's ruling 3 on #3972); a position-level stop write, which names no order, is the one `ok` ack without it.
 
 `place_batch` answers one ack per request, in order. Besides a local refusal and a failure before the send, it raises in two cases. A whole-batch duplicate, `110079` or unmapped code raises as a create's does: `DuplicateClientIdError`, or `UnknownStateError` with `retryable` false; neither names an item, so each concerns every item. An open outcome of the whole call (a transport fault after the send, `10016` or `10019`) and an answer that cannot be paired with the requests (a count of items or codes other than theirs, or an item under another id) raise `AmbiguousResultError`, whose `order_link_ids` names every item (a single create's names its one id). Every item, a refused one included, is paired by its echoed `orderLinkId`, which a refused item is assumed to echo pending E29-K01 (§14.1): fail-safe if it does not, as the answer then pairs with nothing. Any other code that answers the whole batch is every item's rejection. An accepted item is `ok`. A duplicate item is `ok=False` with `DUPLICATE_CLIENT_ID`, which the OMS looks up as it does a create's raised duplicate. An item whose outcome is open (`10016`, `10019`, `110079`, an unmapped code, or an acceptance naming no order) is `ok=False` with `retryable` false and `error_code` `TRANSPORT_ERROR` or `UNKNOWN_STATE`, never a rejection: its order goes to `unknown` (§8.6 "Order creates"). Any other item is a rejection. `ExchangeRecord` is built from the request body as it went on the wire and the parsed reply, so it states no field the call did not carry, and its dump leaves an unset field out, never null, as `22`'s `ExchangeCallRecord` requires.
+
+No port sends a stop-loss, or a stop size, that is not a positive number (C-2.6; the orchestrator's ruling 2 on #2877): the venue reads a `stopLoss` of `0` as "cancel the stop", and a stop is never removed implicitly. A create, every item of a batch, an amend and a stop write that carries one are refused locally (`ValueError`, `exchange.base.guards.check_stop`) before any token is taken or anything is signed, whatever built the request, and `FakeTradingPort` refuses the same. A trailing distance that is not positive is refused the same way, on a stop write: the venue reads a `trailingStop` of `0` as cancelling the trail, and a protective layer is removed only by a named operation that writes its own audit record, so a later explicit, audited clear-trail operation is the only way to remove one (the orchestrator's ruling on SEC-G8B-A-01, from ruling 2's principle). A take-profit of `0` still clears the take-profit alone. A stop write in Full mode that carries a size is refused the same way (`check_stop_mode`), whatever built it, so neither port sends `tpSize` or `slSize` with `tpslMode` `Full`.
 
 ---
 
@@ -4806,10 +4968,11 @@ class ExchangeConfig(BaseModel):
     recv_window_ms: int = 5000
     clock_check_interval_s: int = 60
     clock_block_threshold_ms: int = 2000
-    ws_ping_interval_s: int = 20          # public streams; a private stream pings every
-                                          # CV_ACCOUNT_HEARTBEAT_S / 2 (5 s) for E27-T04 health
-    ws_reconnect_base_ms: int = 500
-    ws_reconnect_max_ms: int = 30000
+    ws_ping_interval_s: int = 20          # public streams only; a private stream pings every 5 s
+                                          # with a 10 s watchdog, fixed values (§14.2 rule 13),
+                                          # CV_ACCOUNT_HEARTBEAT_S / 2 for E27-T04 health
+    ws_reconnect_base_ms: int = 500       # public streams; a private stream's backoff is the
+    ws_reconnect_max_ms: int = 30000      # same 0.5 s to 30 s, fixed (§14.2 rule 13)
     max_topics_per_subscribe: int = 10
     http_timeout_s: float = 10.0
     http_max_retries: int = 3
@@ -5529,6 +5692,20 @@ The minors and nits of G-6's last review round (#3972 delta 3: CR-G6-R4-01 to -0
 
 - §9.2 gains the table that maps `AccountProfileInput` and `AccountProfile` (`22-api-openapi.yaml`) to this model and to `account_profiles`; `account_profiles` does not change. The REST shape changes to match them, on operations no route serves yet (breaking on paper): it gains `is_default` (writable, decision D7), `enabled`, `trading_enabled`, `margin_mode`, `position_mode`, `all_symbols`, `blocked_symbols`, `reduce_only_default`, `slippage_tolerance_bps`, `sizing.min_leg_notional_usd`, the stop's `atr_multiple` and `fallback_pct`, `take_profit_ladder`, three caps, and the read-only `version` and `warnings` (`ProfileWarning`); it loses the members with no column (`trailing_stop`, `default_tpsl_mode`, `sizing.round_to_lot` and `max_notional_usd`, the offset's `atr_bar_type` and `atr_param`, `risk_caps.max_consecutive_losses` and `lockout_minutes_after_breach`) and the read-only `is_active`; and a stored profile's writable members move under `AccountProfile.profile`. `AccountProfileInput` refuses unknown members (C-6.3). Two bounds no column states, at most 10 `take_profit_ladder` rungs and at most 500 entries in each of `allowed_symbols` and `blocked_symbols`, are held by that contract (`maxItems`) and by `AccountProfile` (`max_length`), the model's one change.
 - Decision D11 reaches the contract: `all_symbols` is explicit and an empty `allowed_symbols` allows nothing. US-PROF-003 (`11-user-stories.md`) says so.
+
+### 19.25 2026-10-22 — §14 the exchange private stream (G-8b, #3963)
+
+This number follows §19.24 (#4098). §19.26 (#4137) landed first and left it this number.
+
+- §14.1: `subscribe_private` returns a `PrivateStream` of `PrivateEvent | PrivateStreamStatus`, which the consumer closes, refuses what it refuses before anything is signed, dialled or built, and then raises nothing; the consumer closes it, and `FakeTradingPort` yields what a test pushes, statuses included, with one subscriber per account (G-8b rulings 1 and 6).
+- §14.2: rule 6 names `PrivateStreamStatus` beside `FeedHealthEvent`; rule 9 lists the private stream's and the connection budget's series (ruling 7); new rule 13 fixes the stream: one socket per account on B13 (lane `platform`, ruling 8), M2-signed `auth` on every dial, three `subscribe` ops with the third optional (ruling 2), the status order, a 5 s ping and a 10 s watchdog with 0.5 s to 30 s backoff as fixed values (ruling 4), a new dial that waits for the consumer to read the last `down`, counted in `bybit_private_reconnect_waited_total` (the orchestrator's OQ-D ruling, RelayRoom [LANE-19]), per-row binding with drop-and-count and allow-listed records, the frame and queue bounds (ruling 9), the terminal path after three `auth` refusals (ruling 10), counted only while the clock offset is measured, `close_private_streams` and `reopen_private_streams`, and the one connection budget with its 64-stream cap (ruling 5).
+- §14.3: the Connections, Heartbeat, Private topics and Fills rows follow rule 13, and demo's `execution_fast_topic` is unverified until E29-K01 (ruling 2).
+- §14.4: `PrivateEvent` gains the `execution_fast` kind, an optional `seq` and `record`; new `FastExecution`, `PrivateStreamStatus` and its state and reason sets; `RateBudgetExceededError` carries `reason` (`token_bucket` or `stream_cap`). §16.1: the private stream's ping and backoff are fixed values, not `ExchangeConfig` knobs.
+- §8.9 and §14.4 (the slice-2b rulings, RelayRoom [LANE-20]): `TradingStopRequest` gains `tp_size` and `sl_size`, sent as `tpSize` and `slSize` in Partial mode only, so a Partial-mode stop can be written; §14.4 lists the request and what it refuses at construction.
+- §8.9 and §14.4 (the orchestrator's ruling 2 on #2877): no port sends a stop-loss, or a stop size, that is not positive, as the venue reads a stop-loss of `0` as a cancel (C-2.6); a create, each batch item, an amend and a stop write refuse one before any token or signature.
+- §8.9 and §14.4 (the orchestrator's ruling on SEC-G8B-A-01, from ruling 2's principle): no port sends a trailing distance that is not positive either, as the venue reads a `trailingStop` of `0` as cancelling the trail; a later explicit, audited clear-trail operation is the only way to remove one.
+- §14.2 rules 9 and 13 (the code lens on G-8b, on the connection budget): an open counts only against the windows that hold it, so opens booked ahead never take the private streams' 60 from an open now; a lane books an open at most 300 s ahead and refuses past that, counted under the lane, so the budget keeps two windows of opens at most (C-2.18); rule 9 names each budget series' scopes.
+- §14.3 and §14.4 (the code lens on G-8b, its minor findings): the testnet note names the private stream's `PrivateStreamStatus`, and a stop write in Full mode that carries a size is refused locally.
 
 ### 19.26 2026-10-22 — §8.8 rule 5: only the owner can loosen a stop (E29-T07, #915; E34-S03, #1111)
 

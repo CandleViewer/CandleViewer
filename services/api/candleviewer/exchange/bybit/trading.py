@@ -9,7 +9,8 @@ pinned by a test under `tests/unit/exchange/bybit/test_trading_*.py`:
 2. Every account's client draws on the process's one governor (OM-D08, ruling R5); each
    attempt of a call takes its own token, and the lane's wait bounds the whole call, retries
    included (T04's rate step, 24 §8.7).
-3. Orders go over REST only: this module holds no trade socket (C-2.11, SR-040a).
+3. Orders go over REST only: this module holds no trade socket (C-2.11, SR-040a); the private
+   stream it hands out (G-8b, `private_stream.py`) reads and never trades.
 4. `category` is `linear`, written on every call that takes it (SR-054).
 5. Replies are parsed strictly and every row is checked against the call's account (E8-8,
    SR-E29-02, ruling R12).
@@ -31,7 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from types import MappingProxyType
@@ -57,6 +58,8 @@ from candleviewer.exchange.base.guards import (
     check_exit_ids,
     check_key_ref,
     check_lookup_id,
+    check_stop,
+    check_stop_mode,
     check_window,
 )
 from candleviewer.exchange.base.models import (
@@ -72,7 +75,6 @@ from candleviewer.exchange.base.models import (
     OrderAck,
     PlaceOrderRequest,
     Position,
-    PrivateEvent,
     RateHeadroom,
     RateLane,
     TradingStopRequest,
@@ -118,7 +120,8 @@ from candleviewer.exchange.bybit.trading_parse import (
 from candleviewer.secrets import KekUnavailable, SecretsError
 
 if TYPE_CHECKING:
-    from candleviewer.exchange.base.ports import RateHeadroomPort, TradingPort
+    from candleviewer.exchange.base.ports import PrivateStream, RateHeadroomPort, TradingPort
+    from candleviewer.exchange.bybit.private_stream import PrivateStreams
     from candleviewer.secrets import SigningCapability
 
 __all__ = [
@@ -269,6 +272,13 @@ def _lane(endpoint: Endpoint, requested: RateLane | None) -> RateLane:
     raise ValueError(f"{endpoint.path}: its lane is the endpoint table's or its request's")
 
 
+def _rest_offset(provider: Callable[[], int | None] | None) -> Callable[[], int] | None:
+    """The REST client's offset: the measured one, the host's (0) while unmeasured."""
+    if provider is None:
+        return None
+    return lambda: provider() or 0
+
+
 def _windows(start: TsUs, end: TsUs) -> list[tuple[int, int]]:
     """`[start, end]` in ms as consecutive windows of at most 7 days, the venue's longest."""
     low, high = start // 1000, -(-end // 1000)
@@ -285,9 +295,11 @@ def _windows(start: TsUs, end: TsUs) -> list[tuple[int, int]]:
 class BybitTradingPort:
     """`TradingPort` for one environment, over one signed client per account.
 
-    Built only by `ExchangeBybitService.trading_port` (the process's environment and its one
-    governor). Each method refuses an account of another environment before a client exists,
-    a token is taken or anything is signed (C-2.11).
+    Built only by `ExchangeBybitService.trading_port` (the process's environment, its one
+    governor and its private streams). Each method refuses an account of another environment
+    before a client exists, a token is taken or anything is signed (C-2.11). `clock_offset_ms`
+    is the exchange clock's measured offset, `None` while unmeasured: REST signs on the host's
+    clock then, and the private stream counts no `auth` refusal (G-8b OQ-4).
     """
 
     def __init__(
@@ -297,12 +309,13 @@ class BybitTradingPort:
         credentials: SigningCapability,
         governor: TokenBucketGovernor,
         transport: httpx.AsyncBaseTransport | None,
-        clock_offset_ms: Callable[[], int] | None = None,
+        clock_offset_ms: Callable[[], int | None] | None = None,
         entry_wait_s: float = DEFAULT_ENTRY_WAIT_S,
         max_retries: int = 3,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         now_us: Callable[[], TsUs] = _wall_us,
+        private_streams: PrivateStreams | None = None,
     ) -> None:
         self.capabilities: ExchangeCapabilities = capabilities_for(environment)
         self.environment: Environment = self.capabilities.environment
@@ -320,6 +333,7 @@ class BybitTradingPort:
             {"critical": CRITICAL_WAIT_S, "entry": entry_wait_s, "poll": POLL_WAIT_S}
         )
         self._clients: dict[AccountId, tuple[str, BybitRestClient]] = {}
+        self._streams = private_streams
 
     async def aclose(self) -> None:
         clients, self._clients = self._clients, {}
@@ -347,7 +361,7 @@ class BybitTradingPort:
             uid=account.uid,
             signer=signer,
             governor=self._governor,
-            clock_offset_ms_provider=self._clock_offset_ms,
+            clock_offset_ms_provider=_rest_offset(self._clock_offset_ms),
             transport=self._transport,
             sleep=self._sleep,
             monotonic=self._monotonic,
@@ -501,6 +515,7 @@ class BybitTradingPort:
     async def place_order(self, req: PlaceOrderRequest) -> OrderAck:
         self._check_environment(req.account)
         check_create_id(req.account, req.order_link_id)
+        check_stop(req.stop_loss)
         body = {"category": "linear", **_create_item(req)}
         answer = await self._trade(
             "place_order", req.account, lane=req.lane, body=body, create=True
@@ -525,6 +540,7 @@ class BybitTradingPort:
         self._check_environment(account)
         for req in reqs:
             check_create_id(account, req.order_link_id)
+            check_stop(req.stop_loss)
         items = [_create_item(r) for r in reqs]
         answer = await self._trade(
             "place_batch",
@@ -578,6 +594,7 @@ class BybitTradingPort:
     async def amend_order(self, req: AmendOrderRequest) -> OrderAck:
         self._check_environment(req.account)
         check_exit_ids(req.order_link_id, req.exchange_order_id)
+        check_stop(req.stop_loss)
         body = _amend_body(req)
         answer = await self._trade("amend_order", req.account, lane=req.lane, body=body)
         fields = rec.request_fields(body)
@@ -645,6 +662,8 @@ class BybitTradingPort:
         """Both sides go in one call (24 §8.9): the OMS sends the unchanged side's value; a side
         left `None` is not sent."""
         self._check_environment(req.account)
+        check_stop(req.stop_loss, req.sl_size, req.tp_size, req.trailing_distance)
+        check_stop_mode(req.tpsl_mode, req.tp_size, req.sl_size)
         body = _stop_body(req)
         answer = await self._trade("set_trading_stop", req.account, body=body)
         fields = rec.request_fields(body)
@@ -820,9 +839,15 @@ class BybitTradingPort:
         result = parse(AccountInfoResult, reply.get("result"), "account-info")
         return to_account_info(result, account)
 
-    async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]:
-        """The private stream is G-8b's (#3963, ruling R1): until it lands this refuses."""
-        raise NotImplementedError("G-8b")
+    async def subscribe_private(self, account: AccountRef) -> PrivateStream:
+        """G-8b (#3963): the account's private stream (24 §14.1, §14.2 rule 13), from the
+        adapter's one registry. Another environment's account is refused first, a port built
+        with no registry refuses every account; the registry's own refusals come before anything
+        is signed, dialled or built, and once returned the stream raises nothing."""
+        self._check_environment(account)
+        if self._streams is None:
+            raise RuntimeError("no private stream is wired")
+        return await self._streams.open(account, clock_offset_ms=self._clock_offset_ms)
 
     # -- the rate budget, read (RateHeadroomPort) -------------------------------------------------
 
@@ -903,7 +928,10 @@ def _cancel_all_body(symbol: Symbol | None) -> dict[str, Any]:
 
 
 def _stop_body(req: TradingStopRequest) -> dict[str, Any]:
-    """§8.9's stop write: a side left `None` is not sent, nor its trigger source."""
+    """§8.9's stop write: a side left `None` is not sent, nor its trigger source. A side's size
+    (`tpSize`, `slSize`) goes beside it in Partial mode only: the request refuses a size in Full
+    mode and a Partial-mode price without its size (24 §14.4), and `check_stop_mode` refuses a
+    Full-mode size a `model_copy` carried before this is built."""
     body: dict[str, Any] = {
         "category": "linear",
         "symbol": req.symbol,
@@ -913,9 +941,13 @@ def _stop_body(req: TradingStopRequest) -> dict[str, Any]:
     if req.take_profit is not None:
         body["takeProfit"] = _text(req.take_profit)
         body["tpTriggerBy"] = _TRIGGER[req.tp_trigger_by]
+        if req.tp_size is not None:
+            body["tpSize"] = _text(req.tp_size)
     if req.stop_loss is not None:
         body["stopLoss"] = _text(req.stop_loss)
         body["slTriggerBy"] = _TRIGGER[req.sl_trigger_by]
+        if req.sl_size is not None:
+            body["slSize"] = _text(req.sl_size)
     if req.trailing_distance is not None:
         body["trailingStop"] = _text(req.trailing_distance)
     if req.active_price is not None:

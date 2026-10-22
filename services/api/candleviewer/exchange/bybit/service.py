@@ -8,17 +8,23 @@ module, but it does no real work until its owning epic lands.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 import httpx
+import structlog
 
+from candleviewer.domain.primitives import AccountId, Environment
+from candleviewer.exchange.base.reconnect import ConnectionBudget
 from candleviewer.exchange.bybit.archive import (
     DEFAULT_ARCHIVE_BASE,
     ArchiveConfig,
     BybitTradeArchive,
 )
+from candleviewer.exchange.bybit.capabilities import capabilities_for
 from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.funding import BybitFundingFetcher
 from candleviewer.exchange.bybit.instruments import make_instruments_info_fetcher
@@ -29,9 +35,15 @@ from candleviewer.exchange.bybit.key_verify import (
     key_verification_calls,
     verification_governor,
 )
-from candleviewer.exchange.bybit.key_ws_probe import KeyWsProbe, PrivateWsConnect, WsProbeResult
+from candleviewer.exchange.bybit.key_ws_probe import (
+    KeyWsProbe,
+    PrivateWsConnect,
+    WsProbeResult,
+    connect_private_stream,
+)
 from candleviewer.exchange.bybit.klines import BybitKlineFetcher, TickSizeFor
 from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
+from candleviewer.exchange.bybit.private_stream import PrivateStreams, StreamConnect
 from candleviewer.exchange.bybit.public_ws import (
     PublicSocket,
     frame_route,
@@ -53,6 +65,11 @@ from candleviewer.secrets import WithdrawPermissionRejected
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
     from candleviewer.secrets import CandidateSigner, CredentialBorrower, SigningCapability
+
+
+def _logger() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
 
 
 class _NonClosingTransport(httpx.AsyncBaseTransport):
@@ -80,6 +97,7 @@ class ExchangeBybitService:
         rest_transport: httpx.AsyncBaseTransport | None = None,
         private_ws_connect: PrivateWsConnect | None = None,
         environment: str | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._started = False
         #: E27-T02: the one caller-bound signing capability, injected by `admin.wiring`.
@@ -97,18 +115,41 @@ class ExchangeBybitService:
         self._rest_transport = (
             None if rest_transport is None else _NonClosingTransport(rest_transport)
         )
+        #: G-8b (#3963): the one per-IP WebSocket connection budget (C-12.7, OM-D07; 24 §14.2 rule
+        #: 13) every socket of this process draws on: the public stream's lane (the composition
+        #: root hands it over), the private streams' and the key probe's.
+        self._ws_budget = ConnectionBudget(monotonic)
         #: #836 slice 2b5: `testApiKey`'s private-WS `auth` probe. One per adapter, so one open
-        #: budget per deployment (SR-E27-05). It dials with production's connector unless the
-        #: composition root passes the dev-only account fixture's, behind its door (#2893).
+        #: budget per deployment (SR-E27-05), counted in the connection budget. It dials with
+        #: production's connector unless the composition root passes the dev-only account
+        #: fixture's, behind its door (#2893).
         self._ws_probe = (
-            KeyWsProbe() if private_ws_connect is None else KeyWsProbe(private_ws_connect)
+            KeyWsProbe(budget=self._ws_budget)
+            if private_ws_connect is None
+            else KeyWsProbe(private_ws_connect, budget=self._ws_budget)
         )
         #: The process's own environment (`Settings.environment`), the only one whose keys M2
         #: signs: a stored key's probe dials no other stream (C-2.11). None refuses every probe.
         self._environment = environment
+        #: G-8b (#3963): the private streams dial with production's stream connector, or with the
+        #: dev-only account fixture's when the composition root passes it (#2893), as the probe.
+        self._stream_connect: StreamConnect = (
+            connect_private_stream if private_ws_connect is None else private_ws_connect
+        )
+        self._monotonic = monotonic
+        #: G-8b: this environment's private streams, one registry per adapter (one per account,
+        #: at most 64, on the one connection budget), built with the first trading port.
+        self._private_streams: PrivateStreams | None = None
 
     #: E08-T06: venue name for the `exchange` metric label (owned here, C-2.2).
     venue = "bybit"
+
+    @property
+    def ws_connection_budget(self) -> ConnectionBudget:
+        """G-8b: the process's one WebSocket connection budget (24 §14.2 rule 13); the composition
+        root gives its `public` lane to the public stream."""
+        return self._ws_budget
+
     #: E08-T04: venue topic -> neutral stream kind, for ingestion's watchdog.
     topic_kind = staticmethod(topic_kind)
     #: #1916: raw frame -> (topic, kind, symbol) for per-topic dispatch lanes.
@@ -208,7 +249,7 @@ class ExchangeBybitService:
         self,
         env: str,
         *,
-        clock_offset_ms: Callable[[], int] | None = None,
+        clock_offset_ms: Callable[[], int | None] | None = None,
         entry_wait_s: float = DEFAULT_ENTRY_WAIT_S,
     ) -> BybitTradingPort:
         """G-8 (#2877): the exchange `TradingPort` of this process's environment only (C-2.11),
@@ -216,11 +257,14 @@ class ExchangeBybitService:
         account REST transport (#2893 S4); `entry_wait_s` bounds an `entry` token wait (24 §8.7).
         Any other environment is refused before a client exists, and testnet, which has no
         capability record (ruling R6), is refused too. A factory, not trading methods: the
-        service itself trades nothing."""
+        service itself trades nothing. Every port shares the adapter's one private-stream
+        registry (G-8b), so its one-stream-per-account rule and its cap hold across ports.
+        `clock_offset_ms` is the measured offset, `None` while unmeasured."""
         if self._credentials is None:
             raise RuntimeError("no signing capability is wired")
         if env != self._environment:
             raise ValueError("not this process's environment")
+        streams = self._streams(capabilities_for(env).environment, self._credentials)
         return BybitTradingPort(
             environment=env,
             credentials=self._credentials,
@@ -228,7 +272,37 @@ class ExchangeBybitService:
             transport=self._rest_transport,
             clock_offset_ms=clock_offset_ms,
             entry_wait_s=entry_wait_s,
+            private_streams=streams,
         )
+
+    async def close_private_streams(
+        self, key_ref: str, *, reason: Literal["key_revoked", "key_rotated"] = "key_revoked"
+    ) -> tuple[AccountId, ...]:
+        """G-8b (SR-E27-17, KV-E13, AC-28): close every private stream on `key_ref` before
+        returning, and return their accounts. E27-S04 (#898) calls it before a revoke,
+        force-disable, mark-compromised or account-disable returns, and with `key_rotated` at the
+        start of a rotation's overlap (the consumer then subscribes with the new key). A key it
+        closed opens no stream again. Before any trading port exists there is none to close, and
+        M2 refuses a destroyed key's next `auth` borrow either way (24 §14.2 rule 13)."""
+        streams = self._private_streams
+        return () if streams is None else await streams.close_key(key_ref, reason=reason)
+
+    def reopen_private_streams(self, key_ref: str) -> bool:
+        """G-8b ruling 10: an operator lets a key that three `auth` refusals closed open streams
+        again; `True` when it was so marked. A revoked or rotated key stays closed."""
+        streams = self._private_streams
+        return False if streams is None else streams.reopen(key_ref)
+
+    def _streams(self, environment: Environment, credentials: CredentialBorrower) -> PrivateStreams:
+        if self._private_streams is None:
+            self._private_streams = PrivateStreams(
+                environment=environment,
+                credentials=credentials,
+                connect=self._stream_connect,
+                budget=self._ws_budget,
+                monotonic=self._monotonic,
+            )
+        return self._private_streams
 
     def key_verification_calls(
         self,
@@ -290,7 +364,15 @@ class ExchangeBybitService:
         self._started = True
 
     async def stop(self, grace_s: float) -> None:
-        """Stop the module within `grace_s` seconds. No-op scaffold."""
+        """Stop the module within `grace_s` seconds: every private stream ends with
+        `closed(shutdown)` and its socket closes (G-8b); the rest is a no-op scaffold."""
+        streams = self._private_streams
+        if streams is not None:
+            try:
+                async with asyncio.timeout(grace_s):
+                    await streams.aclose()
+            except TimeoutError:
+                _logger().warning("bybit_private_streams_stop_overran", grace_s=grace_s)
         self._started = False
 
     def health(self) -> HealthReport:

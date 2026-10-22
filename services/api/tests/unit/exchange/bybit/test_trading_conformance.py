@@ -3,11 +3,14 @@ port, over transcribed replies (ruling R2), and `FakeTradingPort`. Each case ask
 the OMS relies on: what they refuse, before anything is sent, and how they answer. Every ack
 either port returns in any case here is checked as it leaves (the orchestrator's ruling 3 on
 #3972): one that is `ok` names the exchange's order and its `order_link_id`, and only a stop
-write, or the one ack of a cancel-all that cancelled nothing, names none.
+write, or the one ack of a cancel-all that cancelled nothing, names none. The private stream
+(G-8b, #3963) is held to one contract too: the exchange's on a fake venue and a virtual clock
+(`_private_venue.py`), the fake's by what a test pushes.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -25,11 +28,14 @@ from candleviewer.exchange.base.models import (
     CancelOrderRequest,
     Order,
     OrderAck,
+    PrivateStreamStatus,
     TradingStopRequest,
 )
 from candleviewer.exchange.bybit.trading import ENDPOINTS
 from tests._corpus import rest
 from tests._signing import CREDENTIAL_ID
+from tests.chaos.ingestion._clock import VirtualClock
+from tests.unit.exchange.bybit._private_venue import PrivateVenue, make_streams
 from tests.unit.exchange.bybit._trading import (
     ACCOUNT_B,
     NOW_US,
@@ -80,6 +86,9 @@ class Harness:
     prime_batch: Callable[[list[str]], None]
     prime_empty_cancel_all: Callable[[], None]
     prime_position_writes: Callable[[], None]
+    #: G-8b: let the private streams run a while; end every open one with its `closed` status.
+    advance: Callable[[], Awaitable[None]]
+    end_private: Callable[[], Awaitable[None]]
     acks: list[tuple[str, tuple[OrderAck, ...]]] = field(default_factory=list)
 
 
@@ -115,6 +124,9 @@ def check_acks_name_their_orders(seen: Sequence[tuple[str, Sequence[OrderAck]]])
 
 def _exchange() -> Harness:
     venue, governor = Venue(), RecordingGovernor()
+    clock = VirtualClock()
+    private = PrivateVenue(clock)
+    streams = make_streams(private)
 
     def prime_create(order_link_id: str) -> None:
         created = with_result(rest("rest/trading-create-reply.json"), orderLinkId=order_link_id)
@@ -171,8 +183,8 @@ def _exchange() -> Harness:
         venue.on("/v5/position/set-leverage", rest("rest/trading-set-leverage-reply.json"))
 
     harness = Harness(
-        port=make_port(venue, governor=governor),
-        sent=lambda: len(venue.sent) + len(governor.acquired),
+        port=make_port(venue, governor=governor, private_streams=streams),
+        sent=lambda: len(venue.sent) + len(governor.acquired) + len(private.dialled),
         lanes=lambda: [lane for _, _, lane, _ in governor.acquired],
         prime_create=prime_create,
         prime_ext_cancel=prime_ext_cancel,
@@ -184,6 +196,8 @@ def _exchange() -> Harness:
         prime_batch=prime_batch,
         prime_empty_cancel_all=prime_empty_cancel_all,
         prime_position_writes=prime_position_writes,
+        advance=lambda: clock.advance(1),
+        end_private=streams.aclose,
     )
     _watch(harness.port, harness.acks)
     return harness
@@ -223,9 +237,19 @@ def _fake() -> Harness:
         prime_batch=lambda _links: None,  # the fake places every new id
         prime_empty_cancel_all=lambda: None,  # the fake holds no order
         prime_position_writes=lambda: None,  # the fake writes to whatever position it holds
+        advance=lambda: asyncio.sleep(0),
+        end_private=lambda: _end_fake_streams(port),
     )
     _watch(harness.port, harness.acks)
     return harness
+
+
+async def _end_fake_streams(port: FakeTradingPort) -> None:
+    """What the exchange's port does on shutdown, pushed: the account's `closed` status."""
+    status = PrivateStreamStatus(
+        account_id=account().account_id, state="closed", reason="shutdown", epoch=0, ts=NOW_US
+    )
+    port.push(status)
 
 
 def _order(order_link_id: str, exchange_order_id: str) -> Order:
@@ -467,6 +491,7 @@ async def _every_call(port: TradingPort, ref: AccountRef) -> AsyncIterator[Calla
     yield lambda: port.wallet(ref)
     yield lambda: port.fee_rate(ref, "BTCUSDT")
     yield lambda: port.account_info(ref)
+    yield lambda: port.subscribe_private(ref)  # 24 §14.1: it refuses as every call does
 
 
 async def test_both_refuse_another_environments_account_before_anything(harness: Harness) -> None:
@@ -627,6 +652,121 @@ async def test_both_write_a_stop_in_the_critical_lane(harness: Harness) -> None:
     assert ack.ok and harness.lanes() == ["critical"]
 
 
+async def test_both_write_a_partial_stop_with_its_size_in_the_critical_lane(
+    harness: Harness,
+) -> None:
+    """G-8b (24 §8.9, §14.4): a Partial-mode stop carries its size and is still a protective,
+    critical write; both answer one `ok` ack that names no order."""
+    harness.prime_position_writes()
+    stop = TradingStopRequest(
+        account=account(),
+        symbol="BTCUSDT",
+        tpsl_mode="partial",
+        stop_loss=Decimal("58000"),
+        sl_size=Decimal("0.01"),
+    )
+    ack = await harness.port.set_trading_stop(stop)
+    assert (ack.ok, ack.order_link_id, ack.exchange_order_id) == (True, None, None)
+    assert harness.lanes() == ["critical"]
+
+
+# -- a stop is never removed implicitly (C-2.6; the orchestrator's ruling 2 on #2877) ------------
+
+#: Stop values the venue would read as a cancel (`0`), or that are no stop at all.
+NOT_POSITIVE = ["0", "-1", "-0.0"]
+
+
+def _partial(**fields: Any) -> TradingStopRequest:
+    return TradingStopRequest(account=account(), symbol="BTCUSDT", tpsl_mode="partial", **fields)
+
+
+def _sized(side: str, value: Decimal) -> TradingStopRequest:
+    """A valid Partial-mode stop with `value` put in its size afterwards: `model_copy` skips the
+    model's own refusal, as the port must refuse whatever built the request."""
+    if side == "sl":
+        valid = _partial(stop_loss=Decimal("58000"), sl_size=Decimal("0.01"))
+        return valid.model_copy(update={"sl_size": value})
+    valid = _partial(take_profit=Decimal("65000"), tp_size=Decimal("0.01"))
+    return valid.model_copy(update={"tp_size": value})
+
+
+#: Every path that sends a stop-loss or a stop size, given the value it sends.
+STOP_PATHS: dict[str, Callable[[TradingPort, Decimal], Awaitable[object]]] = {
+    "place_order": lambda port, v: port.place_order(place(stop_loss=v)),
+    "place_batch": lambda port, v: port.place_batch(
+        [place(order_link_id=link(seq=1)), place(order_link_id=link(seq=2), stop_loss=v)]
+    ),
+    "amend_order": lambda port, v: port.amend_order(
+        AmendOrderRequest(account=account(), symbol="BTCUSDT", order_link_id=link(), stop_loss=v)
+    ),
+    "set_trading_stop": lambda port, v: port.set_trading_stop(
+        TradingStopRequest(account=account(), symbol="BTCUSDT", stop_loss=v)
+    ),
+    "sl_size": lambda port, v: port.set_trading_stop(_sized("sl", v)),
+    "tp_size": lambda port, v: port.set_trading_stop(_sized("tp", v)),
+    # The ruling on SEC-G8B-A-01: a `trailingStop` of `0` cancels the trail at the venue.
+    "trailing_distance": lambda port, v: port.set_trading_stop(
+        TradingStopRequest(
+            account=account(), symbol="BTCUSDT", stop_loss=Decimal("58000"), trailing_distance=v
+        )
+    ),
+}
+
+
+@pytest.mark.parametrize("value", NOT_POSITIVE)
+@pytest.mark.parametrize("path", sorted(STOP_PATHS))
+async def test_both_refuse_a_stop_that_is_not_positive_before_anything(
+    harness: Harness, path: str, value: str
+) -> None:
+    """The venue reads a stop-loss of `0` as "cancel the stop": no path sends one, nor a stop
+    size that is not positive (a batch's every item included), and nothing is sent, no token
+    taken and nothing signed for it."""
+    with pytest.raises(ValueError, match="positive number"):
+        await STOP_PATHS[path](harness.port, Decimal(value))
+    assert harness.sent() == 0
+
+
+@pytest.mark.parametrize("path", sorted(STOP_PATHS))
+async def test_both_still_send_a_positive_stop_on_every_path(harness: Harness, path: str) -> None:
+    harness.prime_create(link())
+    harness.prime_batch([link(seq=1), link(seq=2)])
+    harness.prime_amend(link())
+    harness.prime_position_writes()
+    value = Decimal(
+        {"sl_size": "0.01", "tp_size": "0.01", "trailing_distance": "100"}.get(path, "58000")
+    )
+    await STOP_PATHS[path](harness.port, value)
+    assert harness.sent() > 0
+
+
+#: Sizes no model admits (pydantic refuses them), which only a `model_copy` carries.
+NOT_FINITE = ["NaN", "Infinity", "-Infinity"]
+
+
+@pytest.mark.parametrize("value", NOT_FINITE)
+@pytest.mark.parametrize("side", ["sl", "tp"])
+async def test_both_refuse_a_stop_size_that_is_not_finite_before_anything(
+    harness: Harness, side: str, value: str
+) -> None:
+    """A non-finite size is no positive number either: refused on the `model_copy` path, the
+    one that can carry it, with nothing sent."""
+    with pytest.raises(ValueError, match="positive number"):
+        await harness.port.set_trading_stop(_sized(side, Decimal(value)))
+    assert harness.sent() == 0
+
+
+@pytest.mark.parametrize("side", ["sl", "tp"])
+async def test_both_refuse_a_size_on_a_full_mode_stop_before_anything(
+    harness: Harness, side: str
+) -> None:
+    """24 §14.4: a size goes with a Partial-mode stop only. A Full-mode stop a `model_copy` gave
+    a size is refused before anything is sent, so `tpSize` and `slSize` never go with `Full`."""
+    full = _sized(side, Decimal("0.01")).model_copy(update={"tpsl_mode": "full"})
+    with pytest.raises(ValueError, match="Full-mode stop"):
+        await harness.port.set_trading_stop(full)
+    assert harness.sent() == 0
+
+
 async def test_both_answer_a_cancel_naming_our_id_and_another_exchange_id_not_found(
     harness: Harness,
 ) -> None:
@@ -685,3 +825,40 @@ async def test_the_fakes_lanes_are_the_exchange_ports_endpoint_table() -> None:
     for name, lane in LANES.items():
         assert recorded[name] == (lane or "critical"), name
         assert ENDPOINTS[name].lane == lane, name
+
+
+# -- the private stream (G-8b, #3963; 24 §14.1, §14.2 rule 13) -----------------------------------
+
+
+async def test_both_refuse_another_environments_private_stream_before_anything(
+    harness: Harness,
+) -> None:
+    with pytest.raises(ValueError, match="another environment"):
+        await harness.port.subscribe_private(account(environment="live"))
+    await harness.advance()
+    assert harness.sent() == 0
+
+
+async def test_both_give_an_account_one_private_stream_at_a_time(harness: Harness) -> None:
+    """SR-E29-02: one consumer per account; closing the stream, even unread, frees it."""
+    stream = await harness.port.subscribe_private(account())
+    with pytest.raises(ValueError, match="already has a private stream"):
+        await harness.port.subscribe_private(account())
+    await stream.aclose()
+    again = await harness.port.subscribe_private(account())
+    await again.aclose()
+    await harness.end_private()
+
+
+async def test_both_end_a_private_stream_after_its_closed_status(harness: Harness) -> None:
+    stream = await harness.port.subscribe_private(account())
+    await harness.advance()
+    await harness.end_private()
+    async with asyncio.timeout(5):  # a guard only: every item is queued before the reads
+        seen = [item async for item in stream]
+    last = seen[-1]
+    assert isinstance(last, PrivateStreamStatus)
+    assert (last.state, last.reason) == ("closed", "shutdown")
+    assert not [i for i in seen[:-1] if isinstance(i, PrivateStreamStatus) and i.state == "closed"]
+    with pytest.raises(StopAsyncIteration):
+        await stream.__anext__()

@@ -7,6 +7,7 @@ does. No exchange vocabulary: the ids are this product's (`domain.order_link`).
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID
 
 from candleviewer.domain.order_link import (
@@ -21,18 +22,33 @@ from candleviewer.domain.primitives import OrderLinkId, TsUs
 
 from .models import AccountRef
 
-__all__ = ["check_create_id", "check_exit_ids", "check_key_ref", "check_lookup_id", "check_window"]
+__all__ = [
+    "check_create_id",
+    "check_exit_ids",
+    "check_key_ref",
+    "check_lookup_id",
+    "check_stop",
+    "check_stop_mode",
+    "check_window",
+    "key_ref_id",
+]
 
 
 def check_key_ref(account: AccountRef) -> UUID:
     """Ruling R13: `key_ref` is the canonical form of the account's active key's `api_keys.id`
     (lower-case 8-4-4-4-12), its id returned; any other shape is refused with `ValueError`
     before anything is taken, signed or sent, by every call that names the account."""
+    return key_ref_id(account.key_ref)
+
+
+def key_ref_id(key_ref: object) -> UUID:
+    """`check_key_ref` for a bare `key_ref`, as a call that names a key and no account takes it
+    (a private stream's `close_key`): its id, or `ValueError` for any other shape."""
     try:
-        parsed = UUID(account.key_ref)
+        parsed = UUID(key_ref)  # type: ignore[arg-type]  # any shape: refused below
     except (ValueError, AttributeError, TypeError):
         parsed = None
-    if parsed is None or str(parsed) != account.key_ref:
+    if parsed is None or str(parsed) != key_ref:
         raise ValueError("key_ref is not an api_keys id")
     return parsed
 
@@ -59,6 +75,29 @@ def check_exit_ids(link: str | None, exchange_order_id: str | None) -> None:
         return
     if link is None or EXT_ID.fullmatch(link) is not None or OUR_ID.fullmatch(link) is None:
         raise ValueError("this order can only be named by its exchange_order_id")
+
+
+def check_stop(*values: Decimal | None) -> None:
+    """C-2.6, the orchestrator's ruling 2 on #2877: a stop-loss, a stop's size or a trailing
+    distance that a call sends is a positive number. The venue reads a stop-loss of `0` as
+    "cancel the stop", and a `trailingStop` of `0` as "cancel the trail" (the ruling on
+    SEC-G8B-A-01), so a zero, negative or non-finite one is refused here, before any token is
+    taken or anything is signed, whatever built the request: a protective layer is never
+    removed implicitly. A value left `None` is not sent."""
+    for value in values:
+        if value is not None and (not value.is_finite() or value <= 0):
+            raise ValueError(
+                "a stop-loss, a stop size or a trailing distance must be a positive number"
+            )
+
+
+def check_stop_mode(mode: str, *sizes: Decimal | None) -> None:
+    """24 §8.9 and §14.4: a size goes with a Partial-mode stop only, as a Full-mode stop covers
+    the whole position. `TradingStopRequest` refuses one at construction; one a `model_copy`
+    carried is refused here, before any token is taken or anything is signed, so no port sends
+    a size with a Full-mode stop. `ValueError` otherwise."""
+    if mode != "partial" and any(size is not None for size in sizes):
+        raise ValueError("a Full-mode stop covers the whole position and takes no size")
 
 
 def check_lookup_id(link: OrderLinkId | None) -> None:

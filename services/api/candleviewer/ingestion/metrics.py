@@ -57,7 +57,8 @@ ALLOWED_LABELS: Final[frozenset[str]] = frozenset(
         "topic_class",
         "subscriber",
         # #2877 R7: the adapter's strict reply models, a closed set of class labels (the
-        # `MODEL_LABELS` of its trading parser, 13); never a field name or a value.
+        # `MODEL_LABELS` of its trading parser, 13, and the `PUSH_MODEL_LABELS` of its private
+        # push parser, G-8b #3963); never a field name or a value.
         "model",
     }
 )
@@ -214,6 +215,63 @@ SPECS: Final[tuple[MetricSpec, ...]] = (
         "Reply fields the adapter's strict models do not know, by model (silent drift).",
         "model",
         owner="adapter",
+    ),
+    # G-8b (#3963): the private stream (24 §14.2 rule 13). No label names an account (ruling 7):
+    # `topic` is a closed set of topic names, never a symbol or an id.
+    _c(
+        "bybit_private_rows_refused_total",
+        "Private-stream rows dropped, by topic and reason (other env or account, category, symbol, "
+        "account type, no settle coin, no fill, unmapped type).",
+        "topic",
+        "reason",
+        owner="adapter",
+    ),
+    _c(
+        "bybit_private_frames_rejected_total",
+        "Private-stream frames rejected whole, by reason (a resync follows; oversize recycles).",
+        "reason",
+        owner="adapter",
+    ),
+    _c(
+        "bybit_private_ws_auth_total",
+        "Private-stream auth attempts, by result.",
+        "result",
+        owner="adapter",
+    ),
+    _c(
+        "bybit_private_ws_disconnects_total",
+        "Private-stream sockets lost or streams closed, by the down or closed status reason.",
+        "reason",
+        owner="adapter",
+    ),
+    _c(
+        "bybit_private_subscribe_refused_total",
+        "Private-stream subscribe ops refused or unanswered, by the op's topics.",
+        "topic",
+        owner="adapter",
+    ),
+    _c(
+        "bybit_private_reconnect_waited_total",
+        "Private-stream dials that waited for the consumer to read the last down status.",
+        owner="adapter",
+    ),
+    _g(
+        "bybit_private_ws_streams",
+        "Private streams open now (no account label).",
+        owner="adapter",
+    ),
+    _g(
+        "ws_conn_budget_remaining",
+        "WebSocket opens a connection-budget scope could make now (public, private, probe).",
+        "scope",
+        owner="exchange.base",
+    ),
+    _c(
+        "ws_conn_budget_refused_total",
+        "WebSocket opens the connection budget refused, by scope (a lane: no slot within one "
+        "window; probe; streams: the cap).",
+        "scope",
+        owner="exchange.base",
     ),
     _c("bus_published_total", "Events published, by topic class.", "topic_class", owner="bus"),
     _c("bus_delivered_total", "Events delivered to a subscriber.", "subscriber", owner="bus"),

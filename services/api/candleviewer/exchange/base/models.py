@@ -18,10 +18,12 @@ consumes.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Literal
+from types import MappingProxyType
+from typing import Annotated, Final, Literal
 
 from pydantic import (
     BaseModel,
@@ -49,6 +51,7 @@ from candleviewer.domain.primitives import (
 )
 
 __all__ = [
+    "PRIVATE_STREAM_REASONS",
     "AccountInfo",
     "AccountRef",
     "AmendOrderRequest",
@@ -63,6 +66,7 @@ __all__ = [
     "ExchangeRecordFields",
     "ExecType",
     "Execution",
+    "FastExecution",
     "FeeRate",
     "FeeRateValue",
     "FundingEvent",
@@ -77,6 +81,10 @@ __all__ = [
     "PlaceOrderRequest",
     "Position",
     "PrivateEvent",
+    "PrivateKind",
+    "PrivateStreamReason",
+    "PrivateStreamState",
+    "PrivateStreamStatus",
     "RateHeadroom",
     "RateLane",
     "RiskLimitTier",
@@ -424,7 +432,8 @@ class CancelOrderRequest(BaseModel):
 class TradingStopRequest(BaseModel):
     """§8.9: attach/replace native TP/SL/trailing on an open position via
     `POST /v5/position/trading-stop`. **Always writes both TP and SL sides**
-    in one call (one-sided writes break the exchange's OCO pairing, §8.9 caveat)."""
+    in one call (one-sided writes break the exchange's OCO pairing, §8.9 caveat).
+    `tp_size` and `sl_size` size a Partial-mode stop (G-8b, #3963; 24 §14.4)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -438,6 +447,27 @@ class TradingStopRequest(BaseModel):
     tp_trigger_by: Literal["last", "mark", "index"] = "last"
     sl_trigger_by: Literal["last", "mark", "index"] = "mark"
     tpsl_mode: Literal["full", "partial"] = "full"
+    tp_size: Qty | None = None
+    sl_size: Qty | None = None
+
+    @model_validator(mode="after")
+    def _sized(self) -> TradingStopRequest:
+        """24 §8.9 and §14.4: a size is a Partial-mode stop's alone, a positive number beside
+        its side's price, every Partial-mode price has its size, and the venue requires the two
+        sizes equal. A Full-mode stop covers the whole position and takes none. Refused here,
+        before anything is signed or sent."""
+        if self.tpsl_mode == "full":
+            if self.tp_size is not None or self.sl_size is not None:
+                raise ValueError("a Full-mode stop covers the whole position and takes no size")
+            return self
+        for price, size in ((self.take_profit, self.tp_size), (self.stop_loss, self.sl_size)):
+            if (price is None) != (size is None):
+                raise ValueError("a Partial-mode stop sends each price with its size")
+            if size is not None and size <= 0:  # NaN and infinity never reach here (pydantic)
+                raise ValueError("a Partial-mode stop's size is a positive number")
+        if self.tp_size is not None and self.sl_size is not None and self.tp_size != self.sl_size:
+            raise ValueError("a Partial-mode stop's two sizes are equal, as the venue requires")
+        return self
 
 
 _DecimalText = Annotated[str, StringConstraints(pattern=r"^-?[0-9]+(\.[0-9]+)?$")]
@@ -730,16 +760,128 @@ class RateHeadroom(BaseModel):
     wait_s: Annotated[float, Field(ge=0)]
 
 
-class PrivateEvent(BaseModel):
-    """§14.4. `payload` carries one of the read-facing DTOs above rather
-    than the OMS's mutable aggregates (see `Order`/`Position` deviation
-    notes)."""
+class FastExecution(BaseModel):
+    """24 §14.4: one row of the private `execution.fast` topic, a trade fill pushed ahead of its
+    `Execution` with fewer fields: no fee, fee rate or `exec_type` (the topic carries trades only).
+    `order_link_id` is normalised (24 §14.2 rule 11), `exchange_order_id` is never empty, and
+    `account_id` is the stream's, never the payload's (SR-E29-02)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    kind: Literal["order", "execution", "position", "wallet"]
+    exec_id: str
+    exchange_order_id: ExchangeOrderId
+    order_link_id: OrderLinkId
     account_id: AccountId
-    payload: Order | Execution | Position | Wallet
+    symbol: Symbol
+    side: Side
+    price: Px
+    qty: Qty
+    is_maker: bool
+    ts_exec: TsUs
+    seq: int | None = None
+
+
+type PrivateKind = Literal["order", "execution", "execution_fast", "position", "wallet"]
+
+#: The payload type of each event kind (24 §14.4).
+_PAYLOADS: Final[Mapping[str, type[BaseModel]]] = MappingProxyType(
+    {
+        "order": Order,
+        "execution": Execution,
+        "execution_fast": FastExecution,
+        "position": Position,
+        "wallet": Wallet,
+    }
+)
+#: The kinds whose event carries the row's allow-listed record (SR-E29-08).
+_RECORDED: Final = frozenset({"order", "execution", "execution_fast"})
+
+
+class PrivateEvent(BaseModel):
+    """24 §14.4 and §14.2 rule 13: one row of an account's private stream. `payload` is the
+    read-facing DTO of its `kind` (see the `Order`/`Position` deviation notes), of the stream's own
+    account, as `account_id` is. `ts_event` is the push's creation time; `seq` is the venue's
+    cross sequence where the topic has one; `record` is the row's allow-listed record, on order,
+    execution and fast-execution events only."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: PrivateKind
+    account_id: AccountId
+    payload: Order | Execution | FastExecution | Position | Wallet
     ts_event: TsUs
     ts_ingest: TsUs
-    seq: int
+    seq: int | None = None
+    record: ExchangeRecord | None = None
+
+    @model_validator(mode="after")
+    def _consistent(self) -> PrivateEvent:
+        if type(self.payload) is not _PAYLOADS[self.kind]:
+            raise ValueError("the payload is not of the event's kind")
+        if self.payload.account_id != self.account_id:
+            raise ValueError("the payload is another account's")
+        if self.record is not None and self.kind not in _RECORDED:
+            raise ValueError("only an order or execution event carries a record")
+        return self
+
+
+type PrivateStreamState = Literal["resyncing", "heartbeat", "down", "closed"]
+"""Where a private stream stands (24 §14.2 rule 13): reconcile over REST now, evidence of a live
+authenticated socket, the socket lost, or the stream ended."""
+
+type PrivateStreamReason = Literal[
+    "connected",
+    "reconnected",
+    "rejected_frame",
+    "evidence",
+    "socket_closed",
+    "pong_timeout",
+    "subscribe_refused",
+    "slow_consumer",
+    "shutdown",
+    "key_revoked",
+    "key_rotated",
+    "key_unusable",
+    "auth_refused",
+    "consumer_closed",
+]
+"""Why, from a closed set per state (`PRIVATE_STREAM_REASONS`)."""
+
+#: Each state's reasons (24 §14.4). `consumer_closed` names the consumer's own close: never yielded.
+PRIVATE_STREAM_REASONS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
+    {
+        "resyncing": frozenset({"connected", "reconnected", "rejected_frame"}),
+        "heartbeat": frozenset({"evidence"}),
+        "down": frozenset({"socket_closed", "pong_timeout", "subscribe_refused", "slow_consumer"}),
+        "closed": frozenset(
+            {
+                "shutdown",
+                "key_revoked",
+                "key_rotated",
+                "key_unusable",
+                "auth_refused",
+                "consumer_closed",
+            }
+        ),
+    }
+)
+
+
+class PrivateStreamStatus(BaseModel):
+    """24 §14.4 and §14.2 rule 13: a private stream's own news, in arrival order with its events.
+    `epoch` counts the sockets the stream has opened, so the statuses of one socket share it; a
+    `closed` status is the stream's last item."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    account_id: AccountId
+    state: PrivateStreamState
+    reason: PrivateStreamReason
+    epoch: Annotated[int, Field(ge=0)]
+    ts: TsUs
+
+    @model_validator(mode="after")
+    def _reason_of_its_state(self) -> PrivateStreamStatus:
+        if self.reason not in PRIVATE_STREAM_REASONS[self.state]:
+            raise ValueError("the reason is not one of its state's")
+        return self

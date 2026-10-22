@@ -13,10 +13,12 @@ never finishes the close, and a cancellation propagates. Diagnostic only: it enf
 (ruling 11 on #836).
 SR-E27-05: at most `OPENS_PER_WINDOW` probes per `WINDOW_S` per deployment (the adapter holds one
 probe), then `rate_limited` at once with nothing signed or dialled; the scheduled self-check never
-names it (`test_ws_probe_callers.py`). Results are `KeyProbeError` names (SR-E27-08), never
-exchange text: a refused `auth` is `auth_error`, no answer `timeout`, a failed or dropped
-connection or a frame that does not decode as JSON `transport_error`, any other reply
-`exchange_unknown`.
+names it (`test_ws_probe_callers.py`). The adapter's probe draws on its one per-IP connection
+budget (`ConnectionBudget`, 24 §14.2 rule 13): the same cap, counted with every other open, and
+refused too while only the private streams' reserve is left (KV-D01). Results are
+`KeyProbeError` names (SR-E27-08), never exchange text: a refused `auth` is `auth_error`, no
+answer `timeout`, a failed or dropped connection or a frame that does not decode as JSON
+`transport_error`, any other reply `exchange_unknown`.
 """
 
 from __future__ import annotations
@@ -37,10 +39,14 @@ from uuid import UUID
 import httpx
 from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as ws_connect
-from websockets.exceptions import WebSocketException
+from websockets.exceptions import ConnectionClosedError, WebSocketException
+from websockets.frames import CloseCode
 from websockets.protocol import State
 
+from candleviewer.exchange.base.reconnect import PROBE_CAP, ConnectionBudget
+from candleviewer.exchange.base.reconnect import WINDOW_S as BUDGET_WINDOW_S
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
+from candleviewer.exchange.bybit.errors import FrameTooLarge
 from candleviewer.exchange.bybit.signer import BybitSigner
 
 if TYPE_CHECKING:
@@ -54,11 +60,16 @@ CLOSE_TIMEOUT_S: Final = 1.0
 _LIBRARY_CLOSE_TIMEOUT_S: Final = CLOSE_TIMEOUT_S / 2
 #: SR-E27-17: `expires` at most 10 s ahead of the exchange clock.
 EXPIRES_AHEAD_MS: Final = 10_000
-#: SR-E27-05: probes per window, per deployment (2 % of the venue's 500 per 5 minutes per IP).
-OPENS_PER_WINDOW: Final = 10
-WINDOW_S: Final = 300.0
+#: SR-E27-05: probes per window, per deployment (2 % of the venue's 500 per 5 minutes per IP):
+#: the connection budget's own cap and window, so a probe with no budget counts the same.
+OPENS_PER_WINDOW: Final = PROBE_CAP
+WINDOW_S: Final = BUDGET_WINDOW_S
 #: Every read's bound: an `auth` reply is a few dozen bytes.
 MAX_FRAME_BYTES: Final = 4096
+#: G-8b (#3963, ruling 9): the private stream's frames, at most 1 MiB, and at most this many read
+#: but not yet taken (so 64 streams buffer 256 MiB at worst, never the library's default).
+STREAM_FRAME_BYTES: Final = 1_048_576
+STREAM_MAX_QUEUE: Final = 4
 #: The probe's vocabulary, a subset of `key_info.PROBE_ERRORS` (a test pins it).
 WsProbeError = Literal[
     "auth_error", "timeout", "transport_error", "exchange_unknown", "rate_limited"
@@ -114,11 +125,17 @@ class _Socket:
         await self._conn.send(frame)
 
     async def recv(self, max_bytes: int) -> str:
-        """The library refuses a frame above `max_size` before buffering it; this bound holds
-        whatever that is. A frame that is not UTF-8 decodes leniently and then fails as JSON."""
-        frame = await self._conn.recv(decode=False)
-        if len(frame) > max_bytes:
-            raise ConnectionError("private ws frame above the read bound")
+        """A frame of at most `max_bytes`, else `FrameTooLarge`: the library refuses one above
+        `max_size` before buffering it and closes the socket (1009), and this bound holds whatever
+        that is. A frame that is not UTF-8 decodes leniently and then fails as JSON."""
+        try:
+            frame: bytes | None = await self._conn.recv(decode=False)
+        except ConnectionClosedError as closed:
+            if closed.sent is None or closed.sent.code != CloseCode.MESSAGE_TOO_BIG:
+                raise
+            frame = None  # raised below, outside this handler: no library error rides on it
+        if frame is None or len(frame) > max_bytes:
+            raise FrameTooLarge("private ws frame above the read bound")
         return frame.decode("utf-8", "replace")
 
     async def close(self) -> None:
@@ -146,12 +163,32 @@ async def connect_private_ws(url: str) -> PrivateSocket:
     socket lives for one reply), small frames, the library's close bound inside the probe's, and
     the quiet logger above. As `rest.py`'s `_assert_same_host`, defence in depth: a handshake
     that did not go to `url` itself is aborted before anything is sent on it."""
+    return await _dial(url, max_size=MAX_FRAME_BYTES)
+
+
+async def connect_private_stream(url: str) -> PrivateSocket:
+    """G-8b (#3963): the private stream's connector, the probe's in every other respect (no
+    redirect, no proxy, certifi's roots, the handshake check, the quiet logger, no library
+    pings: the stream pings for itself, 24 §14.2 rule 13): frames up to `STREAM_FRAME_BYTES`,
+    and at most `STREAM_MAX_QUEUE` of them read ahead."""
+    return await _dial(url, max_size=STREAM_FRAME_BYTES, max_queue=STREAM_MAX_QUEUE)
+
+
+async def _dial(url: str, *, max_size: int, max_queue: int | None = None) -> PrivateSocket:
+    """One dial of either connector: the probe's leaves the library's read-ahead as it is."""
     wanted = urlsplit(url)
-    conn = await _NoRedirectConnect(
-        url, open_timeout=PROBE_TIMEOUT_S, close_timeout=_LIBRARY_CLOSE_TIMEOUT_S,
-        ping_interval=None, max_size=MAX_FRAME_BYTES, logger=_SOCKET_LOG, proxy=None,
-        ssl=_TLS if wanted.scheme == "wss" else None,
-    )  # fmt: skip
+    tls = _TLS if wanted.scheme == "wss" else None
+    if max_queue is None:
+        conn = await _NoRedirectConnect(
+            url, open_timeout=PROBE_TIMEOUT_S, close_timeout=_LIBRARY_CLOSE_TIMEOUT_S,
+            ping_interval=None, max_size=max_size, logger=_SOCKET_LOG, proxy=None, ssl=tls,
+        )  # fmt: skip
+    else:
+        conn = await _NoRedirectConnect(
+            url, open_timeout=PROBE_TIMEOUT_S, close_timeout=_LIBRARY_CLOSE_TIMEOUT_S,
+            ping_interval=None, max_size=max_size, max_queue=max_queue, logger=_SOCKET_LOG,
+            proxy=None, ssl=tls,
+        )  # fmt: skip
     request = conn.request
     resource = f"{wanted.path}?{wanted.query}" if wanted.query else wanted.path
     asked = None if request is None else (request.headers.get("Host"), request.path)
@@ -166,7 +203,8 @@ def _wall_ms() -> int:
 
 
 class KeyWsProbe:
-    """The adapter's one private-WS `auth` probe, holding the deployment's open budget."""
+    """The adapter's one private-WS `auth` probe, holding the deployment's open budget: the
+    adapter's `ConnectionBudget` when one is given, else a window of its own."""
 
     def __init__(
         self,
@@ -174,13 +212,17 @@ class KeyWsProbe:
         *,
         monotonic: Callable[[], float] = time.monotonic,
         wall_ms: Callable[[], int] = _wall_ms,
+        budget: ConnectionBudget | None = None,
     ) -> None:
         self._connect, self._monotonic, self._wall_ms = connect, monotonic, wall_ms
+        self._budget = budget
         #: When each of the last `OPENS_PER_WINDOW` probes was admitted; bounded.
         self._opened: deque[float] = deque(maxlen=OPENS_PER_WINDOW)
 
     def _admit(self) -> bool:
         """A sliding window that refuses at once, and never queues, while it is full."""
+        if self._budget is not None:
+            return self._budget.admit_probe()
         now = self._monotonic()
         if len(self._opened) == OPENS_PER_WINDOW and now - self._opened[0] < WINDOW_S:
             return False

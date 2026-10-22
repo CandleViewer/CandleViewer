@@ -33,6 +33,7 @@ from websockets.proxy import get_proxy
 from websockets.uri import parse_uri
 
 from candleviewer.exchange.bybit import key_ws_probe
+from candleviewer.exchange.bybit.errors import FrameTooLarge
 from candleviewer.exchange.bybit.key_ws_probe import KeyWsProbe, PrivateSocket, WsProbeResult
 from tests._signing import CREDENTIAL_ID, fake_capability
 from tests.unit.exchange.bybit.test_key_ws_probe import MARK, NOW_MS, OK, URLS, Clock
@@ -270,3 +271,17 @@ async def test_a_proxy_the_environment_names_never_carries_the_dial(
         assert get_proxy(parse_uri(url)) == via  # the proxy the library's default dial takes
         assert await probe(url) == GRANTED
     assert (proxy.asked, peer.handshakes, len(peer.frames)) == (0, 1, 1)
+
+
+async def test_the_streams_connector_reads_a_frame_above_1_mib_as_frame_too_large() -> None:
+    """SEC-G8B-C-01: the library refuses a frame above the stream connector's `max_size` and closes
+    the socket 1009 before the read's own bound sees it; the read raises `FrameTooLarge`, which
+    the private stream counts as `oversize`, never as a bare close."""
+    peer = Peer(reply="x" * (key_ws_probe.STREAM_FRAME_BYTES + 1))
+    async with asyncio.timeout(_DEADLINE_S), peer.serving() as url:
+        socket = await key_ws_probe.connect_private_stream(url)
+        await socket.send("frame")
+        with pytest.raises(FrameTooLarge):
+            await socket.recv(key_ws_probe.STREAM_FRAME_BYTES)
+        await socket.close()
+    assert [None if close is None else close.code for close in peer.closes] == [1009]

@@ -246,7 +246,7 @@ from candleviewer.ingestion.kline_coverage import Range
 from candleviewer.ingestion.kline_read import KlineReadService, RecordingStart
 from candleviewer.ingestion.metrics import export_ingestion_metrics, ingest_enabled
 from candleviewer.ingestion.planner import SubscriptionPlanner
-from candleviewer.ingestion.reconnect import ConnectionRateGuard, ReconnectPolicy
+from candleviewer.ingestion.reconnect import ReconnectPolicy
 from candleviewer.ingestion.rejection import EventWindow, corrected_now_us
 from candleviewer.ingestion.service import IngestionService
 from candleviewer.ingestion.ticker_stream import TickerStream
@@ -3049,7 +3049,7 @@ def wire_public_ws(
         SubscriptionPlanner(),
         watchdog,
         ReconnectPolicy(),
-        ConnectionRateGuard(clock),
+        adapter.ws_connection_budget.lane("public"),  # one per-IP budget (24 §14.2 rule 13)
         ctx.ingestion.offer_frame,
         bus=ctx.bus.bus,
         env=env,

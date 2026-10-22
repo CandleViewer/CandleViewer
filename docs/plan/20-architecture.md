@@ -64,7 +64,7 @@ C4Context
 | External system              | What we depend on                                                                                                           | Failure impact                            | Mitigation (§11)                                                                            |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Bybit public WS              | `orderbook.{1,50,200,500}.{sym}`, `publicTrade.{sym}`, `tickers.{sym}`, `kline.{iv}.{sym}`, `allLiquidation.{sym}`          | All order-flow views degrade to stale     | Auto reconnect + resubscribe ≤10 topics/req, snapshot resync, staleness badge               |
-| Bybit private WS             | `order`, `execution.fast`, `position`, `wallet` on `/v5/private` (live) and `stream-demo` (demo)                            | OMS state goes stale; fills unknown       | REST reconciliation loop, heartbeat watchdog, native SL is the safety floor                 |
+| Bybit private WS             | `order`, `execution` (`execution.fast` optional), `position`, `wallet` on `/v5/private` (live) and `stream-demo` (demo)     | OMS state goes stale; fills unknown       | REST reconciliation loop, heartbeat watchdog, native SL is the safety floor                 |
 | Bybit REST                   | order CRUD, `trading-stop`, `instruments-info`, `kline`, `position/list`, `order/realtime`, `execution/list`, `market/time` | No order entry, no reconciliation         | Per-UID token bucket off `X-Bapi-Limit-Status`, retry with jitter, idempotent `orderLinkId` |
 | Bybit WS trade (`/v5/trade`) | Low-latency order entry — **live only**                                                                                     | Falls back to REST                        | OMS adapter selects transport per environment (P9)                                          |
 | Tailscale                    | Sole ingress for managers                                                                                                   | No remote access (local still works)      | Owner can operate locally; documented break-glass in `04-security-program.md`               |
@@ -380,7 +380,7 @@ flowchart TB
     WSTRD & RESTA & PAPER --> SM["OrderStateMachine"]
     SM --> STORE["Postgres (orders, executions, trade_groups)"]
     SM --> BUSP(["bus: oms.*"])
-    PRIV["Private WS: order/execution.fast/position/wallet"] --> SM
+    PRIV["Private WS: order/execution/position/wallet, execution.fast optional"] --> SM
     RECON["Reconciler (startup, reconnect, periodic 30 s)"] --> SM
     ALGO["AlgoSupervisor<br/>OCO, iceberg, TWAP, chase, scaled, brackets"] --> VAL
     SM --> ALGO
@@ -1095,7 +1095,9 @@ class TradingPort(Protocol):  # normative: 24-internal-schemas.md §14.1 (G-8, #
     async def wallet(self, account: AccountRef) -> Wallet: ...
     async def fee_rate(self, account: AccountRef, symbol: str) -> FeeRate: ...
     async def account_info(self, account: AccountRef) -> AccountInfo: ...
-    async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]: ...
+    async def subscribe_private(  # 24 §14.2 rule 13: closeable, ends after `closed`
+        self, account: AccountRef
+    ) -> PrivateStream: ...  # of PrivateEvent | PrivateStreamStatus
 
 class RateHeadroomPort(Protocol):  # 24 §14.1: the lane's local rate budget, read without a token
     def headroom(self, account: AccountRef, lane: str) -> RateHeadroom: ...

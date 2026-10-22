@@ -8,7 +8,8 @@ without sharing a base class or importing each other (C-2.2).
 
 `TradingPort` was declared by E08-T01 so its shape was fixed before the OMS;
 G-8 (#2877, E29-X01) implements it in the exchange adapter's package and in
-memory (`FakeTradingPort`, `exchange/base/fakes.py`). Both ports are
+memory (`FakeTradingPort`, `exchange/base/fakes.py`), and G-8b (#3963) its
+private stream (24 §14.2 rule 13). Both ports are
 `@runtime_checkable`, so `isinstance(adapter, MarketDataPort)` is a valid
 structural check (used by the acceptance test and downstream consumers that
 want a cheap sanity check before wiring a fake into a unit test).
@@ -43,6 +44,7 @@ from .models import (
     PlaceOrderRequest,
     Position,
     PrivateEvent,
+    PrivateStreamStatus,
     RateHeadroom,
     RateLane,
     RiskLimitTier,
@@ -52,7 +54,7 @@ from .models import (
     Wallet,
 )
 
-__all__ = ["MarketDataPort", "RateHeadroomPort", "TradingPort"]
+__all__ = ["MarketDataPort", "PrivateStream", "RateHeadroomPort", "TradingPort"]
 
 
 @runtime_checkable
@@ -118,6 +120,18 @@ class StreamForTopic(Protocol):
     def __call__(self, topic: str) -> tuple[str | None, tuple[str, ...]]: ...
 
 
+class PrivateStream(Protocol):
+    """What `TradingPort.subscribe_private` returns (24 §14.1, §14.2 rule 13): the account's
+    events and statuses in arrival order, ending after a `closed` status. It raises nothing once
+    returned; the consumer closes it (`contextlib.aclosing`), which closes its socket."""
+
+    def __aiter__(self) -> PrivateStream: ...
+
+    async def __anext__(self) -> PrivateEvent | PrivateStreamStatus: ...
+
+    async def aclose(self) -> None: ...
+
+
 @runtime_checkable
 class TradingPort(Protocol):
     """§14.1. Account-scoped order entry and reads, every call on the account's own
@@ -179,7 +193,7 @@ class TradingPort(Protocol):
 
     async def account_info(self, account: AccountRef) -> AccountInfo: ...
 
-    async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]: ...
+    async def subscribe_private(self, account: AccountRef) -> PrivateStream: ...
 
 
 @runtime_checkable

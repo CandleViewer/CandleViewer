@@ -29,6 +29,7 @@ from websockets.http11 import Request
 from websockets.protocol import State
 from websockets.uri import parse_uri
 
+from candleviewer.exchange.base.reconnect import ConnectionBudget
 from candleviewer.exchange.bybit import key_ws_probe
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.key_info import PROBE_ERRORS
@@ -309,6 +310,32 @@ async def test_the_window_slides_so_no_300_s_ever_holds_more_than_10_opens() -> 
     assert later == [None, "rate_limited", "rate_limited", "rate_limited", None]
 
 
+async def test_a_budget_backed_probe_counts_in_the_window_and_never_takes_the_reserve() -> None:
+    """G-8b (24 §14.2 rule 13, KV-D01): the adapter's probe draws on its one connection budget.
+    Its opens count with every other open, and it is refused at once, with nothing signed or
+    dialled, while only the private streams' reserve is left."""
+    clock, stream, calls = Clock(), Stream(), list[Call]()
+    budget = ConnectionBudget(clock)
+    probe = KeyWsProbe(stream.connect, monotonic=clock, wall_ms=lambda: NOW_MS, budget=budget)
+    assert (await probe.probe(fake_capability(MARK, calls), "demo", CREDENTIAL_ID)).ok
+    assert budget.remaining("private") == 479  # the probe's open is in the window
+    for _ in range(419):  # public opens take what public may: 420 with the probe's
+        budget.lane("public").reserve()
+    refused = await probe.probe(fake_capability(MARK, calls), "demo", CREDENTIAL_ID)
+    assert refused == WsProbeResult(ok=False, error="rate_limited", latency_ms=None)
+    assert (len(stream.dialled), len(calls), budget.remaining("private")) == (1, 1, 60)
+
+
+async def test_the_adapter_counts_its_probes_in_its_connection_budget() -> None:
+    stream = Stream()
+    svc = ExchangeBybitService(
+        credentials=fake_capability(), private_ws_connect=stream.connect, environment="demo"
+    )
+    before = svc.ws_connection_budget.remaining("private")
+    assert (await svc.key_ws_probe("demo", CREDENTIAL_ID)).ok
+    assert svc.ws_connection_budget.remaining("private") == before - 1
+
+
 async def test_a_refused_unknown_environment_takes_no_open_from_the_budget() -> None:
     stream = Stream()
     probe = probe_for(stream)
@@ -398,6 +425,35 @@ async def test_production_dials_with_bounded_frames_and_a_logger_that_shows_no_f
     expected = {"url": URLS["demo"], "open_timeout": 5.0, "close_timeout": 0.5, "proxy": None}
     assert seen == {**expected, "ping_interval": None, "max_size": 4096, "ssl": key_ws_probe._TLS}
     assert (conn.sent, conn.state, conn.aborts) == (["frame"], State.CLOSED, 0)
+
+
+async def test_the_private_streams_connector_takes_1_mib_frames_and_reads_ahead_4(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """G-8b (#3963, ruling 9): the private stream dials as the probe does (no redirect, no proxy,
+    certifi's roots, the quiet logger, no library pings: the stream pings itself), with frames up
+    to 1 MiB, read twice-bounded, and at most 4 read ahead, never the library's default."""
+    conn = Conn(URLS["live"])
+    seen = dial_into(monkeypatch, conn)
+    caplog.set_level(logging.DEBUG)
+    socket = await key_ws_probe.connect_private_stream(URLS["live"])
+    assert await socket.recv(len(OK)) == OK
+    await socket.close()
+    assert not seen.pop("logger").isEnabledFor(logging.DEBUG)
+    expected = {"url": URLS["live"], "open_timeout": 5.0, "close_timeout": 0.5, "proxy": None}
+    stream = {"ping_interval": None, "max_size": 1_048_576, "max_queue": 4}
+    assert seen == {**expected, **stream, "ssl": key_ws_probe._TLS}
+    assert (key_ws_probe.STREAM_FRAME_BYTES, key_ws_probe.STREAM_MAX_QUEUE) == (1_048_576, 4)
+
+
+async def test_the_streams_connector_aborts_a_handshake_that_reached_another_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = Conn(URLS["live"])
+    dial_into(monkeypatch, conn)
+    with pytest.raises(ConnectionError, match="left the requested stream"):
+        await key_ws_probe.connect_private_stream(URLS["demo"])
+    assert conn.aborts == 1
 
 
 @pytest.mark.parametrize(
