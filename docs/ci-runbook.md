@@ -753,7 +753,8 @@ index alone, removing nothing.
     tables' guard functions (as a function, a procedure, an aggregate or a
     routine), or a routine named as a function the hash chain calls;
   - the statements that reach the tables without naming them: a role
-    grant, an altered schema or one dropped with `CASCADE`, a dropped or
+    grant (or a role created in another, or a group given a member), an
+    altered schema or one dropped with `CASCADE`, a dropped or
     reassigned role's objects, the `pgcrypto` extension dropped or
     altered, a role's or a database's `search_path`, and an event trigger;
   - a statement that disables triggers for a session, and a setting the
@@ -773,16 +774,22 @@ index alone, removing nothing.
   - a `WITH` or `EXPLAIN` over a read of one `FOR UPDATE`: read it without
     the lock;
   - in a plpgsql body, an `IF`, `FOR` or `WITH` header that reads an audit
-    table: a statement runs from the previous `;`, so the header counts
-    with the statement it opens. Read the condition into a variable first;
+    table or calls a guard function: a statement runs from the previous
+    `;`, so the header counts with the statement it opens. Read the
+    condition into a variable first;
   - a Python name bound to more than one value (assigned twice, a loop
-    target, a parameter) where a table goes: give each table its own
-    literal or constant.
+    target, a parameter) where a table goes, in SQL, an Alembic operation
+    or a Core table: give each table its own literal or constant;
+  - a message or a value that opens with `Set` or `Reset` and one word,
+    read as a setting under a name the rule cannot read: reword it.
 
   A string literal that opens with an SQL command word is read as SQL. A
   revision is read as the import system reads it, and one the rule cannot
-  read is refused: make it UTF-8 source, Python that parses, and nested no
-  deeper than Python reads. A name or a string spelled with Unicode
+  read is refused: one that declares another source encoding, holds an
+  undecodable byte, or parses to a different tree than its decoded text
+  ("the revision does not read as UTF-8 source"), one that does not parse,
+  and one nested deeper than Python reads. Make it UTF-8 source, Python
+  that parses, and nested no deeper. A name or a string spelled with Unicode
   escapes (`U&`) is refused too: spell it plainly.
 
   Two files are exempt, and only as far as follows:

@@ -353,12 +353,12 @@ _MUTATING_GRANTS = frozenset({"UPDATE", "DELETE", "TRUNCATE", "ALL", "TRIGGER"})
 # A placeholder in dynamic SQL: its target is an argument, read where it is passed.
 _PLACEHOLDER_RE = re.compile(r"%[IsL]|\$\d+")
 _SETS = frozenset({"SET", "RESET"})
-#: A setting set under a name the rule cannot read: a placeholder, a Python value it
-#: cannot resolve (`_UNRESOLVED_PLACEHOLDER`), or a name its fragment ends on, which
-#: the code may go on to build.
+#: A setting set under a name the rule cannot read: a placeholder (`%I`, `$1`, a
+#: `str.format` field), a Python value it cannot resolve (`_UNRESOLVED_PLACEHOLDER`),
+#: or a name its fragment ends on, which the code may go on to build.
 _DYNAMIC_SETTING_RE = re.compile(
     r"\s*(?:SET(?:\s+(?:SESSION|LOCAL))?|ALTER\s+(?:ROLE|USER|DATABASE|SYSTEM|FUNCTION"
-    r"|PROCEDURE|ROUTINE)\b.*?\bSET)\s+(?:[%$\x00]|[\w.\"]*\s*\Z)",
+    r"|PROCEDURE|ROUTINE)\b.*?\bSET)\s+(?:[%$\x00{]|[\w.\"]*\s*\Z)",
     re.IGNORECASE | re.DOTALL,
 )
 #: The revision that creates the audit tables and their guard functions (21 §3.10).
@@ -545,9 +545,17 @@ def _reach(words: list[str], names: set[str]) -> str | None:
     (`set_config`), or an event trigger, which runs on later DDL (`event_trigger`)."""
     head = words[:2]
     if (
-        head[:1] == ["GRANT"]
-        and "TO" in words
-        and "ON" not in words[: words.index("TO")]
+        (
+            head[:1] == ["GRANT"]
+            and "TO" in words
+            and "ON" not in words[: words.index("TO")]
+        )
+        or (head == ["ALTER", "GROUP"] and "ADD" in words)
+        or (
+            head[:1] == ["CREATE"]
+            and head[1:2] in (["ROLE"], ["USER"], ["GROUP"])
+            and {"ROLE", "GROUP", "SUPERUSER"} & set(words[2:])  # `IN ROLE`, ...
+        )
     ):
         return "role"
     if head == ["ALTER", "SCHEMA"] or (
@@ -565,7 +573,7 @@ def _reach(words: list[str], names: set[str]) -> str | None:
             return "default_privileges"
     if (
         head[:1] in (["SET"], ["RESET"])
-        or (head[:1] == ["ALTER"] and _SETS & set(words))
+        or (head[:1] in (["ALTER"], ["CREATE"]) and _SETS & set(words))
     ) and any(name.lower() == "session_replication_role" for name in names):
         return "replication_role"
     if "set_config" in names:
@@ -787,6 +795,54 @@ def _op_targets(
                 value = names.get(arg.id) if isinstance(arg, ast.Name) else None
             if isinstance(value, str) and value in tables:
                 hits.setdefault(node.lineno, value)
+    return hits
+
+
+#: Where an Alembic drop or reshape names its table: the position and the keyword.
+_TABLE_SLOTS = {
+    "drop_table": (0, "table_name"),
+    "drop_column": (0, "table_name"),
+    "rename_table": (0, "old_table_name"),
+    "alter_column": (0, "table_name"),
+    "drop_index": (1, "table_name"),
+    "drop_constraint": (1, "table_name"),
+}
+#: The target of an operation whose table is a name the rule cannot resolve.
+_RUN_TIME = "a table it names only at run time"
+
+
+def _run_time_tables(tree: ast.AST) -> dict[int, str]:
+    """`{line: _RUN_TIME}` of each `op.<drop or reshape>(...)` whose table is a name the
+    rule cannot resolve to one constant (`_resolve_simple_name_constants`: a rebound
+    name, a parameter), and of each Core `table(...)`/`Table(...)` given such a name:
+    either may be an audit table at run time (#4032)."""
+    names = _resolve_simple_name_constants(tree)
+
+    def unresolved(node: ast.expr | None) -> bool:
+        return isinstance(node, ast.Name) and node.id not in names
+
+    hits: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr in _TABLE_SLOTS
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "op"
+        ):
+            position, keyword = _TABLE_SLOTS[func.attr]
+            given = [kw.value for kw in node.keywords if kw.arg == keyword]
+            if len(node.args) > position:
+                given.append(node.args[position])
+            if any(unresolved(arg) for arg in given):
+                hits.setdefault(node.lineno, _RUN_TIME)
+        callee = (
+            func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        )
+        if callee in {"table", "Table"} and node.args and unresolved(node.args[0]):
+            hits.setdefault(node.lineno, _RUN_TIME)
     return hits
 
 
@@ -1098,17 +1154,20 @@ def _audit_findings(path: Path, forbidden_tables: frozenset[str]) -> list[LintFi
     reshapes = _op_targets(
         tree, frozenset({"rename_table", "alter_column"}), forbidden_tables
     )
-    for line, table in sorted(
-        {**reshapes, **_core_mutations(tree, forbidden_tables)}.items()
-    ):
+    operations = {
+        **_run_time_tables(tree),
+        **reshapes,
+        **_core_mutations(tree, forbidden_tables),
+    }
+    for line, table in sorted(operations.items()):
+        target = table if table == _RUN_TIME else f"append-only table '{table}'"
         findings.append(
             LintFinding(
                 code="CI-MIG-003",
                 path=path,
                 message=(
-                    f"line {line}: operation targets append-only "
-                    f"table '{table}' — forbidden regardless of "
-                    "annotation (C-5.7, ADR-0013 rule 9)"
+                    f"line {line}: operation targets {target} — forbidden regardless "
+                    "of annotation (C-5.7, ADR-0013 rule 9)"
                 ),
             )
         )

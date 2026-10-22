@@ -1106,6 +1106,10 @@ def test_a_drop_whose_table_name_is_on_the_next_line_is_flagged(tmp_path: Path) 
         "ALTER TABLE orders DISABLE TRIGGER ALL",
         "ALTER TABLE orders ALTER COLUMN note SET DEFAULT 'x'",
         "UPDATE orders SET note = 'x'",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE sql"
+        " SET search_path = pg_catalog, pg_temp AS $$ SELECT 1 $$",
+        "CREATE ROLE cv_ro NOLOGIN",
+        "CREATE USER cv_reader LOGIN",
     ],
 )
 def test_a_statement_that_mutates_no_audit_table_is_not_flagged(
@@ -1227,7 +1231,7 @@ def test_a_revision_nested_too_deeply_is_refused_and_the_others_still_report(
         "t = 'audit_log'\n    op.execute(f'DELETE FROM {t}')\n    t = 'orders'\n",
         "t = 'orders'\n    t = 'audit_log'\n    op.execute(f'DELETE FROM {t}')\n",
         "for t in ('orders', 'audit_log'):\n        op.execute(f'DELETE FROM {t}')\n",
-        "t = 'audit_log'\n    op.drop_table(t)\n    t = 'orders'\n",
+        "t = 'audit_log'\n    op.drop_table(t)  # cv:contract-phase: R2\n    t = 'orders'\n",
         "purge('audit_log')\n\n\nt = 'orders'\n\n\ndef purge(t: str) -> None:\n"
         "    op.execute(f'DELETE FROM {t}')\n",
     ],
@@ -1261,6 +1265,49 @@ def test_a_name_bound_to_one_constant_in_two_functions_still_resolves(
         + fn
     )
     assert _audit_hits(tmp_path, source) == []
+
+
+_UNRESOLVED_OP = "from alembic import op\nimport sqlalchemy as sa\n\n\ndef upgrade(t: str) -> None:\n    {}\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _UNRESOLVED_OP.format("op.drop_table(t)  # cv:contract-phase: R2"),
+        _UNRESOLVED_OP.format(
+            "u = 'audit_log'\n    op.rename_table(u, 'x')\n    u = 'orders'"
+        ),
+        _UNRESOLVED_OP.format("op.alter_column(t, 'note', nullable=True)"),
+        _UNRESOLVED_OP.format(
+            "op.drop_index('ix', table_name=t)  # cv:contract-phase: R2"
+        ),
+        _UNRESOLVED_OP.format("op.drop_index('ix', t)  # cv:contract-phase: R2"),
+        "from alembic import op\nimport sqlalchemy as sa\n\nT = 'audit_log'\nT = 'orders'\n\n\n"
+        "def upgrade() -> None:\n    op.execute(sa.table(T).delete())\n",
+    ],
+)
+def test_an_operation_whose_table_the_rule_cannot_resolve_is_refused(
+    tmp_path: Path, source: str
+) -> None:
+    """A drop, a reshape or a Core table given a name bound to more than one value, or a
+    parameter, may be an audit table at run time (#4032)."""
+    hits = _audit_hits(tmp_path, source)
+    assert any("a table it names only at run time" in hit for hit in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "tbl = 'orders'\n    op.drop_column(tbl, 'note')  # cv:contract-phase: R2",
+        "op.drop_index('ix_orders_note')  # cv:contract-phase: R2",
+        "op.drop_index(t)  # cv:contract-phase: R2",  # an index name, no table
+        "op.execute(sa.table('orders').delete())",
+    ],
+)
+def test_an_operation_whose_table_resolves_to_another_is_not_flagged(
+    tmp_path: Path, body: str
+) -> None:
+    assert _audit_hits(tmp_path, _UNRESOLVED_OP.format(body)) == []
 
 
 def test_a_python_revision_nested_too_deeply_is_refused_by_the_cli_with_its_sibling(
@@ -2003,8 +2050,15 @@ _SETTING = "a setting set through set_config() or under a computed name"
         "op.execute('SET ' + name + ' = replica')",
         "op.execute('SET session_' + 'replication_role = replica')",
         "v = 'SET'\n    op.execute(f'{v} {name} = replica')",
+        "op.execute('SET {} = replica'.format(name))",
     ],
-    ids=["an-f-string", "a-concatenation", "a-split-name", "a-resolved-verb"],
+    ids=[
+        "an-f-string",
+        "a-concatenation",
+        "a-split-name",
+        "a-resolved-verb",
+        "a-format-field",
+    ],
 )
 def test_a_setting_python_computes_the_name_of_is_flagged(
     tmp_path: Path, body: str
@@ -2088,6 +2142,20 @@ def test_a_setting_python_computes_the_name_of_is_flagged(
             "an event trigger",
         ),
         ("ALTER EVENT TRIGGER et DISABLE", "an event trigger"),
+        (
+            "CREATE FUNCTION purge() RETURNS void LANGUAGE plpgsql"
+            " SET session_replication_role = replica AS $$ BEGIN NULL; END $$",
+            _TRIGGERS_OFF,
+        ),
+        (
+            "CREATE OR REPLACE PROCEDURE p() LANGUAGE sql"
+            " SET session_replication_role = replica AS $$ SELECT 1 $$",
+            _TRIGGERS_OFF,
+        ),
+        ("ALTER GROUP cv_owner ADD USER cv_app", "a role's membership"),
+        ("CREATE ROLE evil LOGIN IN ROLE cv_owner", "a role's membership"),
+        ("CREATE USER evil IN GROUP cv_owner", "a role's membership"),
+        ("CREATE ROLE evil SUPERUSER", "a role's membership"),
     ],
 )
 def test_a_statement_that_reaches_the_audit_tables_without_naming_one_is_flagged(
