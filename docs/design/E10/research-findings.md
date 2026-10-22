@@ -76,12 +76,13 @@ below.
 **Study 2 — panic-control reachability**
 
 1. Build an interactive prototype (or the drawn Penpot frame with click-through) of SCR-010 with
-   CMP-211 at the RightRail-top placement.
+   CMP-211 as the TopBar Safety cluster (ruling 1; E39-D01 A0).
 2. Each participant runs a 15-minute simulated trading session performing routine tasks (switch
    workspace, open command palette, adjust an order) — log every click within CMP-211's hit area that
    was not an intentional panic activation.
 3. Separately, ask each participant to deliberately activate the panic control as fast as possible;
-   record time from cue to completed hold/typed-confirm.
+   record the time from the cue to the confirmed FREEZE: one blast-radius confirmation with focus on
+   Cancel, then Tab and Enter; no typed word, no hold, no step-up (E39-D01 D2).
 4. Gate: zero accidental activations across all participants; deliberate activation <=2s for each.
 
 Record real results in a new section of this file (or a dated addendum) once run — do not overwrite
