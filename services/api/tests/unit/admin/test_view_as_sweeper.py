@@ -260,11 +260,13 @@ async def test_the_composite_notifier_runs_the_view_as_hook_before_the_registry(
     registry = _Registry(rig)
     rig.ports.reason = ViewAsEndReason.VIEWER_INELIGIBLE
     await RoleChangeNotifier(rig.service, registry).roles_changed(_VIEWER)
+    await rig.settled()
     assert registry.seen == [(_VIEWER, ["viewer_ineligible"])]
 
 
 async def test_a_failing_hook_still_lets_the_registry_run_and_is_raised_after() -> None:
-    """For the route to count (`users.update.step`); the sweeper evaluates the row again."""
+    """A hook that fails still lets the registry run, and its error is raised after it for the
+    route to count (`users.update.step`); the sweeper evaluates the row again."""
     rig = _Rig()
     await rig.viewing()
     registry = _Registry(rig)
@@ -275,13 +277,16 @@ async def test_a_failing_hook_still_lets_the_registry_run_and_is_raised_after() 
 
 
 async def test_a_hook_that_outlasts_its_bound_still_lets_the_registry_run() -> None:
+    """The bound cuts a hook that never answers: the registry runs, then the bound's
+    `TimeoutError` is raised for the route to count."""
     rig = _Rig()
     await rig.viewing()
     registry = _Registry(rig)
     rig.ports.holds.add("ineligible")  # the eligibility read never answers
     notifier = RoleChangeNotifier(rig.service, registry, timeout_s=0)
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(notifier.roles_changed(_VIEWER), 5)  # a guard only
+    async with asyncio.timeout(5):  # a guard only: without the bound it fires, outside the raises
+        with pytest.raises(TimeoutError):
+            await notifier.roles_changed(_VIEWER)
     await rig.settled()
     assert registry.seen == [(_VIEWER, [None])]
 
@@ -356,6 +361,22 @@ async def test_a_role_change_reads_the_viewers_contexts_past_any_list_limit() ->
     assert rig.ports.asked == 1 and _reasons(rig).count("viewer_ineligible") == 1
 
 
+async def test_a_role_change_whose_first_read_fails_still_reads_the_targets_contexts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read that fails leaves the other to run: the target's contexts still end, and the
+    failure is raised after them."""
+    rig = _Rig()
+    await rig.viewing()  # _VIEWER on _TARGET
+    down = AsyncMock(side_effect=ConnectionError("by-viewer read"))
+    monkeypatch.setattr(rig.repo, "list_live_view_as_by_viewer", down)
+    rig.ports.reason = ViewAsEndReason.TARGET_INELIGIBLE
+    with pytest.raises(ConnectionError):
+        await rig.service.on_roles_changed(_TARGET)
+    await rig.settled()
+    assert _reasons(rig) == ["target_ineligible"] and down.await_count == 1
+
+
 async def test_startup_runs_one_tick_then_every_interval_until_stopped() -> None:
     rig = _Rig()
     record = await rig.viewing()
@@ -405,19 +426,3 @@ async def test_shutdown_mid_tick_leaves_the_ends_record_to_the_tracker_drain() -
     await rig.settled()  # the drain
     assert rig.held(record).end_recorded_at == _at(31)
     assert [c["reason"] for c in rig.ports.calls] == ["expired"]
-
-
-async def test_a_role_change_whose_first_read_fails_still_reads_the_targets_contexts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A read that fails leaves the other to run: the target's contexts still end, and the
-    failure is raised after them."""
-    rig = _Rig()
-    await rig.viewing()  # _VIEWER on _TARGET
-    down = AsyncMock(side_effect=ConnectionError("by-viewer read"))
-    monkeypatch.setattr(rig.repo, "list_live_view_as_by_viewer", down)
-    rig.ports.reason = ViewAsEndReason.TARGET_INELIGIBLE
-    with pytest.raises(ConnectionError):
-        await rig.service.on_roles_changed(_TARGET)
-    await rig.settled()
-    assert _reasons(rig) == ["target_ineligible"] and down.await_count == 1

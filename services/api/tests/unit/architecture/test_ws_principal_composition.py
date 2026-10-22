@@ -2,7 +2,8 @@
 builds the WS principal from the store (`StorePrincipalLoader`). So a `sub` over `/ws` answers
 as `tests/contract/rbac/matrix.yaml` says, for every topic family and actor, and a withdrawn grant
 revokes a live subscription. Only the SQL edges of the real classes
-(`SqlAlchemyIdentityProvider.user`/`session_info`, `SqlAlchemyScopeSource.load_grants`) and the
+(`SqlAlchemyIdentityProvider.user`/`session_info`, `SqlAlchemyScopeSource.load_grants`,
+`SqlAlchemySessionRepository.find_by_id`, which an `auth`'s view-as read takes, #3085) and the
 session service are faked, through the RBAC pack's seams (no Postgres, no network). The fake
 backend keeps the deny-all principal. #2648 S9c: the owner's PUT drives the push (AC3), with its
 store edge (`SqlAlchemyAccountAccessStore.replace_grants`) and the step-up service faked too."""
@@ -32,6 +33,7 @@ from candleviewer.storage.repositories import account_access as aa
 from candleviewer.storage.repositories.account_access_sqlalchemy import SqlAlchemyAccountAccessStore
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
+from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
 from candleviewer.ws.lifecycle import ConnectRateLimiter
 from candleviewer.ws_wiring import MachineRevocationAudit, loop_call_later
 from tests.contract.rbac import rbac_harness as rbac
@@ -88,6 +90,14 @@ class _Grants:
         return change
 
 
+class _Rows:
+    """`find_by_id` over the pack's sessions: the row an `auth`'s view-as read takes (#3085),
+    which holds no context, so every socket answers as its own user."""
+
+    async def find_by_id(self, session_id: str) -> Any:
+        return await rbac._Sessions().require_active(session_id)
+
+
 @pytest.fixture(scope="module")
 def deployed() -> Iterator[SimpleNamespace]:
     identity, grants = rbac._Identity(rbac.load_contract()), _Grants()
@@ -103,6 +113,7 @@ def deployed() -> Iterator[SimpleNamespace]:
         for name in ("user", "session_info"):
             mp.setattr(SqlAlchemyIdentityProvider, name, _delegate(identity, name))
         mp.setattr(SqlAlchemyScopeSource, "load_grants", _delegate(grants, "load_grants"))
+        mp.setattr(SqlAlchemySessionRepository, "find_by_id", _delegate(_Rows(), "find_by_id"))
         mp.setattr(
             SqlAlchemyAccountAccessStore, "replace_grants", _delegate(grants, "replace_grants")
         )

@@ -43,6 +43,7 @@ class _Ports:
         self.reason: Ineligible | None = None
         self.asked, self.closing = 0, asyncio.Event()
         self.closed: list[tuple[str, str]] = []
+        self.closed_contexts: list[UUID] = []  # the context each close names
         self.names: Mapping[UUID, str] = _NAMES
         self.fails: dict[str, Exception] = {}
         self.holds: set[str] = set()
@@ -62,8 +63,9 @@ class _Ports:
         self.asked += 1
         return await self._answer("ineligible", self.reason)
 
-    async def close_family(self, session_id: str, *, reason: str) -> None:
+    async def close_family(self, session_id: str, *, context_id: UUID, reason: str) -> None:
         self.closed.append((session_id, reason))
+        self.closed_contexts.append(context_id)
         self.closing.set()
         await self._answer("close_family", None)
 
@@ -429,3 +431,14 @@ async def test_leave_a_held_context_clears_it_and_keeps_its_pending_end() -> Non
     assert (held.end_reason, held.cleared_at, held.end_pending) == ("session_ended", _at(6), True)
     assert rig.ports.closed == [(str(record.id), "view_as_expired")]
     assert (rig.ports.calls, rig.runner.tasks) == ([], [])
+
+
+async def test_an_end_tells_the_closer_which_context_ended() -> None:
+    """Only the sockets bound to the ended context close (`HubSocketCloser`): the closer is given
+    its id, never only the session's."""
+    rig = _Rig()
+    record = await rig.viewing()
+    assert record.view_as is not None
+    assert await rig.service.end(record, reason=ViewAsEndReason.ENDED, now=_at(5))
+    await rig.settled()
+    assert rig.ports.closed_contexts == [record.view_as.context_id]

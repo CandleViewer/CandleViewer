@@ -44,6 +44,7 @@ from candleviewer.storage.repositories.break_glass_sqlalchemy import SqlAlchemyB
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
 from tests.unit.ws._seq_support import validate
 
 _ORIGIN = "http://testserver"  # the TestClient's own origin (§2.5 allow-list)
@@ -260,8 +261,12 @@ def store_reads(monkeypatch: pytest.MonkeyPatch) -> list[SqlAlchemyBreakGlassEve
 
 
 def test_deployed_app_wires_the_read_only_reader_on_the_real_backend(
-    store_reads: list[SqlAlchemyBreakGlassEvents],
+    store_reads: list[SqlAlchemyBreakGlassEvents], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    async def no_row(self: SqlAlchemySessionRepository, session_id: str) -> None:
+        return None  # the seam's `sess-1` is no row, so its `auth` reads no view-as context
+
+    monkeypatch.setattr(SqlAlchemySessionRepository, "find_by_id", no_row)  # #3085's SQL edge
     with _deployed(**_REAL) as client, _authenticated(client) as ws:
         frames = _queued(ws)
     assert [f["p"]["reason"] for f in frames] == [BREAK_GLASS_NOTICE_REASON]

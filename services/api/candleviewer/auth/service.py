@@ -170,10 +170,11 @@ class AuthService:
         return self._session_repository is not None
 
     @property
-    def view_as_store(self) -> ViewAsSessionStore:
+    def view_as_store(self) -> AuthSessionStore:
         """#3085: the view-as columns of `sessions`, for the view-as service and its sweeper,
-        through the repository `sessions` writes. Available from construction, unlike `sessions`,
-        which needs `start()`."""
+        through the repository `sessions` writes, and the rows and rotation families the
+        WebSocket's view-as reads walk. Available from construction, unlike `sessions`, which
+        needs `start()`."""
         if self._session_repository is None:
             raise RuntimeError("AuthService was built without a session repository")
         return self._session_repository

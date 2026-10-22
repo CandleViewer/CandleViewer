@@ -24,6 +24,12 @@ oldest is forgotten first, which reopens the in-flight window for that one sessi
 is logged (throttled). A remembered `user_disabled` is never downgraded by a later revocation
 of the same session, so the 4403 close survives a repeat (§9.5).
 
+A socket is also bound, at its `auth_ok`, to the view-as context its session holds, if any
+(§9.6, #3085): `bind`. `close_context` closes the sockets bound to an ended context and only
+those. That close is not remembered, since the session stays live; it runs inline, not in the
+shielded task; and it is no observation of `auth_revocation_latency_seconds`, which measures
+revocations. Its failed closes are counted as a revocation's are.
+
 The closes run as a task the hub owns (C-2.18), started eagerly so closers that never suspend
 finish inside the `revoke` call, and `revoke` awaits it under `asyncio.shield`: a caller
 cancelled mid-loop still sees its `CancelledError`, but every socket of the revoked session is
@@ -45,6 +51,7 @@ import structlog
 
 from candleviewer.auth.metrics import auth_revocation_latency_seconds
 from candleviewer.observability.metrics import Counter
+from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import FANOUT_SEND_TIMEOUT_S
 
 
@@ -56,19 +63,23 @@ def _log() -> Any:
 CLOSE_TOKEN_EXPIRED = 4401
 
 #: One count of close attempts that failed, from both paths that end a socket on a revocation
-#: (#3497, #3635): this hub's per-session closes, and `ConnectionRegistry.user_disabled`'s per-user
-#: closes (`ws/permissions.py`). A close that raised or hit its bound counts once; a cancellation
-#: is not a failed close and is not counted. A failed close means the socket can stay open until
-#: its access token expires (12 minutes at most), and a closer that raised may also have left the
-#: connection unsealed, still receiving its read-only streams. REST has refused the session (or the
-#: disabled user) since the revocation, and orders are REST only. The deployed gateway's closer
-#: seals without waiting, so a failure is not expected: this is how a regression would be seen. No
-#: label: the log lines name the session or the user. Scraped: in `AUTH_EXPORTED_NAMES`
-#: (`auth/metrics.py`, with `env` only); the `WsRevocationCloseFailed` ticket reads it.
+#: (#3497, #3635) or a view-as context's end (#3085): this hub's per-session and per-context closes,
+#: and `ConnectionRegistry.user_disabled`'s per-user closes (`ws/permissions.py`). A close that
+#: raised or hit its bound counts once; a cancellation is not a failed close and is not counted, nor
+#: is a view-as end's rotation-family walk that failed (the service's `admin.view_as.close_failed`
+#: logs it; the session's own sockets close before the walk). A failed close means the socket can
+#: stay open until its access token expires (12 minutes at most), and a closer that raised may also
+#: have left the connection unsealed, still receiving its read-only streams. REST has refused the
+#: session (or the disabled user) since the revocation, and orders are REST only; after a view-as
+#: end the session stays live and REST answers as the viewer with the context held (§9.6). The
+#: deployed gateway's closer seals without waiting, so a failure is not expected: this is how a
+#: regression would be seen. No label: the log lines name the session or the user. Scraped: in
+#: `AUTH_EXPORTED_NAMES` (`auth/metrics.py`, with `env` only); the `WsRevocationCloseFailed` ticket
+#: reads it.
 ws_revocation_close_failures_total = Counter(
     "ws_session_revocation_close_failures_total",
-    "WebSocket closes that failed during a session revocation or a user disable "
-    "(the socket may remain open).",
+    "WebSocket closes that failed during a session revocation, a user disable or a view-as "
+    "context's end (the socket may remain open).",
 )
 
 #: §9.5 / §13.6 closed `revoked.reason` set - no internal detail ever leaks through it.
@@ -143,6 +154,9 @@ def user_disabled_bye(now_ms: int) -> dict[str, Any]:
 
 
 Closer = Callable[[dict[str, Any], int], Awaitable[None]]  # (bye frame, close code)
+#: The §9.6 closes of a view-as context's sockets (`close_context`).
+ViewAsClose = Literal["view_as_changed", "view_as_expired"]
+VIEW_AS_CLOSES: Final[frozenset[str]] = frozenset({"view_as_changed", "view_as_expired"})
 
 
 def bye_frame(reason: str) -> dict[str, Any]:
@@ -200,6 +214,9 @@ class RevocationHub:
                 "remember_s and close_timeout_s must be finite and > 0, and max_remembered >= 1"
             )
         self._sockets: dict[str, list[Closer]] = defaultdict(list)
+        #: (session id, closer) -> the view-as context the socket authenticated into (#3085), set
+        #: at its `auth_ok` (`bind`): `close_context` closes only the sockets of one context.
+        self._contexts: dict[tuple[str, Closer], str] = {}
         #: Stamps the `user_disabled` bye's `ts`; injectable so tests read a fixed clock.
         self._wall_ms = wall_ms
         self._remember_s = remember_s
@@ -274,12 +291,44 @@ class RevocationHub:
             self._sockets[session_id].remove(closer)
         if not self._sockets.get(session_id):
             self._sockets.pop(session_id, None)
+        self._contexts.pop((session_id, closer), None)
+
+    def bind(self, session_id: str, closer: Closer, context_id: str | None) -> None:
+        """At a socket's `auth_ok` on `session_id`: the view-as context it is bound to, or none
+        (23-ws-protocol.md §9.6, #3085). A registered socket only."""
+        if context_id is None:
+            self._contexts.pop((session_id, closer), None)
+        elif closer in self._sockets.get(session_id, []):
+            self._contexts[(session_id, closer)] = context_id
+
+    async def close_context(self, session_id: str, context_id: str, reason: ViewAsClose) -> int:
+        """Close the sockets of `session_id` bound to the view-as context `context_id`, and only
+        those, with `reason`'s `bye` (§9.6: `view_as_changed`, 4401, or `view_as_expired`,
+        4403); returns how many closes it attempted. The session is not remembered: it stays
+        live, so the socket's reconnect is never refused, as a revocation's would be. Each close
+        is bounded, and a failed one is counted and logged as `revoke`'s are. The closes run
+        inline, not in the hub's shielded task: the caller (`ViewAsService`) bounds the whole
+        and never raises on a failed close. The
+        registration stays until the socket's own teardown ends it: the session is live, so a
+        close that fails leaves the socket where a later `revoke` (a sign-out) still reaches it."""
+        closers = [
+            closer
+            for closer in self._sockets.get(session_id, [])
+            if self._contexts.get((session_id, closer)) == context_id
+        ]
+        if closers:
+            await self._close_each(session_id, reason, closers)
+        return len(closers)
 
     def close_for(self, reason: str) -> tuple[dict[str, Any], int]:
         """The `bye` and close code for `reason`. §9.5: a disabled user gets its own `bye`
-        and 4403 (do not reconnect); every other session revocation closes 4401."""
+        and 4403 (do not reconnect); a view-as close its §9.6 `bye` and code; every other
+        session revocation closes 4401."""
         if reason == "user_disabled":
             return user_disabled_bye(self._wall_ms()), CLOSE_USER_DISABLED
+        if reason in VIEW_AS_CLOSES:
+            frame = lifecycle_bye(reason, now_ms=self._wall_ms())
+            return frame, int(frame["p"]["code"])
         return bye_frame(reason), CLOSE_TOKEN_EXPIRED
 
     async def revoke(self, session_id: str, reason: str = "session_revoked") -> int:
@@ -332,6 +381,7 @@ class RevocationHub:
                     _log().error(
                         "ws revocation close failed; revoked socket may remain open",
                         session_id=session_id,
+                        reason=reason,  # a revocation's, or a view-as end's
                         exc_info=True,
                     )
 

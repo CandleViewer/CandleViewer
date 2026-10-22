@@ -6,10 +6,11 @@ claim-to-insert gap (`SessionService.refresh`)."""
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -21,11 +22,15 @@ from candleviewer.auth.service import AuthService
 from candleviewer.settings import Settings
 from candleviewer.view_as_wiring import (
     HOOK_TIMEOUT_S,
+    HubSocketCloser,
     IdentityEligibility,
     IdentityLabels,
     RoleChangeNotifier,
+    SessionViewAs,
     build_view_as,
 )
+from candleviewer.ws import gateway
+from candleviewer.ws.revocation import RevocationHub
 from tests.unit.admin.test_view_as_service import _TARGET, _VIEWER, _Ports, _Runner
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.auth.test_step_up import _Clock, _session
@@ -112,7 +117,8 @@ async def test_labels_read_each_username_and_leave_a_gone_user_out() -> None:
 
 
 def test_the_service_and_its_sweeper_are_built_on_the_real_backend_only() -> None:
-    ports: dict[str, Any] = {"audit": object(), "runner": _Runner(), "clock": _Clock()}
+    hub = RevocationHub()
+    ports: dict[str, Any] = {"audit": object(), "runner": _Runner(), "clock": _Clock(), "hub": hub}
     real = AuthService(session_repository=FakeSessionRepository())
     identity = _Identity(None, [])
     assert build_view_as(Settings(), auth=AuthService(), identity=identity, **ports) is None
@@ -122,6 +128,10 @@ def test_the_service_and_its_sweeper_are_built_on_the_real_backend_only() -> Non
     service, sweeper = built
     assert sweeper._service is service and sweeper._store is real.view_as_store
     assert (sweeper._interval_s, sweeper._grace) == (5.0, timedelta(seconds=600))  # the defaults
+    # S5-SEC-03: an end closes the sockets bound to its context through the app's hub
+    closer = service._sockets
+    assert type(closer) is HubSocketCloser
+    assert (closer._hub, closer._store) == (hub, real.view_as_store)
 
 
 @pytest.mark.parametrize(
@@ -176,3 +186,130 @@ def test_create_app_puts_the_service_and_its_sweeper_on_app_state() -> None:
     assert isinstance(state.view_as, ViewAsService)
     assert isinstance(state.view_as_sweeper, ViewAsSweeper)
     assert state.view_as_sweeper._service is state.view_as
+
+
+def _spy_on_the_ws_router(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Record the keyword arguments `create_app` gives `make_ws_router`, then build it."""
+    import candleviewer.app as appmod
+
+    seen: list[dict[str, Any]] = []
+    real = gateway.make_ws_router
+
+    def spy(**kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(appmod, "make_ws_router", spy)
+    return seen
+
+
+def test_create_app_gives_the_socket_the_services_read_of_the_sessions_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§9.6: on the real backend an `auth` reads its session's binding through the app's one
+    service, over the auth module's session store. Without it no socket would be refused, bound
+    or closed at its context's expiry."""
+    seen = _spy_on_the_ws_router(monkeypatch)
+    app = create_app(_real())
+    (kwargs,) = seen
+    read = kwargs["view_as"]
+    assert isinstance(read, SessionViewAs)
+    assert read._store is app.state.app_context.auth.view_as_store
+    assert read._views() is app.state.view_as
+
+
+def test_create_app_gives_the_socket_no_view_as_read_on_the_fake_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fake backend stores no context, so its sockets bind none."""
+    seen = _spy_on_the_ws_router(monkeypatch)
+    create_app(Settings())
+    (kwargs,) = seen
+    assert kwargs["view_as"] is None
+
+
+def test_the_sockets_read_fails_when_the_app_has_no_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read as S7's guard reads it: a missing service fails the `auth`, never binds nothing."""
+    seen = _spy_on_the_ws_router(monkeypatch)
+    app = create_app(_real())
+    (kwargs,) = seen
+    del app.state.view_as
+    with pytest.raises(AttributeError):
+        kwargs["view_as"]._views()
+
+
+class _Family:
+    """A session store's two reads `HubSocketCloser` and `SessionViewAs` make."""
+
+    def __init__(self, family: tuple[str, ...], rows: dict[str, Any] | None = None) -> None:
+        self.family, self.rows = family, rows or {}
+
+    async def walk_rotation_family(self, session_id: str) -> tuple[str, ...]:
+        return self.family
+
+    async def find_by_id(self, session_id: str) -> Any:
+        return self.rows.get(session_id)
+
+
+class _Closes:
+    def __init__(self) -> None:
+        self.reasons: list[str] = []
+
+    async def __call__(self, frame: dict[str, Any], code: int) -> None:
+        self.reasons.append(frame["p"]["reason"])
+
+
+async def test_the_closer_closes_the_ended_contexts_sockets_across_the_family_only() -> None:
+    """A socket stays under its predecessor's id until it re-auths; a successor already on a
+    newer context keeps its sockets (an orphaned rotated row's end, later-slices)."""
+    hub, ended, newer = RevocationHub(), uuid4(), uuid4()
+    old, successor_old, successor_new = _Closes(), _Closes(), _Closes()
+    for session_id, socket, context in [
+        ("pred", old, ended),
+        ("succ", successor_old, ended),
+        ("succ", successor_new, newer),
+    ]:
+        hub.register(session_id, socket)
+        hub.bind(session_id, socket, str(context))
+    closer = HubSocketCloser(hub, cast(Any, _Family(("pred", "succ"))))
+    await closer.close_family("pred", context_id=ended, reason="view_as_expired")
+    assert old.reasons == successor_old.reasons == ["view_as_expired"]
+    assert successor_new.reasons == []
+
+
+class _Unwalkable(_Family):
+    async def walk_rotation_family(self, session_id: str) -> tuple[str, ...]:
+        raise ConnectionError("the session store is down")
+
+
+async def test_the_closer_closes_the_sessions_own_sockets_before_walking_its_family() -> None:
+    """They need no read, so a walk that fails still closes them; its error reaches the
+    service, which logs it."""
+    hub, ended, own = RevocationHub(), uuid4(), _Closes()
+    hub.register("s1", own)
+    hub.bind("s1", own, str(ended))
+    closer = HubSocketCloser(hub, cast(Any, _Unwalkable(())))
+    with pytest.raises(ConnectionError):
+        await closer.close_family("s1", context_id=ended, reason="view_as_expired")
+    assert own.reasons == ["view_as_expired"]
+
+
+class _Evaluates:
+    def __init__(self) -> None:
+        self.asked: list[tuple[Any, datetime]] = []
+
+    async def evaluate(self, record: Any, *, now: datetime) -> str:
+        self.asked.append((record, now))
+        return "binding"
+
+
+async def test_the_socket_read_is_the_services_evaluation_of_the_sessions_row() -> None:
+    clock = _Clock()
+    service, row = _Evaluates(), object()
+    store = cast(Any, _Family((), {"s1": row}))
+    read = SessionViewAs(lambda: cast(Any, service), store, clock=clock)
+    assert await read("s1") == "binding" and service.asked == [(row, clock())]
+    assert await read("gone") is None  # no row: no context
+    assert await SessionViewAs(lambda: None, store, clock=clock)("s1") is None  # fake backend

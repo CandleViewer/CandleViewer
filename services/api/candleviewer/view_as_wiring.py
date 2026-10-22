@@ -4,9 +4,9 @@ role-change notifier, and `build_view_as`, which composes the service and its sw
 The eligibility port reads what the request resolvers read (`SessionSnapshotResolver`): the
 viewer's permissions (none unless active), the target's status and roles. What it cannot place,
 a role outside the system set or a status other than active or locked (a locked target may still
-be viewed), ends the context: it fails closed. The socket closer closes nothing until #3085's
-WebSocket side wires `RevocationHub.close_session`; no context can start before #3085's start
-route lands, so no socket is bound to one meanwhile.
+be viewed), ends the context: it fails closed. The socket closer (`HubSocketCloser`) closes the
+sockets bound to the ended context across the session's rotation family, and `SessionViewAs`
+is the binding a WebSocket `auth` reads (23-ws-protocol.md section 9.6).
 """
 
 from __future__ import annotations
@@ -31,11 +31,12 @@ from candleviewer.api.users import PermissionChangeNotifier
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.scopes import PrincipalSnapshot
-from candleviewer.auth.view_as import ViewAsEndReason
+from candleviewer.auth.view_as import ViewAsBinding, ViewAsEndReason
 from candleviewer.settings import Settings
+from candleviewer.ws.revocation import RevocationHub
 
 if TYPE_CHECKING:
-    from candleviewer.auth.service import AuthService
+    from candleviewer.auth.service import AuthService, AuthSessionStore
 
 _VIEWABLE: Final = frozenset({UserStatus.ACTIVE.value, UserStatus.LOCKED.value})
 HOOK_TIMEOUT_S: Final = 5.0  # bounds the role-change hook, so it never holds the registry
@@ -84,9 +85,45 @@ class IdentityLabels:
         return names
 
 
-class UnwiredSockets:
-    async def close_family(self, session_id: str, *, reason: CloseReason) -> None:
-        return None
+class HubSocketCloser:
+    """`ViewAsService`'s socket closer: across `session_id`'s rotation family, the sockets bound
+    to the ended context, and only those (`RevocationHub.close_context`). A socket stays
+    registered under its predecessor's id until it re-`auth`s, so the whole family is walked;
+    a successor already on a newer context keeps its sockets (S5-SEC-03's go-live condition).
+    The session's own sockets close first: that needs no read, so a walk that fails (its error
+    reaches the service, which logs it) still closes them."""
+
+    def __init__(self, hub: RevocationHub, store: AuthSessionStore) -> None:
+        self._hub, self._store = hub, store
+
+    async def close_family(self, session_id: str, *, context_id: UUID, reason: CloseReason) -> None:
+        await self._hub.close_context(session_id, str(context_id), reason)
+        for member in await self._store.walk_rotation_family(session_id):
+            if member != session_id:  # the walk includes the session itself
+                await self._hub.close_context(member, str(context_id), reason)
+
+
+class SessionViewAs:
+    """The WebSocket's view-as read (`ws.gateway.ViewAsRead`): `session_id`'s binding as a
+    request's would be (`ViewAsService.evaluate`), `None` for a session that holds no context or
+    is gone. `views` is read per call, since the router is built before the service; `None`
+    there (the fake backend) binds nothing."""
+
+    def __init__(
+        self,
+        views: Callable[[], ViewAsService | None],
+        store: AuthSessionStore,
+        *,
+        clock: Callable[[], datetime],
+    ) -> None:
+        self._views, self._store, self._clock = views, store, clock
+
+    async def __call__(self, session_id: str) -> ViewAsBinding | None:
+        service = self._views()
+        if service is None:
+            return None
+        record = await self._store.find_by_id(session_id)
+        return None if record is None else await service.evaluate(record, now=self._clock())
 
 
 def _log() -> Any:
@@ -134,6 +171,7 @@ def build_view_as(
     identity: Identity | None,
     audit: ViewAsAudit,
     runner: EndRecordRunner,
+    hub: RevocationHub,
     clock: Callable[[], datetime] | None,  # `create_app`'s auth clock: `None` is real UTC
 ) -> tuple[ViewAsService, ViewAsSweeper] | None:
     """The service and its sweeper over the auth module's session store; `None` on the fake
@@ -147,7 +185,7 @@ def build_view_as(
         audit,
         runner=runner,
         eligibility=IdentityEligibility(identity),
-        sockets=UnwiredSockets(),
+        sockets=HubSocketCloser(hub, store),
         labels=IdentityLabels(identity),
         clock=clock,
     )
