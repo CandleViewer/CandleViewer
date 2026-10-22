@@ -12,8 +12,8 @@ ticket (``#123`` or ``E12-S03``) and must be removed once served (the stale chec
 until they are). The total cap was 123 = 116 frozen + 7 contract-first, each with its own ticket
 in the allowlist (#2266 D2, #966 BK-10, #966 BK-11 and #2300 served theirs; #966 BK-9 a frozen one,
 E13-T02 the frozen `GET /indicators`, E42-T09 two of each, and E13-T03 the four frozen
-`/indicator-presets*` operations); E28-T02's P-1a (#906) raised it to 125, the overflow of
-E28-T05's five unmounted `/trade-group-definitions*` operations on that day's ``main``.
+`/indicator-presets*` operations); E28-T02's P-1a (#906) raised it by its overflow of 2, to
+125: E28-T05's five unmounted `/trade-group-definitions*` operations on that day's ``main``.
 Keep both caps tight: a contract PR that adds an operation raises ``PENDING_BASELINE`` by
 exactly its overflow, measured against current ``main`` with CI re-run there (two
 parallel raises merge cleanly yet both under-count); a PR that serves a frozen

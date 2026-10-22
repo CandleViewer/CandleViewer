@@ -86,6 +86,8 @@ def test_only_the_owner_writes_a_definition_after_a_risk_caps_step_up(route: str
     assert _MATRIX["operations"][route]["outcomes"] == {**outcomes, "unauthenticated": "401"}
     text = _words(op["description"])
     assert all(word in text for word in ("Owner-only", "step-up", "`risk_caps`", "D8"))
+    if route.startswith("POST "):  # a grace class (auth/step_up.py), so an elevation, not a code
+        assert "a live step-up elevation of class `risk_caps`" in text
     assert _ref("parameters", "CsrfToken") in op["parameters"]
     roles = _SPEC["x-permissions"]
     assert "accounts:write" not in roles["manager"] + roles["viewer"]
@@ -120,6 +122,10 @@ def test_a_definition_is_replaced_only_over_the_version_its_writer_read() -> Non
     assert "a stale session cannot put back a member the Owner removed" in _words(
         update["description"]
     )
+    # A member-only PUT must change the ETag: 21's touch trigger fires on the definition's own
+    # row only, so an `updated_at`-derived tag would miss it (E28-T05 derives it accordingly).
+    get_text = _words(_OPS["getTradeGroupDefinition"]["description"])
+    assert "`ETag` versions the definition, members included" in get_text
     for op, status in (("getTradeGroupDefinition", "200"), ("updateTradeGroupDefinition", "200")):
         assert _OPS[op]["responses"][status]["headers"]["ETag"] == _ref("headers", "ETag")
     created = _OPS["createTradeGroupDefinition"]["responses"]["201"]

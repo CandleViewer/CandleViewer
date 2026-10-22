@@ -4990,7 +4990,7 @@ export interface paths {
     get: operations["getTradeGroupDefinition"];
     /**
      * Replace a trade-group definition's name and members (Owner, step-up)
-     * @description Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8), audited. `environment` is write-once (`trg_tgd_write_once`): another value is `400 validation_failed` with `rule: write_once`. The body replaces the whole member set, so a client sends the `ETag` of its read as `If-Match`: a definition changed since is `412`, and a stale session cannot put back a member the Owner removed.
+     * @description Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8), audited. `environment` is write-once (`trg_tgd_write_once`): another value is `400 validation_failed` with `rule: write_once`. The body replaces the whole member set, so a client sends the `ETag` of its read as `If-Match`: a definition changed since is `412 version_conflict`, and a stale session cannot put back a member the Owner removed (absent `If-Match`, the last write wins).
      */
     put: operations["updateTradeGroupDefinition"];
     post?: never;
