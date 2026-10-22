@@ -8,6 +8,7 @@ import pytest
 
 from candleviewer.accounts.errors import AccountVersionConflictError
 from candleviewer.api._generated import openapi_models as api
+from candleviewer.audit.actions import PROFILE_SAVE_REFUSED_REASONS
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from tests.contract._admin_support import ROOT, SPEC, validate_example
 from tests.contract._admin_support import text as _text  # not `text`: Semgrep's raw-SQL rule
@@ -152,13 +153,15 @@ def test_profile_refusals_name_the_member_the_symbol_and_the_limit() -> None:
 
 
 @pytest.mark.parametrize(
-    "response", ["ProfileRejected", "ProfileSaveUnavailable", "PreconditionRequired"]
+    ("response", "status"),
+    [("ProfileRejected", 422), ("ProfileSaveUnavailable", 503), ("PreconditionRequired", 428)],
 )
-def test_every_profile_problem_example_is_a_valid_problem(response: str) -> None:
+def test_every_profile_problem_example_is_a_valid_problem(response: str, status: int) -> None:
     content = _COMPONENTS["responses"][response]["content"]
     for name, example in content["application/problem+json"]["examples"].items():
         problem = example["value"]
         validate_example("/components/schemas/Problem", problem)
+        assert problem["status"] == status, name  # R1C-06: the status the operations declare
         assert problem["title"] == _CODES[problem["code"]]["title"], name
         assert problem["type"] == f"https://candleviewer.local/errors/{problem['code']}", name
 
@@ -166,7 +169,7 @@ def test_every_profile_problem_example_is_a_valid_problem(response: str) -> None
 def test_the_refusal_rules_are_one_list_in_two_passes() -> None:
     _, first, second, *_ = [_text(part) for part in _REJECTED["description"].split("\n\n")]
     one = "native_stop_mandatory stop_defines_r required not_allowed range precision ladder_sum"
-    one += " above_leverage_cap cap_unbounded default_moves_alone"
+    one += " above_leverage_cap cap_unbounded default_has_own_operation"
     two = "max_leverage min_order_qty qty_step min_notional symbol_not_listed"
     assert [rule for rule in one.split() if f"`{rule}`" not in first] == []
     assert [rule for rule in two.split() if f"`{rule}`" not in second or f"`{rule}`" in first] == []
@@ -178,7 +181,7 @@ def test_the_refusal_rules_are_one_list_in_two_passes() -> None:
     for name in ("ProfileRiskCaps", "AccountProfileInput"):
         assert "`cap_unbounded`" in _text(_COMPONENTS["schemas"][name]["description"])
     # It covers every bound `ap_trading_caps` requires, not the loss caps alone (R4-02, #4087).
-    assert "`cap_unbounded` and `default_moves_alone`." in first  # listed with the first pass
+    assert "`cap_unbounded` and `default_has_own_operation`." in first  # listed in the first pass
     unbounded = "a trading-enabled profile with a loss-bounding cap left unbounded"
     assert f"{unbounded} (`ap_trading_caps`, decision D11)" in first
     caps = _text(_COMPONENTS["schemas"]["ProfileRiskCaps"]["description"])
@@ -186,6 +189,13 @@ def test_the_refusal_rules_are_one_list_in_two_passes() -> None:
     assert [bound for bound in [*bounds, "position size", "daily loss"] if bound not in caps] == []
     audited = "`native_stop_mandatory`, `above_leverage_cap`, `cap_unbounded` and every refusal"
     assert second.endswith(f"{audited} of the second pass are audited as `profile.save_refused`.")
+    # R2S-03: these are Slice A's `PROFILE_SAVE_REFUSED_REASONS` (#4087), no more and no fewer.
+    assert set(re.findall(r"`(\w+)`", audited)) | set(two.split()) == PROFILE_SAVE_REFUSED_REASONS
+    r4_03 = (  # the 08:08Z ruling: a refusal of shape alone is a 422 and no audit row
+        "A body refused only by rules of shape, including semantic shape such as `stop_defines_r`,"
+        " is not audited, nor is one refused only by `default_has_own_operation`."
+    )
+    assert r4_03 in _text(_REJECTED["description"])
 
 
 def test_a_put_replaces_the_whole_profile_and_says_what_omitting_risk_caps_does() -> None:
@@ -227,9 +237,53 @@ def test_a_replace_or_delete_of_risk_caps_needs_the_current_etag() -> None:
     said = _text(needed["description"])
     assert "needs the current `ETag`: last-write-wins is refused by contract" in said
     assert "`428 precondition_required`" in said
+    # R2S-01: no form of the header matches every version, as RFC 9110 lets `*` do
+    forms = "`*`, a list of tags, an unparseable value or another profile's tag"
+    assert f"one `ETag` of this resource: {forms} is `412 version_conflict`, never a match" in said
     put = _text(_OPS["updateAccountProfile"]["description"])
     delete = _text(_OPS["deleteAccountProfile"]["description"])
     assert "a replace needs the current `ETag`" in put
     assert "a delete needs the current `ETag`" in delete
     assert all("`428 precondition_required`" in words for words in (put, delete))
     assert "last write wins" not in f"{put} {delete}"  # "Without `If-Match` the last write wins"
+
+
+def test_the_texts_say_who_may_write_and_hide_out_of_grant_accounts() -> None:
+    post, listed, got = (
+        _text(_OPS[name]["description"])
+        for name in ("createAccountProfile", "listAccountProfiles", "getAccountProfile")
+    )
+    owner = "`accounts:write` is held by the Owner role alone, so no grant on an account gives a"
+    assert f"{owner} Manager this write" in post  # R1S-08 (#4083)
+    order = "so a Manager meets the step-up first and `403 forbidden` after one"
+    assert f"The write is path-gated, as the key routes are, {order}" in post  # 06:01Z, R1C-01
+    # R1S-05: out of the caller's grants answers as missing, so a 404 is no existence oracle
+    hidden = "outside the caller's grants"
+    assert f"An account {hidden} is `404`, as one that does not exist is" in listed
+    assert f"of an account {hidden} or missing is `404`, all alike" in got
+
+
+def test_a_profile_write_never_moves_the_default() -> None:
+    """The 09:38Z ruling: the default binding gets its own operation in slice 0d (finding F-31)."""
+    put, post = (_text(_OPS[f"{v}AccountProfile"]["description"]) for v in ("update", "create"))
+    schemas = _COMPONENTS["schemas"]
+    member = _text(schemas["AccountProfileInput"]["properties"]["is_default"]["description"])
+    own = "the default binding moves only through its own operation (#906 slice 0d)"
+    assert [words for words in (put, post, member) if own not in words] == []
+    assert "`422 validation_failed` / `default_has_own_operation`; one that repeats it" in put
+    assert "so `is_default: true` is refused (`default_has_own_operation`)" in post
+    assert "is refused (`default_has_own_operation`)" in member
+    assert 'is "The default binding has its own operation."' in _text(_REJECTED["description"])
+    said = " ".join(op["description"] for op in _OPS.values())
+    assert not re.search(r"profile\.(un)?bound", said)  # the records of slice 0d's operation
+    note = (
+        "Not honoured: an account's default profile moves only through the default binding's own"
+        " operation (#906 slice 0d); this member is dropped at E27's next contract touch (#895)."
+    )
+    account = schemas["UpdateExchangeAccountRequest"]["properties"]["active_profile_id"]
+    assert _text(account["description"]) == note
+    model = ROOT / "docs/security/threat-models/E28-profiles-trade-groups.md"
+    rows = [r for r in model.read_text(encoding="utf-8").splitlines() if r.startswith("| F-")]
+    owed = [row for row in rows if "#906 0d" in row.split("|")[-2]]  # in its Tracked cell
+    owes = "own operation, with its `ETag`, `IfMatchRequired` and the `relaxing` label plus Owner"
+    assert len(owed) == 1 and f"the default binding's {owes} notice (SR-E28-01)" in owed[0]
