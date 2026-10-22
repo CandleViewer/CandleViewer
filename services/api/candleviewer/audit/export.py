@@ -1,7 +1,8 @@
 """The audit export writer (#889 S8, ADR-0039): the file whose bytes `24-internal-schemas.md`
 §15.7 defines, for a planned chain span. Nothing routes to it yet: S10 plans, signs and wires it,
 and S9 serves the file by the name `export_name` gives it and deletes it once expired
-(`remove_exports`).
+(`remove_exports`), sweeps the directory (`export_files`) and probes it for hard links at boot
+(`links_work`).
 
 The header line, then one line per entry of the span in id order, read in keyset batches with the
 renderings verify hashes (`AuditExportReader`); gzipped as one deterministic stream when
@@ -53,10 +54,12 @@ _TMP_FLAGS: Final = (
     os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 )
 #: An export's file (`export_name`) or its temporary name (`.<file>.tmp`), group 2 the job id: the
-#: only names `remove_exports` removes.
+#: only names `export_files` lists and `remove_exports` removes.
 _EXPORT_FILE: Final = re.compile(
     r"(\.)?([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\.ndjson(?:\.gz)?(?(1)\.tmp|)"
 )
+#: The hard-link probe's file and its link, which no export name matches.
+_PROBES: Final = (".link.probe", ".link.probe.link")
 
 
 class ExportTooLarge(AuditError):
@@ -324,12 +327,44 @@ def export_name(job_id: uuid.UUID, compressed: bool) -> str:
     return f"{job_id}.ndjson.gz" if compressed else f"{job_id}.ndjson"
 
 
+def export_files(directory: Path) -> list[tuple[str, str]]:
+    """In a worker thread: `(name, job id)` of each export file or temporary name in `directory`,
+    listed through its descriptor (`O_NOFOLLOW`); none when it does not exist."""
+    try:
+        fd = os.open(directory, _DIR_FLAGS)
+    except FileNotFoundError:
+        return []
+    try:
+        names = os.listdir(fd)
+    finally:
+        os.close(fd)
+    return [(name, found[2]) for name in names if (found := _EXPORT_FILE.fullmatch(name))]
+
+
 def remove_exports(directory: Path, names: Iterable[str]) -> None:
     """In a worker thread: unlink each export file or temporary name of `names` (the link itself,
     never what it points to) through the directory's descriptor; any other name is left alone."""
     fd = os.open(directory, _DIR_FLAGS)
     try:
         _unlink(fd, [name for name in names if _EXPORT_FILE.fullmatch(name)])
+    finally:
+        os.close(fd)
+
+
+def links_work(directory: Path) -> None:
+    """In a worker thread, at boot: `directory`, made `0700`, takes a hard link as `_Sink.finish`
+    publishes a file, or the `OSError` is raised, so a volume without them shows then and not at
+    the first export (the audit lane probes its own: `audit/lane.py` `links_work`)."""
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(directory, _DIR_FLAGS)
+    try:
+        os.fchmod(fd, 0o700)
+        _unlink(fd, _PROBES)  # a crash's leftovers
+        os.close(os.open(_PROBES[0], _TMP_FLAGS, 0o600, dir_fd=fd))
+        try:
+            os.link(*_PROBES, src_dir_fd=fd, dst_dir_fd=fd)
+        finally:
+            _unlink(fd, _PROBES)
     finally:
         os.close(fd)
 

@@ -247,7 +247,7 @@ path is S0 → S2 → S8 → S9 → S10; S3 starts at once, S5 merges after S0, 
 | S7 | The list and rotate routes: the list marks `verified` only from M2's check (decision 4); rotation is single-flight and rate-capped (decision 5) | S2, S6 |
 | S8 | The export writer: batches with verify's renderings, canonical lines, deterministic gzip, SHA-256, off-loop I/O, the file `0600` and opened `O_NOFOLLOW` (repo practice; S8b confirms both). Unit: the lines pinned byte for byte | S2 |
 | S9 | The download and the requester rule (`getJob` too), dark until S10. 2026-10-22: four PRs, S9-0 the requester rule and `getJob`, S9-1a the reader (the lookup, the expiry, the file's checks and its guarded stream, mounting nothing), S9-1b the route, S9-2 the boot sweep and the hard-link probe | S2, S8 |
-| S10 | The signed export replaces the 501, through the injected signer; an export that straddles a rotation fails the job; the SR-E42-08 mark; AC-ADM-20 and AC-ADM-21 | S6, S7, S9 |
+| S10 | The signed export replaces the 501, through the injected signer; an export that straddles a rotation fails the job, as does one while S9-2's boot probe found no hard links (`links_ok`); the SR-E42-08 mark; AC-ADM-20 and AC-ADM-21 | S6, S7, S9 |
 
 2026-10-22 (#889 S9-1b), the download's choices where 22 is silent: a file that cannot be served (missing, a link, not
 one regular file, or not its manifest's size) answers `503 store_unavailable`, with `Retry-After` only for the reader's
@@ -259,6 +259,10 @@ manifest-less job, like an unwired route, answers the `404` before the step-up; 
 `expires_at` and its job's end plus `audit_export_ttl_s`, so S10 derives `expires_at` from that TTL, from that instant
 on (22 says after it: the boundary fails closed), and the `410` deletes it; `Repr-Digest` is the manifest's signed
 digest, so the server checks only the size and the client the bytes.
+
+2026-10-22 (#889 S9-2): a sweep at boot and every 60 s deletes each export file and temporary name no live job needs, an
+expired one included, so a file outlives `expires_at` by a tick at most; a volume without hard links is found at boot
+and degrades export alone (`links_ok`), never the boot.
 
 ## Why not the alternatives
 

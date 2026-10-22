@@ -8,6 +8,12 @@ component at a time, a regular file with one link on the directory's device, and
 size its manifest (`AuditExportResult`) states. It expires at the manifest's `expires_at`, and never
 later than `audit_export_ttl_s` after its job finished; the download that finds it expired deletes
 it.
+
+The sweep (C-2.18: one supervised task) runs at boot, after the hard-link probe, then every
+`SWEEP_INTERVAL_S`, each run within `SWEEP_BUDGET_S`. It lists the directory, then deletes every
+export file and temporary name no job of the store needs: a queued or running export keeps both of
+its names, a succeeded one its file until it expires. Jobs live in memory (ADR-0004), so at boot it
+deletes them all.
 """
 
 from __future__ import annotations
@@ -16,11 +22,11 @@ import asyncio
 import base64
 import errno
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import structlog
 from fastapi.responses import StreamingResponse
@@ -31,14 +37,23 @@ from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.admin_backup_download import DownloadAborted
 from candleviewer.api.recorder_admin import AUDIT_EXPORT, AdminJobStore, Job
 from candleviewer.audit.access import AuditPrincipal
-from candleviewer.audit.export import EXPORT_DIR, export_name, remove_exports
-from candleviewer.observability.context import run_in_thread
+from candleviewer.audit.export import (
+    EXPORT_DIR,
+    export_files,
+    export_name,
+    links_work,
+    remove_exports,
+)
+from candleviewer.observability.context import run_in_thread, spawn
 from candleviewer.storage.backup_artefacts import (
     ArtefactError,
     ArtefactUnreadable,
     LocalArtefactStore,
     ResolvedArtefact,
 )
+
+SWEEP_INTERVAL_S: Final = 60.0
+SWEEP_BUDGET_S: Final = 30.0  #: a wedged volume holds neither the boot nor a tick past it
 
 
 def _log() -> Any:
@@ -66,10 +81,14 @@ class AuditExports:
         *,
         ttl_s: int,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._jobs, self._dir, self._ttl = jobs, data_dir / EXPORT_DIR, timedelta(seconds=ttl_s)
-        self._clock = clock
+        self._clock, self._sleep = clock, sleep
         self._files = LocalArtefactStore(str(self._dir))
+        self._task: asyncio.Task[None] | None = None
+        #: The boot probe's answer: false until it passed, and S10 fails an export while false.
+        self.links_ok = False
 
     def find(self, job_id: str, principal: AuditPrincipal) -> Export | None:
         """`principal`'s succeeded export `job_id`, else None: unknown or evicted, another user's
@@ -99,6 +118,56 @@ class AuditExports:
     async def remove(self, export: Export) -> None:
         """Delete an expired export's file."""
         await self._file_step(remove_exports, self._dir, [export.name])
+
+    async def sweep(self) -> None:
+        """Delete every export file and temporary name no job of the store needs."""
+        found = await self._file_step(export_files, self._dir)
+        stale = [name for name, job_id in found or () if not self._needs(name, job_id)]
+        if stale:
+            await self._file_step(remove_exports, self._dir, stale)
+
+    async def run_once(self) -> None:
+        """One sweep within `SWEEP_BUDGET_S`; any failure is logged, and the next tick runs."""
+        try:
+            async with asyncio.timeout(SWEEP_BUDGET_S):
+                await self.sweep()
+        except Exception as exc:
+            _log().warning("audit.export.sweep_failed", error=type(exc).__name__)
+
+    async def start(self) -> None:
+        """At boot, before serving: the hard-link probe within `SWEEP_BUDGET_S`, any failure logged
+        critical (export alone degrades, never the boot: ADR-0039 driver 4); a sweep; then a sweep
+        every `SWEEP_INTERVAL_S`. A second call starts no second task."""
+        try:
+            async with asyncio.timeout(SWEEP_BUDGET_S):
+                await run_in_thread(links_work, self._dir)
+            self.links_ok = True
+        except Exception as exc:
+            code = errno.errorcode.get(getattr(exc, "errno", None) or 0)
+            _log().critical("audit.export.link_probe_failed", error=type(exc).__name__, errno=code)
+        await self.run_once()
+        if self._task is None:
+            self._task = spawn(self._loop(), name="audit-export-sweep")
+
+    async def stop(self) -> None:
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.wait({task})
+
+    async def _loop(self) -> None:
+        while True:
+            await self._sleep(SWEEP_INTERVAL_S)
+            await self.run_once()
+
+    def _needs(self, name: str, job_id: str) -> bool:
+        job = self._jobs.get(job_id)
+        if job is None or job.kind != AUDIT_EXPORT:
+            return False
+        if job.status in ("queued", "running"):
+            return True  # its writer's temporary name and file
+        export = self._export(job)
+        return export is not None and export.name == name and not self.expired(export)
 
     def _export(self, job: Job) -> Export | None:
         if job.kind != AUDIT_EXPORT or job.status != "succeeded":

@@ -121,6 +121,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     feature_flags = scrub_task = audit_verify = disk_budget = rule_prune = funding_task = None
     bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
     account_health = ws_runtime = lost_jobs = view_as_flush = view_as_sweeper = None
+    audit_exports = None
     alert_tasks: list[Any] = []
     metrics_runtime: MetricsRuntime | None = None
     try:
@@ -210,6 +211,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         lost_jobs = getattr(app.state, "admin_jobs_lost", None)
         if lost_jobs is not None:  # E42-T05 (#966 Q10): the jobs the last clean stop left behind
             await lost_jobs.load()
+        audit_exports = getattr(app.state, "audit_exports", None)
+        if audit_exports is not None:  # #889 S9: the hard-link probe and the first sweep, awaited
+            await audit_exports.start()
         if ctx.settings.metrics_enabled:
             # E04-T06: create_app() owns the single facade (telemetry series hang
             # off it); fall back for apps built without one.
@@ -277,6 +281,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("scrub_task", scrub_task.stop)
             if audit_verify is not None:  # #2111: a run writes through the audit writer (stop_all)
                 await teardown.run("audit_verify_job", audit_verify.stop)
+            if audit_exports is not None:  # #889 S9: its sweep, before the job store it reads
+                await teardown.run("audit_exports", audit_exports.stop)
             admin_jobs = getattr(app.state, "admin_jobs", None)
             if admin_jobs is not None:  # E16-T05: tracked compaction tasks never outlive the app
                 await teardown.run("admin_jobs", admin_jobs.stop)

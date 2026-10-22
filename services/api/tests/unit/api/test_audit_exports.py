@@ -1,13 +1,16 @@
 """The export download's reader (#889 S9-1a), driven directly with no route: `find` (the requester
 rule and the job's state), the expiry and its TTL bound, `open` (a planted link, a resized file),
-`remove`, and the stream's guards and closure. A job store seeded with a succeeded `audit_export`
-job and a file that `write_export` wrote under `tmp_path`: no database, no network, no sleeps."""
+`remove`, and the stream's guards and closure; and (S9-2) the sweep, its loop and the boot probe. A
+job store seeded with a succeeded `audit_export` job and a file that `write_export` wrote under
+`tmp_path`: no database, no network, no sleeps."""
 
 from __future__ import annotations
 
 import asyncio
+import errno
+import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -67,9 +70,9 @@ async def seed(
 
 
 class _Reader:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, **sweep: Any) -> None:
         self.root, self.now, self.jobs = root, NOW, AdminJobStore()
-        self.exports = AuditExports(self.jobs, root, ttl_s=86_400, clock=lambda: self.now)
+        self.exports = AuditExports(self.jobs, root, ttl_s=86_400, clock=lambda: self.now, **sweep)
 
 
 @pytest.fixture
@@ -168,6 +171,28 @@ async def test_remove_deletes_an_exports_file(reader: _Reader) -> None:
     assert not file.exists()
 
 
+async def test_a_removal_that_fails_is_logged_and_never_raises(reader: _Reader) -> None:
+    file = await seed(reader.jobs, reader.root)
+    export = reader.exports.find(JOB, OWNER)
+    assert export is not None
+    file.unlink()
+    file.mkdir()  # unlink(2) refuses a directory
+    with capture_logs() as logs:
+        await reader.exports.remove(export)
+    failed = [e["errno"] for e in logs if e["event"] == "audit.export.file_step_failed"]
+    assert failed == ["EISDIR"] and file.is_dir()
+
+
+def test_remove_exports_tries_every_name_then_raises_the_first_failure(tmp_path: Path) -> None:
+    exports = tmp_path / EXPORT_DIR
+    (exports / f"{JOB}.ndjson").mkdir(parents=True)
+    stale = exports / f".{uuid.UUID(int=3)}.ndjson.tmp"
+    stale.write_bytes(b"x")
+    with pytest.raises(IsADirectoryError):
+        remove_exports(exports, [f"{JOB}.ndjson", stale.name])
+    assert not stale.exists()
+
+
 def test_a_removal_never_leaves_the_directory(tmp_path: Path) -> None:
     beside = tmp_path / f"{JOB}.ndjson"
     beside.write_bytes(b"not ours")
@@ -260,3 +285,175 @@ async def test_the_file_is_closed_when_the_client_goes(gone_at: str) -> None:
     with pytest.raises(ClientDisconnect):
         await _respond(file, send)
     assert file.closed == 1
+
+
+async def test_the_boot_sweep_removes_stale_temporaries_and_unreferenced_files(
+    reader: _Reader, tmp_path: Path
+) -> None:
+    exports, other = reader.root / EXPORT_DIR, tmp_path / "other"
+    exports.mkdir()
+    other.write_bytes(b"not ours")
+    for name in (f"{JOB}.ndjson.gz", f".{uuid.UUID(int=3)}.ndjson.tmp", "notes.txt"):
+        (exports / name).write_bytes(b"x")
+    (exports / f"{uuid.UUID(int=4)}.ndjson").symlink_to(other)
+    await reader.exports.start()
+    await reader.exports.stop()
+    assert reader.exports.links_ok and sorted(os.listdir(exports)) == ["notes.txt"]
+    assert other.read_bytes() == b"not ours"  # a link is removed, never what it points to
+
+
+async def test_a_sweep_before_any_export_finds_nothing_and_makes_nothing(reader: _Reader) -> None:
+    await reader.exports.sweep()
+    assert not (reader.root / EXPORT_DIR).exists()
+
+
+async def test_the_sweep_keeps_what_live_jobs_need(reader: _Reader) -> None:
+    file = await seed(reader.jobs, reader.root)
+    running = uuid.UUID(int=5)
+    reader.jobs._jobs[str(running)] = Job(str(running), "audit_export", "running")
+    temporary = file.with_name(f".{running}.ndjson.gz.tmp")
+    temporary.write_bytes(b"in progress")
+    await reader.exports.sweep()
+    assert file.exists() and temporary.exists()
+
+
+async def test_the_sweep_deletes_a_succeeded_exports_leftover_temporary_name(
+    reader: _Reader,
+) -> None:
+    file = await seed(reader.jobs, reader.root)
+    leftover = file.with_name(f".{file.name}.tmp")
+    leftover.write_bytes(b"x")
+    await reader.exports.sweep()
+    assert file.exists() and not leftover.exists()
+
+
+def _ticking(root: Path, park_at: int = 2) -> tuple[_Reader, list[float], asyncio.Event]:
+    """A reader whose sweep loop parks on its `park_at`th sleep and says so, a tick before."""
+    calls, parked = list[float](), asyncio.Event()
+
+    async def sleep(seconds: float) -> None:
+        calls.append(seconds)
+        if len(calls) == park_at:
+            parked.set()
+            await asyncio.Event().wait()
+
+    return _Reader(root, sleep=sleep), calls, parked
+
+
+async def _within[T](step: Awaitable[T]) -> T:
+    """A wait that fails the test, rather than hanging it, when what it waits for never comes."""
+    async with asyncio.timeout(5):
+        return await step
+
+
+async def test_each_tick_sweeps_and_deletes_a_file_once_it_expires(reader: _Reader) -> None:
+    ticking, calls, parked = _ticking(reader.root)
+    file = await seed(ticking.jobs, ticking.root)
+    await ticking.exports.start()
+    assert file.exists()  # the boot sweep keeps an export that has not expired
+    ticking.now += DAY  # it expires before the loop's first tick
+    await _within(parked.wait())
+    await ticking.exports.stop()
+    assert calls == [60.0, 60.0] and not file.exists()
+
+
+@pytest.mark.parametrize("failing", [{0}, {1}, {0, 1}], ids=["boot", "first_tick", "both"])
+async def test_a_sweep_that_fails_is_logged_and_the_next_one_runs(
+    reader: _Reader, monkeypatch: pytest.MonkeyPatch, failing: set[int]
+) -> None:
+    """The boot's sweep (0) and each tick's go through the guarded `run_once`: a failure is
+    logged, the boot goes on, and the next tick runs."""
+    ticking, calls, parked = _ticking(reader.root, park_at=3)
+    sweeps = list[int]()
+
+    async def flaky() -> None:
+        sweeps.append(len(sweeps))
+        if sweeps[-1] in failing:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(ticking.exports, "sweep", flaky)
+    with capture_logs() as logs:
+        await ticking.exports.start()  # never raises, even when the boot's sweep fails
+        await _within(parked.wait())
+    await ticking.exports.stop()
+    failed = [e["error"] for e in logs if e["event"] == "audit.export.sweep_failed"]
+    assert (sweeps, failed, calls) == ([0, 1, 2], ["RuntimeError"] * len(failing), [60.0] * 3)
+
+
+async def test_a_sweep_that_never_returns_is_cut_at_its_budget(
+    reader: _Reader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(audit_exports, "SWEEP_BUDGET_S", 0.01)
+
+    async def stuck() -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(reader.exports, "sweep", stuck)
+    with capture_logs() as logs:
+        await _within(reader.exports.run_once())
+    failed = [e["error"] for e in logs if e["event"] == "audit.export.sweep_failed"]
+    assert failed == ["TimeoutError"]
+
+
+async def test_a_boot_on_a_wedged_volume_is_cut_at_its_budgets(
+    reader: _Reader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe and the boot's sweep each stop at `SWEEP_BUDGET_S`: export alone degrades, and
+    the boot goes on (ADR-0039 driver 4)."""
+    monkeypatch.setattr(audit_exports, "SWEEP_BUDGET_S", 0.01)
+
+    async def never(*args: Any, **kwargs: Any) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(audit_exports, "run_in_thread", never)
+    with capture_logs() as logs:
+        await _within(reader.exports.start())
+    await reader.exports.stop()
+    probe = [
+        (e["log_level"], e["error"]) for e in logs if e["event"] == "audit.export.link_probe_failed"
+    ]
+    swept = [e["error"] for e in logs if e["event"] == "audit.export.sweep_failed"]
+    assert (probe, swept, reader.exports.links_ok) == (
+        [("critical", "TimeoutError")],
+        ["TimeoutError"],
+        False,
+    )
+
+
+async def test_a_second_start_keeps_one_task_and_stop_is_idempotent(reader: _Reader) -> None:
+    await reader.exports.start()
+    task = reader.exports._task
+    await reader.exports.start()
+    assert task is not None and reader.exports._task is task
+    await reader.exports.stop()
+    await reader.exports.stop()
+    assert task.done() and reader.exports._task is None
+
+
+@pytest.mark.parametrize(
+    ("error", "code"), [(OSError(errno.EPERM, "no hard links"), "EPERM"), (RuntimeError("x"), None)]
+)
+async def test_a_failing_probe_degrades_export_alone(
+    reader: _Reader, monkeypatch: pytest.MonkeyPatch, error: Exception, code: str | None
+) -> None:
+    def no_links(*args: Any, **kwargs: Any) -> None:
+        raise error
+
+    monkeypatch.setattr(os, "link", no_links)
+    with capture_logs() as logs:
+        await reader.exports.start()  # never raises: the boot goes on
+    await reader.exports.stop()
+    failed = [e for e in logs if e["event"] == "audit.export.link_probe_failed"]
+    assert [(e["log_level"], e["errno"]) for e in failed] == [("critical", code)]
+    assert not reader.exports.links_ok and os.listdir(reader.root / EXPORT_DIR) == []
+
+
+async def test_one_unlink_that_fails_leaves_the_rest_of_the_batch(reader: _Reader) -> None:
+    exports = reader.root / EXPORT_DIR
+    (exports / f"{JOB}.ndjson").mkdir(parents=True)  # unlink(2) refuses a directory
+    stale = exports / f".{uuid.UUID(int=3)}.ndjson.tmp"
+    stale.write_bytes(b"x")
+    with capture_logs() as logs:
+        await reader.exports.sweep()
+    failed = [e["errno"] for e in logs if e["event"] == "audit.export.file_step_failed"]
+    assert not stale.exists() and failed == ["EISDIR"]

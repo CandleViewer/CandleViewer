@@ -135,6 +135,13 @@ class _LostJobs:
         self.stops.order.append("admin_jobs_lost")
 
 
+class _Exports(_AsyncStart):
+    """#889 S9-2: the export files' probe and first sweep, awaited at boot."""
+
+    async def start(self) -> None:
+        self.stops.started.append(self.name)
+
+
 class _FailingStart(_AsyncStart):
     async def start(self) -> None:
         raise RuntimeError("a boot step failed")
@@ -278,3 +285,14 @@ async def test_a_boot_that_fails_before_the_count_is_loaded_never_saves_over_it(
         async with _lifespan(app):
             pass
     assert "admin_jobs" in stops.order and "admin_jobs_lost" not in stops.started + stops.order
+
+
+async def test_lifespan_sweeps_the_exports_once_before_serving_and_stops_before_the_store() -> None:
+    """#889 S9-2: the probe and the first sweep end before the first request; the sweep, which
+    reads the job store, ends before the store does."""
+    stops = _Stops()
+    app = _app(stops)
+    app.state.audit_exports = _Exports("audit_exports", stops)
+    async with _lifespan(app):
+        assert stops.started.count("audit_exports") == 1
+    assert stops.order.index("audit_exports") < stops.order.index("admin_jobs")
