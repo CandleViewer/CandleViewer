@@ -191,6 +191,30 @@ class AuditNotDurable(OmsError):
     and nothing was written (C-2.9). Never a `TimeoutError`: no outcome is in doubt."""
 
 
+class HandoverUnavailable(OmsError):
+    """An order a lookup found under the row's `order_link_id`, which is not the row's (SR-E29-03),
+    could not be handed to the next reconciliation pass (`oms_handovers`, 24 Sec.8.3 rule 3), which
+    E29-T06 lands. Nothing was bound: the command port answers `place` with an empty lookup, so the
+    order waits in `unknown` rather than `held` (S2-Q3), and `lookup` raises, as an empty answer
+    there would send the order."""
+
+
+class AckWithoutOrderId(OmsError):
+    """An accepted create whose answer names no exchange order id the OMS keeps (`commands`'s id
+    shape): an ambiguous outcome (ruling 3 on #3972, 24 Sec.8.3 rule 7), raised so B1 lands the
+    order in `unknown` (S1), never in `submitted` with nothing bound."""
+
+
+class ResendRefused(OmsError):
+    """A create resumed after a restart, refused by the synchronous switches just before its
+    re-send (C-2.21: the kill switch, live enablement, the order-entry gate): nothing was sent.
+    `refusal` is the switch's own answer."""
+
+    def __init__(self, refusal: OrderRefused) -> None:
+        super().__init__(f"the resumed create was not sent: {type(refusal).__name__}")
+        self.refusal = refusal
+
+
 # --- The order path's refusals and their answers (E29-T04, #913) --------------------------------
 
 #: The `errors[]` rules of `validation_failed` that 22-api-openapi.yaml `placeOrder` names.

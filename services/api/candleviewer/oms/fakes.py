@@ -75,11 +75,12 @@ from candleviewer.storage.repositories.trade_groups import (
 )
 
 from .errors import AccountScopeDenied
+from .ports import Finding
 
 __all__ = [
-    "FakeClockHealth", "InMemoryExecutionStore", "InMemoryIdempotencyAnchorStore",
-    "InMemoryOrderLinkLookup", "InMemoryOrderStore", "InMemoryRecordedStopStore",
-    "InMemorySubmissionStore", "InMemoryTradingAccounts",
+    "FakeClockHealth", "InMemoryExecutionStore", "InMemoryForeignOrderLockout",
+    "InMemoryIdempotencyAnchorStore", "InMemoryOrderLinkLookup", "InMemoryOrderStore",
+    "InMemoryRecordedStopStore", "InMemorySubmissionStore", "InMemoryTradingAccounts",
 ]  # fmt: skip
 
 #: Wide enough that a sum or difference of numeric(38,18) values is exact, as in Postgres.
@@ -995,3 +996,21 @@ class InMemoryTradingAccounts:
         if account is None:
             raise AccountScopeDenied
         return account
+
+
+class InMemoryForeignOrderLockout:
+    """A `ForeignOrderLockout` (`ports.py`, 24 Sec.8.10): `findings` holds each account's
+    findings, and an account is open while it holds any. An open that names a finding the account
+    holds changes nothing; `opens` counts every call, so a test sees the repeats."""
+
+    def __init__(self) -> None:
+        self.findings: dict[AccountId, set[tuple[Finding, str]]] = {}
+        self.opens = 0
+
+    def is_open(self, account_id: AccountId) -> bool:
+        return bool(self.findings.get(account_id))
+
+    async def open(self, account_id: AccountId, *, finding: Finding, key: str) -> None:
+        self.opens += 1
+        await asyncio.sleep(0)
+        self.findings.setdefault(account_id, set()).add((finding, key))

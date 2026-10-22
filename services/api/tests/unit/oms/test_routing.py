@@ -36,6 +36,7 @@ from candleviewer.oms.routing import (
     RoutedPort,
     RoutedPositions,
     TradingRouter,
+    retry_after,
 )
 
 DEMO_ACCOUNT = AccountId(UUID("5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d"))
@@ -425,3 +426,12 @@ async def test_a_failed_read_raises_so_the_order_fails_closed() -> None:
             positions=positions,
             timeout_s=1.0,
         )
+
+
+@pytest.mark.parametrize(
+    ("wait_s", "seconds"),
+    [(None, 1), (math.nan, 1), (0.0, 1), (0.01, 1), (1.0, 1), (1.5, 2), (59.9, 60), (math.inf, 60)],
+)
+def test_a_wait_reads_as_whole_seconds_of_retry(wait_s: float | None, seconds: int) -> None:
+    """A refused token whose wait is unknown retries after one second (24 Sec.8.7)."""
+    assert retry_after(wait_s) == seconds

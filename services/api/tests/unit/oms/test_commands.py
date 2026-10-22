@@ -1,0 +1,1347 @@
+"""The OMS's command port, B1's `CommandPort` (E29-T04 #913; 24-internal-schemas.md Sec.8.3,
+Sec.8.4, Sec.8.6, Sec.8.8).
+
+`place` builds the create from the stored order only and sends it through the account's own port
+(C-2.11, C-2.10), answering B1 what its guards read: an accepted create's id in the shape the OMS
+keeps (#4020 Lows 1-2), a refusal's codes and never the exchange's text (SR-E29-09), a duplicate
+with what the lookup found and no top-level id (#4020 Low 3), adopted only on the full match and
+audited ahead (C-2.9), another order under the id handed over first (S2-Q3), and a refused rate
+token as `RATE_BUDGET_EXCEEDED`. 24 Sec.8.6's branch runs before any answer. A resumed create is
+looked up first whatever the switches say, then asks them (C-2.21), and is re-sent only within the
+history window (rule 6) and, on live, `LIVE_RESEND_MAX_AGE_S`, past which it ends unsent, audited
+and alerted ([LANE-26]). `lookup` raises rather than answer empty after a failed hand-over.
+`attach_stop` skips a stop the position shows, audited (Q-E), and otherwise gates, records and
+audits the request ahead, sends both sides, settles and reads back; a Partial stop is refused (Q-F).
+No stop or take-profit that is no price above zero is sent (#2877 ruling 2); the venue's outage is
+raised, never a refusal, and never repeated (#2863); a registered order's records carry its
+request's correlation id ([AUDIT-REQUEST-ID]).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import inspect
+from collections.abc import Mapping
+from datetime import timedelta
+from decimal import Decimal
+from types import SimpleNamespace
+from typing import Any
+from uuid import NAMESPACE_URL, UUID, uuid5
+
+import pytest
+from structlog.testing import capture_logs
+
+from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.exchange.base.errors import (
+    AmbiguousResultError,
+    AuthError,
+    ClockDriftError,
+    DuplicateClientIdError,
+    OmsErrorCode,
+    RateBudgetExceededError,
+    ServiceUnavailableError,
+    TransportError,
+)
+from candleviewer.exchange.base.fakes import FakeReject, LandedThenAmbiguous
+from candleviewer.exchange.base.models import OrderAck, PlaceOrderRequest, TradingStopRequest
+from candleviewer.observability.context import bind_context
+from candleviewer.oms.classify import stop_errors
+from candleviewer.oms.commands import (
+    ALREADY_SET,
+    EXPIRED_UNSENT_REASON,
+    LIVE_RESEND_MAX_AGE_S,
+    NEVER_SENT_ALERT,
+    PARTIAL_STOP_UNSUPPORTED,
+    RESEND_REFUSED,
+    SUBMIT_TIMEOUT_S,
+    OmsCommandPort,
+    found_view,
+    order_id_kept,
+    place_request,
+)
+from candleviewer.oms.errors import (
+    RULE_NATIVE_STOP_REQUIRED,
+    AckWithoutOrderId,
+    ClockDriftBlocked,
+    HandoverUnavailable,
+    Problem,
+    ResendRefused,
+    StopRequestInFlight,
+    StopRequestPending,
+    TradingDisabled,
+    problem_for,
+)
+from candleviewer.oms.order_machine import OrderAuditRecord
+from candleviewer.oms.ports import (
+    STOP_REQUEST_BOUND_S,
+    KeyedRecord,
+    NoHandoverStore,
+    OrderEffect,
+    RefuseWhileWaiting,
+)
+from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
+from candleviewer.storage.repositories.orders import NewOrder
+from candleviewer.storage.repositories.recorded_stops import NewRecordedStop
+from tests.unit.oms.command_rig import (
+    ACCOUNT,
+    DAY_US,
+    EPOCH,
+    HOUR_US,
+    LIVE_ACCOUNT,
+    STOP,
+    SYMBOL,
+    T0_US,
+    UIDS,
+    Handovers,
+    Rig,
+    build_rig,
+    command,
+    exchange_order,
+    new_order,
+    outage,
+    position,
+    ref,
+)
+
+_DUP = OmsErrorCode.DUPLICATE_CLIENT_ID.value
+
+
+def _ack(exchange_order_id: object, *, ok: bool = True) -> OrderAck:
+    return OrderAck.model_construct(
+        ok=ok,
+        order_link_id=None,
+        exchange_order_id=exchange_order_id,
+        error_code=None,
+        exchange_ret_code=None,
+        exchange_ret_msg=None,
+        retryable=False,
+        latency_ms=0,
+        transport="rest",
+        record=None,
+    )
+
+
+# --- the request: built from the stored order only ---------------------------------------------
+
+
+def test_the_request_is_the_stored_order_in_the_ports_vocabulary() -> None:
+    """C-2.10, C-2.6: the same id, terms and native stop on every send; 21's column vocabulary
+    becomes 24 Sec.14.4's (`Buy` -> `buy`, `PostOnly` -> `post_only`, `MarkPrice` -> `mark`, `1` ->
+    `rise`, `Partial` -> `partial`)."""
+    order = new_order(
+        side="Sell",
+        order_type="Market",
+        price=None,
+        time_in_force="PostOnly",
+        trigger_price=Decimal("59000"),
+        trigger_by="MarkPrice",
+        trigger_direction=1,
+        stop_loss=Decimal("61000"),
+        take_profit=Decimal("55000"),
+        tpsl_mode="Partial",
+        position_idx=2,
+        close_on_trigger=True,
+    )
+    request = place_request(order, ref())
+    assert request == PlaceOrderRequest(
+        account=ref(),
+        symbol=SYMBOL,
+        side="sell",
+        order_type="market",
+        qty=Decimal("0.010"),
+        price=None,
+        time_in_force="post_only",
+        order_link_id=order.order_link_id,
+        reduce_only=False,
+        close_on_trigger=True,
+        position_idx=2,
+        trigger_price=Decimal("59000"),
+        trigger_by="mark",
+        trigger_direction="rise",
+        take_profit=Decimal("55000"),
+        stop_loss=Decimal("61000"),
+        tpsl_mode="partial",
+        lane="entry",
+    )
+
+
+@pytest.mark.parametrize(
+    ("reduce_only", "intent", "lane"),
+    [
+        (False, "entry", "entry"),
+        (False, "scale_in", "entry"),
+        (True, "entry", "entry"),  # a reduce-only order classified an entry (SR-E29-01)
+        (True, "stop_loss", "critical"),
+        (True, "take_profit", "critical"),
+        (True, "scale_out", "critical"),
+        (True, "flatten", "critical"),
+        (False, "flatten", "entry"),  # never the exits' reserve without reduce-only (C-12.7)
+    ],
+)
+def test_only_a_reduce_only_order_that_reduces_takes_the_critical_lane(
+    reduce_only: bool, intent: Any, lane: str
+) -> None:
+    order = new_order(reduce_only=reduce_only, intent=intent)
+    assert place_request(order, ref()).lane == lane
+
+
+async def test_a_registered_order_is_sent_once_with_its_id_stop_and_take_profit() -> None:
+    rig = build_rig()
+    order = new_order()
+    watch = rig.port.expect(order)
+    answer = await rig.port.place(command("place", order))
+    assert answer == {"ok": True, "exchange_order_id": "fake-000000000001"}
+    (call,) = rig.demo.calls
+    assert (call.method, call.account_id, call.lane) == ("place_order", ACCOUNT, "entry")
+    assert isinstance(call.request, PlaceOrderRequest)
+    sent = (call.request.order_link_id, call.request.stop_loss, call.request.take_profit)
+    assert sent == (order.order_link_id, STOP, Decimal("64000"))
+    assert call.request.account == ref()
+    assert await watch.answer() == answer
+    assert rig.live.calls == []
+
+
+async def test_c_2_11_a_live_accounts_create_goes_on_the_live_port_with_its_own_key() -> None:
+    rig = build_rig()
+    order = new_order(LIVE_ACCOUNT, "live")
+    rig.port.expect(order)
+    answer = await rig.port.place(command("place", order))
+    assert answer["ok"] is True
+    (call,) = rig.live.calls
+    assert isinstance(call.request, PlaceOrderRequest)
+    assert call.request.account == ref(LIVE_ACCOUNT, "live")
+    assert rig.demo.calls == []
+
+
+async def test_a_command_naming_another_order_than_the_registered_one_sends_nothing() -> None:
+    rig = build_rig()
+    order = new_order()
+    rig.port.expect(order)
+    with pytest.raises(ValueError, match="another order"):
+        await rig.port.place(command("place", order, order_link_id=new_order(seq=1).order_link_id))
+    assert rig.demo.calls == []
+
+
+# --- the answer of an accepted or refused create (#4020 Lows 1-3) -------------------------------
+
+
+@pytest.mark.parametrize(
+    "exchange_order_id",
+    ["x" * 64, "fake-000000000001", "b3c0e6e2-1d4f-4f53-9f7a-2a3c4d5e6f70"],
+    ids=["sixty_four", "fake", "uuid"],
+)
+async def test_an_accepted_create_answers_the_order_id_it_names(
+    exchange_order_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = build_rig()
+    order = new_order()
+
+    async def accepted(_request: PlaceOrderRequest) -> OrderAck:
+        return _ack(exchange_order_id)
+
+    monkeypatch.setattr(rig.demo, "place_order", accepted)
+    rig.port.expect(order)
+    answer = await rig.port.place(command("place", order))
+    assert answer == {"ok": True, "exchange_order_id": exchange_order_id}
+
+
+_UNKEPT = [None, "", 1, "x" * 65, "x1\n", "x\x00y", " ", "x 1", "x\u00a0y", "\u2028"]
+
+
+@pytest.mark.parametrize(
+    "exchange_order_id",
+    _UNKEPT,
+    ids=[
+        "none",
+        "empty",
+        "not_text",
+        "sixty_five",
+        "newline",
+        "nul",
+        "space",
+        "inner_space",
+        "nbsp",
+        "line_separator",
+    ],
+)
+async def test_an_accepted_create_naming_no_order_id_the_oms_keeps_is_ambiguous(
+    exchange_order_id: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling 3 on #3972 and #4020 Lows 1-2: B1 lands the order in `unknown` (S1)."""
+    rig = build_rig()
+    order = new_order()
+
+    async def accepted(_request: PlaceOrderRequest) -> OrderAck:
+        return _ack(exchange_order_id)
+
+    monkeypatch.setattr(rig.demo, "place_order", accepted)
+    watch = rig.port.expect(order)
+    with capture_logs() as logs, pytest.raises(AckWithoutOrderId):
+        await rig.port.place(command("place", order))
+    assert await watch.answer() is None
+    assert [log["event"] for log in logs] == ["oms_ack_without_order_id"]
+
+
+def test_the_id_the_oms_keeps_is_b1s_text_id_printable_and_without_whitespace() -> None:
+    assert order_id_kept("x" * 64) == "x" * 64
+    assert all(order_id_kept(raw) is None for raw in _UNKEPT)
+    assert all(b01.text_id(raw) is not None for raw in (" ", "x 1", "x\u00a0y", "\u2028"))
+
+
+async def test_a_refused_create_answers_its_codes_and_never_the_exchanges_text() -> None:
+    """SR-E29-09, 24 Sec.8.6 code-only rule: B1 records the code; the message never leaves."""
+    rig = build_rig()
+    order = new_order()
+    reject = FakeReject(OmsErrorCode.INSUFFICIENT_MARGIN, 110007, "do not show this text")
+    rig.demo.script("place_order", reject)
+    rig.port.expect(order)
+    answer = await rig.port.place(command("place", order))
+    assert answer == {"ok": False, "error_code": "INSUFFICIENT_MARGIN", "exchange_ret_code": 110007}
+    assert "do not show" not in repr(answer)
+
+
+# --- an order found under the id: adopted, handed over, or unresolved (SR-E29-03, S2-Q3) ----
+
+
+async def test_a_duplicate_whose_order_matches_is_answered_found_and_audited_ahead() -> None:
+    """24 Sec.8.3 rule 3: the lookup's order, no top-level id (#4020 Low 3), and the adoption's
+    record written before the answer (C-2.9)."""
+    handovers = Handovers()
+    rig = build_rig(handovers=handovers)
+    order = new_order()
+    rig.demo.seed_order(exchange_order(order), uid=UIDS["demo"])
+    rig.port.expect(order)
+    answer = await rig.port.place(command("place", order))
+    found = found_view(exchange_order(order))
+    assert answer == {"ok": False, "error_code": _DUP, "lookup": found}
+    assert "exchange_order_id" not in answer
+    assert rig.calls() == ["place_order", "open_orders"]
+    ((record, sent_before),) = rig.audits.written
+    assert isinstance(record, OrderAuditRecord)
+    assert (record.action, record.outcome, record.reason) == (
+        "orders.submit",
+        "success",
+        "adopted_after_lookup",
+    )
+    assert (record.order_id, record.account_id, sent_before) == (order.id, ACCOUNT, 2)
+    assert record.detail["exchange_order_id"] == found["exchange_order_id"]
+    assert record.detail["source"] == "realtime"
+    assert handovers.handed == []
+    assert b01.full_match(command("place", order).order, answer["lookup"])
+
+
+async def test_a_duplicate_whose_order_does_not_match_is_handed_over_before_the_answer() -> None:
+    handovers = Handovers()
+    rig = build_rig(handovers=handovers)
+    order = new_order()
+    squatter = exchange_order(order, qty=Decimal("0.020"))
+    rig.demo.seed_order(squatter, uid=UIDS["demo"])
+    rig.port.expect(order)
+    with capture_logs() as logs:
+        answer = await rig.port.place(command("place", order))
+    assert answer == {"ok": False, "error_code": _DUP, "lookup": found_view(squatter)}
+    assert handovers.handed == [(ACCOUNT, squatter.exchange_order_id)]
+    assert rig.audits.written == []  # nothing adopted
+    assert "oms_link_id_held_by_another_order" in [log["event"] for log in logs]
+    assert not b01.full_match(command("place", order).order, answer["lookup"])
+
+
+@pytest.mark.parametrize("handovers", [Handovers(refuse=True), NoHandoverStore()])
+async def test_a_hand_over_that_fails_answers_an_empty_lookup(handovers: Any) -> None:
+    """S2-Q3: nothing handed over, so nothing is held on it: B1's `unknown` arm."""
+    rig = build_rig(handovers=handovers)
+    order = new_order()
+    rig.demo.seed_order(exchange_order(order, price=Decimal("61000")), uid=UIDS["demo"])
+    rig.port.expect(order)
+    with capture_logs() as logs:
+        answer = await rig.port.place(command("place", order))
+    assert answer == {"ok": False, "error_code": _DUP, "lookup": {}}
+    assert "oms_handover_failed" in [log["event"] for log in logs]
+
+
+@pytest.mark.parametrize("lookup_fails", [False, True], ids=["not_found", "lookup_failed"])
+async def test_a_duplicate_no_lookup_settles_answers_an_empty_lookup(lookup_fails: bool) -> None:
+    rig = build_rig()
+    order = new_order()
+    rig.demo.script("place_order", DuplicateClientIdError("the id was already accepted"))
+    if lookup_fails:
+        rig.demo.script("open_orders", TransportError("the read failed"))
+    rig.port.expect(order)
+    answer = await rig.port.place(command("place", order))
+    assert answer == {"ok": False, "error_code": _DUP, "lookup": {}}
+    assert rig.audits.written == []
+
+
+async def test_an_ambiguous_create_is_raised_after_one_send() -> None:
+    """SR-E29-15: `unknown`, never a resend (S1)."""
+    rig = build_rig()
+    order = new_order()
+    rig.demo.script("place_order", LandedThenAmbiguous())
+    watch = rig.port.expect(order)
+    with pytest.raises(AmbiguousResultError):
+        await rig.port.place(command("place", order))
+    assert rig.calls() == ["place_order"]
+    assert await watch.answer() is None
+
+
+@pytest.mark.parametrize(("wait_s", "retry_after_s"), [(None, 1), (0.2, 1), (2.2, 3), (900.0, 60)])
+async def test_a_refused_rate_token_is_rate_budget_exceeded_with_its_retry(
+    wait_s: float | None, retry_after_s: int
+) -> None:
+    """24 Sec.8.7: nothing left, so B1's `rejected`, never `unknown`; the watch keeps the delay."""
+    rig = build_rig()
+    order = new_order()
+    rig.demo.script("place_order", RateBudgetExceededError("no token", retry_after_s=wait_s))
+    watch = rig.port.expect(order)
+    answer = await rig.port.place(command("place", order))
+    assert answer == {
+        "ok": False,
+        "error_code": "RATE_BUDGET_EXCEEDED",
+        "retry_after_s": retry_after_s,
+    }
+    assert await watch.answer() == answer
+
+
+async def test_a_create_that_does_not_answer_in_time_is_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rig = build_rig(submit_timeout_s=0.01)
+    order = new_order()
+
+    async def hangs(_request: PlaceOrderRequest) -> OrderAck:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(rig.demo, "place_order", hangs)
+    watch = rig.port.expect(order)
+    with pytest.raises(TimeoutError):
+        await rig.port.place(command("place", order))
+    assert await watch.answer() is None
+
+
+# --- 24 Sec.8.6, before any answer ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("ret_code", [10003, 10004, 10005, 10010, 33004])
+async def test_an_auth_refusal_passes_its_codes_on_before_the_answer(ret_code: int) -> None:
+    """The orchestrator's Q-I ruling: the code and the exchange's return code, as they came."""
+    rig = build_rig()
+    order = new_order()
+    rig.demo.script("place_order", FakeReject(OmsErrorCode.AUTH_ERROR, ret_code))
+    rig.port.expect(order)
+    answer = await rig.port.place(command("place", order))
+    assert rig.credentials.calls == [(ACCOUNT, "AUTH_ERROR", ret_code)]
+    assert answer == {"ok": False, "error_code": "AUTH_ERROR", "exchange_ret_code": ret_code}
+
+
+async def test_an_auth_error_with_no_return_code_is_not_passed_on() -> None:
+    """A local refusal (the key vault's, M2's): no exchange code, no verdict on the key."""
+    rig = build_rig()
+    order = new_order()
+    rig.demo.script("place_order", FakeReject(OmsErrorCode.AUTH_ERROR))
+    rig.port.expect(order)
+    await rig.port.place(command("place", order))
+    assert rig.credentials.calls == []
+
+
+async def test_a_raised_auth_error_with_its_code_is_passed_on_and_raised() -> None:
+    """A lookup's read raises on every failure (24 Sec.14.4): the branch runs all the same."""
+    rig = build_rig()
+    order = new_order()
+    rig.demo.script("place_order", DuplicateClientIdError("held"))
+    rig.demo.script("open_orders", AuthError("refused", exchange_ret_code=10003))
+    rig.port.expect(order)
+    with pytest.raises(AuthError):
+        await rig.port.place(command("place", order))
+    assert rig.credentials.calls == [(ACCOUNT, "AUTH_ERROR", 10003)]
+
+
+async def test_a_credential_report_that_fails_never_changes_the_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rig = build_rig()
+    order = new_order()
+
+    async def broken(*_args: object, **_kwargs: object) -> None:
+        raise OSError("the store is down")
+
+    monkeypatch.setattr(rig.credentials, "refused", broken)
+    rig.demo.script("place_order", FakeReject(OmsErrorCode.AUTH_ERROR, 10004))
+    rig.port.expect(order)
+    with capture_logs() as logs:
+        answer = await rig.port.place(command("place", order))
+    assert answer["error_code"] == "AUTH_ERROR"
+    assert ("oms_auth_rejection_lost", "critical") in [
+        (log["event"], log["log_level"]) for log in logs
+    ]
+
+
+async def test_clock_drift_trips_the_halt_and_runs_one_resync_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """24 Sec.8.6 `10002`: order entry halts until a measurement taken after the trip clears it,
+    and a second refusal while the resync runs starts no other."""
+    rig = build_rig()
+    measured, reasons = asyncio.Event(), []
+
+    async def resync(*, reason: str) -> int:
+        reasons.append(reason)
+        await measured.wait()
+        rig.health.measure()
+        return 0
+
+    monkeypatch.setattr(rig.health, "resync_after_signature_failure", resync)
+    rig.demo.script(
+        "place_order",
+        FakeReject(OmsErrorCode.CLOCK_DRIFT, 10002),
+        FakeReject(OmsErrorCode.CLOCK_DRIFT, 10002),
+    )
+    for order in (new_order(), new_order(seq=1)):
+        rig.port.expect(order)
+        answer = await rig.port.place(command("place", order))
+        assert answer == {"ok": False, "error_code": "CLOCK_DRIFT", "exchange_ret_code": 10002}
+    assert isinstance(rig.halt.refusal(), ClockDriftBlocked)
+    task = rig.port.resync_task
+    assert task is not None and reasons == ["order_10002"]
+    rig.monotonic.s += 1  # the resync measures after the trip
+    measured.set()
+    await task
+    assert reasons == ["order_10002"]
+    assert rig.halt.refusal() is None
+
+
+async def test_a_raised_clock_drift_trips_the_halt_too() -> None:
+    rig = build_rig()
+    order = new_order()
+    rig.demo.script("place_order", ClockDriftError("recv_window"))
+    rig.port.expect(order)
+    with pytest.raises(ClockDriftError):
+        await rig.port.place(command("place", order))
+    assert isinstance(rig.halt.refusal(), ClockDriftBlocked)
+    assert rig.port.resync_task is not None
+    await rig.port.resync_task
+
+
+# --- a create a restart resumes (SR-E29-15, C-2.21, 24 Sec.8.3 rule 6, [LANE-26]) ---------------
+
+_LOOKUP = ["open_orders", "order_history"]
+SECOND_US = 1_000_000
+
+
+async def _resumed(rig: Rig, order: NewOrder, *, age_us: int) -> Mapping[str, Any]:
+    """`order` stored as a restart finds it, `age_us` old when its `place` resumes."""
+    await rig.stored(order)
+    rig.now.us = T0_US + age_us
+    return await rig.port.place(command("place", order))
+
+
+def test_the_live_resend_bound_is_at_most_two_minutes_and_only_ever_tightened() -> None:
+    """[LANE-26]: 120 s, which a change may lower and never raise; the port refuses a larger
+    bound, and a bound that is no figure."""
+    assert 0 <= LIVE_RESEND_MAX_AGE_S <= 120
+    for bound in (120.000001, 3_600.0, float("inf"), float("nan"), -1.0):
+        with pytest.raises(ValueError, match="tightened"):
+            build_rig(live_resend_max_age_s=bound)
+    for tighter in (0.0, 60.0):
+        build_rig(live_resend_max_age_s=tighter)
+
+
+async def test_a_registered_create_is_not_asked_again() -> None:
+    """The pipeline asks the switches itself, at step 6, just before the persist."""
+    rig = build_rig()
+    order = new_order()
+    rig.switches.refusals[ACCOUNT] = TradingDisabled()
+    rig.port.expect(order)
+    assert (await rig.port.place(command("place", order)))["ok"] is True
+    assert rig.switches.asked == []
+
+
+@pytest.mark.parametrize("refused", [False, True], ids=["switches_on", "switches_refuse"])
+async def test_a_resumed_create_is_looked_up_first_and_one_found_is_adopted_unsent(
+    refused: bool,
+) -> None:
+    """[LANE-26] step 1 (C-2.10): reading is never an order, so the lookup runs whatever the
+    switches say, and an order the venue holds is adopted with nothing sent, past the bound too."""
+    rig = build_rig()
+    order = new_order(LIVE_ACCOUNT, "live")
+    if refused:
+        rig.switches.refusals[LIVE_ACCOUNT] = TradingDisabled()
+    held = exchange_order(order, state="filled")
+    rig.live.seed_order(held, uid=UIDS["live"])
+    answer = await _resumed(rig, order, age_us=2 * DAY_US)
+    assert answer == {"ok": False, "error_code": _DUP, "lookup": found_view(held)}
+    assert rig.calls(rig.live) == _LOOKUP and rig.switches.asked == []
+    assert rig.audits.actions() == [("orders.submit", "adopted_after_lookup")]
+    assert rig.notices.got == []
+
+
+@pytest.mark.parametrize("age_us", [SECOND_US, 2 * DAY_US], ids=["young", "past_the_bound"])
+async def test_the_switches_refuse_a_resumed_create_after_its_lookup_and_before_any_send(
+    age_us: int,
+) -> None:
+    """[LANE-26] step 2 (C-2.21): a refusal sends nothing (`ResendRefused`: B1 lands the order in
+    `unknown`), and comes before the bound is read, so nothing ends unsent while they refuse."""
+    rig = build_rig()
+    order = new_order(LIVE_ACCOUNT, "live")
+    rig.switches.refusals[LIVE_ACCOUNT] = TradingDisabled()
+    with pytest.raises(ResendRefused) as refused:
+        await _resumed(rig, order, age_us=age_us)
+    assert isinstance(refused.value.refusal, TradingDisabled)
+    assert rig.switches.asked == [(LIVE_ACCOUNT, "live")]
+    assert rig.calls(rig.live) == _LOOKUP
+    assert rig.audits.written == [] and rig.notices.got == []
+
+
+@pytest.mark.parametrize(
+    ("age_us", "resent"),
+    [
+        (119 * SECOND_US, True),
+        (120 * SECOND_US, True),
+        (120 * SECOND_US + 1, False),
+        (121 * SECOND_US, False),
+        (30 * DAY_US, False),
+    ],
+    ids=["119s", "exactly_120s", "120s_and_1us", "121s", "a_month"],
+)
+async def test_live_resends_up_to_the_bound_and_never_past_it(age_us: int, resent: bool) -> None:
+    """[LANE-26] steps 3 and 4: a live create no lookup found is re-sent while its age is at most
+    `LIVE_RESEND_MAX_AGE_S`, so at exactly 120 s it still is (the port reads `age > bound` as too
+    old), under the same id and stop, after `adopt_or_resend`'s own lookup; a microsecond past the
+    bound it never is, and ends unsent."""
+    rig = build_rig()
+    order = new_order(LIVE_ACCOUNT, "live")
+    answer = await _resumed(rig, order, age_us=age_us)
+    calls = rig.calls(rig.live)
+    if resent:
+        assert calls == [*_LOOKUP, *_LOOKUP, "place_order"]
+        request = rig.live.calls[-1].request
+        assert isinstance(request, PlaceOrderRequest)
+        assert (request.order_link_id, request.stop_loss) == (order.order_link_id, STOP)
+        assert answer["ok"] is True and rig.notices.got == []
+        return
+    assert calls == _LOOKUP
+    assert answer == {"ok": False, "error_code": b01.EXPIRED_UNSENT}
+    assert rig.audits.actions() == [(RESEND_REFUSED, EXPIRED_UNSENT_REASON)]
+    assert len(rig.notices.got) == 1
+
+
+async def test_a_live_create_past_the_bound_ends_unsent_with_its_record_and_alert() -> None:
+    """[LANE-26] step 4: the record (`oms.resend_refused`, its age and the bound) is written ahead,
+    then the user is alerted through the OMS's notice route; the answer takes `submitting`'s last
+    arm, `rejected` with `EXPIRED_UNSENT` (B1's contract test drives it)."""
+    rig = build_rig()
+    order = new_order(LIVE_ACCOUNT, "live")
+    answer = await _resumed(rig, order, age_us=121 * SECOND_US)
+    assert answer == {"ok": False, "error_code": "EXPIRED_UNSENT"}
+    ((record, sent_before),) = rig.audits.written
+    assert isinstance(record, OrderAuditRecord)
+    assert (record.action, record.outcome, record.severity, record.reason) == (
+        "oms.resend_refused",
+        "denied",
+        "warning",
+        "expired_unsent",
+    )
+    assert (record.order_id, record.account_id, record.request_id) == (order.id, LIVE_ACCOUNT, None)
+    detail = {"order_link_id": order.order_link_id, "age_s": "121", "bound_s": "120"}
+    assert record.detail == detail and sent_before == 2  # the lookup's two reads, no create
+    (notice,) = rig.notices.got
+    assert (notice.kind, notice.order_id, notice.account_id, notice.order_link_id) == (
+        "alert",
+        order.id,
+        LIVE_ACCOUNT,
+        order.order_link_id,
+    )
+    assert notice.detail == {
+        "alert": NEVER_SENT_ALERT,
+        "created_at": "2026-10-21T12:00:00+00:00",
+        "message": (
+            "an order from 2026-10-21 12:00:00 UTC was never sent; re-enter it if still wanted"
+        ),
+    }
+
+
+async def test_an_end_unsent_whose_record_does_not_land_raises_and_alerts_nothing() -> None:
+    """C-2.9: nothing is answered unrecorded, so B1 lands the order in `unknown` instead."""
+    rig = build_rig()
+    rig.audits.refuse = RuntimeError("the audit lane refused")
+    with pytest.raises(RuntimeError, match="audit lane"):
+        await _resumed(rig, new_order(LIVE_ACCOUNT, "live"), age_us=121 * SECOND_US)
+    assert rig.notices.got == [] and rig.calls(rig.live) == _LOOKUP
+
+
+async def test_a_never_sent_alert_that_does_not_land_is_logged_and_the_order_still_ends() -> None:
+    """Never dropped silently: the lost alert is logged CRITICAL, and the record stands."""
+    rig = build_rig()
+    rig.notices.refuse = True
+    with capture_logs() as logs:
+        answer = await _resumed(rig, new_order(LIVE_ACCOUNT, "live"), age_us=121 * SECOND_US)
+    assert answer == {"ok": False, "error_code": "EXPIRED_UNSENT"}
+    lost = [log["log_level"] for log in logs if log["event"] == "oms_never_sent_alert_lost"]
+    assert lost == ["critical"]
+    assert rig.audits.actions() == [(RESEND_REFUSED, EXPIRED_UNSENT_REASON)]
+
+
+@pytest.mark.parametrize(
+    "met",
+    [
+        DuplicateClientIdError("the order_link_id was already accepted"),
+        FakeReject(OmsErrorCode.DUPLICATE_CLIENT_ID, 110072),
+        LandedThenAmbiguous(),
+        RateBudgetExceededError("no token", retry_after_s=1.0),
+    ],
+    ids=["duplicate_raised", "duplicate_answered", "landed_then_ambiguous", "refused_token"],
+)
+async def test_a_resend_the_venue_may_hold_is_looked_up_by_b1_never_renamed(met: Any) -> None:
+    """[LANE-26] step 3, the race after a missed lookup: the venue took the earlier create once
+    the lookups had missed it, so the one re-send meets a duplicate, "already accepted" (or its
+    outcome stays open). One create, the same id and stop, and a duplicate answer with no lookup,
+    so B1 looks the id up at once (24 Sec.8.3 rule 3) and binds what it finds only on its full
+    match; nothing is ever sent under a new id."""
+    rig = build_rig()
+    order = new_order(LIVE_ACCOUNT, "live")
+    rig.live.script("place_order", met)
+    answer = await _resumed(rig, order, age_us=30 * SECOND_US)
+    assert answer == {"ok": False, "error_code": _DUP}
+    creates = [call.request for call in rig.live.calls if call.method == "place_order"]
+    assert len(creates) == 1 and isinstance(creates[0], PlaceOrderRequest)
+    assert (creates[0].order_link_id, creates[0].stop_loss) == (order.order_link_id, STOP)
+
+
+@pytest.mark.parametrize(
+    ("age_us", "resent"),
+    [(121 * SECOND_US, True), (HOUR_US, True), (6 * DAY_US, True), (6 * DAY_US + 1, False)],
+    ids=["121s", "an_hour", "six_days", "past"],
+)
+async def test_demo_keeps_its_six_day_bound(age_us: int, resent: bool) -> None:
+    """Rule 6, which [LANE-26] leaves alone: demo keeps 7 days of history, so it re-sends for 6
+    days, and an id older than that is unresolvable by history (`unknown`), never ended unsent."""
+    rig = build_rig()
+    answer = await _resumed(rig, new_order(), age_us=age_us)
+    assert ("place_order" in rig.calls()) is resent
+    assert answer["ok"] is resent
+    if not resent:
+        assert answer == {"ok": False, "error_code": _DUP, "lookup": {}}
+    assert rig.audits.written == [] and rig.notices.got == []
+
+
+@pytest.mark.parametrize("live", [False, True], ids=["demo_in_window", "live_past_the_bound"])
+async def test_a_resumed_lookup_that_fails_never_resends(live: bool) -> None:
+    rig = build_rig()
+    order = new_order(LIVE_ACCOUNT, "live") if live else new_order()
+    await rig.stored(order)
+    port = rig.live if live else rig.demo
+    port.script("order_history", TransportError("the read failed"))
+    rig.now.us = T0_US + (2 * DAY_US if live else 60 * SECOND_US)
+    answer = await rig.port.place(command("place", order))
+    assert answer == {"ok": False, "error_code": _DUP, "lookup": {}}
+    assert rig.calls(port) == _LOOKUP and rig.notices.got == []
+
+
+@pytest.mark.parametrize("gate", ["auth", "clock"])
+async def test_a_resumed_lookup_that_meets_a_trading_gate_is_raised_and_sends_nothing(
+    gate: str,
+) -> None:
+    """24 Sec.8.6 before any answer: an `AuthError` or a `ClockDriftError` from the first lookup
+    gates trading, so its branch runs and it is raised (B1: `unknown`), with nothing sent."""
+    rig = build_rig()
+    order = new_order(LIVE_ACCOUNT, "live")
+    raised = (
+        AuthError("the key expired", exchange_ret_code=33004)
+        if gate == "auth"
+        else ClockDriftError("recv_window", exchange_ret_code=10002)
+    )
+    rig.live.script("open_orders", raised)
+    with pytest.raises(type(raised)):
+        await _resumed(rig, order, age_us=SECOND_US)
+    assert rig.calls(rig.live) == ["open_orders"] and rig.switches.asked == []
+    if gate == "auth":
+        assert rig.credentials.calls == [(LIVE_ACCOUNT, "AUTH_ERROR", 33004)]
+        return
+    assert isinstance(rig.halt.refusal(), ClockDriftBlocked)
+    assert rig.port.resync_task is not None
+    await rig.port.resync_task
+
+
+async def test_a_resumed_create_with_no_stored_row_sends_nothing() -> None:
+    rig = build_rig()
+    with pytest.raises(ValueError, match="no stored order"):
+        await rig.port.place(command("place", new_order()))
+    assert rig.demo.calls == []
+
+
+# --- lookup: before a create this process did not begin (SR-E29-15) ------------------------------
+
+
+async def test_lookup_answers_nothing_when_no_order_holds_the_id() -> None:
+    rig = build_rig()
+    order = new_order()
+    await rig.stored(order)
+    assert await rig.port.lookup(command("lookup", order)) == {}
+    assert rig.calls() == ["open_orders", "order_history"]
+
+
+async def test_lookup_answers_the_matching_order_audited_ahead() -> None:
+    rig = build_rig()
+    order = new_order()
+    await rig.stored(order)
+    rig.demo.seed_order(exchange_order(order), uid=UIDS["demo"])
+    found = await rig.port.lookup(command("lookup", order))
+    assert found == found_view(exchange_order(order))
+    assert rig.audits.actions() == [("orders.submit", "adopted_after_lookup")]
+
+
+async def test_lookup_hands_another_order_over_before_answering_it() -> None:
+    handovers = Handovers()
+    rig = build_rig(handovers=handovers)
+    order = new_order()
+    await rig.stored(order)
+    squatter = exchange_order(order, side="sell")
+    rig.demo.seed_order(squatter, uid=UIDS["demo"])
+    assert await rig.port.lookup(command("lookup", order)) == found_view(squatter)
+    assert handovers.handed == [(ACCOUNT, squatter.exchange_order_id)]
+
+
+async def test_lookup_raises_when_the_hand_over_fails() -> None:
+    """S2-Q3 as corrected: an empty answer here would make B1 send the order."""
+    rig = build_rig(handovers=NoHandoverStore())
+    order = new_order()
+    await rig.stored(order)
+    rig.demo.seed_order(exchange_order(order, side="sell"), uid=UIDS["demo"])
+    with pytest.raises(HandoverUnavailable):
+        await rig.port.lookup(command("lookup", order))
+
+
+async def test_lookup_raises_when_a_read_fails() -> None:
+    rig = build_rig()
+    order = new_order()
+    await rig.stored(order)
+    rig.demo.script("open_orders", TransportError("the read failed"))
+    with pytest.raises(TransportError):
+        await rig.port.lookup(command("lookup", order))
+
+
+async def test_lookup_of_a_registered_order_reads_the_registration_and_keeps_it() -> None:
+    """A resync can make B1 look before its first send: the registration stays for `place`."""
+    rig = build_rig()
+    order = new_order()
+    watch = rig.port.expect(order)
+    assert await rig.port.lookup(command("lookup", order)) == {}
+    assert not watch.answered
+    assert (await rig.port.place(command("place", order)))["ok"] is True
+    assert (await watch.answer() or {}).get("ok") is True
+
+
+# --- attach_stop (24 Sec.8.8 rules 2 and 6; 21 Sec.3.3.11) ----------------------------------------
+
+
+def _attach(order: Any, stop: str = "58000") -> b01.Command:
+    return command("attach_stop", order, {"stop_loss": stop})
+
+
+async def _filled(rig: Any, order: Any = None) -> Any:
+    """An entry whose first fill started its stop: stored, as B1's `sl_pending` finds it."""
+    order = order if order is not None else new_order()
+    await rig.stored(order, lifecycle="submitted")
+    return order
+
+
+def _rows(rig: Any) -> list[Any]:
+    """Every recorded stop the in-memory store holds (its own table, read directly)."""
+    return list(rig.store._stops.values())
+
+
+async def test_attach_skips_the_call_when_the_position_shows_the_stop_but_still_audits_it() -> None:
+    """Q-E: the saving is the `critical` call, never the trail (C-2.9)."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position(stop_loss=STOP, updated_at=T0_US + 5_000))
+    answer = await rig.port.attach_stop(_attach(order))
+    reading = {"updated_time": (T0_US + 5_000) // 1_000, "stop_loss": "58000", "size": "0.01"}
+    assert answer == {"ok": True, "position": reading}
+    assert rig.calls() == ["positions"]
+    ((record, _),) = rig.audits.written
+    assert isinstance(record, OrderAuditRecord)
+    assert (record.action, record.outcome, record.reason) == ("sl.attached", "success", ALREADY_SET)
+    assert (record.order_id, record.account_id) == (order.id, ACCOUNT)
+    assert _rows(rig) == []
+
+
+async def test_attach_records_and_audits_its_request_before_the_send() -> None:
+    """21 Sec.3.3.11: the row is written ahead, its `sl.attached` record in the insert's
+    transaction and named by the row (`audit_record_id`), then the call, then the answer."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    rig.now.us = T0_US + 7_000_000
+    answer = await rig.port.attach_stop(_attach(order))
+    assert rig.calls() == ["positions", "set_trading_stop", "positions"]
+    ((record, sent_before),) = rig.audits.written
+    assert isinstance(record, KeyedRecord)
+    assert (record.action, record.reason, record.object_kind) == (
+        "sl.attached",
+        "first_fill_attach",
+        "recorded_stop",
+    )
+    assert (record.actor_user_id, record.outcome, sent_before) == (None, "success", 1)
+    (row,) = _rows(rig)
+    assert (row.source, row.kind, row.status, row.tpsl_mode) == (
+        "trading_stop",
+        "stop_loss",
+        "pending",
+        "Full",
+    )
+    assert (row.trigger_price, row.size, row.order_id, row.position_marker) == (
+        STOP,
+        None,
+        None,
+        None,
+    )
+    assert (row.position_side, row.position_idx, row.actor_user_id) == ("Buy", 0, None)
+    assert record.object_id == row.id and record.name == str(row.id)
+    assert row.audit_record_id == rig.audits.record_id("sl.attached", str(row.id))
+    assert row.answered_at == EPOCH + timedelta(microseconds=T0_US + 7_000_000)
+    assert answer["ok"] is True and answer["position"]["stop_loss"] == "58000"
+
+
+async def test_attach_sends_both_sides_the_take_profit_as_the_position_shows_it() -> None:
+    """24 Sec.8.9: one call writes both sides, so the take-profit the position shows goes too."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position(take_profit=Decimal("64000")))
+    await rig.port.attach_stop(_attach(order))
+    call = rig.demo.calls[1]
+    assert (call.method, call.lane) == ("set_trading_stop", "critical")
+    assert call.request == TradingStopRequest(
+        account=ref(), symbol=SYMBOL, stop_loss=STOP, take_profit=Decimal("64000")
+    )
+
+
+async def test_a_refused_attach_voids_its_row_audited_ahead() -> None:
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    reject = FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003, "do not show this text")
+    rig.demo.script("set_trading_stop", reject)
+    answer = await rig.port.attach_stop(_attach(order))
+    assert {key: answer[key] for key in ("ok", "error_code", "exchange_ret_code")} == {
+        "ok": False,
+        "error_code": "INSTRUMENT_FILTER",
+        "exchange_ret_code": 110003,
+    }
+    assert answer["position"]["stop_loss"] is None and "do not show" not in repr(answer)
+    (row,) = _rows(rig)
+    assert row.status == "void"
+    assert rig.audits.actions() == [
+        ("sl.attached", "first_fill_attach"),
+        ("sl.modified", "trading_stop_refused"),
+    ]
+    void = rig.audits.written[1][0]
+    assert isinstance(void, KeyedRecord) and void.object_id == row.id
+    assert void.detail["error_code"] == "INSTRUMENT_FILTER"
+
+
+async def test_an_attach_whose_send_raises_leaves_its_row_in_flight() -> None:
+    """Only the complete read resolves a request with no answer (21 Sec.3.3.11)."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    rig.demo.script("set_trading_stop", TransportError("cut off"))
+    with pytest.raises(TransportError):
+        await rig.port.attach_stop(_attach(order))
+    (row,) = _rows(rig)
+    assert (row.status, row.answered_at) == ("pending", None)
+    assert rig.calls() == ["positions", "set_trading_stop"]
+
+
+async def _earlier_request(rig: Any) -> None:
+    """A trading-stop request of the key, in flight since `T0` (the store's clock)."""
+    earlier = NewRecordedStop(
+        id=uuid5(NAMESPACE_URL, "earlier"),
+        exchange_account_id=ACCOUNT,
+        symbol=SYMBOL,
+        position_idx=0,
+        position_side="Buy",
+        kind="stop_loss",
+        source="trading_stop",
+        order_id=None,
+        tpsl_mode="Full",
+        trigger_price=Decimal("57000"),
+        size=None,
+        audit_record_id=uuid5(NAMESPACE_URL, "earlier-record"),
+        actor_user_id=None,
+    )
+
+    async def audited(_rows: Any) -> None:
+        return None
+
+    await rig.stops.record([earlier], write_ahead=audited)
+
+
+async def test_a_row_waiting_for_the_complete_read_refuses_the_attach_at_once() -> None:
+    """Q-A and Q-D: 409 `stop_request_in_flight`, `Retry-After: 5`, nothing recorded or sent."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    await _earlier_request(rig)
+    rig.now.us = T0_US + round(STOP_REQUEST_BOUND_S * 1_000_000)  # the bound fails closed
+    with pytest.raises(StopRequestPending) as refused:
+        await rig.port.attach_stop(_attach(order))
+    assert refused.value.retry_after_s == 5
+    assert problem_for(refused.value) == Problem(409, "stop_request_in_flight", retry_after=True)
+    assert rig.calls() == ["positions"] and len(_rows(rig)) == 1
+
+
+async def test_a_request_in_flight_inside_its_bound_refuses_the_insert() -> None:
+    """Q2: inside its bound the row is not waiting; the second request meets it at the insert."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    await _earlier_request(rig)
+    rig.now.us = T0_US + 1_000_000
+    with pytest.raises(StopRequestInFlight):
+        await rig.port.attach_stop(_attach(order))
+    assert rig.calls() == ["positions"] and len(_rows(rig)) == 1
+
+
+async def test_a_partial_mode_stop_is_refused_before_anything_is_sent() -> None:
+    """Q-F: no stop size can be sent yet (24 Sec.8.9), so B1 goes to `sl_missing` and B8."""
+    rig = build_rig()
+    order = await _filled(rig, new_order(tpsl_mode="Partial"))
+    answer = await rig.port.attach_stop(_attach(order))
+    assert answer == {"ok": False, "error_code": PARTIAL_STOP_UNSUPPORTED}
+    assert rig.demo.calls == [] and _rows(rig) == []
+    ((record, _),) = rig.audits.written
+    assert isinstance(record, OrderAuditRecord)
+    assert (record.action, record.outcome, record.reason) == (
+        "sl.attached",
+        "denied",
+        "partial_mode",
+    )
+
+
+async def test_an_attach_whose_audit_does_not_land_records_and_sends_nothing() -> None:
+    """C-2.9: the hook fails the insert, so no row is written and nothing is sent."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    rig.audits.refuse = RuntimeError("the audit lane refused")
+    with pytest.raises(RuntimeError, match="audit lane"):
+        await rig.port.attach_stop(_attach(order))
+    assert rig.calls() == ["positions"] and _rows(rig) == []
+
+
+async def test_an_attach_reads_and_sends_on_its_own_environments_port() -> None:
+    rig = build_rig()
+    order = await _filled(rig, new_order(LIVE_ACCOUNT, "live"))
+    rig.live.seed_position(position(LIVE_ACCOUNT))
+    answer = await rig.port.attach_stop(_attach(order))
+    assert answer["ok"] is True
+    assert rig.calls(rig.live) == ["positions", "set_trading_stop", "positions"]
+    assert rig.demo.calls == []
+
+
+_NO_STOP: list[dict[str, Any]] = [
+    {},
+    {"stop_loss": None},
+    {"stop_loss": "0"},
+    {"stop_loss": "-0"},
+    {"stop_loss": "-1"},
+    {"stop_loss": "NaN"},
+    {"stop_loss": "sNaN"},
+    {"stop_loss": "Infinity"},
+    {"stop_loss": "-Infinity"},
+    {"stop_loss": "x"},
+]
+
+
+@pytest.mark.parametrize("terms", _NO_STOP)
+async def test_an_attach_without_a_usable_stop_sends_nothing(terms: dict[str, Any]) -> None:
+    rig = build_rig()
+    order = await _filled(rig)
+    with pytest.raises(ValueError, match="stop"):
+        await rig.port.attach_stop(command("attach_stop", order, terms))
+    assert rig.demo.calls == []
+
+
+async def test_an_attach_for_no_stored_order_sends_nothing() -> None:
+    rig = build_rig()
+    with pytest.raises(ValueError, match="no stored order"):
+        await rig.port.attach_stop(_attach(new_order()))
+    assert rig.demo.calls == []
+
+
+async def test_the_attach_answer_is_a_reading_b1s_guard_takes() -> None:
+    """B1.5: `sl_attach_ok` confirms the requested stop on the open position the read-back shows."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    answer = await rig.port.attach_stop(_attach(order))
+    assert b01.sl_attach_ok({"stop_loss": "58000"}, SimpleNamespace(data=answer))
+    assert not b01.sl_attach_ok({"stop_loss": "57000"}, SimpleNamespace(data=answer))
+
+
+# --- no stop or take-profit that is no price above zero is sent (#2877 ruling 2, C-2.6) ---------
+
+#: Prices a registered `NewOrder` can carry (2a's `check_fields` refuses a non-finite figure, and
+#: the store's CHECK refuses these at the insert), and the ones only a row read back can.
+_NOT_ABOVE_ZERO = ["0", "-0", "-1"]
+_NOT_FINITE = ["NaN", "sNaN", "Infinity", "-Infinity"]
+
+
+@pytest.mark.parametrize("value", _NOT_ABOVE_ZERO)
+@pytest.mark.parametrize("side", ["stop_loss", "take_profit"])
+async def test_a_registered_create_whose_side_is_no_price_above_zero_sends_nothing(
+    side: str, value: str
+) -> None:
+    """Refused before anything is sent, whatever the exchange port checks (G-8b's guard is not
+    relied on): B1 lands the order in `unknown`, never with a protection removed by implication."""
+    rig = build_rig()
+    order = new_order()
+    figure = Decimal(value)  # the same id, with a side that is no price above zero
+    rig.port.expect(
+        new_order(stop_loss=figure) if side == "stop_loss" else new_order(take_profit=figure)
+    )
+    with capture_logs() as logs, pytest.raises(ValueError, match=side):
+        await rig.port.place(command("place", order))
+    assert rig.demo.calls == []
+    refused = [log for log in logs if log["event"] == "oms_create_price_refused"]
+    assert [(log["log_level"], log["side"]) for log in refused] == [("critical", side)]
+
+
+@pytest.mark.parametrize(
+    ("value", "looked_up"),
+    [("0", True), ("-0", True), ("-1", True), ("NaN", False), ("Infinity", False)],
+)
+async def test_a_resumed_row_whose_stop_is_no_price_above_zero_is_never_resent(
+    value: str, looked_up: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Postgres's `numeric` holds `NaN` and `Infinity`, which pass `stop_loss > 0`. A row read
+    back with a stop at or below zero is still looked up (reading is never an order) and refused
+    before the re-send; a non-finite one forms no request at all, so nothing is read or sent."""
+    rig = build_rig()
+    order = new_order()
+    malformed = dataclasses.replace(await rig.stored(order), stop_loss=Decimal(value))
+
+    async def stored(_account_id: Any, _link: str) -> Any:
+        return malformed
+
+    monkeypatch.setattr(rig.orders, "get_by_link_id", stored)
+    rig.now.us = T0_US + 60 * SECOND_US
+    with pytest.raises(ValueError, match="stop_loss"):
+        await rig.port.place(command("place", order))
+    assert rig.calls() == (_LOOKUP if looked_up else [])
+
+
+@pytest.mark.parametrize("value", [*_NOT_ABOVE_ZERO, *_NOT_FINITE])
+@pytest.mark.parametrize("effect", [OrderEffect.ENTRY, OrderEffect.REDUCE])
+def test_the_validator_path_refuses_a_stop_that_is_no_price_above_zero(
+    effect: OrderEffect, value: str
+) -> None:
+    """The pipeline's native-stop rule (slice 1's `stop_errors`, which C5 runs before the
+    persist) refuses it on every path: an entry's stop and a reduce-only order's alike."""
+    refused = stop_errors(
+        effect=effect, side="buy", reference_price=Decimal("60000"), stop=Decimal(value)
+    )
+    assert [(error.field, error.rule) for error in refused] == [
+        ("stop_loss", RULE_NATIVE_STOP_REQUIRED)
+    ]
+
+
+@pytest.mark.parametrize("shown", ["0", "-1"])
+async def test_an_attach_leaves_out_a_take_profit_the_reading_shows_as_no_price(shown: str) -> None:
+    """The side the reading cannot vouch for is not sent, so the venue keeps its take-profit: a
+    zero there would remove it by implication (a reading cannot hold a non-finite one)."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position(take_profit=Decimal(shown)))
+    await rig.port.attach_stop(_attach(order))
+    call = rig.demo.calls[1]
+    assert call.request == TradingStopRequest(
+        account=ref(), symbol=SYMBOL, stop_loss=STOP, take_profit=None
+    )
+
+
+# --- the venue's outage (#4092, #2863): raised, never a refusal, never repeated ------------------
+
+
+def test_the_outage_the_tests_script_is_retryable_as_4092_raises_it() -> None:
+    """SEC-4092-02: the port must never loop on `retryable`, which the outage carries. The tests
+    script #4092's own class, now in the base."""
+    raised = outage()
+    assert type(raised) is ServiceUnavailableError and isinstance(raised, TransportError)
+    assert raised.retryable is True and raised.code is OmsErrorCode.SERVICE_UNAVAILABLE
+
+
+async def test_a_create_the_outage_answers_is_raised_after_one_send() -> None:
+    """Never mapped to a refusal: raised, so B1 lands the order in `unknown` (its contract test)."""
+    rig = build_rig()
+    order = new_order()
+    rig.port.expect(order)
+    rig.demo.script("place_order", outage(10016))
+    with pytest.raises(ServiceUnavailableError):
+        await rig.port.place(command("place", order))
+    assert rig.calls() == ["place_order"]
+
+
+async def test_an_attach_the_outage_answers_is_raised_after_one_call() -> None:
+    """Whether the venue applied the stop is open: raised, so B1's stop goes `sl_missing`, and the
+    row stays in flight for the complete read; nothing is sent again."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    rig.demo.script("set_trading_stop", outage())
+    with pytest.raises(ServiceUnavailableError):
+        await rig.port.attach_stop(_attach(order))
+    assert rig.calls() == ["positions", "set_trading_stop"]
+    (row,) = _rows(rig)
+    assert (row.status, row.answered_at) == ("pending", None)
+
+
+async def test_a_lookup_the_outage_fails_is_raised_after_one_read() -> None:
+    rig = build_rig()
+    order = new_order()
+    await rig.stored(order)
+    rig.demo.script("open_orders", outage())
+    with pytest.raises(ServiceUnavailableError):
+        await rig.port.lookup(command("lookup", order))
+    assert rig.calls() == ["open_orders"]
+
+
+@pytest.mark.parametrize("resumed", [False, True], ids=["after_a_duplicate", "resumed"])
+async def test_a_creates_lookup_the_outage_fails_settles_nothing_and_sends_nothing(
+    resumed: bool,
+) -> None:
+    """An empty lookup (`unknown`), never a refusal B1 would record, and no call repeated."""
+    rig = build_rig()
+    order = new_order()
+    if resumed:
+        await rig.stored(order)
+        rig.demo.script("order_history", outage())
+    else:
+        rig.demo.seed_order(exchange_order(order), uid=UIDS["demo"])  # the create is a duplicate
+        rig.demo.script("open_orders", outage())
+        rig.port.expect(order)
+    answer = await rig.port.place(command("place", order))
+    assert answer == {"ok": False, "error_code": _DUP, "lookup": {}}
+    assert rig.calls() == (_LOOKUP if resumed else ["place_order", "open_orders"])
+
+
+# --- the request's correlation id ([AUDIT-REQUEST-ID], #3990; 21 Sec.3.10.1) --------------------
+
+_REQUEST = UUID("6f1d2c3b-4a59-4e68-8f7a-9b0c1d2e3f40")
+#: A correlation id bound where B1's call runs, which no record of the port may take.
+_STALE = UUID("0a1b2c3d-4e5f-4a6b-8c7d-8e9fa0b1c2d3")
+
+
+@pytest.mark.parametrize("call", ["place", "lookup"])
+async def test_a_registered_orders_record_carries_its_requests_id_never_the_contexts(
+    call: str,
+) -> None:
+    """B1's calls run in its own task, so the id rides on the registration (`expect`), and one
+    bound where the call runs, stale or not, is never taken."""
+    rig = build_rig()
+    order = new_order()
+    rig.demo.seed_order(exchange_order(order), uid=UIDS["demo"])
+    rig.port.expect(order, request_id=_REQUEST)
+    with bind_context(request_id=str(_STALE)):
+        if call == "place":
+            await rig.port.place(command("place", order))
+        else:
+            await rig.port.lookup(command("lookup", order))
+    ((record, _),) = rig.audits.written
+    assert isinstance(record, OrderAuditRecord) and record.request_id == _REQUEST
+
+
+async def test_a_second_registration_carries_its_own_requests_id() -> None:
+    rig = build_rig()
+    order = new_order()
+    rig.demo.seed_order(exchange_order(order), uid=UIDS["demo"])
+    rig.port.expect(order, request_id=_STALE)
+    rig.port.expect(order, request_id=_REQUEST)
+    await rig.port.place(command("place", order))
+    assert [record.request_id for record, _ in rig.audits.written] == [_REQUEST]
+
+
+async def test_records_of_a_resume_and_an_attach_carry_no_request_id() -> None:
+    """A restart's resume and a fill-driven attach are no request's, whatever their task's
+    context: an adoption, an end unsent, a stop's request and its void all carry None."""
+    rig = build_rig()
+    adopted = new_order(seq=1)
+    rig.demo.seed_order(exchange_order(adopted), uid=UIDS["demo"])
+    filled = await _filled(rig)
+    rig.demo.seed_position(position())
+    rig.demo.script("set_trading_stop", FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003))
+    with bind_context(request_id=str(_STALE)):
+        await _resumed(rig, adopted, age_us=SECOND_US)
+        await _resumed(rig, new_order(LIVE_ACCOUNT, "live"), age_us=121 * SECOND_US)
+        await rig.port.attach_stop(_attach(filled))
+    assert [(record.action, record.request_id) for record, _ in rig.audits.written] == [
+        ("orders.submit", None),
+        (RESEND_REFUSED, None),
+        ("sl.attached", None),
+        ("sl.modified", None),
+    ]
+
+
+def test_every_action_the_port_writes_is_registered() -> None:
+    """24 Sec.15.5's closed set: the writer refuses an action it does not list."""
+    assert {"orders.submit", "sl.attached", "sl.modified", RESEND_REFUSED} <= AUDIT_ACTIONS
+
+
+# --- the pipeline's watch, cancel and amend ------------------------------------------------------
+
+
+async def test_watches_are_bounded_and_one_dropped_is_answered_none() -> None:
+    """C-2.18: the oldest registration goes first, its waiter answered rather than left waiting."""
+    rig = build_rig(max_watches=2)
+    watches = [rig.port.expect(new_order(seq=n)) for n in range(3)]
+    assert await watches[0].answer() is None
+    assert not watches[1].answered and not watches[2].answered
+
+
+async def test_a_second_registration_of_an_order_replaces_the_first() -> None:
+    rig = build_rig()
+    order = new_order()
+    first, second = rig.port.expect(order), rig.port.expect(order)
+    assert await first.answer() is None
+    answer = await rig.port.place(command("place", order))
+    assert await second.answer() == answer
+
+
+def test_the_port_holds_at_least_one_registration() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        build_rig(max_watches=0)
+
+
+async def test_cancel_and_amend_go_to_their_services_or_raise_unwired() -> None:
+    order = new_order()
+    unwired = build_rig()
+    with pytest.raises(b01.PortMissingError):
+        await unwired.port.cancel(command("cancel", order))
+    with pytest.raises(b01.PortMissingError):
+        await unwired.port.amend(command("amend", order))
+    seen: list[str] = []
+
+    async def service(sent: b01.Command) -> Mapping[str, Any]:
+        seen.append(sent.kind)
+        return {"ok": True}
+
+    wired = build_rig(cancels=service, amends=service)
+    assert await wired.port.cancel(command("kill_cancel", order)) == {"ok": True}
+    assert await wired.port.amend(command("amend", order)) == {"ok": True}
+    assert seen == ["kill_cancel", "amend"]
+
+
+def test_the_stop_request_bound_exceeds_an_entrys_answer_path() -> None:
+    """[LANE-25]: an entry's stop request is answered within its `submitting` step's write, the
+    create, and the result step's write, each read from the constant that bounds it, so a change
+    to any of them that the bound no longer covers fails here."""
+    defaults = inspect.signature(OmsCommandPort).parameters
+    assert defaults["submit_timeout_s"].default == SUBMIT_TIMEOUT_S
+    persist, place, result = CV_PERSIST_TIMEOUT, SUBMIT_TIMEOUT_S, CV_PERSIST_TIMEOUT
+    assert STOP_REQUEST_BOUND_S > persist + place + result
+    assert inspect.signature(RefuseWhileWaiting).parameters["bound_s"].default == (
+        STOP_REQUEST_BOUND_S
+    )

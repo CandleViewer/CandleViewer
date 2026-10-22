@@ -20,6 +20,10 @@ wires it (slice 3's wiring binds the Postgres adapters), so it opens no route to
 route takes from the authenticated session after its admission (scope and arm, 22 Idempotency),
 never from the request: `find` is keyed by that principal, so another's key reads as missing
 (SR-E29-07), and an anchor is decided only by the id that read returned.
+`oms/commands.py`, B1's command port, records and settles the stop requests of `attach_stop`
+through `RecordedStopRepository`: only B1's `sl_pending` invoke calls it, for the order whose
+machine runs it, and it reads that order's row by the account the command names (OM-I02); no route
+reaches it, and slice 3's routes reach B1 only through the OMS facade, after their admission.
 """
 
 from __future__ import annotations
@@ -41,6 +45,7 @@ NAMES = re.compile(
 )
 ALLOWED = frozenset(
     {
+        "oms/commands.py",
         "oms/fakes.py",
         "oms/idempotency.py",
         "oms/order_steps.py",

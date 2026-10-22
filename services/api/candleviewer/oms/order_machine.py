@@ -244,7 +244,9 @@ B1_AUDITS: Final[Mapping[str, tuple[str, Outcome, Severity]]] = MappingProxyType
 class OrderAuditRecord:
     """One record the facade writes ahead (C-2.9). E29-T04 writes it through `AuditWriter.emit`
     as `system:oms`, with the order as its object; `detail` holds ids and state names, never
-    values (C-12.6)."""
+    values (C-12.6). `request_id` is the correlation id of the HTTP request the record is written
+    for (`X-Correlation-Id`, #3990), None for a job, a restart's resume or a fill-driven step (21
+    Sec.3.10.1)."""
 
     action: str
     order_id: UUID
@@ -253,6 +255,7 @@ class OrderAuditRecord:
     severity: Severity
     reason: str
     detail: Mapping[str, str | None]
+    request_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)

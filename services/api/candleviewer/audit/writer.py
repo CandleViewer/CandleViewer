@@ -109,7 +109,14 @@ Sleeper = Callable[[float], Awaitable[None]]
 #: The actions `emit_keyed()` writes, each with the namespace of its record ids, one per action and
 #: fixed for good: a new value would give a name written on both sides of the change two rows.
 KEYED_ACTIONS: Final[Mapping[str, uuid.UUID]] = MappingProxyType(
-    {"admin.view_as_ended": uuid.UUID("f30c6b64-1ea6-416d-aebb-8aaa0760f421")}  # name: context id
+    {
+        "admin.view_as_ended": uuid.UUID("f30c6b64-1ea6-416d-aebb-8aaa0760f421"),  # context id
+        # E29-T04 (#913): a stop request's records, each named by its `recorded_stops` row's id,
+        # which carries the request's record id (21 Sec.3.3.11 "Audit").
+        "sl.attached": uuid.UUID("d6abc860-0257-4214-9142-d65723f23fd7"),
+        "sl.modified": uuid.UUID("132f3241-512e-445d-86af-731eab14fe5e"),
+        "tp.modified": uuid.UUID("0f574dd0-7558-4261-8417-7c38870c061d"),
+    }
 )
 
 

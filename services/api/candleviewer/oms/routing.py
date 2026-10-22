@@ -38,7 +38,7 @@ from typing import Any, Final, Literal, Protocol, get_args
 import structlog
 
 from candleviewer.domain.primitives import AccountId, Environment, Symbol
-from candleviewer.exchange.base.models import AccountRef, RateLane
+from candleviewer.exchange.base.models import AccountRef, Position, RateLane
 from candleviewer.exchange.base.ports import RateHeadroomPort, TradingPort
 
 from .classify import ExchangePosition
@@ -54,6 +54,8 @@ __all__ = [
     "RoutedPositions",
     "TradingRouter",
     "Transport",
+    "read_position",
+    "retry_after",
 ]
 
 #: The lanes a request waits in (24 Sec.8.7): every one needs a bound in `lane_waits`.
@@ -111,7 +113,7 @@ class TradingRouter:
             raise ValueError("the rate reading answers another lane")
         if reading.wait_s <= self._lane_waits[lane]:
             return RateReading(available=True)
-        return RateReading(available=False, retry_after_s=_retry_after(reading.wait_s))
+        return RateReading(available=False, retry_after_s=retry_after(reading.wait_s))
 
 
 class RoutedPositions:
@@ -130,18 +132,26 @@ class RoutedPositions:
         account = await self._accounts.trading_account(account_id)
         if account.account_id != account_id:
             raise ValueError("the trading account resolved is another account's")
-        rows = [
-            row
-            for row in await self._router.port_for(account.environment).positions(account)
-            if row.account_id == account_id
-            and row.symbol == symbol
-            and row.position_idx == position_idx
-        ]
-        if len(rows) > 1:
-            raise ValueError("the exchange read names the position twice")
-        if not rows:
-            return None
-        return ExchangePosition(side=rows[0].side, qty=rows[0].qty)
+        port = self._router.port_for(account.environment)
+        row = await read_position(port, account, symbol, position_idx)
+        return None if row is None else ExchangePosition(side=row.side, qty=row.qty)
+
+
+async def read_position(
+    port: TradingPort, account: AccountRef, symbol: Symbol, position_idx: int
+) -> Position | None:
+    """`account`'s row for `symbol` and `position_idx` in one positions read (the `poll` lane),
+    whatever else the port answers; None when it shows none, `ValueError` when it shows two."""
+    rows = [
+        row
+        for row in await port.positions(account)
+        if row.account_id == account.account_id
+        and row.symbol == symbol
+        and row.position_idx == position_idx
+    ]
+    if len(rows) > 1:
+        raise ValueError("the exchange read names the position twice")
+    return rows[0] if rows else None
 
 
 def _check_route(environment: Environment, port: TradingPort) -> None:
@@ -165,8 +175,11 @@ def _bounds(lane_waits: Mapping[RateLane, float]) -> Mapping[RateLane, float]:
     return MappingProxyType({lane: float(wait) for lane, wait in lane_waits.items()})
 
 
-def _retry_after(wait_s: float) -> int:
-    """`wait_s` rounded up to whole seconds, at least 1 and at most `MAX_RETRY_AFTER_S`."""
+def retry_after(wait_s: float | None) -> int:
+    """`wait_s` as a `Retry-After`: rounded up to whole seconds, at least 1 and at most
+    `MAX_RETRY_AFTER_S`; 1 when no wait is known (a refused token whose wait was not timed)."""
+    if wait_s is None or wait_s != wait_s:  # unknown, or NaN: the shortest retry
+        return 1
     if not wait_s < MAX_RETRY_AFTER_S:  # past the cap, or no end at all (inf)
         return MAX_RETRY_AFTER_S
     return max(1, math.ceil(wait_s))

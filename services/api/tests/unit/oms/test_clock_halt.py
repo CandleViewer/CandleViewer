@@ -5,6 +5,7 @@ it untripped too. Each refusal is a fresh `ClockDriftBlocked`, 503 `clock_drift`
 
 from __future__ import annotations
 
+import asyncio
 import math
 from typing import Any
 
@@ -15,6 +16,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.exchange.base.errors import ClockDriftError
 from candleviewer.ingestion.clock import ClockGuard
+from candleviewer.oms import clock_halt
 from candleviewer.oms.clock_halt import CLOCK_HALT_RETRY_AFTER_S, ClockHalt
 from candleviewer.oms.errors import ClockDriftBlocked, problem_for
 from candleviewer.oms.fakes import FakeClockHealth
@@ -247,3 +249,36 @@ async def test_the_clock_guard_as_it_stands_is_the_halts_clock() -> None:
     await guard.resync_after_signature_failure(reason="order_10002")
     mono.now = 112.0
     assert halt.refusal() is None
+
+
+async def test_a_resync_measures_with_its_reason_and_a_later_refusal_clears() -> None:
+    """24 Sec.8.6: a `10002` forces a resync; the halt clears once that measurement is fresh."""
+    halt, health, clock = rig()
+    halt.trip()
+    clock.now += 1
+    await halt.resync(reason="order_10002")
+    assert health.resyncs == ["order_10002"]
+    assert halt.refusal() is None
+
+
+@pytest.mark.parametrize("hangs", [False, True], ids=["fails", "hangs"])
+async def test_a_resync_that_fails_is_logged_and_leaves_the_halt(
+    hangs: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    halt, health, clock = rig()
+    halt.trip()
+    clock.now += 1
+
+    async def broken(*, reason: str) -> int:
+        if hangs:
+            await asyncio.Event().wait()
+        raise OSError("no sample answered")
+
+    monkeypatch.setattr(health, "resync_after_signature_failure", broken)
+    monkeypatch.setattr(clock_halt, "CLOCK_RESYNC_TIMEOUT_S", 0.01)
+    with capture_logs() as logs:
+        await halt.resync(reason="order_10002")
+    failure = "TimeoutError" if hangs else "OSError"
+    events = [(log["event"], log["failure"]) for log in logs]
+    assert events == [("oms_clock_resync_failed", failure)]
+    assert refused(halt)

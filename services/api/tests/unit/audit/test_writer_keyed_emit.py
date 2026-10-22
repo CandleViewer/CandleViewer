@@ -22,6 +22,10 @@ def test_writer_keyed_actions_keep_their_namespaces_for_good() -> None:
     """A new namespace would give a context written on both sides of the change two rows (V45);
     the restart test below pins the id one derives."""
     assert KEYED_ACTIONS[_ACTION] == uuid.UUID("f30c6b64-1ea6-416d-aebb-8aaa0760f421")
+    # E29-T04 (#913): a stop request's records, named by their `recorded_stops` row's id.
+    assert KEYED_ACTIONS["sl.attached"] == uuid.UUID("d6abc860-0257-4214-9142-d65723f23fd7")
+    assert KEYED_ACTIONS["sl.modified"] == uuid.UUID("132f3241-512e-445d-86af-731eab14fe5e")
+    assert KEYED_ACTIONS["tp.modified"] == uuid.UUID("0f574dd0-7558-4261-8417-7c38870c061d")
     assert set(KEYED_ACTIONS) <= AUDIT_ACTIONS
     assert len(set(KEYED_ACTIONS.values())) == len(KEYED_ACTIONS)  # never two actions on one id
 

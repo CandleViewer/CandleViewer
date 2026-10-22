@@ -19,6 +19,7 @@ resync (slice 2b's command port); the pipeline asks `refusal()` first.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Any, Final
 
@@ -29,10 +30,12 @@ from candleviewer.exchange.base.errors import ClockDriftError
 from .errors import ClockDriftBlocked
 from .ports import ClockHealth
 
-__all__ = ["CLOCK_HALT_RETRY_AFTER_S", "ClockHalt"]
+__all__ = ["CLOCK_HALT_RETRY_AFTER_S", "CLOCK_RESYNC_TIMEOUT_S", "ClockHalt"]
 
 #: The `Retry-After`, in seconds, of an order refused while the clock is not cleared.
 CLOCK_HALT_RETRY_AFTER_S: Final = 5
+#: The bound on one resync the order path asks for, in seconds.
+CLOCK_RESYNC_TIMEOUT_S: Final = 10.0
 
 
 def _log() -> Any:
@@ -85,6 +88,18 @@ class ClockHalt:
         self._tripped_at = None
         _log().info("oms_clock_halt_cleared", halted_s=round(since_trip, 3))
         return None
+
+    async def resync(self, *, reason: str) -> None:
+        """Ask the clock to measure at once (24 Sec.8.6: a `10002` forces a resync), within
+        `CLOCK_RESYNC_TIMEOUT_S`. The halt clears at a later `refusal()` once that measurement is
+        healthy. A resync that fails, or does not answer in time, is logged and leaves the halt as
+        it is: the clock's own cadence measures again. Never raises but on cancellation, as the
+        order path runs it as its own task."""
+        try:
+            async with asyncio.timeout(CLOCK_RESYNC_TIMEOUT_S):
+                await self._clock.resync_after_signature_failure(reason=reason)
+        except Exception as exc:  # the halt stands; nothing awaits this task's result
+            _log().warning("oms_clock_resync_failed", reason=reason, failure=type(exc).__name__)
 
     def _refused(self) -> ClockDriftBlocked:
         return ClockDriftBlocked(retry_after_s=self._retry_after_s)

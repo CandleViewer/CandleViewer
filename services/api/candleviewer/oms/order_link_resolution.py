@@ -47,6 +47,7 @@ __all__ = [
     "Unresolved",
     "UnresolvedReason",
     "adopt_or_resend",
+    "find_by_link_id",
     "place_or_adopt",
 ]
 
@@ -246,6 +247,16 @@ async def _adopt(port: PlacementPort, request: PlaceOrderRequest) -> Adopted | U
         return _adopted(*found)
     _log().warning("order_link_id_duplicate_unresolved", order_link_id=link)
     return Unresolved(order_link_id=link)
+
+
+async def find_by_link_id(
+    port: PlacementPort, request: PlaceOrderRequest
+) -> tuple[Order, Literal["realtime", "history"]] | None:
+    """`_find`'s lookup round for E29-T04's command port: its `lookup`, which B1 asks before a
+    create this process did not begin, and a live create too old to re-send (24 Sec.14.1). The
+    caller checks what it finds against the row (SR-E29-03) and audits an adoption (C-2.9);
+    every error propagates."""
+    return await _find(port, request)
 
 
 async def _find(

@@ -35,6 +35,13 @@ imports `ingestion` (C-3.4). `TradingAccounts` resolves the account the OMS has 
 the trading port's `AccountRef`, whose `key_ref` only that account's active key fills
 (SR-E27-21).
 
+The command port (`commands.OmsCommandPort`) consumes five more, which slice 3 binds:
+`SubmitAudit` (the keyed audit records a stop request's row names), `OrderHandovers` (with
+`NoHandoverStore`, its one production binding until E29-T06), `CredentialRejections` (24 Sec.8.6
+`AUTH_ERROR`), `TradingSwitches` (C-2.21's switches before a re-send) and `StopRequestGate`, with
+its fail-closed interim `RefuseWhileWaiting` (21 Sec.3.3.11). `ForeignOrderLockout` (SR-E27-19) is
+declared here for E29-T05 and E29-T06, its callers.
+
 The vocabulary the ports speak lives here too: `OrderEffect` (SR-E29-01), `StopOffset` (22
 `Offset`), `SizingRequest` (22 `Sizing`), `ArmToken`, the session's arm token held masked (C-12.6)
 and compared in constant time (SR-043), and `SizedOrder`, the order the validator, the risk gate
@@ -46,7 +53,8 @@ Verdicts are B1's gate values (`statechart/bindings/b01_order.py`).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
@@ -59,14 +67,26 @@ import structlog
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Px, Qty, Side, Symbol
-from candleviewer.exchange.base.models import AccountRef
+from candleviewer.exchange.base.models import AccountRef, Order
 from candleviewer.exchange.policy import InstrumentPolicy
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.observability.secret_type import ComparableSecret, Secret
 from candleviewer.risk.models import RiskDecision, RiskRefusal
+from candleviewer.storage.errors import StorageError
+from candleviewer.storage.repositories.orders import OrderStoreError
+from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 
-from .errors import RULE_SIZING_MODE_UNSUPPORTED, FieldError, OrderInvalid, StopUnitUnsupported
+from .errors import (
+    RULE_SIZING_MODE_UNSUPPORTED,
+    FieldError,
+    HandoverUnavailable,
+    OrderInvalid,
+    StopRequestPending,
+    StopUnitUnsupported,
+    StoreUnavailable,
+    TradingDisabled,
+)
 from .order_link import OrderPurpose
 
 Verdict = Literal["pass", "fail"]
@@ -282,6 +302,193 @@ class RateReading:
                 raise ValueError("an admission carries no retry_after_s")
         elif isinstance(delay, bool) or not isinstance(delay, int) or delay < 1:
             raise ValueError("a refusal carries a retry_after_s of at least one whole second")
+
+
+# --- The command port's collaborators (slice 2b, C4) ---------------------------------------------
+
+#: An M19 record's outcome and severity, as `order_machine.OrderAuditRecord` names them (a test
+#: pins the two alike).
+AuditOutcome = Literal["success", "failure", "denied"]
+AuditSeverity = Literal["info", "warning", "error", "critical"]
+#: What a keyed record is about: a stop request's record has its row as its object (21
+#: Sec.3.3.11 "Audit").
+AuditObject = Literal["order", "recorded_stop"]
+
+
+@dataclass(frozen=True, slots=True)
+class KeyedRecord:
+    """One audit record the order path writes under an id it knows ahead (21 Sec.3.3.11 "Audit"):
+    `SubmitAudit.record_id(action, name)`'s, so a row carries it (`audit_record_id`) before the
+    record lands, and a repeat of the write stores no second row. `detail` holds ids, state names
+    and reasons, never a price, a size or a secret (C-12.6); `actor_user_id` is None for the
+    system (`system:oms`). `request_id` is the correlation id of the HTTP request the record is
+    written for (`X-Correlation-Id`, #3990), None for a job, a restart's resume or a fill-driven
+    attach (21 Sec.3.10.1)."""
+
+    action: str
+    name: str
+    account_id: UUID
+    object_kind: AuditObject
+    object_id: UUID
+    outcome: AuditOutcome
+    severity: AuditSeverity
+    reason: str
+    actor_user_id: UUID | None
+    detail: Mapping[str, str | None]
+    request_id: UUID | None = None
+
+
+class SubmitAudit(Protocol):
+    """The audit writer's keyed records (`AuditWriter.emit_keyed`, which slice 3 wires; `oms` never
+    imports `audit`, C-3.3). `record_id` is the id `write` stores a record under,
+    `uuid5(KEYED_ACTIONS[action], name)`, fixed for good; `write` makes the record durable or
+    raises (C-2.9)."""
+
+    def record_id(self, action: str, name: str) -> UUID: ...
+
+    async def write(self, record: KeyedRecord) -> None: ...
+
+
+class OrderHandovers(Protocol):
+    """Where a lookup hands an order it found under a row's id that is not the row's (SR-E29-03)
+    to the next reconciliation pass: `oms_handovers`, appended before the lookup answers (24
+    Sec.8.3 rule 3), idempotent on the account and the order's exchange id. E29-T06 lands the
+    table and its writer; until then `NoHandoverStore` is the one production binding."""
+
+    async def hand_over_order(self, account_id: AccountId, order: Order) -> None:
+        """Append `order` for the next pass, or raise `HandoverUnavailable`."""
+        ...
+
+
+class NoHandoverStore:
+    """`OrderHandovers` until E29-T06's `oms_handovers` (S2-Q3's deviation): no hand-over can be
+    recorded, so each is `HandoverUnavailable`, and an order whose id another order holds waits in
+    `unknown`, where reconciliation meets the other order, instead of `held`."""
+
+    async def hand_over_order(self, account_id: AccountId, order: Order) -> None:
+        raise HandoverUnavailable("no hand-over store exists until E29-T06 (S2-Q3)")
+
+
+class CredentialRejections(Protocol):
+    """24 Sec.8.6 `AUTH_ERROR`: the exchange refused a request for its key (an invalid key, a bad
+    signature, a missing permission). The OMS passes the code and the exchange's return code on as
+    they came (the orchestrator's Q-I ruling); slice 3's binding maps the return code through the
+    adapter's public key-verdict table, disables the account's key and alerts the Owner, so `oms`
+    holds no exchange code (C-2.2)."""
+
+    async def refused(
+        self, account_id: AccountId, *, error_code: str, exchange_ret_code: int | None
+    ) -> None: ...
+
+
+class TradingSwitches(Protocol):
+    """The synchronous switches checked just before a send (C-2.21): live trading enabled for a
+    live account, the B18 kill switch and the order-entry gate (#3382, ruling R1's second check).
+    The refusal, or None; it reads in-memory state and never awaits."""
+
+    def refusal(
+        self, account_id: AccountId, environment: Environment
+    ) -> TradingDisabled | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PositionKey:
+    """The position a stop request is for (21 Sec.3.3.11, `ux_rs_in_flight`): its account, symbol
+    and position index."""
+
+    account_id: AccountId
+    symbol: Symbol
+    position_idx: int
+
+
+class StopRequestGate(Protocol):
+    """Asked before every stop request for a position leaves (21 Sec.3.3.11): an entry's first
+    persist, and `attach_stop` before its record. `clear` returns when the key may take a request,
+    and raises `StopRequestPending` while a row of the key waits for the complete read, which only
+    that read (slice 3) resolves."""
+
+    async def clear(self, key: PositionKey) -> None: ...
+
+
+class WaitingRows(Protocol):
+    """The recorded stops' `waiting_for_key` (`oms.repository`): the one read the interim gate
+    makes, scoped by the account it is given (C-12.4)."""
+
+    async def waiting_for_key(
+        self,
+        account_id: UUID,
+        symbol: str,
+        position_idx: int,
+        *,
+        now: datetime,
+        bound_s: float | None,
+    ) -> Sequence[RecordedStopRow]: ...
+
+
+#: How long an unanswered stop request holds its key before it waits for the complete read, in
+#: seconds (the orchestrator's Q2 ruling, [LANE-25]). It is at least an entry's answer path, the
+#: slowest a request is answered: the `submitting` step's write (`CV_PERSIST_TIMEOUT`, 1 s), the
+#: create (`commands.SUBMIT_TIMEOUT_S`, at most 5 s) and the result step's write (1 s), 7 s in all;
+#: a trading stop's one call is shorter. It is no safety knob: either side of it refuses a second
+#: request for the key, inside it at the insert (`ux_rs_in_flight`, the bounded retry) and past it
+#: here. Slice 3's setting replaces it.
+STOP_REQUEST_BOUND_S: Final = 10.0
+#: The `Retry-After` of a request refused because a row of its key waits for the complete read, in
+#: seconds: only that read clears it (the orchestrator's Q-D ruling).
+STOP_REQUEST_RETRY_AFTER_S: Final = 5
+#: The interim gate's bound on its read, in seconds.
+STOP_GATE_READ_TIMEOUT_S: Final = 1.0
+
+
+class RefuseWhileWaiting:
+    """The interim `StopRequestGate` until slice 3's complete read (the orchestrator's Q-A ruling):
+    it resolves no waiting row, it refuses while the key has one (fail closed). A read that fails,
+    or does not answer within `timeout_s`, refuses too (`StoreUnavailable`): no stop request leaves
+    unchecked."""
+
+    def __init__(
+        self,
+        rows: WaitingRows,
+        *,
+        now: Callable[[], datetime],
+        bound_s: float = STOP_REQUEST_BOUND_S,
+        timeout_s: float = STOP_GATE_READ_TIMEOUT_S,
+    ) -> None:
+        self._rows = rows
+        self._now = now
+        self._bound_s = bound_s
+        self._timeout_s = timeout_s
+
+    async def clear(self, key: PositionKey) -> None:
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                waiting = await self._rows.waiting_for_key(
+                    key.account_id,
+                    key.symbol,
+                    key.position_idx,
+                    now=self._now(),
+                    bound_s=self._bound_s,
+                )
+        except (TimeoutError, StorageError, OrderStoreError) as exc:
+            _log().warning("oms_stop_gate_unavailable", failure=type(exc).__name__)
+            raise StoreUnavailable from None
+        if waiting:
+            _log().warning("oms_stop_request_waiting", symbol=key.symbol, rows=len(waiting))
+            raise StopRequestPending(retry_after_s=STOP_REQUEST_RETRY_AFTER_S)
+
+
+#: What a lockout opens on: an order, or a trade execution, with no OMS intent (24 Sec.8.10).
+Finding = Literal["order", "execution"]
+
+
+class ForeignOrderLockout(Protocol):
+    """SR-E27-19's freeze (24 Sec.8.10; S2-Q7): the risk module's one setter of the
+    `reconciliation_foreign_order` lockout, which E39 owns and the private-stream consumer (E29-T05)
+    and reconciliation (E29-T06) call. Opening it where it is open already changes nothing, and it
+    opens once per finding, keyed by the order's exchange id or the fill's `exec_id`, so the
+    Owner's release sticks. T04 declares it and calls it nowhere."""
+
+    async def open(self, account_id: AccountId, *, finding: Finding, key: str) -> None: ...
 
 
 class Interim:

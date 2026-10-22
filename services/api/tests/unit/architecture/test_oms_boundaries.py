@@ -1,4 +1,4 @@
-"""The OMS's boundary to the exchange (E29-T04 #913; C-2.2).
+"""The OMS's boundary to the exchange (E29-T04 #913; C-2.2), and its one hand-over binding.
 
 C-2.2: all exchange-specific knowledge stays in the adapter package, `candleviewer.exchange.bybit`.
 The OMS reaches the exchange only through `exchange.base`'s ports, a trading port per environment
@@ -148,3 +148,19 @@ def test_the_generated_import_contract_forbids_the_adapter_package_to_the_oms() 
     assert contract["type"] == "forbidden"
     assert contract["source_modules"].split() == ["candleviewer.oms"]
     assert contract["forbidden_modules"].split() == [ADAPTER]
+
+
+def test_no_handover_store_is_the_only_production_order_handovers() -> None:
+    """S2-Q3's deviation, until E29-T06 lands `oms_handovers`: the one class in `candleviewer` that
+    hands an order over is `NoHandoverStore`, which hands none, so a squatted id goes `unknown`.
+    E29-T06 replaces it, and this pin, with its table's writer."""
+    handing = set()
+    for path in sorted(PACKAGE.rglob("*.py")):
+        for node in ast.walk(_parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ClassDef) and any(
+                isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef)
+                and item.name == "hand_over_order"
+                for item in node.body
+            ):
+                handing.add((path.relative_to(PACKAGE).as_posix(), node.name))
+    assert handing == {("oms/ports.py", "OrderHandovers"), ("oms/ports.py", "NoHandoverStore")}
