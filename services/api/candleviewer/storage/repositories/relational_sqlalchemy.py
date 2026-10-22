@@ -38,11 +38,10 @@ _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]{0,62}")
 #: Driver exceptions carry the server's message and `DETAIL` (`Failing row contains (...)`,
 #: `Key (col)=(val)`): a stripped chain drops every link of theirs (#2748).
 _DRIVER_PACKAGES = frozenset({"asyncpg", "psycopg", "psycopg2"})
-#: SQLAlchemy 2.1's wrapper for a driver error raised without a DBAPI call; 2.0, which
-#: `pyproject.toml` still allows, has none.
-_EMULATED: tuple[type[BaseException], ...] = (
-    (sa_exc.EmulatedDBAPIException,) if hasattr(sa_exc, "EmulatedDBAPIException") else ()
-)
+#: A driver error's own text fields (asyncpg's, and the adapted error's `detail`).
+_DRIVER_TEXT = ("message", "detail", "hint", "context", "internal_query")
+#: A `PendingRollbackError`'s message quotes the error that rolled the session back.
+_ROLLED_BACK = "this session's transaction was rolled back after an earlier error"
 
 
 def _build_engine(dsn: str) -> AsyncEngine:
@@ -86,20 +85,34 @@ def constraint_of(exc: BaseException) -> str | None:
     return next((n for n in names if isinstance(n, str) and _IDENTIFIER.fullmatch(n)), None)
 
 
+def _is_driver(error: object) -> bool:
+    """A driver's own error, or SQLAlchemy's emulation of one: their text is the server's."""
+    return isinstance(error, sa_exc.EmulatedDBAPIException) or (
+        type(error).__module__.split(".")[0] in _DRIVER_PACKAGES
+    )
+
+
 class _DriverFacts(Exception):
     """A stripped error's `orig`: the SQLSTATE and constraint name, where every classifier in
     the adapters reads them (asyncpg's `sqlstate`, psycopg's `pgcode` and `diag`), and no text
-    of the server's."""
+    of the server's. `client` names the class of a failure raised before the database (a bind
+    processor's `ValueError`), whose text can quote a bound value."""
 
-    def __init__(self, state: str | None, constraint: str | None) -> None:
+    def __init__(
+        self, state: str | None, constraint: str | None, client: str | None = None
+    ) -> None:
         named = f", constraint {constraint}" if constraint else ""
-        super().__init__(f"database error (sqlstate {state or 'unknown'}{named})")
+        message = f"database error (sqlstate {state or 'unknown'}{named})"
+        super().__init__(f"{client} raised before the database" if client else message)
         self.sqlstate = self.pgcode = state
         self.constraint_name = constraint
+        self.client = client
         self.diag = self
 
-    def __reduce__(self) -> tuple[type[_DriverFacts], tuple[str | None, str | None]]:
-        return type(self), (self.sqlstate, self.constraint_name)
+    def __reduce__(
+        self,
+    ) -> tuple[type[_DriverFacts], tuple[str | None, str | None, str | None]]:
+        return type(self), (self.sqlstate, self.constraint_name, self.client)
 
 
 def strip_driver_text(exc: BaseException) -> None:
@@ -107,8 +120,10 @@ def strip_driver_text(exc: BaseException) -> None:
 
     Each SQLAlchemy `StatementError` in the graph keeps its type, `connection_invalidated`,
     SQLSTATE and constraint name, and loses its message, statement, parameters, driver error
-    and chain. Any other exception keeps its type and message, but loses chain links that are
-    driver exceptions. In place, because `async with` re-raises this same object."""
+    and chain. A driver error left unwrapped (only *exc* itself can be one) keeps its type and
+    codes, and loses its text; a `PendingRollbackError` loses the text it quotes. Any other
+    exception keeps its type and message, but loses chain links that are driver exceptions. In
+    place, because `async with` re-raises this same object."""
     seen: set[int] = set()
     todo = [exc]
     while todo:
@@ -117,7 +132,13 @@ def strip_driver_text(exc: BaseException) -> None:
             continue
         seen.add(id(node))
         if isinstance(node, sa_exc.StatementError):
-            facts = _DriverFacts(sqlstate_of(node), constraint_of(node))
+            orig = node.orig
+            client = (
+                orig.client
+                if isinstance(orig, _DriverFacts)
+                else None if orig is None or _is_driver(orig) else type(orig).__name__
+            )
+            facts = _DriverFacts(sqlstate_of(node), constraint_of(node), client)
             node.args = (str(facts),)
             node.orig, node.statement, node.params, node.detail = facts, None, None, []
             node.__cause__ = node.__context__ = None
@@ -125,18 +146,40 @@ def strip_driver_text(exc: BaseException) -> None:
             if hasattr(node, "__notes__"):  # `add_note()` text can quote the server too
                 del node.__notes__
             continue
+        if _is_driver(node):  # only *exc* itself: every link to a driver error is cut below
+            _strip_unwrapped(node)
+        elif isinstance(node, sa_exc.PendingRollbackError):
+            node.args = (_ROLLED_BACK,)
         if isinstance(node, BaseExceptionGroup):
             todo.extend(node.exceptions)
         for link in ("__cause__", "__context__"):
             linked = getattr(node, link)
             if linked is None:
                 continue
-            if isinstance(linked, _EMULATED) or (
-                type(linked).__module__.split(".")[0] in _DRIVER_PACKAGES
-            ):
+            if _is_driver(linked):
                 setattr(node, link, None)
             else:
                 todo.append(linked)
+
+
+def _strip_unwrapped(error: BaseException) -> None:
+    """A driver error raised as it is: keep its type, SQLSTATE and constraint name; drop its
+    message and text fields, and the driver error an emulated one wraps."""
+    state, constraint = getattr(error, "sqlstate", None), getattr(error, "constraint_name", None)
+    if isinstance(error, sa_exc.EmulatedDBAPIException):
+        state, constraint = sqlstate_of(error) or state, constraint_of(error) or constraint
+    facts = _DriverFacts(
+        state if isinstance(state, str) and _SQLSTATE.fullmatch(state) else None,
+        constraint if isinstance(constraint, str) and _IDENTIFIER.fullmatch(constraint) else None,
+    )
+    error.args = (str(facts),)
+    if isinstance(error, sa_exc.EmulatedDBAPIException):
+        error.orig = facts
+    for name in _DRIVER_TEXT:
+        if getattr(error, name, None) is not None:
+            setattr(error, name, None)
+    if hasattr(error, "__notes__"):
+        del error.__notes__
 
 
 class SqlAlchemyUnitOfWork:
@@ -244,11 +287,22 @@ class _PendingUnitOfWork:
 
     async def __aenter__(self) -> SqlAlchemyUnitOfWork:
         session = self._sessionmaker()
-        connection = await session.connection()
-        await connection.exec_driver_sql(f"SET LOCAL statement_timeout = '{_STATEMENT_TIMEOUT_MS}'")
-        await connection.exec_driver_sql(
-            f"SET LOCAL application_name = 'candleviewer:{self._app_name_suffix}'"
-        )
+        try:
+            connection = await session.connection()
+            await connection.exec_driver_sql(
+                f"SET LOCAL statement_timeout = '{_STATEMENT_TIMEOUT_MS}'"
+            )
+            await connection.exec_driver_sql(
+                f"SET LOCAL application_name = 'candleviewer:{self._app_name_suffix}'"
+            )
+        except BaseException as failed:  # never handed out: close it here, or the pool waits on GC
+            strip_driver_text(failed)
+            try:
+                await session.close()
+            except BaseException as cleanup:  # the close failed as well
+                strip_driver_text(cleanup)
+                raise
+            raise
         self._uow = SqlAlchemyUnitOfWork(session, connection)
         return self._uow
 
