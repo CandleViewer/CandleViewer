@@ -22,6 +22,7 @@ from candleviewer.exchange.base.errors import (
     ClockDriftError,
     RateBudgetExceededError,
     RateLimitError,
+    ServiceUnavailableError,
     TransportError,
 )
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
@@ -40,6 +41,8 @@ LIMITED_10006 = {**rest("rest/error_10018.json"), "retCode": 10006}
 UNAVAILABLE = rest("rest/error_503.json")
 CLOCK_DRIFT = rest("rest/error_10002.json")
 CANCELLED = rest("rest/trading-cancel-reply.json")
+#: The venue's outage outside a create (24 §8.6, #2863) on the documented envelope, a test input.
+OUTAGE = {**rest("rest/error_10018.json"), "retCode": 10016, "retMsg": "x"}
 
 
 def _client(
@@ -349,3 +352,40 @@ async def test_the_retry_after_a_resync_waits_only_for_what_is_left() -> None:
     await _cancel(client, 5.0)
 
     assert [deadline for *_, deadline in governor.acquired] == [5.0, 1.0] and len(sent) == 2
+
+
+@pytest.mark.parametrize("code", [10016, 10019])
+async def test_a_token_refused_after_an_outage_answer_raises_the_outage(code: int) -> None:
+    """#2863: the venue may have applied the exit, so a token refused for its retry raises the
+    outage, never "nothing was sent" (`reached`)."""
+    clock, sent = FakeClock(), list[httpx.Request]()
+    governor = TokenBucketGovernor(
+        default_capacity=1.0, default_refill_per_s=0.1, clock=clock.now, sleep=clock.sleep
+    )
+    client, _ = _client(
+        clock, _answers(sent, clock, (0.0, {**OUTAGE, "retCode": code})), governor=governor
+    )
+
+    with pytest.raises(ServiceUnavailableError):
+        await _cancel(client, 5.0)
+
+    assert len(sent) == 1 and clock.sleeps == [1.0]
+
+
+@pytest.mark.parametrize(
+    ("wait_s", "sleeps", "attempts"),
+    [(0.75, [], 1), (5.0, [1.0, 2.0], 3)],
+    ids=["entry-wait", "critical-wait"],
+)
+async def test_the_lane_wait_bounds_an_outage_answers_attempts(
+    wait_s: float, sleeps: list[float], attempts: int
+) -> None:
+    """#2863: at most 3 attempts, and only those whose back-off ends within the lane's wait: an
+    entry-lane exit gets one, a critical one all three (each backoff at its floor: 1, 2 s)."""
+    clock, sent = FakeClock(), list[httpx.Request]()
+    client, _ = _client(clock, _answers(sent, clock, (0.0, OUTAGE)))
+
+    with pytest.raises(ServiceUnavailableError):
+        await _cancel(client, wait_s)
+
+    assert (clock.sleeps, len(sent)) == (sleeps, attempts)

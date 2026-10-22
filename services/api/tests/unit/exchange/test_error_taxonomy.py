@@ -17,6 +17,7 @@ from candleviewer.exchange.base.errors import (
     NotFoundError,
     OmsErrorCode,
     RateLimitError,
+    ServiceUnavailableError,
     TransportError,
     UnknownStateError,
 )
@@ -32,6 +33,7 @@ from candleviewer.exchange.base.errors import (
         (DuplicateClientIdError, OmsErrorCode.DUPLICATE_CLIENT_ID, False),
         (NotFoundError, OmsErrorCode.ORDER_NOT_FOUND, False),
         (TransportError, OmsErrorCode.TRANSPORT_ERROR, True),
+        (ServiceUnavailableError, OmsErrorCode.SERVICE_UNAVAILABLE, True),
         (UnknownStateError, OmsErrorCode.UNKNOWN_STATE, True),
         (AmbiguousResultError, OmsErrorCode.TRANSPORT_ERROR, False),
     ],
@@ -54,6 +56,14 @@ def test_an_ambiguous_create_is_a_transport_error_never_made_retryable() -> None
     err = AmbiguousResultError("boom", order_link_id="cv-1", retryable=True)
     assert isinstance(err, TransportError) and err.retryable is False
     assert err.order_link_id == "cv-1"
+
+
+def test_the_venues_outage_is_a_transport_level_error_never_a_rate_limit() -> None:
+    """#2863: 10016 and 10019 are the venue's outage (24 section 8.6, `SERVICE_UNAVAILABLE`):
+    retried as a transport fault is, never drained from the rate budget as a rate limit is."""
+    err = ServiceUnavailableError("boom", exchange_ret_code=10016)
+    assert isinstance(err, TransportError) and not isinstance(err, RateLimitError)
+    assert not isinstance(err, AmbiguousResultError)
 
 
 def test_instrument_filter_error_carries_filter_name() -> None:

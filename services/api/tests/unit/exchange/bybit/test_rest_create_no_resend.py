@@ -226,13 +226,16 @@ async def test_a_create_the_venue_refused_unprocessed_is_retried_under_the_same_
         ("/v5/position/trading-stop", EndpointClass.POSITION),
     ],
 )
-@pytest.mark.parametrize("outcome", ["read-timeout", "5xx", "10016"])
+@pytest.mark.parametrize(("outcome", "attempts"), [("read-timeout", 4), ("5xx", 4), ("10016", 3)])
 async def test_amend_cancel_and_trading_stop_keep_their_retry(
-    path: str, cls: EndpointClass, outcome: str
+    path: str, cls: EndpointClass, outcome: str, attempts: int
 ) -> None:
+    """A transport fault or a 5xx takes the client's 3 retries; the venue's outage takes 3
+    attempts in all, as 24 §8.6's row 10016 says (#2863)."""
     error, sent = await _post([LEFT[outcome]], path, cls)
 
-    assert error is not None and not isinstance(error, AmbiguousResultError) and len(sent) == 4
+    assert error is not None and not isinstance(error, AmbiguousResultError)
+    assert len(sent) == attempts
 
 
 @pytest.mark.parametrize("code", [110079, 999999])
@@ -263,8 +266,12 @@ async def test_amend_and_cancel_skip_the_create_only_answer_checks(path: str, ou
 
 
 @pytest.mark.parametrize("signed", [False, True], ids=["market-data", "account"])
-@pytest.mark.parametrize("outcome", ["read-timeout", "5xx", "10016", "10019"])
-async def test_reads_keep_their_retry_with_full_jitter(signed: bool, outcome: str) -> None:
+@pytest.mark.parametrize(
+    ("outcome", "attempts"), [("read-timeout", 4), ("5xx", 4), ("10016", 3), ("10019", 3)]
+)
+async def test_reads_keep_their_retry_with_full_jitter(
+    signed: bool, outcome: str, attempts: int
+) -> None:
     sent: Sent = []
     sleeps: list[float] = []
     async with _client([LEFT[outcome]], sent, sleeps) as client:
@@ -274,8 +281,9 @@ async def test_reads_keep_their_retry_with_full_jitter(signed: bool, outcome: st
             else:
                 await client.get_public("/v5/market/kline")
 
-    assert not isinstance(caught.value, AmbiguousResultError) and len(sent) == 4
-    assert all(2**n / 2 <= wait <= 2**n for n, wait in enumerate(sleeps, 1)) and len(sleeps) == 3
+    assert not isinstance(caught.value, AmbiguousResultError) and len(sent) == attempts
+    assert all(2**n / 2 <= wait <= 2**n for n, wait in enumerate(sleeps, 1))
+    assert len(sleeps) == attempts - 1
 
 
 @given(

@@ -13,7 +13,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from candleviewer.domain.klines import KlinePageRejected
-from candleviewer.exchange.base.errors import RateLimitError
+from candleviewer.exchange.base.errors import RateLimitError, ServiceUnavailableError
 from candleviewer.exchange.base.models import KlineEvent
 from candleviewer.ingestion.kline_backfill import (
     MAX_PAGES_PER_JOB,
@@ -94,6 +94,10 @@ def _rl() -> RateLimitError:
     return RateLimitError("rate limited", exchange_ret_code=10018)
 
 
+def _outage(code: int) -> ServiceUnavailableError:
+    return ServiceUnavailableError("service unavailable", exchange_ret_code=code)
+
+
 async def test_backfill_pages_newest_first_until_window_covered_with_progress() -> None:
     progress: list[tuple[float, str]] = []
     port = _Bybit(2_500)
@@ -133,6 +137,35 @@ async def test_backfill_rate_limit_backs_off_with_jitter_and_emits_loading_state
     # full jitter, random=0.5: 1 + (min(60, 2**n) - 1) * 0.5
     assert sleep.calls == [1.0, 1.5]
     assert statuses.count(STATUS_LOADING_OLDER) == 2
+
+
+@pytest.mark.parametrize("code", [10016, 10019])
+async def test_backfill_retries_the_venues_outage_as_a_transient_fault_never_a_rate_limit(
+    code: int,
+) -> None:
+    """#2863: after the client's attempts a 10016/10019 page is `SERVICE_UNAVAILABLE`, which the
+    backfill retries under `max_retries` as it does a 5xx, never on the rate-limit path: no
+    loading-older state, and nothing counts toward the rate-limit ceiling (SR-E12-08)."""
+    from candleviewer.ingestion.metrics import (
+        kline_backfill_pages_total,
+        kline_backfill_rate_limited_total,
+        symbol_label,
+    )
+
+    labels = {"symbol": symbol_label(SYM), "interval": IV}
+    counters = [
+        kline_backfill_pages_total.labels(**labels, result="retry"),
+        kline_backfill_pages_total.labels(**labels, result="rate_limited"),
+        kline_backfill_rate_limited_total.labels(**labels),
+    ]
+    before = [counter._value.get() for counter in counters]  # test-only read, as elsewhere
+    sleep, statuses = _Sleep(), []
+    port = _Bybit(5, errors=[_outage(code), _outage(code)])
+    svc = _svc(port, sleep=sleep, on_progress=lambda **kw: statuses.append(kw["status"]))
+    result = await svc.backfill_range(SYM, IV, Range(0, 5 * W))
+    assert not result.partial and len(result.fetched) == 5
+    assert STATUS_LOADING_OLDER not in statuses and len(port.calls) == 3
+    assert [c._value.get() - b for c, b in zip(counters, before, strict=True)] == [2, 0, 0]
 
 
 async def test_backfill_aborts_after_five_consecutive_rate_limits_keeping_partial() -> None:

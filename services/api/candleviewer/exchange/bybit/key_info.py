@@ -42,10 +42,10 @@ _VERDICTS: Final[Mapping[int, tuple[str, tuple[type[ExchangeError], ...]]]] = {
 }
 #: The verdict vocabulary. M13's `Refusal` holds exactly these values (a parity test pins it).
 VERDICT_REASONS: Final = frozenset(reason for reason, _ in _VERDICTS.values())
-#: The probe's own table (#3089; not `map_ret_code`, which folds 10005 and 10010 into an auth error
-#: and 10016 and 10019 into a rate-limit error): a refused call's exchange code -> its
-#: `KeyProbeError` name, `exchange_unknown` when unlisted. `probe_error` reads the HTTP 5xx row from
-#: the REST client's own error; the 403 and 429 rows wait for the client's HTTP status (#3281).
+#: The probe's own table (#3089; not `map_ret_code`, which folds 10005 and 10010 into an auth
+#: error): a refused call's exchange code -> its `KeyProbeError` name, `exchange_unknown` when
+#: unlisted. `probe_error` reads the HTTP 5xx row from the REST client's own error; the 403 and 429
+#: rows wait for the client's HTTP status (#3281).
 _PROBE_CODES: Final[Mapping[int, str]] = {
     10002: "clock_drift",
     10003: "auth_error",

@@ -32,6 +32,7 @@ from candleviewer.exchange.base.errors import (
     ExchangeError,
     RateBudgetExceededError,
     RateLimitError,
+    ServiceUnavailableError,
     TransportError,
     UnknownStateError,
 )
@@ -64,6 +65,9 @@ _REDACTED = "**redacted**"
 #: `10018` is the IP-level limit: hold every caller >=10 min (24-internal-schemas §8.6).
 _IP_RATE_LIMIT_CODE = 10018
 _IP_HOLD_S = 600.0
+#: 24 §8.6 row 10016, and 10019 by ruling 1 on #2877 (#2863): outside a create, retried with
+#: back-off within the lane's wait, and after 3 attempts the venue's outage is the call's answer.
+_SERVICE_UNAVAILABLE_ATTEMPTS = 3
 #: Cap on any venue-advertised wait (header is untrusted input).
 _MAX_RESET_WAIT_S = 900.0
 #: Bound on the injected re-measure hook so a hung server-time call cannot stall the retry.
@@ -647,6 +651,15 @@ class BybitRestClient:
                     raise error
                 budget.refresh()
                 continue
+
+            if isinstance(error, ServiceUnavailableError):
+                # The venue's own outage, not a rate limit (#2863): no bucket drain, and not
+                # counted as rate-limited.
+                bybit_rest_requests_total.labels(endpoint=path, result="service_unavailable").inc()
+                reached = error
+                if attempt < _SERVICE_UNAVAILABLE_ATTEMPTS and await self._retry(attempt, budget):
+                    continue
+                raise error
 
             if isinstance(error, RateLimitError):
                 bybit_rate_limited_total.labels(code=str(ret_code)).inc()

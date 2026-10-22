@@ -30,6 +30,7 @@ from candleviewer.exchange.base.errors import (
     InstrumentFilterError,
     RateBudgetExceededError,
     RateLimitError,
+    ServiceUnavailableError,
     TransportError,
     UnknownStateError,
 )
@@ -40,6 +41,7 @@ from candleviewer.exchange.base.models import (
 )
 from candleviewer.exchange.bybit import trading
 from candleviewer.exchange.bybit.config import EndpointClass
+from candleviewer.exchange.bybit.metrics import bybit_rate_limited_total, bybit_rest_requests_total
 from candleviewer.exchange.bybit.trading import BybitTradingPort
 from candleviewer.oms.order_link_resolution import Adopted, place_or_adopt
 from candleviewer.secrets import (
@@ -190,16 +192,86 @@ async def test_a_batch_answered_with_an_open_code_raises_naming_every_item(code:
     assert _bare(caught.value) and len(venue.sent) == 1
 
 
-@pytest.mark.parametrize("code", OPEN_CODES)
-async def test_the_same_code_on_a_cancel_is_the_venues_answer_an_ack(code: int) -> None:
-    """Only a create's outcome is left open by these codes: a cancel's is an ack, not raised.
+class DrainRecordingGovernor(RecordingGovernor):
+    """Records each server-side drain a rate-limit answer makes (`drain`)."""
 
-    Its `error_code` is the class `mapping.py` gives both codes, `RATE_LIMITED`, pinned there by
-    `test_mapping.py` before this port: a known divergence from 24 §8.6, whose rows for `10016`
-    and `10019` say `SERVICE_UNAVAILABLE` outside a create. This test pins the ack the port
-    answers today; it does not settle which of the two is right."""
-    ack = await make_port(Venue().on("/v5/order/cancel", _answered(code))).cancel_order(_cancel())
-    assert (ack.ok, ack.error_code, ack.exchange_ret_code) == (False, "RATE_LIMITED", code)
+    def __init__(self) -> None:
+        super().__init__()
+        self.drained: list[float] = []
+
+    def drain(self, uid: str, endpoint_class: EndpointClass, amount: float) -> None:
+        self.drained.append(amount)
+        super().drain(uid, endpoint_class, amount)
+
+
+#: The exits the venue's outage can answer, each in its lane's wait (an amend's lane is its
+#: request's; the protective one, `critical`, is the one that matters here, AC-31).
+OUTAGE_EXITS = ["cancel_order", "cancel_all", "amend_order", "set_trading_stop"]
+
+
+async def _exit(port: BybitTradingPort, name: str) -> object:
+    if name == "cancel_order":
+        return await port.cancel_order(_cancel())
+    if name == "cancel_all":
+        return await port.cancel_all(account(), "BTCUSDT")
+    if name == "amend_order":
+        amend = AmendOrderRequest(
+            account=account(),
+            symbol="BTCUSDT",
+            order_link_id=link(),
+            stop_loss=Decimal("58500"),
+            lane="critical",
+        )
+        return await port.amend_order(amend)
+    stop = TradingStopRequest(account=account(), symbol="BTCUSDT", stop_loss=Decimal("58000"))
+    return await port.set_trading_stop(stop)
+
+
+@pytest.mark.parametrize("name", OUTAGE_EXITS)
+@pytest.mark.parametrize("code", OPEN_CODES)
+async def test_the_same_code_on_an_exit_is_retried_then_raised_never_an_ack(
+    code: int, name: str
+) -> None:
+    """#2863: outside a create the code is the venue's outage, `SERVICE_UNAVAILABLE` (24 §8.6):
+    sent up to 3 times with back-off (all 3 here, as the sleeps are no-ops), never drained from
+    the rate budget nor counted as rate-limited, then raised bare. Whether the venue applied the
+    exit is open, so it is never answered as a rejection (24 §14.4)."""
+    path = trading.ENDPOINTS[name].path
+    counters = [
+        bybit_rate_limited_total.labels(code=str(code)),
+        bybit_rest_requests_total.labels(endpoint=path, result="service_unavailable"),
+        exchange_errors_total.labels(**{"class": "SERVICE_UNAVAILABLE"}),
+    ]
+    before = [counter._value.get() for counter in counters]  # test-only read, as elsewhere
+    venue = Venue().on(path, _answered(code))
+    governor = DrainRecordingGovernor()
+
+    with pytest.raises(ServiceUnavailableError) as caught:
+        await _exit(make_port(venue, governor=governor, max_retries=3), name)
+
+    error = caught.value
+    assert (error.code.value, error.retryable) == ("SERVICE_UNAVAILABLE", True)
+    assert (error.exchange_ret_code, error.exchange_ret_msg) == (code, f"code {code}")
+    assert _bare(error) and len(venue.sent) == 3 and governor.drained == []
+    assert [c._value.get() - b for c, b in zip(counters, before, strict=True)] == [0, 3, 3]
+
+
+@pytest.mark.parametrize("code", OPEN_CODES)
+async def test_an_exit_the_venue_serves_on_a_later_attempt_is_its_answer(code: int) -> None:
+    """The retry is the same request: a cancel served on the second attempt is accepted."""
+    venue = Venue().on("/v5/order/cancel", _answered(code), CANCEL)
+    ack = await make_port(venue, max_retries=3).cancel_order(_cancel())
+    assert (ack.ok, ack.exchange_order_id, len(venue.sent)) == (True, ORDER_ID, 2)
+    assert venue.bodies()[0] == venue.bodies()[1]
+
+
+@pytest.mark.parametrize("code", OPEN_CODES)
+async def test_a_read_meeting_the_venues_outage_raises_it_after_three_attempts(code: int) -> None:
+    venue = Venue().on("/v5/position/list", _answered(code))
+    with pytest.raises(ServiceUnavailableError) as caught:
+        await make_port(venue, max_retries=3).positions(account())
+    assert caught.value.exchange_ret_code == code and _bare(caught.value)
+    assert len(venue.sent) == 3
 
 
 async def test_a_creates_5xx_is_ambiguous_and_bare() -> None:
