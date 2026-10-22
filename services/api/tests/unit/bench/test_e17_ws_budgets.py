@@ -9,11 +9,14 @@ self-check).
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from bench.ingestion import HARNESS_VERSION as E08_HARNESS_VERSION
 from bench.ingestion import gate
@@ -325,6 +328,93 @@ def test_a_send_delay_under_a_millisecond_injects_none_so_the_skew_is_still_judg
 def test_a_single_hello_is_not_pluralised_in_the_skew_line() -> None:
     res = evaluate(summary(cv_clock_skew_ms=trend(6.0, n=1)))
     assert "(max over 1 hello of |raw|;" in res.invalid[0]
+
+
+# -- the guard reads the minimum-RTT hello, NTP's minimum-delay filter ------------------------
+
+#: Six hellos as (signed raw skew, round trip) ms on one host clock: five clean ones and one that
+#: queued (raw 40 on a 44 ms round trip). k6's trends of them are the ones profile A's run 3
+#: recorded on cv-bench-01 on 2026-10-22 (RTT p50 7.5 / max 44, raw max 40, corrected max 18).
+RUN3_HELLOS = [(2.0, 3.0), (3.0, 4.0), (4.0, 7.0), (5.0, 8.0), (5.0, 12.0), (40.0, 44.0)]
+
+
+def k6_trend(values: list[float]) -> dict[str, float]:
+    """`values` as a k6 trend summarises them: a percentile interpolates between two ranks."""
+    s = sorted(values)
+
+    def p(q: float) -> float:
+        i = q * (len(s) - 1)
+        return s[math.floor(i)] + (s[math.ceil(i)] - s[math.floor(i)]) * (i - math.floor(i))
+
+    return {"count": len(s), "p50": p(0.5), "p95": p(0.95), "p99": p(0.99), "max": s[-1]}
+
+
+def paired(hellos: list[tuple[float, float]], *, pairs: bool = True) -> dict[str, Any]:
+    """The summary k6 writes for `hellos`: the three pooled trends and, unless `pairs` is False (a
+    summary from before the client kept the pairs), each VU's hello in `hellos`."""
+    summ = summary(
+        cv_clock_skew_ms=k6_trend([abs(raw) for raw, _ in hellos]),
+        cv_clock_skew_corrected_ms=k6_trend([abs(raw - rtt / 2) for raw, rtt in hellos]),
+        cv_hello_rtt_ms=k6_trend([rtt for _, rtt in hellos]),
+    )
+    if pairs:
+        summ["hellos"] = [{"vu": i, "raw": r, "rtt": t} for i, (r, t) in enumerate(hellos, 1)]
+    return summ
+
+
+def test_run_3_voided_by_one_queued_hello_is_valid_on_its_minimum_rtt_hello() -> None:
+    """The max over the hellos read 18.0 ms, all of it the queued hello's wait; the fastest hello
+    (a 3 ms round trip) reads 0.5 ms. A summary without the pairs is still judged on the max."""
+    old = evaluate(paired(RUN3_HELLOS, pairs=False))
+    assert old.status == "INVALID" and old.invalid == [  # run 3's result.json, verbatim
+        "clock_skew: corrected max 18.0 ms against 5 ms (max over 6 hellos of |raw - RTT/2|; "
+        "raw max 40.0 ms; hello RTT p50 7.5 ms / max 44.0 ms)"
+    ]
+    assert old.as_dict()["clock_skew"]["skew_estimator"] == "max_over_hellos"
+    new = evaluate(paired(RUN3_HELLOS))
+    assert (new.status, new.invalid) == ("PASS", [])
+    assert new.clock_skew is not None and new.clock_skew.text == (
+        "corrected 0.5 ms against 5 ms (the minimum-RTT hello of 6: raw 2.0 ms, RTT 3.0 ms; "
+        "hello RTT p50 7.5 ms / max 44.0 ms)"
+    )
+    got = new.as_dict()["clock_skew"]
+    want = {"skew_estimator": "min_rtt_hello", "skew_ms": 0.5, "hello_raw": 2.0, "hello_rtt": 3.0}
+    assert {k: got[k] for k in want} == want  # result.json names the estimator and its hello
+
+
+def test_a_clock_10_ms_off_beyond_half_of_every_round_trip_is_still_invalid() -> None:
+    """A real offset is in every hello, the fastest one too, so the minimum-RTT hello reads it."""
+    res = evaluate(paired([(rtt / 2 + 10.0, rtt) for _, rtt in RUN3_HELLOS]))
+    assert res.status == "INVALID" and res.invalid == [
+        "clock_skew: corrected 10.0 ms against 5 ms (the minimum-RTT hello of 6: raw 11.5 ms, "
+        "RTT 3.0 ms; hello RTT p50 7.5 ms / max 44.0 ms)"
+    ]
+
+
+@pytest.mark.parametrize("step", [1, -1])
+def test_hellos_tied_on_the_minimum_rtt_give_the_smallest_corrected_skew_in_any_order(
+    step: int,
+) -> None:
+    """k6 times whole milliseconds, so two hellos can share the fastest round trip."""
+    skew = budgets.clock_skew(paired([(9.0, 4.0), (3.0, 4.0), (1.0, 9.0)][::step]))
+    assert skew is not None and (skew.skew_ms, skew.hello_raw, skew.hello_rtt) == (1.0, 3.0, 4.0)
+
+
+def test_a_send_delay_run_with_paired_hellos_still_reports_its_raw_max_unjudged() -> None:
+    res = evaluate(paired(RUN3_HELLOS), prof=PROFILE | {"send_delay_ms": 25})
+    assert res.status == "PASS" and res.as_dict()["clock_skew"]["skew_estimator"] == "raw_max"
+
+
+@settings(deadline=None, derandomize=True)
+@given(st.lists(st.tuples(st.floats(-1e4, 1e4), st.floats(0.0, 1e4)), min_size=1, max_size=12))
+def test_the_minimum_rtt_hello_never_reads_above_the_max_over_the_hellos(
+    hellos: list[tuple[float, float]],
+) -> None:
+    """So a run the max admitted, as it did runs 1 and 2 of A, the minimum-RTT hello admits too."""
+    new, old = (budgets.clock_skew(paired(hellos, pairs=p)) for p in (True, False))
+    assert new is not None and old is not None
+    assert (new.skew_estimator, old.skew_estimator) == ("min_rtt_hello", "max_over_hellos")
+    assert new.skew_ms <= old.skew_ms
 
 
 # -- a /metrics scrape that times out is a budget line ---------------------------------------

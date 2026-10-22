@@ -300,6 +300,42 @@ def test_the_js_skew_correction_returns_nothing_for_a_welcome_without_a_skew_or_
     assert json.loads(done.stdout) == [None, None, None]
 
 
+#: What node loads for `k6/metrics` so that `measure.js` runs outside k6: a metric keeps its name.
+K6_METRICS = (
+    "export class Trend { constructor(name) { this.name = name; } } "
+    "export class Counter extends Trend {}"
+)
+
+
+def test_the_js_summary_keeps_each_vus_hello_paired_and_out_of_the_pooled_trends() -> None:
+    """k6 pools a metric's samples over every VU, which loses which round trip went with which
+    skew, so each VU keeps its one hello in two trends of its own; the summary turns them into
+    `hellos`, the pairs the guard reads (a VU whose welcome was never timed has none)."""
+    hook = (
+        "export async function resolve(s, c, next) { return s === 'k6/metrics' ? { url: "
+        f"'data:text/javascript,' + encodeURIComponent({json.dumps(K6_METRICS)}), "
+        "shortCircuit: true } : next(s, c); }"
+    )
+    script = f"""
+    import {{ register }} from 'node:module';
+    register('data:text/javascript,' + encodeURIComponent({json.dumps(hook)}));
+    const {{ helloTrends, summarize }} = await import('{LOAD}/lib/measure.js');
+    const own = helloTrends(3);
+    const one = (v) => ({{ type: 'trend', values: {{ 'p(50)': v, max: v, count: 1 }} }});
+    const metrics = {{ cv_hello_rtt_ms: one(44) }};
+    for (const [vu, raw, rtt] of [[2, 40, 44], [1, -2, 3]]) {{
+      metrics[own[vu - 1].raw.name] = one(raw);
+      metrics[own[vu - 1].rtt.name] = one(rtt);
+    }}
+    console.log(JSON.stringify(summarize({{ metrics }}, {{}})));
+    """
+    done = node("--input-type=module", "-e", script)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert list(out["trends"]) == ["cv_hello_rtt_ms"]  # the pooled trend stays, the pairs move
+    assert out["hellos"] == [{"vu": 1, "raw": -2, "rtt": 3}, {"vu": 2, "raw": 40, "rtt": 44}]
+
+
 # -- the egress guard and the send delay ----------------------------------------------
 
 
@@ -646,9 +682,28 @@ def test_the_report_shows_the_raw_and_corrected_skew_the_hello_rtt_and_same_host
     run = hello_skew_run(tmp_path / "run", same_host=True)
     assert runner.finish(run, 0.10) == 0  # 13 ms raw is over the 5 ms guard, 3 ms corrected is not
     assert (
-        "- Clock skew at the hello (same_host true): corrected max 3.0 ms against 5 ms "
-        "(max over 6 hellos of |raw - RTT/2|; raw max 13.0 ms; hello RTT p50 20.0 ms / max 33.0 ms)"
+        "- Clock skew at the hello (same_host true, skew_estimator max_over_hellos): corrected max "
+        "3.0 ms against 5 ms (max over 6 hellos of |raw - RTT/2|; raw max 13.0 ms; hello RTT p50 "
+        "20.0 ms / max 33.0 ms)"
     ) in (run / "report.md").read_text(encoding="utf-8")
+
+
+def test_a_run_with_paired_hellos_reports_its_minimum_rtt_hello_and_names_the_estimator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
+    run = hello_skew_run(tmp_path / "run", same_host=True)
+    summ = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    summ["hellos"] = [{"vu": 1, "raw": 13.0, "rtt": 33.0}, {"vu": 2, "raw": 9.0, "rtt": 17.0}]
+    (run / "summary.json").write_text(json.dumps(summ), encoding="utf-8")
+    assert runner.finish(run, 0.10) == 0
+    assert (  # the pairs pick the hello; the pooled trend gives the round trips' p50 and max
+        "- Clock skew at the hello (same_host true, skew_estimator min_rtt_hello): corrected 0.5 "
+        "ms against 5 ms (the minimum-RTT hello of 2: raw 9.0 ms, RTT 17.0 ms; hello RTT p50 20.0 "
+        "ms / max 33.0 ms)"
+    ) in (run / "report.md").read_text(encoding="utf-8")
+    skew = json.loads((run / "result.json").read_text(encoding="utf-8"))["result"]["clock_skew"]
+    assert skew["skew_estimator"] == "min_rtt_hello" and skew["hello_rtt"] == 17.0
 
 
 def test_result_json_keeps_the_skew_the_rtt_and_same_host_in_the_run_metadata(
@@ -660,13 +715,16 @@ def test_result_json_keeps_the_skew_the_rtt_and_same_host_in_the_run_metadata(
     body = json.loads((run / "result.json").read_text(encoding="utf-8"))
     assert body["facts"]["same_host"] is True
     assert body["result"]["clock_skew"] == {
-        "max_ms": 3.0,
+        "skew_ms": 3.0,
+        "skew_estimator": "max_over_hellos",  # its summary has no pairs: written before them
         "raw": 13.0,
         "rtt_p50": 20.0,
         "rtt_max": 33.0,
         "hellos": 6,
         "rtt_corrected": True,
         "send_delay_ms": 0.0,
+        "hello_raw": None,
+        "hello_rtt": None,
         "judged": True,
     }
 
@@ -678,8 +736,8 @@ def test_a_run_saved_before_the_correction_is_reported_as_raw_with_no_host_recor
     run = make_run(tmp_path / "old")  # only the raw skew in its summary, no same_host in run.json
     assert runner.finish(run, 0.10) == 0
     assert (
-        "- Clock skew at the hello (same_host not recorded): raw max 1.0 ms against 5 ms "
-        "(max over 100 hellos of |raw|; not RTT-corrected: the summary has no "
+        "- Clock skew at the hello (same_host not recorded, skew_estimator raw_max): raw max 1.0 "
+        "ms against 5 ms (max over 100 hellos of |raw|; not RTT-corrected: the summary has no "
         "cv_clock_skew_corrected_ms)"
     ) in (run / "report.md").read_text(encoding="utf-8")
 
