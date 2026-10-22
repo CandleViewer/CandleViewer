@@ -75,6 +75,8 @@ export default tseslint.config(
           "sessionStorage",
           "process",
           "Buffer",
+          "crypto", // the hash is src/sha256.ts: WebCrypto's digest is async
+          "TextEncoder", // src/sha256.ts writes its own UTF-8
           "globalThis",
           "self",
         ].map((name) => ({ name, message: PURE })),
