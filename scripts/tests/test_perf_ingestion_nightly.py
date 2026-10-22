@@ -28,6 +28,8 @@ with open(os.environ["UV_LOG"], "a", encoding="utf-8") as fh:
 """
 #: Scenario files no dispatch may name: an option, and a name too long for the pattern.
 DECOYS = ("-h", "--record-baseline", "a" * 65)
+#: Names with a letter outside ASCII (ß; a fullwidth "a"), which [a-z] matches in some locales.
+NOT_ASCII = ("soak_barß", "\uff41ll")
 
 
 def _doc() -> dict[Any, Any]:
@@ -66,6 +68,9 @@ def test_unbuffered_output_and_the_scenario_input_through_env() -> None:
         "pack"
     )  # the check runs first, and must pass
     assert "continue-on-error" not in _step("scenario")
+    # the check reads scenarios/ from the checkout's root: no working directory moves it
+    assert "working-directory" not in _step("scenario") and "defaults" not in _job()
+    assert "defaults" not in _doc()
     upload = next(s for s in _job()["steps"] if "upload-artifact@" in s.get("uses", ""))
     assert upload["if"] == "always()"  # a cancelled pack still uploads what it wrote
     # ... from where the pack writes it: services/api + --out-dir bench/reports
@@ -83,7 +88,7 @@ def _pack(
     too long, so that only the name pattern refuses those."""
     scenarios = tmp_path / "services" / "api" / "bench" / "ingestion" / "scenarios"
     scenarios.mkdir(parents=True)
-    for name in ("soak_bars", "soak_bars_frozen", *DECOYS):
+    for name in ("soak_bars", "soak_bars_frozen", *DECOYS, *NOT_ASCII):
         (scenarios / f"{name}.json").write_text("{}", encoding="utf-8")
     bash = shutil.which("bash") or ""
     if not bash:  # CI runs these fail-closed proofs
@@ -147,15 +152,18 @@ def test_anything_but_a_name_is_refused_before_the_runner_starts(
     assert code == 2 and calls == []
 
 
-@pytest.mark.parametrize("scenario", ["soak_barß", "\uff41ll"])  # ß; a fullwidth "a"
+@pytest.mark.parametrize("scenario", NOT_ASCII)
 def test_a_letter_outside_ascii_is_refused_whatever_the_runners_locale(
     tmp_path: Path, scenario: str
 ) -> None:
-    # The proof needs a locale where [a-z] matches such a letter; skip, visibly, without one.
+    # The proof needs a locale where [a-z] matches such a letter (each name has a scenario
+    # file, so only the C-locale pattern can refuse it); without one, skip visibly, or fail in CI.
     probe = 'export LC_ALL=en_US.UTF-8; [[ "ß" =~ ^[a-z]$ ]]'
     if subprocess.run(
         [shutil.which("bash") or "bash", "-c", probe], check=False
     ).returncode:
-        pytest.skip("no en_US.UTF-8 locale here, so [a-z] cannot match ß")
+        (pytest.fail if os.environ.get("CI") else pytest.skip)(
+            "no en_US.UTF-8 locale here"
+        )
     code, calls = _pack(tmp_path, scenario, locale="en_US.UTF-8")  # matches [a-z] there
     assert code == 2 and calls == []
