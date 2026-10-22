@@ -159,8 +159,8 @@ def test_no_contract_text_keys_the_native_stop_on_intent_or_the_profile_flag() -
     texts = list(map(_words, _strings(_SPEC)))
     keyed = re.compile(r"\bentry[- ](?:intents?|type)\b")
     assert [text for text in texts if keyed.search(text)] == []
-    # The profile flag is named only where the contract says it is a constant nobody reads.
-    flag = [text for text in texts if "require_native_stop" in text]
+    # The profile flag is named only as a constant nobody reads, or bare as `errors[].field` (#906).
+    flag = [t for t in texts if t != "require_native_stop" and "require_native_stop" in t]
     assert flag  # the profile still documents its constant
     allowed = ("cannot be set to `false`", "The order path never reads it")
     assert [text for text in flag if not any(phrase in text for phrase in allowed)] == []

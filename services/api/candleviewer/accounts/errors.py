@@ -42,7 +42,7 @@ class AccountRuleError(AccountsError):
 
 
 class AccountVersionConflictError(AccountsError):
-    """If-Match token is stale; problem code `precondition_failed`."""
+    """If-Match token is stale; problem code `version_conflict` (412)."""
 
 
 class ProfileUnavailableError(AccountsError):

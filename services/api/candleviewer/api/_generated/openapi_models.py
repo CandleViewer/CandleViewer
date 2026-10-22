@@ -80,6 +80,22 @@ class Error(BaseModel):
     field: str | None = None
     rule: str | None = None
     message: str | None = None
+    symbol: Annotated[
+        str | None,
+        Field(
+            description="The instrument whose exchange limit the value breaks, for a rule that checks one.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ] = None
+    limit: Annotated[
+        str | None,
+        Field(
+            description="The limit the value breaks, in the member's own unit.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
 
 
 class Exchange(BaseModel):
@@ -594,7 +610,12 @@ class UpdateExchangeAccountRequest(BaseModel):
             description="`false` disables the account; with open exposure it needs the `open_exposure` query choice."
         ),
     ] = None
-    active_profile_id: UUID | None = None
+    active_profile_id: Annotated[
+        UUID | None,
+        Field(
+            description="Not honoured: an account's default profile moves only through the default binding's own operation (#906 slice 0d); this member is dropped at E27's next contract touch (#895).\n"
+        ),
+    ] = None
     position_mode: Literal["one_way", "hedge"] | None = None
     margin_mode: Literal["cross", "isolated", "portfolio"] | None = None
 
@@ -1060,7 +1081,7 @@ class AccountProfileInput(BaseModel):
     is_default: Annotated[
         bool | None,
         Field(
-            description="The account's default, its ceiling (decision D7). A create is never the default; a replace may change it only from `false` to `true`, changing no other member (`default_moves_alone`).\n"
+            description="The account's default, its ceiling (decision D7). A profile write never changes it: the default binding moves only through its own operation (#906 slice 0d), so `true` on a create, or on a replace a value other than the stored one, is refused (`default_has_own_operation`).\n"
         ),
     ] = False
     enabled: Annotated[bool | None, Field(description="A disabled profile sizes nothing.")] = True
