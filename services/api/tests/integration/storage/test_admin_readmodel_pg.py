@@ -36,7 +36,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     sqlstate_of,
 )
-from tests.integration._refused import assert_no_row_values, rendered, server_text
+from tests.integration._refused import assert_no_row_values, rendered_graph, server_text
 
 pytestmark = pytest.mark.integration
 
@@ -221,8 +221,10 @@ async def test_a_read_is_cut_near_read_timeout_and_leaves_the_pooled_default(
     with server_text(relational) as seen, pytest.raises(DBAPIError) as raised:
         await SqlAlchemyAdminCounts(relational, env="demo")._row(_SLEEP)
     assert sqlstate_of(raised.value) == "57014"  # statement timeout; its text is stripped (#2748)
+    assert (raised.value.__cause__, raised.value.__suppress_context__) == (None, True)
+    assert "pg_sleep" in "\n".join(seen.statements)  # control: the engine had the statement
+    assert "pg_sleep" not in rendered_graph(raised.value)  # which did not leave
     assert_no_row_values(raised.value, seen, "canceling statement")  # the server's message
-    assert "pg_sleep" not in rendered(raised.value)  # nor the statement it ran
     assert time.monotonic() - started < 2.5
     assert repo.READ_TIMEOUT == "1s" and await _pooled(relational) == before
     assert read["pid"] == before[0]  # one pooled backend throughout: the check is not vacuous

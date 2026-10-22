@@ -49,7 +49,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     sqlstate_of,
 )
-from tests.integration._refused import rendered
+from tests.integration._refused import assert_no_row_values, server_text
 
 pytestmark = pytest.mark.integration
 
@@ -64,6 +64,7 @@ _KINDS = {  # kind -> (role, status, owner role already expired)
     "expired": ("owner", "active", True),
 }
 _UNTOUCHED, _RESET = (2, 2, 1, 0), (0, 0, 0, 1)  # `_state` before / after a reset
+_CRASH = "injected crash"  # the RAISE's message below, planted by name (C-12.6, #2748)
 # A user and role, a confirmed and a pending TOTP method, two live sessions, one code.
 _SEED = sa.text(
     "WITH u AS (INSERT INTO users (id, email, username, password_hash, status) VALUES "
@@ -223,15 +224,18 @@ async def test_failed_reset_changes_zero_rows(pg_dsn: str) -> None:
                     "FOR EACH ROW EXECUTE FUNCTION bg_crash()"
                 )
             )
+        rel = SqlAlchemyRelationalRepository(pg_dsn, "breakglass-refused")  # for `server_text`
         try:  # the crash hits the last statement, after every revoke ran
-            with pytest.raises(DBAPIError) as raised:
-                await _reset(store, uid, code)
+            with server_text(rel) as seen, pytest.raises(DBAPIError) as raised:
+                await _reset(SqlAlchemyBreakGlassRepository(rel), uid, code)
             assert sqlstate_of(raised.value) == "P0001"  # the injected RAISE, text stripped (#2748)
-            assert "injected crash" not in rendered(raised.value)  # the RAISE's message (C-12.6)
+            assert (raised.value.__cause__, raised.value.__suppress_context__) == (None, True)
+            assert_no_row_values(raised.value, seen, _CRASH)  # the RAISE's message
         finally:
             async with engine.begin() as conn:
                 await conn.execute(sa.text("DROP TRIGGER bg_crash ON system_events"))
                 await conn.execute(sa.text("DROP FUNCTION bg_crash()"))
+            await rel.dispose()
         assert await _state(engine, uid) == _UNTOUCHED  # the code was not consumed either
         assert not isinstance(await _reset(store, uid, code), str)  # a re-run succeeds
         assert await _state(engine, uid) == _RESET

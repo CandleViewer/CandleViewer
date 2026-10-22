@@ -17,7 +17,12 @@ from candleviewer.storage.repositories.alerts import AlertNameTakenError, AlertR
 from candleviewer.storage.repositories.alerts_sqlalchemy import SqlAlchemyAlertRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from tests.integration import _refused
-from tests.integration._refused import assert_no_row_values, seed_user, server_text
+from tests.integration._refused import (
+    assert_no_markers,
+    assert_no_row_values,
+    seed_user,
+    server_text,
+)
 
 pytestmark = pytest.mark.integration
 pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16 at head
@@ -28,8 +33,8 @@ _PLANTED = {"webhook_url_enc": _URL, "webhook_secret_enc": _SECRET}
 _ALERT: dict[str, Any] = {"condition_ir": {"conditions": {}}, "condition_hash": "a" * 64}
 _TYPED = (None, True)  # `(__cause__, __suppress_context__)` of an error raised `from None`
 _UPDATABLE = (
-    "name condition_ir condition_hash trigger_mode cooldown_seconds "
-    "expires_at severity channels message_template"
+    "name condition_ir condition_hash trigger_mode cooldown_seconds expires_at severity channels "
+    "message_template symbol scope_account_id enabled"
 ).split()  # what `update` takes besides the id and `if_match`
 
 
@@ -93,13 +98,14 @@ async def test_a_soft_deleted_name_is_free_to_reuse(
 
 
 async def test_a_22_character_symbol_is_refused_by_the_symbol_domain(
-    repo: SqlAlchemyAlertRepository, owner: str
+    rel: SqlAlchemyRelationalRepository, repo: SqlAlchemyAlertRepository, owner: str
 ) -> None:
-    # A domain CHECK has no DETAIL, so there is no value to plant: the facts only.
-    with pytest.raises(StorageConstraintViolated) as err:
+    # A domain CHECK has no DETAIL, so there is no value to plant: the facts, and no marker.
+    with server_text(rel) as seen, pytest.raises(StorageConstraintViolated) as err:
         await _create(repo, owner, "Breakout", symbol="A" * 22)
     assert (err.value.sqlstate, err.value.constraint) == ("23514", "symbol_code_check")
     assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
+    assert_no_markers(err.value, seen)  # the statement's text too, which has no value to plant
 
 
 async def test_a_cooldown_over_a_planted_ciphertext_is_refused_on_create(

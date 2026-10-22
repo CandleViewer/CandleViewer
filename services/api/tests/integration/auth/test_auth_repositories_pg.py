@@ -44,6 +44,7 @@ _NOW = datetime.now(UTC).replace(microsecond=0)
 _USER = {"email": "secret-mail@x.io", "display_name": "SECRET-NOTE name"}
 _PLAIN = "plain-SECRET-HASH"
 _TOKEN, _PURPOSE = "SECRET-MFA-TOKEN", "SECRET-purpose"
+_TYPED = (None, True)  # `(__cause__, __suppress_context__)` of a stripped driver error
 
 
 @pytest.fixture(scope="module")
@@ -281,6 +282,7 @@ async def test_a_rehash_to_a_non_argon_hash_leaves_without_the_users_row(
     with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
         await users.rehash_password(uid, password_hash=_PLAIN, algo_params={"m": 1})
     assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "users_pwd_argon")
+    assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
     assert_no_row_values(err.value, seen, _PLAIN, *_USER.values())  # untouched columns too
 
 
@@ -292,4 +294,5 @@ async def test_a_challenge_of_an_unknown_purpose_leaves_without_its_nonce(
     with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
         await mfa.create_challenge(uid, purpose=_PURPOSE, mfa_token_hash=_TOKEN, expires_at=exp)
     assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "mfa_ch_purpose")
+    assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
     assert_no_row_values(err.value, seen, _PURPOSE, _TOKEN.encode())  # the nonce, as `\x<hex>`

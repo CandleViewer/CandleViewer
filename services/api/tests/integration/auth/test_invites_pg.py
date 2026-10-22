@@ -41,6 +41,7 @@ PW = "pending-hash"
 # and the S hash `users_pwd_argon` refuses.
 _USER = {"email": "secret-mail@x.io", "display_name": "SECRET-NOTE name"}
 _PLAIN = "plain-SECRET-HASH"
+_TYPED = (None, True)  # `(__cause__, __suppress_context__)` of a stripped driver error
 _COUNT = sa.text(
     "SELECT (SELECT count(*) FROM users WHERE username = :u) + "
     "(SELECT count(*) FROM user_invites WHERE token_hash = :h)"
@@ -236,6 +237,7 @@ async def test_an_activation_with_a_non_argon_hash_leaves_without_the_users_row(
                 uid, password_hash=_PLAIN, algo_params={"m": 1}, now=datetime.now(UTC)
             )
         assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "users_pwd_argon")
+        assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
         assert_no_row_values(err.value, seen, _PLAIN, *_USER.values())
     finally:
         await rel.dispose()

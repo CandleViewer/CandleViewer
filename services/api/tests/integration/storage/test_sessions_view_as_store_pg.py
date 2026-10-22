@@ -334,6 +334,7 @@ async def test_an_idle_timeout_out_of_range_leaves_without_the_session_row(
         await store.create_session(row)
     facts = (sqlstate_of(err.value), constraint_of(err.value))
     assert facts == ("23514", "sessions_idle_timeout_range")
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
     assert_no_row_values(err.value, seen, _IP, _UA, _DEVICE, row.refresh_token_hash)
 
 
