@@ -5,20 +5,24 @@ Thin HTTP adapter over `rules.manager.RulesManager` (`22-api-openapi.yaml`
 `actor_resolver` returns the caller's `Actor` (permissions, granted accounts, owner flag,
 fresh step-up) or `None` (401). `rules:read` gates reads, `rules:write` gates writes;
 live arming additionally needs `rules:arm_live` + a fresh one-shot step-up, enforced by the
-manager's synchronous arming check (statecharts record, code enforces - C-2.21).
+manager's synchronous arming check (statecharts record, code enforces - C-2.21). Bodies are read
+under `MAX_RULE_BODY_BYTES` (413 `payload_too_large`) before anything parses them.
 """
 
 from __future__ import annotations
 
 import inspect
+import json
+import re
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from candleviewer.rules.compiler.common import MAX_ITEMS
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.ir.models import RuleScope
 from candleviewer.rules.manager import Actor, RuleError, RulesManager
@@ -26,6 +30,12 @@ from candleviewer.rules.scope import ScopeResolver
 
 _READ = "rules:read"
 _WRITE = "rules:write"
+#: The body ceiling of the rule write routes, from the document bounds every save applies
+#: (`check_bounds`): `MAX_ITEMS` values at 100 bytes each. The densest corpus rule takes a fifth
+#: of that per value as compact JSON and under a third indented, so a rule at the bounds fits.
+MAX_RULE_BODY_BYTES: Final = MAX_ITEMS * 100
+_LENGTH: Final = re.compile(r"[0-9]{1,19}")  # a usable `Content-Length`, as `api/drawings.py`
+_TOO_LARGE: Final = "Request body or batch exceeds the operation's size ceiling"
 
 
 def _problem(status: int, code: str, title: str, detail: str, **extra: Any) -> JSONResponse:
@@ -61,6 +71,25 @@ def _doc(body: dict[str, Any]) -> dict[str, Any] | None:
     if "scope" not in doc and isinstance(body.get("scope"), str):
         doc["scope"] = {"level": body["scope"]}
     return doc
+
+
+def _declared_length(raw: str) -> int | None:
+    """`Content-Length` when it is 1..19 ASCII digits, else None (only the streamed count then)."""
+    return int(raw) if _LENGTH.fullmatch(raw) else None
+
+
+async def _read_capped(request: Request, cap: int) -> bytes | None:
+    """The raw body, or None past `cap` bytes, before it is buffered whole: a declared length over
+    `cap` is refused unread and a stream stops one chunk past it, as in `api/drawings.py`."""
+    declared = _declared_length(request.headers.get("content-length", ""))
+    if declared is not None and declared > cap:
+        return None
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > cap:
+            return None
+    return bytes(raw)
 
 
 def make_rules_crud_router(
@@ -113,9 +142,14 @@ def make_rules_crud_router(
             return _problem(503, "service_unavailable", "Unavailable", "rule engine unavailable")
         return actor, mgr
 
-    async def _body(request: Request) -> dict[str, Any] | None:
+    async def _body(request: Request) -> dict[str, Any] | JSONResponse | None:
+        """The JSON object sent (None for anything else), or the 413 past the ceiling."""
+        raw = await _read_capped(request, MAX_RULE_BODY_BYTES)
+        if raw is None:
+            detail = f"The request body exceeds {MAX_RULE_BODY_BYTES} bytes."
+            return _problem(413, "payload_too_large", _TOO_LARGE, detail)
         try:
-            body = await request.json()
+            body = json.loads(raw)
         except ValueError:
             return None
         return body if isinstance(body, dict) else None
@@ -154,6 +188,8 @@ def make_rules_crud_router(
             return g
         actor, mgr = g
         body = await _body(request)
+        if isinstance(body, JSONResponse):
+            return body
         doc = _doc(body) if body is not None else None
         if body is None or doc is None:
             return _bad("body needs an 'ir' object")
@@ -183,6 +219,8 @@ def make_rules_crud_router(
             return g
         actor, mgr = g
         body = await _body(request)
+        if isinstance(body, JSONResponse):
+            return body
         doc = _doc(body) if body is not None else None
         raw = request.headers.get("if-match", "").strip().strip('"')
         if raw == "" and body is not None:
@@ -248,6 +286,8 @@ def make_rules_crud_router(
             return g
         actor, mgr = g
         body = await _body(request)
+        if isinstance(body, JSONResponse):
+            return body
         if body is None or not isinstance(body.get("version_id"), str):
             return _bad("body needs 'version_id'")
         try:
@@ -273,6 +313,8 @@ def make_rules_crud_router(
             return g
         actor, mgr = g
         body = await _body(request)
+        if isinstance(body, JSONResponse):
+            return body
         if (
             body is None
             or not isinstance(body.get("mode"), str)
@@ -306,4 +348,4 @@ def make_rules_crud_router(
     return router
 
 
-__all__ = ["make_rules_crud_router"]
+__all__ = ["MAX_RULE_BODY_BYTES", "make_rules_crud_router"]
