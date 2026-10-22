@@ -18419,6 +18419,7 @@ export interface operations {
         };
       };
       403: components["responses"]["Forbidden"];
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["RuleIrInvalid"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -18485,6 +18486,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       412: components["responses"]["PreconditionFailed"];
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["RuleIrInvalid"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -18560,6 +18562,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      413: components["responses"]["PayloadTooLarge"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -18620,6 +18623,7 @@ export interface operations {
         };
       };
       403: components["responses"]["CsrfTokenInvalid"];
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["RuleIrInvalid"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -18665,6 +18669,7 @@ export interface operations {
       400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -18926,6 +18931,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      413: components["responses"]["PayloadTooLarge"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

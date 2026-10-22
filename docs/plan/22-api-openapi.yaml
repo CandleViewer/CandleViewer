@@ -7017,6 +7017,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Rule" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -7074,6 +7075,7 @@ paths:
               schema: { $ref: "#/components/schemas/RuleDetail" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
@@ -7182,6 +7184,7 @@ paths:
               schema: { $ref: "#/components/schemas/RuleDetail" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/validate:
@@ -7246,6 +7249,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /rules/{ruleId}/simulate:
@@ -7378,6 +7382,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -12696,6 +12701,7 @@ paths:
                             model: {}
                             counterpart: {}
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
