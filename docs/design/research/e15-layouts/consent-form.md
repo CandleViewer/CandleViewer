@@ -1,7 +1,7 @@
 # E15-D01 — Consent form: layout and workspace research session
 
 Read aloud and signed before any recording starts (discussion guide §2). The participant keeps a copy; the signed form
-is kept on the private research drive, apart from the notes, and is the only document that links a name to a session id.
+is kept on a private, access-controlled drive the owner designates before the first session (OQ-2), apart from the notes, and is the only document that links a name to a session id.
 
 **What the session is.** Up to about 65 minutes: a 45-minute interview over your own trading screen, then about 20
 minutes with six sync pictures and twelve preset cards. It is about how you arrange, link and switch your trading
@@ -14,7 +14,7 @@ the six sync pictures and your card sort. Nothing else: no camera and no keystro
 balance or position view the session does not need. If one appears anyway, the facilitator says "Pausing the recording"
 and stops at once, and that part is cut before the recording is stored.
 
-**Where it is kept.** On the private research drive, readable only by the research team: the owner and the named
+**Where it is kept.** On a private, access-controlled drive the owner designates before the first session (OQ-2), readable only by the research team: the owner and the named
 facilitator and note-taker. Never in the code repository, the design tool, the issue tracker or a chat. A second
 analysis pass may use an AI tool on de-identified notes only, never on the recording.
 
