@@ -12,7 +12,6 @@ import hashlib
 import importlib.util
 import itertools
 import random
-import re
 import sys
 import time
 import tracemalloc
@@ -1061,19 +1060,73 @@ def test_a_chunk_of_many_block_openers_is_read_in_linear_memory(tmp_path: Path) 
     assert peak < 16 * 2**20
 
 
-#: The continuation pattern the linear scan replaced (CodeQL py/redos), kept as its oracle.
-_BACKTRACKING_CONTINUED = re.compile(r"(?:\s|--[^\n\r]*|/\*.*?\*/)*\|\|", re.DOTALL)
+def _reached_continuation(text: str, pos: int) -> bool:
+    """`_continued`'s answer by brute force, from the replaced pattern's three rules: from
+    a reached position, whitespace reaches the next; `--` every position up to its line's
+    end; `/*` the position past every `*/` after it. A reached `||` continues."""
+    reached: set[int] = set()
+    todo = [pos]
+    while todo:
+        at = todo.pop()
+        if at in reached:
+            continue
+        reached.add(at)
+        if text.startswith("||", at):
+            return True
+        if at < len(text) and text[at].isspace():
+            todo.append(at + 1)
+        if text.startswith("--", at):
+            line = at + 2
+            while line < len(text) and text[line] not in "\n\r":
+                line += 1
+            todo += range(at + 2, line + 1)
+        if text.startswith("/*", at):
+            todo += [
+                j + 2 for j in range(at + 2, len(text) - 1) if text.startswith("*/", j)
+            ]
+    return False
 
 
-def test_the_continuation_scan_answers_as_the_pattern_it_replaced() -> None:
-    """Every short string over the characters either reads, at every position (a seeded
-    sample): the scan changes the time, never the answer."""
+#: The characters the scan treats apart, Unicode spaces, and lookalike non-spaces.
+_CONTINUATION_CHARS = "-/*|x' \n\r\t\x0b\x0c\x1c\x85\xa0\u2028\u3000\u200b\ufeff"
+
+
+def test_the_continuation_scan_answers_as_the_patterns_rules_read_it() -> None:
+    """A seeded sample of strings, each at three positions: the scan reaches what the
+    rules reach. The commit that brought the scan in compared it with the replaced
+    pattern itself; the pattern is not kept, as CodeQL would flag it here too."""
     rng = random.Random(4061)
     for _ in range(20_000):
-        text = "".join(rng.choice("-/*| \n\rax'") for _ in range(rng.randint(0, 12)))
-        pos = rng.randint(0, len(text))
-        expected = _BACKTRACKING_CONTINUED.match(text, pos) is not None
-        assert migration_lint._continued(text, pos) is expected, (text, pos)
+        text = "".join(
+            rng.choice(_CONTINUATION_CHARS) for _ in range(rng.randint(0, 16))
+        )
+        for pos in {0, len(text), rng.randint(0, len(text))}:
+            expected = _reached_continuation(text, pos)
+            assert migration_lint._continued(text, pos) is expected, (text, pos)
+
+
+@pytest.mark.parametrize(
+    ("text", "pos", "continued"),
+    [
+        ("/**/||", 0, True),
+        ("/**//*/||", 0, True),  # a later `*/` closes an earlier `/*` too
+        ("\x1c||", 0, True),  # Unicode whitespace
+        ("\u2028||", 0, True),
+        ("--\n||", 0, True),
+        ("-- x ||", 0, True),  # a `--` reaches its whole line
+        ("/*/||", 0, False),  # `/*/` closes nothing
+        ("--\r-||", 0, False),  # `\r` ends a line
+        ("\u200b||", 0, False),  # not whitespace
+        ("/* ||", 0, False),  # an unclosed `/*`
+        (" x ||", 0, False),
+        ("x||", 3, False),  # at the end
+    ],
+)
+def test_the_continuation_scan_keeps_the_replaced_patterns_answers(
+    text: str, pos: int, continued: bool
+) -> None:
+    """Each case is the replaced pattern's answer, checked against it before it went."""
+    assert migration_lint._continued(text, pos) is continued
 
 
 @pytest.mark.parametrize(
@@ -1083,11 +1136,21 @@ def test_the_continuation_scan_answers_as_the_pattern_it_replaced() -> None:
 )
 def test_a_run_of_comment_openers_is_read_in_linear_time(run: str, then: str) -> None:
     """The two shapes the replaced pattern took exponential time on, at 100,000
-    characters: one pass, well inside the bound (a quadratic read would not be). A
-    `||` after the run continues once its comment is over."""
+    characters: one pass, well inside the bound (a quadratic read would not be). The
+    `||` after the run is reached: through the `*/` that closes the block comments, or
+    in the line the dashes run on."""
     started = time.perf_counter()
     assert migration_lint._continued(run + "x", 0) is False
     assert migration_lint._continued(run + then, 0) is True
+    assert time.perf_counter() - started < 2.0
+
+
+def test_a_statement_of_many_literals_is_read_in_linear_time() -> None:
+    """Each literal's scan stops where nothing more can be reached, so 20,000 literals
+    in one statement are read in one pass, not one pass each."""
+    statement = "SELECT " + ", ".join(["'SELECT 1'"] * 20_000)
+    started = time.perf_counter()
+    assert len(migration_lint._nested_sql(statement)) == 20_000
     assert time.perf_counter() - started < 2.0
 
 

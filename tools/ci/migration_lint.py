@@ -481,38 +481,44 @@ def _sql_split(sql: str) -> list[str]:
 # routine's `AS '...'` body run it whatever it opens with (a `;`, a comment, a
 # label). A C function's `AS 'obj_file', 'link_symbol'` reads as harmless words.
 _RUNS_ITS_LITERAL = frozenset({"EXECUTE", "DO", "FORMAT", "AS"})
-# A literal that `||` continues is a piece of a bigger string (`'UPDATE' || ' t'`).
 _LINE_END_RE = re.compile(r"[\n\r]")
 
 
 def _continued(text: str, pos: int) -> bool:
     """Whether `||` follows `pos` past a run of whitespace, `--` comments and `/* */`
-    comments, as the backtracking pattern this replaces read it: a reached `--`
-    reaches every position up to its line's end, and a reached `/*` the position past
-    every `*/` after it. One pass over `text`, in linear time: the pattern backtracked
-    exponentially on a run of `--` or of `*//*` (CodeQL py/redos). A `--` inside the
-    reached part of a line ends where that line does, so each line end is searched
-    for once."""
+    comments: a literal that `||` continues is a piece of a bigger string
+    (`'UPDATE' || ' t'`). It answers as the backtracking pattern this replaces read
+    it: a reached `--` reaches every position up to its line's end, and a reached `/*`
+    the position past every `*/` after it. One pass, in linear time (the pattern
+    backtracked exponentially on a run of `--` or of `*//*`, CodeQL py/redos):
+    - a position reaches only the next one or the one after (`ahead` holds three);
+    - a `--` inside the reached part of a line ends where that line does, so each
+      line end is searched for once;
+    - an unreached position past every `--` line, with no `/*` reached, ends the
+      scan, as nothing ahead can be reached then."""
     end = len(text)
-    reached = bytearray(end + 2)
-    reached[pos] = 1
+    ahead = 1  # bit k: position i + k is reached
     line_from, line_to = end + 1, -1  # the positions a reached `--` reaches
     block_from = end + 1  # past a reached `/*`: every `*/` from here reaches past it
     for i in range(pos, end):
         if i >= block_from and text.startswith("*/", i):
-            reached[i + 2] = 1
-        if not reached[i] and not line_from <= i <= line_to:
+            ahead |= 4
+        if not ahead & 1 and not line_from <= i <= line_to:
+            if i > line_to and block_from > end:
+                return False
+            ahead >>= 1
             continue
         if text.startswith("||", i):
             return True
         if text[i].isspace():
-            reached[i + 1] = 1
+            ahead |= 2
         elif text.startswith("--", i):
             if not line_from <= i + 2 <= line_to:
                 line_end = _LINE_END_RE.search(text, i + 2)
                 line_from, line_to = i + 2, line_end.start() if line_end else end
         elif text.startswith("/*", i):
             block_from = min(block_from, i + 2)
+        ahead >>= 1
     return False
 
 
