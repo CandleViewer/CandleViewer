@@ -20,6 +20,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 
@@ -124,11 +125,16 @@ def test_snapshots_diff_the_hour_before_and_hour_2_gc_off_and_back_as_it_was(
 
 
 def test_where_names_a_line_alike_on_every_machine_and_in_a_linked_checkout(tmp_path: Path) -> None:
-    root, std = Path(__file__).resolve().parents[5], "/usr/lib/python3.12/json/decoder.py"
+    root, other = Path(__file__).resolve().parents[5], "/srv/elsewhere/json/decoder.py"
     venv = f"{root}/services/api/.venv/lib/python3.12/site-packages/pydantic/main.py"
     assert memdiag.where(venv, 3) == "site-packages/pydantic/main.py:3"
-    assert memdiag.where(std, 1) == f"{std}:1"
+    assert memdiag.where(other, 1) == f"{other}:1"
     assert memdiag.where("<frozen abc>", 0) == "<frozen abc>:0"
+    std = asyncio.base_events.__file__  # under a home directory with a uv-managed Python (L2)
+    assert memdiag.where(std, 123) == "stdlib/asyncio/base_events.py:123"
+    assert memdiag.where(f"{Path(std).parents[1]}/site-packages/x.py", 4) == "site-packages/x.py:4"
+    assert all(memdiag.where(f, 1).startswith(memdiag._NOT_REPO) for f in (venv, other, std))
+    assert not memdiag.where(f"{root}/services/api/x.py", 5).startswith(memdiag._NOT_REPO)
     (tmp_path / "co").symlink_to(root)  # a linked checkout: its files named through the link
     linked_py = tmp_path / "co/services/api/bench/ingestion/memdiag.py"
     spec = importlib.util.spec_from_file_location("linked", linked_py)
@@ -171,6 +177,15 @@ def test_allocator_records_its_settings_and_pythonmalloc_malloc_leaves_no_pymall
         argv, env={"PYTHONMALLOC": "malloc"}, capture_output=True, text=True, timeout=60
     )  # not -I: isolated mode ignores PYTHON* variables
     assert (done.returncode, done.stdout.strip()) == (0, "0"), done.stderr
+
+
+@pytest.mark.parametrize("exc", [OSError(22, "Invalid argument"), ValueError("unrecognized name")])
+def test_glibc_is_confstrs_value_or_none(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    """musl has the name but `confstr` fails with EINVAL; macOS has no such name."""
+    monkeypatch.setattr(os, "confstr", lambda name: "glibc 2.39")
+    assert memdiag._glibc() == "glibc 2.39"
+    monkeypatch.setattr(os, "confstr", mock.Mock(side_effect=exc))
+    assert memdiag._glibc() is None
 
 
 def test_mallinfo2_is_glibcs_struct_and_smaps_and_thp_parse_fixed_text() -> None:
@@ -338,6 +353,7 @@ def _heap(mib_h: float, snaps: list[Doc] | None = None) -> Doc:
 _UP = {LIB: [0.4 * h for h in range(11)], "a/c.py:2": [0.3 * h for h in range(11)]}  # hours 2-12
 D, TM, M, MM = (_leg(x) for x in memdiag.LEG_ENV)
 TL = _leg("tracemalloc", snapshots=_snaps(_UP))  # two LEAK lines: +4.0 and +3.0 MiB
+GROWTH = "LEAK growth +7.00 MiB (h2-12), the default's W24 rise +9.00 MiB (h12-24)"  # N4: windows
 TL_BARS = _leg("tracemalloc", snapshots=_snaps(_UP, tbs={LIB: [_tb(BARS)]}))  # 4.0 via bars/
 TL_HALF = _heap(0, _snaps({LIB: _UP[LIB], "c.py:2": _UP[LIB]}, tbs={LIB: [_tb(BARS)]}))
 DOWN = {"w24": 0.21, "rise": 1.92}  # below the default's 0.3 and 3.0 by MOVE_MIN and 12 times it
@@ -389,7 +405,7 @@ def test_why_not_names_each_reason_a_leg_is_no_reading(
         ([D, TL_BARS, M, MM], "LEAK IN BARS", "57% of the LEAK growth is under candleviewer/bars/"),
         ([D, TL_HALF, M, MM], "LEAK IN BARS", "50% of"),
         ([D, TL, M, MM], "LEAK ELSEWHERE", "0% of"),
-        ([D, TL, M, MM], "LEAK ELSEWHERE", "LEAK growth +7.00 MiB, the default's W24 rise +9.00"),
+        ([D, TL, M, MM], "LEAK ELSEWHERE", GROWTH),
         ([D, TL, M_DOWN, MM], "MIXED", "moved by malloc"),
         ([D, TM, M, MM_DOWN], FRAG, "mmap128k W24 slope +0.210 MiB/h, net rise +1.92 MiB"),
         ([D_OTHER, TM, M_DOWN, MM], "FRAGMENTATION (malloc; steps: other)", ""),
@@ -450,6 +466,14 @@ def test_judge_picks_a_valid_report_then_the_latest_and_skips_what_it_cannot_rea
     )
     assert "\n- skipped, unreadable: i.json: JSONDecodeError\n" in md
     assert not list(tmp_path.rglob("*.tmp")) and memdiag.main(["judge", str(tmp_path / "no")]) == 2
+
+
+@pytest.mark.parametrize("key", ["head", "steps", "w24", "symbols"])  # `why_not` reads none
+def test_judge_skips_a_report_lacking_a_key_it_reads_later(tmp_path: Path, key: str) -> None:
+    doc = {k: x for k, x in D.items() if k != key}
+    (tmp_path / "x.json").write_text(json.dumps(doc), encoding="utf-8")
+    v = memdiag.judge(tmp_path)
+    assert (v["skipped"], v["outcome"]) == (["x.json: KeyError"], "NO VERDICT")
 
 
 def _clean(monkeypatch: pytest.MonkeyPatch, **env: str) -> None:
@@ -546,10 +570,12 @@ def test_a_stopped_or_crashed_leg_reports_what_it_had_and_stops_tracing(
     [
         ("default", {}, [], True),
         ("default", {}, ["--hours", "1"], False),  # an override
+        ("default", {}, ["--tracemalloc", "0"], True),  # 0 is off, not a frame count to refuse
         ("tracemalloc", {}, ["--tracemalloc", "6"], False),  # traced, though 24 h
         ("mmap128k", {"MALLOC_MMAP_THRESHOLD_": "131072"}, [], False),  # an allocator variable
         ("default", {"MALLOC_ARENA_MAX": "2"}, [], None),  # None: refused before the soak
         ("default", {"LD_PRELOAD": "libjemalloc.so.2"}, [], None),
+        ("default", {"LD_AUDIT": "libaudit.so"}, [], None),  # interposes glibc symbols, as above
         ("default", {}, ["--tracemalloc", "6"], None),
         ("tracemalloc", {}, [], None),
         ("mmap128k", {}, [], None),
@@ -569,6 +595,32 @@ def test_a_leg_is_a_reading_only_unchanged_and_refuses_an_environment_not_its_la
     code = memdiag.main(["leg", "--label", label, "--out-dir", str(tmp_path), *argv])
     got = _read(tmp_path / f"{label}.json")["reading"] if code == 0 else None
     assert (code, got) == ((2, None) if reading is None else (0, reading))
+
+
+@pytest.mark.parametrize("label", memdiag.LEG_ENV)
+def test_a_leg_refuses_when_tracemalloc_is_already_tracing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], label: str
+) -> None:
+    """-X tracemalloc, PYTHONTRACEMALLOC: `start(6)` would do nothing, and 1 frame would stay."""
+    _clean(monkeypatch)
+    monkeypatch.setattr(memdiag, "run_soak", _soak(2))
+    tracemalloc.start(1)
+    try:
+        run = ["leg", "--label", label, "--tracemalloc", "6", "--out-dir", str(tmp_path)]
+        code = memdiag.main(run)
+    finally:
+        tracemalloc.stop()
+    err = capsys.readouterr().err
+    assert code == 2 and "already tracing: -X tracemalloc or PYTHONTRACEMALLOC" in err
+    assert list(tmp_path.iterdir()) == []  # refused before the soak: no probe line, no report
+
+
+@pytest.mark.parametrize("frames", ["-1", "65536"])  # `tracemalloc.start` takes 1-65535; 0 is off
+def test_a_bad_tracemalloc_frame_count_is_an_argparse_error(tmp_path: Path, frames: str) -> None:
+    run = ["leg", "--label", "tracemalloc", "--tracemalloc", frames, "--out-dir", str(tmp_path)]
+    with pytest.raises(SystemExit) as stop:
+        memdiag.main(run)
+    assert stop.value.code == 2 and list(tmp_path.iterdir()) == []
 
 
 def test_the_bars_soak_takes_three_setup_samples_and_a_leg_aligns_on_them(

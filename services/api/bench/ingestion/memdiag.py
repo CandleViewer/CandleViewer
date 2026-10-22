@@ -27,6 +27,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import sysconfig
 import tracemalloc
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -76,7 +77,9 @@ R3: Final = ("bars_store_at_cap", "bars_closes_folded", "bars_builders_healthy")
 _ROOT: Final = Path(__file__).absolute().parents[4]
 #: The checkout as tracemalloc names its files (as imported) and resolved: one may be a link.
 _ROOTS: Final = (f"{_ROOT}/", f"{_ROOT.resolve()}/")
-_NOT_REPO: Final = ("/", "<", "site-packages/")  # how `where` writes a line outside the checkout
+_STD: Final = Path(sysconfig.get_paths()["stdlib"])  # under a home directory with uv's Python
+_STDLIB: Final = (f"{_STD}/", f"{_STD.resolve()}/")  # as imported and resolved, like the checkout
+_NOT_REPO: Final = ("/", "<", "site-packages/", "stdlib/")  # how `where` writes a non-repo line
 #: Traces whose newest frame is tracemalloc's, the import system's or this module's.
 DROP: Final = [
     tracemalloc.Filter(False, pattern)
@@ -86,10 +89,12 @@ DROP: Final = [
 
 def where(filename: str, lineno: int) -> str:
     """`path:line`, alike on every machine: `site-packages/...` for an installed package (a venv in
-    the checkout too), repo-relative in the checkout, linked or not, else as tracemalloc gave it."""
+    the checkout too), `stdlib/...` for the standard library (uv keeps it under a home directory),
+    repo-relative in the checkout, linked or not, else as tracemalloc gave it."""
     _, sep, tail = filename.partition("/site-packages/")
+    std = next((f"stdlib/{filename[len(s) :]}" for s in _STDLIB if filename.startswith(s)), "")
     rel = next((filename.removeprefix(r) for r in _ROOTS if filename.startswith(r)), filename)
-    return f"{'site-packages/' + tail if sep else rel}:{lineno}"
+    return f"{'site-packages/' + tail if sep else std or rel}:{lineno}"
 
 
 def top_growth(prev: Lines, cur: Lines, n: int, shrank: bool = False) -> list[Doc]:
@@ -142,8 +147,15 @@ def _mallinfo2(libc: str | None) -> Callable[[], _Mallinfo2] | None:
     return lib.mallinfo2
 
 
-_CS: Final = "CS_GNU_LIBC_VERSION"
-GLIBC: Final = os.confstr(_CS) if _CS in os.confstr_names else None  # "glibc 2.39"; None: not glibc
+def _glibc() -> str | None:
+    """`os.confstr`'s "glibc 2.39", or None where it has none: macOS lacks the name, musl fails."""
+    try:
+        return os.confstr("CS_GNU_LIBC_VERSION")
+    except (OSError, ValueError):
+        return None
+
+
+GLIBC: Final = _glibc()  # "glibc 2.39"; None: not glibc
 _MALLINFO2: Final = _mallinfo2(GLIBC)
 MALLINFO: Final = ("arena", "hblkhd", "uordblks", "fordblks", "keepcost")
 
@@ -425,7 +437,10 @@ def rule(legs: Mapping[str, Doc]) -> tuple[str, list[str]]:
     why += [f"LEAK line {line}: +{g:.2f} MiB" for line, g in (leaks or {}).items()]
     if leaks:
         rise = _mib(None if r is None else r * n_sym)
-        why.append(f"LEAK growth +{sum(leaks.values()):.2f} MiB, the default's W24 rise {rise} MiB")
+        why.append(
+            f"LEAK growth +{sum(leaks.values()):.2f} MiB (h{WARMUP_H}-{TRACE_LEG_H:.0f}), "
+            f"the default's W24 rise {rise} MiB (h{W24[0]:.0f}-{W24[1]:.0f})"
+        )
     if leaks and moved:
         return "MIXED", [*why, f"moved by {', '.join(moved)}: the orchestrator rules"]
     if leaks and not missing:
@@ -455,7 +470,9 @@ def judge(root: Path) -> Doc:
         try:
             d = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(d, dict) and d.get("kind") == "memdiag-leg" and d["label"] in LEG_ENV:
-                why_not(d)  # what a report lacks raises here, not in the rule
+                why_not(d)  # a key it reads that `d` lacks raises KeyError here, not in `rule`
+                if lacks := {"head", "steps", "w24", "symbols"} - d.keys():  # read after it
+                    raise KeyError(", ".join(sorted(lacks)))
                 docs.append(d)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             skipped.append(f"{p.relative_to(root)}: {type(exc).__name__}")
@@ -491,7 +508,7 @@ def judge(root: Path) -> Doc:
 def allocator(env: Mapping[str, str], blocks: int, dev_mode: bool = False) -> Doc:
     """The allocator settings in `env` (and `-X dev`'s debug hooks) and the self-check: pymalloc
     holds blocks (`sys.getallocatedblocks()`) exactly when PYTHONMALLOC is not `malloc`."""
-    names = ("PYTHONMALLOC", "PYTHONTRACEMALLOC", "GLIBC_TUNABLES", "LD_PRELOAD")
+    names = ("PYTHONMALLOC", "PYTHONTRACEMALLOC", "GLIBC_TUNABLES", "LD_PRELOAD", "LD_AUDIT")
     seen = {k: v for k, v in sorted(env.items()) if k in names or k.startswith("MALLOC_")}
     seen |= {"dev_mode": "on"} if dev_mode else {}
     malloc = seen.get("PYTHONMALLOC") == "malloc"
@@ -529,7 +546,11 @@ def leg(a: argparse.Namespace) -> int:
     is raised after it."""
     sc = load("soak_bars", "full")
     over: Doc = {} if a.hours is None else {"duration_s": a.hours * 3600}
-    traced = bool(a.tracemalloc) or tracemalloc.is_tracing()  # `-X tracemalloc` too
+    if tracemalloc.is_tracing():  # the interpreter's own: `start` below would do nothing
+        why = "already tracing: -X tracemalloc or PYTHONTRACEMALLOC"
+        print(f"memdiag {a.label}: refused, tracemalloc {why}", file=sys.stderr)
+        return 2
+    traced = bool(a.tracemalloc)
     alloc = allocator(os.environ, sys.getallocatedblocks(), sys.flags.dev_mode)
     want = (dict(LEG_ENV[a.label]), a.label == "tracemalloc")
     if not alloc["self_check"] or (alloc["seen"], traced) != want:
@@ -576,13 +597,20 @@ def leg(a: argparse.Namespace) -> int:
     return 0 if verdict else 1
 
 
+def _frames(text: str) -> int:
+    """`--tracemalloc`: 0 (off), else the frames `tracemalloc.start` takes, 1-65535."""
+    if not 0 <= (n := int(text)) <= 65535:
+        raise argparse.ArgumentTypeError(f"{text} is not 0 (off) or 1-65535")
+    return n
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     lg = sub.add_parser("leg", help="run one leg in this process")
     lg.add_argument("--label", required=True, choices=tuple(LEG_ENV))
     lg.add_argument("--hours", type=float, help="scenario hours; any value overrides the profile")
-    lg.add_argument("--tracemalloc", type=int, default=0, metavar="N", help="frames; 0: off")
+    lg.add_argument("--tracemalloc", type=_frames, default=0, metavar="N", help="frames; 0: off")
     lg.add_argument("--top", type=int, default=TOP, metavar="K", help="lines a snapshot diff keeps")
     lg.add_argument("--deadline-h", type=float, help="wall hours after which the leg reports")
     lg.add_argument("--out-dir", type=Path, required=True)

@@ -15,8 +15,9 @@ sample and, once an hour of scenario time, writes a line of probes: pymalloc blo
 `smaps_rollup` and the thread count. The report records the head, the scenario file's sha256, the machine
 profile, glibc, Python and the THP mode. The dispatch sets the allocator variables; the leg records those it
 saw and checks pymalloc against them. A leg whose environment is not its label's does not start (exit 2):
-another allocator variable, `LD_PRELOAD` or `-X dev`, pymalloc against its variable, or tracemalloc on any
-leg but the tracemalloc leg, or off on that one. One leg a dispatch on cv-bench-01, never two at once:
+another allocator variable, `LD_PRELOAD`, `LD_AUDIT` or `-X dev`, pymalloc against its variable, tracemalloc
+on any leg but the tracemalloc leg or off on that one, or tracemalloc already on before the leg, on any leg
+(`-X tracemalloc`, `PYTHONTRACEMALLOC`). One leg a dispatch on cv-bench-01, never two at once:
 
 | Order | Leg           | Length                              | Allocator environment           | Read for                                    |
 | ----- | ------------- | ----------------------------------- | ------------------------------- | ------------------------------------------- |
@@ -24,6 +25,11 @@ leg but the tracemalloc leg, or off on that one. One leg a dispatch on cv-bench-
 | 2     | `tracemalloc` | 12 h (`--hours 12 --tracemalloc 6`) | none                            | attribution only; its RSS is never sloped   |
 | 3     | `malloc`      | 24 h                                | `PYTHONMALLOC=malloc`           | the W24 slope without pymalloc              |
 | 4     | `mmap128k`    | 24 h                                | `MALLOC_MMAP_THRESHOLD_=131072` | the W24 slope with the mmap threshold fixed |
+
+All four legs, and any re-run (a replicate default included), run at one commit. Once the workflow is on
+`main`, make one ref that points at a single `main` commit and that nobody moves (a tag), and dispatch every
+leg with `gh workflow run perf-bars-memdiag.yml --ref <that tag> -f leg=<leg>`. A leg measured at another
+head is not comparable with the default (M3), so `judge` leaves it out and the verdict is INCONCLUSIVE.
 
 A report says `"reading": true` only for a leg with no override, no tracemalloc and no allocator variable.
 Its R1-R4 verdict is the runner's verdict on a process that also probed hourly, after the soak's own RSS
@@ -44,14 +50,15 @@ fragmentation". Made precise here and committed before any dispatch; the thresho
 > - MIXED: both a LEAK line and an allocator move. The orchestrator rules on it.
 > - INCONCLUSIVE: top-N is flat and no allocator leg moves the slope, or legs are still missing. Name the missing legs. Add a `uordblks` growth ratio as an annotation, not as an outcome.
 
-Refinements made with this PR from the methodology review. They narrow ruling (b)'s call, and the
-orchestrator accepted them (2026-10-22, 06:46Z):
+Refinements made with this PR from the methodology review. They narrow ruling (b)'s call; the
+orchestrator accepted B1-M4 (2026-10-22, 06:46Z):
 
 - **B1**, to "grows monotonically ⇒ leak": a LEAK run counts only if the snapshots' filtered traced total
   also grew by `LEAK_MIN_GROWTH_MIB` or more over the same hours. The bars store's turnover is no leak.
 - **M1**, to "plateau moves with the allocator setting": a move is one-sided, the allocator leg's W24 slope
   below the default's by `MOVE_MIN` or more; a rise is an annotation. The mover must fit the default's W24
-  steps, mmap128k for glibc steps and malloc for "other" steps; a mover that does not is INCONCLUSIVE.
+  steps, mmap128k for glibc steps and malloc for "other" steps; a mover that does not is INCONCLUSIVE. So
+  is a THP or a no-step attribution: `FITS` has no entry for either.
 - **M2**, to the same: a move also needs the W24 net rise to drop by 12 × `MOVE_MIN` (1.08 MiB a symbol)
   or more. `judge` lists each leg's rise times, from its 60 s curve.
 - **M3**: a leg whose head, scenario sha256, machine profile, glibc, Python or THP mode differs from the
@@ -60,6 +67,8 @@ orchestrator accepted them (2026-10-22, 06:46Z):
   10 h (2.7 MiB) or more over hours 2-12, the outcome is INCONCLUSIVE ("Python heap grows, not attributed
   to a line"), never FRAGMENTATION. The top-N is 100 lines (`--top`), not 25, the leaner of the two fixes
   (the other keeps every line's hourly size), so the turnover's lines (8 of 25 at hour 3) crowd out none.
+- **N5**, to "grows monotonically": strictly increasing, each hourly snapshot larger than the one before. A
+  line that grows in bursts with flat hours between is no LEAK line; its growth shows in the total (M4).
 
 How `judge` applies it (the constants and `rule` in `memdiag.py`):
 
@@ -70,20 +79,22 @@ How `judge` applies it (the constants and `rule` in `memdiag.py`):
 - **Units.** `LEAK_MIN_GROWTH_MIB` (1.0) is MiB of the whole process, three symbols; `MOVE_MIN` (0.09
   MiB/h) and R4's limit (0.18) are a symbol's.
 - **LEAK lines.** A run is a line's consecutive hourly snapshots from hour 2 on, in each one's top-100 since
-  hour 2, each larger than the one before: strictly increasing is this harness's "monotonically". A line
-  that grows in bursts with flat hours between is no LEAK line; its growth shows in the total (M4). A
-  library line's growth goes where the newest repo frame of its biggest traceback is. Tracebacks are kept
-  for the 5 lines that grew most each hour; a library LEAK line with none kept counts as elsewhere.
+  hour 2, each larger than the one before (N5). A library line's growth goes where the newest repo frame
+  of its biggest traceback is. Tracebacks are kept for the 5 lines that grew most each hour; a library
+  LEAK line with none kept counts as elsewhere.
 - **The store's turnover (B1).** The store is at its cap from setup, 1 000 stored bars a series, and each
   series that closes replaces stored bars with live ones at its rate (closes an hour a lane: tick 3 930,
   volume 334.8, time 99.9, range about 12.9). Live bars held a symbol, of 27 000 in series that close:
   5 155 at h2, 10 131 at h12, 11 822 at h24. A stored bar holds 1 312 B at `bars/reader.py`'s and
   `domain/sql_names.py`'s lines; a live one 832 B at `bars/time_builder.py`'s and 272-480 B at
-  `exchange/bybit/trades.py`'s: -208 B a bar replaced. Over h2-7 the three symbols replace 10 044 bars:
-  `time_builder.py:159` grows +1.99 MiB and `trades.py:64` +2.0-4.0 MiB, every hour, while the filtered
-  total falls (2.96 MiB by h12, 14 928 replaced). The total test keeps such lines out; it masks a Python
-  leak slower than that fall, about 0.1 MiB/h a symbol (a run over hours 2-12 needs about 0.13), under
-  R4's 0.18. Each snapshot records its filtered total and the lines that shrank most since hour 2.
+  `exchange/bybit/trades.py`'s: -208 to 0 B a bar replaced, -208 the end that masks most. Over h2-7 the
+  three symbols replace 10 044 bars: `time_builder.py:159` grows +1.99 MiB and `trades.py:64` +2.0-4.0 MiB,
+  every hour, while the filtered total falls (2.96 MiB by h12, 14 928 replaced). The total test keeps such
+  lines out; it masks a Python leak slower than that fall, about 0.1 MiB/h a symbol (a run over hours 2-12
+  needs about 0.13), under R4's 0.18. M4's floor is net of the same fall: it flags growth no line explains
+  only from 2.7 + 2.96 = 5.66 MiB over 10 h, about 0.19 MiB/h a symbol, just above R4's 0.18. A bursty or
+  diffuse leak between about 0.13 and 0.19 escapes both tests; at R4's measured 0.2475, M4 alone catches it.
+  Each snapshot records its filtered total and the lines that shrank most since hour 2.
 - **Validity.** A leg counts only if: its length reached; R3 passed; its own allocator setting seen and
   consistent with pymalloc; tracemalloc on for its leg only, and there with 6 frames or more, a top-N of
   100 or more and snapshots diffed against hour 2 at hours 3-12; its probe lines the soak's own samples,
@@ -94,7 +105,10 @@ How `judge` applies it (the constants and `rule` in `memdiag.py`):
 - **Steps.** A step is an RSS rise of 1 MiB or more between two samples of the soak's 60 s curve, put down
   by the hourly probes either side to glibc (arena + hblkhd), THP (AnonHugePages) or other, by which rose
   by half of it, with uordblks' and fordblks' changes beside it. Two steps in one hour share their probes.
-  On cv-bench-01 THP explains no step: it is `madvise`, and glibc does not advise its heap.
+  A table that left mmap for the heap nets arena + hblkhd to 0, so its glibc step reads "other" and,
+  through `FITS`, a real mmap128k FRAGMENTATION reads INCONCLUSIVE; the uordblks and fordblks columns show
+  such a case, for the orchestrator's ruling. On cv-bench-01 THP explains no step: it is `madvise`, and
+  glibc does not advise its heap.
 - **The repeat assumption (M2).** One default leg, no replicate: `MOVE_MIN` assumes the step pattern
   repeats from run to run. The rises at h2.12, h2.93, h7.00, h16.80 and h17.57 sit within 1.4 min of the
   DedupeRing's same-size set rebuilds, a schedule the hash seed does not move; those at h12.20 and h22.92
