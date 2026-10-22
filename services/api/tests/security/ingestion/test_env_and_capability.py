@@ -44,6 +44,12 @@ TRADING_NAMES = {
     "place_order",
     "cancel_all",
     "trading_port",  # G-8 (#2877): the adapter's factory of the trading port
+    # G-8b (#3963): the private stream, its registry, its connector and the adapter's key hooks
+    "subscribe_private",
+    "PrivateStreams",
+    "connect_private_stream",
+    "close_private_streams",
+    "reopen_private_streams",
 }
 TRADING_PATHS = ("/v5/order/", "/v5/position/", "/v5/asset/")
 

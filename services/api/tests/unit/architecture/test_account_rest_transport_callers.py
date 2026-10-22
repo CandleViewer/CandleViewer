@@ -7,7 +7,8 @@ other product module (`candleviewer/`, `cvdev/`), passing either keyword or a `*
 call, or naming the adapter's `_rest_transport`, would send signed key-verification calls to a
 transport that the `CV_ACCOUNT_FIXTURE` gate never checked (C-2.11, C-12.2). Such a change fails
 here, and a security review decides it. #836 slice 2b5 adds the private-WS connector's way in on
-the same terms: the keyword `private_ws_connect=` and the adapter's `_ws_probe`.
+the same terms: the keyword `private_ws_connect=` and the adapter's `_ws_probe`, and G-8b (#3963)
+the private streams that dial with it: the adapter's `_stream_connect` and `_private_streams`.
 
 Limits: these are AST checks, so an alias of either callee or a name built at run time is not
 caught, as in `test_dev_module_confined.py`.
@@ -30,7 +31,7 @@ CARRIERS = {
     "build_app_context": frozenset({"account_fixture"}),
 }
 #: The adapter's fields that hold them.
-PRIVATE = frozenset({"_rest_transport", "_ws_probe"})
+PRIVATE = frozenset({"_rest_transport", "_ws_probe", "_stream_connect", "_private_streams"})
 #: The adapter, which owns them.
 OWNER = "candleviewer/exchange/bybit/service.py"
 

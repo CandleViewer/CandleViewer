@@ -50,6 +50,8 @@ class VenueSocket:
     sent: list[tuple[float, dict[str, Any]]] = field(default_factory=list)
     inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     closed: bool = False
+    #: What the read that meets a drop fails with: the peer's text, as a library error carries it.
+    drop_text: str = "the peer dropped the connection"
 
     async def send(self, frame: str) -> None:
         if self.closed:
@@ -62,7 +64,7 @@ class VenueSocket:
         self.venue.bounds.append(max_bytes)
         frame = await self.inbox.get()
         if frame == DROP:
-            raise ConnectionResetError("the peer dropped the connection")
+            raise ConnectionResetError(self.drop_text)
         return frame
 
     async def close(self) -> None:
