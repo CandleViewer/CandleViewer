@@ -31,7 +31,7 @@ import structlog
 
 from candleviewer.observability.context import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
-from candleviewer.secrets import _export_custody, _kek, _source
+from candleviewer.secrets import _export_custody, _kek, _source, export_signer
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.broker import ALLOWED_CALLERS, Purpose, _m2_only
@@ -44,6 +44,7 @@ from candleviewer.secrets.errors import (
     KekUnavailable,
     RotationCode,
 )
+from candleviewer.secrets.export_signer import ExportSigner, SigningKeys
 from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
 from candleviewer.secrets.signing import RequestSignature, SigningMessage
 from candleviewer.secrets.store import AuditSink, AuthKeyStore, CredentialStore, KcvStore
@@ -445,6 +446,23 @@ class SecretsService:
             except Exception:
                 m.credential_outcome_audit_failures_total.inc()
 
+    async def _sign_audit_export(
+        self, key_id: object, digest: object, job_id: object, actor_user_id: object
+    ) -> bytes:
+        """`mint_export_signer`'s call: `export_signer`'s checks in their order (#889, ADR-0039)."""
+        checked = export_signer.request(key_id, digest, job_id, actor_user_id)
+        keks, keys = self._require()._held_keks(), self._export_keys
+        if keys is None or self._export_reason is not None:
+            raise CredentialUnavailable("export_key_unavailable")
+        return await export_signer.sign(keys, keks, self._audit, checked)
+
+    async def _active_export_key(self) -> export_signer.PublicKey | None:
+        """`mint_signing_keys`' call: None while no KEK is held or export is unavailable (22)."""
+        broker, keys = self._broker, self._export_keys
+        if broker is None or keys is None or self._export_reason is not None:
+            return None
+        return await export_signer.active_key(keys, broker._held_keks())
+
     @staticmethod
     def _close(*keks: _kek.LoadedKek) -> None:
         for k in keks:
@@ -629,6 +647,26 @@ def mint_candidate_keys(
         return await hold_candidate(resolve(), caller, hold_s, *args)
 
     return CandidateKeys(run)
+
+
+def mint_export_signer(service: SecretsService) -> ExportSigner:
+    """Wiring-time audit export signer (#889, ADR-0039 decision 3). Called once, in
+    `admin.wiring.build_secrets_service`; refuses while no KEK is held or export is unavailable."""
+
+    async def sign(key_id: object, digest: object, job_id: object, actor_user_id: object) -> bytes:
+        return await service._sign_audit_export(key_id, digest, job_id, actor_user_id)
+
+    return ExportSigner(sign)
+
+
+def mint_signing_keys(service: SecretsService) -> SigningKeys:
+    """Wiring-time directory of the active export signing key (#889, ADR-0039 decision 3): public
+    material only. Called once, in `admin.wiring.build_secrets_service`."""
+
+    async def active() -> export_signer.PublicKey | None:
+        return await service._active_export_key()
+
+    return SigningKeys(active)
 
 
 async def prove_kek_possession(

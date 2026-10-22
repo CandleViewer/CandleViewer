@@ -30,10 +30,12 @@ R7  Any class outside `secrets/` subclassing a class imported from `candleviewer
     (runtime backstop: `__init_subclass__` + `@typing.final` in M2).
 R8  Last-hop names pinned: `unwrap_dek`, `wrap_dek`, `open_`, `seal`, `cred_aad`, `dek_aad`,
     `rewrap_all`, `verify_kcv`, `drop_kek`, `flush_cache`, `kek_handle`, `kek_prev_handle`,
-    `kek_ack_path` (outside `settings.py`); str literals `/run/credentials…` or `CV_KEK_…`.
+    `kek_ack_path` (outside `settings.py`), `unwrap_export_dek` (#889); str literals
+    `/run/credentials…` or `CV_KEK_…`.
 R9  Borrow names (see R10); admin metadata (`_ADMIN_ONLY`: attribute, bare name, import or
     literal) outside `admin/`;
-    `mint_borrower` / `mint_candidate_keys` outside `admin/wiring.py`; every M2-defined private
+    `mint_borrower` / `mint_candidate_keys` / `mint_export_signer` / `mint_signing_keys` outside
+    `admin/wiring.py`; every M2-defined private
     name (harvested with
     rglob, no subtraction) plus `_key`, `_cache`, `_items`, `_broker`, on non-self receivers.
 R10 Plaintext stays in `secrets/` (C-2.7, #2339): the plaintext borrow (`with_credentials`,
@@ -55,8 +57,11 @@ import candleviewer.secrets as m2
 
 PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 MINT_SITES = {"admin/wiring.py"}
-#: The capability mints (`mint_candidate_keys`: key import's candidate verification, #836).
-MINTS = frozenset({"mint_borrower", "mint_candidate_keys"})
+#: The capability mints (`mint_candidate_keys`: key import's candidate verification, #836; the
+#: audit export's signer and key directory, #889 ADR-0039 decision 3).
+MINTS = frozenset(
+    {"mint_borrower", "mint_candidate_keys", "mint_export_signer", "mint_signing_keys"}
+)
 #: The M4 exchange adapter package (the only signing-capability holder), built from parts.
 _BORROW_SITE = "/".join(("exchange", "by" + "bit")) + "/"
 _ADMIN_SITE = "admin/"
@@ -80,6 +85,7 @@ _LAST_HOP = frozenset(
     {
         "unwrap_dek", "wrap_dek", "open_", "cred_aad", "dek_aad", "rewrap_all",
         "verify_kcv", "drop_kek", "flush_cache", "kek_handle", "kek_prev_handle", "kek_ack_path",
+        "unwrap_export_dek",
     }
 )  # fmt: skip
 _SETTINGS_ONLY = frozenset({"kek_handle", "kek_prev_handle", "kek_ack_path"})

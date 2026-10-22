@@ -19,19 +19,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from candleviewer import app as app_module
-from candleviewer.admin.wiring import SecretsBundle
+from candleviewer.admin.wiring import secrets_bundle
 from candleviewer.api.admin_kek import MAX_BODY_BYTES, make_admin_kek_router
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.service import AuthService
-from candleviewer.secrets import (
-    SecretsLifecycleFacade,
-    SecretsMetadataFacade,
-    SecretsService,
-    mint_borrower,
-    mint_candidate_keys,
-)
+from candleviewer.secrets import SecretsService
 from candleviewer.secrets.store import InMemoryCredentialStore
 from tests.unit.api.test_invites_create_app_e2e import _h, _login, _World
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
@@ -60,12 +54,7 @@ def deploy(monkeypatch: pytest.MonkeyPatch, svc: SecretsService) -> tuple[_World
         clock=w.clock,
     )
     monkeypatch.setattr(app_module, "build_auth_service", lambda *_a, **_k: w.auth)
-    bundle = SecretsBundle(
-        SecretsLifecycleFacade(svc),
-        SecretsMetadataFacade(svc),
-        mint_borrower(svc, "exchange_adapter"),
-        mint_candidate_keys(svc),
-    )
+    bundle = secrets_bundle(svc)
     app = app_module.create_app(principal_resolver=w.resolver, secrets_bundle=bundle)
     ctx = app.state.app_context
     ctx.audit._writer = w.audit  # the lazy emitter resolves `audit.writer` per call

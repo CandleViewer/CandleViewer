@@ -200,6 +200,10 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "CandidateKeys",  # #836: key import's capability, minted once in admin.wiring
         "CandidateSigner",  # #836: a held candidate's signer, the adapter's view of the pair
         "mint_candidate_keys",  # #836: that mint, pinned to admin/wiring.py by the M2 guard
+        "ExportSigner",  # #889: the audit export signer, adapted to `audit`'s port in wiring
+        "SigningKeys",  # #889: the active export key's public material, the same way
+        "mint_export_signer",  # #889: their mints, pinned to admin/wiring.py by the M2 guard
+        "mint_signing_keys",
     },
     # E26-T02: the replay read path's request, in-stream gap marker, storage ports, typed
     # errors and bounded read-ahead source (docs/plan/24-internal-schemas.md Sec.13.7).

@@ -189,6 +189,10 @@ class CredentialBroker:
             raise KekUnavailable("kek_unavailable")
         return self._kek
 
+    def _held_keks(self) -> tuple[LoadedKek, ...]:
+        """The KEKs held, the current first: what the export signer opens a key under (#889)."""
+        return tuple(k for k in (self._require_kek(), self._prev) if k is not None)
+
     def drop_kek(self) -> None:
         """Zero everything, fail closed from now on (stop / runtime loss)."""
         self._cache.flush()

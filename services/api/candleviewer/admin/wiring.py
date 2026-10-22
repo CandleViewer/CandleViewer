@@ -16,9 +16,16 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 
+from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.audit.actions import validate_action
+from candleviewer.audit.export_signing import (
+    ExportSigningFailed,
+    Signer,
+    SigningKey,
+    SigningKeyDirectory,
+)
 from candleviewer.audit.lane_journal import key_id
 from candleviewer.audit.machine_events import (
     MachineEventStore,
@@ -41,15 +48,20 @@ from candleviewer.secrets import (
     CredentialBorrower,
     CredentialStore,
     ExportKeyStore,
+    ExportSigner,
     KcvStore,
+    SecretsError,
     SecretsLifecycle,
     SecretsLifecycleFacade,
     SecretsMetadata,
     SecretsMetadataFacade,
     SecretsService,
+    SigningKeys,
     export_secrets_metrics,
     mint_borrower,
     mint_candidate_keys,
+    mint_export_signer,
+    mint_signing_keys,
 )
 from candleviewer.settings import Settings
 
@@ -62,12 +74,15 @@ SecretsMeta = SecretsMetadata
 
 @dataclass(frozen=True)
 class SecretsBundle:
-    """The four narrow capabilities of one `SecretsService` (built once, in wiring)."""
+    """The narrow capabilities of one `SecretsService` (built once, in wiring); the export signer
+    and its key directory are `audit`'s ports, for S10's export job alone (#889, ADR-0039)."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
     exchange_borrower: CredentialBorrower
     candidate_keys: CandidateKeys
+    export_signer: Signer
+    signing_keys: SigningKeyDirectory
 
 
 __all__ = [
@@ -90,6 +105,7 @@ __all__ = [
     "export_secrets_metrics",
     "secrets_audit_row",
     "secrets_audit_sink",
+    "secrets_bundle",
     "system_event_redactor",
 ]
 AuditHandle = AuditService
@@ -206,12 +222,61 @@ def build_secrets_service(
             store=store, kcv_store=kcv_store, audit=sink, auth_keys=auth_keys,
             export_keys=export_keys,
         )  # fmt: skip
+    return secrets_bundle(svc)
+
+
+def secrets_bundle(svc: SecretsService) -> SecretsBundle:
+    """Every capability of `svc`, each minted here: `build_secrets_service`'s, and a test's that
+    builds a service of its own."""
     return SecretsBundle(
         SecretsLifecycleFacade(svc),
         SecretsMetadataFacade(svc),
         mint_borrower(svc, "exchange_adapter"),
         mint_candidate_keys(svc),
+        _AuditExportSigner(mint_export_signer(svc)),
+        _SigningKeyDirectory(mint_signing_keys(svc)),
     )
+
+
+#: M2's export-signing refusals as the job's codes (22 `Job.error`), else `signing_unavailable`.
+_SIGNING_FAILURES: Final = {
+    "signing_key_rotated": "signing_key_rotated",
+    "audit_unavailable": "audit_unavailable",
+    "export_request_invalid": "internal_error",
+}
+
+
+class _AuditExportSigner:
+    """`audit`'s `Signer` over M2's: an M2 refusal leaves as the job's code, nothing chained."""
+
+    __slots__ = ("_signer",)
+
+    def __init__(self, signer: ExportSigner) -> None:
+        self._signer = signer
+
+    @audited("security.audit_export_signed", "security.audit_export_sign_failed")  # M2 writes
+    async def sign_audit_export(
+        self, key_id: str, digest: bytes, job_id: uuid.UUID, actor_user_id: uuid.UUID
+    ) -> bytes:
+        try:
+            return await self._signer.sign_audit_export(key_id, digest, job_id, actor_user_id)
+        except SecretsError as exc:
+            code = _SIGNING_FAILURES.get(str(exc), "signing_unavailable")
+        raise ExportSigningFailed(code)  # after the handler: nothing chained
+
+
+class _SigningKeyDirectory:
+    """`audit`'s `SigningKeyDirectory` over M2's: public key material only."""
+
+    __slots__ = ("_keys",)
+
+    def __init__(self, keys: SigningKeys) -> None:
+        self._keys = keys
+
+    @audit_exempt("read")
+    async def active(self) -> SigningKey | None:
+        active = await self._keys.active()
+        return None if active is None else SigningKey(*active)
 
 
 def build_audit_service(
