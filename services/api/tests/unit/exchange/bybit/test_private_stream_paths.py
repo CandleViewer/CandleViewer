@@ -3,7 +3,7 @@ venue and a virtual clock: rows read while subscribing wait behind `resyncing`; 
 unanswered or broken required subscription recycles the socket and the optional one does not;
 `budget_blocked` waits for the window; and a stream that is closing sends nothing more at any
 step (each B13 hook checks it). Plus the registry's edges: an unknown environment, a failed
-build and a failed owned task.
+build, a failed owned task, and the bounded key marks.
 """
 
 from __future__ import annotations
@@ -303,6 +303,19 @@ async def test_an_owned_task_that_fails_is_logged_by_its_type_only() -> None:
         await streams.drain()
     [logged] = [e for e in logs if e["event"] == "bybit_private_task_failed"]
     assert logged["error"] == "ValueError" and "detail" not in str(logs)
+
+
+def test_the_key_marks_are_bounded_oldest_first() -> None:
+    streams = make_streams(PrivateVenue(VirtualClock()))
+    for n in range(ps.KEYS_REMEMBERED + 1):
+        streams.mark_refused(f"key-{n}")
+    assert streams.reopen("key-0") is False  # dropped as the oldest
+    assert streams.reopen(f"key-{ps.KEYS_REMEMBERED}") is True
+
+
+async def test_closing_a_key_with_no_stream_closes_nothing() -> None:
+    streams = make_streams(PrivateVenue(VirtualClock()))
+    assert await streams.close_key("no-such-key", reason="key_revoked") == ()
 
 
 async def test_the_status_bound_is_made_visible_if_it_is_ever_exceeded() -> None:

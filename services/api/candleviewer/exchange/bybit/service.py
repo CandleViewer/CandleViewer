@@ -11,13 +11,13 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 import httpx
 import structlog
 
-from candleviewer.domain.primitives import Environment
+from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.reconnect import ConnectionBudget
 from candleviewer.exchange.bybit.archive import (
     DEFAULT_ARCHIVE_BASE,
@@ -274,6 +274,24 @@ class ExchangeBybitService:
             entry_wait_s=entry_wait_s,
             private_streams=streams,
         )
+
+    async def close_private_streams(
+        self, key_ref: str, *, reason: Literal["key_revoked", "key_rotated"] = "key_revoked"
+    ) -> tuple[AccountId, ...]:
+        """G-8b (SR-E27-17, KV-E13, AC-28): close every private stream on `key_ref` before
+        returning, and return their accounts. E27-S04 (#898) calls it before a revoke,
+        force-disable, mark-compromised or account-disable returns, and with `key_rotated` at the
+        start of a rotation's overlap (the consumer then subscribes with the new key). A key it
+        closed opens no stream again. Before any trading port exists there is none to close, and
+        M2 refuses a destroyed key's next `auth` borrow either way (24 §14.2 rule 13)."""
+        streams = self._private_streams
+        return () if streams is None else await streams.close_key(key_ref, reason=reason)
+
+    def reopen_private_streams(self, key_ref: str) -> bool:
+        """G-8b ruling 10: an operator lets a key that three `auth` refusals closed open streams
+        again; `True` when it was so marked. A revoked or rotated key stays closed."""
+        streams = self._private_streams
+        return False if streams is None else streams.reopen(key_ref)
 
     def _streams(self, environment: Environment, credentials: CredentialBorrower) -> PrivateStreams:
         if self._private_streams is None:

@@ -301,6 +301,7 @@ class _PrivateConn:
         self._terminal: ClosedReason | None = None
         self._stop = False
         self._closed = False
+        self._machine_stopping = False
         self._pending: list[PrivateEvent] = []
         self._session: list[asyncio.Task[Any]] = []
         self._timer: asyncio.Task[None] | None = None
@@ -521,7 +522,6 @@ class _PrivateConn:
         """End the stream: stop, close the socket within `CLOSE_TIMEOUT_S`, queue `closed` (not
         for the consumer's own close, which reads nothing more), and hand B13's stop to a task
         the registry owns. Returns once the socket is closed (SR-E27-17)."""
-        first = not self._stop
         self.halt()
         tasks, self._session = self._session, []
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -530,12 +530,13 @@ class _PrivateConn:
         if sock is not None:
             await self._owner.close_quietly(sock)
         self._end(reason)
-        if first:
+        if not self._machine_stopping:
             self._owner.spawn(self.stop_machine(), "private-ws-stop")
 
     async def stop_machine(self) -> None:
         """B13's own close: `SHUTDOWN` where the chart takes it (`live`, `backing_off`), else
         `KILL`, which cancels the service in flight; then the interpreter stops."""
+        self._machine_stopping = True
         interp, self._interp = self._interp, None
         if interp is not None:
             if interp.status == "running":
@@ -875,6 +876,32 @@ class PrivateStreams:
 
     def mark_refused(self, key_ref: str) -> None:
         _remember(self._refused_keys, key_ref, None)
+
+    async def close_key(
+        self, key_ref: str, *, reason: Literal["key_revoked", "key_rotated"]
+    ) -> tuple[AccountId, ...]:
+        """SR-E27-17 (KV-E13, AC-28): close every stream on `key_ref` before returning, and name
+        their accounts for the caller's audit. The key is tombstoned first, so no dial or `auth`
+        uses it from then on and a stream on it is refused (`AuthError`); each stream stops at
+        once, its socket closes within `CLOSE_TIMEOUT_S`, `closed(reason)` is its last item, and
+        B13's stop is a task this registry owns (it is not awaited here)."""
+        _remember(self._closed_keys, key_ref, reason)
+        conns = [c for c in self._conns.values() if c.key_ref == key_ref and not c.stopping]
+        for conn in conns:
+            conn.halt()  # every stream at once, before any socket's close is awaited
+        await asyncio.gather(*(conn.close(reason) for conn in conns))
+        if conns:
+            logger().warning("bybit_private_key_closed", reason=reason, streams=len(conns))
+        return tuple(conn.account.account_id for conn in conns)
+
+    def reopen(self, key_ref: str) -> bool:
+        """An operator's action (ruling 10): a key three `auth` refusals marked may open streams
+        again. `True` when it was marked. A key `close_key` closed stays closed."""
+        if key_ref not in self._refused_keys:
+            return False
+        del self._refused_keys[key_ref]
+        logger().warning("bybit_private_key_reopened")
+        return True
 
     async def aclose(self) -> None:
         """Shut down: every stream closes with `closed(shutdown)`, later opens are refused, and
