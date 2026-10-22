@@ -2495,7 +2495,7 @@ export interface paths {
     put?: never;
     /**
      * Create a per-account profile (leverage, sizing, offsets, risk caps, allowed symbols)
-     * @description Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025, SR-E28-02): without a live one the answer is `403 step_up_required`, audited as `auth.step_up_required`, and nothing is stored. The profile is created as an alternate at `version` 1 (`updateAccountProfile` makes a profile the default). The body is checked first, as `ProfileRejected` describes, and a `name` the account already uses, in any letter case, is `409 conflict`. Audited write-ahead as `profile.created`: when that record cannot be written nothing is stored (`503 audit_unavailable`). `Idempotency-Key` records are the caller's own (SR-E28-17) and kept 24 h at most; one that is lost re-runs the request, which then meets its own `name` (`409 conflict`).
+     * @description Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025, SR-E28-02): without a live one the answer is `403 step_up_required`, audited as `auth.step_up_required`, and nothing is stored. The write is path-gated, as the key routes are, so a Manager meets the step-up first and `403 forbidden` after one. The profile is created as an alternate at `version` 1 (`updateAccountProfile` makes a profile the default). The body is checked first, as `ProfileRejected` describes, and a `name` the account already uses, in any letter case, is `409 conflict`. Audited write-ahead as `profile.created`: when that record cannot be written nothing is stored (`503 audit_unavailable`). `Idempotency-Key` records are the caller's own (SR-E28-17) and kept 24 h at most; one that is lost re-runs the request, which then meets its own `name` (`409 conflict`).
      */
     post: operations["createAccountProfile"];
     delete?: never;
@@ -10875,8 +10875,8 @@ export interface components {
      *     `*USDT` counts as `all_symbols`), `min_order_qty` and `qty_step` (`sizing.qty`),
      *     `min_notional` (`risk_caps.max_position_notional_usd` below a symbol's minimum notional)
      *     and `symbol_not_listed` (an entry that names no listed, trading linear USDT perpetual).
-     *     `native_stop_mandatory` and every refusal of the second pass are audited as
-     *     `profile.save_refused`.
+     *     `native_stop_mandatory`, `above_leverage_cap` and every refusal of the second pass are
+     *     audited as `profile.save_refused`.
      */
     ProfileRejected: {
       headers: {

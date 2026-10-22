@@ -159,7 +159,7 @@ def test_the_refusal_rules_are_one_list_in_two_passes() -> None:
     assert "the second only when the first passes" in first
     # R1S-05 (#4083): a pattern that matches every listed symbol allows what `all_symbols` does.
     assert "a universal pattern such as `*USDT` counts as `all_symbols`" in second
-    audited = "`native_stop_mandatory` and every refusal of the second pass are audited as"
+    audited = "`above_leverage_cap` and every refusal of the second pass are audited as"
     assert second.endswith(f"{audited} `profile.save_refused`.")
 
 
