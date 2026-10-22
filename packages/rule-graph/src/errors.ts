@@ -9,6 +9,7 @@
  * - `NOT_FORM_REPRESENTABLE`: the rule uses a graph-only construct, so the form cannot show it.
  * - `SCHEMA_VIOLATION`: the document does not fit the published rule IR schema, or cannot be
  *   represented without loss.
+ * - `MULTIPLE_SINKS`: the actions hang off more than one condition, which no IR can express.
  */
 export const RULE_GRAPH_ERROR_CODES = Object.freeze([
   "CYCLE_DETECTED",
@@ -16,6 +17,7 @@ export const RULE_GRAPH_ERROR_CODES = Object.freeze([
   "ORPHAN_NODE",
   "NOT_FORM_REPRESENTABLE",
   "SCHEMA_VIOLATION",
+  "MULTIPLE_SINKS",
 ] as const);
 
 /** One of the stable {@link RULE_GRAPH_ERROR_CODES}. */
@@ -41,4 +43,9 @@ export class RuleGraphError extends Error {
 /** Whether `value` is a {@link RuleGraphError}: an `instanceof` check, so a lookalike is not. */
 export function isRuleGraphError(value: unknown): value is RuleGraphError {
   return value instanceof RuleGraphError;
+}
+
+/** Throws a {@link RuleGraphError} unless `ok`. */
+export function check(ok: boolean, code: RuleGraphErrorCode, message: string, ids: string[] = []) {
+  if (!ok) throw new RuleGraphError(code, message, ids);
 }
