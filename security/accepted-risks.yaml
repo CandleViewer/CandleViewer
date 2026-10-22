@@ -156,19 +156,6 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/3639"
-  # electron 41.10.7 (the desktop shell's runtime), not part of EX-09: the advisory was published
-  # 2026-10-21, so C-12.3's 30-day window for a Medium ends on this expiry and 04 section 16.2 needs
-  # no row. The fix is Electron 42.11.3 or later, a major, which this entry expires into. 41 and 42
-  # are past Electron's end of support (2026-08-24 and 2026-10-20; releases.electronjs.org), so
-  # the upgrade targets a supported major, 43 or later. #3639 tracks that upgrade until it has its
-  # own ticket: the slice that closes #3639 re-points this entry to it, or keeps #3639 open.
-  - id: "GHSA-fw47-9c62-h3vw"
-    tool: npm-audit
-    severity: MEDIUM
-    reason: "electron 41.10.7, the desktop shell's runtime; fixed only in 42.11.3, a major. The flaw attributes WebHID and WebUSB permission checks to the wrong origin: CandleViewer uses neither API; its main process denies every permission request and every device permission (setPermissionRequestHandler, setDevicePermissionHandler) and registers no select-*-device listener, so Electron cancels every device chooser and never grants a device; and its sandboxed, context-isolated renderer loads only its own origin"
-    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
-    expires: "2026-11-20"
-    ticket: "https://github.com/CandleViewer/CandleViewer/issues/3639"
   # #3549: CI's Semgrep venv (tools/ci/requirements-semgrep.txt). semgrep 1.181.0, the newest
   # release, pins mcp==1.29.0 exactly, and only mcp 1.30.0 has the fix. The entry ends inside
   # C-12.3's 30 days, so it needs no exception. No gate reads it until the alert gate lands, so

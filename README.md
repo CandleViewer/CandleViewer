@@ -103,7 +103,7 @@ it does not duplicate them (`CONSTITUTION.md` C-16.5).
 
 | Tool                     | Minimum version                                        | Check                    |
 | ------------------------ | ------------------------------------------------------ | ------------------------ |
-| Node.js                  | 20.19.5 (Electron 41 installer needs require(esm))     | `node --version`         |
+| Node.js                  | 20.19.5 (Electron 45 installer needs require(esm))     | `node --version`         |
 | pnpm                     | 12.5.1 (pinned via `packageManager` in `package.json`) | `pnpm --version`         |
 | Python                   | 3.12                                                   | `python --version`       |
 | uv                       | latest                                                 | `uv --version`           |

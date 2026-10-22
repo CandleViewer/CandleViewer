@@ -199,3 +199,10 @@ vitest entry is out of `security/accepted-risks.yaml` and EX-09, and `pnpm audit
 lists vitest or @vitest/mocker. The `tinypool` override in `pnpm-workspace.yaml` is removed
 too, because vitest 4 does not depend on tinypool. The rows above record the state before
 this change. #1819 stays open for the other majors it sequences.
+
+Update 2026-10-22 (#1819, electron): the desktop shell now runs Electron 45, a supported major,
+so the accepted-risk entry for electron 41.10.7 is out of `security/accepted-risks.yaml`, and
+`pnpm audit` no longer lists electron. Since Electron 42 the `electron` package fetches its
+binary on first use instead of in a `postinstall` script, so its `allowBuilds` and
+`tools/ci/allowed-postinstall.json` entries (§5) now run nothing. #1819 stays open for the
+other majors it sequences.
