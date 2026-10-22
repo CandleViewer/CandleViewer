@@ -1,12 +1,16 @@
 // What `validateCvwb` may say when it refuses a binary body (#415 E17-X02, #4112): the decoders' own
-// diagnostics (packages/protocol/src/runtime/index.ts), which are fixed words and header integers,
-// never payload bytes, and the codec's fallback for an untyped throw. The fuzz property
-// (codec.fuzz.test.ts) refuses any other message; codec.diagnostics.test.ts checks this list
-// against every diagnostic the decoders throw, so a new one fails a PR rather than the nightly.
+// diagnostics (packages/protocol/src/runtime/index.ts), which are fixed words and integers (header
+// fields, indexes, sizes) with two bounded echoes, the magic's 4 header bytes in hex and a refused
+// side byte in decimal, and the codec's fallback for an untyped throw; never a run of body bytes.
+// The fuzz property (codec.fuzz.test.ts) refuses any other message; codec.diagnostics.test.ts
+// checks this list against every diagnostic the decoders throw, so a new one fails its own PR.
+
+/** The `diagnostic` of a `validateCvwb` refusal. */
+export const BODY = ["cvwb", "unsupported_body_kind", "unsupported_format_version"];
 const INT = String.raw`\d+`; // a header integer
 const FITS = String.raw`count=${INT} x ${INT} bytes exceeds the ${INT} bytes left in the buffer`;
 
-export const DIAGNOSTICS = [
+const DIAGNOSTICS = [
   String.raw`binary frame too short for the ${INT}-byte common header \(got ${INT} bytes\)`,
   String.raw`bad magic 0x[0-9a-f]+, expected 0x[0-9a-f]+ \("CVWB"\)`,
   String.raw`unknown body_kind ${INT}`,

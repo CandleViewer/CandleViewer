@@ -4,14 +4,13 @@
 // expected 1`). These checks run in the unit project, so such a gap fails the PR that adds it.
 import { describe, expect, it } from "vitest";
 import { validateCvwb } from "../../../src/lib/ws/protocol/codec";
-import { DIAGNOSTIC } from "./support/cvwbDiagnostics";
+import { BODY, DIAGNOSTIC } from "./support/cvwbDiagnostics";
 import { repoFile } from "./support/schemaHarness";
 
-const BODY = /^(?:cvwb|unsupported_body_kind|unsupported_format_version)$/;
 const typed = {
   t: "decode_error",
   code: "frame_malformed",
-  diagnostic: expect.stringMatching(BODY),
+  diagnostic: expect.stringMatching(new RegExp(`^(?:${BODY.join("|")})$`)),
 };
 
 describe("validateCvwb's refusals are diagnostics the fuzz property accepts (#4112)", () => {
@@ -28,6 +27,7 @@ describe("validateCvwb's refusals are diagnostics the fuzz property accepts (#41
 
   it("names the count of a heatmap column that is not one column (the nightly's body)", () => {
     const seed = corpus.find((s) => s.name === "heatmap-record-count-2");
+    expect(seed).toBeDefined();
     expect(validateCvwb(Buffer.from(seed?.hex ?? "", "hex"))).toEqual({
       ...typed,
       diagnostic: "cvwb",
@@ -38,19 +38,26 @@ describe("validateCvwb's refusals are diagnostics the fuzz property accepts (#41
   it("every diagnostic the decoders throw is in the list", () => {
     const source = repoFile("packages/protocol/src/runtime/index.ts");
     const text = (lit: string): string => lit.slice(1, -1);
-    // `assertFits(count, stride, available, what)` throws `${what}: count=...`: its labels
+    const count = (re: RegExp): number => (source.match(re) ?? []).length;
+    // Every construction is read as one literal message: a variable, a concatenation or the
+    // `FrameMalformedError` alias fails here instead of going unchecked.
+    const read = [...source.matchAll(/new BinaryFrameError\(\s*(`[^`]*`|"[^"]*")\s*[,)]/g)].map(
+      (m) => text(m[1] ?? ""),
+    );
+    expect(read).toHaveLength(count(/new (?:BinaryFrameError|FrameMalformedError)\(/g));
+    // a decoder's own body_kind check (6): `validateCvwb` picks the decoder by that body_kind
+    const thrown = read.filter((t) => !t.startsWith("expected body_kind="));
+    expect(read.length - thrown.length).toBe(6);
+    // `assertFits(count, stride, available, what)` throws `${what}: count=...`: every call's label
     const fits = /assertFits\([^;]*,\s*(`[^`]*`|"[^"]*")\s*,?\s*\);/g;
     const labels = [...source.matchAll(fits)].map((m) => text(m[1] ?? ""));
-    const thrown = [...source.matchAll(/new BinaryFrameError\(\s*(`[^`]*`|"[^"]*")/g)]
-      .map((m) => text(m[1] ?? ""))
-      // a decoder's own body_kind check: `validateCvwb` picks the decoder by that body_kind
-      .filter((t) => !t.startsWith("expected body_kind="));
+    expect(labels).toHaveLength(count(/(?<!function )assertFits\(/g));
+    // each `${...}` stands for a number (a header field, an index, a size); the corpus cases above
+    // check the real values of the diagnostics they reach
     const sample = (t: string): string => t.replace(/\$\{[^}]*\}/g, "7");
     const messages = thrown.flatMap((t) =>
       t.startsWith("${what}") ? labels.map((w) => sample(t.replace("${what}", w))) : [sample(t)],
     );
-    expect(labels).toHaveLength(5); // book levels, trades, footprint groups, footprint group, heatmap rows
-    expect(thrown.length).toBeGreaterThanOrEqual(16);
     expect(messages.filter((m) => !DIAGNOSTIC.test(m))).toEqual([]);
   });
 });

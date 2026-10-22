@@ -15,7 +15,7 @@ import * as P from "@candleviewer/protocol";
 import { expect, it } from "vitest";
 import { decodeFrame, isTopic, validateCvwb } from "../../../src/lib/ws/protocol/codec";
 import { MAX_ID_LENGTH } from "../../../src/lib/ws/protocol/frames";
-import { DIAGNOSTIC } from "./support/cvwbDiagnostics";
+import { BODY, DIAGNOSTIC } from "./support/cvwbDiagnostics";
 import { checked, kindOf } from "./support/fuzzCaps";
 
 const CORPORA = fileURLToPath(new URL("../../../../../tests/fuzz/ws-frames/", import.meta.url));
@@ -156,7 +156,6 @@ function run<T>(target: string, c: Case, call: () => T): T {
 
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const WIRE = ["envelope", "payload"]; // what `decodeFrame` refuses with; `validateCvwb`'s are below
-const BODY = ["cvwb", "unsupported_body_kind", "unsupported_format_version"];
 
 /**
  * A typed `frame_malformed` whose message is safe to log: a `decodeFrame` refusal is plain words, a
