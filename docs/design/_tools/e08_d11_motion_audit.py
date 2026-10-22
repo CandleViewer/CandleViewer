@@ -11,15 +11,17 @@ ladder, E08-D03's `recovered` hold, the `23` section 7.5 resync budget); PROPOSE
 `docs/design/E08/E08-D11.md` section 2's and change only when the owner's run (section 11) changes
 them. The mass-transition measurements are read from `E08-D11-proto/proto-results.json` if present.
 
-The flap replay follows section 3 as folded after the two lens rounds: the title swaps at 0 ms on
-the first change, then at most once per second and, once a tier trips, latches on "Connection
-unstable" until the stable window completes; the glyph and the CMP-076 chip follow the words, not
-the transport; the banner fill is debounced on the clearing side; the panel scrim appears once per
-episode and cuts in the frame the fresh snapshot applies (a tradable book is never dimmed; the
-15 % hold is reported for the C-row to E11-D06); `role="alert"` fires on every Disconnected entry
-that follows an announced recovery, until the slow-flap tier (3 entries in 60 s) collapses further
-entries into one polite "Connection unstable" and lengthens the stable window to 30 s. The stale
-chip and dim clear after a window of continuous freshness (the quiet-symbol scenario shows why).
+The flap replay follows section 3 as folded after the lens rounds: the title swaps at 0 ms on the
+first change, then at most once per second and, once a tier trips, latches on "Connection
+unstable" until the stable window completes; the glyph, the CMP-076 chip and the panel header's
+words take those slots and latch with the title (the header in its own wording, with a cut where
+the title reads "Reconnected"), never the transport; the banner fill is debounced on the clearing
+side; the panel scrim appears once per episode and cuts in the frame the fresh snapshot applies (a
+tradable book is never dimmed; the 15 % hold is reported for the C-row to E11-D06); `role="alert"`
+fires on every Disconnected entry that follows an announced recovery, until the slow-flap tier (3
+entries in 60 s) collapses further entries into one polite "Connection unstable" and lengthens the
+stable window to 30 s. The stale chip and dim clear after a window of continuous freshness (the
+quiet-symbol scenario shows why).
 
 Usage: python3 -I docs/design/_tools/e08_d11_motion_audit.py          (Markdown; exit 1 on a FAIL)
        python3 -I docs/design/_tools/e08_d11_motion_audit.py --json   (the boards' numbers)
@@ -71,7 +73,8 @@ DEGRADED_CLEAR_S = 5.0  # the focused symbol's topics fresh for this long before
 STALE_HOLD_S = 5.0  # the stale chip and dim clear after this long of continuous freshness (T3)
 DIM_ALPHA = 0.85  # stale text at 85 % over `stale.surface` (E17-D01 15 %, E11-D06 D13)
 PANEL_DIM_ALPHA = 0.15  # the Stale panel dim: `stale.surface` at 15 % over the panel (E17-D01 5)
-WORD_SLOT_S = 1.0  # title swaps after the first: at most one per second (D2); glyph and chip follow
+WORD_SLOT_S = 1.0  # title swaps after the first: at most one per second (D2); the glyph, the chip
+# and the panel header's words take the same slots and latch (D10, D25)
 EMPHASIS_ALPHA, EMPHASIS_MIN_MS, EMPHASIS_MAX_CELLS = 0.25, 500, 20
 EMPHASIS_BUSY_S = 10.0  # a cell emphasising at >= 1 Hz for this long stops until it quiets (D15)
 # element|width|height in CSS px (E08-D03's 1280 px boards; compact density). The title line is
@@ -83,7 +86,8 @@ EMPHASIS_BUSY_S = 10.0  # a cell emphasising at >= 1 Hz for this long stops unti
 AREAS = (
     "banner fill|1280|96;banner title line|379|19;banner icon|20|20;connection chip|128|20;"
     "stale chip|64|18;one row|1280|24;rendered rows 60|76800|24;emphasis cell|96|20;"
-    "emphasis cells 20|1920|20;panel scrim|480|600;T2 header strip|480|24;progress bar|400|4"
+    "emphasis cells 20|1920|20;panel scrim|480|600;panel header|480|24;T2 header strip|480|24;"
+    "progress bar|400|4"
 )
 # element|changes per second, worst case under the table|kind|changes in the worst 1 s window
 # (a WCAG flash is a pair of opposing changes: 2 changes = 1 flash; the sustained rate is the
@@ -95,6 +99,7 @@ FLASH = (
     f"banner title and body|{1 / WORD_SLOT_S}|text|1;"
     f"banner glyph|{1 / WORD_SLOT_S}|text|1;"
     f"connection chip|{1 / WORD_SLOT_S}|text|1;"
+    f"panel header words|{1 / WORD_SLOT_S}|text|1;"
     f"stale chip, book|{2 / (T1_S['book'] + STALE_HOLD_S)}|luminance|1;"
     f"watchlist row settle, ticker|{2 / (T1_S['ticker'] + STALE_HOLD_S)}|luminance|1;"
     f"stale panel dim, book|{2 / (T1_S['book'] + STALE_HOLD_S)}|luminance|1;"
@@ -140,6 +145,12 @@ WORDS = {
     "unstable": "Connection unstable — last data Ns ago",
     "recovered": "Reconnected",
 }
+HEADER = {  # the panel header's words: the title's slots and latch (D10); "" is the cut
+    "down": "Disconnected — last data Ns ago",
+    "up": "Reconnected — verifying · last data Ns ago",
+    "unstable": "Connection unstable — verifying · last data Ns ago",
+    "recovered": "",
+}
 SCRIM_BLOCK = 0.6  # the scrim's one level; 0 = off (a cut in the frame the fresh snapshot applies)
 QUIET_PERIOD_S, QUIET_DURATION_S = 5.5, 60.0  # the quiet symbol: one print every 5.5 s for a minute
 
@@ -157,19 +168,22 @@ def flap(drops: Drops) -> dict[str, Any]:
     changes = sorted([(d, "down") for d, _ in drops] + [(u, "up") for _, u in drops])
     fill: list[tuple[float, str]] = []
     words: list[tuple[float, str]] = []  # title swaps: the first at 0 ms, then <= 1 per second
+    header: list[tuple[float, str]] = []  # the panel header's words, in the title's slots (D10)
     scrim: list[tuple[float, float]] = []  # the panel scrim's large-area level (H8)
     ann: list[tuple[float, str]] = []
     entries: list[float] = []  # Disconnected entries (the first drop, and drops after a recovery)
     appearances, collapse, occupied, down = 0, math.inf, False, False
     unstable = latched = episode = slow = False
 
-    def swap(t: float, text: str) -> None:  # a pending swap takes the latest wording (latest wins)
+    def swap(t: float, kind: str) -> None:  # a pending swap takes the latest wording (latest wins)
         applied = [w for w in words if w[0] <= t]
         slot = max(t, applied[-1][0] + WORD_SLOT_S) if applied else t
-        if words and words[-1][0] > t:
-            words[-1] = (words[-1][0], text)
+        if words and words[-1][0] > t:  # the header's words ride the same slot (D10)
+            words[-1] = (words[-1][0], WORDS[kind])
+            header[-1] = (header[-1][0], HEADER[kind])
         else:
-            words.append((slot, text))
+            words.append((slot, WORDS[kind]))
+            header.append((slot, HEADER[kind]))
 
     for t, kind in changes:
         if occupied and t >= collapse:  # dismissed at the earliest moment: the worst case
@@ -200,17 +214,17 @@ def flap(drops: Drops) -> dict[str, Any]:
                 scrim.append((t, 0.0))
         if trip:
             unstable = latched = True
-            swap(t, WORDS["unstable"])
+            swap(t, "unstable")
             ann.append((words[-1][0], "polite: Connection unstable"))  # with the title (D20)
         elif not latched:
-            swap(t, WORDS[kind])
+            swap(t, kind)
         if kind == "up":
             nxt = [c for c in changes if c[0] > t]
             step = t + (UNSTABLE_STABLE_S if slow else STABLE_WINDOW_S)  # the stable window
             if not nxt or nxt[0][0] >= step:
                 fill.append((step, "success"))
                 ann.append((step, "assertive: Reconnected"))
-                swap(step, WORDS["recovered"])
+                swap(step, "recovered")
                 latched = unstable = episode = slow = False  # the next drop opens a new episode
                 collapse = step + RECOVERED_HOLD_S  # earliest; dismissal still required
     out: dict[str, Any] = {"changes": len(changes), "appearances": appearances}
@@ -220,6 +234,9 @@ def flap(drops: Drops) -> dict[str, Any]:
     out["words"] = [f"{t:g} s {w}" for t, w in words]
     out["word_swaps"], out["text_max_per_s"] = len(words), max_per_second([w[0] for w in words])
     out["glyph_max_per_s"] = out["text_max_per_s"]  # the glyph and the chip follow the words (M1)
+    out["header"] = [f"{t:g} s {w or 'cut'}" for t, w in header]  # the panel header's words (D10)
+    out["header_changes"] = len(header)
+    out["header_max_per_s"] = max_per_second([h[0] for h in header])
     out["transport_max_per_s"] = max_per_second([c[0] for c in changes])  # the block's rate
     out["scrim"] = [f"{t:g} s {lvl:g}" for t, lvl in scrim]
     out["scrim_changes"] = len(scrim)

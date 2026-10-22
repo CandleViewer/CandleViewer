@@ -90,7 +90,7 @@
         right: 0;
         padding: 2px 8px;
         background: #22292f;
-      } /* the panel header: "Reconnected — verifying" + the age at 1 Hz carries the stable window, never a dim */
+      } /* the panel header: its words take the title's slots and latch (D10); "Reconnected — verifying" + the age at 1 Hz carries the stable window, never a dim */
       #scrim {
         position: absolute;
         inset: 0;
@@ -284,6 +284,13 @@
         unstable: "Connection unstable — last data Ns ago",
         recovered: "Reconnected",
       };
+      const HDR = {
+        // the panel header's words: the same slots and latch as the title (D10); "" is the cut at the window's end
+        down: "Disconnected — last data Ns ago",
+        up: "Reconnected — verifying · last data Ns ago",
+        unstable: "Connection unstable — verifying · last data Ns ago",
+        recovered: "",
+      };
       const act = {
         banner: (on) => banner.classList.toggle("on", on),
         fill: (f) => {
@@ -294,6 +301,7 @@
           title.textContent = w.text;
           glyph.textContent = w.glyph; // the glyph follows the words, never the transport (M1)
           chip.textContent = w.chip; // so does the CMP-076 chip; its latency number is never in a live region
+          if (w.hdr !== undefined) act.hdr(w.hdr); // and the panel header's words, in the same slots (D10)
         },
         scrim: (level) => {
           scrim.className = level === 0.6 ? "block" : level === 0.15 ? "hold" : "";
@@ -346,6 +354,7 @@
                 : kind === "down"
                   ? `Reconnecting (${attempt})`
                   : "Live 42 ms",
+            hdr: HDR[kind], // the panel header's words take the title's slots and latch, never the transport
           };
           if (words.length && words[words.length - 1][0] > t) {
             words[words.length - 1][1] = text;
@@ -395,14 +404,12 @@
               setScrim(t, 0.6); // the 0.6 scrim appears once per episode
               episode = true;
             }
-            emit(t, () => act.block(true));
-            emit(t, () => act.hdr("Disconnected — last data Ns ago"));
+            emit(t, () => act.block(true)); // the block alone follows the transport; the header's words wait for their slot
             collapse = Infinity;
           } else {
             if (scrims.length && scrims[scrims.length - 1][1] === 0.6)
               setScrim(t, CFG.hold ? 0.15 : 0); // the fresh snapshot: a cut (or the ?hold arm)
             emit(t, () => act.block(false));
-            emit(t, () => act.hdr("Reconnected — verifying · last data Ns ago"));
           }
           if (trip) {
             unstable = latched = true;
@@ -420,8 +427,7 @@
               ann.push(`${step} s recovered`);
               emit(step, () => act.ann("assertive", "Reconnected."));
               wordsAt(step, WORDS.recovered, "recovered");
-              if (scrims[scrims.length - 1][1] !== 0) setScrim(step, 0);
-              emit(step, () => act.hdr(""));
+              if (scrims[scrims.length - 1][1] !== 0) setScrim(step, 0); // the header's cut rides the recovered words
               latched = unstable = episode = slow = false;
               attempt = 0;
               collapse = step + HOLD_S;
