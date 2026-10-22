@@ -51,7 +51,7 @@ Each ships a positive (`# ruleid:`) and negative (`# ok:`) fixture, and is verif
 
 `.zap/rules-low-priv.yaml`: OpenAPI-driven active scan of `/rules*` as a low-privilege (`rules:read`) synthetic
 Viewer, signed in with a real TOTP method on a throwaway CI stack (#3991). Its session is minted per run and reaches
-ZAP through `security/zap/role_session.js`, never a stored secret. Any response returning data outside the session's
-grants is a High finding. Not run locally (no ZAP/docker). Wired as `.github/workflows/dast-rules-nightly.yml`
+ZAP through `security/zap/role_session.js`, never a stored secret. A response returning data outside the session's
+grants is triaged as a High finding: ZAP reports what it saw, and this nightly has no denials phase of its own. Not run locally (no ZAP/docker). Wired as `.github/workflows/dast-rules-nightly.yml`
 (nightly + manual, through `_dast-low-priv.yml`); it fails when the scan loses its session, and on any High or
 Medium alert outside `.zap/rules-low-priv-baseline.json`.

@@ -153,7 +153,7 @@ jobs:
             --password-env ZAP_VIEWER_PASSWORD --totp-secret-file "$RUNNER_TEMP/cv/viewer.totp" \
             --out "$envfile"
           docker run --rm --network host --env-file "$envfile" -e ZAP_TARGET -e ZAP_PROFILE \
-            -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -autorun "/zap/wrk/$WORK/$ZAP_PROFILE-scan.yaml" \
+            -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -silent -autorun "/zap/wrk/$WORK/$ZAP_PROFILE-scan.yaml" \
             2>&1 | tee "$WORK/$ZAP_PROFILE-scan.log"
 
       - name: The scan stayed signed in, and no new medium+ alert

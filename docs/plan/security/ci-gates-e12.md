@@ -175,7 +175,7 @@ fix merged (#2140 → #2137, #2141 → #2138, #2142 → #2139). The rules now co
   its session is minted by `security/zap/mint_sessions.py` and reaches ZAP through
   `security/zap/role_session.js`. No credential is stored, so none needs rotating. A scan that
   loses its session fails (`security/zap/check_liveness.py`).
-- **Tuning for expected 4xx:** `alertFilter` marks two alerts as false positives on these two
+- **Tuning for expected 4xx:** `alertFilter` marks one alert as a false positive on these two
   paths only: 90022 when the evidence is our problem+json codes (`validation_failed`,
   `bar_window_too_large`, `no_data_recorded`, `response_too_large`). Rule 10049 is not in the
   pinned ZAP 2.17.0 image, so it has no filter. Injection and disclosure rules are never filtered.

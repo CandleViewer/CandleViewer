@@ -348,6 +348,24 @@ def test_the_scan_signs_in_as_the_viewer_and_passes_only_its_profile() -> None:
     assert "check_liveness.py" in gates["run"] and "baseline_gate.py" in gates["run"]
 
 
+def test_zap_makes_no_unsolicited_request() -> None:
+    """`-silent`: no update check and no call home leave the runner (C-13.5), as the admin
+    nightly runs (#4031)."""
+    scan = _steps()["The passive and active scan, as the Viewer"]["run"]
+    assert "zap.sh -cmd -silent -autorun" in scan
+
+
+def test_no_scan_container_outlives_the_job_and_the_checkout_holds_no_token() -> None:
+    """The container ZAP mounts the checkout into is removed (`--rm`), and the checkout
+    keeps no token (`persist-credentials: false`), so the mount hands ZAP none."""
+    steps = _steps()
+    assert "docker run --rm " in steps["The passive and active scan, as the Viewer"]["run"]
+    checkout = next(
+        s for s in steps.values() if str(s.get("uses", "")).startswith("actions/checkout@")
+    )
+    assert checkout["with"]["persist-credentials"] is False
+
+
 def test_the_artefact_check_searches_every_secret_the_run_makes_before_any_upload() -> None:
     steps = _steps()
     made = steps["Make this run's synthetic credentials (masked, never echoed)"]["run"]
