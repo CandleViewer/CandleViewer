@@ -50,6 +50,12 @@ def pg_dsn() -> Iterator[str]:
     for port in ports:
         ports[port] = ("127.0.0.1", None)  # the port itself is docker's pick
     with container:
+        # Read back, not assumed: a testcontainers that stopped passing `ports` to docker-py as it
+        # is would leave the loop above a no-op, and the database on every interface.
+        started = container.get_wrapped_container()
+        started.reload()  # its `attrs` were read before the ports were published
+        bound = {b["HostIp"] for binds in started.ports.values() for b in binds or []}
+        assert bound == {"127.0.0.1"}, f"the Postgres port is published on {bound or 'nowhere'}"
         dsn = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+asyncpg")
         subprocess.run(
             [sys.executable, "-m", "alembic", "upgrade", "head"],
@@ -71,7 +77,7 @@ def seed_user(dsn: str, **planted: str) -> str:
     if "id" in planted:
         raise TypeError("seed_user returns the id it makes: `id` is not for `planted`")
     uid = str(uuid.uuid4())
-    base = {"id": uid, "email": f"{uid[:8]}@x.io", "username": f"u{uid[:8]}"}
+    base = {"id": uid, "email": f"{uid[:8]}@x.invalid", "username": f"u{uid[:8]}"}  # RFC 2606
     row = base | {"password_hash": "$argon2id$x"} | planted
     insert = sql.SQL("INSERT INTO users ({}) VALUES ({})").format(
         sql.SQL(", ").join(map(sql.Identifier, row)),
@@ -93,8 +99,10 @@ def rendered(exc: BaseException) -> str:
 
 def reachable(exc: BaseException) -> list[BaseException]:
     """*exc* first, then every exception reachable from it, each once: its `__cause__` and
-    `__context__` even when `__suppress_context__` hides them from `traceback`, and an exception
-    group's members. As `strip_driver_text` walks, which is the code this verifies."""
+    `__context__` even when `__suppress_context__` hides them from `traceback`, an exception
+    group's members, and the exceptions its attributes hold (`StatementError.orig`), alone or in
+    a list or tuple. Wider than the walk of `strip_driver_text`, the code this verifies, so a
+    link the strip misses still shows."""
     nodes: list[BaseException] = []
     seen: set[int] = set()
     todo = deque([exc])
@@ -107,6 +115,9 @@ def reachable(exc: BaseException) -> list[BaseException]:
         if isinstance(node, BaseExceptionGroup):
             todo.extend(node.exceptions)
         todo.extend(link for link in (node.__cause__, node.__context__) if link is not None)
+        for value in vars(node).values():  # an attribute outside `args`
+            held = value if isinstance(value, list | tuple) else [value]
+            todo.extend(item for item in held if isinstance(item, BaseException))
     return nodes
 
 
@@ -128,7 +139,10 @@ class Seen(list[str]):
 
 
 class _Records(logging.Handler):
-    """Keeps the text of every record that reaches it: its message and its traceback's text."""
+    """Keeps the text of every record that reaches it: its message, and its traceback's text
+    (`exc_info`, and the `exc_text` a formatter or a filter left when it cleared that). It fails
+    closed: a record whose message cannot be formatted leaves the `repr` of the message and
+    arguments."""
 
     def __init__(self, into: list[str]) -> None:
         super().__init__(logging.DEBUG)
@@ -139,9 +153,18 @@ class _Records(logging.Handler):
             text = record.getMessage()
             if record.exc_info:
                 text += "\n" + logging.Formatter().formatException(record.exc_info)
+            if record.exc_text:
+                text += "\n" + record.exc_text
             self._into.append(text)
-        except Exception:  # a malformed record is the logging module's to report
+        except Exception:  # the logging module reports it; its text is kept all the same
+            self._into.append(repr((record.msg, record.args)))
             self.handleError(record)
+
+
+def _event_text(event: EventDict) -> str:
+    """An event as a renderer writes it: an exception value as its `str`, as production's
+    redaction does (`_exception_text`); `repr` shows only its class and `args`."""
+    return repr({key: str(v) if isinstance(v, BaseException) else v for key, v in event.items()})
 
 
 @contextmanager
@@ -152,9 +175,9 @@ def _structlog_events() -> Iterator[list[EventDict]]:
     cap = structlog.testing.LogCapture()
     processors = structlog.get_config()["processors"]
     kept = list(processors)
-    processors[:] = [format_exc_info, cap]
-    structlog.configure(processors=processors)
     try:
+        processors[:] = [format_exc_info, cap]
+        structlog.configure(processors=processors)
         yield cap.entries
     finally:
         processors[:] = kept
@@ -185,7 +208,7 @@ def server_text(rel: SqlAlchemyRelationalRepository) -> Iterator[Seen]:
             try:
                 yield seen
             finally:
-                seen.logs.extend(repr(logged) for logged in events)
+                seen.logs.extend(_event_text(logged) for logged in events)
     finally:
         root.setLevel(level)
         root.removeHandler(handler)
@@ -207,7 +230,9 @@ def _check_markers(left: str, seen: Seen) -> None:
 def assert_no_markers(exc: BaseException, seen: Seen) -> None:
     """No `DETAIL` or statement marker is in what left as *exc* (`rendered_graph`) or in the
     block's logs. For a refusal with no value to plant (a domain CHECK, a trigger's fixed text).
-    The `[SQL` marker is controlled: the engine's own text of the error must hold it."""
+    The `[SQL` marker is controlled: the engine's own text of the error must hold it. Limits:
+    `Failing row` is case-sensitive, `DETAIL:` matches only asyncpg's `__str__`, and the `[SQL`
+    control cannot hold for a refusal at COMMIT, where SQLAlchemy's `statement` is None."""
     _check_markers(_left(exc, seen), seen)
 
 

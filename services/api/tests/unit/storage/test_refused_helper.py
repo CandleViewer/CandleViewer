@@ -8,7 +8,9 @@ import contextlib
 import logging
 import re
 from collections.abc import AsyncIterator, Callable
+from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 import pytest_asyncio
 import structlog
@@ -20,6 +22,7 @@ from tests.integration._refused import (
     assert_no_row_values,
     reachable,
     rendered_graph,
+    seed_user,
     server_text,
 )
 
@@ -75,11 +78,21 @@ def _behind_a_cycle() -> BaseException:
     return _hidden(ValueError("typed"), _hidden(a, _hidden(b, a)))
 
 
+def _adapted() -> RuntimeError:
+    """An error whose cause carries the value, as `StatementError.orig` does the driver's text."""
+    adapted = RuntimeError("adapted")
+    adapted.__cause__ = RuntimeError(_PLANTED)
+    return adapted
+
+
 _HIDDEN: dict[str, Build] = {
     "two-suppressed-links-deep": lambda: _two_deep(RuntimeError(_PLANTED)),
     "in-a-group-member": _in_a_group_member,
     "in-an-attribute": lambda: _Typed(_PLANTED),
     "behind-a-cycle": _behind_a_cycle,
+    "exception-in-an-attribute": lambda: _Typed(_adapted()),
+    "exception-in-a-list-attribute": lambda: _Typed([_adapted()]),
+    "exception-in-a-tuple-attribute": lambda: _Typed((_adapted(),)),
 }
 
 
@@ -103,6 +116,11 @@ def _within_except(log: Callable[..., object], *args: object, **kwargs: object) 
         log(*args, **kwargs)
 
 
+class _Detailed(Exception):
+    def __str__(self) -> str:  # the row is in the `str`, as a driver error's DETAIL, not `args`
+        return f"{self.args[0]}: {_PLANTED}"
+
+
 _LOGGED: dict[str, Callable[[], object]] = {
     "stdlib-warning": lambda: logging.getLogger("leak").warning("failed: %s", _PLANTED),
     "stdlib-debug": lambda: logging.getLogger("leak.sub").debug("failed: %s", _PLANTED),
@@ -110,6 +128,9 @@ _LOGGED: dict[str, Callable[[], object]] = {
     "structlog-event": lambda: structlog.get_logger("leak").error("failed", error=_PLANTED),
     "structlog-exc-info": lambda: _within_except(
         structlog.get_logger("leak").error, "failed", exc_info=True
+    ),
+    "structlog-exception-value": lambda: structlog.get_logger("leak").error(
+        "failed", error=_Detailed("primary")
     ),
 }
 
@@ -129,6 +150,36 @@ def test_server_text_logs_without_the_value_pass_the_check(rel: Rel) -> None:
         _controlled(seen)
     assert sum("nothing" in line for line in seen.logs) == 2  # both were kept; neither trips it
     assert_no_row_values(ValueError("typed"), seen, _PLANTED)
+
+
+def test_server_text_a_log_that_cannot_be_formatted_keeps_its_text(
+    rel: Rel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(logging, "raiseExceptions", False)  # pytest's handler re-raises a bad one
+    with server_text(rel) as seen:
+        logging.getLogger("leak").warning("failed: %s %s", _PLANTED)  # one argument short
+        _controlled(seen)
+    _leaks(ValueError("typed"), seen, _PLANTED)
+
+
+def test_server_text_a_log_whose_exc_info_was_cleared_keeps_its_exc_text(rel: Rel) -> None:
+    record = logging.LogRecord("leak", logging.ERROR, __file__, 1, "failed", None, None)
+    record.exc_text = f"Traceback (most recent call last):\nRuntimeError: {_PLANTED}"
+    with server_text(rel) as seen:
+        logging.getLogger("leak").handle(record)  # as a filter that cleared `exc_info` leaves it
+        _controlled(seen)
+    _leaks(ValueError("typed"), seen, _PLANTED)
+
+
+def test_server_text_structlog_processors_are_restored_when_entering_them_fails(
+    rel: Rel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    processors = structlog.get_config()["processors"]
+    kept = list(processors)
+    monkeypatch.setattr(structlog, "configure", MagicMock(side_effect=[RuntimeError("no"), None]))
+    with pytest.raises(RuntimeError, match="no"), server_text(rel):
+        pytest.fail("the block must not run")
+    assert processors == kept
 
 
 @pytest.mark.parametrize("fails", [False, True], ids=["after-the-block", "when-it-raises"])
@@ -183,3 +234,11 @@ def test_the_checks_a_marker_in_what_left_fails(
 def test_assert_no_markers_no_statement_seen_fails_the_control() -> None:
     with pytest.raises(AssertionError, match="control: the engine's text has no statement"):
         assert_no_markers(ValueError("typed"), Seen())
+
+
+def test_seed_user_synthetic_email_is_on_a_reserved_domain(monkeypatch: pytest.MonkeyPatch) -> None:
+    connect = MagicMock()
+    monkeypatch.setattr(psycopg, "connect", connect)
+    seed_user("postgresql+asyncpg://u:p@127.0.0.1:9/db")  # no database: `connect` is a stand-in
+    values = connect.return_value.__enter__.return_value.execute.call_args.args[1]
+    assert [v.rsplit("@", 1)[1] for v in values if "@" in v] == ["x.invalid"]  # RFC 2606

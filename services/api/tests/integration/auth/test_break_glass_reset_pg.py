@@ -148,6 +148,16 @@ async def _env(pg_dsn: str) -> AsyncIterator[tuple[AsyncEngine, BreakGlassResetS
         await engine.dispose()
 
 
+@asynccontextmanager
+async def _refused_rel(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepository]:
+    """A repository of its own for `server_text`, disposed whatever the test did."""
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "breakglass-refused")
+    try:
+        yield rel
+    finally:
+        await rel.dispose()
+
+
 async def _user(engine: AsyncEngine, kind: str = "owner") -> tuple[str, str]:
     """Seed a `_SEED` user; returns (user id, its unused recovery code)."""
     role, status, expired = _KINDS[kind]
@@ -209,7 +219,7 @@ async def test_reset_without_code_consumes_no_code(pg_dsn: str) -> None:
 
 
 async def test_failed_reset_changes_zero_rows(pg_dsn: str) -> None:
-    async with _env(pg_dsn) as (engine, store):
+    async with _env(pg_dsn) as (engine, store), _refused_rel(pg_dsn) as rel:
         uid, code = await _user(engine)
         async with engine.begin() as conn:
             await conn.execute(
@@ -224,7 +234,6 @@ async def test_failed_reset_changes_zero_rows(pg_dsn: str) -> None:
                     "FOR EACH ROW EXECUTE FUNCTION bg_crash()"
                 )
             )
-        rel = SqlAlchemyRelationalRepository(pg_dsn, "breakglass-refused")  # for `server_text`
         try:  # the crash hits the last statement, after every revoke ran
             with server_text(rel) as seen, pytest.raises(DBAPIError) as raised:
                 await _reset(SqlAlchemyBreakGlassRepository(rel), uid, code)
@@ -235,7 +244,6 @@ async def test_failed_reset_changes_zero_rows(pg_dsn: str) -> None:
             async with engine.begin() as conn:
                 await conn.execute(sa.text("DROP TRIGGER bg_crash ON system_events"))
                 await conn.execute(sa.text("DROP FUNCTION bg_crash()"))
-            await rel.dispose()
         assert await _state(engine, uid) == _UNTOUCHED  # the code was not consumed either
         assert not isinstance(await _reset(store, uid, code), str)  # a re-run succeeds
         assert await _state(engine, uid) == _RESET
