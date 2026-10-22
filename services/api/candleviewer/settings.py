@@ -500,6 +500,11 @@ class Settings(BaseSettings):
     # the 8 MiB batch budget). A larger entry stops the run (503, `entry_too_large@<id>`). An
     # export reads such an entry alone (#889), so lowering this also isolates more entries there.
     audit_verify_max_entry_bytes: int = Field(default=4_194_304, ge=65_536, le=8_388_608)
+    # E42-T02 export (#889, 22 `exportAuditLog`): the most entries one export's span may hold and
+    # the most bytes its file may have as written (the gzip when compressed). Past either the job
+    # fails `export_too_large` and leaves nothing on disk.
+    audit_export_max_rows: int = Field(default=1_000_000, ge=1)
+    audit_export_max_bytes: int = Field(default=1_073_741_824, ge=1)
     # Structure one Owner audit page serves, as the `{`, `[` and `,` of its states'
     # renderings; past it the remaining states are withheld (`detail.elided`). The page is
     # serialized on the event loop (C-2.17): the costliest page measured, 4-byte UTF-8

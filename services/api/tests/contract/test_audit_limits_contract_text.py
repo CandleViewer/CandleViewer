@@ -127,6 +127,7 @@ def test_export_limits_are_settings_named_with_their_defaults() -> None:
     ):
         stated = re.search(rf"`{name}`[^(]*\(default (\d+)\)", _EXPORT)
         assert stated and int(stated[1]) == default, name
+        assert name not in Settings.model_fields or Settings.model_fields[name].default == default
 
 
 @pytest.mark.parametrize(
