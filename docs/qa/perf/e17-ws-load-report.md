@@ -35,6 +35,16 @@ non-loopback target. A run clears its directory of an earlier run's artefacts an
 directory the harness made: an empty one, or one that holds the `.cv-bench-ws-run` marker a run writes (a regular
 file). Any other is refused, untouched (use an empty `--out-dir`); the refusal and the clear follow no symlink inside it.
 
+**The clock-skew guard** makes a run INVALID when the hello's clock skew is over 5 ms. k6 times each hello's round
+trip, and the guard reads the corrected skew `|raw - RTT/2|` of the hello with the shortest round trip (NTP's
+minimum-delay filter; on a tie, the smallest corrected skew). It used to read the max over the hellos, so one hello
+that waited in a queue decided the run, though such a reading is the wait, not the clocks' offset: on one host
+clock, profile A's run 3 on `cv-bench-01` read 18.0 ms, all of it one hello's 40 ms raw skew on a 44 ms round trip
+(the median round trip was 7.5 ms). The minimum-RTT reading is never above that max, so a run the max admitted stays
+admitted. `result.json` and the report's guard line name the estimator (`skew_estimator`): `min_rtt_hello`;
+`max_over_hellos` for a k6 summary written before each VU kept its hello's raw skew and round trip as a pair
+(`hellos`); `raw_max` where only the raw skew is read (a run with an injected send delay reports it, unjudged).
+
 **A run is only as long as it says.** A run shorter than its profile (`--duration-s`, `--warmup-s`, the workflow's
 `duration_s`) is labelled `smoke`: the gate never holds it to a full baseline, and `record` refuses it, so a short
 window can never become a baseline.
