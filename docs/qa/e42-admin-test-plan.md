@@ -1,10 +1,10 @@
 # E42 Admin area: black-box test plan, fixtures and exploratory charters
 
-Ticket: E42-Q01 (#962). Status: part 1 of 2, a draft for review by the story owners and the Security
-engineer. This part holds the conventions, the S01 to S03 cases, the cross-session scenarios, the
-exploratory charters and the S01 to S03 traceability. Part 2 adds S04 to S07, E42-T07 and E42-S08,
-the entry and exit criteria, the regression pack, the screen-reader script, the per-screen budgets and the
-cases deferred in section 5. The fixture set lands with its own PRs and is described in section 1.
+Ticket: E42-Q01 (#962). Status: a draft for review by the story owners and the Security engineer. It
+holds the conventions, the cases for E42-S01 to S08 and E42-T07, the cross-session scenarios, the
+exploratory charters, the traceability, the entry and exit criteria, the regression pack, the
+screen-reader script and the per-screen budgets. The fixture set lands with its own PRs and is described
+in section 1.
 
 ## 0. Conventions
 
@@ -57,23 +57,32 @@ cases deferred in section 5. The fixture set lands with its own PRs and is descr
 The handles below are fixed here. The fixture slices define each one as an idempotent seed script under
 `services/api/tests/fixtures/admin/`, with a README line saying how to load it.
 
-| Handle                          | What it is                                                                                   |
-| ------------------------------- | -------------------------------------------------------------------------------------------- |
-| OWNER                           | The Owner, TOTP enrolled                                                                     |
-| OWNER-2                         | A second Owner, for concurrent edits                                                         |
-| MGR-M                           | A Manager with an active session, one armed rule and a grant on SUB-S                        |
-| MGR-N                           | A Manager with no grants                                                                     |
-| MGR-MANY                        | A Manager with grants on SUB-S, SUB-T and SUB-U                                              |
-| VIEWER-V                        | A Viewer                                                                                     |
-| INVITED-I, DISABLED-D, LOCKED-L | A user in each non-active status                                                             |
-| SUB-S, SUB-T, SUB-U             | Demo sub-accounts                                                                            |
-| SUB-K                           | An account under the 48-hour key restriction                                                 |
-| TIER-FULL                       | The account tier `regular`, recorded, with 5 of 5 sub-accounts in use                        |
-| HEALTH-RECORDER-DOWN            | The overview's `recorder` slice unreachable, every other slice healthy                       |
-| POS-M-S                         | An open position of MGR-M's on SUB-S, its exposure above the tightened cap AD-S03-04 saves   |
-| PROFILE-S                       | The profile bound to SUB-S                                                                   |
-| OVERVIEW-503                    | `GET /api/v1/admin/overview` answering `503`                                                 |
-| AUDIT-CORRUPT                   | A chain with one altered entry at a known `first_bad_id`; it loads only into a test database |
+| Handle                                | What it is                                                                                   |
+| ------------------------------------- | -------------------------------------------------------------------------------------------- |
+| OWNER                                 | The Owner, TOTP enrolled                                                                     |
+| OWNER-2                               | A second Owner, for concurrent edits                                                         |
+| MGR-M                                 | A Manager with an active session, one armed rule and a grant on SUB-S                        |
+| MGR-N                                 | A Manager with no grants                                                                     |
+| MGR-MANY                              | A Manager with grants on SUB-S, SUB-T and SUB-U                                              |
+| VIEWER-V                              | A Viewer                                                                                     |
+| INVITED-I, DISABLED-D, LOCKED-L       | A user in each non-active status                                                             |
+| SUB-S, SUB-T, SUB-U                   | Demo sub-accounts                                                                            |
+| SUB-K                                 | An account under the 48-hour key restriction                                                 |
+| TIER-FULL                             | The account tier `regular`, recorded, with 5 of 5 sub-accounts in use                        |
+| HEALTH-RECORDER-DOWN                  | The overview's `recorder` slice unreachable, every other slice healthy                       |
+| POS-M-S                               | An open position of MGR-M's on SUB-S, its exposure above the tightened cap AD-S03-04 saves   |
+| PROFILE-S                             | The profile bound to SUB-S                                                                   |
+| OVERVIEW-503                          | `GET /api/v1/admin/overview` answering `503`                                                 |
+| AUDIT-10M                             | 10 million generated audit entries, from the generator E42-K01 shares                        |
+| AUDIT-CORRUPT                         | A chain with one altered entry at a known `first_bad_id`; it loads only into a test database |
+| AUDIT-KEY-ENTRY                       | An entry whose before and after states referenced key material, by fingerprint               |
+| FLAG-HEAT                             | The liquidation-heat estimate flag, on                                                       |
+| FLAG-LIVE-BLOCKED                     | `trading.live_enabled` off, with the pen-test sign-off outstanding                           |
+| RULES-ON-FLAG                         | Two armed rules that depend on a flag being disabled                                         |
+| HEALTH-SUB002-WS-DOWN, HEALTH-TIMEOUT | Health payloads: `sub_002`'s private WebSocket down; the health read timing out              |
+| BACKUP-VERIFY-FAILED, BACKUPS-NONE    | The latest backup failing verification; no backup at all                                     |
+| GROUP-G                               | An enabled trade group with an open group trade                                              |
+| SC-CHAIN-TRIPS                        | A machine restored with `chain_trips` above 0                                                |
 
 ## 2. Cases by story group
 
@@ -348,6 +357,299 @@ read-only"; 22 "View-as session")
 - **AD-S03-N04 The key restriction on SCR-122** (`e2e`; D02 D8): SUB-K's row shows the 48-hour restriction
   with its absolute unlock time.
 
+### S04: the audit log browser and event detail (US-ADMIN-001, 008, 009; SCR-135, SCR-136; D02 D11)
+
+**AD-S04-01 Search the log [R]** (`e2e`, `perf`; E42-S04 "Search the log"; SCR-135; US-ADMIN-009)
+
+- Pre: OWNER, elevated; AUDIT-10M loaded.
+- Steps: filter by actor, action, subject, severity and a time range; page forward twice and back once.
+- Expected: matching entries in a stable order, with cursor pagination of 200 rows. The first page answers
+  within 2 s, and a filter round trip within 400 ms (SCR-135). The labels come from the registered
+  vocabulary (D11).
+- Audit: `admin.audit_read`.
+
+**AD-S04-02 No mutation affordance exists [R]** (`e2e`, `security`; E42-S04 "No mutation affordance
+exists"; D11)
+
+- Steps: inspect every row, the detail drawer and the page chrome; then send every non-read HTTP verb to
+  each `/admin/audit*` path.
+- Expected: no edit, delete or correct control anywhere. The page says the log is append-only and kept
+  indefinitely. No verb changes a record (AC-ADM-15 holds the API half).
+
+**AD-S04-03 Integrity verification [R]** (`e2e`, `integration`; E42-S04 "Integrity verification"; D11;
+22 `verifyAuditChain`)
+
+- Pre: AUDIT-CORRUPT, the corrupted-chain fixture, on a test database.
+- Steps: run the tamper check over the full range; then over a range that ends before the break.
+- Expected: the first run reports the break at the fixture's `first_bad_id`, as a critical banner naming
+  a security incident, not a UI error. The second reports the range verified. The page footer's tamper
+  line shows its three states across the runs.
+- Audit: `admin.audit_verify` per run.
+
+**AD-S04-04 A manager sees only their own actions [R]** (`e2e`, `contract`; E42-S04 "Manager scope"; D11)
+
+- Pre: MGR-M, with actions of its own and of others in the log.
+- Steps: open the audit log; then ask the API for another actor's events.
+- Expected: only MGR-M's own actions, enforced server-side, under the header "Showing your actions only".
+  The request for another actor's events answers `403 forbidden`.
+- Audit: `admin.audit_read`; the refusal, `admin.audit_denied`.
+
+**AD-S04-05 Export is signed and audited [R]** (`e2e`, `contract`; E42-S04 "Export is signed and
+audited"; D11; 22 `exportAuditLog`)
+
+- Pre: OWNER, with the `audit` class's step-up.
+- Steps: export the filtered set; follow the job; download the file; verify its signature.
+- Expected: an async job with visible progress produces a signed NDJSON file, and redaction is kept in it.
+  The export control names the real format.
+- Audit: `admin.audit_export` for the request and again, with reason `downloaded`, for the download. See
+  Q-5.
+
+**AD-S04-06 A failed export offers no partial file** (`e2e`; E42-S04 "Export job fails")
+
+- Pre: an export job that ends `failed`.
+- Expected: the failure shows its reason and a retry action, and no partial file is offered.
+
+**AD-S04-07 A secret-bearing entry shows fingerprints only [R]** (`e2e`, `security`; E42-S04 "Secret-bearing
+entry")
+
+- Pre: AUDIT-KEY-ENTRY, an entry whose before and after states referenced key material.
+- Expected: the diff renders fingerprints only, never a secret value, in the drawer and in the export.
+
+**Negative and boundary cases**
+
+- **AD-S04-N01 An export over the range limit** (`contract`; 22 `exportAuditLog`): a window longer than
+  `audit_export_max_range_days` (31 by default) answers `422 validation_failed`, with `errors[].rule`
+  `max_export_range`, and no job is created.
+- **AD-S04-N02 The export rate limit** (`contract`): the sixth export in an hour answers `429 rate_limited`
+  with `Retry-After`.
+- **AD-S04-N03 One export at a time** (`contract`): a second export while one is queued or running answers
+  `409 conflict`.
+- **AD-S04-N04 An expired download** (`contract`): a download after `expires_at` answers `410 gone`.
+- **AD-S04-N05 Export without the step-up** (`contract`): `403 step_up_required` with `action_class`
+  `audit`, and no job.
+- **AD-S04-N06 The detail's fetch** (`perf`; SCR-136): one record in ≤300 ms; the raw payload loads only
+  when expanded.
+
+### S05: feature flags and maintenance mode (US-ADMIN-001, 007, 011, 012; SCR-145, SCR-148; D02 D13, D15)
+
+**AD-S05-01 A flag change reaches every user within 10 s [R]** (`e2e`; E42-S05 "Toggle a flag";
+US-ADMIN-007)
+
+- Pre: OWNER, elevated; FLAG-HEAT (the liquidation-heat estimate flag, on); MGR-M and VIEWER-V connected.
+- Steps: disable the flag through its dialog.
+- Expected: the feature disappears for every connected user within **≤10 s** of the `flags.change`
+  record, through the `system` topic.
+- Audit: `flags.change`, with the before and after values and OWNER as the actor.
+
+**AD-S05-02 A safety flag needs a fresh step-up** (`e2e`, `contract`; E42-S05 "Safety flags require
+step-up"; D13)
+
+- Pre: OWNER, with no live grace for the flag's class.
+- Steps: change a trading-capability flag.
+- Expected: the gate appears, and the write does not happen until the step-up succeeds.
+- Audit: `auth.step_up_required`, `auth.step_up_granted`, then one `flags.change`.
+
+**AD-S05-03 Each flag's state is visible** (`e2e`; E42-S05 "Flag state visibility"; D13)
+
+- Expected: flags are grouped as Safety flags, Gated, Rollouts and Other. Each shows its state as a word, its
+  description, its scope, who changed it last and when, and its own history. The `fail_closed`,
+  `unreadable` and `409 conflict` states are drawn. No flag is labelled "kill switch".
+
+**AD-S05-04 Live enablement stays blocked [R]** (`e2e`, `contract`, `security`; E42-S05 "Live enablement
+stays blocked here"; 22 `setFeatureFlag`)
+
+- Pre: FLAG-LIVE-BLOCKED: `trading.live_enabled` off, the pen-test sign-off outstanding.
+- Steps: look at the flag's row; then write it directly through the API.
+- Expected: the toggle is disabled, with the blocking reason and a link to the security centre. The direct
+  write answers `422 validation_failed` with rule `gate_evidence_required`, and nothing is written.
+
+**AD-S05-05 Maintenance mode's consequences are explicit [R]** (`e2e`; E42-S05 "Maintenance mode
+consequences are explicit"; SCR-148; D15)
+
+- Steps: open the maintenance entry dialog; turn maintenance on; then turn it off.
+- Expected:
+  - the dialog is `role="alertdialog"` and lists exactly: new orders blocked, running algos cancelled,
+    recording continues, managers see a maintenance notice; it says native exchange stops stay active;
+  - turning it on is a rung-2 action of the `flags` class; turning it off is rung 4, `killswitch`, and
+    always needs a fresh code (D15). See Q-6 on the typed confirmation.
+- Audit: `flags.change` and `maintenance.enabled`; then `flags.change` and `maintenance.disabled`.
+
+**AD-S05-06 A rejected write leaves no optimistic state** (`e2e`; E42-S05 "Flag write rejected
+mid-flight")
+
+- Pre: the server answers the flag write `422`.
+- Expected: the toggle returns to the server's value, with an inline error naming the reason.
+
+**AD-S05-07 Armed rules that depend on a flag are listed** (`e2e`; E42-S05 "Armed rule depends on the
+flag")
+
+- Pre: RULES-ON-FLAG, two armed rules that depend on the flag being disabled.
+- Expected: the dialog lists both rules, and the write waits for the owner's acknowledgement.
+
+**Negative and boundary cases**
+
+- **AD-S05-N01 A flag changed twice in one second** (`e2e`, `integration`; US-ADMIN-007; 23 §8.1 and §15.9): two `flags.change` records, in order. The `system` topic does not throttle flag
+  frames, so every connected client receives both, in order, and ends on the second value within ≤10 s.
+- **AD-S05-N02 Two owners change one flag** (`contract`; D13): the second write, made on a stale version,
+  answers `409 conflict`, and nothing of it is applied.
+- **AD-S05-N03 A safety flag ignores overrides** (`security`; AC-ADM-09): an override row never changes a
+  safety flag's resolved value, and an unreadable row fails closed.
+
+### S06: system health, incidents and backups (US-ADMIN-001, 011; SCR-143, SCR-144, SCR-146; D02 D12, D14)
+
+**AD-S06-01 The health overview** (`e2e`, `a11y`; E42-S06 "Health overview"; D12)
+
+- Steps: open `/admin/health`.
+- Expected: WebSocket connection states, ingest rates and lag, the rate-limit budget per account, queue
+  depths, database sizes and latency, error rates and process uptime. Each tile shows a number with its
+  unit, a state word and "as of"; never colour alone.
+
+**AD-S06-02 Drill down** (`e2e`; E42-S06 "Drill down"; D12)
+
+- Steps: select the recorder.
+- Expected: its recent errors, recent reconnects and metrics over the last hour. The sparkline has a table
+  alternative.
+
+**AD-S06-03 A degraded state names its impact [R]** (`e2e`; E42-S06 "Degraded state names the impact")
+
+- Pre: HEALTH-SUB002-WS-DOWN, the private WebSocket for `sub_002` down.
+- Expected: that tile escalates with a text label, names the features affected and gives a remediation
+  hint. The page says native exchange stops are unaffected.
+
+**AD-S06-04 The page survives the outage it reports [R]** (`e2e`; E42-S06 "The page survives the outage it
+reports"; D4)
+
+- Pre: HEALTH-TIMEOUT: `GET /api/v1/admin/health` times out, and the `system` topic is the only live
+  source.
+- Expected: the shell and navigation stay usable. Each tile keeps its last-known value, marked "stale
+  since", rather than an empty page.
+
+**AD-S06-05 Restore is gated [R]** (`e2e`, `contract`; E42-S06 "Restore is gated"; D14)
+
+- Pre: OWNER with 2 open positions.
+- Steps: start the restore wizard and go through to the confirmation.
+- Expected:
+  - the wizard leads with "Bybit is not affected", and the owner must acknowledge that a restore changes
+    nothing on Bybit before continuing;
+  - the impact preview says trading halts during the restore and market history is not restored;
+  - completion is rung 4: the backup's timestamp as the typed token, and a fresh `backups` code.
+- Audit: `backup.restore`, at high severity.
+
+**AD-S06-06 A failed verification is shown with its reason [R]** (`e2e`; E42-S06 "Backup verification
+fails")
+
+- Pre: BACKUP-VERIFY-FAILED, the most recent backup having failed verification.
+- Expected: its row shows the failed-verification state and its reason, and a warning states how old the
+  last verified backup is.
+
+**AD-S06-07 No backups yet** (`e2e`; E42-S06 "No backups yet")
+
+- Pre: BACKUPS-NONE.
+- Expected: the empty state says no backup has run, names the schedule and offers "Back up now".
+
+**Negative and boundary cases**
+
+- **AD-S06-N01 An acknowledged incident stays open** (`e2e`, `contract`; D12; 22 `listIncidents`):
+  acknowledging never resolves; the system resolves it, and a new occurrence reopens it. Audit:
+  `incident.acknowledged`.
+- **AD-S06-N02 A backup's download and delete always need a fresh code** (`contract`; D14): rung 4, no
+  grace. Audit: `backup.downloaded`, `backup.deleted`.
+
+### S07: manager onboarding and governance (US-ADMIN-001, 005, 006, 013; SCR-140, SCR-141)
+
+**AD-S07-01 The guided steps** (`e2e`; E42-S07 "Guided steps")
+
+- Steps: start the manager onboarding flow and complete it.
+- Expected: it walks through sub-account creation, the 48-hour key restriction, key creation with 2FA,
+  permission scoping, IP whitelisting, profile creation and limits, marking each completed step.
+
+**AD-S07-02 A blocked step does not halt the flow [R]** (`e2e`; E42-S07 "Blocked step does not halt the
+flow"; D02 D8)
+
+- Pre: SUB-K, under the 48-hour key restriction.
+- Expected: the key step is blocked and shows the exact unlock time, as an absolute time. The other steps
+  stay available.
+
+**AD-S07-03 Resume on another device** (`e2e`; E42-S07 "Resume")
+
+- Pre: the flow left after the profile step.
+- Steps: return on a different device.
+- Expected: the flow resumes at the first incomplete step, with the earlier steps marked complete.
+
+**AD-S07-04 Disable a trade group** (`e2e`, `integration`; E42-S07 "Disable a trade group")
+
+- Pre: GROUP-G, enabled, with an open group trade.
+- Steps: disable G.
+- Expected: G leaves the ticket's targets, and the positions opened through G stay fully manageable.
+
+**AD-S07-05 A membership change keeps the open trade's snapshot** (`integration`; E42-S07 "Membership change
+during an open trade")
+
+- Pre: GROUP-G with an open group trade.
+- Steps: change G's membership.
+- Expected: the open trade keeps its original membership, and its detail shows which group version it used.
+
+**AD-S07-06 A secret is never shown again [R]** (`e2e`, `security`; E42-S07 "Secret never re-displayed";
+C-2.7)
+
+- Steps: enter an API secret at the key step; go back to that step.
+- Expected: only the key's fingerprint and status are shown. No secret value was written outside the
+  encrypted store: not in a log, a record, the page state or local storage.
+
+**AD-S07-07 A recorder purge meets the gate first** (`e2e`; E42-S07 "Recorder purge from the admin area")
+
+- Pre: OWNER with no live grace.
+- Steps: open `/admin/recorder`; purge.
+- Expected: the gate appears before any destructive control is reachable. The purge shows its impact
+  preview and is rung 3: the object's own name as the typed token. See Q-8.
+
+### E42-T07 and E42-S08: the statechart inspector
+
+**AD-T07-01 List the live machines** (`contract`; E42-T07 "List live machines"; 22 `listStatecharts`)
+
+- Pre: several machines running.
+- Expected: one row per machine, with its kind, state, `machine_hash`, `chain_trips` and
+  `dropped_receipts`.
+
+**AD-T07-02 No live interpreter is queried** (`unit`, `integration`; E42-T07 "No hot-path interpreter
+query"; C-2.20)
+
+- Expected: the answer comes from the persisted snapshots and `machine_events`; a spy on the interpreter
+  records no call.
+
+**AD-T07-03 The export matches the registered chart** (`contract`; E42-T07 "Stately export matches the
+registered chart")
+
+- Expected: the export for a registered `machine_hash` round-trips through the Stately schema the chart
+  was authored in.
+
+**AD-T07-N01 A snapshot whose seal fails is left out** (`security`; 22 `listStatecharts`): it is left out of
+the list, `snapshots` says `error` with a fixed reason, and a critical event is raised once per machine,
+environment and snapshot.
+
+**AD-S08-01 See a degraded machine [R]** (`e2e`; E42-S08 "See a degraded machine")
+
+- Pre: SC-CHAIN-TRIPS, a machine restored with `chain_trips` above 0.
+- Expected: it is listed as degraded, with its `chain_trips` and `dropped_receipts` counts shown.
+
+**AD-S08-02 Acknowledge a latch [R]** (`e2e`, `integration`; E42-S08 "Acknowledge a latch")
+
+- Pre: SC-CHAIN-TRIPS.
+- Steps: acknowledge the latch with step-up.
+- Expected: the latch clears, and the machine serves order-path commands again. The acknowledgement is
+  audited with the owner's identity. See Q-7.
+
+**AD-S08-03 Acknowledging without elevation is refused** (`contract`; E42-S08 "Acknowledge without
+elevation is refused")
+
+- Expected: the server refuses, the gate appears, and the latch stays set.
+
+**AD-S08-04 The diagram matches the running chart** (`e2e`; E42-S08 "State diagram matches the running
+chart")
+
+- Expected: the diagram matches the Stately export for that `machine_hash` and highlights the current
+  state.
+
 ## 3. Cross-session scenarios
 
 Each needs two browser contexts: A is the owner, and B is the other user. The timing is the story's or the
@@ -411,7 +713,7 @@ Each charter is timeboxed, within `03-testing-strategy.md` §11.2's 60 to 120 mi
 CH-AD-2's chain check runs on AUDIT-CORRUPT, in a test database only, never on staging: a stored record
 changed there would permanently break an append-only, hash-chained log.
 
-## 5. Traceability: S01 to S03
+## 5. Traceability
 
 | Story   | Gherkin scenario                                      | Cases                                                              |
 | ------- | ----------------------------------------------------- | ------------------------------------------------------------------ |
@@ -432,12 +734,46 @@ changed there would permanently break an append-only, hash-chained log.
 | E42-S03 | Tighten a limit during an open position               | AD-S03-04                                                          |
 | E42-S03 | View-as is unmistakably read-only                     | AD-S03-05, AD-S03-N01, AD-S03-N02, AD-S03-N03, AD-S03-N04          |
 | E42-S03 | (failure) Concurrent edit                             | AD-S03-06, AD-S02-N03                                              |
+| E42-S04 | Search the log                                        | AD-S04-01, AD-S04-N06                                              |
+| E42-S04 | No mutation affordance exists                         | AD-S04-02, CH-AD-2                                                 |
+| E42-S04 | Integrity verification                                | AD-S04-03                                                          |
+| E42-S04 | Manager scope                                         | AD-S04-04, CH-AD-1                                                 |
+| E42-S04 | Export is signed and audited                          | AD-S04-05, AD-S04-N01 to AD-S04-N05                                |
+| E42-S04 | (failure) Export job fails                            | AD-S04-06                                                          |
+| E42-S04 | (edge) Secret-bearing entry                           | AD-S04-07                                                          |
+| E42-S05 | Toggle a flag                                         | AD-S05-01, AD-S05-N01                                              |
+| E42-S05 | Safety flags require step-up                          | AD-S05-02, AD-S05-N03                                              |
+| E42-S05 | Flag state visibility                                 | AD-S05-03, AD-S05-N02                                              |
+| E42-S05 | Live enablement stays blocked here                    | AD-S05-04                                                          |
+| E42-S05 | Maintenance mode consequences are explicit            | AD-S05-05, AD-X-03                                                 |
+| E42-S05 | (failure) Flag write rejected mid-flight              | AD-S05-06                                                          |
+| E42-S05 | (edge) Armed rule depends on the flag                 | AD-S05-07                                                          |
+| E42-S06 | Health overview                                       | AD-S06-01                                                          |
+| E42-S06 | Drill down                                            | AD-S06-02                                                          |
+| E42-S06 | Degraded state names the impact                       | AD-S06-03                                                          |
+| E42-S06 | The page survives the outage it reports               | AD-S06-04, CH-AD-5                                                 |
+| E42-S06 | Restore is gated                                      | AD-S06-05, AD-S06-N02                                              |
+| E42-S06 | (failure) Backup verification fails                   | AD-S06-06                                                          |
+| E42-S06 | (edge) No backups yet                                 | AD-S06-07                                                          |
+| E42-S07 | Guided steps                                          | AD-S07-01                                                          |
+| E42-S07 | Blocked step does not halt the flow                   | AD-S07-02                                                          |
+| E42-S07 | Resume                                                | AD-S07-03                                                          |
+| E42-S07 | Disable a trade group                                 | AD-S07-04                                                          |
+| E42-S07 | Membership change during an open trade                | AD-S07-05                                                          |
+| E42-S07 | (failure) Secret never re-displayed                   | AD-S07-06                                                          |
+| E42-S07 | (edge) Recorder purge from the admin area             | AD-S07-07                                                          |
+| E42-T07 | List live machines                                    | AD-T07-01, AD-T07-N01                                              |
+| E42-T07 | No hot-path interpreter query                         | AD-T07-02                                                          |
+| E42-T07 | Stately export matches the registered chart           | AD-T07-03                                                          |
+| E42-S08 | See a degraded machine                                | AD-S08-01                                                          |
+| E42-S08 | Acknowledge a latch                                   | AD-S08-02                                                          |
+| E42-S08 | Acknowledge without elevation is refused              | AD-S08-03                                                          |
+| E42-S08 | State diagram matches the running chart               | AD-S08-04                                                          |
 
 The scope's implied cases map as follows. "Expired token mid-action" is AD-S01-04 and AD-S02-06.
 "Concurrent owner edits" is AD-S03-06 and AD-S02-N03, with the grant-edit case deferred below. "A manager
-session open while their grant is revoked" is AD-X-02. "An export over the range limit" and "a flag changed
-twice in one second" are S04's and S05's, in part 2, as are AD-X-03 (maintenance, S05) and CH-AD-2 (the audit
-log, S04).
+session open while their grant is revoked" is AD-X-02. "An export over the range limit" is AD-S04-N01, and
+"a flag changed twice in one second" is AD-S05-N01.
 
 **Deferred to part 2** (omissions the review of part 1 found; part 2 adds them to S01 to S03):
 
@@ -451,6 +787,75 @@ log, S04).
   (`503 audit_unavailable`), and AD-X-01's invariant that no order is placed after the disable;
 - the entry criterion that the view-as routes are not mounted on `main` (AC-ADM-22 waits on #3085), which
   blocks AD-S03-05 and AD-S03-N01 to N03.
+
+## 6. Entry and exit criteria, per story group
+
+**Entry.** A story group's cases start when all of these hold:
+
+- the story is merged to `main` and deployed to staging, behind its flag if it has one;
+- the group's fixtures are loaded, and each seed's own post-conditions passed (section 1);
+- the group's `contract` cases are green in CI;
+- the D02 frames the group's cases cite are signed off, and any §9 question a case depends on is answered or
+  the case is marked blocked on it.
+
+**Exit.** A story group is done when all of these hold:
+
+- every case of the group has a recorded result: pass or fail, the environment and the build SHA;
+- every timing case records the two server timestamps it was measured between;
+- no P0 or P1 defect is open, or each is explicitly accepted by the story owner;
+- every **[R]** case of the group is automated (E42-Q02) or listed as manual in the regression pack;
+- the group's screens passed the screen-reader script (section 8), executed by E42-Q05;
+- every audit action the group's cases name was seen in the log, with its actor, target and outcome.
+
+## 7. The regression pack
+
+- **Members:** every case marked **[R]**. They cover each story group's headline behaviour, every
+  cross-session scenario, every case whose failure is a security or money incident (view-as, live
+  enablement, maintenance, the tamper check, the secret display), and each "survives the outage" case.
+- **When:** every sprint after the group's exit, and on any change to the admin routes, the auth and RBAC
+  modules, the audit writer or reader, the flag service, the health feed or the backup engine.
+- **How:** the automated members run in CI's E2E and contract jobs (E42-Q02); the manual members run in the
+  sprint's QA pass, with results recorded as in section 6.
+- **Flaky members** are quarantined within 24 h with an owner and a follow-up, never silently retried
+  (C-9.3).
+
+## 8. The screen-reader script and the budgets
+
+### 8.1 The screen-reader script
+
+E42-Q05 runs this with a screen reader (NVDA on Windows, VoiceOver on macOS) and the keyboard only. It
+follows D02's keyboard model (D18) and each frame's keyboard notes; E42-D06's hand-off pack replaces it when
+it lands. A step passes when it completes by keyboard alone, each announcement is made once, and focus is
+never lost.
+
+1. **The shell (D1):** the landmarks read in order: top bar, navigation, content, right rail, status bar.
+   The admin band is the first region in the content, "Admin area". A route change is announced, for
+   example "Admin · Users".
+2. **The gate (D2):** focus starts on the password field and Tab stays inside the dialog. A failure is
+   announced assertively once, and `Esc` cancels.
+3. **The users grid (D8):** one tab stop into the grid; the arrow keys move between rows and cells; Enter
+   opens the user; Shift+F10 opens the row menu; sortable headers announce their sort.
+4. **A destructive dialog (D3):** Cancel is the first tab stop; the consequences read as a list; Enter in a
+   typed-token field never confirms.
+5. **View-as (D10):** the banner is read first and Exit is the first tab stop; the countdown is not read on
+   each tick.
+6. **The audit log (D11):** the filter bar, then the grid; Enter opens the drawer, and `Esc` returns focus to
+   the row it came from.
+7. **Health (D12):** each tile is a labelled region. A component going `degraded` or `down` is announced
+   assertively once, and its recovery politely once.
+8. **Flags (D13):** each toggle is labelled with the flag's description, and its value is a word.
+9. **Countdowns (D16):** a polite announcement at 5 minutes left, and an assertive one at 1 minute and at
+   expiry; never on every tick.
+
+### 8.2 The per-screen budgets
+
+| Screen  | Budget                                                               | Source                | Measured by                       |
+| ------- | -------------------------------------------------------------------- | --------------------- | --------------------------------- |
+| SCR-120 | Each tile in ≤800 ms, with or without a slow subsystem               | SCR-120               | E42-Q03                           |
+| SCR-135 | A filter round trip ≤400 ms, and the first page ≤2 s, over 10 M rows | SCR-135, US-ADMIN-009 | E42-K01 (the query plan), E42-Q03 |
+| SCR-136 | One record in ≤300 ms                                                | SCR-136               | E42-Q03                           |
+| SCR-143 | ≤1 % added server load, and ≤2 ms scripting per frame                | US-ADMIN-011, SCR-143 | E42-Q03                           |
+| SCR-149 | The step-up in ≤400 ms                                               | SCR-149               | E42-Q03                           |
 
 ## 9. Questions
 
@@ -479,6 +884,14 @@ Each is a question for the implementing story, not a guess.
 - **Q-4:** E42-S03 names the limit change's action `risk.limits_changed`, which the registry does not hold
   (it has `risk.freeze_manager` and `risk.unfreeze_manager`), and the per-user caps override has no admin
   endpoint on `main` (D02 §6.4, §13.1 and O-G). AD-S03-04 is blocked until both exist.
+- **Q-5:** E42-S04 expects `audit.exported` for an export. The registry has `admin.audit_export`, which the
+  contract writes for the request and, with reason `downloaded`, for the download. AD-S04-05 expects those.
+- **Q-6:** E42-S05 requires a typed confirmation to enter maintenance mode. D02 D15 drops it, since it has no
+  server counterpart, and leaves the choice open (O-E). AD-S05-05 asserts the rungs and not a typed word.
+- **Q-7:** E42-S08's latch acknowledgement has no operation in `22` and no registered audit action. AD-S08-02
+  expects a record with the owner's identity, under the action the story's contract slice registers.
+- **Q-8:** E42-S07 does not name the recorder purge's action. The registry has `retention.purge` and
+  `data.deleted`. AD-S07-07 expects the one the purge's operation documents.
 - **Q-10:** E42-S02 expects a deleted user under a "Disabled/Deleted" filter. A user has no deleted status
   (22 `UserStatus`), and D02 lists disabled users in the default view. AD-S02-03 asserts neither until the
   story settles it. E42-S02 also implies an immediate anonymised reference; the contract anonymises it 90
