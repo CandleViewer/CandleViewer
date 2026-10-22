@@ -16,9 +16,7 @@ import pytest
 import yaml
 
 _COMPOSE_DIR = Path(__file__).resolve().parents[5] / "infra" / "compose"
-_OVERRIDES = sorted(
-    p.name for p in _COMPOSE_DIR.glob("docker-compose*.yml") if p.name != "docker-compose.yml"
-)
+_OVERRIDES = sorted(p.name for p in _COMPOSE_DIR.glob("*.y*ml") if p.name != "docker-compose.yml")
 
 
 def _postgres(name: str) -> dict[str, Any]:
@@ -42,6 +40,13 @@ def test_every_override_is_checked() -> None:
     assert {"docker-compose.dev.yml", "docker-compose.vps.yml"} <= set(_OVERRIDES)
 
 
+def test_the_dev_pointer_only_includes_the_checked_files() -> None:
+    pointer = yaml.safe_load((_COMPOSE_DIR.parent / "docker-compose.dev.yml").read_text("utf-8"))
+    included = {Path(path).name for entry in pointer["include"] for path in entry["path"]}
+    assert "services" not in pointer and included <= {"docker-compose.yml", *_OVERRIDES}
+
+
 @pytest.mark.parametrize("override", _OVERRIDES)
 def test_no_override_replaces_the_postgres_command(override: str) -> None:
-    assert not {"command", "entrypoint"} & set(_postgres(override))
+    replaced = {"command", "entrypoint"} & set(_postgres(override))
+    assert not replaced, f"{override} must not replace the base file's postgres {replaced}"

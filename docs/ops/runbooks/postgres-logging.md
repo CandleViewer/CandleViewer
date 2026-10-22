@@ -47,17 +47,21 @@ On a host that holds real data, do not, except as "When the detail is needed" be
 ## What it costs
 
 `terse` drops the `DETAIL`, `HINT`, `QUERY` and `CONTEXT` of every message, not only an integrity
-error's: a deadlock's participants and queries, a lock timeout's holder, a serialization failure's
-reason and an authentication failure's reason leave the server log too. They cannot be reproduced
-on demand against a dev database.
+error's: a deadlock's participants and queries, a lock wait's holder (`log_lock_waits`), a
+serialization failure's reason and an authentication failure's reason leave the server log too. They
+cannot be reproduced on demand against a dev database.
 
 ## When the detail is needed
 
-With the Owner's approval, for a bounded time, give one role back the detail for its new sessions:
-`ALTER ROLE <role> SET log_error_verbosity = default`. End it with
-`ALTER ROLE <role> RESET log_error_verbosity`. While it is set, the server log holds that role's
-row values again, so keep the window short. The check below counts it, so one left behind is a
-finding.
+Reproduce the failure on a dev database with `psql` first where you can. Otherwise, with the
+Owner's approval and for a bounded time, give one role back the detail for its new sessions:
+`ALTER ROLE <role> SET log_error_verbosity = 'default'`. Quote the value: an unquoted `DEFAULT`
+removes the role's setting, as `RESET` does, and changes nothing. End it with
+`ALTER ROLE <role> RESET log_error_verbosity`.
+
+While it is set, the server log holds that role's row values again, P2 columns included, which
+`21-database-schema.md` §12 keeps out of logs. The approval covers that, so keep the window
+short. The check below counts the setting, so one left behind is a finding.
 
 ## Check it
 
