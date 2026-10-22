@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import socket
+import stringprep
 import tomllib
 from contextlib import nullcontext
 from pathlib import Path
@@ -15,7 +16,13 @@ from typing import Any
 
 import pytest
 
-from tests.exchange_smoke._guard import DEMO_HOSTS, SmokeGuardError, assert_demo_only, opted_in
+from tests.exchange_smoke._guard import (
+    _IGNORED,
+    DEMO_HOSTS,
+    SmokeGuardError,
+    assert_demo_only,
+    opted_in,
+)
 
 _API = Path(__file__).resolve().parents[3]
 _REPO = _API.parents[1]
@@ -40,6 +47,10 @@ _SMOKE_CONFTEST = _API / "tests" / "exchange_smoke" / "conftest.py"
         {"CV_INGEST_REST_URL": "https://\uff41pi.bybit.com"},  # a fullwidth letter (NFKC)
         {"CV_INGEST_REST_URL": "https://api.by\u200bbit.com"},  # a zero-width space
         {"CV_INGEST_REST_URL": "https://api-test\u00adnet.bybit.com"},  # a soft hyphen
+        {"CV_INGEST_REST_URL": "https://api.by\ufe0fbit.com"},  # a variation selector
+        {"CV_INGEST_REST_URL": "https://api.by\u034fbit.com"},  # the combining grapheme joiner
+        {"CV_INGEST_REST_URL": "https://api\u3002bybit\u3002com"},  # ideographic full stops
+        {"CV_BYBIT_ACCOUNT_LABEL": "live\u0301"},  # a combining mark keeps the word (NFKD)
     ],
 )
 def test_smoke_guard_live_configuration_fails_fast_with_explicit_error(
@@ -47,6 +58,14 @@ def test_smoke_guard_live_configuration_fails_fast_with_explicit_error(
 ) -> None:
     with pytest.raises(SmokeGuardError, match=r"demo-only|no credentials"):
         assert_demo_only({"CV_EXCHANGE_SMOKE": "1", **env})
+
+
+def test_smoke_guard_drops_what_idna_maps_to_nothing_and_reads_its_dots() -> None:
+    """The fold is RFC 3454's table B.1, the code points IDNA's nameprep drops, and the two label
+    separators IDNA reads as dots: no spelling a resolver folds to a live host is missed (#1849)."""
+    dropped = {cp for cp, to in _IGNORED.items() if to is None}
+    assert dropped == {cp for cp in range(0x110000) if stringprep.in_table_b1(chr(cp))}
+    assert {cp: to for cp, to in _IGNORED.items() if to is not None} == {0x3002: ".", 0xFF61: "."}
 
 
 def test_smoke_guard_demo_configuration_passes() -> None:

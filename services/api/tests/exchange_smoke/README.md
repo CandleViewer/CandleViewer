@@ -20,9 +20,10 @@ CV_EXCHANGE_SMOKE=1 uv run pytest tests/exchange_smoke -m exchange_smoke --no-co
   - Any `CV_*` value names a live or testnet REST host (`api.bybit.*`, `api.bytick.*`,
     `api-testnet.bybit.*`, the adapter's hosts less demo's) or the testnet stream
     (`stream-testnet.bybit.*`), whatever its shape: a URL, a list, JSON. The value is read as a
-    resolver reads a host (NFKC, without the characters a lookup ignores), so a fullwidth or
-    zero-width spelling is the host it folds to. The demo hosts pass; an IP literal is outside
-    this check (the adapter accepts only its named hosts).
+    resolver reads a host (compatibility-normalized, without the code points IDNA maps to
+    nothing, RFC 3454 table B.1, and with its ideographic dots as `.`), so a fullwidth,
+    zero-width or variation-selector spelling is the host it folds to. The demo hosts pass; an
+    IP literal is outside this check (the adapter accepts only its named hosts).
   - A `CV_BYBIT*` value, or any other `CV_*` value that is a URL, contains `live`, `mainnet` or
     `prod`. A word in a value that is not a URL, such as a file name, is not read.
   - The error names the variable, never its value: a URL may carry a password.
