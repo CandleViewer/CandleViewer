@@ -71,6 +71,40 @@ def test_create_name_with_nul_is_the_field_422_nothing_persisted(env: Env) -> No
     assert env.repo.rows == {} and env.audit.calls == []
 
 
+#: The stored `symbol_code` domain caps a symbol at 20 characters (vw1 C1 on #1204).
+SYMBOL_20, SYMBOL_21 = "X" * 16 + "USDT", "X" * 17 + "USDT"
+TOO_LONG = {"field": "symbol", "rule": "string_too_long",
+            "message": "String should have at most 20 characters"}  # fmt: skip
+
+
+def test_create_symbol_over_the_symbol_code_cap_is_the_field_422_nothing_persisted(
+    env: Env,
+) -> None:
+    r = env.c.post("/alerts", json=PRICE_CROSS | {"symbol": SYMBOL_21})
+    assert r.status_code == 422, r.text
+    assert r.json()["code"] == "validation_failed" and r.json()["errors"] == [TOO_LONG]
+    assert env.repo.rows == {} and env.audit.calls == []
+
+
+def test_update_symbol_over_the_symbol_code_cap_is_the_field_422_row_kept(env: Env) -> None:
+    a = env.create()
+    r = env.c.put(f"/alerts/{a['id']}", json=PRICE_CROSS | {"symbol": SYMBOL_21})
+    assert r.status_code == 422, r.text
+    assert r.json()["code"] == "validation_failed" and r.json()["errors"] == [TOO_LONG]
+    assert env.c.get(f"/alerts/{a['id']}").json()["symbol"] == "BTCUSDT"
+    assert env.audit.actions() == ["alert.created"]
+
+
+@pytest.mark.parametrize("write", ["create", "update"])
+def test_symbol_at_the_symbol_code_cap_is_accepted(env: Env, write: str) -> None:
+    if write == "create":
+        r = env.c.post("/alerts", json=PRICE_CROSS | {"symbol": SYMBOL_20})
+    else:
+        r = env.c.put(f"/alerts/{env.create()['id']}", json=PRICE_CROSS | {"symbol": SYMBOL_20})
+    assert r.status_code == (201 if write == "create" else 200), r.text
+    assert r.json()["symbol"] == SYMBOL_20
+
+
 _JSON = {"content-type": "application/json"}
 
 

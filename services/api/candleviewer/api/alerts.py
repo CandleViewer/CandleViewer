@@ -52,6 +52,9 @@ READ, WRITE = "alerts:read", "alerts:write"
 LIST_ALERTS_QUERY = frozenset({"cursor", "limit", "enabled", "symbol"})
 GET_ALERT_QUERY: frozenset[str] = frozenset()
 _SYMBOL = r"^[A-Z0-9]{2,20}USDT$"
+#: The stored `symbol_code` domain (migration 0004: `^[A-Z0-9]{4,20}$`, the same as
+#: `domain.primitives.Symbol`) caps a symbol at 20 characters; `_SYMBOL` alone admits 24.
+_SYMBOL_MAX_LENGTH = 20
 Channel = Literal["in_app", "email", "webhook", "push", "desktop"]
 OnCompile = Callable[[float, str | None], None]
 #: E40-T03: the in-process change event (alert id) the evaluator re-keys on.
@@ -67,7 +70,7 @@ class AlertInput(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: Annotated[str, Field(min_length=1, max_length=120)]
-    symbol: Annotated[str, Field(pattern=_SYMBOL)] | None = None
+    symbol: Annotated[str, Field(pattern=_SYMBOL, max_length=_SYMBOL_MAX_LENGTH)] | None = None
     exchange_account_id: UUID | None = None
     trigger_mode: Literal["once", "every_time", "once_per_bar"] = "once"
     channels: Annotated[tuple[Channel, ...], Field(min_length=1, max_length=5)]
