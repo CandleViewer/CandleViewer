@@ -25,6 +25,7 @@ from candleviewer.exchange.base.errors import (
     InsufficientMarginError,
     NotFoundError,
     RateLimitError,
+    ServiceUnavailableError,
     UnknownStateError,
 )
 
@@ -43,9 +44,11 @@ _RET_CODE_MAP: dict[int, tuple[type[ExchangeError], dict[str, str]]] = {
     10005: (AuthError, {}),
     10006: (RateLimitError, {}),
     10010: (AuthError, {}),
-    10016: (RateLimitError, {}),
+    # The venue's own outage, never a rate limit (#2863): no token drained. A create that has
+    # left reads both as an open outcome first (`OPEN_CREATE_CODES`, below).
+    10016: (ServiceUnavailableError, {}),
     10018: (RateLimitError, {}),
-    10019: (RateLimitError, {}),
+    10019: (ServiceUnavailableError, {}),
     10403: (RateLimitError, {}),
     10404: (InstrumentFilterError, {"filter_name": "unknown_op_or_category"}),
     10429: (RateLimitError, {}),

@@ -1327,14 +1327,15 @@ def test_probe_errors_have_their_own_table_and_timeout_refines_transport_error()
     assert "own translation table, owned and tested by E27-T03 (#836)" in probe
     assert (
         "it does not reuse the adapter's general mapping of exchange refusal codes "
-        "(`map_ret_code`), which folds `10005` and `10010` into an auth error and `10016` and "
-        "`10019` into a rate-limit error"
+        "(`map_ret_code`), which folds `10005` and `10010` into an auth error."
     ) in probe
     # The stated reason holds: the adapter's mapping folds codes this vocabulary keeps apart.
     assert type(map_ret_code(10005, "")) is type(map_ret_code(10003, ""))
     assert type(map_ret_code(10010, "")) is type(map_ret_code(10003, ""))
-    assert type(map_ret_code(10016, "")) is type(map_ret_code(10006, ""))
-    assert type(map_ret_code(10019, "")) is type(map_ret_code(10006, ""))
+    # And no longer names 10016 and 10019, which both now read as the venue's outage (#2863).
+    assert "rate-limit error" not in probe
+    for code in (10016, 10019):
+        assert map_ret_code(code, "").code.value.lower() == "service_unavailable"
 
 
 # --- Re-check cadence and expiry window (C-12.2, SR-E27-05) --------------------------------------

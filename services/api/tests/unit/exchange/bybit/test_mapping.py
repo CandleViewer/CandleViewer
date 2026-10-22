@@ -7,6 +7,7 @@ table changed or added, fed through the corpus error envelope (C-13.5).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -21,9 +22,10 @@ from candleviewer.exchange.base.errors import (
     InsufficientMarginError,
     NotFoundError,
     RateLimitError,
+    ServiceUnavailableError,
     UnknownStateError,
 )
-from candleviewer.exchange.bybit.mapping import map_ret_code
+from candleviewer.exchange.bybit.mapping import _RET_CODE_MAP, map_ret_code
 from tests._corpus import rest
 
 RISK_LIMIT = "risk_limit_tier"
@@ -78,9 +80,9 @@ OFFICIAL_V5: dict[int, tuple[str, type[ExchangeError], str | None]] = {
         (10005, AuthError),
         (10006, RateLimitError),
         (10010, AuthError),
-        (10016, RateLimitError),
+        (10016, ServiceUnavailableError),
         (10018, RateLimitError),
-        (10019, RateLimitError),
+        (10019, ServiceUnavailableError),
         (10403, RateLimitError),
         (10404, InstrumentFilterError),
         (10429, RateLimitError),
@@ -184,3 +186,83 @@ def test_map_ret_code_follows_the_official_v5_table(ret_code: int) -> None:
     assert getattr(error, "filter_name", None) == filter_name
     assert error.retryable is False
     assert (error.exchange_ret_code, error.exchange_ret_msg) == (ret_code, text)
+
+
+#: `24-internal-schemas.md`, whose section 8.6 table is the mapping's contract (#2863).
+SCHEMAS_24 = Path(__file__).resolve().parents[6] / "docs" / "plan" / "24-internal-schemas.md"
+#: Section 8.6's internal names -> the class `map_ret_code` gives them. The classes are coarser
+#: than the names and never split one: the auth family is one class, and every filter refusal is
+#: an `InstrumentFilterError` naming its filter.
+FAMILY: dict[str, type[ExchangeError]] = {
+    "AUTH_ERROR": AuthError,
+    "PERMISSION_DENIED": AuthError,
+    "IP_NOT_ALLOWED": AuthError,
+    "CLOCK_DRIFT": ClockDriftError,
+    "RATE_LIMITED": RateLimitError,
+    "SERVICE_UNAVAILABLE": ServiceUnavailableError,
+    "INSUFFICIENT_MARGIN": InsufficientMarginError,
+    "INSTRUMENT_FILTER": InstrumentFilterError,
+    "PRICE_OUT_OF_BOUNDS": InstrumentFilterError,
+    "REDUCE_ONLY_VIOLATION": InstrumentFilterError,
+    "POSITION_MODE_MISMATCH": InstrumentFilterError,
+    "LEVERAGE_ERROR": InstrumentFilterError,
+    "RISK_LIMIT_EXCEEDED": InstrumentFilterError,
+    "ORDER_CAP_EXCEEDED": InstrumentFilterError,
+    "ORDER_NOT_FOUND": NotFoundError,
+    "DUPLICATE_CLIENT_ID": DuplicateClientIdError,
+    "UNKNOWN_STATE": UnknownStateError,
+}
+
+
+def _section_86_rows() -> dict[int, tuple[str, bool]]:
+    """Section 8.6's table as the document states it: retCode -> (the first internal name its
+    row gives, whether the row says it is retryable). Rows naming no single code (`0`, `170xxx`,
+    any other) are left out; a row naming two codes gives both."""
+    text = SCHEMAS_24.read_text(encoding="utf-8")
+    table = text[text.index("### 8.6 Error mapping") :].split("| Bybit retCode", 1)[1]
+    rows: dict[int, tuple[str, bool]] = {}
+    for line in table.splitlines()[2:]:
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        codes = [int(code) for code in re.findall(r"`(\d+)`", cells[0])]
+        name = re.search(r"`([A-Z_]+)`", cells[2])
+        if not codes or codes == [0] or name is None:
+            continue
+        for code in codes:
+            rows[code] = (name.group(1), cells[3].startswith("yes"))
+    return rows
+
+
+SECTION_86 = _section_86_rows()
+
+
+def test_section_8_6_and_the_mapping_list_the_same_codes() -> None:
+    """#2863: a code the table maps without a row, or a row the table does not map, fails; the
+    three duplicate codes are read from the text instead (`10001`, `20006`, `110072`)."""
+    assert len(SECTION_86) >= 40
+    assert set(SECTION_86) == set(_RET_CODE_MAP) | {10001, 20006, 110072}
+
+
+@pytest.mark.parametrize("ret_code", sorted(SECTION_86))
+def test_every_code_maps_to_the_class_and_retry_its_section_8_6_row_names(ret_code: int) -> None:
+    """#2863: the expected class is derived from the document, never from a hand-written list, so
+    a mapping that drifts from 24 section 8.6 (as 10016 and 10019 had to `RATE_LIMITED`) fails.
+    Read as an order create meets it, the only call a duplicate can answer (R9)."""
+    name, retryable = SECTION_86[ret_code]
+    error = map_ret_code(ret_code, "", create=True)
+    assert type(error) is FAMILY[name]
+    assert error.retryable is retryable
+    assert error.exchange_ret_code == ret_code
+
+
+@pytest.mark.parametrize("ret_code", [10016, 10019])
+def test_the_venues_outage_is_no_rate_limit_on_any_call(ret_code: int) -> None:
+    """#2863: outside a create, 10016 and 10019 are `SERVICE_UNAVAILABLE`, retryable, and never a
+    `RateLimitError` (which drains a token and counts as rate-limited)."""
+    envelope = {**rest("rest/error_10018.json"), "retCode": ret_code, "retMsg": f"code {ret_code}"}
+    for create in (False, True):
+        error = map_ret_code(envelope["retCode"], envelope["retMsg"], create=create)
+        assert type(error) is ServiceUnavailableError and not isinstance(error, RateLimitError)
+        assert (error.code.value, error.retryable) == ("SERVICE_UNAVAILABLE", True)
+        assert (error.exchange_ret_code, error.exchange_ret_msg) == (ret_code, f"code {ret_code}")

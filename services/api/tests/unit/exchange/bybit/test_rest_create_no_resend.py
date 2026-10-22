@@ -230,9 +230,12 @@ async def test_a_create_the_venue_refused_unprocessed_is_retried_under_the_same_
 async def test_amend_cancel_and_trading_stop_keep_their_retry(
     path: str, cls: EndpointClass, outcome: str
 ) -> None:
+    """A transport fault or a 5xx takes the client's 3 retries; the venue's outage takes 3
+    attempts in all, as 24 §8.6's rows say (#2863)."""
     error, sent = await _post([LEFT[outcome]], path, cls)
 
-    assert error is not None and not isinstance(error, AmbiguousResultError) and len(sent) == 4
+    assert error is not None and not isinstance(error, AmbiguousResultError)
+    assert len(sent) == (3 if outcome == "10016" else 4)
 
 
 @pytest.mark.parametrize("code", [110079, 999999])
@@ -274,8 +277,10 @@ async def test_reads_keep_their_retry_with_full_jitter(signed: bool, outcome: st
             else:
                 await client.get_public("/v5/market/kline")
 
-    assert not isinstance(caught.value, AmbiguousResultError) and len(sent) == 4
-    assert all(2**n / 2 <= wait <= 2**n for n, wait in enumerate(sleeps, 1)) and len(sleeps) == 3
+    attempts = 3 if outcome in ("10016", "10019") else 4  # the venue's outage: 3 (#2863)
+    assert not isinstance(caught.value, AmbiguousResultError) and len(sent) == attempts
+    assert all(2**n / 2 <= wait <= 2**n for n, wait in enumerate(sleeps, 1))
+    assert len(sleeps) == attempts - 1
 
 
 @given(

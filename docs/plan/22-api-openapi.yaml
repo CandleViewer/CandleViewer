@@ -15898,8 +15898,8 @@ components:
         non-zero exchange refusal code (the code itself is in `ret_code`). The probe has its own
         translation table, owned and tested by E27-T03 (#836); it does not reuse the adapter's
         general mapping of exchange refusal codes (`map_ret_code`), which folds `10005` and
-        `10010` into an auth error and `10016` and `10019` into a rate-limit error. No exchange
-        error text, header, URL or request fragment is echoed.
+        `10010` into an auth error. No exchange error text, header, URL or request fragment is
+        echoed.
     ApiKeyWithVerification:
       type: object
       description: >

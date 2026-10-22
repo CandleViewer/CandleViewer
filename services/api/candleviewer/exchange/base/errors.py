@@ -194,6 +194,18 @@ class TransportError(ExchangeError):
         super().__init__(message, **kwargs)  # type: ignore[arg-type]
 
 
+class ServiceUnavailableError(TransportError):
+    """The venue answered that it could not serve the call: retCode 10016 (internal server
+    error) or 10019 (service restarting), outside an order create (§8.6, #2863). The venue's
+    own outage, never a rate limit: no token is drained and nothing counts as rate-limited.
+    Retryable: the REST client retries it with back-off within the lane's wait, and after 3
+    attempts raises it. Whether the venue applied the call is then open, so the trading port
+    raises it instead of answering a rejection, and B1 takes the order to `unknown`. An order
+    create that has left reads both codes as an open outcome instead (`AmbiguousResultError`)."""
+
+    code = OmsErrorCode.SERVICE_UNAVAILABLE
+
+
 class AmbiguousResultError(TransportError):
     """An order create left the process and its outcome is unknown: a timeout, a
     transport error, an HTTP 5xx, an answer the client cannot decode or read, retCode

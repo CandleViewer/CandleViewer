@@ -27,6 +27,7 @@ from .errors import (
     OmsErrorCode,
     RateBudgetExceededError,
     RateLimitError,
+    ServiceUnavailableError,
     TransportError,
     UnknownStateError,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "RateBudgetExceededError",
     "RateHeadroomPort",
     "RateLimitError",
+    "ServiceUnavailableError",
     "Ticker",
     "Trade",
     "TradeSide",
