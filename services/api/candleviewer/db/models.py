@@ -1546,6 +1546,42 @@ auth_keys = Table(
     Index("ix_auth_keys_env_kek", "env", "kek_version"),
 )
 
+#: `audit_signing_keys` (#889 S4, 0046_audit_signing_keys): the audit export signing keys of each
+#: environment (ADR-0039), the seed sealed under the row's DEK, which the KEK of (env, kek_version)
+#: wraps. Its CHECKs and trigger are 21 Sec.3.1.5b's DDL only (`alembic check` compares neither);
+#: the 0046 tests pin them and the cv_app DELETE revoke.
+audit_signing_keys = Table(
+    "audit_signing_keys",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("env", exchange_env, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("key_id", Text, nullable=False),
+    Column("public_key", BYTEA, nullable=False),
+    Column("fingerprint_sha256", _sha256_hex, nullable=False),
+    Column("sealed_seed", BYTEA, comment="SECRET: Ed25519 seed sealed under the row's DEK"),
+    Column(
+        "dek_ref",
+        Text,
+        nullable=False,
+        comment="SECRET: the row's DEK wrapped under the KEK of (env, kek_version)",
+    ),
+    Column("kek_version", Integer, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("valid_from", TIMESTAMP(timezone=True), nullable=False),
+    Column("valid_until", TIMESTAMP(timezone=True)),
+    Column("retired_reason", Text),
+    Column("created_by", ForeignKey("users.id", ondelete="RESTRICT")),
+    Column("client_ref", Text),
+    Column("client_body_sha256", _sha256_hex),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    UniqueConstraint("env", "version", name="ask_env_version"),
+    UniqueConstraint("env", "key_id", name="ask_env_key_id"),
+    UniqueConstraint("env", "fingerprint_sha256", name="ask_env_fingerprint"),
+    UniqueConstraint("env", "created_by", "client_ref", name="ask_env_request"),
+    Index("ux_ask_active", "env", unique=True, postgresql_where=text("status = 'active'")),
+)
+
 
 #: `account_profiles` and `account_profile_revisions` (E28-T01 #905, revision
 #: 0037_account_profiles, 21 Sec.3.2.4 and Sec.3.2.5). `version`, the revision rows and the

@@ -83,6 +83,8 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "positions",
         "position_snapshots",
         "auth_keys",
+        # E42-T02 (0046_audit_signing_keys)
+        "audit_signing_keys",
         # E50-T61 (0033_machine_persistence)
         "machine_snapshots",
         "machine_drain_journal",
