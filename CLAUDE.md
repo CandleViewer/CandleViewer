@@ -241,8 +241,8 @@ These rules keep agents from colliding:
 
 - **Rules** (`.claude/rules/`, one concern each, pointers to the owners above): `00-constitution-pointers`,
   `10-branching-and-prs`, `20-python-backend`, `21-statecharts`, `22-exchange-adapter`, `30-frontend-react`,
-  `31-chart-engine`, `40-testing`, `50-security`, `60-database-migrations`, `70-multi-agent`. Load the ones
-  matching the paths you touch.
+  `31-chart-engine`, `32-design-specs`, `40-testing`, `50-security`, `60-database-migrations`, `70-multi-agent`.
+  Load the ones matching the paths you touch.
 - **Subagents** (`.claude/agents/`): `backend-implementer`, `frontend-implementer`, `chart-engine-implementer`,
   `statechart-author`, `test-writer`, `security-reviewer`, `code-reviewer`, `ticket-triager`.
 - **Commands**: `/pickup <issue#>`, `/ready-check`, `/statechart-new <B>`, `/pr`.

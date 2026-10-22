@@ -1,0 +1,83 @@
+---
+description: Standing gates for design specs under docs/design (E09-D09 T2 checklist, reason vocabulary, recurring a11y and contract-pinning items) for every design writer and pre-lens brief.
+---
+
+# Design specs — standing gates
+
+Owners (normative; this file is a checklist that points at them, C-16.5 — if it ever disagrees, they win and
+this file is a bug): the decision rule for gated controls is `docs/plan/14-screens-catalogue.md` §0.5 rule 5;
+its anatomy, reason vocabulary, component map, keyboard rules and measured tokens are
+`docs/design/E09/E09-D09.md` §2.1–§2.2, §3.1–§3.3, §7–§8, §9.1–§9.3 and §11; the accessibility floors are `docs/plan/05-accessibility-standard.md` §3.1, §3.4 and §5; the arm
+rule is `docs/plan/22-api-openapi.yaml` (`ArmToken`); Penpot references follow `docs/design/README.md`.
+Shorthand: `05`, `14`, `22` are the `docs/plan/` documents by number.
+
+Terms (this file): a **pre-lens** is the lane's own review of a spec before it posts READY for the
+orchestrator's round. A **G-T2 miss is a Major** in the pre-lens; a **Recurring-item miss is a Minor**.
+
+## G-T2 — the controls E09-D09 §2.1 routes to T2 are specified as T2
+
+Scope: a control that `14` §0.5 rule 5 and E09-D09 §2.1 steps 3–4 route to **T2 "disabled with a visible
+reason"** — gated by an active view-as context (step 3a: every write, the C-2.6 carve-out excepted), a permission,
+grant, account or environment leg (step 3), or a registered state (step 4). Not in scope, because the
+owner routes them elsewhere: admin navigation affordances (T3 hidden — the one mandatory hiding case, §2.1
+step 1, anti-enumeration), server refusals (T4, step 2), a missing step-up and the three-strike read-only
+state (T1 / a step-2 refusal today, §2.1 and §3.3), and form-validity disabling (outside the grammar, §9.1).
+Within scope, the spec must state once and cite from every section that shows a T2 control:
+
+- **G-T2.1a** (§2.2, §9.1): the control keeps its native role and its **full label**.
+- **G-T2.1b** (§9.1): `aria-disabled="true"`, never the `disabled` attribute — it stays in the Tab order and a
+  menu item stays arrow-reachable.
+- **G-T2.1c** (§2.2, §9.2): the reason node is in the DOM at mount and linked by `aria-describedby`. Three
+  owner-legal renderings, and the spec names which one each control uses (this file): **2a inline** (the default; the
+  reason under or beside the control), **2b tooltip echo** (icon-only controls and toolbar segments without
+  room: a glyph badge on the icon, the description node visually hidden, CMP-016 echoes it on hover and focus —
+  never the only copy), and the **sentence form** (an empty state whose sole CTA is gated, or a control whose
+  only destination was an admin route: the reason sentence alone, no button).
+- **G-T2.1d** (§2.2, §8): CMP-079 RbacGate wraps every §2.1 step-3 control (the sentence form is CMP-026 with
+  `cta` omitted, §8); in rendering 2a the CMP-019 `lock`
+  glyph (`decorative=false`, accessible name "Not available") leads the full label (in 2b it is the badge on
+  the icon; the sentence form has no glyph and no button).
+- **G-T2.2** (§2.2, §11): hi-fi label `color.text.tertiary`, reason `color.text.secondary`; for primary / buy /
+  sell actions the fill becomes `color.surface.raised` with a `color.border.default` hairline; **never
+  `color.text.disabled`, never `opacity.disabled`** on the label, glyph or reason. The token pins are §8
+  DS-1's interim aliases — re-read §8 if the DS re-aliases them. Wireframes (this file): the T2 label is drawn
+  in a grey that is not the one reserved for placeholder or disabled text; a 2a frame draws
+  the glyph, the full label and the reason, a 2b frame the badge and the echo, a sentence-form frame the
+  sentence alone.
+- **G-T2.3** (§9.3): `Enter`, `Space` or a bound hotkey on a T2 control changes nothing and re-shows the reason
+  inline with one polite announcement; arrow keys land on a disabled menu item without activating it.
+- **G-T2.4** (§3.1–§3.2): every reason is one of §3.1's keys (`{verb}` only on `rbac.permission` and
+  `rbac.owner_only`, from the §3.2 verb table) or a key of a state vocabulary §3.1 registers. A §3.1 key's string
+  is one sentence, ≤ 60 characters, with a full stop; it names a capability, never data — no balance, position,
+  symbol, count, route, screen name or user name except the view-as target (`rbac.view_as`). A registered state
+  string is its vocabulary owner's (§2.1 step 4 — it may carry a time or a second sentence, as E30-D02's `frozen`
+  does); a screen never writes its own string.
+  (This file:) a verb the §3.2 table lacks is routed as an amendment to E09-D09 §3.2; a state string the
+  registered vocabularies lack is a PROPOSED key with the vocabulary owner named.
+- **G-T2.5** (§2.2 "one notice, many pointers"): a panel that is read-only for the session carries one
+  panel-header notice; every gated control's `aria-describedby` points at that node.
+- **G-T2.6** (this file; E09-D09 §7–§8 practise it): T2 is named in every state row and frame that shows a
+  gated control; CMP-079 and CMP-019 `lock` appear in every component list and component amendment that
+  covers those surfaces.
+
+## Recurring items (Minors; each has been a carry more than once)
+
+- **R1 Text resize** (`05` §5 item 7, WCAG 1.4.4): for every dialog, drawer and fixed-height region, say what
+  reflows at 200 % zoom and the in-app text scale, at the design lanes' 1280 × 800 frame (this file).
+- **R2 Forced colours** (this file): name the `forced-colors` rendering for every colour-only carrier, or hand
+  it to the hi-fi spec in the hand-off section.
+- **R3 Keyboard model** (`05` §3.1 item 1, §3.4 items 2, 4 and 6; the named items are this file's checklist):
+  initial focus, the Tab order across columns and sticky footers, what `Enter` does in a field, where focus
+  returns on close; a table that moves rows with arrows is the APG grid or a focusable scroll region, named.
+- **R4 Frames** (`docs/design/README.md` requires a frame per state in `14`; the rest is this file): every
+  state the text names has a frame or a named inset; the frame list and the state tables reconcile.
+- **R5 Live accounts** (`22` `ArmToken`): submits — `placeOrder`, `createTradeGroup`, reduce-only ones and
+  risk-increasing amends, reverse and leverage changes included — need the arm; cancels, `closePosition`,
+  `closeAllPositions`, quantity-reducing amends, take-profit changes and attaching or tightening a stop are
+  never refused for want of it (C-2.6) — a spec must not gate those on the arm (a cancel gated on a permission
+  leg, step 3b, is still T2 on that leg).
+- **R6 Contracts in flight** (this file; `.claude/rules/70-multi-agent.md` §3 interface-first): pin them at their current head sha, re-read them before every commit,
+  quote their vocabulary exactly, qualify "if #N merges as is", and re-pin to the merge commit once merged.
+- **R7 Penpot references** (`docs/design/README.md`): page name and page id only — never an instance
+  hostname, team or file URL, in the spec, the tool, the body or a commit (this file adds: including values
+  assembled from split string literals).
