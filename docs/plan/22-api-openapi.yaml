@@ -11930,9 +11930,10 @@ paths:
         own in-app alert records once delivered (`sent` or `acked`; `alerts:read`; every
         channel's record stays in `listAlertDeliveries`); the action outcomes of the rules the
         caller may read (`rules:read`); order outcomes on the caller's granted accounts
-        (`orders:read`); `system_events` for the Owner only. Order outcomes, and rule runs and
-        system events that name an account, are limited to the server's exchange environment.
-        `unread_only` drops acknowledged alert rows and keeps the rest, which have no read state yet.
+        (`orders:read`); every `system_events` row for the Owner, and for anyone else only the
+        rows addressed to them. Order outcomes, and rule runs and system events that name an
+        account, are limited to the server's exchange environment. `unread_only` drops
+        acknowledged alert rows and keeps the rest, which have no read state yet.
       x-rbac: { permissions: [], scope: self }
       parameters:
         - $ref: "#/components/parameters/Limit"
