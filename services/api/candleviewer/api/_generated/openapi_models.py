@@ -628,7 +628,7 @@ class UpdateExchangeAccountRequest(BaseModel):
     active_profile_id: Annotated[
         UUID | None,
         Field(
-            description="Not honoured: an account's default profile moves only through the default binding's own operation (#906 slice 0d); this member is dropped at E27's next contract touch (#895).\n"
+            description="Not honoured: a value sent is ignored, since an account's default profile moves only through the default binding's own operation (`setAccountDefaultProfile`); this member is dropped at E27's next contract touch (#895).\n"
         ),
     ] = None
     position_mode: Literal["one_way", "hedge"] | None = None
@@ -1096,7 +1096,7 @@ class AccountProfileInput(BaseModel):
     is_default: Annotated[
         bool,
         Field(
-            description="The account's default, its ceiling (decision D7). A profile write never changes it: the default binding moves only through its own operation (#906 slice 0d), so `true` on a create, or on a replace a value other than the stored one, is refused (`default_has_own_operation`).\n"
+            description="The account's default, its ceiling (decision D7). A profile write never changes it: the default binding moves only through its own operation (`setAccountDefaultProfile`), so `true` on a create, or on a replace a value other than the stored one, is refused (`default_has_own_operation`).\n"
         ),
     ] = False
     enabled: Annotated[bool, Field(description="A disabled profile sizes nothing.")] = True
@@ -1173,6 +1173,19 @@ class AccountProfile(BaseModel):
     updated_at: AwareDatetime
     warnings: list[ProfileWarning]
     profile: AccountProfileInput
+
+
+class AccountDefaultBindingInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    profile_id: Annotated[UUID, Field(description="A live profile of this account.")]
+
+
+class AccountDefaultBinding(BaseModel):
+    exchange_account_id: UUID
+    profile_id: UUID
+    version: Annotated[int, Field(ge=1)]
 
 
 class Instrument(BaseModel):

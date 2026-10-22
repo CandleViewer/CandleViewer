@@ -553,6 +553,20 @@ operations:
     state: not_mounted
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+  GET /exchange-accounts/{accountId}/default-profile:
+    permissions: ['accounts:read']
+    scope: granted_accounts
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml by #906 slice 0d; the router slice (D2) mounts it
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
+  PUT /exchange-accounts/{accountId}/default-profile:
+    permissions: ['accounts:write']
+    scope: granted_accounts
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml by #906 slice 0d; the router slice (D2) mounts it
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /exchange-accounts/{accountId}/fee-rate:
     permissions: ['accounts:read']
     scope: granted_accounts

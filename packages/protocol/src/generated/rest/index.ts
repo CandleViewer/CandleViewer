@@ -2206,7 +2206,7 @@ export interface paths {
     options?: never;
     head?: never;
     /**
-     * Update label, enabled flag, active profile, position/margin mode
+     * Update label, enabled flag, position/margin mode
      * @description Changing `position_mode` or `margin_mode` proxies to Bybit
      *     (`POST /v5/position/switch-mode`, `switch-isolated`, `account/set-margin-mode`) and
      *     fails with `conflict` when the account holds open positions or active orders.
@@ -2219,6 +2219,57 @@ export interface paths {
      *     The choice applies only to disabling, never to a mode change.
      */
     patch: operations["updateExchangeAccount"];
+    trace?: never;
+  };
+  "/exchange-accounts/{accountId}/default-profile": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Get the account's default profile binding
+     * @description The account's default binding: which of its profiles is the default, its ceiling (decision D7), and the binding's `version`, which the weak `ETag` names. Every account has one from its creation, its `Default` profile. An account that does not exist, is deleted or is outside the caller's grants is `404`, all alike.
+     */
+    get: operations["getAccountDefaultProfile"];
+    /**
+     * Make another profile of the account its default
+     * @description Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. The one
+     *     operation that moves the account's default (decision D7): the body names the profile to
+     *     bind and nothing else. A `profile_id` that is missing, deleted or another account's is
+     *     `404`, as an account outside the caller's grants is, and a body that fails its schema is
+     *     `422 validation_failed`; neither is audited.
+     *
+     *     `If-Match` is required and takes this binding's `ETag`, never a profile's, and it is
+     *     checked before the profile the body names. Without it the answer is
+     *     `428 precondition_required`; a stale one is `412 version_conflict`, even when the default
+     *     has since come back to the profile it was on, because the tag names the binding's
+     *     version. Either way nothing changes: reload, then move again. A retry with the same
+     *     `Idempotency-Key` and body is answered from the stored `200` before `If-Match` is read,
+     *     so a move whose answer was lost is not refused; the key with another body is
+     *     `409 idempotency_key_reuse`.
+     *
+     *     The move is audited write-ahead in its transaction, as `profile.unbound` for the default
+     *     it replaces, then `profile.bound` for the new one: when either record cannot be written
+     *     nothing changes (`503 audit_unavailable`). The server judges the move cap by cap over
+     *     `ProfileRiskCaps`: `null` is no bound, and every cap of a profile that cannot trade
+     *     (`enabled` or `trading_enabled` false) counts as zero, since it sizes nothing;
+     *     `allowed_symbols` is not compared. When any cap is higher on the new default than on the
+     *     one it replaces, `profile.bound` is labelled `relaxing` and the Owner is notified
+     *     (SR-E28-01). So a move onto the bootstrap `Default` while it cannot trade is not relaxing,
+     *     even with `null` caps, and a move that turns trading on, from a default that cannot
+     *     trade, is always relaxing. Binding the profile that already is the default changes
+     *     nothing, writes no record and answers the binding with its current `ETag`.
+     */
+    put: operations["setAccountDefaultProfile"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   "/exchange-accounts/{accountId}/fee-rate": {
@@ -2498,7 +2549,7 @@ export interface paths {
     put?: never;
     /**
      * Create a per-account profile (leverage, sizing, offsets, risk caps, allowed symbols)
-     * @description Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025, SR-E28-02): without a live one the answer is `403 step_up_required`, audited as `auth.step_up_required`, and nothing is stored. The write is path-gated, as the key routes are, so a Manager meets the step-up first and `403 forbidden` after one. The profile is created as an alternate at `version` 1, so `is_default: true` is refused (`default_has_own_operation`): the default binding moves only through its own operation (#906 slice 0d). The body is checked first, as `ProfileRejected` describes, and a `name` the account already uses, in any letter case, is `409 conflict`. Audited write-ahead as `profile.created`: when that record cannot be written nothing is stored (`503 audit_unavailable`). `Idempotency-Key` records are the caller's own (SR-E28-17) and kept 24 h at most; one that is lost re-runs the request, which then meets its own `name` (`409 conflict`).
+     * @description Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025, SR-E28-02): without a live one the answer is `403 step_up_required`, audited as `auth.step_up_required`, and nothing is stored. The write is path-gated, as the key routes are, so a Manager meets the step-up first and `403 forbidden` after one. The profile is created as an alternate at `version` 1, so `is_default: true` is refused (`default_has_own_operation`): the default binding moves only through its own operation (`setAccountDefaultProfile`). The body is checked first, as `ProfileRejected` describes, and a `name` the account already uses, in any letter case, is `409 conflict`. Audited write-ahead as `profile.created`: when that record cannot be written nothing is stored (`503 audit_unavailable`). `Idempotency-Key` records are the caller's own (SR-E28-17) and kept 24 h at most; one that is lost re-runs the request, which then meets its own `name` (`409 conflict`).
      */
     post: operations["createAccountProfile"];
     delete?: never;
@@ -2535,9 +2586,10 @@ export interface paths {
      *     (SR-E28-08).
      *
      *     A replace never moves the account's default: the default binding moves only through its
-     *     own operation (#906 slice 0d). A body whose `is_default` differs from the stored one (left
-     *     out, it is `false`) is `422 validation_failed` / `default_has_own_operation`; one that
-     *     repeats it is accepted, so a profile read and sent back whole is a valid replace.
+     *     own operation (`setAccountDefaultProfile`). A body whose `is_default` differs from the
+     *     stored one (left out, it is `false`) is `422 validation_failed` /
+     *     `default_has_own_operation`; one that repeats it is accepted, so a profile read and sent
+     *     back whole is a valid replace.
      *
      *     `If-Match` is required: a replace needs the current `ETag`, and last-write-wins is refused
      *     on risk caps by contract. Without it the answer is `428 precondition_required`; a stale
@@ -2551,7 +2603,7 @@ export interface paths {
     post?: never;
     /**
      * Delete a per-account profile
-     * @description Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. A soft delete: the profile leaves every read, its revisions stay, and a position sized from it keeps its version. Refused with `409 conflict`, nothing changed and `detail` naming each blocker, while the profile is the account's default (make another profile the default first) or while any rule scoped to the account is armed, named by its id and name (a rule cannot name a profile yet). `If-Match` is required: a delete needs the current `ETag`, and last-write-wins is refused on risk caps by contract. Without it the answer is `428 precondition_required`; a stale one is `412 version_conflict`. Audited write-ahead as `profile.deleted`: when that record cannot be written nothing changes (`503 audit_unavailable`).
+     * @description Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. A soft delete: the profile leaves every read, its revisions stay, and a position sized from it keeps its version. Refused with `409 conflict`, nothing changed and `detail` naming each blocker, while the profile is the account's default (make another profile the default first, with `setAccountDefaultProfile`) or while any rule scoped to the account is armed, named by its id and name (a rule cannot name a profile yet). `If-Match` is required: a delete needs the current `ETag`, and last-write-wins is refused on risk caps by contract. Without it the answer is `428 precondition_required`; a stale one is `412 version_conflict`. Audited write-ahead as `profile.deleted`: when that record cannot be written nothing changes (`503 audit_unavailable`).
      */
     delete: operations["deleteAccountProfile"];
     options?: never;
@@ -5833,6 +5885,22 @@ export interface components {
       /** @description Orders working on the exchange. */
       working_orders: number;
     };
+    /** @description An account's default binding: which of its profiles is the default, its ceiling (decision D7). `version` is 1 for the account's first default and grows by one with each move, so it never repeats; `DefaultBindingETag` names it. `getAccountProfile` reads the profile itself. */
+    AccountDefaultBinding: {
+      /** Format: uuid */
+      exchange_account_id: string;
+      /** Format: uuid */
+      profile_id: string;
+      version: number;
+    };
+    /** @description The profile to make the account's default, and nothing else: whether the move relaxes a cap is the server's judgement (`setAccountDefaultProfile`), never the caller's. */
+    AccountDefaultBindingInput: {
+      /**
+       * Format: uuid
+       * @description A live profile of this account.
+       */
+      profile_id: string;
+    };
     /** @description Per-account connection health (US-ACCT-010), from positive evidence only (an authenticated private-WS heartbeat or a REST success); it decays on silence. `healthy`, `degraded` and `down` set `connection_state` to `connected`, `degraded` and `disconnected`. Order entry for the account is refused while it is `down`. The server derives every field from the evidence when it serves it, so a lapse shows without waiting for a scheduled re-check. */
     AccountHealth: {
       /**
@@ -5908,7 +5976,7 @@ export interface components {
        */
       enabled: boolean;
       /**
-       * @description The account's default, its ceiling (decision D7). A profile write never changes it: the default binding moves only through its own operation (#906 slice 0d), so `true` on a create, or on a replace a value other than the stored one, is refused (`default_has_own_operation`).
+       * @description The account's default, its ceiling (decision D7). A profile write never changes it: the default binding moves only through its own operation (`setAccountDefaultProfile`), so `true` on a create, or on a replace a value other than the stored one, is refused (`default_has_own_operation`).
        * @default false
        */
       is_default: boolean;
@@ -10442,7 +10510,7 @@ export interface components {
     UpdateExchangeAccountRequest: {
       /**
        * Format: uuid
-       * @description Not honoured: an account's default profile moves only through the default binding's own operation (#906 slice 0d); this member is dropped at E27's next contract touch (#895).
+       * @description Not honoured: a value sent is ignored, since an account's default profile moves only through the default binding's own operation (`setAccountDefaultProfile`); this member is dropped at E27's next contract touch (#895).
        */
       active_profile_id?: string | null;
       /** @description `false` disables the account; with open exposure it needs the `open_exposure` query choice. */
@@ -10908,7 +10976,7 @@ export interface components {
      *     except two members named by rule: `native_stop_mandatory` (`require_native_stop` cannot
      *     be set to `false`) and `stop_defines_r` (a stop in `r_multiple`: the stop defines R).
      *     Then two passes run, each listing every failure it finds, the second only when the first
-     *     passes. The first needs no data: `required` and `not_allowed` (the rules of
+     *     passes. The first needs no exchange data: `required` and `not_allowed` (the rules of
      *     `AccountProfileInput`), `range` and `precision` (`limit` holds the bound broken, or the
      *     decimal places allowed), `ladder_sum`, `above_leverage_cap`, `cap_unbounded` and
      *     `default_has_own_operation`. `cap_unbounded` is a trading-enabled profile with a
@@ -10929,8 +10997,8 @@ export interface components {
      *
      *     `cap_unbounded` is audited though it arrives as a missing member: it is a cap removed
      *     rather than raised (PF-T02), a refusal of the risk policy and not of shape. A body refused
-     *     only by rules of shape, including semantic shape such as `stop_defines_r`, is not audited,
-     *     nor is one refused only by `default_has_own_operation`.
+     *     only by rules of shape or by `default_has_own_operation` is not audited, semantic shape
+     *     such as `stop_defines_r` included.
      */
     ProfileRejected: {
       headers: {
@@ -10940,7 +11008,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description A profile write that could not be checked or recorded, so nothing changed: `instrument_cache_unavailable` when the instrument cache was more than 15 minutes old and its refresh, shared by concurrent saves, did not finish in time (create and replace only); `audit_unavailable` when the write-ahead audit record could not be written (C-2.9); `store_unavailable` as on every route. Each is retryable after `Retry-After`, and the same request with the same `Idempotency-Key` is then a first submission. */
+    /** @description A profile write that could not be checked or recorded, so nothing changed: `instrument_cache_unavailable` when the instrument cache was more than 15 minutes old and its refresh, shared by concurrent saves, did not finish in time (`createAccountProfile` and `updateAccountProfile` only); `audit_unavailable` when the write-ahead audit record could not be written (C-2.9); `store_unavailable` as on every route. Each is retryable after `Retry-After`, and the same request with the same `Idempotency-Key` is then a first submission. */
     ProfileSaveUnavailable: {
       headers: {
         "Retry-After": components["headers"]["RetryAfter"];
@@ -11062,7 +11130,7 @@ export interface components {
     IdempotencyKeyRequired: string;
     /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
     IfMatch: string;
-    /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another profile's tag is `412 version_conflict`, never a match. */
+    /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
     IfMatchRequired: string;
     JournalTradeId: string;
     KeyId: string;
@@ -11214,11 +11282,13 @@ export interface components {
      *     as must any proxy or access log that records response headers.
      */
     CsrfTokenIssued: string;
+    /** @description `W/"<accountId>:default:<version>"` of the default binding answered: its version, never the profile it names, so a tag read before a move never matches after it, even once the default is back on the same profile. Send it as `If-Match` on `setAccountDefaultProfile`: the server compares the account id and the version it names, so the weak tag matches. */
+    DefaultBindingETag: string;
     /** @description Opaque version of the returned representation, for `If-Match`. */
     ETag: string;
     /** @description True when the response was replayed from the idempotency store. */
     IdempotencyReplayed: boolean;
-    /** @description `W/"<id>:<version>"` of the profile answered. Send it as `If-Match` on `updateAccountProfile` and `deleteAccountProfile`: the server compares the version it names, so the weak tag matches. */
+    /** @description `W/"<id>:<version>"` of the profile answered. Send it as `If-Match` on `updateAccountProfile` and `deleteAccountProfile`: the server compares the id and the version it names, so the weak tag matches. */
     ProfileETag: string;
     /** @description Requests permitted in the current window. */
     RateLimitLimit: number;
@@ -14491,6 +14561,90 @@ export interface operations {
       503: components["responses"]["ServiceUnavailable"];
     };
   };
+  getAccountDefaultProfile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The binding. */
+      200: {
+        headers: {
+          ETag: components["headers"]["DefaultBindingETag"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AccountDefaultBinding"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  setAccountDefaultProfile: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
+        "If-Match": components["parameters"]["IfMatchRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AccountDefaultBindingInput"];
+      };
+    };
+    responses: {
+      /** @description Bound, or already bound (nothing changed). */
+      200: {
+        headers: {
+          ETag: components["headers"]["DefaultBindingETag"];
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AccountDefaultBinding"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      412: components["responses"]["PreconditionFailed"];
+      /** @description The body fails its schema (`validation_failed`): `profile_id` missing or not a UUID, or another member. Nothing changes and nothing is audited. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      428: components["responses"]["PreconditionRequired"];
+      503: components["responses"]["ProfileSaveUnavailable"];
+    };
+  };
   getFeeRate: {
     parameters: {
       query?: {
@@ -14956,7 +15110,7 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another profile's tag is `412 version_conflict`, never a match. */
+        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
         "If-Match": components["parameters"]["IfMatchRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -15006,7 +15160,7 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another profile's tag is `412 version_conflict`, never a match. */
+        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
         "If-Match": components["parameters"]["IfMatchRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
