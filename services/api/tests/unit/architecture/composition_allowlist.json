@@ -110,6 +110,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "GET /exchange-accounts/{accountId}/default-profile": {
+      "reason": "contract-first operation (#906 slice 0d-1, the default binding); the router slice D2 serves it",
+      "ticket": "#906"
+    },
     "GET /exchange-accounts/{accountId}/fee-rate": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -481,6 +485,10 @@
     "PUT /detectors/config": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
+    },
+    "PUT /exchange-accounts/{accountId}/default-profile": {
+      "reason": "contract-first operation (#906 slice 0d-1, the default binding); the router slice D2 serves it",
+      "ticket": "#906"
     },
     "PUT /exchange-accounts/{accountId}/profiles/{profileId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
