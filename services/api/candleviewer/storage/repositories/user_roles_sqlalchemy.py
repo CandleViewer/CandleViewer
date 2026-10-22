@@ -112,7 +112,8 @@ class SqlAlchemyUserRoleStore:
         self, user_id: uuid.UUID, roles: frozenset[str], *, actor: uuid.UUID, audit: AuditHook
     ) -> bool:
         """Replace the role set atomically (new grants record `actor`); False if the user
-        does not exist. Raises what the owner-floor check or `audit` raises, or
+        does not exist. Raises what the owner-floor check or `audit` raises, the typed
+        `query_failure` for any other refused statement (#2748), or
         `WriteAheadTimeout` when `audit` outlives its bound; each rolls the transaction back,
         so nothing changes without its audit record."""
         uid, wanted = str(user_id), sorted(roles)

@@ -111,7 +111,8 @@ class SqlAlchemyUserLifecycleStore:
         written, a repeat included.
 
         Raises `UserSelfTargetError`, what `check` raises, what the owner-floor check raises for
-        the last active owner, what `audit` raises, or `WriteAheadTimeout` when `audit` outlives
+        the last active owner, what `audit` raises, the typed `query_failure` for any other refused
+        statement (#2748), or `WriteAheadTimeout` when `audit` outlives
         `audit_timeout_s`; on any of them the transaction rolls back and nothing changes. A
         driver or commit `TimeoutError` is raised as is: the outcome is unknown. If the commit
         landed, the revoked ids are lost with the exception; `read_back_disable` finds them

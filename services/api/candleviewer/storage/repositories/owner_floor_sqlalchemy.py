@@ -78,9 +78,10 @@ def floor_refusal(
     constraint: str | None,
 ) -> Exception:
     """The error a refused statement leaves as, from its SQLSTATE and constraint alone (#2748,
-    C-12.6): the trigger's 23514 (the database saw no active owner left) as `check`'s refusal,
-    anything else as `query_failure`. Raise it `from None`."""
-    if state == _CHECK_VIOLATION:
+    C-12.6): the trigger's 23514 (the database saw no active owner left; it names no constraint)
+    as `check`'s refusal, anything else, a named CHECK's 23514 included, as `query_failure`. Raise
+    it `from None`."""
+    if state == _CHECK_VIOLATION and constraint is None:
         try:
             check(current, new, 0)
         except Exception as refusal:  # the floor's own error (409 at the edge)

@@ -146,6 +146,7 @@ async def test_apply_roles_refused_audit_write_rolls_the_change_back() -> None:
         ("active", "23514", None, OwnerFloorError),
         ("active", "23505", "user_roles_pkey", StorageConstraintViolated),
         ("disabled", "23514", None, StorageConstraintViolated),  # not this change's floor
+        ("active", "23514", "uaa_trade_implies_view", StorageConstraintViolated),  # a named CHECK
     ],
 )
 async def test_apply_roles_trigger_check_before_audit_maps_only_the_floor(
