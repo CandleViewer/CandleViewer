@@ -969,7 +969,7 @@ Drag preview                Drop zones
 - **A11y:** Combobox with `aria-autocomplete="list"`; results are announced as a count; the current symbol is the initial value and Esc restores it.
 - **Performance:** Opens in <=80 ms from a locally cached instrument list; switching symbol swaps subscriptions with a single WS frame and shows the previous frame until first data (no white flash).
 - **Analytics/audit:** `chart.symbol_changed` with `{from, to, source: 'quick-switcher'}` (analytics).
-- **Design sign-off acceptance checklist:** [ ] typeahead with fuzzy match [ ] recent symbols [ ] interval shortcuts in the same overlay [ ] not-recorded warning on symbols with no history [ ] no-results state
+- **Design sign-off acceptance checklist:** [x] typeahead with fuzzy match (B16) [x] recent symbols (B15) [x] interval shortcuts in the same overlay (B15) [x] not-recorded warning on symbols with no history (B02, B16, B18) [x] no-results state (B17)
 
 ### SCR-042 — Interval / bar-mode menu
 
@@ -2157,7 +2157,7 @@ Drag preview                Drop zones
 - **A11y:** Combobox pattern with `aria-activedescendant`; results announce their count; each result reads symbol, base/quote and a recording indicator; Esc closes and restores focus.
 - **Performance:** Search runs against a locally cached instrument list (refreshed hourly from `GET /api/v1/instruments`); results appear within 50 ms of a keystroke with no network round-trip in the common case.
 - **Analytics/audit:** `symbol.searched`, `symbol.search_result_opened`, `empty_state_shown {surface, reason}` (analytics; payloads in E08-D05 §12.1).
-- **Design sign-off acceptance checklist:** [ ] fuzzy matching with the matched substring highlighted (and not relying on colour alone) [ ] recent and favourite sections [ ] per-result actions (open chart, add to watchlist, open ladder) [ ] not-recorded indicator [ ] no-results state with a suggestion [ ] keyboard-only operation
+- **Design sign-off acceptance checklist:** [x] fuzzy matching with the matched substring highlighted (and not relying on colour alone) (B01, B05) [x] recent and favourite sections (B04) [x] per-result actions (open chart, add to watchlist, open ladder) (B06) [x] not-recorded indicator (B01, B05) [x] no-results state with a suggestion (B07) [x] keyboard-only operation (B14)
 
 ### SCR-103 — Symbol info / instrument detail
 
