@@ -4935,6 +4935,75 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/trade-group-definitions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List trade-group definitions (named sets of accounts)
+     * @description A definition is listed only when every member account is in the caller's grants; any other is left out as if it did not exist (SR-E28-21). Soft-deleted ones are never listed. `meta.total`, when present, counts only the definitions the caller may read.
+     */
+    get: operations["listTradeGroupDefinitions"];
+    put?: never;
+    /**
+     * Create a trade-group definition, a named set of accounts (Owner, step-up)
+     * @description A definition is a named set of accounts that a ticket fans out to (SR-E28-31;
+     *     `21-database-schema.md` section 3.3.3a). It places nothing: `POST /trade-groups` is the
+     *     execution. It grants nothing either: a ticket names each member it targets as a leg, and
+     *     each leg's account is checked against the caller's grants at that use.
+     *
+     *     Owner-only (`accounts:write`) with a live step-up elevation of class `risk_caps`, until the
+     *     Owner decides otherwise (decision D8 of the E28 threat model, queued on #2701; SR-E28-02,
+     *     PF-E02): without the step-up, `403 step_up_required`. Every member is in the definition's
+     *     `environment` (C-2.11, SR-E28-16): a member from another environment is refused with
+     *     `400 validation_failed`, one `errors[]` entry with `rule: environment_mismatch` per such
+     *     member, and nothing is written (`trg_tgdm_env` checks it again in the database). A member
+     *     account that does not exist is refused as the order routes refuse one,
+     *     `403 account_scope_denied` (SR-E29-13). A name that a live definition holds, compared
+     *     case-insensitively, is `409 conflict`. The write is audited with the membership before and
+     *     after (E28 threat model section 8.1, SR-E28-20).
+     */
+    post: operations["createTradeGroupDefinition"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/trade-group-definitions/{definitionId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
+        definitionId: components["parameters"]["TradeGroupDefinitionId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Get a trade-group definition
+     * @description `ETag` versions the definition, members included; send it as `If-Match` on `updateTradeGroupDefinition`.
+     */
+    get: operations["getTradeGroupDefinition"];
+    /**
+     * Replace a trade-group definition's name and members (Owner, step-up)
+     * @description Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8), audited. `environment` is write-once (`trg_tgd_write_once`): another value is `400 validation_failed` with `rule: write_once`. The body replaces the whole member set, so a client sends the `ETag` of its read as `If-Match`: a definition changed since is `412 version_conflict`, and a stale session cannot put back a member the Owner removed (absent `If-Match`, the last write wins).
+     */
+    put: operations["updateTradeGroupDefinition"];
+    post?: never;
+    /**
+     * Delete a trade-group definition (Owner, step-up)
+     * @description Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8), audited. A soft delete: it is no longer listed or read, and stays as its groups' history.
+     */
+    delete: operations["deleteTradeGroupDefinition"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/trade-groups": {
     parameters: {
       query?: never;
@@ -5076,7 +5145,7 @@ export interface paths {
     put?: never;
     /**
      * Dry-run a fan-out - resolved per-account sizing, risk and rejections
-     * @description Runs the full fan-out pipeline (24-internal-schemas.md section 9.3 sizing, 9.4 fan-out) **without submitting anything**, returning exactly what each leg would send. Legs that would be rejected (cap breach, symbol not allowed, insufficient margin, rate budget exhausted) are returned with their reason so the ticket can show them before the user commits. Never mutates state and is therefore safe to call on every keystroke; it is rate-limited rather than idempotency-keyed.
+     * @description Runs the full fan-out pipeline (24-internal-schemas.md section 9.3 sizing, 9.4 fan-out) **without submitting anything**, returning exactly what each leg would send. Legs that would be rejected (cap breach, symbol not allowed, insufficient margin, rate budget exhausted) are returned with their reason so the ticket can show them before the user commits. Never mutates state and is therefore safe to call on every keystroke; it is rate-limited rather than idempotency-keyed. It takes `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
      */
     post: operations["previewTradeGroup"];
     delete?: never;
@@ -6517,6 +6586,7 @@ export interface components {
       };
       /** @default entry */
       intent: components["schemas"]["OrderIntent"];
+      /** @description At most 20 legs, one per account (SR-E28-17; the Business-KYC sub-account ceiling of ADR-0008). Two legs on one `exchange_account_id` refuse the whole request, on `previewTradeGroup` too, with `422 validation_failed` and `rule: duplicate_account`: a check of the body alone, answered as the body's other refusals are, before any account is resolved, so it says nothing about any account. */
       legs: components["schemas"]["TradeGroupLegInput"][];
       /** @default 5 */
       max_concurrent_legs: number;
@@ -10061,6 +10131,33 @@ export interface components {
       /** Format: date-time */
       updated_at?: string;
     };
+    /** @description A stored definition. `definition` is the body `updateTradeGroupDefinition` takes back unchanged. Closed, so it never carries `created_by` (SR-E28-21). */
+    TradeGroupDefinition: {
+      /** Format: date-time */
+      created_at: string;
+      definition: components["schemas"]["TradeGroupDefinitionInput"];
+      /** Format: uuid */
+      id: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    /** @description The body `createTradeGroupDefinition` and `updateTradeGroupDefinition` take, and that `TradeGroupDefinition.definition` returns unchanged: the writable columns of `trade_group_definitions` and `trade_group_definition_members` (`21-database-schema.md` section 3.3.3a), and nothing else. */
+    TradeGroupDefinitionInput: {
+      environment: components["schemas"]["Environment"];
+      /** @description At most 20, one per account, as a group's legs (SR-E28-17): a repeated `exchange_account_id` is `422 validation_failed` with `rule: duplicate_account`. */
+      members: components["schemas"]["TradeGroupDefinitionMember"][];
+      /** @description Unique among live definitions, compared case-insensitively (`ux_tgd_name`). */
+      name: string;
+    };
+    TradeGroupDefinitionMember: {
+      /**
+       * @description A disabled member stays in the definition, and a ticket does not target it.
+       * @default true
+       */
+      enabled: boolean;
+      /** Format: uuid */
+      exchange_account_id: string;
+    };
     /** @description One account's share of a fan-out. Field names mirror the `trade_group_legs` columns in 21-database-schema.md §3.3.3 one-for-one; the only additions are `orders` (the leg's order ids, a join rather than a column), `order_details` (those orders themselves, on `placeOrder`'s `202`) and `resolved` (the computed parameters, stored as `resolved_*` columns and the `profile_snapshot` JSONB). */
     TradeGroupLeg: {
       /**
@@ -10877,6 +10974,8 @@ export interface components {
     TemplateId: string;
     /** @description Exclusive end of the time window (RFC 3339 UTC). Defaults to now. */
     To: string;
+    /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
+    TradeGroupDefinitionId: string;
     /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
     TradeGroupId: string;
     UserId: string;
@@ -18918,6 +19017,186 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  listTradeGroupDefinitions: {
+    parameters: {
+      query?: {
+        /** @description Opaque forward cursor from `meta.next_cursor`. Cursors expire after 1 hour. */
+        cursor?: components["parameters"]["Cursor"];
+        /** @description Page size. */
+        limit?: components["parameters"]["Limit"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Definitions page. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page"] & {
+            items?: components["schemas"]["TradeGroupDefinition"][];
+          };
+        };
+      };
+      403: components["responses"]["Forbidden"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  createTradeGroupDefinition: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TradeGroupDefinitionInput"];
+      };
+    };
+    responses: {
+      /** @description Definition created. */
+      201: {
+        headers: {
+          ETag: components["headers"]["ETag"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TradeGroupDefinition"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  getTradeGroupDefinition: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
+        definitionId: components["parameters"]["TradeGroupDefinitionId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Definition. */
+      200: {
+        headers: {
+          ETag: components["headers"]["ETag"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TradeGroupDefinition"];
+        };
+      };
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  updateTradeGroupDefinition: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
+        definitionId: components["parameters"]["TradeGroupDefinitionId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TradeGroupDefinitionInput"];
+      };
+    };
+    responses: {
+      /** @description Replaced. */
+      200: {
+        headers: {
+          ETag: components["headers"]["ETag"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TradeGroupDefinition"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      412: components["responses"]["PreconditionFailed"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  deleteTradeGroupDefinition: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
+        definitionId: components["parameters"]["TradeGroupDefinitionId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

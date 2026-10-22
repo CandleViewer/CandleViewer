@@ -4784,6 +4784,50 @@
         }
       }
     },
+    "/trade-group-definitions": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/trade-group-definitions/{definitionId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
     "/trade-groups": {
       "get": {
         "x-rbac": {
@@ -4806,7 +4850,7 @@
       "post": {
         "x-rbac": {
           "permissions": [
-            "orders:read"
+            "orders:write"
           ],
           "scope": "granted_accounts"
         }
