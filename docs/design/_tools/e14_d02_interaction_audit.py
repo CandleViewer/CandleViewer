@@ -19,7 +19,9 @@ source so a reviewer can re-grep it:
    resolved exactly as ``packages/ui/tokens/tests/verify_tokens.py`` does, measured with
    ``contrast_ratio()`` from ``docs/design/_tools/contrast_check.py`` (imported, never
    re-implemented). Dark is gated (the boards are dark); light and high-contrast are reported.
-5. The geometry arithmetic of the selection model (target, pick tolerances, glyph, footprint rows).
+5. The geometry arithmetic of the selection model (target, pick tolerances, glyph, footprint rows)
+   and the rail model of spec section 3.1: the three collapse heights (758 / 656 / 554 px for six /
+   five / four groups) and the groups drawn at the 728 and 600 px pane stacks, from the registry.
 6. The counts the boards quote, for the local check-nums cross-check (``--json``).
 
 Usage: python3 -I docs/design/_tools/e14_d02_interaction_audit.py [--json]
@@ -164,6 +166,30 @@ GEOM |= {"rows_px": ROWS, "rail_px": (32, 24, 24), "popover_px": (280, 320), "ma
 GEOM |= {"nudge_ticks": (1, 10), "target_over_rows": [round(24 / r, 2) for r in ROWS]}
 GEOM |= {"glyph_over_rows": [round(8 / r, 2) for r in ROWS]}
 GEOM |= {"tol_over_rows": [round(10 / r, 2) for r in ROWS]}
+RAIL_GROUPS = ("cursor", "lines", "shapes", "fibonacci", "analysis", "annotation")
+RAIL_PX = {"button": 24, "pad": 4, "separator": 6, "delete_gap": 12, "controls": 4}
+
+
+def rail_height(groups: int, s: int = 24) -> int:
+    """The compact rail's column for the first ``groups`` groups (spec section 3.1): the end
+    padding, the tool buttons, the overflow button, a separator block per group and after the
+    overflow, the four controls, the 12 px gap and delete-all. The board script draws the same."""
+    tools = sum(1 for r in REG if r[4] in RAIL_GROUPS[:groups])
+    fixed = RAIL_PX["pad"] * 2 + RAIL_PX["delete_gap"] + (groups + 1) * RAIL_PX["separator"]
+    return fixed + (tools + 1 + RAIL_PX["controls"] + 1) * s
+
+
+def rail_fit(pane_h: int) -> int:
+    """Groups drawn at a pane stack of ``pane_h`` px: whole groups collapse from the bottom up."""
+    groups = len(RAIL_GROUPS)
+    while groups > 1 and rail_height(groups) > pane_h:
+        groups -= 1
+    return groups
+
+
+GEOM |= {"rail_model_px": RAIL_PX, "rail_tools": [sum(r[4] == g for r in REG) for g in RAIL_GROUPS]}
+GEOM |= {"rail_heights": [rail_height(g) for g in (6, 5, 4)], "pane_stacks": [728, 600]}
+GEOM["rail_groups_drawn"] = [rail_fit(h) for h in (728, 600)]
 
 
 def read(name: str) -> str:
