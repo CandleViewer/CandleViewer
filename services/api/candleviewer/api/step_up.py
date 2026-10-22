@@ -535,6 +535,13 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     # #2738 (SR-025, 04 §7.2.2 row 9, Owner and Manager): every request changes retention.
     ("PUT", re.compile(r"^/recording/retention-policies$"), "recorder"),  # setRetentionPolicies
     ("PUT", re.compile(r"^/recording/symbols/[^/]+/pin$"), "recorder"),  # pinRecordedSymbol
+    # #906 (E28-T02, SR-E28-02, 04 §7.2.2 row 21): createAccountProfile, updateAccountProfile and
+    # deleteAccountProfile. Not mounted yet. A profile's caps and native-stop rule size every order,
+    # so the guard refuses an un-elevated write before its handler runs and B16 writes
+    # `auth.step_up_required`; the handler's own `profile.save_refused` never names a step-up.
+    ("POST", re.compile(r"^/exchange-accounts/[^/]+/profiles$"), "risk_caps"),
+    ("PUT", re.compile(r"^/exchange-accounts/[^/]+/profiles/[^/]+$"), "risk_caps"),
+    ("DELETE", re.compile(r"^/exchange-accounts/[^/]+/profiles/[^/]+$"), "risk_caps"),
 )
 
 #: These routes cannot be gated by path alone: kill-switch *engage* must
@@ -604,11 +611,12 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
 #: under any of them, #2738); their writes without step-up are allow-listed,
 #: each with its 04 §7.2.2 row, in the registry test. `feature-flags` (#3083):
 #: a flag write is owner-equivalent configuration (live gate, kill switches). `view-as`
-#: (#3085): an impersonation start, handler-gated.
+#: (#3085): an impersonation start, handler-gated. `exchange-accounts/{id}/profiles` (#906,
+#: SR-E28-02): the profile writes, path-gated with `risk_caps`.
 DANGEROUS_PATH_PATTERN = re.compile(
     r"^/(admin/)?(users|exchange-accounts/[^/]+/keys|keys|live|kill|trading/kill-switch"
     r"|session/environment|risk/lockouts|recording[^/]*|recorder[^/]*|audit|backups"
-    r"|feature-flags|view-as)(/|$)"
+    r"|feature-flags|view-as|exchange-accounts/[^/]+/profiles)(/|$)"
 )
 
 

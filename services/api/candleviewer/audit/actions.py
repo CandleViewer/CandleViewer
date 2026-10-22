@@ -145,7 +145,20 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # (the account's id where no key is stored); critical for a withdraw, transfer, fiat or
         # card right, any right that moves funds.
         "security.key_policy_violation",
+        # `profiles.update` is 21 Sec.3.10.1's name from before E28: nothing emits it. A profile
+        # record is one of the `profile.*` actions below (SR-E28-20: one vocabulary).
         "profiles.update",
+        # E28-T02 (#906): a profile write, written ahead of its commit (C-2.9) with `object_kind`
+        # `account_profile` and the profile's id; 24 Sec.15.5 holds the fields. A PUT with
+        # `is_default: true` moves the account's default as `.unbound` (the profile it replaces)
+        # then `.bound` (decision D7, ruling B5). `.save_refused` is a save refused before anything
+        # is stored, its `reason` one of `PROFILE_SAVE_REFUSED_REASONS`.
+        "profile.created",
+        "profile.updated",
+        "profile.deleted",
+        "profile.bound",
+        "profile.unbound",
+        "profile.save_refused",
         "orders.submit",
         "orders.cancel",
         "orders.amend",
@@ -283,6 +296,29 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
 for _action in AUDIT_ACTIONS:
     if not _ACTION_FMT_RE.match(_action):  # pragma: no cover - defends the registry itself
         raise AuditError(f"registry action {_action!r} violates au_action_fmt")
+
+#: `profile.save_refused`'s `reason` (E28-T02, #906; E28 threat model Sec.8.1), a closed set of the
+#: refusals of the profile's risk policy (ruling of 2026-10-22: a malformed body is not audited):
+#: the native-stop rule (`require_native_stop` set to `false`, SR-E28-08), `leverage` above the
+#: profile's own `max_leverage_cap`, a trading-enabled profile with a loss cap left unbounded
+#: (`cap_unbounded`: a cap removed rather than raised, PF-T02, though it arrives as a missing
+#: member; ruling of 2026-10-22 07:10Z), and the exchange limits the
+#: second validation pass refuses: leverage above an allowed symbol's maximum, a fixed size below
+#: its minimum quantity or off its step, a notional cap below its minimum notional, and a symbol
+#: the exchange does not list. A missing step-up is none (ruling B4): the path guard refuses it
+#: before the handler runs and B16 audits it as `auth.step_up_required`. 24 Sec.15.5 lists them.
+PROFILE_SAVE_REFUSED_REASONS: frozenset[str] = frozenset(
+    {
+        "native_stop_mandatory",
+        "above_leverage_cap",
+        "cap_unbounded",
+        "max_leverage",
+        "min_order_qty",
+        "qty_step",
+        "min_notional",
+        "symbol_not_listed",
+    }
+)
 
 LaneClass = Literal["reserved", "shared"]
 _ANY = frozenset(AuditOutcome)

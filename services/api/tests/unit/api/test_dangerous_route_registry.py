@@ -23,6 +23,7 @@ from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute, Host, Mount
 from starlette.types import Receive, Scope, Send
 
+from candleviewer.api import step_up as step_up_module
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.rbac_conformance import RBAC_SEED_PATH
@@ -103,6 +104,37 @@ def _ungated_dangerous_writes(app: FastAPI) -> list[tuple[str, str]]:
 
 def test_every_mounted_dangerous_write_route_is_gated() -> None:
     assert _ungated_dangerous_writes(create_app()) == []
+
+
+def _convertor_writes(app: FastAPI) -> list[tuple[str, str]]:
+    # A row matches the decoded path with `[^/]+`, which a `{name:path}` segment can outrun: the
+    # sweep would certify `/exchange-accounts/{aid:path}/profiles` while `a/b` slips the guard.
+    writes = sorted(op for op in served_operations(app) if op[0] in _WRITE)
+    return [
+        (m, p)
+        for m, p in writes
+        if DANGEROUS_PATH_PATTERN.match(p) and re.search(r"\{[^}:]+:[^}]+\}", p)
+    ]
+
+
+def test_no_mounted_dangerous_write_uses_a_path_convertor() -> None:
+    assert _convertor_writes(create_app()) == []
+
+
+def test_a_dangerous_write_with_a_path_convertor_is_reported() -> None:
+    """The self-test of the check above (#4087 security lens R1S-01; R2S-01: every write method)."""
+    app = create_app()
+    router = APIRouter(prefix="/exchange-accounts")
+    router.add_api_route("/{accountId:path}/profiles", _stand_in, methods=["POST"])
+    item = "/{accountId}/profiles/{profileId:path}"
+    router.add_api_route(item, _stand_in, methods=["PUT", "PATCH", "DELETE"])
+    app.include_router(router)
+    assert _convertor_writes(app) == [
+        ("DELETE", "/exchange-accounts" + item),
+        ("PATCH", "/exchange-accounts" + item),
+        ("POST", "/exchange-accounts/{accountId:path}/profiles"),
+        ("PUT", "/exchange-accounts" + item),
+    ]
 
 
 def test_gate_sees_a_route_mounted_through_an_included_router() -> None:
@@ -421,6 +453,9 @@ def test_sub_application_tripwire_catches_a_mounted_dangerous_route() -> None:
         # #3083: the flag prefix is swept too, not only the one write the contract has.
         ("DELETE", "/admin/feature-flags/{flagKey}"),
         ("POST", "/admin/feature-flags/{flagKey}/overrides"),
+        # #906 (SR-E28-02): the profile prefix is swept whole, not only the three writes it has.
+        ("PATCH", "/exchange-accounts/{accountId}/profiles/{profileId}"),
+        ("POST", "/exchange-accounts/{accountId}/profiles/{profileId}/clone"),
     ],
 )
 def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) -> None:
@@ -449,6 +484,9 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
         ("POST", "/admin/keys/kek-rewrap", "keys"),  # rewrapKek (#2266, 04 row 41a)
         ("PUT", "/recording/retention-policies", "recorder"),  # setRetentionPolicies (04 row 9)
         ("PUT", "/recording/symbols/s/pin", "recorder"),  # pinRecordedSymbol (04 row 9)
+        ("POST", "/exchange-accounts/a/profiles", "risk_caps"),  # createAccountProfile (#906)
+        ("PUT", "/exchange-accounts/a/profiles/p", "risk_caps"),  # updateAccountProfile (#906)
+        ("DELETE", "/exchange-accounts/a/profiles/p", "risk_caps"),  # deleteAccountProfile (#906)
     ],
 )
 def test_contract_dangerous_routes_map_to_action_class(
@@ -796,3 +834,99 @@ def test_the_flag_write_is_handler_gated_from_the_locked_row() -> None:
     assert DANGEROUS_PATH_PATTERN.match("/admin/feature-flags/x1")
     assert dangerous_action_class("PUT", "/admin/feature-flags/x1") is None
     assert ("PUT", "/admin/feature-flags/{flagKey}", "flags") in HANDLER_GATED_ROUTES
+
+
+# -- #906 (E28-T02, SR-E28-02, ruling B4): the profile writes ----------------------------------
+
+_PROFILES = "/exchange-accounts/{accountId}/profiles"
+_PROFILE = _PROFILES + "/{profileId}"
+#: The three writes of the contract. Their rows are registered before the router that serves them
+#: is mounted (the sweeps above look at mounted routes only), so the gate is there the moment it is.
+_PROFILE_WRITES = [("POST", _PROFILES), ("PUT", _PROFILE), ("DELETE", _PROFILE)]
+
+
+@pytest.mark.parametrize(("method", "path"), _PROFILE_WRITES)
+def test_a_profile_write_is_path_gated_with_the_risk_caps_class(method: str, path: str) -> None:
+    assert DANGEROUS_PATH_PATTERN.match(path)
+    assert dangerous_action_class(method, _concrete(path)) == "risk_caps"
+    assert not _ungated(method, path)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", _PROFILES),
+        ("GET", _PROFILE),
+        ("PUT", _PROFILES),
+        ("DELETE", _PROFILES),
+        ("POST", _PROFILE),
+        ("PATCH", _PROFILE),
+        ("POST", _PROFILE + "/clone"),
+        ("PUT", _PROFILE + "/clone"),  # the PUT and DELETE rows end at the profile id (`$`)
+        ("DELETE", _PROFILE + "/clone"),
+    ],
+)
+def test_no_other_method_or_path_of_the_profile_prefix_is_path_gated(
+    method: str, path: str
+) -> None:
+    """The rows are exact: the reads pass, and a route the contract lacks is the sweep's to flag."""
+    assert dangerous_action_class(method, _concrete(path)) is None
+
+
+@pytest.mark.parametrize(
+    ("path", "swept"),
+    [
+        (_PROFILES, True),
+        (_PROFILE, True),
+        (_PROFILE + "/clone", True),  # swept whole, as `keys` is
+        ("/exchange-accounts/{accountId}/fee-rate", False),  # no other path under the prefix
+        ("/exchange-accounts/{accountId}/profile", False),
+        ("/exchange-accounts/{accountId}/profiles-archive", False),
+        ("/exchange-accounts/profiles", False),  # no account segment
+        ("/accounts/{accountId}/profiles", False),
+        ("/profiles", False),
+    ],
+)
+def test_the_sweep_gains_the_profile_prefix_and_no_other_exchange_accounts_path(
+    path: str, swept: bool
+) -> None:
+    """The account's own routes (`/exchange-accounts`, `/{accountId}`) are E27's: no pin here."""
+    assert bool(DANGEROUS_PATH_PATTERN.match(path)) is swept
+
+
+def test_every_contract_profile_write_is_path_gated_with_risk_caps() -> None:
+    """Derived from the contract, so a fourth profile write fails here until it is registered."""
+    profile = re.compile(r"^/exchange-accounts/\{[^}]+\}/profiles(/|$)")
+    found = {
+        key: op["operationId"]
+        for key, op in _contract_operations().items()
+        if profile.match(key[1])
+    }
+    writes = {op: _gating(*key) for key, op in found.items() if key[0] in _WRITE}
+    gated = ("path", "risk_caps")
+    assert writes == dict.fromkeys(
+        ["createAccountProfile", "updateAccountProfile", "deleteAccountProfile"], gated
+    )
+    reads = [key for key in found if key[0] == "GET"]
+    assert reads and all(dangerous_action_class(m, _concrete(p)) is None for m, p in reads)
+
+
+@pytest.mark.parametrize(("method", "path"), _PROFILE_WRITES)
+def test_the_sweep_catches_a_mounted_profile_write_whose_row_is_dropped(
+    monkeypatch: pytest.MonkeyPatch, method: str, path: str
+) -> None:
+    """Mounted (here by a stand-in router), the three writes pass the sweep through their rows
+    alone, and the sweep names exactly the one whose row is dropped."""
+    app = create_app()
+    router = APIRouter(prefix="/exchange-accounts")
+    router.add_api_route("/{accountId}/profiles", _stand_in, methods=["GET", "POST"])
+    router.add_api_route(
+        "/{accountId}/profiles/{profileId}", _stand_in, methods=["GET", "PUT", "DELETE"]
+    )
+    app.include_router(router)
+    assert _ungated_dangerous_writes(app) == []
+    dropped = [r for r in DANGEROUS_ROUTES if r[0] == method and r[1].match(_concrete(path))]
+    assert len(dropped) == 1
+    rows = tuple(r for r in DANGEROUS_ROUTES if r not in dropped)
+    monkeypatch.setattr(step_up_module, "DANGEROUS_ROUTES", rows)
+    assert _ungated_dangerous_writes(app) == [(method, path)]
