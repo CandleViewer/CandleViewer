@@ -21,7 +21,7 @@ also construct their own via `SqlAlchemyRelationalRepository(dsn, suffix)` (the
 from __future__ import annotations
 
 import re
-from types import TracebackType
+from types import SimpleNamespace, TracebackType
 
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.ext.asyncio import (
@@ -68,20 +68,20 @@ def _build_engine(dsn: str) -> AsyncEngine:
     )
 
 
-def _sources(exc: BaseException) -> tuple[object, ...]:
+def _sources(exc: object) -> tuple[object, ...]:
     """Where a driver error's facts live: SQLAlchemy's `orig` (the adapted error), and asyncpg's
     own error behind it (`orig.orig`, or its `__cause__`)."""
     orig = getattr(exc, "orig", None)
     return orig, getattr(orig, "orig", None), getattr(orig, "__cause__", None)
 
 
-def sqlstate_of(exc: BaseException) -> str | None:
+def sqlstate_of(exc: object) -> str | None:
     """The SQLSTATE a database error reports, or None (a driver-side failure has none)."""
     codes = (getattr(src, key, None) for src in _sources(exc) for key in ("sqlstate", "pgcode"))
     return next((c for c in codes if isinstance(c, str) and _SQLSTATE.fullmatch(c)), None)
 
 
-def constraint_of(exc: BaseException) -> str | None:
+def constraint_of(exc: object) -> str | None:
     """The name of the constraint a database error reports, or None."""
     holders = (h for src in _sources(exc) for h in (src, getattr(src, "diag", None)))
     names = (getattr(h, "constraint_name", None) for h in holders)
@@ -135,9 +135,11 @@ class _DriverFacts(Exception):
     def __init__(
         self, state: str | None, constraint: str | None, client: str | None = None
     ) -> None:
-        named = f", constraint {constraint}" if constraint else ""
-        message = f"database error (sqlstate {state or 'unknown'}{named})"
-        super().__init__(f"{client} raised before the database" if client else message)
+        if client:
+            super().__init__(f"{client} raised before the database")
+        else:
+            named = f", constraint {constraint}" if constraint else ""
+            super().__init__(f"database error (sqlstate {state or 'unknown'}{named})")
         self.sqlstate = self.pgcode = state
         self.constraint_name = constraint
         self.client = client
@@ -149,13 +151,30 @@ class _DriverFacts(Exception):
         return type(self), (self.sqlstate, self.constraint_name, self.client)
 
 
+def _strip_unwrapped(error: BaseException) -> None:
+    """A driver error raised as it is: keep its type, SQLSTATE and constraint name, read as
+    `sqlstate_of` and `constraint_of` read a wrapped one (asyncpg's, psycopg's or an emulated
+    error's); drop its message and text fields, its notes, and the driver error an emulated one
+    wraps."""
+    held = SimpleNamespace(orig=error)
+    facts = _DriverFacts(sqlstate_of(held), constraint_of(held))
+    error.args = (str(facts),)
+    if isinstance(error, sa_exc.EmulatedDBAPIException):
+        error.orig = facts
+    for name in _DRIVER_TEXT:
+        if getattr(error, name, None) is not None:
+            setattr(error, name, None)
+    if hasattr(error, "__notes__"):
+        del error.__notes__
+
+
 def strip_driver_text(exc: BaseException) -> None:
     """Remove the database server's text from *exc* and its chain, in place (#2748, C-12.6).
 
     Each SQLAlchemy `StatementError` in the graph keeps its type, `connection_invalidated`,
     SQLSTATE and constraint name, and loses its message, statement, parameters, driver error
-    and chain. A driver error left unwrapped (only *exc* itself can be one) keeps its type and
-    codes, and loses its text; a `PendingRollbackError` loses the text it quotes. Any other
+    and chain. A driver error left unwrapped (*exc* itself or a group member) keeps its type
+    and codes, and loses its text; a `PendingRollbackError` loses the text it quotes. Any other
     exception keeps its type and message, but loses chain links that are driver exceptions. In
     place, because `async with` re-raises this same object."""
     seen: set[int] = set()
@@ -180,7 +199,7 @@ def strip_driver_text(exc: BaseException) -> None:
             if hasattr(node, "__notes__"):  # `add_note()` text can quote the server too
                 del node.__notes__
             continue
-        if _is_driver(node):  # only *exc* itself: every link to a driver error is cut below
+        if _is_driver(node):  # *exc* itself or a group member: a link to one is cut below
             _strip_unwrapped(node)
         elif isinstance(node, sa_exc.PendingRollbackError):
             node.args = (_ROLLED_BACK,)
@@ -194,26 +213,6 @@ def strip_driver_text(exc: BaseException) -> None:
                 setattr(node, link, None)
             else:
                 todo.append(linked)
-
-
-def _strip_unwrapped(error: BaseException) -> None:
-    """A driver error raised as it is: keep its type, SQLSTATE and constraint name; drop its
-    message and text fields, and the driver error an emulated one wraps."""
-    state, constraint = getattr(error, "sqlstate", None), getattr(error, "constraint_name", None)
-    if isinstance(error, sa_exc.EmulatedDBAPIException):
-        state, constraint = sqlstate_of(error) or state, constraint_of(error) or constraint
-    facts = _DriverFacts(
-        state if isinstance(state, str) and _SQLSTATE.fullmatch(state) else None,
-        constraint if isinstance(constraint, str) and _IDENTIFIER.fullmatch(constraint) else None,
-    )
-    error.args = (str(facts),)
-    if isinstance(error, sa_exc.EmulatedDBAPIException):
-        error.orig = facts
-    for name in _DRIVER_TEXT:
-        if getattr(error, name, None) is not None:
-            setattr(error, name, None)
-    if hasattr(error, "__notes__"):
-        del error.__notes__
 
 
 class SqlAlchemyUnitOfWork:
@@ -303,6 +302,8 @@ class SqlAlchemyRelationalRepository:
         repo.unit_of_work() as uow: ...` opens the session, sets the
         per-transaction `SET LOCAL statement_timeout`/`application_name`
         (ticket "Technical notes"), and yields the bound `SqlAlchemyUnitOfWork`.
+        A start that fails closes the session and raises without the server's text; if the
+        close fails too, its error keeps the start's failure as its context (#2748).
         """
         return _PendingUnitOfWork(self._sessionmaker, self._application_name_suffix)
 
@@ -310,7 +311,8 @@ class SqlAlchemyRelationalRepository:
 class _PendingUnitOfWork:
     """Deferred `unit_of_work()` result — opens the session lazily on
     `__aenter__` so `RelationalRepository.unit_of_work()` stays a plain,
-    non-async factory call per the Protocol's signature."""
+    non-async factory call per the Protocol's signature. A session that cannot
+    start is closed here, since no unit of work is handed out to close it."""
 
     def __init__(
         self, sessionmaker: async_sessionmaker[AsyncSession], app_name_suffix: str
