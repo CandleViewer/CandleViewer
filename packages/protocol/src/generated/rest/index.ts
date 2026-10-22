@@ -5040,7 +5040,10 @@ export interface paths {
      *     account-state cap the request does not move (the daily loss, open positions, available
      *     margin) still rejects that leg alone when it is sent, a per-leg `risk_limit_breached`
      *     under `atomicity`, as the `202` example shows: only submitted values that widen the
-     *     bound profile refuse the whole request. The sizer's own policy clamp is no refusal;
+     *     bound profile refuse the whole request. Every cap the guard reads (open positions,
+     *     concurrent orders, order rate, daily loss) and the allowed symbols are the bound
+     *     profile's, or an alternate's stricter value; an alternate profile never relaxes one.
+     *     The sizer's own policy clamp is no refusal;
      *     `sizing_explanation` names it. An `overrides.profile_id` may name any of the leg's
      *     account's own profiles, the bound one included; any other refuses the whole request
      *     with `404 not_found`, decided at validation, after the account-scope check and before
@@ -5105,7 +5108,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -5125,7 +5128,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -5147,7 +5150,8 @@ export interface paths {
      *       (classified by its effect, never by its `intent`: SR-E29-01) is refused as
      *       `amendOrder` refuses a cleared stop: `400 validation_failed` / `native_stop_required`
      *       (C-2.6). An entry leg's stop-loss, attached or under `tpsl_mode: Partial` a separate
-     *       order, can move but is never removed.
+     *       order, can move but is never removed, and no request clears the stop of an open
+     *       position (24-internal-schemas.md section 8.8 rule 6, as `setPositionTpSl` refuses).
      *     * A stop moved to loosen is refused with `403 risk_limit_breached`: compared with the
      *       stop it replaces, a long leg's stop may only rise and a short leg's only fall, before
      *       entry and past it (a ratchet).
@@ -5170,7 +5174,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -8614,7 +8618,7 @@ export interface components {
       price?: components["schemas"]["Decimal"];
       /**
        * Format: uuid
-       * @description An alternate profile of this order's account; it only narrows the account's bound profile, its active profile (later narrows, as on `createTradeGroup`; SR-E28-03). Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each.
+       * @description An alternate profile of this order's account; it only narrows the account's bound profile, its active profile (later narrows, as on `createTradeGroup`; SR-E28-03): every cap the guard reads and the allowed symbols stay the bound profile's or stricter. Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each.
        */
       profile_id?: string | null;
       /** @default false */
@@ -11038,7 +11042,7 @@ export interface components {
     To: string;
     /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
     TradeGroupDefinitionId: string;
-    /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+    /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
     TradeGroupId: string;
     UserId: string;
     VersionId: string;
@@ -19378,7 +19382,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -19442,7 +19446,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -19485,7 +19489,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;

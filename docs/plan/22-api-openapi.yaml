@@ -5740,7 +5740,10 @@ paths:
         account-state cap the request does not move (the daily loss, open positions, available
         margin) still rejects that leg alone when it is sent, a per-leg `risk_limit_breached`
         under `atomicity`, as the `202` example shows: only submitted values that widen the
-        bound profile refuse the whole request. The sizer's own policy clamp is no refusal;
+        bound profile refuse the whole request. Every cap the guard reads (open positions,
+        concurrent orders, order rate, daily loss) and the allowed symbols are the bound
+        profile's, or an alternate's stricter value; an alternate profile never relaxes one.
+        The sizer's own policy clamp is no refusal;
         `sizing_explanation` names it. An `overrides.profile_id` may name any of the leg's
         account's own profiles, the bound one included; any other refuses the whole request
         with `404 not_found`, decided at validation, after the account-scope check and before
@@ -5989,7 +5992,8 @@ paths:
           (classified by its effect, never by its `intent`: SR-E29-01) is refused as
           `amendOrder` refuses a cleared stop: `400 validation_failed` / `native_stop_required`
           (C-2.6). An entry leg's stop-loss, attached or under `tpsl_mode: Partial` a separate
-          order, can move but is never removed.
+          order, can move but is never removed, and no request clears the stop of an open
+          position (24-internal-schemas.md section 8.8 rule 6, as `setPositionTpSl` refuses).
         * A stop moved to loosen is refused with `403 risk_limit_breached`: compared with the
           stop it replaces, a long leg's stop may only rise and a short leg's only fall, before
           entry and past it (a ratchet).
@@ -13968,7 +13972,8 @@ components:
         that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail`
         shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these
         routes refuses the caller's capability (permission, session state, the order-entry
-        gate, the arm token) or fails CSRF; it is never a scope answer.
+        gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is
+        never a scope answer.
       schema: { type: string, format: uuid }
     TradeGroupDefinitionId:
       name: definitionId
@@ -17323,7 +17328,7 @@ components:
           {
             type: ["string", "null"],
             format: uuid,
-            description: "An alternate profile of this order's account; it only narrows the account's bound profile, its active profile (later narrows, as on `createTradeGroup`; SR-E28-03). Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each.",
+            description: "An alternate profile of this order's account; it only narrows the account's bound profile, its active profile (later narrows, as on `createTradeGroup`; SR-E28-03): every cap the guard reads and the allowed symbols stay the bound profile's or stricter. Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each.",
           }
         note: { type: string, maxLength: 280 }
     AmendOrderRequest:

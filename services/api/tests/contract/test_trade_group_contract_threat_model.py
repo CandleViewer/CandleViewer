@@ -273,6 +273,7 @@ def test_a_leg_only_narrows_its_bound_profile_and_a_widening_request_is_refused_
         "one `errors[]` entry per offending leg, audited, before any leg is sent",
         "whatever `atomicity` says; it is never a per-leg failure",
         "only submitted values that widen the bound profile refuse the whole request",
+        "an alternate profile never relaxes one",
         "The sizer's own policy clamp is no refusal; `sizing_explanation` names it",
         "decided at validation, after the account-scope check and before any leg is sized, with "
         "one title and `detail` shape",
@@ -281,6 +282,10 @@ def test_a_leg_only_narrows_its_bound_profile_and_a_widening_request_is_refused_
     preview = _words(_OPS["previewTradeGroup"]["description"])
     assert "never a leg returned with `would_submit: false`" in preview
     assert "cap the request does not move still marks that leg alone" in preview
+    assert (
+        "is `404 not_found`, decided at validation, after the account-scope check and before any "
+        "leg is sized, as on the submit" in preview
+    )
     for text in (create, preview):
         assert "refused whole" in text and "`403 risk_limit_breached`" in text
         assert "one `errors[]` entry per offending leg" in text
@@ -302,6 +307,8 @@ def test_a_profile_id_of_another_account_is_answered_as_a_missing_one(operation:
     text = _words(fields["profile_id"]["description"])
     assert "only narrows" in text and "the same answer for each" in text
     assert "`404 not_found`, decided at validation, after the account-scope check" in text
+    if operation == "placeOrder":  # SEC-4107-02: an alternate never relaxes a cap
+        assert "every cap the guard reads and the allowed symbols stay the bound profile's" in text
     order = _words(_SPEC["info"]["description"])  # the owner of the order of the checks
     assert (
         "then validation (where a `profile_id` that is not one of the account's own profiles is "
@@ -365,8 +372,11 @@ def test_a_group_amend_never_clears_or_loosens_a_stop() -> None:
         "**An amend keeps the admission rules** (SR-E28-33; E28 threat model PF-T20, F-29)",
         "A refusal is the whole request's, as on `createTradeGroup`: nothing is amended, "
         "`errors[]` names every offending leg",
+        "each targeted leg goes through the resolver, the sizer and the guard again",
+        "`errors[]` names every offending leg, and the refusal is audited with a result per leg",
         "on a leg whose order is an entry (classified by its effect, never by its `intent`: "
         "SR-E29-01)",
+        "no request clears the stop of an open position",
         "is refused as `amendOrder` refuses a cleared stop: `400 validation_failed` / "
         "`native_stop_required` (C-2.6)",
         "An entry leg's stop-loss, attached or under `tpsl_mode: Partial` a separate order, can "
@@ -385,6 +395,8 @@ def test_a_group_amend_declares_its_refusals_and_keeps_its_bounds() -> None:
     """The statuses the text names, and the body's shape: a reducing leg may clear its stop."""
     amend = _OPS["amendTradeGroup"]
     assert amend["responses"]["400"] == _ref("responses", "BadRequest")
+    group_id = _words(_SPEC["components"]["parameters"]["TradeGroupId"]["description"])
+    assert "or is a risk refusal (`risk_limit_breached`); it is never a scope answer" in group_id
     assert amend["responses"]["403"] == _ref("responses", "Forbidden")
     anchor = _words(_OPS["amendOrder"]["description"])
     assert "which returns `validation_failed` / `native_stop_required`" in anchor
