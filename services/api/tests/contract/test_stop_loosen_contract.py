@@ -157,9 +157,13 @@ def test_an_armed_trail_goes_by_the_trigger_it_re_arms_at_so_a_tighter_one_passe
     assert (
         "until it is confirmed, an armed trail (the record's, once the market has passed its "
         "activation price, or one recorded at once), changed or re-sent, is compared by the "
-        "trigger it re-arms at, against the trigger in force, never by its activation price, so "
-        "a tighter distance on an armed trail is no loosening"
+        "trigger it re-arms at, against the trigger in force, not by the level a trail not yet "
+        "armed is checked at; its activation price stays as recorded or arms earlier (lower for a "
+        "long, higher for a short), as a later one is looser (above). So a tighter distance on an "
+        "armed trail is no loosening where it re-arms no further from the market than the "
+        "trigger in force"
     ) in _rule_5()
+    assert "never by its activation price" not in _rule_5()  # F3-4137-01
 
 
 def test_a_trail_with_no_activation_price_is_recorded_with_the_writers_one() -> None:
