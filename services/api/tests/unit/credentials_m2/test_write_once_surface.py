@@ -14,6 +14,10 @@ string, is caught as well. The same SQL scan also pins the single writer of the 
 `last_used_at` column: the broker's debounced touch (21 §3.2.2, #2580). Neither reads SQL
 assembled from parts (f-string fragments, `+`): AGENTS.md §5.2 forbids string-built SQL and the
 `cv-raw-sql-string-interpolation` Semgrep rule rejects it in `text()` and `execute()` calls.
+
+The Table tripwire has one exemption, reviewed with #3998: the pinned table of guarded privileges
+(`storage/guarded_privileges.py`) may name the table as a `str` key of the dict display it assigns
+to `GUARDED_PRIVILEGES`, and only there; any other reference in that module is still a use.
 """
 
 from __future__ import annotations
@@ -52,6 +56,11 @@ _PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 #: Modules that may name the `api_keys` Table in code (`db/models.py` defines it). One added here
 #: can write through the Table with no SQL string: add it only after a security review.
 _TABLE_USERS = frozenset({Path("db/models.py")})
+#: The pinned table of what the revisions revoke from `cv_app` (#3998) names the table only as a
+#: `str` key of the dict display it assigns to `GUARDED_PRIVILEGES`, which the boot check binds as
+#: a `has_table_privilege` parameter: no row is read or written. Only those keys are skipped; any
+#: other reference in it (a second dict, a Name or attribute key, a `Table(...)`) is still a use.
+_PRIVILEGE_TABLE = Path("storage/guarded_privileges.py")
 #: `str` parameters a non-insert port method may take; any other `str` could carry ciphertext.
 _PLAIN_STR = frozenset({"env", "dek_ref"})
 #: `rewrap`'s `(action, fields)` (#2266) goes only to the injected audit-row builder, redacted
@@ -434,13 +443,36 @@ def _api_keys_table_uses(root: Path = _PKG, allowed: frozenset[Path] = _TABLE_US
     for rel, tree in _api_keys_modules(root):
         if rel in allowed or rel.parts[0] == "migrations":
             continue
-        prose = _prose(tree)
+        skipped = _prose(tree) | (_pinned_keys(tree) if rel == _PRIVILEGE_TABLE else set())
         uses |= {
             f"{rel}:{line}"
             for n in ast.walk(tree)
-            if n not in prose and (line := _api_keys_line(n)) is not None
+            if n not in skipped and (line := _api_keys_line(n)) is not None
         }
     return sorted(uses)
+
+
+def _pinned_keys(tree: ast.Module) -> set[ast.expr]:
+    """The `str` keys of the dict display that a module-level `GUARDED_PRIVILEGES = ...` (plain or
+    annotated) assigns, through a `MappingProxyType(...)` call or not; nothing else is exempt."""
+    keys: set[ast.expr] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(isinstance(t, ast.Name) and t.id == "GUARDED_PRIVILEGES" for t in targets):
+            continue
+        value = node.value
+        match value:
+            case ast.Call(func=ast.Name(id="MappingProxyType"), args=[inner]):
+                value = inner
+            case ast.Call(func=ast.Attribute(attr="MappingProxyType"), args=[inner]):
+                value = inner
+        if isinstance(value, ast.Dict):
+            keys |= {
+                k for k in value.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            }
+    return keys
 
 
 def test_no_candleviewer_code_references_the_api_keys_table_outside_its_definition() -> None:
@@ -546,6 +578,38 @@ def test_table_tripwire_passes_what_does_not_name_the_table_in_code(
     tmp_path: Path, rel: str, source: str
 ) -> None:
     assert _api_keys_table_uses(_tree(tmp_path, {rel: source})) == []
+
+
+#: The privilege table's own shape: an annotated assignment through `MappingProxyType(...)`.
+_PINNED = "GUARDED_PRIVILEGES: Final = MappingProxyType({'api_keys': frozenset({'DELETE'})})"
+
+
+@pytest.mark.parametrize(
+    ("rel", "source", "lines"),
+    [
+        (_PRIVILEGE_TABLE, _PINNED, []),
+        (_PRIVILEGE_TABLE, "GUARDED_PRIVILEGES = {'api_keys': frozenset({'DELETE'})}", []),
+        (_PRIVILEGE_TABLE, _PINNED + "\nOTHER = {'api_keys': 1}", [2]),
+        (_PRIVILEGE_TABLE, "GUARDED_PRIVILEGES = {models.api_keys: frozenset()}", [1]),
+        (_PRIVILEGE_TABLE, "GUARDED_PRIVILEGES = {api_keys: frozenset()}", [1]),
+        (_PRIVILEGE_TABLE, _PINNED + "\nt = sa.Table('api_keys', sa.MetaData())", [2]),
+        (Path("repo.py"), _PINNED, [1]),
+    ],
+    ids=[
+        "pinned keys",
+        "plain dict",
+        "a second dict",
+        "attribute key",
+        "name key",
+        "table there",
+        "same dict elsewhere",
+    ],
+)
+def test_table_tripwire_passes_only_the_str_keys_of_guarded_privileges(
+    tmp_path: Path, rel: Path, source: str, lines: list[int]
+) -> None:
+    uses = _api_keys_table_uses(_tree(tmp_path, {rel.as_posix(): source}))
+    assert uses == [f"{rel.as_posix()}:{line}" for line in lines]
 
 
 # -- The guard itself: it must see what it claims to see

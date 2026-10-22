@@ -1998,6 +1998,9 @@ def create_app(
     ctx.ingestion.attach_latency(
         StageRecorder(metrics_facade.get("ingest_stage_seconds"), resolved.telemetry_sample_n)
     )
+    # #3998: the gauge of the runtime role's guarded privileges, set by `StorageService.start()`'s
+    # check on the real backend (catalogue entry registered just above).
+    ctx.storage.attach_privileges_gauge(metrics_facade.get("cv_db_guarded_privileges_held").child())
     # #2314: M13 row gauges (catalogue entries registered just above), refreshed by the
     # supervisor-started `AccountsService`. Fake backend: no store, so the gauges stay unset.
     accounts_counts = _build_accounts_counts(resolved)

@@ -111,6 +111,15 @@ class StorageDdlNotFound(StorageError):
     code = "STORAGE_DDL_NOT_FOUND"
 
 
+class GuardedPrivilegesHeld(StorageError):
+    """In `live`, the runtime role holds a privilege that a revision revoked from `cv_app`, or the
+    boot check could not show it holds none (`storage.guarded_privileges`, #3998): the start
+    fails closed. The message names tables and privileges, never the role, a DSN or driver text.
+    """
+
+    code = "STORAGE_GUARDED_PRIVILEGES_HELD"
+
+
 class StorageRetentionBlockedByPin(StorageError):
     """`RetentionRepository.apply` refused to roll off or delete a pinned range."""
 
@@ -316,6 +325,7 @@ ERROR_CODES: dict[type[StorageError], str] = {
     StorageSchemaDrift: StorageSchemaDrift.code,
     StorageWalNotApplied: StorageWalNotApplied.code,
     StorageDdlNotFound: StorageDdlNotFound.code,
+    GuardedPrivilegesHeld: GuardedPrivilegesHeld.code,
     StorageRetentionBlockedByPin: StorageRetentionBlockedByPin.code,
     StorageRetentionBlockedUnverified: StorageRetentionBlockedUnverified.code,
     StorageRetentionBlockedByReplay: StorageRetentionBlockedByReplay.code,

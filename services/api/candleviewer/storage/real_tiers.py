@@ -8,7 +8,8 @@ first touched (its start probes). A `RealTier` pairs a tier with its probe, whic
 tier cannot answer, and its close, which is told how long it may take. The tiers come in start
 order (postgres, questdb, cold) and are closed in reverse. Credentials stay inside the clients:
 nothing here formats or logs a DSN or a password, and the probes' own errors carry neither
-(C-12.6).
+(C-12.6). The guarded-privilege read (#3998) runs on the relational client's connection, the role
+the app logs in as.
 
 The questdb probe checks both of QuestDB's ports the tier uses: PG-wire answers `SELECT 1`, and the
 ILP port accepts a connection (nothing is sent); an ILP failure is `QuestDbIlpUnreachable`, so a
@@ -37,6 +38,7 @@ from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.parquet_repository import ParquetColdTierRepository
 from candleviewer.storage.cold.questdb_source import QuestDbHotTierSource
 from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.guarded_privileges import PrivilegeReport
 from candleviewer.storage.models import StorageTier
 from candleviewer.storage.questdb.reader import QuestDbReader
 from candleviewer.storage.questdb.repository import QuestDbMarketDataRepository
@@ -46,6 +48,9 @@ from candleviewer.storage.repositories import (
     ColdTierRepository,
     MarketDataRepository,
     RelationalRepository,
+)
+from candleviewer.storage.repositories.guarded_privileges_sqlalchemy import (
+    SqlAlchemyGuardedPrivileges,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 
@@ -83,6 +88,9 @@ class RealTiers:
     relational: RelationalRepository
     cold: ColdTierRepository
     tiers: tuple[RealTier, ...]
+    #: Reads the runtime role's guarded privileges (#3998), which `StorageService.start()` checks
+    #: once the tiers answer. `build_real_tiers` always sets it; a test's tiers may leave it out.
+    guarded_privileges: Callable[[], Awaitable[PrivilegeReport]] | None = None
 
 
 def build_real_tiers(settings: Settings) -> RealTiers:
@@ -155,6 +163,7 @@ def build_real_tiers(settings: Settings) -> RealTiers:
             RealTier("questdb", probe_questdb, close_questdb),
             RealTier("cold", probe_cold, close_cold),
         ),
+        guarded_privileges=SqlAlchemyGuardedPrivileges(relational).held,
     )
 
 

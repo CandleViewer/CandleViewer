@@ -5,7 +5,12 @@ database containers required, ticket acceptance criterion 1). On `"real"` (#3874
 E07-T02/T03/T04 tier clients (`storage.real_tiers`) and probes each one in start order
 (postgres, questdb, cold), each within `probe_timeout_s`. A tier that cannot answer fails the
 start closed: every client is closed again and `StorageTierUnavailable` names the tier and the
-probe error's type, never a DSN (C-12.6). Nothing is written by a start, failed or not.
+probe error's type, never a DSN (C-12.6). Nothing is written by a start, failed or not. Once every
+tier answers, the start checks the runtime role's guarded privileges (`storage.guarded_privileges`,
+#3998) within `probe_timeout_s`: in `live` a held one, a pinned table missing from `public` or a
+check that cannot run fails the start closed the same way (`GuardedPrivilegesHeld`). Elsewhere
+its held and missing counts stay in `tier_health()`, and `/readyz` is degraded while either is
+above 0.
 
 Once started, the real tiers are probed again every `probe_interval_s` by one task the service
 owns; `tier_health()` reports the latest probe of each, for `/readyz` and the health screen. A
@@ -32,8 +37,15 @@ import structlog
 
 from candleviewer.observability import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
+from candleviewer.settings import Environment
 from candleviewer.storage.errors import StorageTierUnavailable
-from candleviewer.storage.health import StorageHealthReport, TierHealth, TierState
+from candleviewer.storage.guarded_privileges import check_guarded_privileges
+from candleviewer.storage.health import (
+    GuardedPrivilegesHealth,
+    StorageHealthReport,
+    TierHealth,
+    TierState,
+)
 from candleviewer.storage.models import StorageTier
 from candleviewer.storage.real_tiers import RealTier, RealTiers, build_real_tiers
 from candleviewer.storage.repositories import (
@@ -51,6 +63,7 @@ from candleviewer.storage.testing import (
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.observability.metrics import MetricChild
     from candleviewer.settings import Settings
 
 #: Bound on one tier's probe, at start and on every later round.
@@ -106,6 +119,9 @@ class StorageService:
         self._prober: asyncio.Task[None] | None = None
         #: Serialises `start()`: a second call waits, then finds the service started.
         self._start_lock = asyncio.Lock()
+        self._privileges_gauge: MetricChild | None = None
+        #: What the start's guarded-privilege check counted (#3998); None until one has run.
+        self._privileges: GuardedPrivilegesHealth | None = None
 
     @property
     def market_data(self) -> MarketDataRepository:
@@ -136,6 +152,10 @@ class StorageService:
             )
         return self._retention
 
+    def attach_privileges_gauge(self, gauge: MetricChild) -> None:
+        """Wire `cv_db_guarded_privileges_held` (`create_app`), which the start's check sets."""
+        self._privileges_gauge = gauge
+
     async def start(self, ctx: AppContext) -> None:
         """Construct and connect the configured tier clients; a second call before `stop()`,
         concurrent or not, changes nothing.
@@ -144,7 +164,9 @@ class StorageService:
         in memory. On `real` it probes each tier in start order and raises
         `StorageTierUnavailable` naming the first one that cannot answer, after closing every
         client again, so a misconfigured environment fails loudly at boot instead of serving
-        with a missing tier.
+        with a missing tier. Then it checks the runtime role's guarded privileges (#3998): in
+        `live` a held pair, a pinned table missing from `public` or a check that cannot run
+        raises `GuardedPrivilegesHeld`, after closing every client again too.
         """
         async with self._start_lock:
             await self._start(ctx)
@@ -162,6 +184,7 @@ class StorageService:
         if self._backend != "real":
             raise StorageTierUnavailable(f"unknown storage_backend {self._backend!r}")
         built = self._build_real(ctx.settings)
+        privileges: GuardedPrivilegesHealth | None = None
         try:
             for tier in built.tiers:
                 health = await self._probe(tier)
@@ -171,11 +194,19 @@ class StorageService:
                         f"storage tier {tier.tier!r} is unreachable at start ({health.detail})"
                     )
                 self._tier_health[tier.tier] = health
+            if built.guarded_privileges is not None:  # #3998: on the relational tier's login
+                privileges = await check_guarded_privileges(
+                    built.guarded_privileges,
+                    live=ctx.settings.environment is Environment.LIVE,
+                    gauge=self._privileges_gauge,
+                    timeout_s=self._probe_timeout_s,
+                )
         except BaseException:
             self._tier_health.clear()
             loop = asyncio.get_running_loop()
             await self._close(built.tiers, loop.time() + START_FAILURE_CLOSE_S)
             raise
+        self._privileges = privileges
         self._tiers = built.tiers
         self._market_data = built.market_data
         self._relational = built.relational
@@ -334,7 +365,9 @@ class StorageService:
         (`postgres`, `questdb`, `cold`) report `ok`/`"fake/healthy"` — the
         ticket's acceptance criterion 1 wording exactly — with `latency_ms`
         ~0 since no I/O occurs. On `real`, each tier's latest probe (#3874), read once per
-        tier: the sync `/readyz` handler calls this from a worker thread."""
+        tier: the sync `/readyz` handler calls this from a worker thread; and what the start's
+        guarded-privilege check counted (#3998), which only a start outside `live` can leave
+        above 0."""
         if not self._started:
             return StorageHealthReport(tiers=())
         if self._backend == "fake":
@@ -353,5 +386,6 @@ class StorageService:
             )
         health = self._tier_health
         return StorageHealthReport(
-            tiers=tuple(h for t in self._tiers if (h := health.get(t.tier)) is not None)
+            tiers=tuple(h for t in self._tiers if (h := health.get(t.tier)) is not None),
+            guarded_privileges=self._privileges,
         )
