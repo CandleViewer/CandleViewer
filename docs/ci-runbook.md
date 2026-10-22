@@ -741,50 +741,69 @@ index alone, removing nothing.
   migrate → contract across separate releases (C-5.1), and annotate the
   destructive statement with the phase comment the linter expects once you
   are genuinely in the contract phase. The same code also refuses, with no
-  annotation or exemption, any statement or Alembic call that mutates an
-  append-only audit table (C-5.7): a `DELETE`, `UPDATE`, `TRUNCATE`,
-  `DROP`, `ALTER`, `MERGE` or mutating `GRANT` that names one, however it
-  is spelled or nested (a plpgsql or SQL-standard body, a rule, a prepared
-  statement, `EXECUTE`), a trigger, a rule or a `TRIGGER` grant on one, a
-  mutating grant on every table of a schema, any statement that defines,
-  replaces, alters or drops one of the tables' guard functions (as a
-  function, a procedure or a routine) or a routine named as a function the
-  hash chain calls, and the statements that reach the tables without
-  naming them: a role grant, a dropped or altered schema, a dropped or
-  reassigned role's objects, the `pgcrypto` extension dropped or altered,
-  and a role's or a database's `search_path`. It is fail-closed: a
-  mutating statement that names an audit table anywhere counts, so these
-  are refused as well, each with its rewrite: a foreign key onto one
-  (declare it in `CREATE TABLE` or with `op.create_foreign_key`), a
-  backfill that reads one (stage what it reads in a temporary table
-  first), a statement on another table that names one as a string value
-  (pass the name as a bind parameter), a docstring or a message that opens
-  with a mutating verb and names one (reword it), and a `WITH` or
-  `EXPLAIN` over a read of one `FOR UPDATE`. In a plpgsql body a statement
-  runs from the previous `;`, so an `IF`, `FOR` or `WITH` header that
-  reads an audit table counts with the statement it opens: read the
-  condition into a variable first. A string literal that opens with an SQL
-  command word is read as SQL. A revision is read exactly as the import
-  system reads it, and one the rule cannot read (it declares a source
-  encoding other than UTF-8, does not parse, or nests too deeply) is
-  refused, and so is a name or a string spelled with Unicode escapes
-  (`U&`). Only `0003_audit_log`, which creates the tables, their triggers
-  and the functions, may create those triggers and drop the tables, their
-  triggers and the functions (its downgrade does): the exemption holds for
-  that file alone, which the migrations lockfile pins by name and content.
-  One more file is exempt, for one statement each way:
-  `0045_audit_chain_hardening` (#889, SR-E42-10) may replace
-  `audit_chain()` with the text the lint pins by SHA-256 (0003's function
-  with its own `search_path` and its row id drawn under the chain lock)
-  and restore 0003's text in its downgrade, each as one `op.execute` of a
-  string literal, and hold nothing else beyond the docstring, the three
-  imports and the four identifiers. Any other statement, an `ALTER` or a
-  `DROP`, another guard function or a changed text makes it an ordinary
-  revision, and each line that deviates is a finding. The pinned order,
-  `pg_catalog, public, pg_temp`, puts `pg_catalog` first, so no function
-  or operator in another schema shadows a built-in the chain calls, and
-  `pg_temp` last, because `audit_chain` reads `audit_log` unqualified and
-  the temporary schema would otherwise be searched first for it.
+  annotation or exemption, whatever can mutate an append-only audit table
+  (C-5.7):
+  - a `DELETE`, `UPDATE`, `TRUNCATE`, `DROP`, `ALTER`, `MERGE` or mutating
+    `GRANT` that names one, however it is spelled or nested (a plpgsql or
+    SQL-standard body, a rule, a prepared statement, `EXECUTE`), and a
+    trigger, a rule or a `TRIGGER` grant on one;
+  - a mutating grant on every table of a schema, and a mutating default
+    privilege on tables, which every table created later gets;
+  - any statement that defines, replaces, alters or drops one of the
+    tables' guard functions (as a function, a procedure, an aggregate or a
+    routine), or a routine named as a function the hash chain calls;
+  - the statements that reach the tables without naming them: a role
+    grant, an altered schema or one dropped with `CASCADE`, a dropped or
+    reassigned role's objects, the `pgcrypto` extension dropped or
+    altered, a role's or a database's `search_path`, and an event trigger;
+  - a statement that disables triggers for a session, and a setting the
+    rule cannot read: one set through `set_config()` or under a computed
+    name. Set a setting with `SET LOCAL <name> = <value>`.
+
+  It is fail-closed: a mutating statement that names an audit table
+  anywhere counts, so these are refused as well, each with its rewrite:
+  - a foreign key onto one: declare it in `CREATE TABLE` or with
+    `op.create_foreign_key`;
+  - a backfill that reads one: stage what it reads in a temporary table
+    first;
+  - a statement on another table that names one as a string value: pass
+    the name as a bind parameter;
+  - a docstring or a message that opens with a mutating verb and names
+    one: reword it;
+  - a `WITH` or `EXPLAIN` over a read of one `FOR UPDATE`: read it without
+    the lock;
+  - in a plpgsql body, an `IF`, `FOR` or `WITH` header that reads an audit
+    table: a statement runs from the previous `;`, so the header counts
+    with the statement it opens. Read the condition into a variable first;
+  - a Python name bound to more than one value (assigned twice, a loop
+    target, a parameter) where a table goes: give each table its own
+    literal or constant.
+
+  A string literal that opens with an SQL command word is read as SQL. A
+  revision is read as the import system reads it, and one the rule cannot
+  read is refused: make it UTF-8 source, Python that parses, and nested no
+  deeper than Python reads. A name or a string spelled with Unicode
+  escapes (`U&`) is refused too: spell it plainly.
+
+  Two files are exempt, and only as far as follows:
+  - `0003_audit_log`, which creates the tables, their triggers and the
+    guard functions, may create those triggers, drop the tables and their
+    triggers (its downgrade does), and define and drop the functions. The
+    exemption holds for that file alone, which the migrations lockfile
+    pins by name and content.
+  - `0045_audit_chain_hardening` (#889, SR-E42-10) may replace
+    `audit_chain()` with the text the lint pins by SHA-256 (0003's function
+    with its own `search_path` and its row id drawn under the chain lock)
+    and restore 0003's text in its downgrade, each as one `op.execute` of a
+    string literal, and hold nothing else beyond the docstring, the three
+    imports and the four identifiers. Any other statement, an `ALTER` or a
+    `DROP`, another guard function or a changed text makes it an ordinary
+    revision, and each line that deviates is a finding. The pinned order,
+    `pg_catalog, public, pg_temp`, puts `pg_catalog` first, so no function
+    or operator in another schema shadows a built-in the chain calls, and
+    `pg_temp` last, because `audit_chain` reads `audit_log` unqualified and
+    the temporary schema would otherwise be searched first for it.
+
 - **CI-MIG-004** (upgrade-path failure): running the migration chain up
   from the previous release tag's schema failed. Reproduce locally
   (`alembic upgrade head` from a DB seeded at the previous tag) and fix the

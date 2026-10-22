@@ -520,9 +520,10 @@ def _redefined_functions(words: list[str], names: set[str]) -> set[str]:
 
 
 def _shadowed_callees(words: list[str], statement: str, names: set[str]) -> set[str]:
-    """The chain's callees (`_CHAIN_CALLEES`) the clause `words` of `statement` names a
-    routine it creates (by the routine's own name: a parameter may share a callee's),
-    or alters or drops (by any name it uses: `RENAME TO`, a list of routines)."""
+    """The chain's callees (`_CHAIN_CALLEES`) that the clause `words` of `statement`
+    creates a routine as (read from the routine's own name, since a parameter may
+    share a callee's name), or alters or drops (read from any name the clause uses:
+    `RENAME TO`, a list of routines)."""
     verb = _routine_ddl(words)
     if verb is None:
         return set()
@@ -586,8 +587,7 @@ def _audit_mutations(sql: str, tables: frozenset[str], *, owner: bool) -> set[st
     schema-wide grant; `fn:<name>`: a guard function it redefines or drops;
     `callee:<name>`: a routine the hash chain calls, redefined, altered or dropped;
     `reach:<what>`: what `_reach` names; `unicode`: a name or a string spelled with
-    Unicode escapes). A
-    statement counts when a clause of it mutates (`_clauses`, `_mutates`: a body or
+    Unicode escapes). A statement counts when a clause of it mutates (`_clauses`, `_mutates`: a body or
     a rule starts one mid-statement) and it names an audit table as an identifier
     (`_sql_identifiers`, fail-closed: a subquery's table counts too), or
     when SQL nested in it mutates a placeholder's target and the statement names an
@@ -971,9 +971,9 @@ def check_audit_table_integrity(
     creates the audit tables and those functions, `_AUDIT_OWNER_REVISION`
     (`0003_audit_log`), is exempt for three statement kinds, wherever they stand in
     it: `CREATE TRIGGER` on the audit tables, `DROP TABLE` and `DROP TRIGGER` on
-    them, and the guard functions' DDL. It is the file of that
-    name whose module-level `revision` says so, the file the migrations lockfile
-    pins. Every other statement in it is checked. The revision that replaces
+    them, and the guard functions' DDL. It is the file of that name whose
+    module-level `revision` says so, the file the migrations lockfile pins. Every
+    other statement in it is checked. The revision that replaces
     `audit_chain()`, `_CHAIN_HARDENING_REVISION`, named as the owner is, is exempt
     while it holds nothing but the function text and the restore its pins hash
     (`_chain_hardening_deviations`); otherwise each line that deviates is a finding
@@ -1206,13 +1206,9 @@ def check_security_sensitive(
             literals = _iter_string_literals(path, source, skip_docstrings=True)
             for _, literal, _ in literals:
                 names |= _sql_identifiers(literal)
-        except (
-            SyntaxError,
-            RecursionError,
-        ):  # not Python, or nested too deeply to read:
-            names = {
-                word.lower() for word in _WORD_RE.findall(source)
-            }  # every word, fail-closed
+        except (SyntaxError, RecursionError):
+            # Not Python, or nested too deeply to read: every word, fail-closed.
+            names = {word.lower() for word in _WORD_RE.findall(source)}
         for table in sorted(names & tables):
             findings.append(
                 LintFinding(
