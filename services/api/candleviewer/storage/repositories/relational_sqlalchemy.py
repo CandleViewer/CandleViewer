@@ -134,11 +134,11 @@ def strip_driver_text(exc: BaseException) -> None:
         seen.add(id(node))
         if isinstance(node, sa_exc.StatementError):
             orig = node.orig
-            client = (
-                orig.client
-                if isinstance(orig, _DriverFacts)
-                else None if orig is None or _is_driver(orig) else type(orig).__name__
-            )
+            client: str | None = None
+            if isinstance(orig, _DriverFacts):
+                client = orig.client
+            elif orig is not None and not _is_driver(orig):
+                client = type(orig).__name__
             facts = _DriverFacts(sqlstate_of(node), constraint_of(node), client)
             node.args = (str(facts),)
             node.orig, node.statement, node.params, node.detail = facts, None, None, []

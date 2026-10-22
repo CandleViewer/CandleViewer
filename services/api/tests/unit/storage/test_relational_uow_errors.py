@@ -415,9 +415,7 @@ def _asyncpg_unique() -> Exception:
         "H": f"see {_P1}",
         "n": "users_email_key",
     }
-    query = (
-        f"INSERT INTO users (email) VALUES ('{_P1}')"  # noqa: S608 -- an error's text, never run
-    )
+    query = f"INSERT INTO users (email) VALUES ('{_P1}')"  # noqa: S608 -- error text, never run
     return cast(Exception, asyncpg.exceptions.PostgresError.new(fields, query=query))
 
 
