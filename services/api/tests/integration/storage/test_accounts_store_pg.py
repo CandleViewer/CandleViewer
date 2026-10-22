@@ -47,7 +47,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     constraint_of,
     sqlstate_of,
 )
-from tests.integration._refused import assert_no_row_values, server_text
+from tests.integration._refused import assert_no_row_values, rendered_graph, server_text
 
 pytestmark = pytest.mark.integration
 
@@ -61,6 +61,7 @@ _SNAPSHOT: dict[str, object] = {
 # The fake ciphertexts `_seed_key` writes (S), and values planted by name, as a traceback prints
 # the calling line (#2748). `ux_ea_label` is on lower(label), so its DETAIL prints lower case.
 _KEY_ID_ENC, _SECRET_ENC = b"\x01" * 28, b"\x02" * 28
+_NONCE, _SEED_DEK, _UID = b"SECRET-NONCE", "v1:SECRET-SEED-DEK", "771234567890123"
 _LABEL, _LABEL2, _BAD_UID, _IP = "secret-label-1", "secret-label-2", "SECRET-uid", "198.51.100.23"
 # `(__cause__, __suppress_context__)` of an error raised `from None`, or of a stripped driver error
 _TYPED = (None, True)
@@ -149,10 +150,15 @@ def creds(rel: SqlAlchemyRelationalRepository) -> SqlAlchemyCredentialStore:
 
 
 def _new(
-    exch: str, *, env: str = "demo", label: str | None = None, parent: uuid.UUID | None = None
+    exch: str,
+    *,
+    env: str = "demo",
+    label: str | None = None,
+    parent: uuid.UUID | None = None,
+    uid: str | None = None,
 ) -> NewExchangeAccount:
     return NewExchangeAccount(
-        uuid.uuid4(), exch, env, "sub" if parent else "main", _uid(),
+        uuid.uuid4(), exch, env, "sub" if parent else "main", uid or _uid(),
         label or f"L{uuid.uuid4().hex[:8]}", parent,
     )  # fmt: skip
 
@@ -163,7 +169,7 @@ async def _seed_key(creds: SqlAlchemyCredentialStore, acct: uuid.UUID) -> uuid.U
     row = CredentialRow(
         id=kid, exchange_account_id=acct, env="demo", label=f"k{kid.hex[:8]}",
         key_id_enc=_KEY_ID_ENC, key_id_last4="abcd", secret_enc=_SECRET_ENC,
-        enc_nonce=b"\x03" * 12, dek_ref="v1:00", kek_version=1,
+        enc_nonce=_NONCE, dek_ref=_SEED_DEK, kek_version=1,
         permission_snapshot=dict(_SNAPSHOT),
     )  # fmt: skip
     await creds.insert(row.to_record())
@@ -202,18 +208,20 @@ async def test_constraint_mapping(
     rel: SqlAlchemyRelationalRepository, store: SqlAlchemyAccountsStore, pg_dsn: str
 ) -> None:
     exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
-    a = await store.create_account(owner, _new(exch, label=_LABEL))
+    a = await store.create_account(owner, _new(exch, label=_LABEL, uid=_UID))
     with server_text(rel) as seen, pytest.raises(AccountsStoreConflictError) as ei:
         await store.create_account(owner, _new(exch, label=_LABEL.upper()))
     assert ei.value.constraint == "ux_ea_label"
     assert (ei.value.__cause__, ei.value.__suppress_context__) == _TYPED
     assert_no_row_values(ei.value, seen, _LABEL)  # the DETAIL's key, `lower(label)`
+    left = rendered_graph(ei.value) + "\n".join(seen.logs)
+    assert _LABEL.upper() not in left  # the refused value itself: the server never prints it
     same_uid = NewExchangeAccount(uuid.uuid4(), exch, "demo", "main", a.exchange_uid, "other")
     with server_text(rel) as seen, pytest.raises(AccountsStoreConflictError) as ei2:
         await store.create_account(owner, same_uid)
     assert ei2.value.constraint == "ux_ea_uid"
     assert (ei2.value.__cause__, ei2.value.__suppress_context__) == _TYPED
-    assert_no_row_values(ei2.value, seen, a.exchange_uid)
+    assert_no_row_values(ei2.value, seen, _UID)
     bad_uid = NewExchangeAccount(uuid.uuid4(), exch, "demo", "main", _BAD_UID, _LABEL2)
     with server_text(rel) as seen, pytest.raises(AccountsStoreRuleError) as ei3:
         await store.create_account(owner, bad_uid)
@@ -514,7 +522,7 @@ async def test_a_pass_that_is_trade_and_read_only_leaves_without_the_key_row(
         await SqlAlchemyKeySelfCheckStore(rel, env="demo").record_pass(kid, verified)
     assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "ak_readonly_excl")
     assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
-    assert_no_row_values(err.value, seen, _IP, _KEY_ID_ENC, _SECRET_ENC)
+    assert_no_row_values(err.value, seen, _IP, _KEY_ID_ENC, _SECRET_ENC, _NONCE, _SEED_DEK)
 
 
 async def test_a_disarm_commits_its_code_and_time_and_stays_owed_until_its_record_is_marked(
