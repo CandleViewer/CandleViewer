@@ -10,9 +10,9 @@ from typing import Any, cast
 import pytest
 
 import candleviewer.app as app_module
-from candleviewer.admin.wiring import secrets_audit_row, secrets_audit_sink
+from candleviewer.admin.wiring import _secrets_audit_columns, secrets_audit_row, secrets_audit_sink
 from candleviewer.audit.actions import UnknownAuditAction
-from candleviewer.audit.redact import REDACTION_MARKER
+from candleviewer.audit.redact import REDACTION_MARKER, redact
 from candleviewer.observability.context import bind_context
 from candleviewer.settings import Environment, Settings
 
@@ -110,3 +110,47 @@ def test_a_kek_boot_record_is_stored_without_its_kek_version(action: str) -> Non
     fields = {"env": "demo", "kek_version": "2", "stranded": "1"}
     stored = secrets_audit_row("demo")(action, fields)["after_state"]
     assert stored == {**fields, "kek_version": REDACTION_MARKER}
+
+
+#: #889 (ADR-0039 decision 7): a signing key's record, which names its `key_id`.
+_SIGNING_KEY = {
+    "env": "demo", "key_id": "cv-audit-export-v1:" + "a" * 16, "fingerprint_sha256": "b" * 64,
+    "retired_material_destroyed": "true", "actor_kind": "system", "actor_role": "secrets",
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("action", ["security.audit_signing_key_x", "security.audit_export_x"])
+def test_a_signing_key_record_is_about_the_signing_key(action: str) -> None:
+    """S6a: `object_kind` `audit_signing_key`, never the `api_key` its `key_id` would give, and
+    the boolean member a JSON boolean."""
+    columns = _secrets_audit_columns(action, _SIGNING_KEY)
+    assert (columns["object_kind"], columns["object_id"]) == (
+        "audit_signing_key", _SIGNING_KEY["key_id"]
+    )  # fmt: skip
+    assert columns["after_state"] == _SIGNING_KEY | {"retired_material_destroyed": True}
+
+
+def test_a_boolean_member_is_true_or_false_and_nothing_else() -> None:
+    """Security F2: `"false"` is stored false; any other value is refused before the record."""
+    fields = {"retired_material_destroyed": "false"}
+    columns = _secrets_audit_columns("security.audit_signing_key_x", fields)
+    assert columns["after_state"] == {"retired_material_destroyed": False}
+    with pytest.raises(KeyError):
+        _secrets_audit_columns(
+            "security.audit_signing_key_x", {"retired_material_destroyed": "True"}
+        )
+
+
+def test_the_signing_key_record_members_survive_the_audit_redactor() -> None:
+    """Security F6: what verifiers and the Owner's chain cross-check read (24 §15.7)."""
+    members: dict[str, Any] = {"key_id": _SIGNING_KEY["key_id"], "sha256": "c" * 64}
+    members |= {"fingerprint_sha256": "b" * 64, "retired_material_destroyed": True}
+    assert redact(members) == members
+
+
+def test_a_signing_key_rotation_refusal_is_stored_as_denied_at_warning() -> None:
+    """S7 registers the action; the port's mapping is S6's (ADR-0039 decision 7)."""
+    columns = _secrets_audit_columns("security.audit_signing_key_rotation_refused", {"r": "x"})
+    assert (columns["object_kind"], columns["outcome"], columns["severity"]) == (
+        "audit_signing_key", "denied", "warning"
+    )  # fmt: skip

@@ -15,7 +15,8 @@ as `pg_insert` too; positional or keyword table arguments), and a table or ORM o
 it, an import of the schema's `audit_log` or a `.tables["audit_log"]` lookup, outside the
 two files that define one for reading. It sees SQL, not calls, so a second scan pins the helper's
 callers: the repository's `insert`, the credential store's `rewrap` and `record_kcv` (#2266), and
-the export key store's `_record` (#889), each in the transaction of the change its record states.
+the export key store's `_record` (#889: `insert_first`, `rotate`, and since S6 `rewrap` and
+`destroy_retired_seeds`), each in the transaction of the change its record states.
 """
 
 from __future__ import annotations
@@ -45,7 +46,8 @@ _HELPER = "insert_audit_row_locked"
 _CALLERS = {
     _WRITER: ["insert"],
     Path("storage/repositories/credentials_sqlalchemy.py"): ["record_kcv", "rewrap"],
-    Path("storage/repositories/export_keys_sqlalchemy.py"): ["_record"],  # #889 S4b-2
+    # #889 S4b-2; reviewed again in S6a, whose re-wrap and destroy run it through `_update`
+    Path("storage/repositories/export_keys_sqlalchemy.py"): ["_record"],
 }
 
 

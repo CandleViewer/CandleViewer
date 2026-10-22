@@ -185,6 +185,10 @@ Option (a), with Ed25519.
    so it exists only for a rotation that committed (wherever this record says a rotation is recorded or audited ahead,
    it is that record), and the key's records name `object_kind` `audit_signing_key`, which
    S6 adds to M2's audit port with a boolean member and a refused record's `outcome: denied`.
+   2026-10-22 (#889 S6a-1): the port gives `audit_signing_key` to every `security.audit_signing_key_*` and
+   `security.audit_export_*` record before its `key_id` rule, which named an API key, so the records keep the member
+   `key_id` that 24 §15.7 names; it stores `retired_material_destroyed` as a JSON boolean, and
+   `security.audit_signing_key_rotation_refused` (S7 registers it) as `denied` at warning.
 8. **No feature flag (C-4.13).** The export spans S2 to S10, but the contracted `501` is its gate until S10 replaces
    it in one PR (ruling 7): nothing before S10 can produce a signed file, and the download stays dark until then
    (S9). The signing-keys list and the rotation (S7) are complete, audited operations on their own. No flag gates a

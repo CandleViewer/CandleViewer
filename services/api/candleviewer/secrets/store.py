@@ -2,8 +2,8 @@
 the audit export signing keys (`audit_signing_keys`).
 
 Records are plain dicts, keyed by `CredentialRow` field names (by `audit_signing_keys` column names
-for export keys), so the Postgres adapter in
-M10 (`storage`) satisfies these Protocols structurally without importing M2 (C-3.2).
+for export keys), so the Postgres adapter in M10 (`storage`) satisfies these Protocols
+structurally without importing M2 (C-3.2).
 """
 
 from __future__ import annotations
@@ -141,7 +141,8 @@ class ExportKeyStore(Protocol):
         at T for `reason` and its seed destroyed (Q3), in one write; `record` inserted active from
         T, its version the retired key's plus one, which is the highest plus one; the record;
         commit. Returns the rotation's `200` as `rotation` rebuilds it, or None, nothing written,
-        when `retire` is not the active key. Any failure rolls back all of it."""
+        when `retire` is not the active key. Any failure rolls back all of it. A malformed
+        `retire` raises `ValueError` before any I/O."""
         ...
 
     async def rotation(
@@ -159,21 +160,29 @@ class ExportKeyStore(Protocol):
         ...
 
     async def rewrap(
-        self, key_id: str, *, env: str, from_version: int, dek_ref: str, kek_version: int
+        self,
+        key_id: str,
+        *,
+        env: str,
+        from_version: int,
+        dek_ref: str,
+        kek_version: int,
+        audit: tuple[str, dict[str, str]],
     ) -> bool:
         """Compare-and-set on `kek_version` of the key `key_id` of `env` while it holds its seed;
-        True iff this call moved it. The caller records it ahead through `AuditSink` (C-2.9); S6 may
-        pass an in-transaction record instead."""
+        True iff this call moved it, and then the `audit` record, which is required, committed
+        with it (C-2.9): a failure of either rolls back both. A malformed `key_id` or `dek_ref`,
+        a `from_version` or `kek_version` that is not an int of at least 1, and a `kek_version`
+        that is `from_version` (no re-wrap) raise `ValueError` before any I/O."""
         ...
 
     async def count_retired_with_seed(self, env: str) -> int:
         """Retired keys of `env` still holding a seed: Q3's `retired_with_seed` finding (I2)."""
         ...
 
-    async def destroy_retired_seeds(self, env: str) -> int:
-        """Q3's retried destroy: every retired key of `env` loses its seed. How many did. The caller
-        records it ahead through `AuditSink` (C-2.9); S6 may pass an in-transaction record
-        instead."""
+    async def destroy_retired_seeds(self, env: str, *, audit: tuple[str, dict[str, str]]) -> int:
+        """Q3's retried destroy: every retired key of `env` loses its seed, the `audit` record,
+        which is required, committed with it when any did (C-2.9). How many did."""
         ...
 
 
@@ -345,15 +354,28 @@ def _key_row(record: Mapping[str, Any], *, request: bool) -> dict[str, Any]:
     seed = row["sealed_seed"]
     if type(seed) is not bytes or len(seed) != 60 or not _wrapped(row["dek_ref"]):
         raise ValueError("an export key is stored only sealed: a 60-byte seed, an ek1 DEK wrap")
-    if type(row["kek_version"]) is not int or row["kek_version"] < 1:
-        raise ValueError("ask_kek_version")
     row |= {k: record.get(k) if request else None for k in _REQUEST}
     if request and (row["created_by"] is None or row["client_body_sha256"] is None):
         raise ValueError("a rotated export key carries its request")
-    body = row["client_body_sha256"]
-    if request and (not isinstance(body, str) or _SHA256_HEX.fullmatch(body) is None):
-        raise ValueError("sha256_hex")
     return row | ({"client_ref": _canonical(row["client_ref"])} if request else {})
+
+
+def _rewrap_checked(key_id: object, dek_ref: object, from_version: object, to: object) -> None:
+    """A re-wrap's arguments, refused (`ValueError`) as every store refuses them before any I/O: a
+    malformed key id or wrap, a KEK version on either side that is not an int of at least 1
+    (`ask_kek_version`), or one that moves nothing (I3)."""
+    _key_id(key_id)
+    if not _wrapped(dek_ref):
+        raise ValueError("a DEK is stored only wrapped: ek1 and 120 hex")
+    if any(type(v) is not int or v < 1 for v in (from_version, to)) or to == from_version:
+        raise ValueError("ask_kek_version, or a re-wrap that moves no KEK version")
+
+
+class _RequestTaken(ValueError):
+    """The fake's `ExportKeyRequestTaken` (M10): a rotation's request stored already. M2 tells it
+    apart by this `code`, as `broker._io` reads a typed refusal of another module (I1)."""
+
+    code = "STORAGE_EXPORT_KEY_REQUEST_TAKEN"
 
 
 class InMemoryExportKeyStore:
@@ -374,23 +396,33 @@ class InMemoryExportKeyStore:
         return [r for r in self.rows if r["env"] == env]
 
     def _checked(self, row: dict[str, Any]) -> str:
-        """`row`'s fingerprint, or the refusal of `ask_public_key` or `ask_key_id`: CHECKs, which
-        Postgres fires before any unique key."""
+        """`row`'s fingerprint, or the refusal of a CHECK, which Postgres fires before any unique
+        key: `ask_kek_version`, `ask_public_key`, `ask_key_id` and a request's `sha256_hex`."""
+        if type(row["kek_version"]) is not int or row["kek_version"] < 1:
+            raise ValueError("ask_kek_version")
         if type(row["public_key"]) is not bytes or len(row["public_key"]) != 32:
             raise ValueError("ask_public_key")
         fp = hashlib.sha256(row["public_key"]).hexdigest()
         if row["key_id"] != f"cv-audit-export-v{row['version']}:{fp[:16]}":
             raise ValueError("ask_key_id")
+        body = row["client_body_sha256"]
+        if body is not None and (not isinstance(body, str) or not _SHA256_HEX.fullmatch(body)):
+            raise ValueError("sha256_hex")
         return fp
 
     def _new(self, row: dict[str, Any], at: datetime) -> dict[str, Any]:
-        """`row` as the table inserts it, active from `at`, or the refusal of a CHECK or of a unique
-        key of 21 Sec.3.1.5b (the version, the fingerprint, the request)."""
+        """`row` as the table inserts it, active from `at`, or the refusal of a CHECK, of the
+        primary key or of a unique key of 21 Sec.3.1.5b (the version, the fingerprint, the
+        request: `_RequestTaken`). The `created_by` foreign key and the column types are not
+        checked."""
         fp, ref = self._checked(row), row["client_ref"]
+        if any(r["id"] == row["id"] for r in self.rows):
+            raise ValueError("an export key's id is unique")
         for r in self._mine(row["env"]):
-            same = (r["created_by"], r["client_ref"]) == (row["created_by"], ref)
-            if r["version"] == row["version"] or r["fingerprint_sha256"] == fp or (same and ref):
+            if r["version"] == row["version"] or r["fingerprint_sha256"] == fp:
                 raise ValueError("an export key's version, fingerprint and request are unique")
+            if ref and (r["created_by"], r["client_ref"]) == (row["created_by"], ref):
+                raise _RequestTaken("an export key's version, fingerprint and request are unique")
         return row | {"fingerprint_sha256": fp, "status": "active", "valid_from": at} | _AS_MADE
 
     def _commit(self, rows: list[dict[str, Any]], audit: tuple[str, dict[str, str]]) -> None:
@@ -417,6 +449,8 @@ class InMemoryExportKeyStore:
         if row["version"] != 1:
             raise ValueError("an environment's first export key is version 1")
         self._checked(row)  # the CHECKs before the unique key, as Postgres fires them
+        if any(r["id"] == row["id"] for r in self.rows):
+            raise ValueError("an export key's id is unique")  # the primary key, any environment
         if mine:
             return False
         self._commit([*self.rows, self._new(row, self.clock())], audit)
@@ -459,25 +493,32 @@ class InMemoryExportKeyStore:
         return sum(r["kek_version"] == version for r in self._seeded(env))
 
     async def rewrap(
-        self, key_id: str, *, env: str, from_version: int, dek_ref: str, kek_version: int
+        self,
+        key_id: str,
+        *,
+        env: str,
+        from_version: int,
+        dek_ref: str,
+        kek_version: int,
+        audit: tuple[str, dict[str, str]],
     ) -> bool:
-        seeded, _ = self._seeded(env), _key_id(key_id)
-        if not _wrapped(dek_ref):
-            raise ValueError("a DEK is stored only wrapped: ek1 and 120 hex")
+        seeded = self._seeded(env)
+        _rewrap_checked(key_id, dek_ref, from_version, kek_version)
         for r in seeded:
             if (r["key_id"], r["kek_version"]) == (key_id, from_version):
-                # the row the UPDATE would change: its trigger pairs the two, its CHECK the version
-                if type(kek_version) is not int or kek_version < 1 or kek_version == from_version:
-                    raise ValueError("a re-wrap moves the DEK and its KEK version together")
-                r["dek_ref"], r["kek_version"] = dek_ref, kek_version
+                if dek_ref == r["dek_ref"]:  # the trigger: a DEK moves with its KEK version (23514)
+                    raise ValueError("a re-wrap moves the DEK with its KEK version")
+                moved = r | {"dek_ref": dek_ref, "kek_version": kek_version}
+                self._commit([moved if x is r else x for x in self.rows], audit)
                 return True
         return False  # no row matched: a stale or replayed call, as in SQL
 
     async def count_retired_with_seed(self, env: str) -> int:
         return sum(r["status"] == "retired" for r in self._seeded(env))
 
-    async def destroy_retired_seeds(self, env: str) -> int:
-        held = [r for r in self._seeded(env) if r["status"] == "retired"]
-        for r in held:
-            r["sealed_seed"] = None
+    async def destroy_retired_seeds(self, env: str, *, audit: tuple[str, dict[str, str]]) -> int:
+        held = {id(r) for r in self._seeded(env) if r["status"] == "retired"}
+        if held:
+            gone = [r | {"sealed_seed": None} if id(r) in held else r for r in self.rows]
+            self._commit(gone, audit)
         return len(held)

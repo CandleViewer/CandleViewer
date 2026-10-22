@@ -37,7 +37,10 @@ LIVE_FILE_PREFIX = "/run/credentials/"
 _PR_SET_DUMPABLE, _PR_GET_DUMPABLE = 4, 3
 #: `auth_keys.dek_ref` (#2152): the prefix, then nonce(12) || ciphertext(32) || tag(16) in hex.
 AUTH_WRAP_PREFIX = "ak1:"
-_AUTH_WRAP_RE = re.compile(r"[0-9a-f]{120}")
+#: The hex body of a 32-byte key's wrap, after either prefix.
+_WRAP_RE = re.compile(r"[0-9a-f]{120}")
+#: `audit_signing_keys.dek_ref` (#889 S6, 21 §3.1.5b): the same shape under its own prefix.
+EXPORT_WRAP_PREFIX = "ek1:"
 
 
 class LoadedKek:
@@ -104,9 +107,27 @@ class LoadedKek:
         """`InvalidTag` on wrong KEK / environment / purpose / row / version; `ValueError` on
         shape, including an `api_keys` wrap (`v2:`)."""
         body = dek_ref.removeprefix(AUTH_WRAP_PREFIX)
-        if body == dek_ref or not _AUTH_WRAP_RE.fullmatch(body):
+        if body == dek_ref or not _WRAP_RE.fullmatch(body):
             raise ValueError("unsupported auth key wrap")
         aad = env.akey_aad(self.env_name, purpose, key_id, self.version)
+        return env.open_(self._live_key(), bytes.fromhex(body), aad)
+
+    def wrap_export_dek(self, dek: bytearray, *, key_id: str) -> str:
+        """`audit_signing_keys.dek_ref` (#889 S6): ``ek1:`` + hex of the row's DEK, a 32-byte
+        `bytearray` as `seal_seed` takes it, sealed under this KEK, bound to its environment, the
+        key id and this version."""
+        if type(dek) is not bytearray or len(dek) != env.KEY_LEN:
+            raise ValueError("export DEK: a 32-byte bytearray")
+        aad = env.export_dek_aad(self.env_name, key_id, self.version)
+        return EXPORT_WRAP_PREFIX + env.seal(self._live_key(), dek, aad).hex()
+
+    def unwrap_export_dek(self, dek_ref: str, *, key_id: str) -> bytearray:
+        """`InvalidTag` on wrong KEK / environment / key id / version; `ValueError` on shape,
+        including a credential or an auth key wrap."""
+        body = dek_ref.removeprefix(EXPORT_WRAP_PREFIX)
+        if body == dek_ref or not _WRAP_RE.fullmatch(body):
+            raise ValueError("unsupported export DEK wrap")
+        aad = env.export_dek_aad(self.env_name, key_id, self.version)
         return env.open_(self._live_key(), bytes.fromhex(body), aad)
 
     def close(self) -> None:

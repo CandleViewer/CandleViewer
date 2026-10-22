@@ -5,12 +5,13 @@ Lives in M10 so M2 never imports a driver; it moves plain dicts, so `ExportKeySt
 refusing before any write a seed that is not 60 bytes and a wrap that is not `ek1:` and 120 hex,
 and never logs a row. Bound to the process environment, it refuses a call or a record naming
 another, or a key not named by its key id, before any I/O, and every statement names it (C-2.11).
-A generation's or a rotation's record is built by a function the composition root injects
-(`admin.wiring.secrets_audit_row`) and inserted in the change's transaction by
-`insert_audit_row_locked`: row locks first, the chain lock last, READ COMMITTED (C-2.9). A database
-error leaves as `StorageQueryFailed` with the SQLSTATE alone, nothing chained: the driver's text
-repeats the failing row, sealed seed and wrap included (C-12.6, class S). Two constraint names are
-read: another boot's first key (`insert_first`) and a retried request (`ExportKeyRequestTaken`).
+A change's record (a generation, a rotation, and since S6 a re-wrap or a destroy) is built by a
+function the composition root injects (`admin.wiring.secrets_audit_row`) and inserted in the
+change's transaction by `insert_audit_row_locked`: row locks first, the chain lock last, READ
+COMMITTED (C-2.9). A database error leaves as `StorageQueryFailed` with the SQLSTATE alone, nothing
+chained: the driver's text repeats the failing row, sealed seed and wrap included (C-12.6, class S).
+Two constraint names are read: another boot's first key (`insert_first`) and a retried request
+(`ExportKeyRequestTaken`).
 Static SQL with explicit columns (21 Sec.12 forbids `SELECT *`; a unit test guards it), no DELETE.
 """
 
@@ -129,6 +130,15 @@ async def _record(session: Any, row: dict[str, Any]) -> None:
         raise ExportKeyAuditNotWritten("the export key's record was not written; nothing was")
 
 
+def _at(row: dict[str, Any]) -> datetime:
+    """A record's `event_ts`, the time of the change it records; a naive one is refused before
+    any I/O, so no comparison with a stored time can fail after the commit."""
+    at = datetime.fromisoformat(row["event_ts"])
+    if at.tzinfo is None:
+        raise ValueError("a record's event_ts is timezone-aware")
+    return at
+
+
 class ExportKeyEnvironmentError(ValueError):
     """A call or a record named an environment other than the process's (C-2.11); refused
     before any I/O."""
@@ -176,6 +186,24 @@ class SqlAlchemyExportKeyStore:
             state = sqlstate_of(exc)
         raise StorageQueryFailed(state)  # the SQLSTATE alone, nothing chained (C-12.6)
 
+    async def _update(
+        self, stmt: sa.TextClause, params: dict[str, Any], audit: tuple[str, dict[str, str]]
+    ) -> int:
+        """One UPDATE and, only if it changed a row, its `audit` record, built before any I/O and
+        written with the chain lock last: one transaction, so a failure of either rolls back
+        both (C-2.9). The rows it changed."""
+        row = self._audit_row(*audit)
+        try:
+            async with self._rel.unit_of_work() as uow:
+                res: Any = await uow.session.execute(stmt, params)
+                if changed := int(res.rowcount):
+                    await _record(uow.session, row)
+                await uow.commit()
+                return changed
+        except DBAPIError as exc:
+            state = sqlstate_of(exc)
+        raise StorageQueryFailed(state)  # the SQLSTATE alone, nothing chained (C-12.6)
+
     async def active(self, env: str) -> dict[str, Any] | None:
         """The active key's sealed record, its `env` read from the row."""
         self._own(env)
@@ -196,7 +224,7 @@ class SqlAlchemyExportKeyStore:
         if params["version"] != 1:
             raise ValueError("an environment's first export key is version 1")
         row = self._audit_row(*audit)
-        params["at"] = datetime.fromisoformat(row["event_ts"])
+        params["at"] = _at(row)
         try:
             async with self._rel.unit_of_work() as uow:
                 await uow.session.execute(_INSERT, params)
@@ -227,7 +255,7 @@ class SqlAlchemyExportKeyStore:
         if not _fits(_KEY_ID, retire) or reason not in _REASONS:
             raise ValueError("a key id to retire; reason: scheduled, compromise or unrecoverable")
         row = self._audit_row(*audit)
-        params["at"] = at = datetime.fromisoformat(row["event_ts"])
+        params["at"] = at = _at(row)
         retiring = {"env": self._env, "key_id": retire, "at": at, "reason": reason}
         try:
             async with self._rel.unit_of_work() as uow:
@@ -235,13 +263,14 @@ class SqlAlchemyExportKeyStore:
                 old = (await s.execute(_RETIRE, retiring)).mappings().one_or_none()
                 if old is None:
                     return None
+                stepped_back = at < old["valid_from"]  # a clock stepped back: T all the same
                 top = (await s.execute(_TOP, {"env": self._env})).scalar_one()
                 if not params["version"] == old["version"] + 1 == top + 1:
                     raise ValueError("a rotation steps the export key version by one")
                 new = (await s.execute(_INSERT, params)).mappings().one()
                 await _record(s, row)
                 await uow.commit()
-                if at < old["valid_from"]:  # a clock stepped back: T all the same (21 Sec.3.1.5b)
+                if stepped_back:  # logged only once committed (21 Sec.3.1.5b)
                     ids = {"retired_key_id": old["key_id"], "active_key_id": new["key_id"]}
                     log = structlog.get_logger(__name__)  # resolved per call (#2008)
                     log.warning("audit.export_key.clock_anomaly", env=self._env, **ids)
@@ -268,18 +297,30 @@ class SqlAlchemyExportKeyStore:
         return int((await self._exec(_COUNT, env=env, v=version))[0]["count"])
 
     async def rewrap(
-        self, key_id: str, *, env: str, from_version: int, dek_ref: str, kek_version: int
+        self,
+        key_id: str,
+        *,
+        env: str,
+        from_version: int,
+        dek_ref: str,
+        kek_version: int,
+        audit: tuple[str, dict[str, str]],
     ) -> bool:
+        """The compare-and-set, then its record, refused before any I/O as M2's fake refuses it.
+        The trigger refuses a DEK that does not move with its KEK version (23514)."""
         self._own(env)
         if not (_fits(_KEY_ID, key_id) and _fits(_DEK_REF, dek_ref)):
             raise ValueError("a key id, and a DEK stored only wrapped: ek1 and 120 hex")
-        move = {"key_id": key_id, "from_v": from_version, "to_v": kek_version, "dek_ref": dek_ref}
-        return int(await self._exec(_REWRAP, env=env, **move)) == 1
+        versions = (from_version, kek_version)
+        if any(type(v) is not int or v < 1 for v in versions) or kek_version == from_version:
+            raise ValueError("ask_kek_version, or a re-wrap that moves no KEK version")
+        move = {"env": env, "key_id": key_id, "from_v": from_version, "to_v": kek_version}
+        return await self._update(_REWRAP, move | {"dek_ref": dek_ref}, audit) == 1
 
     async def count_retired_with_seed(self, env: str) -> int:
         self._own(env)
         return int((await self._exec(_RETAINED, env=env))[0]["count"])
 
-    async def destroy_retired_seeds(self, env: str) -> int:
+    async def destroy_retired_seeds(self, env: str, *, audit: tuple[str, dict[str, str]]) -> int:
         self._own(env)
-        return int(await self._exec(_DESTROY, env=env))
+        return await self._update(_DESTROY, {"env": env}, audit)

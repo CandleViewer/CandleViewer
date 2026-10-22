@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import logging
 import pickle
+import re
 import traceback
 import weakref
 from base64 import b64encode
@@ -19,10 +20,12 @@ from collections.abc import Callable, Iterator
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from hypothesis import given, seed, settings
 from hypothesis import strategies as st
@@ -32,7 +35,7 @@ from candleviewer.secrets import _envelope as env
 from candleviewer.secrets import _export_key as xk
 from candleviewer.secrets.errors import CredentialUnavailable
 from tests.unit.credentials_m2._helpers import _Spy
-from tests.unit.credentials_m2._vectors import RFC8032
+from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, RFC8032, kek
 
 DEK, SEED, OTHER = bytes(range(200, 232)), bytes(range(1, 33)), bytes(range(33, 65))
 DIGEST = hashlib.sha256(b"abc").digest()
@@ -383,3 +386,82 @@ def test_any_digest_signs_and_verifies_with_the_public_key(digest: bytes) -> Non
         env.zero(dek)
     public = Ed25519PublicKey.from_public_bytes(key.public_key)
     public.verify(signature, b"cv.audit.export.v1:" + digest.hex().encode())
+
+
+KEY_ID = "cv-audit-export-v1:" + "a" * 16
+OTHER_ID = UUID(int=7)
+Wrapped = Callable[[str], object]
+
+
+def _wrap() -> str:
+    return kek().wrap_export_dek(bytearray(DEK), key_id=KEY_ID)
+
+
+def _wrap_of(size: int) -> Wrapped:
+    return lambda _: kek().wrap_export_dek(bytearray(size), key_id=KEY_ID)
+
+
+def test_the_dek_wrap_is_ek1_under_its_own_label() -> None:
+    """#889 S6a-1 (ADR-0039 decision 2): `ek1:` and 120 hex, its AAD `cv-export-dek-v1`, the
+    environment, the key id and the KEK version as decimal text, each part length-prefixed."""
+    ref = _wrap()
+    assert re.fullmatch(r"ek1:[0-9a-f]{120}", ref) and DEK.hex() not in ref
+    assert kek().unwrap_export_dek(ref, key_id=KEY_ID) == DEK
+    assert env.export_dek_aad("live", KEY_ID, 7) == (
+        b"\x00\x10cv-export-dek-v1\x00\x04live\x00\x23" + KEY_ID.encode() + b"\x00\x017"
+    )
+
+
+def test_the_dek_wrap_binds_its_own_kek_s_version_and_environment() -> None:
+    """The wrap side binds the KEK's own version and environment, never a default's."""
+    k = kek(KEK_V2, 3, "live")
+    ref = k.wrap_export_dek(bytearray(DEK), key_id=KEY_ID)
+    assert k.unwrap_export_dek(ref, key_id=KEY_ID) == DEK
+
+
+#: The wrap opened under one changed binding, or another key class's wrap re-prefixed `ek1:`: no
+#: credential wrap or auth key opens as a signing key's DEK.
+WRAP_NOT_OPENING: dict[str, Wrapped] = {
+    "kek_version": lambda ref: kek(KEK_V1, 2).unwrap_export_dek(ref, key_id=KEY_ID),
+    "environment": lambda ref: kek(KEK_V1, 1, "testnet").unwrap_export_dek(ref, key_id=KEY_ID),
+    "kek": lambda ref: kek(KEK_V2, 1).unwrap_export_dek(ref, key_id=KEY_ID),
+    "key_id": lambda ref: kek().unwrap_export_dek(ref, key_id=KEY_ID.replace("v1", "v2")),
+    "a_credential_wrap": lambda _: kek().unwrap_export_dek(
+        "ek1:" + kek().wrap_dek(bytearray(DEK), credential_id=OTHER_ID)[3:], key_id=KEY_ID
+    ),
+    "an_auth_key_wrap": lambda _: kek().unwrap_export_dek(
+        "ek1:" + kek().wrap_auth_key(bytearray(DEK), key_id=OTHER_ID, purpose="totp_seal")[4:],
+        key_id=KEY_ID,
+    ),
+}
+
+
+@pytest.mark.parametrize("call", WRAP_NOT_OPENING.values(), ids=list(WRAP_NOT_OPENING))
+def test_the_dek_wrap_opens_only_under_its_own_binding(call: Wrapped) -> None:
+    ref = _wrap()
+    with pytest.raises(InvalidTag):
+        call(ref)
+
+
+#: Refused (`ValueError`) before any key operation: a wrap of another shape or prefix, a DEK that is
+#: not a 32-byte `bytearray`, an AAD of another environment or a KEK version not an int above 0.
+REFUSED_WRAPS: dict[str, Wrapped] = {
+    "a_credential_prefix": lambda ref: kek().unwrap_export_dek("v2:" + ref[4:], key_id=KEY_ID),
+    "an_auth_prefix": lambda ref: kek().unwrap_export_dek("ak1:" + ref[4:], key_id=KEY_ID),
+    "a_newline": lambda ref: kek().unwrap_export_dek(ref + "\n", key_id=KEY_ID),
+    "bare_hex": lambda ref: kek().unwrap_export_dek(ref[4:], key_id=KEY_ID),
+    "as_a_credential": lambda ref: kek().unwrap_dek(ref, credential_id=OTHER_ID),
+    "as_an_auth_key": lambda ref: kek().unwrap_auth_key(ref, key_id=OTHER_ID, purpose="totp_seal"),
+    **{f"dek_{n}": _wrap_of(n) for n in (16, 24, 31, 33)},
+    "dek_bytes": lambda _: kek().wrap_export_dek(cast(Any, bytes(32)), key_id=KEY_ID),
+    "aad_prod": lambda _: env.export_dek_aad("prod", KEY_ID, 1),
+    "aad_version_0": lambda _: env.export_dek_aad("demo", KEY_ID, 0),
+    "aad_version_true": lambda _: env.export_dek_aad("demo", KEY_ID, True),
+}
+
+
+@pytest.mark.parametrize("call", REFUSED_WRAPS.values(), ids=list(REFUSED_WRAPS))
+def test_a_malformed_wrap_or_dek_is_refused_before_any_key_operation(call: Wrapped) -> None:
+    ref = _wrap()
+    with pytest.raises(ValueError):
+        call(ref)

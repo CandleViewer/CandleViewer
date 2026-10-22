@@ -65,6 +65,9 @@ _REDACT_KEYS: Final[frozenset[str]] = frozenset(
         "signature",
         # pydantic writes the input it refuses in a ValidationError's text by this name (#415)
         "input_value",
+        # an audit export signing key's sealed seed and wrapped DEK, by their columns (#889, C-12.6)
+        "sealed_seed",
+        "dek_ref",
     }
 )
 #: `_REDACT_KEYS` with `-` read as `_`, as `_is_redact_key` reads a name: the hyphenated and the

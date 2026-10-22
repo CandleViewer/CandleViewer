@@ -20,8 +20,12 @@ Store = InMemoryExportKeyStore
 T0 = datetime(2026, 9, 1, tzinfo=UTC)
 SEED, WRAP, NEXT_WRAP = b"\x5a" * 60, "ek1:" + "ab" * 60, "ek1:" + "cd" * 60
 OWNER, OTHER = UUID(int=1), UUID(int=2)
+#: Placeholder records `(action, fields)`: a store never reads them. S6a-2 registers the boot's
+#: actions and writes their real fields; S7 the rotation's.
 GENERATED = ("security.audit_signing_key_generated", {"key": "first"})
 ROTATED = ("security.audit_signing_key_rotated", {"key": "next"})
+REWRAPPED = ("security.audit_signing_key_rewrapped", {"key": "moved"})
+DESTROYED = ("security.audit_signing_key_material_destroyed", {"key": "gone"})
 RETIRED = ["retired", "scheduled", None]  # status, retired_reason, sealed_seed (Q3)
 
 
@@ -69,7 +73,9 @@ async def _rotate(
 
 
 Call = Callable[[Any], Awaitable[object]]
+#: A re-wrap of v1 from KEK v1 to v2, with its record, which every re-wrap carries (security F1).
 MOVE: dict[str, Any] = {"env": "demo", "from_version": 1, "dek_ref": NEXT_WRAP, "kek_version": 2}
+MOVE["audit"] = REWRAPPED
 
 
 def _rotating(record: dict[str, Any], reason: str = "scheduled") -> Call:
@@ -81,8 +87,9 @@ def _first(record: dict[str, Any]) -> Call:
 
 
 #: What every `ExportKeyStore` refuses (`ValueError`) before any change or I/O: another
-#: environment, a plaintext seed or DEK, a first key not v1, an incomplete request, and a reason or
-#: an `Idempotency-Key` the table cannot hold.
+#: environment, a plaintext seed or DEK, a first key not v1, an incomplete request, a reason or
+#: an `Idempotency-Key` the table cannot hold, a malformed `retire` or `key_id`, and a re-wrap's
+#: KEK version that is not an int of at least 1 or that moves nothing (I3).
 REFUSED: dict[str, Call] = {
     "env_active": lambda s: s.active("live"),
     "env_list": lambda s: s.list_keys("live"),
@@ -90,7 +97,7 @@ REFUSED: dict[str, Call] = {
     "env_count": lambda s: s.count_at_kek_version(1, "live"),
     "env_rewrap": lambda s: s.rewrap(key_id(1), **MOVE | {"env": "live"}),
     "env_retained": lambda s: s.count_retired_with_seed("live"),
-    "env_destroy": lambda s: s.destroy_retired_seeds("live"),
+    "env_destroy": lambda s: s.destroy_retired_seeds("live", audit=DESTROYED),
     "env_first": _first(export_key(1, env="live")),
     "env_rotate": _rotating(export_key(2, env="live", **rotation_request())),
     "first_not_v1": _first(export_key(2)),
@@ -106,6 +113,20 @@ REFUSED: dict[str, Call] = {
         export_key(2, **rotation_request()), retire=str(uuid4()), reason="scheduled", audit=ROTATED
     ),
     "rewrap_not_a_key_id": lambda s: s.rewrap(str(uuid4()), **MOVE),
+    "rewrap_key_id_not_str": lambda s: s.rewrap(1, **MOVE),
+    "rewrap_key_id_v0": lambda s: s.rewrap(f"cv-audit-export-v0:{'a' * 16}", **MOVE),
+    "rewrap_key_id_v01": lambda s: s.rewrap(f"cv-audit-export-v01:{'a' * 16}", **MOVE),
+    "rewrap_key_id_upper": lambda s: s.rewrap(key_id(1).upper(), **MOVE),
+    "rewrap_from_version_0": lambda s: s.rewrap(key_id(1), **MOVE | {"from_version": 0}),
+    "rewrap_from_version_str": lambda s: s.rewrap(key_id(1), **MOVE | {"from_version": "1"}),
+    "rewrap_from_version_true": lambda s: s.rewrap(key_id(1), **MOVE | {"from_version": True}),
+    "rewrap_kek_version_true": lambda s: s.rewrap(
+        key_id(1), **MOVE | {"from_version": 2, "kek_version": True}
+    ),
+    "rewrap_kek_version_0": lambda s: s.rewrap(key_id(1), **MOVE | {"kek_version": 0}),
+    "rewrap_kek_version_str": lambda s: s.rewrap(key_id(1), **MOVE | {"kek_version": "2"}),
+    "rewrap_same_version": lambda s: s.rewrap(key_id(1), **MOVE | {"kek_version": 1}),
+    "rewrap_no_move": lambda s: s.rewrap(key_id(1), **MOVE | {"kek_version": 1, "dek_ref": WRAP}),
 }
 
 
@@ -117,8 +138,14 @@ async def test_a_refused_call_changes_nothing(keys: Store, call: Call) -> None:
     assert (keys.rows, keys.audit) == before
 
 
+def _reusing_ids(s: Store) -> Awaitable[object]:
+    """A rotation whose new key reuses the active key's primary key."""
+    return _rotating(export_key(2, **rotation_request()) | {"id": s.rows[0]["id"]})(s)
+
+
 #: What the table refuses (21 Sec.3.1.5b), and so the fake: its CHECKs, which Postgres fires before
-#: any unique key, and a re-wrap that does not move the DEK and its KEK version together.
+#: any unique key, a reused primary key, and a re-wrap that moves the KEK version but keeps the DEK,
+#: which the write-once trigger refuses (23514 naming `kek_version`).
 TABLE_REFUSED: dict[str, Call] = {
     "key_id_not_derived": _first(export_key(1) | {"key_id": key_id(1, bytes(32))}),
     "public_key_short": _first(export_key(1) | {"public_key": bytes(31)}),
@@ -126,7 +153,11 @@ TABLE_REFUSED: dict[str, Call] = {
     "body_hash_not_hex": _rotating(
         export_key(2, **rotation_request()) | {"client_body_sha256": "A" * 64}
     ),
-    "rewrap_same_kek_version": lambda s: s.rewrap(key_id(1), **MOVE | {"kek_version": 1}),
+    "reused_id": _reusing_ids,
+    "rewrap_same_dek": lambda s: s.rewrap(key_id(1), **MOVE | {"dek_ref": WRAP}),
+    "reused_first_id": lambda s: s.insert_first(
+        export_key(1) | {"id": s.rows[0]["id"]}, audit=GENERATED
+    ),  # the primary key, before `insert_first`'s False for a key already held
 }
 
 
@@ -188,7 +219,7 @@ async def test_a_rotation_steps_from_the_highest_version_not_the_active_ones(key
         "retired_reason": "scheduled",
         "sealed_seed": None,
     }
-    v3 = {"version": 3, "key_id": key_id(3), "public_key": pk}
+    v3 = {"id": uuid4(), "version": 3, "key_id": key_id(3), "public_key": pk}
     keys.rows.append(
         keys.rows[0] | v3 | {"fingerprint_sha256": hashlib.sha256(pk).hexdigest()} | gone
     )
@@ -202,9 +233,12 @@ async def test_a_reused_request_is_refused_as_its_unique_key_refuses_it(keys: St
     request = rotation_request()
     await _rotate(keys, 2, **request)
     before = copy.deepcopy((keys.rows, keys.audit))
-    with pytest.raises(ValueError, match="unique"):
+    with pytest.raises(ValueError, match="unique") as taken:
         await _rotate(keys, 3, **request)  # the same Owner and Idempotency-Key, a new rotation
     assert (keys.rows, keys.audit) == before
+    assert (
+        getattr(taken.value, "code", None) == "STORAGE_EXPORT_KEY_REQUEST_TAKEN"
+    )  # as in M10 (I1)
 
 
 @pytest.mark.parametrize(("version", "steps"), [(2, True), (3, False), (1, False)])
@@ -281,11 +315,10 @@ async def test_another_users_or_environments_request_answers_as_missing(keys: St
 
 async def test_the_rewrap_compares_and_sets_on_keys_holding_their_seed(keys: Store) -> None:
     await _rotate(keys, 2)  # v1 retired, its seed destroyed
-    move: dict[str, Any] = {"env": "demo", "from_version": 1, "dek_ref": NEXT_WRAP}
-    move["kek_version"] = 2
+    move = MOVE  # from KEK v1 to v2, with its record
     assert [await keys.count_at_kek_version(v, "demo") for v in (1, 2)] == [1, 0]  # v2 only
     assert not await keys.rewrap(key_id(1), **move)  # no seed: nothing to re-wrap (Q3)
-    assert not await keys.rewrap(key_id(2), **move | {"from_version": 2})  # stale
+    assert not await keys.rewrap(key_id(2), **move | {"from_version": 3})  # stale
     assert await keys.rewrap(key_id(2), **move) is True
     assert not await keys.rewrap(key_id(2), **move)  # a replay: it has moved on
     assert [(r["kek_version"], r["dek_ref"]) for r in keys.rows] == [(1, WRAP), (2, NEXT_WRAP)]
@@ -297,7 +330,35 @@ async def test_a_retired_key_holding_its_seed_counts_until_its_destroy(keys: Sto
     keys.rows[0]["sealed_seed"] = SEED  # a retire that kept the seed, which the table admits
     assert await keys.count_retired_with_seed("demo") == 1  # Q3's `retired_with_seed`
     assert await keys.count_at_kek_version(1, "demo") == 2  # a KEK re-wrap waits for it (I2)
-    assert await keys.destroy_retired_seeds("demo") == 1
+    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == 1
     assert await keys.count_retired_with_seed("demo") == 0
-    assert await keys.destroy_retired_seeds("demo") == 0  # the retry finds nothing left
+    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == 0  # nothing left
     assert [r["sealed_seed"] for r in keys.rows] == [None, SEED]  # the active key keeps its own
+
+
+async def test_a_stale_rotation_is_none_before_its_inserts_checks(keys: Store) -> None:
+    """As in SQL: the retire matches no key, so no INSERT runs and no CHECK fires (F2)."""
+    bad = export_key(2, **rotation_request()) | {"kek_version": 0}
+    assert await keys.rotate(bad, retire=key_id(9), reason="scheduled", audit=ROTATED) is None
+
+
+async def test_a_rewrap_and_a_destroy_commit_with_their_record_or_not_at_all(keys: Store) -> None:
+    await _rotate(keys, 2)
+    keys.rows[0]["sealed_seed"] = SEED  # a retire that kept the seed, which the table admits
+    keys.audit_fails, before = True, copy.deepcopy((keys.rows, keys.audit))
+    for call in (
+        keys.rewrap(key_id(2), **MOVE),
+        keys.destroy_retired_seeds("demo", audit=DESTROYED),
+    ):
+        with pytest.raises(RuntimeError):
+            await call
+    assert (keys.rows, keys.audit) == before
+    keys.audit_fails = False
+    assert await keys.rewrap(key_id(2), **MOVE) is True
+    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == 1
+    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == 0  # no record for none
+    assert keys.audit[-2:] == [REWRAPPED, DESTROYED]
+    assert [(r["sealed_seed"], r["dek_ref"]) for r in keys.rows] == [
+        (None, WRAP),
+        (SEED, NEXT_WRAP),
+    ]

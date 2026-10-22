@@ -276,8 +276,9 @@ class RewrapAuditNotWritten(StorageError):
 
 
 class ExportKeyAuditNotWritten(StorageError):
-    """An audit export signing key's generation or rotation record was not written (its
-    `record_id` is stored already), so the key's change rolled back with it (#889 S4b, C-2.9)."""
+    """An audit export signing key's record was not written (its `record_id` is stored already):
+    a generation's, a rotation's, a re-wrap's or a destroy's, so the key's change rolled back with
+    it (#889 S4b, S6a; C-2.9)."""
 
     code = "STORAGE_EXPORT_KEY_AUDIT_NOT_WRITTEN"
 
