@@ -980,8 +980,8 @@ Drag preview                Drop zones
 - **A11y:** Menu with grouped items (time / tick / volume / range / renko / P&F) as real menu semantics; each non-time bar mode carries a one-line description; custom-interval entry is a labelled field.
 - **Performance:** Interval change reuses the cached series when present; otherwise first paint of the new interval <=600 ms for the visible window with progressive backfill.
 - **Analytics/audit:** `chart.interval_changed`, `chart.bar_mode_changed` (analytics).
-- **Design sign-off acceptance checklist:** [ ] all bar modes drawn with their parameter inputs [ ] favourites/pinned intervals [ ] custom-interval validation message [ ] non-time bar modes state clearly which ones require recorded tick history [ ] rebuilding and partial-history precedence drawn per the SCR-030 state matrix (E12-D01 §9)
-- **Hi-fi (E12-D03):** [E12-D03.md](../design/E12/E12-D03.md) §2 (per-mode table), §3 (redlines), §4 (states), §7 (placement); Penpot page `E12-D03`, boards 01–18 (pending).
+- **Design sign-off acceptance checklist:** [x] all bar modes drawn with their parameter inputs [x] favourites/pinned intervals [x] custom-interval validation message [x] non-time bar modes state clearly which ones require recorded tick history [x] rebuilding and partial-history precedence drawn per the SCR-030 state matrix (E12-D01 §9)
+- **Hi-fi (E12-D03):** [E12-D03.md](../design/E12/E12-D03.md) §2 (per-mode table), §3 (redlines), §4 (states), §7 (placement); Penpot page `E12-D03`, boards 01–18 (drawn).
 
 ### SCR-043 — Price-scale / time-scale context menus
 
