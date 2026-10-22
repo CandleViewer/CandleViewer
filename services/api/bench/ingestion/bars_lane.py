@@ -22,8 +22,8 @@ each series (`ensure`) and registers it with the bar set (`register`): no per-us
   second of it (the set's ticker cadence: clock closes, the 60 s state blobs).
 - **Judged by:** budget #8's figure (R1) and its flatness from hour 2 (R2), the cap checks (R3) and,
   on the full profile, the plateau (R4): the Theil-Sen slope of the RSS the lanes add per symbol
-  over the last 12 h of scenario time, at most 0.18 MB/h (`budgets.check_plateau`; the flatness
-  band alone admits about 0.42). The smoke has no such window.
+  over the last 12 h of scenario time, at most 0.18 MB/h, MB a MiB (`budgets.check_plateau`; the
+  flatness band alone admits about 0.42). The smoke has no such window.
 - **Inert series:** the five `delta` series never close here. The feed alternates buy and sell
   prints of 0.001 (`Lane._trade_frame`), so a draft's |delta| stays at or under 0.001, and a delta
   bar closes only once |delta| reaches its threshold, which is 1 or more on the wire. Their
@@ -40,7 +40,9 @@ each series (`ensure`) and registers it with the bar set (`register`): no per-us
   - the tape (`StorageTape`): no watermark replay and no `ahead_of_tape` check on a restore;
   - `start()`: its `sweep_tmp` and its ticker (the engine drives `tick` directly);
   - the one set and one store the app shares across symbols: a lane has its own pair per symbol,
-    so `CAP_GLOBAL` (512 series) is never approached.
+    so `CAP_GLOBAL` (512 series) is never approached;
+  - the indicators sink (E13-T02, composed by `wire_bars`): a reading with it in the lane is owed
+    before the flip (#399).
 """
 
 from __future__ import annotations

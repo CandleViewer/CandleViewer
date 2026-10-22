@@ -311,7 +311,9 @@ def check_plateau(
     headroom up in days. A single step registers only within about 13 minutes of a 12 h window's
     middle, and growth that starts in the last 3.5 h reads 0 (`theil_sen_mb_per_h`): R2's band
     stays the guard for a large step, and a late leak is not seen. Fewer than
-    `PLATEAU_MIN_SAMPLES` samples in the window is no reading, and a hard FAIL."""
+    `PLATEAU_MIN_SAMPLES` samples in the window is no reading, and a hard FAIL. A run shorter
+    than `window_s` is read whole: the registered rule judges a complete run only (1441 samples,
+    a last `t_s` of 86 400), which `docs/qa/perf/e12-bars-store-memory.md` checks apart."""
     end = max((s.t_s for s in samples), default=0.0)
     kept = [s for s in samples if s.t_s >= end - window_s]
     if len(kept) < PLATEAU_MIN_SAMPLES:

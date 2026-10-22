@@ -5,9 +5,10 @@ Status: **harness delivered; the 24 h reading (the fallback, coordinator ruling 
 This record holds the D2-G4 fallback reading (coordinator ruling 4): run 39396280082 was cancelled at its
 2100-minute timeout with no report, so `soak_bars --profile full` ran once on a laptop, as "The reading" says:
 machine profile `laptop-i7-13850HX`, not `cv-bench-01`; 24 h of scenario time in 9 822.5 s of wall time; no
-baseline recorded, and the committed baseline is a smoke run, so its gate compared nothing. The rule that judges it was recorded on #399 before the reading existed and is quoted below. Every cell of the
-reading table comes from the laptop run's report or is computed from its curve; none is invented. `bars_enabled`
-stays off at least until the line passes.
+baseline recorded, and the committed baseline is a smoke run, so its gate compared nothing. The rule that
+judges it was recorded on #399 before the reading existed and is quoted below. Every cell of the reading
+table's 24 h column comes from the laptop run's report or is computed from its curve, and its 1.5 h column is
+quoted from #3861; none is invented. `bars_enabled` stays off at least until the line passes.
 
 The line is D2-G4 of #399's flag checklist: "memory at the 32-spec cap measured in the soak lane before
 `bars_enabled` flips". Does the bars path hold budget #8 (06 §2 row 8, 300 MB a symbol) at 32 specs a
@@ -42,8 +43,9 @@ figure is the RSS the lanes add, per symbol, in MiB. The lane never reads `bars_
 > budget, limit, band or baseline is changed to pass. [...]
 
 The quote is an excerpt of the posted comment. Its first paragraph goes on to list what lies outside the
-figure (restated under "Noted" below) and ends "This text records numbers and sources only."; a second
-paragraph records the coordinator's ruling, and the comment continues after it.
+figure (restated under "Noted" below, with the E13 item brought up to date for #3927) and ends "This text
+records numbers and sources only."; a second paragraph records the coordinator's ruling, and the comment
+continues after it.
 
 Ruled on 20 Oct: the 30-day horizon, so R4 is <= 0.18 MB/h. If run 39396280082 yields no report, a laptop
 `--profile full` run of `soak_bars`, labelled with its machine profile, is the fallback reading, and this
@@ -62,8 +64,9 @@ leak: growth that starts in the last ~3.5 h is under-read, and the table holds t
 Run 39396280082 (`perf-ingestion-nightly`, `profile=full`, runner `cv-bench-01`, machine profile `bench-runner`)
 was cancelled at its 2100-minute timeout; its artifact `e08-perf-pack-full` holds no `e08-full` report, so it
 gives no reading. The fallback: `uv run python -m bench.ingestion.runner soak_bars --profile full` (no
-`--record-baseline`) from `services/api` at `bd82bdce2`, this PR before its rebase and this record's fill (the
-PR's other eight files are identical at its head), machine profile `laptop-i7-13850HX`
+`--record-baseline`) from `services/api` at `bd82bdce2`, this PR before its rebase and this record's fill (at
+its head the PR's runner, scenario file and tests are unchanged, and `budgets.py` and `bars_lane.py` differ
+in docstrings only), machine profile `laptop-i7-13850HX`
 (i7-13850HX, 28 threads, WSL2, Python 3.12), harness `e08-q04/2`, 20:03:11Z to 22:46:53Z on 21 Oct, wall time
 9 822.5 s. Its report (`e08-full-20261021T200311Z.md` and `.json`, kept off the repository) has the check lines
 of the `soak_bars` section, the curve `_curve` (the process RSS in MiB at each of the 1 441 samples) and, because
@@ -100,7 +103,7 @@ verdict.
 | ----------------------------------------------------- | --------------------- | ----------------------------------------------------------------------------- | ------------------------ | ---------------------- |
 | `undetected_loss` (#5; hard, outside R1 to R4)        | 0 events              | the check line                                                                | 0 events                 | not recorded           |
 | R1 `rss_per_symbol_p95`                               | <= 300 MB             | the check line: p95 of the lane-added RSS per symbol                          | 177.6 MB (p50 174.9)     | 169.7 MB (p50 169.2)   |
-| R2 `memory_flatness`                                  | <= 5 %                | the check line: the largest deviation from the hour-2 sample, as a %          | 4.26 %                   | 3.0 %                  |
+| R2 `memory_flatness`                                  | <= 5 %                | the check line: the largest deviation from the hour-2 sample, as a %          | 4.26 %                   | 3.0 % (from 480 s)     |
 | R3 `bars_store_at_cap`                                | 1 000 at every sample | the check line: the fewest bars any series held, at the lowest sample         | 1 000 at all 1 441       | 1 000 at all 91        |
 | R3 `bars_closes_folded`                               | >= 1                  | the check line: the lowest lane                                               | 105 062                  | 6 556                  |
 | R3 `bars_builders_healthy`                            | 0 reasons             | the check line: the count of degraded reasons, named in its note              | 0 reasons                | not yet checked        |
@@ -120,19 +123,23 @@ against 145.6 MB. The R4 figure agrees three ways: the report's `rss_plateau_slo
 - **The shape of the R4 failure, observed and not diagnosed**: the process RSS never falls; it climbs in
   steps with long flat runs (lane-added 170.26, 174.92 and 178.20 MiB a symbol at hours 2, 12 and 24). Over
   hours 12 to 24 four rises above 1 MiB make up 9.63 of the 9.84 MiB the process gained, and least squares
-  over the same window reads +0.285 MB/h a symbol, so the failure is not an artefact of the estimator. One run on one laptop, in a fresh
-  process and not on `cv-bench-01`: the fix and any repeat are separate work on #399.
-- **No row estimate of `bars_time` exists** (SR-E12-02). A time-kind tail read is bounded by span (twice
-  the bars asked for, at most 400 days), not by table rows (`build_tail_scan_bound_query` refuses `time`),
-  and by the 2 s timeout and 8 concurrent reads, under BR-28's Medium residual (RSK-059). It is revisited
-  before `bars_enabled` goes to production, or sooner when a row estimate of `bars_time` exists (#399).
-  The soak's stand-in table does not measure database read cost, so this reading says nothing of it.
+  over the same window reads +0.285 MB/h a symbol, so the failure is not an artefact of the estimator. One
+  run on one laptop, in a fresh process and not on `cv-bench-01`: what follows (a diagnosis, a fix, a repeat
+  on `cv-bench-01`) is separate work on #399.
+- **Time reads at the reading's head** (SR-E12-02): there a time-kind tail read was bounded by span (twice
+  the bars asked for, at most 400 days), not by table rows (`build_tail_scan_bound_query` refused `time`),
+  and by the 2 s timeout and 8 concurrent reads, under BR-28's Medium residual (RSK-059). #4069 (#399 R1),
+  merged after the reading, bounds a time read by table rows as well, which the E12 threat model records
+  as closing that revisit. The soak's stand-in table does not measure database read cost, so this reading
+  says nothing of it.
 - **The five `delta` series never close in the lane**: the feed alternates buy and sell prints of 0.001,
   below the smallest threshold the wire takes. Their hydrated bars are in the level and their fold path is
-  not exercised; the level and R4 are unaffected.
+  not exercised: neither the level nor R4 says anything about that path.
 - **Outside the figure**: the bar writer (up to about 85 MiB a process), the WS publisher, WS delivery
   (#568, #528, after #399), tape replay at restore and E13's indicators sink: E13-T02 (#3927, `4a921a101`)
   added it to `wire_bars` after `e784738b5`, and the reading's head carries it, but the lane composes the
-  store alone (`EmitRouter([self.store])`), so the figure leaves it out. A passing reading stands for the flip
-  while `bars/series_store.py`, `bars/builder_set.py` and `bars/models.py` are as at `e784738b5` and the
-  sink list in `bars_wiring.py` is as at `4a921a101`.
+  store alone (`EmitRouter([self.store])`), so the figure leaves it out. #3927 left the lane as it
+  was (none of its files is under `services/api/bench`), so a `soak_bars` reading with the sink in the lane
+  is owed before the flip (#399). A passing reading stands for the D2-G4 line while `bars/series_store.py`,
+  `bars/builder_set.py` and `bars/models.py` are as at `e784738b5` and the sink list in `bars_wiring.py` is
+  as at `4a921a101`; the flip also waits for the reading with the sink in the lane.
