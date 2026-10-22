@@ -193,6 +193,7 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "CredentialStore",
         "KcvStore",
         "AuthKeyStore",  # #3505: the keyring count port `admin.wiring` hands to M2
+        "ExportKeyStore",  # #889: the export signing keys' store, M2's port (ADR-0039)
         "SecretsLifecycleFacade",
         "SecretsMetadataFacade",
         "SigningCapability",  # #836: the Protocol M4's signer takes, so the signer is injectable

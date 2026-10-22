@@ -1,18 +1,42 @@
-"""Persistence ports for `api_keys` envelope columns, `kek_versions` and `auth_keys` counts.
+"""Persistence ports for `api_keys` envelope columns, `kek_versions`, `auth_keys` counts and
+the audit export signing keys (`audit_signing_keys`).
 
-Records are plain dicts keyed by `CredentialRow` field names, so the Postgres adapter in
+Records are plain dicts, keyed by `CredentialRow` field names (by `audit_signing_keys` column names
+for export keys), so the Postgres adapter in
 M10 (`storage`) satisfies these Protocols structurally without importing M2 (C-3.2).
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import hashlib
+import re
+from collections.abc import Awaitable, Callable, Mapping
+from datetime import UTC, datetime
 from itertools import count
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 from uuid import UUID
 
 #: `(action, fields)` -> durable, hash-chained audit append (write-ahead; raises to refuse).
 AuditSink = Callable[[str, dict[str, str]], Awaitable[None]]
+
+#: An export key's public record (`list_keys`, `rotation`): 22's `AuditSigningKey` but `alg` and
+#: `verified`, which are not stored, plus its environment and version.
+EXPORT_KEY_PUBLIC: Final = (
+    "env", "version", "key_id", "public_key", "fingerprint_sha256", "status", "valid_from",
+    "valid_until", "retired_reason",
+)  # fmt: skip
+#: The active key's sealed record (`active`), which S6 opens: the seed sealed, the DEK wrapped.
+EXPORT_KEY_SEALED: Final = (
+    "id", "env", "version", "key_id", "public_key", "fingerprint_sha256", "sealed_seed",
+    "dek_ref", "kek_version",
+)  # fmt: skip
+RETIRED_REASONS: Final = frozenset({"scheduled", "compromise", "unrecoverable"})
+_REQUEST = ("created_by", "client_ref", "client_body_sha256")
+_DEK_REF = re.compile(r"ek1:[0-9a-f]{120}")
+_KEY_ID = re.compile(r"cv-audit-export-v[1-9][0-9]*:[0-9a-f]{16}")
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+#: A rotation's `200` shows the key it made as it was then (decision 5), even once retired.
+_AS_MADE: Final = {"status": "active", "valid_until": None, "retired_reason": None}
 
 
 class CredentialStore(Protocol):
@@ -73,6 +97,83 @@ class AuthKeyStore(Protocol):
 
     async def count_at_kek_version(self, version: int, env: str) -> int:
         """The rows of `env`, the process's environment, wrapped under KEK `version`."""
+        ...
+
+
+class ExportKeyStore(Protocol):
+    """`audit_signing_keys` (#889 S4, ADR-0039, 21 Sec.3.1.5b): the process environment's audit
+    export signing keys. Bound to it, a store refuses another environment, in a call or a record,
+    before any I/O (C-2.11). It moves sealed bytes only: before any write it refuses a
+    `sealed_seed` that is not 60 bytes and a `dek_ref` that is not `ek1:` and 120 hex, so no
+    plaintext seed or DEK is stored (C-2.7). A key record carries `id`, `env`, `version`, `key_id`,
+    `public_key`, `sealed_seed`, `dek_ref` and `kek_version`; the store derives the fingerprint
+    from `public_key` and refuses a `key_id` that is not the one derived (`ask_key_id`), so the id
+    the seal binds is the row's. A rotation's record also carries its request: `created_by`,
+    `client_ref` (stored as canonical lower-case UUID text) and `client_body_sha256` (decision 5).
+    `audit` is the `(action, fields)` record committed with the change (C-2.9); its event time is
+    the change's."""
+
+    async def active(self, env: str) -> dict[str, Any] | None:
+        """The active key's `EXPORT_KEY_SEALED` record, which S6 opens, or None. Its `env` is the
+        row's own, never the argument."""
+        ...
+
+    async def list_keys(self, env: str) -> list[dict[str, Any]]:
+        """Every key of `env` as an `EXPORT_KEY_PUBLIC` record, newest first: no seed, no wrap."""
+        ...
+
+    async def insert_first(
+        self, record: dict[str, Any], *, audit: tuple[str, dict[str, str]]
+    ) -> bool:
+        """The environment's first key, version 1, active from its record's time, committed with
+        that record. False, nothing written, when it has a key: another boot won (no second v1)."""
+        ...
+
+    async def rotate(
+        self,
+        record: dict[str, Any],
+        *,
+        retire: str,
+        reason: str,
+        audit: tuple[str, dict[str, str]],
+    ) -> dict[str, Any] | None:
+        """One transaction: the record's time T; the active key whose `key_id` is `retire` retired
+        at T for `reason` and its seed destroyed (Q3), in one write; `record` inserted active from
+        T, its version the retired key's plus one, which is the highest plus one; the record;
+        commit. Returns the rotation's `200` as `rotation` rebuilds it, or None, nothing written,
+        when `retire` is not the active key. Any failure rolls back all of it."""
+        ...
+
+    async def rotation(
+        self, env: str, *, created_by: UUID, client_ref: str
+    ) -> dict[str, Any] | None:
+        """The durable idempotency read (decision 5), by `(env, created_by, client_ref)` only and
+        at any age: `active`, the key the request made, as it was then; `retired`, the key one
+        version lower; and the request's `client_body_sha256`, which the caller compares (409
+        `idempotency_key_reuse`). None for another user's or environment's request (SR-E29-07)."""
+        ...
+
+    async def count_at_kek_version(self, version: int, env: str) -> int:
+        """The keys of `env` holding a seed, wrapped under KEK `version`: what a KEK re-wrap must
+        still move. A destroyed seed has nothing to re-wrap (Q3)."""
+        ...
+
+    async def rewrap(
+        self, key_id: str, *, env: str, from_version: int, dek_ref: str, kek_version: int
+    ) -> bool:
+        """Compare-and-set on `kek_version` of the key `key_id` of `env` while it holds its seed;
+        True iff this call moved it. The caller records it ahead through `AuditSink` (C-2.9); S6 may
+        pass an in-transaction record instead."""
+        ...
+
+    async def count_retired_with_seed(self, env: str) -> int:
+        """Retired keys of `env` still holding a seed: Q3's `retired_with_seed` finding (I2)."""
+        ...
+
+    async def destroy_retired_seeds(self, env: str) -> int:
+        """Q3's retried destroy: every retired key of `env` loses its seed. How many did. The caller
+        records it ahead through `AuditSink` (C-2.9); S6 may pass an in-transaction record
+        instead."""
         ...
 
 
@@ -205,3 +306,178 @@ class InMemoryAuthKeyStore:
         if env != self.env:
             raise ValueError("the auth key store serves only the process environment")
         return sum(r["env"] == env and r["kek_version"] == version for r in self.rows)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _wrapped(ref: object) -> bool:
+    return isinstance(ref, str) and _DEK_REF.fullmatch(ref) is not None
+
+
+def _canonical(ref: object) -> str:
+    """An `Idempotency-Key` as `ask_client_ref` stores it; `ValueError` for no UUID."""
+    return str(UUID(str(ref)))
+
+
+def _key_id(value: object) -> str:
+    """A key id as `ask_key_id` shapes it; `ValueError` for anything else, before any I/O."""
+    if not isinstance(value, str) or _KEY_ID.fullmatch(value) is None:
+        raise ValueError("an export key is named by its key id, cv-audit-export-v<N>:<16 hex>")
+    return value
+
+
+def _public(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: row[k] for k in EXPORT_KEY_PUBLIC}
+
+
+def _rotation(new: Mapping[str, Any], old: Mapping[str, Any]) -> dict[str, Any]:
+    made = {"active": _public(new) | _AS_MADE, "retired": _public(old)}
+    return made | {"client_body_sha256": new["client_body_sha256"]}
+
+
+def _key_row(record: Mapping[str, Any], *, request: bool) -> dict[str, Any]:
+    """`record`'s columns, refused (`ValueError`) as every store refuses them before any write: a
+    seed that is not 60 sealed bytes, a DEK that is not `ek1:` and 120 hex, a rotation's request
+    incomplete. `client_ref` is made canonical; a first key carries no request."""
+    row = {k: record[k] for k in EXPORT_KEY_SEALED if k != "fingerprint_sha256"}
+    seed = row["sealed_seed"]
+    if type(seed) is not bytes or len(seed) != 60 or not _wrapped(row["dek_ref"]):
+        raise ValueError("an export key is stored only sealed: a 60-byte seed, an ek1 DEK wrap")
+    if type(row["kek_version"]) is not int or row["kek_version"] < 1:
+        raise ValueError("ask_kek_version")
+    row |= {k: record.get(k) if request else None for k in _REQUEST}
+    if request and (row["created_by"] is None or row["client_body_sha256"] is None):
+        raise ValueError("a rotated export key carries its request")
+    body = row["client_body_sha256"]
+    if request and (not isinstance(body, str) or _SHA256_HEX.fullmatch(body) is None):
+        raise ValueError("sha256_hex")
+    return row | ({"client_ref": _canonical(row["client_ref"])} if request else {})
+
+
+class InMemoryExportKeyStore:
+    """Test fake for `ExportKeyStore`: `rows` holds `audit_signing_keys` rows of any environment
+    and `audit` each record committed with a change. Bound to one environment, it refuses what a
+    store and the table (21 Sec.3.1.5b) refuse. `clock` gives a change's time; while
+    `audit_fails` is set, a record fails and so does the change it records."""
+
+    def __init__(self, env: str = "demo", clock: Callable[[], datetime] = _now) -> None:
+        self.env, self.clock = env, clock
+        self.rows: list[dict[str, Any]] = []
+        self.audit: list[tuple[str, dict[str, str]]] = []
+        self.audit_fails = False
+
+    def _mine(self, env: object) -> list[dict[str, Any]]:
+        if env != self.env:
+            raise ValueError("the export key store serves only the process environment")
+        return [r for r in self.rows if r["env"] == env]
+
+    def _checked(self, row: dict[str, Any]) -> str:
+        """`row`'s fingerprint, or the refusal of `ask_public_key` or `ask_key_id`: CHECKs, which
+        Postgres fires before any unique key."""
+        if type(row["public_key"]) is not bytes or len(row["public_key"]) != 32:
+            raise ValueError("ask_public_key")
+        fp = hashlib.sha256(row["public_key"]).hexdigest()
+        if row["key_id"] != f"cv-audit-export-v{row['version']}:{fp[:16]}":
+            raise ValueError("ask_key_id")
+        return fp
+
+    def _new(self, row: dict[str, Any], at: datetime) -> dict[str, Any]:
+        """`row` as the table inserts it, active from `at`, or the refusal of a CHECK or of a unique
+        key of 21 Sec.3.1.5b (the version, the fingerprint, the request)."""
+        fp, ref = self._checked(row), row["client_ref"]
+        for r in self._mine(row["env"]):
+            same = (r["created_by"], r["client_ref"]) == (row["created_by"], ref)
+            if r["version"] == row["version"] or r["fingerprint_sha256"] == fp or (same and ref):
+                raise ValueError("an export key's version, fingerprint and request are unique")
+        return row | {"fingerprint_sha256": fp, "status": "active", "valid_from": at} | _AS_MADE
+
+    def _commit(self, rows: list[dict[str, Any]], audit: tuple[str, dict[str, str]]) -> None:
+        """The change and its record, or neither: one transaction."""
+        if self.audit_fails:
+            raise RuntimeError("audit record not written")
+        self.audit.append((audit[0], dict(audit[1])))
+        self.rows = rows
+
+    def _seeded(self, env: str) -> list[dict[str, Any]]:
+        return [r for r in self._mine(env) if r["sealed_seed"] is not None]
+
+    async def active(self, env: str) -> dict[str, Any] | None:
+        live = (r for r in self._mine(env) if r["status"] == "active")
+        return next(({k: r[k] for k in EXPORT_KEY_SEALED} for r in live), None)
+
+    async def list_keys(self, env: str) -> list[dict[str, Any]]:
+        return [_public(r) for r in sorted(self._mine(env), key=lambda r: -r["version"])]
+
+    async def insert_first(
+        self, record: dict[str, Any], *, audit: tuple[str, dict[str, str]]
+    ) -> bool:
+        mine, row = self._mine(record.get("env")), _key_row(record, request=False)
+        if row["version"] != 1:
+            raise ValueError("an environment's first export key is version 1")
+        self._checked(row)  # the CHECKs before the unique key, as Postgres fires them
+        if mine:
+            return False
+        self._commit([*self.rows, self._new(row, self.clock())], audit)
+        return True
+
+    async def rotate(
+        self,
+        record: dict[str, Any],
+        *,
+        retire: str,
+        reason: str,
+        audit: tuple[str, dict[str, str]],
+    ) -> dict[str, Any] | None:
+        mine, row = self._mine(record.get("env")), _key_row(record, request=True)
+        _key_id(retire)
+        if reason not in RETIRED_REASONS:
+            raise ValueError("a retired_reason of 22's three")
+        at = self.clock()
+        old = next((r for r in mine if r["key_id"] == retire and r["status"] == "active"), None)
+        if old is None:
+            return None
+        if not row["version"] == old["version"] + 1 == max(r["version"] for r in mine) + 1:
+            raise ValueError("a rotation steps the export key version by one")
+        gone = {"status": "retired", "valid_until": at, "retired_reason": reason}
+        retired, new = old | gone | {"sealed_seed": None}, self._new(row, at)
+        self._commit([retired if r is old else r for r in self.rows] + [new], audit)
+        return _rotation(new, retired)
+
+    async def rotation(
+        self, env: str, *, created_by: UUID, client_ref: str
+    ) -> dict[str, Any] | None:
+        mine, request = self._mine(env), (created_by, _canonical(client_ref))
+        new = next((r for r in mine if (r["created_by"], r["client_ref"]) == request), None)
+        if new is None:
+            return None
+        (old,) = (r for r in mine if r["version"] == new["version"] - 1)
+        return _rotation(new, old)
+
+    async def count_at_kek_version(self, version: int, env: str) -> int:
+        return sum(r["kek_version"] == version for r in self._seeded(env))
+
+    async def rewrap(
+        self, key_id: str, *, env: str, from_version: int, dek_ref: str, kek_version: int
+    ) -> bool:
+        seeded, _ = self._seeded(env), _key_id(key_id)
+        if not _wrapped(dek_ref):
+            raise ValueError("a DEK is stored only wrapped: ek1 and 120 hex")
+        for r in seeded:
+            if (r["key_id"], r["kek_version"]) == (key_id, from_version):
+                # the row the UPDATE would change: its trigger pairs the two, its CHECK the version
+                if type(kek_version) is not int or kek_version < 1 or kek_version == from_version:
+                    raise ValueError("a re-wrap moves the DEK and its KEK version together")
+                r["dek_ref"], r["kek_version"] = dek_ref, kek_version
+                return True
+        return False  # no row matched: a stale or replayed call, as in SQL
+
+    async def count_retired_with_seed(self, env: str) -> int:
+        return sum(r["status"] == "retired" for r in self._seeded(env))
+
+    async def destroy_retired_seeds(self, env: str) -> int:
+        held = [r for r in self._seeded(env) if r["status"] == "retired"]
+        for r in held:
+            r["sealed_seed"] = None
+        return len(held)
