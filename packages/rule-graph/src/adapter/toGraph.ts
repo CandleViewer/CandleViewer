@@ -16,9 +16,9 @@ export const SLOTS = {
 const KIND_OF = { children: "logicGate", child: "temporal", operands: "arithmetic" } as const;
 const GRAPH_KEYS = ["trigger", "conditions", "actions", "graph_layout"];
 
-const isTree = (value: unknown): value is Tree =>
+export const isTree = (value: unknown): value is Tree =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const isNode = (value: unknown): value is Tree => isTree(value) && "node_id" in value;
+const isNode = (v: unknown): v is Tree => isTree(v) && typeof v["node_id"] === "string";
 
 /** A stored `graph_layout` as a GraphLayout; keys it does not know are kept in `extra`. */
 export function readLayout(stored: unknown): GraphLayout {
@@ -39,7 +39,12 @@ export const nodesNeedingLayout = (graph: GraphModel, layout: GraphLayout): stri
  * shared node, one subtree under one `node_id`, is one node with an edge per use; any other reuse
  * of an id is refused, never merged.
  */
-export function toGraph(ir: RuleIr, layout = readLayout(ir.graph_layout)): GraphModel {
+export function toGraph(ir: RuleIr, layout?: GraphLayout): GraphModel {
+  const doc: unknown = ir; // the shape first, so a malformed IR is refused rather than misread
+  const actions = isTree(doc) ? doc["actions"] : undefined;
+  const listed = Array.isArray(actions) && actions.length > 0 && actions.every(isNode);
+  const shaped = listed && isTree((doc as Tree)["trigger"]) && isNode((doc as Tree)["conditions"]);
+  check(shaped, "SCHEMA_VIOLATION", "$: a rule IR has a trigger, a root condition and actions.");
   checkBounds(ir);
   const envelope = Object.fromEntries(Object.entries(ir).filter(([k]) => !GRAPH_KEYS.includes(k)));
   const nodes: GraphNode[] = [{ id: "trigger", type: "trigger", data: { ...ir.trigger } }];
@@ -77,7 +82,7 @@ export function toGraph(ir: RuleIr, layout = readLayout(ir.graph_layout)): Graph
   }
   const root: Tree = { ...ir.conditions };
   for (const action of ir.actions) visit(root, action.node_id, "when");
-  for (const { id, ...data } of layout.comments) {
+  for (const { id, ...data } of (layout ?? readLayout(ir.graph_layout)).comments) {
     fresh(id, data, false);
     nodes.push({ id, type: "comment", data });
   }

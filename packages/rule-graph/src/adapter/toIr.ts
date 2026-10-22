@@ -3,8 +3,9 @@
 // that keeps all of it is refused. Pure and synchronous.
 import { MAX_VALUES, checkBounds } from "../canonical/schema.js";
 import { check } from "../errors.js";
-import type { CommentNode, GraphLayout, GraphModel, GraphNode, RuleIrDraft } from "../model.js";
-import { SLOTS, type Tree } from "./toGraph.js";
+import type { CommentNode, GraphEdge, GraphLayout, GraphModel, GraphNode } from "../model.js";
+import type { RuleIrDraft } from "../model.js";
+import { SLOTS, type Tree, isTree } from "./toGraph.js";
 
 const SV = "SCHEMA_VIOLATION";
 /** Per node kind (a condition's `data.kind`, else the node type): its type, then its inputs. */
@@ -18,24 +19,33 @@ const KINDS: Readonly<Record<string, readonly string[]>> = {
   arithmetic: ["condition", "in"],
 };
 const BLANK: GraphLayout = { positions: {}, collapsed: [], comments: [], extra: {} };
+const named = (...ids: unknown[]) => ids.filter((id): id is string => typeof id === "string");
 
-/** The IR of `graph`, which stores `layout` with the graph's comments as its `graph_layout`. */
+/**
+ * The IR of `graph`, which stores `layout` with the graph's comments as its `graph_layout`. The
+ * layout defaults to an empty one, so stored positions need the caller's layout passed in.
+ */
 export function toIr(graph: GraphModel, layout = BLANK): { ir: RuleIrDraft; layout: GraphLayout } {
-  const { nodes, edges } = graph; // within the server's caps (rules/compiler/common.py:19-20)
-  check(nodes.length <= 1_000 && edges.length <= 4_000, SV, "Over 1 000 nodes or 4 000 edges.");
+  const { nodes = [], edges = [] }: Partial<GraphModel> = isTree(graph) ? graph : {};
+  // Lists, within the server's caps (rules/compiler/common.py:19-20).
+  const fits = Array.isArray(nodes) && Array.isArray(edges) && nodes.length <= 1_000;
+  check(fits && edges.length <= 4_000, SV, "Over 1 000 nodes or 4 000 edges, or not lists.");
   const kinds = new Map<string, string>();
-  for (const { id, type, data } of nodes) {
-    const kind = String(type === "condition" ? data["kind"] : type);
-    const known = !kinds.has(id) && KINDS[kind]?.[0] === type;
-    check(known, SV, `Node ${id} is a repeat, or of no known kind.`, [id]);
+  for (const node of nodes) {
+    const { id, type, data } = (isTree(node) ? node : {}) as GraphNode;
+    const kind = String(type === "condition" ? data?.["kind"] : type);
+    const known =
+      typeof id === "string" && isTree(data) && !kinds.has(id) && KINDS[kind]?.[0] === type;
+    check(known, SV, `Node ${id} is malformed, a repeat or of no known kind.`, named(id));
     kinds.set(id, kind);
   }
   const fed = new Map<string, string[]>(); // [target, port]: the sources, in edge order
   const slot = (target: string, port: string) => JSON.stringify([target, port]);
-  for (const { id, source, target, targetPort: port } of edges) {
+  for (const edge of edges) {
+    const { id, source, target, targetPort: port } = (isTree(edge) ? edge : {}) as GraphEdge;
     const [from, to] = [String(kinds.get(source)), String(kinds.get(target))];
     const joins = from in SLOTS && Number(KINDS[to]?.indexOf(port)) > 0;
-    check(joins, SV, `Edge ${id} does not join a condition to an input.`, [source, target]);
+    check(joins, SV, `Edge ${id} does not join a condition to an input.`, named(source, target));
     fed.set(slot(target, port), [...(fed.get(slot(target, port)) ?? []), source]);
   }
   const triggers = nodes.filter((node) => node.type === "trigger");
@@ -50,28 +60,36 @@ export function toIr(graph: GraphModel, layout = BLANK): { ir: RuleIrDraft; layo
   }
   const sinks = [...roots];
   check(sinks.length < 2, "MULTIPLE_SINKS", `The actions hang off ${sinks.join(", ")}.`, sinks);
+  const twice = actions.find(({ id }) => (fed.get(slot(id, "when")) as string[]).length > 1)?.id;
+  const repeat = `Action ${twice} has more than one condition feeding it.`; // graph.py:166-174
+  check(twice === undefined, "MULTIPLE_SINKS", repeat, [String(twice)]);
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const built = new Set<string>();
-  let budget = MAX_VALUES;
+  let budget = MAX_VALUES; // the values the copies add, each charged before it is made
+  const over = `The graph expands past ${MAX_VALUES} values.`;
+  const spend = (n: number) => check((budget -= n) >= 0, SV, over);
   const build = (id: string, path: readonly string[]): Tree => {
     const cycle = path.slice(path.indexOf(id)); // from `id` back to it, if it repeats
     const loop = `The graph has a cycle: ${[...cycle, id].join(" -> ")}.`;
     check(!path.includes(id), "CYCLE_DETECTED", loop, cycle);
-    check(--budget >= 0, SV, `The graph expands past ${MAX_VALUES} nodes.`);
+    const { data } = byId.get(id) as GraphNode;
+    spend(1 + Object.keys(data).length); // a copy adds at least as many: never past checkBounds
     built.add(id);
-    const out: Tree = { ...(byId.get(id) as GraphNode).data };
+    const out: Tree = { ...data };
     delete out["kind"];
     for (const [key, port] of Object.entries(SLOTS[kinds.get(id) as keyof typeof SLOTS])) {
       const sources = [...(fed.get(slot(id, port)) ?? [])];
-      const value = out[key];
       const next = () => build(sources.shift() as string, [...path, id]);
-      if (Array.isArray(value)) {
-        const fits = value.filter((item) => item === null).length === sources.length;
-        check(fits, SV, `Node ${id} needs one ${port} edge per empty slot.`, [id]);
-        out[key] = value.map((item) => (item === null ? next() : item));
+      if (port === "in") {
+        const list = out[key] ?? sources.map(() => null); // none: a slot per edge, as the server
+        const holes = Array.isArray(list) ? list.filter((item) => item === null).length : -1;
+        check(holes === sources.length, SV, `Node ${id} needs an edge per empty slot.`, [id]);
+        spend((list as unknown[]).length - holes);
+        out[key] = (list as unknown[]).map((item) => (item === null ? next() : item));
       } else if (sources.length > 0) {
-        const once = sources.length === 1 && value === undefined;
+        const once = sources.length === 1 && out[key] == null; // an edge fills a null input
         check(once, SV, `Node ${id} has two values for its ${port} input.`, [id]);
+        budget += Number(key in out); // refund the null the edge replaces: its node is charged
         out[key] = next();
       }
     }
