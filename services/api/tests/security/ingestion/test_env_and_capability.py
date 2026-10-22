@@ -22,6 +22,9 @@ from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.public_ws import PUBLIC_WS_URLS
 
 # nosemgrep: cv-adapter-isolation reason=X02 owner=@CandleViewer/security review=2026-12-31
+from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
+
+# nosemgrep: cv-adapter-isolation reason=X02 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.rest import BybitRestClient
 
 # nosemgrep: cv-adapter-isolation reason=X02 owner=@CandleViewer/security review=2026-12-31
@@ -34,7 +37,14 @@ from tests._signing import CREDENTIAL_ID, fake_capability
 PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 #: Every module on the public market-data ingestion path (ticket repo paths).
 INGESTION_PATH = ("ingestion", "book", "bars", "orderflow", "recorder", "replay")
-TRADING_NAMES = {"TradingPort", "signed_request", "BybitSigner", "place_order", "cancel_all"}
+TRADING_NAMES = {
+    "TradingPort",
+    "signed_request",
+    "BybitSigner",
+    "place_order",
+    "cancel_all",
+    "trading_port",  # G-8 (#2877): the adapter's factory of the trading port
+}
 TRADING_PATHS = ("/v5/order/", "/v5/position/", "/v5/asset/")
 
 
@@ -71,6 +81,7 @@ async def test_relative_paths_stay_on_configured_host() -> None:
     rec = _Rec()
     async with BybitRestClient(
         RestClientConfig(base_url="https://api-demo.bybit.com"),
+        governor=TokenBucketGovernor(),
         transport=httpx.MockTransport(rec),
     ) as c:
         await c.get_public("/v5/market/time")
@@ -83,11 +94,12 @@ async def test_absolute_path_cannot_escape_base_url() -> None:
     async with BybitRestClient(
         RestClientConfig(base_url="https://api.bybit.com"),
         signer=signer,
+        governor=TokenBucketGovernor(),
         transport=httpx.MockTransport(rec),
     ) as c:
         for p in ("https://api-demo.bybit.com/v5/x", "//evil.example/v5/x"):
             with pytest.raises((ValueError, TypeError)):
-                await c.signed_request("GET", p)
+                await c.signed_request("GET", p, lane="poll")
     assert rec.hosts == []
 
 
@@ -98,15 +110,17 @@ def test_public_ws_hosts_never_mix_envs() -> None:
 
 
 def test_public_rest_client_is_credential_less() -> None:
-    client = ExchangeBybitService.public_rest_client("demo")
+    client = ExchangeBybitService().public_rest_client("demo")
     assert client._signer is None and client._config.base_url == "https://api.bybit.com"
 
 
 async def test_public_client_cannot_sign() -> None:
-    client = ExchangeBybitService.public_rest_client("live")
+    client = ExchangeBybitService().public_rest_client("live")
     async with client:
         with pytest.raises(TypeError):
-            await client.signed_request("POST", "/v5/order/create", body={"orderLinkId": "x"})
+            await client.signed_request(
+                "POST", "/v5/order/create", body={"orderLinkId": "x"}, lane="entry"
+            )
 
 
 def _imports(module_dir: Path) -> list[tuple[Path, str]]:

@@ -6,17 +6,19 @@ deterministic, injected clocks, no network (C-13.5). The pack asserts the **boun
 survives refactors behind it and is reusable verbatim by a second exchange adapter
 (`24-internal-schemas.md` §14.2 rule 5).
 
-| Module                         | Stream / concern                                                          | E08-Q01 cases                      |
-| ------------------------------ | ------------------------------------------------------------------------- | ---------------------------------- |
-| `test_contract_trades.py`      | `publicTrade` -> `TradePrint` -> `TradeEvent`, dedupe, malformed prints   | D01-D05                            |
-| `test_contract_orderbook.py`   | `orderbook.N` -> `BookSnapshot`/`BookDelta`, gap = invalidate, truncation | E01-E04, E06, E07                  |
-| `test_contract_ticker.py`      | `tickers` snapshot/delta merge                                            | C01-C03                            |
-| `test_contract_kline.py`       | kline pages, boundary, split-point property                               | F01, F02                           |
-| `test_contract_instruments.py` | `instruments-info` filters, delisting, tick change                        | A01, A02, A08, A10, B-group inputs |
-| `test_contract_errors.py`      | `10018`/`10002`/`10001`/5xx/HTML -> internal taxonomy                     | F03, F06, A10                      |
-| `test_contract_clock.py`       | server-time fixture -> `ClockGuard` offset                                | F04                                |
-| `test_contract_leakage.py`     | P3: no Bybit vocabulary outside `exchange/bybit/`; parse-time guard       | all                                |
-| `test_contract_feed_rot.py`    | field-manifest drift guard, fixture coverage meta-test, secret scan       | R6                                 |
+| Module                           | Stream / concern                                                              | E08-Q01 cases                      |
+| -------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------- |
+| `test_contract_trades.py`        | `publicTrade` -> `TradePrint` -> `TradeEvent`, dedupe, malformed prints       | D01-D05                            |
+| `test_contract_orderbook.py`     | `orderbook.N` -> `BookSnapshot`/`BookDelta`, gap = invalidate, truncation     | E01-E04, E06, E07                  |
+| `test_contract_ticker.py`        | `tickers` snapshot/delta merge                                                | C01-C03                            |
+| `test_contract_kline.py`         | kline pages, boundary, split-point property                                   | F01, F02                           |
+| `test_contract_instruments.py`   | `instruments-info` filters, delisting, tick change                            | A01, A02, A08, A10, B-group inputs |
+| `test_contract_errors.py`        | `10018`/`10002`/`10001`/5xx/HTML -> internal taxonomy                         | F03, F06, A10                      |
+| `test_contract_clock.py`         | server-time fixture -> `ClockGuard` offset                                    | F04                                |
+| `test_contract_leakage.py`       | P3: no Bybit vocabulary outside `exchange/bybit/`; parse-time guard           | all                                |
+| `test_contract_feed_rot.py`      | field-manifest drift guard, fixture coverage meta-test, secret scan           | R6                                 |
+| `test_contract_trading.py`       | order-path shapes, docs-transcribed (#2877 ruling R2), parsed field for field | none: G-8 (#2877)                  |
+| `test_contract_trading_drift.py` | each transcription against every recording of its route and code              | none: G-8 (#2877)                  |
 
 Added in review round 2: `test_contract_precision.py` (B01-B07), `test_contract_catalogue.py`
 (A02-A04, A08, A09), `test_contract_streams_extra.py` (C01-C04, C06, D04, E04),

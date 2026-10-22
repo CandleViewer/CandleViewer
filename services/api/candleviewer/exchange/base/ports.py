@@ -6,12 +6,12 @@ in-memory adapter (`FakeExchange`, `exchange/base/fakes.py`) and the real
 the exchange adapter (E08-T02+) both satisfy these protocols
 without sharing a base class or importing each other (C-2.2).
 
-`TradingPort` is declared here so its shape is fixed and reviewable now, but
-it is **not implemented** in this ticket (E08-T01) — the concrete OMS-facing
-implementation is E29's scope. `MarketDataPort` is `@runtime_checkable` so
-`isinstance(adapter, MarketDataPort)` is a valid structural check (used by
-the acceptance test and downstream consumers that want a cheap sanity check
-before wiring a fake into a unit test).
+`TradingPort` was declared by E08-T01 so its shape was fixed before the OMS;
+G-8 (#2877, E29-X01) implements it in the exchange adapter's package and in
+memory (`FakeTradingPort`, `exchange/base/fakes.py`). Both ports are
+`@runtime_checkable`, so `isinstance(adapter, MarketDataPort)` is a valid
+structural check (used by the acceptance test and downstream consumers that
+want a cheap sanity check before wiring a fake into a unit test).
 """
 
 from __future__ import annotations
@@ -43,6 +43,8 @@ from .models import (
     PlaceOrderRequest,
     Position,
     PrivateEvent,
+    RateHeadroom,
+    RateLane,
     RiskLimitTier,
     TickerEvent,
     TradeEvent,
@@ -50,7 +52,7 @@ from .models import (
     Wallet,
 )
 
-__all__ = ["MarketDataPort", "TradingPort"]
+__all__ = ["MarketDataPort", "RateHeadroomPort", "TradingPort"]
 
 
 @runtime_checkable
@@ -118,11 +120,10 @@ class StreamForTopic(Protocol):
 
 @runtime_checkable
 class TradingPort(Protocol):
-    """§14.1. Account-scoped order entry and reads. **Declared only** in
-    this ticket (E08-T01 scope, ticket body "Out of scope") — building a
-    conforming implementation, the exchange or otherwise, is E29's job. Declaring
-    it now lets E29 be authored against a signature that has already been
-    reviewed rather than inventing one under deadline."""
+    """§14.1. Account-scoped order entry and reads, every call on the account's own
+    environment (C-2.11). The id filters of `open_orders` and `order_history` are
+    keyword-only (#846 ruling Q5, §8.5): an implementation sends them and filters the
+    rows again itself, and an `ext-` key never goes on the wire (§14.2 rule 11)."""
 
     capabilities: ExchangeCapabilities
 
@@ -145,7 +146,11 @@ class TradingPort(Protocol):
     ) -> None: ...
 
     async def open_orders(
-        self, account: AccountRef, symbol: Symbol | None = None
+        self,
+        account: AccountRef,
+        symbol: Symbol | None = None,
+        *,
+        order_link_id: OrderLinkId | None = None,
     ) -> Sequence[Order]: ...
 
     async def order_history(
@@ -153,6 +158,7 @@ class TradingPort(Protocol):
         account: AccountRef,
         *,
         order_link_id: OrderLinkId | None = None,
+        exchange_order_id: str | None = None,
         start: TsUs | None = None,
         end: TsUs | None = None,
     ) -> Sequence[Order]: ...
@@ -174,3 +180,13 @@ class TradingPort(Protocol):
     async def account_info(self, account: AccountRef) -> AccountInfo: ...
 
     async def subscribe_private(self, account: AccountRef) -> AsyncIterator[PrivateEvent]: ...
+
+
+@runtime_checkable
+class RateHeadroomPort(Protocol):
+    """§14.1, beside `TradingPort` and not part of it: the local rate budget of an account's lane,
+    read without taking a token or sending anything (#2877 ruling 4). It reads no exchange, so
+    it is no `TradingPort` call; the OMS's own `RateHeadroom` port binds to it (E29-T04), so B1's
+    `rate` verdict needs no governor of its own (C-2.2), until E34-T02's `reserve()`."""
+
+    def headroom(self, account: AccountRef, lane: RateLane) -> RateHeadroom: ...

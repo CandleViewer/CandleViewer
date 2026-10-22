@@ -38,6 +38,7 @@ from candleviewer.exchange.bybit.public_ws import (
     public_socket_factory,
     topic_kind,
 )
+from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.ticker import parse_ticker_frame, ticker_topic
 from candleviewer.exchange.bybit.trades import (
@@ -45,6 +46,7 @@ from candleviewer.exchange.bybit.trades import (
     recent_trades_fetcher,
     trade_topic,
 )
+from candleviewer.exchange.bybit.trading import DEFAULT_ENTRY_WAIT_S, BybitTradingPort
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.secrets import WithdrawPermissionRejected
 
@@ -84,7 +86,10 @@ class ExchangeBybitService:
         #: M2 computes the request MAC (`credentials.sign(...)`) and returns the key id,
         #: never the secret (C-2.7, #2339). Never minted here.
         self._credentials = credentials
-        self._verify_governor = verification_governor()
+        #: OM-D08 (#2877 ruling R5): the process's one governor, so its IP bucket and `10018`
+        #: hold cover every REST client built here, public, trading and key verification alike.
+        self._governor = TokenBucketGovernor()
+        self._verify_governor = verification_governor(self._governor)
         #: #2893 S4: the transport of every account REST client built here, chosen once. None in
         #: production, so httpx keeps its own; the composition root passes the dev-only account
         #: fixture's only when `CV_ACCOUNT_FIXTURE` is set, and the clients get a view of it that
@@ -146,12 +151,11 @@ class ExchangeBybitService:
         """E08-T04: unauthenticated public-stream socket factory for `env`."""
         return public_socket_factory(env, max_frame_bytes=max_frame_bytes)
 
-    @staticmethod
-    def public_rest_client(env: str) -> BybitRestClient:
-        """E04-T06: credential-less public REST client (server-time probe).
-        Public data always uses the live host (demo has no public feed)."""
+    def public_rest_client(self, env: str) -> BybitRestClient:
+        """E04-T06: credential-less public REST client (server-time probe), on the process's
+        one governor (OM-D08). Public data always uses the live host (demo has no public feed)."""
         base = "https://api-testnet.bybit.com" if env == "testnet" else "https://api.bybit.com"
-        return BybitRestClient(RestClientConfig(base_url=base))
+        return BybitRestClient(RestClientConfig(base_url=base), governor=self._governor)
 
     @staticmethod
     def kline_fetcher(
@@ -160,11 +164,12 @@ class ExchangeBybitService:
         """E12-S05: validated kline pages over a public governed client (`MARKET_DATA`)."""
         return BybitKlineFetcher(client, tick_size_for)
 
-    @classmethod
-    def funding_fetcher(cls, env: str) -> tuple[BybitFundingFetcher, Callable[[], Awaitable[None]]]:
+    def funding_fetcher(
+        self, env: str
+    ) -> tuple[BybitFundingFetcher, Callable[[], Awaitable[None]]]:
         """E24-T02-F1: settled-funding history fetcher over a governed public REST
         client (`MARKET_DATA` bucket) plus the closer for that client."""
-        client = cls.public_rest_client(env)
+        client = self.public_rest_client(env)
         return BybitFundingFetcher(client), client.aclose
 
     #: E27-T03: `(reason, code)` when a key-verification refusal is a verdict about the key.
@@ -197,6 +202,32 @@ class ExchangeBybitService:
             raise ValueError("not this process's environment")
         return await self._ws_probe.probe(
             self._credentials, env, credential_id, clock_offset_ms=clock_offset_ms
+        )
+
+    def trading_port(
+        self,
+        env: str,
+        *,
+        clock_offset_ms: Callable[[], int] | None = None,
+        entry_wait_s: float = DEFAULT_ENTRY_WAIT_S,
+    ) -> BybitTradingPort:
+        """G-8 (#2877): the exchange `TradingPort` of this process's environment only (C-2.11),
+        signed by M2 under `sign_rest`, on the process's one governor (OM-D08) and the adapter's
+        account REST transport (#2893 S4); `entry_wait_s` bounds an `entry` token wait (24 §8.7).
+        Any other environment is refused before a client exists, and testnet, which has no
+        capability record (ruling R6), is refused too. A factory, not trading methods: the
+        service itself trades nothing."""
+        if self._credentials is None:
+            raise RuntimeError("no signing capability is wired")
+        if env != self._environment:
+            raise ValueError("not this process's environment")
+        return BybitTradingPort(
+            environment=env,
+            credentials=self._credentials,
+            governor=self._governor,
+            transport=self._rest_transport,
+            clock_offset_ms=clock_offset_ms,
+            entry_wait_s=entry_wait_s,
         )
 
     def key_verification_calls(

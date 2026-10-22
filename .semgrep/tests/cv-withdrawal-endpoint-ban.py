@@ -19,6 +19,42 @@ def bad_raw_path(session: object) -> None:
     session.post("/v5/asset/withdraw/create", json={})  # ruleid: cv-withdrawal-endpoint-ban
 
 
+def bad_update_master_key(client: object) -> None:
+    client.signed_request("POST", "/v5/user/update-api", body={})  # ruleid: cv-withdrawal-endpoint-ban
+
+
+def bad_update_sub_key(client: object) -> None:
+    client.signed_request("POST", "/v5/user/update-sub-api", body={})  # ruleid: cv-withdrawal-endpoint-ban
+
+
+def bad_create_sub_key(client: object) -> None:
+    client.signed_request("POST", '/v5/user/create-sub-api', body={})  # ruleid: cv-withdrawal-endpoint-ban
+
+
+def bad_host_qualified_key_edit(client: object) -> None:
+    client.post("https://venue.example/v5/user/update-api", json={})  # ruleid: cv-withdrawal-endpoint-ban
+
+
+def bad_built_key_edit(client: object, base: str) -> None:
+    client.post(f"{base}/v5/user/create-sub-api", json={})  # ruleid: cv-withdrawal-endpoint-ban
+
+
+def bad_key_edit_sub_path(client: object) -> None:
+    client.signed_request("POST", "/v5/user/update-sub-api/x", body={})  # ruleid: cv-withdrawal-endpoint-ban
+
+
+def ok_read_key_info(client: object) -> None:
+    client.signed_request("GET", "/v5/user/query-api", lane="poll")  # ok: cv-withdrawal-endpoint-ban
+
+
+def ok_longer_name(client: object) -> None:
+    client.signed_request("GET", "/v5/user/update-api-key", lane="poll")  # ok: cv-withdrawal-endpoint-ban
+
+
+def ok_prose_names_the_path(client: object) -> None:
+    client.read()  # prose may name /v5/user/update-api; no literal holds it  # ok: cv-withdrawal-endpoint-ban
+
+
 def ok_place_order(client: object) -> None:
     client.place_order(symbol="BTCUSDT", side="Buy", qty="1")  # ok: cv-withdrawal-endpoint-ban
 

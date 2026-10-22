@@ -6,6 +6,10 @@ table changed or added, fed through the corpus error envelope (C-13.5).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from candleviewer.exchange.base.errors import (
@@ -81,6 +85,7 @@ OFFICIAL_V5: dict[int, tuple[str, type[ExchangeError], str | None]] = {
         (10404, InstrumentFilterError),
         (10429, RateLimitError),
         (20006, DuplicateClientIdError),
+        (33004, AuthError),
         (110001, NotFoundError),
         (110003, InstrumentFilterError),
         (110004, InsufficientMarginError),
@@ -97,20 +102,67 @@ OFFICIAL_V5: dict[int, tuple[str, type[ExchangeError], str | None]] = {
     ],
 )
 def test_map_ret_code_covers_documented_table(ret_code: int, expected_type: type) -> None:
-    error = map_ret_code(ret_code, "some message")
+    """The table as an order create meets it: the only call a duplicate can answer (R9)."""
+    error = map_ret_code(ret_code, "some message", create=True)
     assert isinstance(error, expected_type)
     assert error.exchange_ret_code == ret_code
 
 
 def test_map_ret_code_10001_generic_parameter_error() -> None:
-    error = map_ret_code(10001, "params error: qty invalid")
+    error = map_ret_code(10001, "params error: qty invalid", create=True)
     assert isinstance(error, InstrumentFilterError)
     assert not isinstance(error, DuplicateClientIdError)
 
 
 def test_map_ret_code_10001_duplicate_order_link_id() -> None:
-    error = map_ret_code(10001, "orderLinkId is duplicate")
+    error = map_ret_code(10001, "orderLinkId is duplicate", create=True)
     assert isinstance(error, DuplicateClientIdError)
+
+
+def test_a_10001_saying_duplicate_in_capitals_is_a_duplicate_too() -> None:
+    """The text is read whatever its case: the exact `10001` text is assumed pending E29-K01."""
+    error = map_ret_code(10001, "Duplicate orderLinkId", create=True)
+    assert isinstance(error, DuplicateClientIdError)
+
+
+def test_a_10001_that_only_names_the_field_is_not_a_duplicate() -> None:
+    """#2877 R9: the text must say "duplicate"; naming `orderLinkId` is a parameter error."""
+    error = map_ret_code(10001, "orderLinkId is invalid", create=True)
+    assert type(error) is InstrumentFilterError
+
+
+@pytest.mark.parametrize(
+    ("ret_code", "text", "expected_type"),
+    [
+        (110072, "OrderLinkedID is duplicate", UnknownStateError),
+        (20006, "duplicate reqId", UnknownStateError),
+        (10001, "orderLinkId is duplicate", InstrumentFilterError),
+    ],
+)
+def test_a_duplicate_code_on_any_call_but_a_create_is_no_duplicate(
+    ret_code: int, text: str, expected_type: type[ExchangeError]
+) -> None:
+    """#2877 R9: a cancel or an amend meeting a duplicate code is answered, not adopted:
+    `create` is false unless the caller says so."""
+    assert type(map_ret_code(ret_code, text)) is expected_type
+    assert type(map_ret_code(ret_code, text, create=False)) is expected_type
+
+
+#: The key-verification fixtures (E27-T03): documented-shape stand-ins from the v5 error table.
+KEY_FIXTURES = Path(__file__).parents[3] / "fixtures" / "key_verification"
+
+
+def test_an_expired_key_is_an_auth_error_never_retried() -> None:
+    """33004, the v5 error table's "(Derivatives) Your api key has expired" (UTA section,
+    bybit-exchange/docs@19518b90fb36): a typed `AuthError`, which gates trading, not an
+    unmapped `UnknownStateError` that leaves a create's outcome open (#2877)."""
+    body: dict[str, Any] = json.loads(
+        (KEY_FIXTURES / "error_33004.json").read_text(encoding="utf-8")
+    )
+    for create in (True, False):
+        error = map_ret_code(body["retCode"], body["retMsg"], create=create)
+        assert type(error) is AuthError and error.retryable is False
+        assert (error.exchange_ret_code, error.exchange_ret_msg) == (33004, body["retMsg"])
 
 
 @pytest.mark.parametrize("ret_code", [170001, 999999, -1, 42])

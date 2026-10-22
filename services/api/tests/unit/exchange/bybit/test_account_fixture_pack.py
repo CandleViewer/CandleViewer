@@ -366,9 +366,20 @@ async def call(
         wall_clock=lambda: NOW_MS / 1000,
         clock_offset_ms_provider=lambda: 0,
     )
+    if path.startswith(("/v5/order/", "/v5/position/", "/v5/execution/", "/v5/account/fee-rate")):
+        # SR-054: the client refuses these paths unless the caller states category=linear.
+        if method == "GET":
+            params = {"category": "linear", **(params or {})}
+        else:
+            body = {"category": "linear", **(body or {})}
     try:
         return await client.signed_request(
-            method, path, params=params, body=body, endpoint_class=endpoint
+            method,
+            path,
+            params=params,
+            body=body,
+            endpoint_class=endpoint,
+            lane="poll" if method == "GET" else "entry",
         )
     finally:
         await client.aclose()

@@ -245,7 +245,7 @@ async def test_governor_hold_gauge_clears_after_hold_elapses() -> None:
     world = _World()
     gov = TokenBucketGovernor(clock=lambda: world.now, sleep=world.sleep)
     gov.hold_ip(600.0)
-    await gov.acquire("u", EndpointClass.MARKET_DATA)
+    await gov.acquire("u", EndpointClass.MARKET_DATA, lane="poll")
     assert bybit_ip_hold_remaining_seconds._value.get() == 0.0
 
 
@@ -256,7 +256,7 @@ async def test_governor_acquire_queued_on_lock_observes_hold_set_meanwhile() -> 
     )
     bucket = gov._get_bucket("u", EndpointClass.MARKET_DATA)
     await bucket.lock.acquire()
-    waiter = asyncio.create_task(gov.acquire("u", EndpointClass.MARKET_DATA))
+    waiter = asyncio.create_task(gov.acquire("u", EndpointClass.MARKET_DATA, lane="poll"))
     await asyncio.sleep(0)  # waiter is now queued on the bucket lock, past the first check
     gov.hold_ip(600.0)
     bucket.lock.release()

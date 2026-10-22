@@ -827,6 +827,2206 @@
    "required": true
   }
  },
+ "rest.trading-account-info": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.dcpStatus": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.isMasterTrader": {
+   "types": [
+    "boolean"
+   ],
+   "required": true
+  },
+  "result.marginMode": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.smpGroup": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.spotHedgingStatus": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.timeWindow": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.unifiedMarginStatus": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.updatedTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-amend-reply": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.orderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.orderLinkId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-cancel-all-reply": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].orderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderLinkId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.success": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-cancel-reply": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.orderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.orderLinkId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-closed-pnl": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].avgEntryPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].avgExitPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].closedPnl": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].closedSize": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].createdTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumEntryValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumExitValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].execType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].fillCount": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].leverage": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].qty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].side": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].updatedTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.nextPageCursor": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-create-batch-reply": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].createAt": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderLinkId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retExtInfo.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "retExtInfo.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retExtInfo.list[].code": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo.list[].msg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-create-reply": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.orderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.orderLinkId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-error-110001": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-error-110072": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-execution-list": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].blockTradeId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].closedSize": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].execFee": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].execId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].execPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].execQty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].execTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].execType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].execValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].extraFees": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].feeCurrency": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].feeRate": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].indexPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].isMaker": {
+   "types": [
+    "boolean"
+   ],
+   "required": true
+  },
+  "result.list[].leavesQty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].markIv": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].markPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderLinkId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderQty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].seq": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].side": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].stopOrderType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].tradeIv": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].underlyingPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.nextPageCursor": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-fee-rate": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].makerFeeRate": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].rpiMakerFeeRate": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].takerFeeRate": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-order-history": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].avgPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].blockTradeId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cancelType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].closeOnTrigger": {
+   "types": [
+    "boolean"
+   ],
+   "required": true
+  },
+  "result.list[].createdTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumExecFee": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumExecQty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumExecValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumFeeDetail": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].cumFeeDetail.MNT": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].extraFees": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].isLeverage": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].lastPriceOnCreated": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].leavesQty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].leavesValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderIv": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderLinkId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderStatus": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].placeType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].positionIdx": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].price": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].qty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].reduceOnly": {
+   "types": [
+    "boolean"
+   ],
+   "required": true
+  },
+  "result.list[].rejectReason": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].rpiMatchedQty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].rpiTakerAccess": {
+   "types": [
+    "boolean"
+   ],
+   "required": true
+  },
+  "result.list[].side": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].slLimitPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].slTriggerBy": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].slippageTolerance": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].slippageToleranceType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].smpGroup": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].smpOrderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].smpType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].stopLoss": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].stopOrderType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].takeProfit": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].timeInForce": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].tpLimitPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].tpTriggerBy": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].tpslMode": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].triggerBy": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].triggerDirection": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].triggerPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].updatedTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.nextPageCursor": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-order-realtime": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].avgPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].blockTradeId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cancelType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].closeOnTrigger": {
+   "types": [
+    "boolean"
+   ],
+   "required": true
+  },
+  "result.list[].createdTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumExecFee": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumExecQty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumExecValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumFeeDetail": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].cumFeeDetail.MNT": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].isLeverage": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].lastPriceOnCreated": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].leavesQty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].leavesValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderIv": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderLinkId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderStatus": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].orderType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].placeType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].positionIdx": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].price": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].qty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].reduceOnly": {
+   "types": [
+    "boolean"
+   ],
+   "required": true
+  },
+  "result.list[].rejectReason": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].side": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].slLimitPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].slTriggerBy": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].smpGroup": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].smpOrderId": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].smpType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].stopLoss": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].stopOrderType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].takeProfit": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].timeInForce": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].tpLimitPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].tpTriggerBy": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].tpslMode": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].triggerBy": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].triggerDirection": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].triggerPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].updatedTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.nextPageCursor": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-position-list": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].adlRankIndicator": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].autoAddMargin": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].avgPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].breakEvenPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].bustPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].createdTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].cumRealisedPnl": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].curRealisedPnl": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].isReduceOnly": {
+   "types": [
+    "boolean"
+   ],
+   "required": true
+  },
+  "result.list[].leverage": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].leverageSysUpdatedTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].liqPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].markPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].mmrSysUpdateTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].positionBalance": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].positionIM": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].positionIMByMp": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].positionIdx": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].positionMM": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].positionMMByMp": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].positionStatus": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].positionValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].riskId": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].riskLimitValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].seq": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].sessionAvgPrice": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].side": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].size": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].stopLoss": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].takeProfit": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].tpslMode": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].tradeMode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].trailingStop": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].unrealisedPnl": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].updatedTime": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.nextPageCursor": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-set-leverage-reply": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-trading-stop-reply": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-wallet-balance": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].accountIMRate": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].accountIMRateByMp": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].accountLTV": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].accountMMRate": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].accountMMRateByMp": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].accountType": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[].coin[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].accruedInterest": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].availableToBorrow": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].availableToWithdraw": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].bonus": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].borrowAmount": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].coin": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].collateralSwitch": {
+   "types": [
+    "boolean"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].cumRealisedPnl": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].equity": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].locked": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].marginCollateral": {
+   "types": [
+    "boolean"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].spotBorrow": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].spotHedgingQty": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].totalOrderIM": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].totalPositionIM": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].totalPositionMM": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].unrealisedPnl": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].usdValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].coin[].walletBalance": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].totalAvailableBalance": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].totalEquity": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].totalInitialMargin": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].totalInitialMarginByMp": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].totalMaintenanceMargin": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].totalMaintenanceMarginByMp": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].totalMarginBalance": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].totalPerpUPL": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].totalWalletBalance": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
  "tickers": {
   "": {
    "types": [

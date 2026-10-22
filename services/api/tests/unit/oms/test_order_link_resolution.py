@@ -2,9 +2,9 @@
 
 Ruling B4: no recorded exchange payloads here. The fake below speaks domain
 `Order`/`OrderAck` models only; the fixture-driven integration test belongs to
-E29-T04. Ruling Q5: `open_orders` has no id filter yet, so the OMS filters
-locally, and the fake's `order_history` ignores its filter to prove the OMS
-re-checks it.
+E29-T04. Ruling Q5: the OMS passes the id filter to both lookups and filters
+the results again, and the fake ignores the filters to prove the OMS re-checks
+them.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from candleviewer.exchange.base.errors import (
     DuplicateClientIdError,
     ExchangeError,
     OmsErrorCode,
+    RateBudgetExceededError,
     TransportError,
 )
 from candleviewer.exchange.base.models import (
@@ -125,7 +126,8 @@ class _FakeExchange:
     An id it has seen is rejected with `DuplicateClientIdError`, even once the
     order has left `open` and `history`. `timeout_after_send` makes a create
     land and then fail with `TransportError`, and `ambiguous_after_send` with the
-    REST client's `AmbiguousResultError` (#3866); `failing_lookup` names a lookup that fails.
+    REST client's `AmbiguousResultError` (#3866); `failing_lookup` names a lookup that fails,
+    and `send_error` a create refused before it leaves.
     """
 
     def __init__(self) -> None:
@@ -139,9 +141,13 @@ class _FakeExchange:
         self.ambiguous_after_send = False
         self.failing_lookup: str | None = None
         self.lookup_error: ExchangeError = TransportError("lookup timed out")
+        self.send_error: ExchangeError | None = None
+        self.filters: list[OrderLinkId | None] = []
 
     async def place_order(self, req: PlaceOrderRequest) -> OrderAck:
         self.calls.append(("place_order", req.account.account_id, req.order_link_id))
+        if self.send_error is not None:
+            raise self.send_error
         self.sent.append(req)
         if self.reply is not None:
             return self.reply
@@ -156,9 +162,14 @@ class _FakeExchange:
         return _ack(ok=True)
 
     async def open_orders(
-        self, account: AccountRef, symbol: Symbol | None = None
+        self,
+        account: AccountRef,
+        symbol: Symbol | None = None,
+        *,
+        order_link_id: OrderLinkId | None = None,
     ) -> Sequence[Order]:
         self.calls.append(("open_orders", account.account_id, symbol))
+        self.filters.append(order_link_id)
         self._fail("open_orders")
         return list(self.open)
 
@@ -167,6 +178,7 @@ class _FakeExchange:
         account: AccountRef,
         *,
         order_link_id: OrderLinkId | None = None,
+        exchange_order_id: str | None = None,
         start: TsUs | None = None,
         end: TsUs | None = None,
     ) -> Sequence[Order]:
@@ -209,6 +221,7 @@ async def test_duplicate_rejection_is_adopted_not_failed() -> None:
 
     assert outcome == Adopted(order=live, source="realtime")
     assert exchange.calls == [("place_order", ACCOUNT, LINK), ("open_orders", ACCOUNT, SYMBOL)]
+    assert exchange.filters == [LINK]  # #846 Q5: the id filter reaches the port, then re-checked
     assert logs == [
         {
             "event": "order_link_id_duplicate_adopted",
@@ -253,6 +266,45 @@ async def test_duplicate_found_by_neither_lookup_is_left_to_reconciliation() -> 
             "order_link_id": LINK,
         }
     ]
+
+
+@pytest.mark.parametrize("failing", ["open_orders", "order_history"])
+@pytest.mark.parametrize(
+    "error",
+    [TransportError("lookup timed out"), RateBudgetExceededError("no token; nothing was sent")],
+    ids=["transport", "rate-budget"],
+)
+async def test_a_duplicate_whose_lookup_fails_is_unresolved_never_the_lookups_error(
+    failing: str, error: ExchangeError
+) -> None:
+    """§8.3 rule 3: the exchange holds an order under the id, so a failed lookup moves the
+    order to `unknown`; a refused rate token's "nothing was sent" is the lookup's, never the
+    order's, and the create is never sent again."""
+    exchange = _FakeExchange()
+    exchange.seen.add(LINK)
+    exchange.failing_lookup, exchange.lookup_error = failing, error
+
+    with capture_logs() as logs:
+        outcome = await place_or_adopt(exchange, _request())
+
+    assert outcome == Unresolved(order_link_id=LINK, reason="lookup_failed")
+    assert [call[0] for call in exchange.calls].count("place_order") == 1
+    assert {"event": "order_link_id_duplicate_unresolved", "reason": "lookup_failed"} in [
+        {key: log[key] for key in ("event", "reason") if key in log} for log in logs
+    ]
+
+
+@pytest.mark.parametrize("error", [AuthError("refused"), ClockDriftError("drift")], ids=str)
+async def test_a_key_or_clock_refusal_of_a_duplicates_lookup_propagates(
+    error: ExchangeError,
+) -> None:
+    """They gate trading: the caller must see them, as `adopt_or_resend`'s caller does."""
+    exchange = _FakeExchange()
+    exchange.seen.add(LINK)
+    exchange.failing_lookup, exchange.lookup_error = "open_orders", error
+
+    with pytest.raises(type(error)):
+        await place_or_adopt(exchange, _request())
 
 
 async def test_duplicate_reported_in_the_ack_is_adopted_too() -> None:
@@ -420,6 +472,18 @@ async def test_an_unconfirmed_resend_is_unresolved_and_never_repeated(answer: st
     if answer == "duplicate-in-ack":
         exchange.reply = _ack(ok=False, error_code=OmsErrorCode.DUPLICATE_CLIENT_ID)
     exchange.ambiguous_after_send = answer == "ambiguous"
+
+    outcome = await _resolve(exchange)
+
+    assert outcome == Unresolved(order_link_id=LINK, reason="resend_unconfirmed")
+    assert [call[0] for call in exchange.calls] == ["open_orders", "order_history", "place_order"]
+
+
+async def test_a_resend_refused_for_its_rate_token_leaves_the_create_unresolved() -> None:
+    """The re-send never left, so the earlier create is as open as before: `unknown`, never a
+    refusal its caller could read as "not placed" (24 §14.4 `RateBudgetExceededError`)."""
+    exchange = _FakeExchange()
+    exchange.send_error = RateBudgetExceededError("no rate token; nothing was sent")
 
     outcome = await _resolve(exchange)
 

@@ -71,6 +71,7 @@ async def test_signed_request_sends_bapi_headers() -> None:
             "/v5/account/wallet-balance",
             params={"accountType": "UNIFIED"},
             endpoint_class=EndpointClass.ACCOUNT,
+            lane="poll",
         )
     finally:
         await client.aclose()
@@ -96,7 +97,7 @@ async def test_m2_signing_refusal_sends_nothing() -> None:
     client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
     try:
         with pytest.raises(CredentialUnavailable):
-            await client.signed_request("GET", "/v5/account/wallet-balance")
+            await client.signed_request("GET", "/v5/account/wallet-balance", lane="poll")
     finally:
         await client.aclose()
     assert route.call_count == 0
@@ -107,7 +108,7 @@ async def test_signed_request_without_signer_raises_type_error() -> None:
     client = BybitRestClient(_config(), governor=_fresh_governor())
     try:
         with pytest.raises(TypeError):
-            await client.signed_request("GET", "/v5/account/wallet-balance")
+            await client.signed_request("GET", "/v5/account/wallet-balance", lane="poll")
     finally:
         await client.aclose()
 
@@ -227,7 +228,7 @@ async def test_secrets_never_appear_in_debug_logs(caplog: pytest.LogCaptureFixtu
     client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
     caplog.set_level(logging.DEBUG)
     try:
-        await client.signed_request("GET", "/v5/account/wallet-balance")
+        await client.signed_request("GET", "/v5/account/wallet-balance", lane="poll")
     finally:
         await client.aclose()
     for value in ("visible-key", route.calls.last.request.headers["X-BAPI-SIGN"]):
@@ -273,7 +274,10 @@ async def test_signed_get_signs_the_wire_encoded_query_string() -> None:
     client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
     try:
         await client.signed_request(
-            "GET", "/v5/market/kline", params={"symbol": "BTC USDT", "note": "a&b=c"}
+            "GET",
+            "/v5/market/kline",
+            params={"symbol": "BTC USDT", "note": "a&b=c"},
+            lane="poll",
         )
     finally:
         await client.aclose()
@@ -337,7 +341,10 @@ async def test_4xx_with_mapped_ret_code_raises_mapped_error() -> None:
     try:
         with pytest.raises(Exception) as exc_info:
             await client.signed_request(
-                "GET", "/v5/account/wallet-balance", endpoint_class=EndpointClass.ACCOUNT
+                "GET",
+                "/v5/account/wallet-balance",
+                endpoint_class=EndpointClass.ACCOUNT,
+                lane="poll",
             )
         assert exc_info.value.__class__.__name__ == "AuthError"
     finally:
@@ -407,8 +414,9 @@ async def test_non_json_body_on_order_class_stays_unknown_state_without_retry() 
             await client.signed_request(
                 "POST",
                 "/v5/order/cancel",
-                body={"symbol": "BTCUSDT", "orderLinkId": "cv-1"},
+                body={"category": "linear", "symbol": "BTCUSDT", "orderLinkId": "cv-1"},
                 endpoint_class=EndpointClass.ORDER,
+                lane="critical",
             )
     finally:
         await client.aclose()
@@ -426,8 +434,9 @@ async def test_order_class_post_without_order_link_id_is_rejected() -> None:
             await client.signed_request(
                 "POST",
                 "/v5/order/create",
-                body={"symbol": "BTCUSDT"},
+                body={"category": "linear", "symbol": "BTCUSDT"},
                 endpoint_class=EndpointClass.ORDER,
+                lane="entry",
             )
     finally:
         await client.aclose()
@@ -445,8 +454,9 @@ async def test_order_class_post_with_order_link_id_is_accepted() -> None:
         result = await client.signed_request(
             "POST",
             "/v5/order/create",
-            body={"symbol": "BTCUSDT", "orderLinkId": "cv-1"},
+            body={"category": "linear", "symbol": "BTCUSDT", "orderLinkId": "cv-1"},
             endpoint_class=EndpointClass.ORDER,
+            lane="entry",
         )
         assert result["retCode"] == 0
     finally:
@@ -515,7 +525,7 @@ async def test_check_reachable_consumes_ip_wide_budget() -> None:
     client = BybitRestClient(_config(), governor=governor)
     try:
         assert await client.check_reachable() is True
-        ip_tokens_after_one = governor._ip_bucket.tokens
+        ip_tokens_after_one = governor._ip.bucket.tokens
         assert ip_tokens_after_one == pytest.approx(0.0, abs=1e-6)
     finally:
         await client.aclose()

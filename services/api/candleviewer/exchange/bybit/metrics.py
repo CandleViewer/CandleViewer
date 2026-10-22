@@ -43,3 +43,15 @@ bybit_rate_limited_total = Counter(
     "Rate-limited responses, by code.",
     ["code"],
 )
+
+bybit_rows_refused_total = Counter(
+    "bybit_rows_refused_total",
+    "Trading-read rows set aside, by reason (env, account, no fill, unmapped type, not USDT).",
+    ["reason"],
+)
+
+cv_bybit_unknown_fields_total = Counter(
+    "cv_bybit_unknown_fields_total",
+    "Reply fields the adapter's strict models do not know, by model (silent drift).",
+    ["model"],
+)

@@ -89,6 +89,15 @@ NOT_SENT: dict[str, Outcome] = {
 }
 
 
+def _create_body(path: str) -> dict[str, object]:
+    """A create's body as the client must get it: `category` stated (SR-054), and the id on the
+    create, or on every item of a batch (#2877)."""
+    item = {"symbol": "BTCUSDT", "orderLinkId": "cv-1"}
+    if path == "/v5/order/create-batch":
+        return {"category": "linear", "request": [item]}
+    return {"category": "linear", **item}
+
+
 def _client(
     outcomes: list[Outcome],
     sent: Sent,
@@ -119,19 +128,27 @@ async def _post(
 ) -> tuple[ExchangeError | None, Sent]:
     sent: Sent = []
     async with _client(outcomes, sent, [], governor) as client:
-        body = {"symbol": "BTCUSDT", "orderLinkId": "cv-1"}
+        body = _create_body(path)
         try:
-            await client.signed_request("POST", path, body=body, endpoint_class=cls)
+            await client.signed_request("POST", path, body=body, endpoint_class=cls, lane="entry")
         except ExchangeError as error:
             return error, sent
     return None, sent
 
 
 @pytest.mark.parametrize("cls", list(EndpointClass), ids=str)
-@pytest.mark.parametrize("path", [CREATE, "/v5/order/create-batch"])
+@pytest.mark.parametrize(
+    ("path", "order_link_id", "order_link_ids"),
+    [(CREATE, "cv-1", ("cv-1",)), ("/v5/order/create-batch", None, ("cv-1",))],
+    ids=["create", "create-batch"],
+)
 @pytest.mark.parametrize("outcome", LEFT.values(), ids=LEFT.keys())
 async def test_a_create_that_left_is_ambiguous_and_sent_once(
-    path: str, outcome: Outcome, cls: EndpointClass
+    path: str,
+    order_link_id: str | None,
+    order_link_ids: tuple[str, ...],
+    outcome: Outcome,
+    cls: EndpointClass,
 ) -> None:
     counters = [
         exchange_errors_total.labels(**{"class": c}) for c in ("TRANSPORT_ERROR", "UNKNOWN_STATE")
@@ -141,7 +158,8 @@ async def test_a_create_that_left_is_ambiguous_and_sent_once(
     error, sent = await _post([outcome, OK], path, cls)
 
     assert isinstance(error, AmbiguousResultError) and len(sent) == 1
-    assert error.order_link_id == "cv-1" and error.retryable is False
+    assert (error.order_link_id, error.order_link_ids) == (order_link_id, order_link_ids)
+    assert error.retryable is False
     assert [c._value.get() - b for c, b in zip(counters, before, strict=True)] == [1, 0]
 
 
@@ -236,8 +254,10 @@ async def test_amend_and_cancel_skip_the_create_only_answer_checks(path: str, ou
     untyped = (TypeError, ValueError, RecursionError, httpx.DecodingError)  # as before #3866
     async with _client([LEFT[outcome]], sent, []) as client:
         with pytest.raises((ExchangeError, *untyped)) as caught:
-            body = {"symbol": "BTCUSDT", "orderLinkId": "cv-1"}
-            await client.signed_request("POST", path, body=body, endpoint_class=EndpointClass.ORDER)
+            body = _create_body(path)
+            await client.signed_request(
+                "POST", path, body=body, endpoint_class=EndpointClass.ORDER, lane="entry"
+            )
 
     assert not isinstance(caught.value, AmbiguousResultError) and len(sent) == 1
 
@@ -250,7 +270,7 @@ async def test_reads_keep_their_retry_with_full_jitter(signed: bool, outcome: st
     async with _client([LEFT[outcome]], sent, sleeps) as client:
         with pytest.raises(ExchangeError) as caught:
             if signed:
-                await client.signed_request("GET", "/v5/account/wallet-balance")
+                await client.signed_request("GET", "/v5/account/wallet-balance", lane="poll")
             else:
                 await client.get_public("/v5/market/kline")
 

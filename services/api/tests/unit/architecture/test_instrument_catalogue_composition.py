@@ -78,11 +78,11 @@ def test_live_feed_and_public_ws_share_one_public_rest_client(
     built: list[Any] = []
     real = ExchangeBybitService.public_rest_client
 
-    def _counting(env: str) -> Any:
-        built.append(real(env))
+    def _counting(self: ExchangeBybitService, env: str) -> Any:
+        built.append(real(self, env))
         return built[-1]
 
-    monkeypatch.setattr(ExchangeBybitService, "public_rest_client", staticmethod(_counting))
+    monkeypatch.setattr(ExchangeBybitService, "public_rest_client", _counting)
     settings = Settings(**{**_REAL, **_LIVE, "ingestion_ws_enabled": True})
     ingestion = appmod.create_app(settings).state.app_context.ingestion
     assert isinstance(ingestion.instruments, InstrumentsRefreshScheduler)

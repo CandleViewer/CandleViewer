@@ -85,7 +85,6 @@ class RestClientConfig(BaseModel):
     total_timeout_s: float = 10.0
     max_connections: int = 20
     max_keepalive_connections: int = 20
-    ip_budget_per_5s: int = 600
     max_retries: int = 3
 
     @field_validator("base_url")

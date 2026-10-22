@@ -71,7 +71,7 @@ async def test_s08_measured_skew_raises_the_drift_alarm_and_signs_correctly(
     assert guard.health_severity() == "critical"  # > 2 000 ms: BybitClockDriftCritical
     client = _signed(rig, guard)
     try:
-        body = await rig.call(client.signed_request("GET", PATH))
+        body = await rig.call(client.signed_request("GET", PATH, lane="poll"))
         assert body["retCode"] == 0  # corrected timestamp lands inside recv_window
     finally:
         await client.aclose()
@@ -85,7 +85,7 @@ async def test_s08_second_consecutive_10002_surfaces_clock_drift_distinctly(rig:
     first = len(rig.ex.rest_calls)
     try:
         with pytest.raises(ClockDriftError):
-            await rig.call(client.signed_request("GET", PATH))
+            await rig.call(client.signed_request("GET", PATH, lane="poll"))
     finally:
         await client.aclose()
     assert len(rig.ex.trace.kinds("rest.10002")) == 2  # exactly one retry, never a loop
@@ -101,7 +101,7 @@ async def test_s08_signature_failure_remeasures_and_the_retry_succeeds(rig: Rig)
     triggered = metric(clock_resync_triggered_total, reason="signature_failure")
     client = _signed(rig, guard)
     try:
-        body = await rig.call(client.signed_request("GET", PATH))
+        body = await rig.call(client.signed_request("GET", PATH, lane="poll"))
     except ClockDriftError as exc:  # the retry failed too: say so, not just the venue text
         pytest.fail(f"10002 retry still rejected: clock re-measure missing or ineffective ({exc})")
     finally:

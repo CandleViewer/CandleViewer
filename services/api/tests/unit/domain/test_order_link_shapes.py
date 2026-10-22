@@ -1,6 +1,7 @@
-"""`OUR_ID`, `EXT_ID` and `ext_key` (§8.3; E29-T02, #846). The patterns are compared with
-the two `ord_link_fmt` arms that `21-database-schema.md` §3.3.4 declares, read from the
-document itself, so this suite fails if the code or the document drifts."""
+"""`OUR_ID`, `EXT_ID` and `ext_key` (§8.3; E29-T02, #846), and the owner of an id: the
+environment letters, `account_tag` and `link_owner` (G-8, #2877 ruling R12). The patterns are
+compared with the two `ord_link_fmt` arms that `21-database-schema.md` §3.3.4 declares, read
+from the document itself, so this suite fails if the code or the document drifts."""
 
 from __future__ import annotations
 
@@ -13,7 +14,17 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from candleviewer.domain.order_link import EXT_ID, OUR_ID, ext_key
+from candleviewer.domain.order_link import (
+    BASE62,
+    ENV_LETTER,
+    EXT_ID,
+    OUR_ID,
+    account_tag,
+    base62,
+    ext_key,
+    link_owner,
+)
+from candleviewer.domain.primitives import AccountId
 
 _SCHEMA_DOC = Path(__file__).resolve().parents[5] / "docs" / "plan" / "21-database-schema.md"
 _CHECK_ARMS = re.compile(
@@ -185,3 +196,60 @@ def test_the_module_text_names_no_exchange_because_the_adapter_isolation_rule_bl
     flagged = _adapter_isolation_pattern().findall(_MODULE_SOURCE.read_text(encoding="utf-8"))
 
     assert flagged == []
+
+
+# -- the owner of an id (G-8, #2877, ruling R12): environment letters and `acct4` ---------------
+
+
+def test_the_environment_letters_are_one_per_exchange_environment() -> None:
+    assert dict(ENV_LETTER) == {"live": "l", "demo": "d", "testnet": "t"}
+    assert "p" not in ENV_LETTER.values()  # paper never reaches an exchange
+
+
+def test_link_owner_reads_the_environment_letter_and_account_tag() -> None:
+    assert link_owner(EXAMPLE) == ("l", "d0hb")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [ext_key("x-1"), "linear-004", EXAMPLE + "\n"],
+    ids=["ext-key", "foreign", "our-id-and-a-trailing-newline"],
+)
+def test_link_owner_names_no_owner_for_any_other_id(value: str) -> None:
+    """An `ext-` key and a foreign id name no account of ours, and neither does one of ours
+    with a trailing newline: `link_owner` applies `OUR_ID` with `re.fullmatch`."""
+    assert link_owner(value) is None
+
+
+def test_link_owner_reads_a_paper_ids_letter_which_no_exchange_environment_has() -> None:
+    """`p` is paper's (§8.3): read as it is, so a check against an exchange environment's
+    letter refuses it (`check_create_id`)."""
+    assert link_owner("cvp" + EXAMPLE[3:]) == ("p", "d0hb")
+    assert "p" not in ENV_LETTER.values()
+
+
+def test_account_tag_of_the_worked_example_is_its_acct4() -> None:
+    """24 §8.3's worked example: account `5b1c9d2e-...` is `d0hb` in its ids."""
+    assert account_tag(AccountId(uuid.UUID("5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d"))) == "d0hb"
+
+
+@given(st.uuids())
+def test_account_tag_is_four_base62_digits(account: uuid.UUID) -> None:
+    tag = account_tag(AccountId(account))
+    assert len(tag) == 4 and all(c in BASE62 for c in tag)
+
+
+@pytest.mark.parametrize(("value", "width"), [(5, -1), (-1, 2)], ids=["width", "value"])
+def test_base62_refuses_a_negative_value_or_width(value: int, width: int) -> None:
+    """A negative value would never end its digit loop: refused, never looped on."""
+    with pytest.raises(ValueError, match="non-negative"):
+        base62(value, width)
+
+
+def test_base62_pads_to_its_width() -> None:
+    assert (base62(0, 2), base62(61, 2), base62(62, 2), base62(3843, 2)) == (
+        "00",
+        "0z",
+        "10",
+        "zz",
+    )

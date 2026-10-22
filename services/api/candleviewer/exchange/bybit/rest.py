@@ -20,7 +20,7 @@ import random
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
+from typing import Any, Final
 
 import httpx
 import structlog
@@ -30,12 +30,14 @@ from candleviewer.exchange.base.errors import (
     AmbiguousResultError,
     ClockDriftError,
     ExchangeError,
+    RateBudgetExceededError,
     RateLimitError,
     TransportError,
     UnknownStateError,
 )
+from candleviewer.exchange.base.models import RateLane
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
-from candleviewer.exchange.bybit.mapping import map_ret_code
+from candleviewer.exchange.bybit.mapping import OPEN_CREATE_CODES, map_ret_code
 from candleviewer.exchange.bybit.metrics import (
     bybit_rate_limit_remaining,
     bybit_rate_limited_total,
@@ -71,12 +73,33 @@ _SIGNATURE_RESYNC_TIMEOUT_S = 5.0
 #: characters only. No scheme, authority, backslash, whitespace/control char,
 #: query/fragment or percent-escape can match, so httpx can never be steered
 #: to another host (it honours an absolute/scheme-relative URL over base_url).
-_SAFE_PATH = re.compile(r"/v5/[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)*\Z")
+#: Lower case only: every v5 path is, so a case variant of a banned, create or
+#: category-taking path below is refused rather than read as another path (#2877).
+_SAFE_PATH = re.compile(r"/v5/[a-z0-9_\-]+(?:/[a-z0-9_\-]+)*\Z")
+#: C-2.8: the paths that move money or edit a key's rights, each refused with every path under
+#: it, before any token or signature, whatever builds the path at run time (#2877 ruling R14).
+#: A superset of what `cv-withdrawal-endpoint-ban` flags in source: only this list refuses the
+#: two bare asset roots (a test ties the two lists). Assembled from their segments, so that rule
+#: finds no call site here: this is the list that refuses them. SR-E27-12's other families are
+#: E27-X02's.
+_BANNED_ROOTS: Final = (
+    *(f"/v5/asset/{family}" for family in ("withdraw", "transfer")),
+    *(f"/v5/user/{op}" for op in ("update-api", "update-sub-api", "create-sub-api")),
+)
 
 #: 24 §8.6 "Order creates" (SR-E29-15): a create that has left is never sent again; amend,
-#: cancel and trading-stop keep their retries. 10016/10019 leave a create's outcome unknown.
-_CREATE_PATHS = frozenset({"/v5/order/create", "/v5/order/create-batch"})
-_AMBIGUOUS_RET_CODES = frozenset({10016, 10019})
+#: cancel and trading-stop keep their retries. `OPEN_CREATE_CODES` (10016, 10019) leave a
+#: create's outcome unknown.
+_BATCH_PATH = "/v5/order/create-batch"
+_CREATE_PATHS = frozenset({"/v5/order/create", _BATCH_PATH})
+#: SR-054: the signed paths that take a `category`, which must be `linear`, stated by the caller.
+_CATEGORY_PREFIXES = ("/v5/order/", "/v5/position/", "/v5/execution/")
+_CATEGORY_PATHS = frozenset({"/v5/account/fee-rate"})
+#: SR-E29-08: our own key id and signature are masked in an answer before it is decoded, so a
+#: venue that echoes them puts them in no error, record or log line. A shorter value is no
+#: credential the venue issues, and masking it would rewrite the body's own words.
+_MIN_MASKED_LEN = 8
+_MASK = b"**redacted**"
 #: Raised while connecting or waiting for a pooled connection: nothing left. Any other failure
 #: may follow the send, a bare `TimeoutError` too (httpx maps its own; an unmapping transport
 #: raises it at a point this client cannot place).
@@ -84,16 +107,20 @@ _NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
 class RestPathRejected(ExchangeError, ValueError):
-    """The request `path` is not a plain relative `/v5/...` path (SR-040a).
+    """The request `path` is not a plain relative `/v5/...` path (SR-040a), or it moves money or
+    edits a key's rights (C-2.8).
 
     Raised before signing or sending. The message never carries the key or
     signature, and never echoes the rejected path (it may hold control chars)."""
 
 
 def validate_rest_path(path: str) -> str:
-    """Return `path` unchanged if it is a safe relative `/v5/` path, else raise."""
+    """Return `path` unchanged if it is a safe relative `/v5/` path that moves no money and
+    edits no key, else raise."""
     if not isinstance(path, str) or not _SAFE_PATH.match(path):
         raise RestPathRejected("REST path must be a relative /v5/ path (SR-040a)")
+    if any(path == root or path.startswith(f"{root}/") for root in _BANNED_ROOTS):
+        raise RestPathRejected("this path moves money or edits a key; it is never called (C-2.8)")
     return path
 
 
@@ -141,6 +168,35 @@ ClockOffsetProvider = Callable[[], Awaitable[int]] | Callable[[], int]
 technical notes: "The clock offset is injected, not read from a global")."""
 
 
+class _LaneBudget:
+    """The lane's wait for one call (24 §8.7): a deadline from the call's start, on the client's
+    monotonic clock. Everything the call spends counts against it: every attempt's token wait,
+    its time on the network, a clock re-measure and every pause before a retry, so an attempt
+    that is slow to answer leaves no time for a retry. Without one, nothing is bounded."""
+
+    __slots__ = ("_clock", "_until", "left")
+
+    def __init__(self, wait_s: float | None, clock: Callable[[], float]) -> None:
+        self._clock = clock
+        #: The next token wait's bound: the whole wait on the first attempt, what is left after.
+        self.left = wait_s
+        self._until = None if wait_s is None else clock() + wait_s
+
+    def allows(self, pause_s: float) -> bool:
+        """Whether a pause of `pause_s` from now ends within the budget."""
+        return self._until is None or self._clock() + pause_s <= self._until
+
+    def within(self, cap_s: float) -> float:
+        """`cap_s`, or what is left of the wait when that is shorter."""
+        if self._until is None:
+            return cap_s
+        return max(0.0, min(cap_s, self._until - self._clock()))
+
+    def refresh(self) -> None:
+        if self._until is not None:
+            self.left = max(0.0, self._until - self._clock())
+
+
 def _redact(mapping: Mapping[str, Any]) -> dict[str, Any]:
     """Return a copy of `mapping` with any secret-shaped key's value
     replaced by a fixed placeholder — used before anything is logged."""
@@ -180,9 +236,11 @@ class BybitRestClient:
 
     Public (unauthenticated) calls work with `signer=None`; the signed path
     (`signed_request`) requires a `BybitSigner`. Every request is shaped by
-    the shared per-UID token bucket, retried per the taxonomy's `retryable`
-    flag with full jitter (never an order create that has left: 24 §8.6
-    "Order creates"), and logged with secrets redacted.
+    the process's one governor (`governor=`, required: OM-D08), in the lane
+    its caller names, retried per the taxonomy's `retryable` flag with full
+    jitter (never an order create that has left: 24 §8.6 "Order creates"),
+    within the lane's wait when the caller gives one (24 §8.7), and logged
+    with secrets redacted.
     """
 
     def __init__(
@@ -191,24 +249,24 @@ class BybitRestClient:
         *,
         uid: str = "public",
         signer: BybitSigner | None = None,
-        governor: TokenBucketGovernor | None = None,
+        governor: TokenBucketGovernor,
         clock_offset_ms_provider: ClockOffsetProvider | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         random_fn: Callable[[], float] = random.random,
         wall_clock: Callable[[], float] = time.time,
+        monotonic: Callable[[], float] = time.monotonic,
         on_signature_failure: Callable[[], Awaitable[object]] | None = None,
     ) -> None:
         self._config = config
         self._on_signature_failure = on_signature_failure
         self._wall_clock = wall_clock
+        #: Measures a lane's wait (24 §8.7); `sleep` must advance it, as `asyncio.sleep` does.
+        self._monotonic = monotonic
         self._uid = uid
         self._signer = signer
-        self._governor = (
-            governor
-            if governor is not None
-            else TokenBucketGovernor(ip_budget_per_5s=config.ip_budget_per_5s)
-        )
+        #: OM-D08: the process's one governor, given by the service; never built here.
+        self._governor = governor
         self._clock = _Clock(clock_offset_ms_provider, wall_clock)
         self._sleep = sleep
         self._random = random_fn
@@ -258,9 +316,16 @@ class BybitRestClient:
         params: Mapping[str, Any] | None = None,
         endpoint_class: EndpointClass = EndpointClass.MARKET_DATA,
     ) -> dict[str, Any]:
-        """Unauthenticated `GET` — instrument catalogue, kline, server time."""
+        """Unauthenticated `GET` — instrument catalogue, kline, server time, in the `poll` lane."""
         return await self._request(
-            "GET", path, params=params, body=None, endpoint_class=endpoint_class, signed=False
+            "GET",
+            path,
+            params=params,
+            body=None,
+            endpoint_class=endpoint_class,
+            signed=False,
+            lane="poll",
+            budget_wait_s=None,
         )
 
     async def server_time(self) -> ServerTime:
@@ -276,35 +341,57 @@ class BybitRestClient:
         params: Mapping[str, Any] | None = None,
         body: Mapping[str, Any] | None = None,
         endpoint_class: EndpointClass = EndpointClass.ACCOUNT,
+        lane: RateLane,
+        budget_wait_s: float | None = None,
     ) -> dict[str, Any]:
         """Authenticated request. Raises `TypeError` if no signer was
         configured — a signed call is never silently downgraded to public.
 
-        A POST/PUT to `EndpointClass.ORDER` **must** carry `orderLinkId` in
-        `body`: this client retries signed POSTs on transport errors and
-        5xx automatically, and that is only safe for order placement when
-        every attempt reuses the same client-generated id (C-2.10) so a
-        duplicate is recognised as "already accepted" rather than
-        resubmitted under a new id. This is enforced here, not merely
-        documented, because a future OMS caller forgetting it would
-        silently double-submit orders on a retried timeout. An order create
-        is retried only if it never left (24 §8.6 "Order creates")."""
+        An order create (`/v5/order/create`, and every item of `/v5/order/create-batch`)
+        **must** carry a non-empty `orderLinkId`, under any endpoint class: a create is retried
+        only while it never left (24 §8.6 "Order creates"), and only the same client-generated id
+        lets a duplicate read as "already accepted" rather than a second order (C-2.10). Every
+        other call passes this guard: a cancel, `cancel-all` or amend by `orderId` is an exit
+        that must reach the order class (OM-D09, AC-31). A path that takes a `category` must
+        state `linear` in what goes on the wire, the query of a GET or the body of a POST, and
+        the other mapping may name no other (SR-054): it is refused, never filled in. All three
+        refusals happen before a token is taken or anything is signed. `lane` is the caller's
+        rate lane (20 §4.3). `budget_wait_s` is the lane's wait, which bounds the whole call (24
+        §8.7): each attempt takes its own token within what is left of it, and a retry whose
+        pause (a backoff, the venue's reset time or an IP hold) would end past it is not made,
+        so the last attempt's own failure, a venue rate-limit answer included, is raised at
+        once. A token refused before anything has been sent is `RateBudgetExceededError`."""
+        self.preflight(method, path, params=params, body=body)
+        return await self._request(
+            method,
+            path,
+            params=params,
+            body=body,
+            endpoint_class=endpoint_class,
+            signed=True,
+            lane=lane,
+            budget_wait_s=budget_wait_s,
+        )
+
+    def preflight(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        body: Mapping[str, Any] | None = None,
+    ) -> None:
+        """The refusals a signed call meets before a token is taken or anything is signed, each
+        a local one: no signer (`TypeError`), a path that is not a plain `/v5/` one or that moves
+        money or edits a key (`RestPathRejected`, C-2.8), a create without its ids (C-2.10) and a
+        category other than `linear` in what `method` sends (SR-054, `ValueError`).
+        `signed_request` runs it first; a caller that maps failures runs it before its handler,
+        so a refusal never reads as an open outcome (24 §14.4)."""
         if self._signer is None:
             raise TypeError("signed_request called without a configured BybitSigner")
-        if (
-            endpoint_class is EndpointClass.ORDER
-            and method.upper() in ("POST", "PUT")
-            and not (body and body.get("orderLinkId"))
-        ):
-            raise ValueError(
-                "signed_request: ORDER-class POST/PUT requires a non-empty "
-                "'orderLinkId' in body — this client retries automatically "
-                "and retries without a stable client id can double-submit "
-                "orders (C-2.10)"
-            )
-        return await self._request(
-            method, path, params=params, body=body, endpoint_class=endpoint_class, signed=True
-        )
+        validate_rest_path(path)
+        _require_create_ids(path, body)
+        _require_linear_category(method, path, params, body)
 
     def _query_params(self, params: Mapping[str, Any] | None) -> httpx.QueryParams | None:
         if not params:
@@ -344,16 +431,40 @@ class BybitRestClient:
         body: Mapping[str, Any] | None,
         endpoint_class: EndpointClass,
         signed: bool,
+        lane: RateLane,
+        budget_wait_s: float | None,
     ) -> dict[str, Any]:
         validate_rest_path(path)
         self._assert_same_host(method, path)
         creates = method.upper() == "POST" and path in _CREATE_PATHS
         attempt = 0
         clock_retry_used = False
+        budget = _LaneBudget(budget_wait_s, self._monotonic)
+        #: The failure of the last attempt that may have reached the venue: a token refused for a
+        #: retry raises it, since "nothing was sent" no longer holds (24 §8.7).
+        reached: ExchangeError | None = None
         while True:
             attempt += 1
-            await self._governor.acquire(self._uid, endpoint_class)
+            try:
+                await self._governor.acquire(
+                    self._uid, endpoint_class, lane=lane, deadline_s=budget.left
+                )
+            except RateBudgetExceededError as refused:
+                if reached is not None:
+                    raise reached from None
+                # The local refusal of a token, nothing sent: counted and logged here, where the
+                # client counts its other errors (DoD C-11.2 item 9).
+                exchange_errors_total.labels(**{"class": refused.code.value}).inc()
+                logger().warning(
+                    "bybit_rate_budget_exceeded",
+                    path=path,
+                    endpoint_class=str(endpoint_class),
+                    lane=lane,
+                    attempt=attempt,
+                )
+                raise
             headers: dict[str, str] = {}
+            masked: tuple[str, ...] = ()
             query = self._query_params(params)
             payload_str = self._payload_string(method, query, body)
             if signed:
@@ -374,6 +485,7 @@ class BybitRestClient:
                         "X-BAPI-SIGN": auth.signature,
                     }
                 )
+                masked = (auth.api_key, auth.signature)
             if method.upper() in ("POST", "PUT"):
                 headers["Content-Type"] = "application/json"
 
@@ -387,7 +499,7 @@ class BybitRestClient:
                 params=_redact(params or {}),
             )
 
-            start = time.monotonic()
+            start = self._monotonic()
             try:
                 request = self._client.build_request(
                     method,
@@ -405,16 +517,19 @@ class BybitRestClient:
                 bybit_rest_requests_total.labels(endpoint=path, result="transport_error").inc()
                 if creates and not isinstance(exc, _NOT_SENT):
                     raise _ambiguous(path, body, type(exc).__name__) from exc
-                if attempt > self._config.max_retries:
-                    raise TransportError(f"transport error calling {path}: {exc}") from exc
-                await self._backoff(attempt)
-                continue
+                # SR-E29-08: the class only, never the httpx text, which a caller logs.
+                failure = TransportError(f"transport error calling {path} ({type(exc).__name__})")
+                if not isinstance(exc, _NOT_SENT):
+                    reached = failure
+                if await self._retry(attempt, budget):
+                    continue
+                raise failure from exc
             except httpx.DecodingError as exc:  # a corrupt Content-Encoding: not a TransportError
                 if not creates:
                     raise
                 raise _answer_ambiguous(path, body, "an undecodable body") from exc
             finally:
-                bybit_rest_latency_seconds.labels(endpoint=path).observe(time.monotonic() - start)
+                bybit_rest_latency_seconds.labels(endpoint=path).observe(self._monotonic() - start)
 
             if raw is None:
                 bybit_rest_requests_total.labels(endpoint=path, result="oversized").inc()
@@ -431,18 +546,19 @@ class BybitRestClient:
                     raise _ambiguous(path, body, "an oversized body") from too_large
                 raise too_large
 
+            raw = _mask(raw, masked)
             self._observe_rate_headers(response, endpoint_class)
 
             if response.status_code >= 500:
                 bybit_rest_requests_total.labels(endpoint=path, result="5xx").inc()
                 if creates:
                     raise _ambiguous(path, body, f"HTTP {response.status_code}")
-                if attempt > self._config.max_retries:
-                    raise TransportError(
-                        f"{path} returned HTTP {response.status_code} after {attempt} attempts"
-                    )
-                await self._backoff(attempt)
-                continue
+                reached = TransportError(
+                    f"{path} returned HTTP {response.status_code} after {attempt} attempts"
+                )
+                if await self._retry(attempt, budget):
+                    continue
+                raise reached
 
             is_http_error = response.status_code >= 400
             if is_http_error:
@@ -468,12 +584,12 @@ class BybitRestClient:
                         attempt=attempt,
                         status=response.status_code,
                     )
-                    if attempt > self._config.max_retries:
-                        raise TransportError(
-                            f"{path} returned a non-JSON body after {attempt} attempts"
-                        ) from exc
-                    await self._backoff(attempt)
-                    continue
+                    reached = TransportError(
+                        f"{path} returned a non-JSON body after {attempt} attempts"
+                    )
+                    if await self._retry(attempt, budget):
+                        continue
+                    raise reached from exc
                 bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
                 exchange_errors_total.labels(**{"class": UnknownStateError.code.value}).inc()
                 raise UnknownStateError(
@@ -491,35 +607,45 @@ class BybitRestClient:
             if not has_ret_code or (is_http_error and ret_code == 0):
                 bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
                 exchange_errors_total.labels(**{"class": UnknownStateError.code.value}).inc()
+                # SR-E29-08: the body's type and size only, never its content (account figures).
                 raise UnknownStateError(
-                    f"{path} returned HTTP {response.status_code} with no usable retCode: {data!r}"
+                    f"{path} returned HTTP {response.status_code} with no usable retCode"
+                    f" ({type(data).__name__}, {len(raw)} bytes)"
                 )
             if ret_code == 0:
                 bybit_rest_requests_total.labels(endpoint=path, result="ok").inc()
                 return dict(data)
 
             ret_msg = str(data.get("retMsg", ""))
-            if creates and ret_code in _AMBIGUOUS_RET_CODES:
+            if creates and ret_code in OPEN_CREATE_CODES:
                 # Not a rate limit (#2863): no bucket drain, counted as the error raised.
                 venue = {"exchange_ret_code": ret_code, "exchange_ret_msg": ret_msg}
                 raise _answer_ambiguous(path, body, f"retCode {ret_code}", **venue)
-            error = map_ret_code(ret_code, ret_msg)
+            error = map_ret_code(ret_code, ret_msg, create=creates)
             if creates and isinstance(error, UnknownStateError):
                 error.retryable = False  # its outcome is open: polled and reconciled, never resent
             exchange_errors_total.labels(**{"class": error.code.value}).inc()
 
             if isinstance(error, ClockDriftError) and not clock_retry_used:
                 clock_retry_used = True
+                reached = error
                 bybit_rest_requests_total.labels(endpoint=path, result="clock_drift").inc()
                 # Re-measure the offset (ClockGuard.resync_after_signature_failure,
                 # injected by the composition root) *before* the single retry
-                # re-signs with it (E08-S07 "Signature failure fallback").
+                # re-signs with it (E08-S07 "Signature failure fallback"), within what is
+                # left of the lane's wait (24 §8.7): with none left before the re-measure, or
+                # after it, the venue's answer is the call's and no retry is made.
+                if not budget.allows(0.0):
+                    raise error
                 if self._on_signature_failure is not None:
                     try:
-                        async with asyncio.timeout(_SIGNATURE_RESYNC_TIMEOUT_S):
+                        async with asyncio.timeout(budget.within(_SIGNATURE_RESYNC_TIMEOUT_S)):
                             await self._on_signature_failure()
                     except Exception as exc:  # re-measure failure must not mask the 10002
                         logger().warning("bybit_clock_resync_failed", error=type(exc).__name__)
+                if not budget.allows(0.0):
+                    raise error
+                budget.refresh()
                 continue
 
             if isinstance(error, RateLimitError):
@@ -531,15 +657,36 @@ class BybitRestClient:
                     hold_s = min(max(_IP_HOLD_S, reset_wait_s), _MAX_RESET_WAIT_S)
                     self._governor.hold_ip(hold_s)
                     logger().warning("rest_ip_hold_started", hold_s=hold_s, code=ret_code)
-                if error.retryable and attempt <= self._config.max_retries:
-                    default = error.retry_after_s or self._retry_after_default(attempt)
-                    retry_after = max(reset_wait_s, default)
-                    await self._sleep(retry_after)
+                reached = error
+                if error.retryable and await self._retry(
+                    attempt, budget, floor_s=reset_wait_s, hint_s=error.retry_after_s
+                ):
                     continue
                 raise error
 
             bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
             raise error
+
+    async def _retry(
+        self,
+        attempt: int,
+        budget: _LaneBudget,
+        *,
+        floor_s: float = 0.0,
+        hint_s: float | None = None,
+    ) -> bool:
+        """Pause before another attempt and say so; `False` when none is made: `max_retries`
+        are spent, or, under a lane's wait, the pause or an IP hold ends past it (24 §8.7), so
+        no sleep runs past the lane's wait. The pause is the hint (the venue's own) or a jittered
+        backoff, and never shorter than `floor_s` (the venue's reset time)."""
+        if attempt > self._config.max_retries:
+            return False
+        pause_s = max(floor_s, hint_s or self._retry_after_default(attempt))
+        if not budget.allows(max(pause_s, self._governor.ip_hold_remaining_s())):
+            return False
+        await self._sleep(pause_s)
+        budget.refresh()
+        return True
 
     def _observe_rate_headers(
         self, response: httpx.Response, endpoint_class: EndpointClass
@@ -595,23 +742,32 @@ class BybitRestClient:
         base = min(2.0**attempt, 30.0)
         return base * (0.5 + self._random() * 0.5)
 
-    async def _backoff(self, attempt: int) -> None:
-        await self._sleep(self._retry_after_default(attempt))
-
 
 def _ambiguous(
     path: str, body: Mapping[str, Any] | None, cause: str, **detail: object
 ) -> AmbiguousResultError:
-    """The create to `path` left and `cause` hides its outcome (24 §8.6 "Order creates")."""
+    """The create to `path` left and `cause` hides its outcome (24 §8.6 "Order creates"); the
+    error names the create's id, or every item's of a batch (`order_link_ids`)."""
     link = body.get("orderLinkId") if body else None
     order_link_id = link if isinstance(link, str) else None
+    items = body.get("request") if body and path == _BATCH_PATH else None
+    order_link_ids = (
+        tuple(item["orderLinkId"] for item in items if _has_link(item))
+        if isinstance(items, list)
+        else ()
+    )
     exchange_errors_total.labels(**{"class": AmbiguousResultError.code.value}).inc()
     logger().warning(
-        "bybit_rest_create_ambiguous", path=path, cause=cause, order_link_id=order_link_id
+        "bybit_rest_create_ambiguous",
+        path=path,
+        cause=cause,
+        order_link_id=order_link_id,
+        order_link_ids=list(order_link_ids),
     )
     return AmbiguousResultError(
         f"{path}: {cause} after the create left; its outcome is unknown",
         order_link_id=order_link_id,
+        order_link_ids=order_link_ids,
         **detail,
     )
 
@@ -622,6 +778,49 @@ def _answer_ambiguous(
     """An answer to the create arrived but hides its outcome: counted as the error raised."""
     bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
     return _ambiguous(path, body, cause, **detail)
+
+
+def _has_link(item: object) -> bool:
+    link = item.get("orderLinkId") if isinstance(item, Mapping) else None
+    return isinstance(link, str) and link != ""
+
+
+def _require_create_ids(path: str, body: Mapping[str, Any] | None) -> None:
+    """An order create, or each item of a batch, carries a non-empty `orderLinkId` (C-2.10)."""
+    if path not in _CREATE_PATHS:
+        return
+    if path == _BATCH_PATH:
+        items = body.get("request") if body else None
+        complete = isinstance(items, list) and bool(items) and all(map(_has_link, items))
+    else:
+        complete = _has_link(body)
+    if not complete:
+        raise ValueError(
+            "signed_request: an order create needs a non-empty 'orderLinkId' (every item of a "
+            "batch too): a create is retried only before it leaves, under the same id (C-2.10)"
+        )
+
+
+def _require_linear_category(
+    method: str, path: str, params: Mapping[str, Any] | None, body: Mapping[str, Any] | None
+) -> None:
+    """SR-054: a category-taking path states `category=linear` itself, never filled in, in the
+    mapping that goes on the wire (`_request` sends the query of a GET or DELETE and the body of
+    a POST or PUT); the mapping left behind may name no other category."""
+    if not (path.startswith(_CATEGORY_PREFIXES) or path in _CATEGORY_PATHS):
+        return
+    query = method.upper() in ("GET", "DELETE")
+    sent, unsent = (params, body) if query else (body, params)
+    stated = (sent or {}).get("category")
+    if stated != "linear" or (unsent or {}).get("category", stated) != stated:
+        raise ValueError("signed_request: this path takes category, and only 'linear' (SR-054)")
+
+
+def _mask(raw: bytes, values: tuple[str, ...]) -> bytes:
+    for value in values:
+        if len(value) >= _MIN_MASKED_LEN:
+            raw = raw.replace(value.encode(), _MASK)
+    return raw
 
 
 def _usable_ret_code(data: object, is_http_error: bool) -> bool:

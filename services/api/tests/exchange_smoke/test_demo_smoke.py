@@ -18,6 +18,7 @@ from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.instruments import make_instruments_info_fetcher
 from candleviewer.exchange.bybit.orderbook import book_topic
 from candleviewer.exchange.bybit.public_ws import public_socket_factory
+from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.ticker import ticker_topic
 from candleviewer.exchange.bybit.trades import trade_topic
@@ -30,7 +31,7 @@ SYMBOL = "BTCUSDT"
 
 
 def _client() -> BybitRestClient:
-    return BybitRestClient(RestClientConfig(base_url=DEMO_REST_URL))
+    return BybitRestClient(RestClientConfig(base_url=DEMO_REST_URL), governor=TokenBucketGovernor())
 
 
 async def test_smoke_instrument_catalogue_fetch() -> None:

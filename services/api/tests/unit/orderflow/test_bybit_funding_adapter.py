@@ -12,6 +12,7 @@ from candleviewer.exchange.bybit.funding import (
     fetch_funding_page,
     parse_funding_page,
 )
+from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from tests._corpus import rest
 
@@ -80,7 +81,9 @@ async def test_fetch_is_public_market_data_and_bounds_params() -> None:
         return httpx.Response(200, json=rest("rest/funding_history_BTCUSDT_8h.json"))
 
     cfg = RestClientConfig(base_url="https://api-demo.bybit.com")
-    async with BybitRestClient(cfg, transport=httpx.MockTransport(handler)) as client:
+    async with BybitRestClient(
+        cfg, governor=TokenBucketGovernor(), transport=httpx.MockTransport(handler)
+    ) as client:
         rows = await BybitFundingFetcher(client)("BTCUSDT", 1_000_000, 2_000_000, 200)
         assert len(rows) == 4
         with pytest.raises(ValueError):
@@ -103,7 +106,9 @@ async def test_fetch_refuses_a_symbol_ending_in_a_newline_before_any_request(tai
         return httpx.Response(200, json=rest("rest/funding_history_BTCUSDT_8h.json"))
 
     cfg = RestClientConfig(base_url="https://api-demo.bybit.com")
-    async with BybitRestClient(cfg, transport=httpx.MockTransport(handler)) as client:
+    async with BybitRestClient(
+        cfg, governor=TokenBucketGovernor(), transport=httpx.MockTransport(handler)
+    ) as client:
         with pytest.raises(FundingRowRejected, match="invalid symbol"):
             await fetch_funding_page(client, "BTCUSDT" + tail, start_us=0, end_us=1)
         assert seen == []

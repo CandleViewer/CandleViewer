@@ -6,9 +6,15 @@ known to return maps to exactly one `ExchangeError` subclass, and anything
 else (including a code Bybit adds later) raises `UnknownStateError` with the
 raw code/message preserved — never a silent pass-through (acceptance
 criterion 6, C-2.2 adapter rule 1).
+
+A duplicate `orderLinkId` is an answer to an order create only (#2877 ruling R9): `110072`,
+`20006`, or a `10001` whose text says "duplicate". On any other call those codes are not a
+duplicate: `10001` stays the parameter error and the other two are unmapped.
 """
 
 from __future__ import annotations
+
+from typing import Final
 
 from candleviewer.exchange.base.errors import (
     AuthError,
@@ -43,7 +49,9 @@ _RET_CODE_MAP: dict[int, tuple[type[ExchangeError], dict[str, str]]] = {
     10403: (RateLimitError, {}),
     10404: (InstrumentFilterError, {"filter_name": "unknown_op_or_category"}),
     10429: (RateLimitError, {}),
-    20006: (DuplicateClientIdError, {}),
+    # The UTA table of the v5 error page (bybit-exchange/docs@19518b90fb36, docs/v5/error.mdx):
+    # "(Derivatives) Your api key has expired" (#2877; E27's `key_expired` verdict reads it).
+    33004: (AuthError, {}),
     110001: (NotFoundError, {}),
     110003: (InstrumentFilterError, {"filter_name": "price_out_of_bounds"}),
     110004: (InsufficientMarginError, {}),
@@ -66,7 +74,6 @@ _RET_CODE_MAP: dict[int, tuple[type[ExchangeError], dict[str, str]]] = {
     110045: (InsufficientMarginError, {}),
     110047: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
     110048: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
-    110072: (DuplicateClientIdError, {}),
     110073: (InstrumentFilterError, {"filter_name": "margin_mode_switch_failed"}),
     110079: (UnknownStateError, {}),
     110086: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
@@ -74,25 +81,36 @@ _RET_CODE_MAP: dict[int, tuple[type[ExchangeError], dict[str, str]]] = {
     3400139: (InstrumentFilterError, {"filter_name": "risk_limit_tier"}),
 }
 
-_DUPLICATE_MARKERS = ("duplicate", "orderlinkid", "order_link_id")
+#: The codes that leave an order create's outcome open (24 §8.6 "Order creates"): the venue
+#: answered, but whether the order landed is unknown, so the create is never sent again and its
+#: order goes to `unknown`. The REST client raises them as an ambiguous result for a create and
+#: the trading port reads a batch item's code by them: one definition for both.
+OPEN_CREATE_CODES: Final = frozenset({10016, 10019})
+
+#: The duplicate-`orderLinkId` codes of an order create (24 §8.6): `110072` on REST, `20006` on
+#: the trade socket. `10001` is one too when its text says so; its exact text is assumed pending
+#: E29-K01 (O-1).
+_DUPLICATE_CODES = frozenset({20006, 110072})
+_DUPLICATE_MARKER = "duplicate"
 
 
-def map_ret_code(ret_code: int, ret_msg: str) -> ExchangeError:
+def map_ret_code(ret_code: int, ret_msg: str, *, create: bool = False) -> ExchangeError:
     """Map one Bybit `(retCode, retMsg)` pair to an `ExchangeError` instance.
 
     Never called with `ret_code == 0` (the caller checks success first).
-    `10001` needs the message text to disambiguate a generic parameter
-    error from a duplicate-`orderLinkId` rejection (§8.6 row 2); every other
-    code is a straight table lookup. An unmapped code always raises
-    `UnknownStateError` — that is the acceptance-criterion-6 contract, not a
-    bug to silence.
+    `create` says whether the call was an order create, the only call a
+    duplicate-`orderLinkId` rejection can answer (#2877 ruling R9); it is false
+    unless the caller says so, so no other call can read as one. `10001`
+    needs the message text to disambiguate a generic parameter error from a
+    duplicate rejection (§8.6 row 2); every other code is a straight table
+    lookup. An unmapped code always raises `UnknownStateError` — that is the
+    acceptance-criterion-6 contract, not a bug to silence.
     """
+    if create and (
+        ret_code in _DUPLICATE_CODES or (ret_code == 10001 and _DUPLICATE_MARKER in ret_msg.lower())
+    ):
+        return DuplicateClientIdError(ret_msg, exchange_ret_code=ret_code, exchange_ret_msg=ret_msg)
     if ret_code == 10001:
-        lowered = ret_msg.lower()
-        if any(marker in lowered for marker in _DUPLICATE_MARKERS):
-            return DuplicateClientIdError(
-                ret_msg, exchange_ret_code=ret_code, exchange_ret_msg=ret_msg
-            )
         return InstrumentFilterError(
             ret_msg,
             filter_name="unknown",

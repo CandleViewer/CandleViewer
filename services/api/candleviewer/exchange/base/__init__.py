@@ -8,7 +8,8 @@ Allowed dependencies (CONSTITUTION.md C-3.1): M1.
 
 `Trade`/`Ticker`/`TradeSide` (E02-T12) are the synthetic-feed normalised
 domain event shapes; the full `ExchangeAdapter` interface, capability
-record, `FakeExchange` and error taxonomy land with E08-T01.
+record, `FakeExchange` and error taxonomy land with E08-T01, and
+`FakeTradingPort` with G-8 (#2877).
 """
 
 from __future__ import annotations
@@ -24,13 +25,14 @@ from .errors import (
     InsufficientMarginError,
     NotFoundError,
     OmsErrorCode,
+    RateBudgetExceededError,
     RateLimitError,
     TransportError,
     UnknownStateError,
 )
-from .fakes import FakeExchange
+from .fakes import FakeExchange, FakeTradingPort
 from .models import ExchangeCapabilities, Ticker, Trade, TradeSide
-from .ports import MarketDataPort, TradingPort
+from .ports import MarketDataPort, RateHeadroomPort, TradingPort
 
 __all__ = [
     "AmbiguousResultError",
@@ -40,11 +42,14 @@ __all__ = [
     "ExchangeCapabilities",
     "ExchangeError",
     "FakeExchange",
+    "FakeTradingPort",
     "InstrumentFilterError",
     "InsufficientMarginError",
     "MarketDataPort",
     "NotFoundError",
     "OmsErrorCode",
+    "RateBudgetExceededError",
+    "RateHeadroomPort",
     "RateLimitError",
     "Ticker",
     "Trade",

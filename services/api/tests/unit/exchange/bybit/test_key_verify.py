@@ -24,6 +24,7 @@ from candleviewer.exchange.base.errors import (
     RateLimitError,
     TransportError,
 )
+from candleviewer.exchange.base.models import RateLane
 from candleviewer.exchange.bybit.config import SIGNED_REST_BASES, EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.key_info import (
     KEY_INFO_PATH,
@@ -55,15 +56,22 @@ def load(name: str) -> dict[str, Any]:
 
 
 class Governor(TokenBucketGovernor):
-    """Records each draw: `(uid, endpoint class)`."""
+    """Records each draw: `(uid, endpoint class, lane)`."""
 
     def __init__(self) -> None:
         super().__init__(default_capacity=1000.0, default_refill_per_s=1000.0)
-        self.drawn: list[tuple[str, EndpointClass]] = []
+        self.drawn: list[tuple[str, EndpointClass, RateLane]] = []
 
-    async def acquire(self, uid: str, endpoint_class: EndpointClass) -> None:
-        self.drawn.append((uid, endpoint_class))
-        await super().acquire(uid, endpoint_class)
+    async def acquire(
+        self,
+        uid: str,
+        endpoint_class: EndpointClass,
+        *,
+        lane: RateLane,
+        deadline_s: float | None = None,
+    ) -> None:
+        self.drawn.append((uid, endpoint_class, lane))
+        await super().acquire(uid, endpoint_class, lane=lane, deadline_s=deadline_s)
 
 
 @pytest.fixture
@@ -171,7 +179,7 @@ async def test_both_calls_draw_the_account_reads_class_never_the_order_or_positi
 ) -> None:
     calls, governor = build("demo")
     await both(calls)
-    assert governor.drawn == [(UID, EndpointClass.ACCOUNT)] * 2
+    assert governor.drawn == [(UID, EndpointClass.ACCOUNT, "poll")] * 2
 
 
 @pytest.mark.parametrize(
@@ -280,7 +288,9 @@ async def test_the_service_builds_every_verification_client_on_one_capped_govern
     for calls in (first, second):
         await calls.aclose()
     governor = first._client._governor  # SR-E27-05: 10 calls per second, all UIDs together
-    assert governor is second._client._governor and governor._ip_bucket.capacity == 50.0
+    assert governor is second._client._governor
+    assert governor._cap is not None and governor._cap.capacity == 50.0
+    assert governor._ip is svc._governor._ip  # R5: the process IP bucket and hold, shared
     assert asked(venue) == [(HOSTS["testnet"], KEY_INFO_PATH)]
     with pytest.raises(RuntimeError, match="no signing capability"):
         ExchangeBybitService().key_verification_calls("demo", OTHER_KEY, uid=UID, recv_window_ms=1)
