@@ -922,9 +922,10 @@ COMMENT ON COLUMN audit_signing_keys.dek_ref IS 'SECRET: the row''s DEK wrapped 
   `cv-export-seed-v1 ‖ environment ‖ key_id ‖ public_key`, each part preceded by its length as a u16 big-endian
   (`export_seed_aad`, `secrets/_envelope.py`; no KEK version).
   `dek_ref` is `ek1:` plus the lower-case hex of `nonce(12) ‖ ciphertext(32) ‖ tag(16)` (120 digits): the DEK under
-  the KEK of `(env, kek_version)`, with an AAD under its own label, `cv-export-dek-v1`, whose parts S6 sets, so a KEK
-  rotation re-wraps only the DEK. `ask_sealed_seed` and `ask_dek_ref` admit nothing else, so no plaintext seed or DEK
-  is stored, even by a buggy caller; Postgres still echoes a refused row in its error `DETAIL`, which the store drops
+  the KEK of `(env, kek_version)`, AAD `cv-export-dek-v1 ‖ environment ‖ key_id ‖ kek_version` (#889 S6a-1; the KEK
+  version as decimal text), so a KEK rotation re-wraps only the DEK. `ask_sealed_seed` and `ask_dek_ref` admit
+  nothing else, so no plaintext seed or DEK is stored, even by a buggy caller; Postgres still echoes a refused row
+  in its error `DETAIL`, which the store drops
   (C-12.6), and the server log keeps only the message (`log_error_verbosity = terse`, #2748). `ask_fingerprint` and
   `ask_key_id` derive the fingerprint and the key id, so the three never disagree.
 - **Lifecycle.** A key is inserted `active`, with its seed. The rotation that inserts its successor retires it:

@@ -105,23 +105,37 @@ MachineEventSinkUnavailable = MachineEventUnavailable
 _SECRETS_ERRORS = frozenset(
     {"security.kek_load_failed", "security.kek_rotation_failed", "security.kek_rows_stranded"}
 )
-#: An M2 refusal (#2266): stored as denied, at warning, as the other refusals are (C-12.8).
-_SECRETS_REFUSED = "security.kek_rotation_refused"
+#: M2 refusals (#2266; #889 S7's rotation): stored as denied, at warning, as the other refusals
+#: are (C-12.8).
+_SECRETS_REFUSED = frozenset(
+    {"security.kek_rotation_refused", "security.audit_signing_key_rotation_refused"}
+)
+#: The audit export signing key's records (#889, ADR-0039 decision 7): `object_kind`
+#: `audit_signing_key`, whose `key_id` is the export key's id, never an API key's.
+_SIGNING_KEY_ACTIONS = ("security.audit_signing_key_", "security.audit_export_")
+#: Members M2's `(action, fields)` port carries as `"true"`/`"false"`, stored as JSON booleans
+#: (22 `rotateAuditSigningKey`: `retired_material_destroyed: true`); any other value raises
+#: (`KeyError`) before the record is written or built, so a typo never records `false`.
+_BOOLEANS = frozenset({"retired_material_destroyed"})
+_BOOL = {"true": True, "false": False}
 
 
 def _secrets_audit_columns(action: str, fields: dict[str, str]) -> dict[str, Any]:
     """The audit columns of one M2 record, for the WAL sink and the row builder alike. Fields
     are ids only; the actor comes from the wiring-bound caller identity, never the borrower."""
+    signing_key = action.startswith(_SIGNING_KEY_ACTIONS)
     columns: dict[str, Any] = {
         "actor_label": f"{fields.get('actor_kind', 'system')}:{fields.get('actor_role', '')}",
         "actor_user_id": fields.get("actor_user_id"),
-        "object_kind": "api_key" if "key_id" in fields else "kek",
+        "object_kind": (
+            "audit_signing_key" if signing_key else "api_key" if "key_id" in fields else "kek"
+        ),
         "object_id": fields.get("key_id"),
         "severity": Severity.ERROR if action in _SECRETS_ERRORS else Severity.INFO,
-        "after_state": dict(fields),
+        "after_state": {k: _BOOL[v] if k in _BOOLEANS else v for k, v in fields.items()},
         "request_id": current_request_uuid(),  # the request the change is part of (#3990)
     }
-    if action == _SECRETS_REFUSED:
+    if action in _SECRETS_REFUSED:
         columns |= {"outcome": AuditOutcome.DENIED, "severity": Severity.WARNING}
     return columns
 

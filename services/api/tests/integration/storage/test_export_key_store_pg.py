@@ -26,6 +26,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 )
 from tests.integration.storage.test_audit_signing_keys_pg import _REV, _as, _at, _exec, pg
 from tests.unit.credentials_m2.test_export_key_store import (
+    DESTROYED,
     GENERATED,
     MOVE,
     NEXT_WRAP,
@@ -231,21 +232,26 @@ async def test_two_rotations_of_one_key_make_one_successor(
 
 
 async def test_the_rewrap_compares_and_sets_on_keys_holding_their_seed(
-    pg: str, store: Store
+    pg: str, store: Store, records: Records
 ) -> None:
+    """S6a: the move commits with its record, and the trigger refuses a DEK kept (S4b's F1)."""
     await store.insert_first(export_key(1), audit=GENERATED)
     await _rotate(store, 2, _user(pg))  # v1 retired, its seed destroyed
     assert not await store.rewrap(key_id(1), **MOVE)  # no seed: nothing to re-wrap (Q3)
-    assert not await store.rewrap(key_id(2), **MOVE | {"from_version": 2})  # stale
-    assert await store.rewrap(key_id(2), **MOVE) is True  # as cv_app, past the write-once guard
-    assert not await store.rewrap(key_id(2), **MOVE)  # a replay: it has moved on
+    assert not await store.rewrap(key_id(2), **MOVE | {"from_version": 3})  # stale
+    with pytest.raises(StorageQueryFailed, match="23514") as refused:
+        await store.rewrap(key_id(2), **MOVE | {"dek_ref": WRAP})
+    assert refused.value.__context__ is None and "ek1:" not in repr(refused.value)  # C-12.6
+    assert await store.rewrap(key_id(2), **MOVE) is True  # past the guard
+    assert not await store.rewrap(key_id(2), **MOVE)  # a replay: it moved on
     q = "SELECT version, kek_version, dek_ref FROM audit_signing_keys ORDER BY version"
     assert _exec(pg, q) == [(1, 1, WRAP), (2, 2, NEXT_WRAP)]
     assert [await store.count_at_kek_version(v, "demo") for v in (1, 2)] == [0, 1]
+    assert [bool(_event_ts(pg, r)) for r in records.built[2:]] == [False] * 3 + [True, False]
 
 
 async def test_a_retired_key_holding_its_seed_counts_until_its_destroy(
-    pg: str, store: Store, rel: SqlAlchemyRelationalRepository
+    pg: str, store: Store, rel: SqlAlchemyRelationalRepository, records: Records
 ) -> None:
     await store.insert_first(export_key(1), audit=GENERATED)
     await Store(rel, env="live", audit_row=Records("live")).insert_first(
@@ -259,9 +265,10 @@ async def test_a_retired_key_holding_its_seed_counts_until_its_destroy(
     )
     assert await store.count_retired_with_seed("demo") == 1
     assert await store.count_at_kek_version(1, "demo") == 1  # a KEK re-wrap waits for it (I2)
-    assert await store.destroy_retired_seeds("demo") == 1
+    assert await store.destroy_retired_seeds("demo", audit=DESTROYED) == 1
     assert await store.count_retired_with_seed("demo") == 0
-    assert await store.destroy_retired_seeds("demo") == 0  # the retry finds nothing left
+    assert await store.destroy_retired_seeds("demo", audit=DESTROYED) == 0  # nothing left
+    assert [bool(_event_ts(pg, r)) for r in records.built[1:]] == [True, False]  # S6a's record
     q = "SELECT env::text, sealed_seed IS NULL FROM audit_signing_keys ORDER BY 1"
     assert _exec(pg, q) == [("demo", True), ("live", False)]  # the process environment's only
 

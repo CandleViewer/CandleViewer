@@ -10,7 +10,8 @@ concatenation is ambiguous:
   environment-free ``cv-dek-v1`` wrap is refused, never opened.
 - auth keyring (#2152, ADR-0009 Amendment 4): wrap ``cv-akey-v1``, TOTP seal ``cv-totp-v1`` and
   the ``cv-rc-v2`` recovery-code digest preimage (`21-database-schema.md` §3.1.5a).
-- audit export key (#889, ADR-0039): the seed's seal ``cv-export-seed-v1`` (`_export_key.py`).
+- audit export key (#889, ADR-0039): the seed's seal ``cv-export-seed-v1`` (`_export_key.py`) and
+  its DEK's wrap ``cv-export-dek-v1 | environment | key_id | kek_version`` (`export_dek_aad`).
 
 SR-003 `key_version`: there is no separate key-version column — every exchange key rotation
 inserts a new `api_keys` row (`api_key_rotations` links old→new), so `credential_id` already
@@ -81,6 +82,14 @@ def export_seed_aad(env: str, key_id: str, public_key: bytes) -> bytes:
     if env not in ENVIRONMENTS or len(public_key) != 32:
         raise ValueError("unknown environment or export public key length")
     return aad(b"cv-export-seed-v1", env.encode(), key_id.encode(), bytes(public_key))
+
+
+def export_dek_aad(env: str, key_id: str, kek_version: int) -> bytes:
+    """Audit export DEK wrap under the KEK (#889 S6, ADR-0039 decision 2): its own label, so
+    neither a credential wrap (`cv-dek-v2`) nor an auth key wrap opens as a signing key's DEK."""
+    if env not in ENVIRONMENTS or type(kek_version) is not int or kek_version < 1:
+        raise ValueError("unknown environment, or kek_version not a positive int")
+    return aad(b"cv-export-dek-v1", env.encode(), key_id.encode(), str(kek_version).encode())
 
 
 def totp_aad(env: str, user_id: UUID) -> bytes:

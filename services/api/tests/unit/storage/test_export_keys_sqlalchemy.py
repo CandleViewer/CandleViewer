@@ -4,6 +4,7 @@ them. The SQL runs on Postgres 16 in `tests/integration/storage/test_export_key_
 
 from __future__ import annotations
 
+import inspect
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -31,7 +32,7 @@ _STATEMENTS = {n: v for n, v in vars(m).items() if isinstance(v, sa.TextClause)}
 
 
 def _port(store: m.SqlAlchemyExportKeyStore) -> m2.ExportKeyStore:
-    return store  # mypy holds the adapter to the Protocol M2 is typed against
+    return store  # a local `mypy --strict` check; CI's comes when S6a-2 adds the store to the app
 
 
 def test_statements_name_their_columns_and_environment_and_never_delete() -> None:
@@ -59,6 +60,20 @@ def test_the_adapters_copies_of_m2s_rules_have_not_drifted() -> None:
     keys = (*m2.EXPORT_KEY_PUBLIC, "client_body_sha256")  # no `secrets` import here (C-3.2)
     new, old = ({k: f"{v} {k}" for k in keys} for v in ("new", "old"))
     assert m._rotation(dict(new), dict(old)) == m2._rotation(new, old)
+    assert m._KEY == tuple(k for k in m2.EXPORT_KEY_SEALED if k != "fingerprint_sha256")
+    assert m2._RequestTaken.code == ExportKeyRequestTaken.code  # the fake's error is M10's
+    ref = "0193F2BB-0000-4000-8000-0000000000A1"
+    refs = [ref, "{" + ref + "}", "urn:uuid:" + ref, ref.replace("-", "")]
+    assert [m._canonical(r) for r in refs] == [m2._canonical(r) for r in refs] == [ref.lower()] * 4
+
+
+def test_the_rewraps_and_the_destroys_record_is_required_by_every_store() -> None:
+    """S6a-1: no store defaults the record away, as `CredentialStore.rewrap` requires its own."""
+    stores = (m2.ExportKeyStore, m2.InMemoryExportKeyStore, m.SqlAlchemyExportKeyStore)
+    for method in ("rewrap", "destroy_retired_seeds"):
+        for store in stores:
+            audit = inspect.signature(getattr(store, method)).parameters["audit"]
+            assert audit.default is inspect.Parameter.empty, (store.__name__, method)
 
 
 def _no_record(action: str, fields: dict[str, str]) -> dict[str, Any]:
@@ -86,10 +101,11 @@ ROTATE_LOG = ["BUILD", "UPDATE", "SELECT", "INSERT", "LOCK", "INSERT"]
 class _Tx:
     """`test_credentials_rewrap_tx.py`'s logging unit of work (`LOCK`: the chain lock) and record
     builder for `store`. The retire returns `old`; the key's INSERT violates `refused` or returns
-    its row; the record's writes `recorded` rows. `at` keeps the time each key statement writes."""
+    its row; a re-wrap or a destroy changes `moved` rows; the record's writes `recorded` rows.
+    `at` keeps the time each key statement writes."""
 
-    def __init__(self, old: Any = V1, refused: str = "", recorded: int = 1) -> None:
-        self.old, self.refused, self.recorded = old, refused, recorded
+    def __init__(self, old: Any = V1, refused: str = "", recorded: int = 1, moved: int = 1) -> None:
+        self.old, self.refused, self.recorded, self.moved = old, refused, recorded, moved
         self.log: list[str] = []
         self.at: list[datetime] = []
         self.store = m.SqlAlchemyExportKeyStore(cast(Any, self), env="demo", audit_row=self.build)
@@ -107,7 +123,8 @@ class _Tx:
                 raise DBAPIError("INSERT", None, cast(Any, orig))
             self.at += [params["at"]] if stmt is m._RETIRE or stmt is m._INSERT else []
             row = self.old if stmt is m._RETIRE else params
-            res = SimpleNamespace(rowcount=self.recorded, one=lambda: row, one_or_none=lambda: row)
+            count = self.moved if stmt in (m._REWRAP, m._DESTROY) else self.recorded
+            res = SimpleNamespace(rowcount=count, one=lambda: row, one_or_none=lambda: row)
             res.mappings, res.scalar_one = lambda: res, lambda: self.old["version"]
             return res
 
@@ -140,11 +157,14 @@ async def test_a_write_locks_its_rows_then_the_chain_and_commits_at_its_records_
     assert logs == ([warned | ids] if days > 0 else [])
 
 
+#: v1 with a naive `valid_from`: the comparison fails inside the transaction, not after it (N-a).
+NAIVE = V1 | {"valid_from": T.replace(tzinfo=None)}
 UNDONE = {  # a write that cannot finish: its call, the unit of work, outcome, steps
     "stale": (ROTATE, {"old": None}, None, ROTATE_LOG[:2]),  # `retire` is not the active key
     "boot_won": (FIRST, {"refused": "ux_ask_active"}, False, FIRST_LOG[:2]),
     "reused_id": (FIRST, {"refused": "audit_signing_keys_pkey"}, StorageQueryFailed, FIRST_LOG[:2]),
     "retried": (ROTATE, {"refused": "ask_env_request"}, ExportKeyRequestTaken, ROTATE_LOG[:4]),
+    "naive_valid_from": (ROTATE, {"old": NAIVE}, TypeError, ROTATE_LOG[:2]),  # rolls back
     "other_23505": (ROTATE, {"refused": "ask_env_fingerprint"}, StorageQueryFailed, ROTATE_LOG[:4]),
     "first_record": (FIRST, {"recorded": 0}, ExportKeyAuditNotWritten, FIRST_LOG),
     "rotate_record": (ROTATE, {"recorded": 0}, ExportKeyAuditNotWritten, ROTATE_LOG),
@@ -165,3 +185,51 @@ async def test_a_write_that_cannot_finish_commits_nothing(
     else:
         assert await call(tx.store) is outcome
     assert tx.log == (log if outcome is None else [*log, "ROLLBACK"])
+
+
+async def test_the_clock_anomaly_is_logged_only_once_committed() -> None:
+    tx = _Tx(old=V1 | {"valid_from": T + timedelta(1)}, recorded=0)  # stepped back, not recorded
+    with structlog.testing.capture_logs() as logs, pytest.raises(ExportKeyAuditNotWritten):
+        await ROTATE(tx.store)
+    assert (logs, tx.log[-1]) == ([], "ROLLBACK")
+
+
+async def test_a_naive_record_time_is_refused_before_any_io() -> None:
+    def naive(action: str, fields: dict[str, str]) -> dict[str, Any]:
+        return RECORD | {"event_ts": "2026-10-18T12:00:00"}
+
+    adapter = m.SqlAlchemyExportKeyStore(cast(Any, None), env="demo", audit_row=naive)
+    for call in (FIRST, ROTATE):
+        with pytest.raises(ValueError, match="timezone"):
+            await call(adapter)
+
+
+REWRAP, DESTROY = (
+    lambda s: s.rewrap(m1.key_id(1), **m1.MOVE),  # with its record, `m1.REWRAPPED`
+    lambda s: s.destroy_retired_seeds("demo", audit=m1.DESTROYED),
+)
+RECORDED = ["BUILD", "UPDATE", "LOCK", "INSERT"]
+
+
+@pytest.mark.parametrize(
+    ("call", "uow", "outcome", "log"),
+    [
+        (REWRAP, {}, True, [*RECORDED, "COMMIT"]),
+        (REWRAP, {"moved": 0}, False, ["BUILD", "UPDATE", "COMMIT"]),  # stale: no record
+        (REWRAP, {"recorded": 0}, ExportKeyAuditNotWritten, [*RECORDED, "ROLLBACK"]),
+        (DESTROY, {"moved": 2}, 2, [*RECORDED, "COMMIT"]),
+        (DESTROY, {"moved": 0}, 0, ["BUILD", "UPDATE", "COMMIT"]),  # none held: no record
+        (DESTROY, {"moved": 2, "recorded": 0}, ExportKeyAuditNotWritten, [*RECORDED, "ROLLBACK"]),
+    ],
+    ids=["rewrap", "rewrap_stale", "rewrap_record", "destroy", "destroy_none", "destroy_record"],
+)
+async def test_a_rewrap_and_a_destroy_commit_with_their_record_or_not_at_all(
+    call: m1.Call, uow: dict[str, Any], outcome: type[Exception] | int, log: list[str]
+) -> None:
+    tx = _Tx(**uow)
+    if isinstance(outcome, type):
+        with pytest.raises(outcome):
+            await call(tx.store)
+    else:
+        assert await call(tx.store) == outcome
+    assert tx.log == log
