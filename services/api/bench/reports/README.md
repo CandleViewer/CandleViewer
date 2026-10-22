@@ -21,6 +21,24 @@ baseline whose gate is not warn-only records it, fails at +50 % (`gate.record` w
 so the #2825 PR sets it). The smoke profile takes its first sample after an unsampled warm-up
 (`warmup_s`, `warmup_wall_s` in `scenarios/soak_steady.json`, which says why 120 s).
 
+The full `soak_bars` profile also holds the figure to a plateau (R4 of #399 D2-G4, registered on
+#399 before its 24 h reading): `rss_plateau_slope`, the Theil-Sen slope of the per-sample series
+behind `rss_mb_per_symbol` over the last 12 h of scenario time (`plateau_window_s`, 721 samples at
+60 s), must be at most 0.18 MB/h, over at least 100 samples, else the check fails with a note. A run
+shorter than the window is read whole; the registered rule judges a complete run only, which
+`docs/qa/perf/e12-bars-store-memory.md` checks apart (its block prints `1441 86400.0`). "MB" is the
+harness's own unit, a MiB, as in `rss_mb_per_symbol`. The limit is budget #8's headroom over a
+30-day horizon, (300 - 170) MB / 720 h; the 5 % flatness band alone admits about 0.42. R4 reads
+growth that is sustained across the window: a single step registers only within about 13 minutes of
+the window's middle, and growth that starts in the last 3.5 h reads 0 at any rate, so the flatness
+band (5 % of the process RSS) stays the guard for a large step, and a late leak is not seen. The
+slope is also reported as `rss_slope_mb_per_h_per_symbol`. It is a hard check, so it guards a full
+run that has no baseline; a baseline recorded from a full run should leave that metric out, as a
+relative band means little for a slope near zero. The smoke has no 12 h window and so neither the
+check nor the metric. In the lane the five `delta` series never close: the feed alternates buy and
+sell prints of 0.001, below the smallest threshold the wire takes, so their hydrated bars are in the
+level and their fold path is not exercised.
+
 `HARNESS_VERSION` is `e08-q04/2` and the gate compares no baseline recorded by another version.
 The six E08 baselines are `e08-q04/1`, and `rss_mb_per_symbol` in
 `baselines/e08/soak_steady.json` and `e08-sample.md` is whole-process RSS divided by the symbol

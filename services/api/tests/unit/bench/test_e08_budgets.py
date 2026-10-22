@@ -3,12 +3,17 @@ Pure (no I/O, no clock)."""
 
 from __future__ import annotations
 
+import math
+import statistics
+from collections.abc import Callable
+
 import pytest
 
 from bench.ingestion import budgets as b
 from bench.ingestion.budgets import Sample
 
 MiB = 2**20
+HOUR = 3600.0
 
 
 def _samples(rss: list[int], cpu_step: float = 0.1, storage_step: int = 0) -> list[Sample]:
@@ -126,3 +131,163 @@ def test_headroom_zero_or_ip_limit_fails() -> None:
 def test_summary_shape_matches_baseline_schema() -> None:
     assert b.summary([3.0, 1.0, 2.0]) == {"p50": 2.0, "p95": 3.0, "max": 3.0, "count": 3.0}
     assert b.summary([])["p95"] == 0.0
+
+
+# --- R4, the plateau of the bars soak (#399 D2-G4) ----------------------------------------------
+
+
+def _lane_curve(
+    per_symbol_mb: Callable[[float], float],
+    *,
+    pre: int = 58 * MiB,
+    symbols: int = 3,
+    end_s: float = 86_400.0,
+    step_s: float = 60.0,
+) -> list[Sample]:
+    """A sample every `step_s` to `end_s`: `pre` bytes and what `per_symbol_mb(t)` adds a symbol."""
+    n = int(end_s / step_s) + 1
+    return [
+        Sample(t, pre + round(per_symbol_mb(t) * symbols * MiB), t * 0.01, 1.0, 0, 0)
+        for t in (i * step_s for i in range(n))
+    ]
+
+
+def _wobble(t: float) -> float:
+    """A zero-mean wobble of at most 0.5 MB, deterministic in `t` (no random numbers)."""
+    return ((int(t / 60) * 41) % 101 - 50) / 100.0
+
+
+def test_the_plateau_limit_is_the_headroom_under_budget_8_over_30_days() -> None:
+    # R4 as pre-registered on #399: (300 - 170) MB over 720 h, 0.18 MB/h, at least 100 samples
+    assert b.SLOPE_LIMIT_MB_PER_H == round((b.B8_RSS_MB_PER_SYMBOL - 170.0) / 720.0, 2) == 0.18
+    assert b.PLATEAU_MIN_SAMPLES == 100
+
+
+def test_theil_sen_is_the_median_of_the_pairwise_slopes_in_mb_per_hour() -> None:
+    line = [(t, 5.0 + 2.0 * t / HOUR) for t in (0.0, 600.0, 1800.0, 3600.0, 7200.0)]
+    assert b.theil_sen_mb_per_h(line) == pytest.approx(2.0)
+    assert b.theil_sen_mb_per_h(line[::-1]) == pytest.approx(2.0)  # the order of the points is moot
+    wild = [*line[:2], (1800.0, 500.0), *line[3:]]  # one wild sample moves no median of 10 slopes
+    assert b.theil_sen_mb_per_h(wild) == pytest.approx(2.0)
+    assert b.theil_sen_mb_per_h([(0.0, 1.0), (0.0, 9.0), (3600.0, 3.0)]) == pytest.approx(-2.0)
+
+
+def test_theil_sen_has_no_slope_without_two_points_at_different_times() -> None:
+    for points in ([], [(0.0, 1.0)], [(5.0, 1.0), (5.0, 2.0)]):
+        with pytest.raises(statistics.StatisticsError):
+            b.theil_sen_mb_per_h(points)
+
+
+@pytest.mark.parametrize(
+    ("mb_per_h", "passed"),
+    [(0.0, True), (0.05, True), (0.15, True), (0.25, False), (0.42, False)],
+)
+def test_plateau_holds_the_slope_a_symbol_to_the_pre_registered_limit(
+    mb_per_h: float, passed: bool
+) -> None:
+    s = _lane_curve(lambda t: 170.0 + mb_per_h * t / HOUR + _wobble(t))
+    c = b.check_plateau(s, 3, 12 * HOUR)
+    assert (c.name, c.budget, c.limit) == ("rss_plateau_slope", "#8", 0.18)
+    assert (c.unit, c.hard) == ("MB/h", True)
+    assert c.measured == pytest.approx(mb_per_h, abs=0.01) and c.passed is passed
+    assert "721 samples" in c.note  # hours 12 to 24, both ends in
+
+
+def test_a_creep_inside_the_flatness_band_passes_it_and_fails_the_plateau() -> None:
+    """0.25 MB/h a symbol is 16.5 MiB over the 22 h after hour 2: 2.9 % of the process RSS, inside
+    R2's 5 % band, and far under 300 MB. Only the slope sees it use the headroom in 22 days."""
+    pre = 58 * MiB
+    s = _lane_curve(lambda t: 170.0 + 0.25 * t / HOUR, pre=pre)
+    checks = {c.name: c for c in b.check_soak(s, 3, 0.0833 * 86_400, 0.05, pre)}
+    assert checks["memory_flatness"].passed and checks["rss_per_symbol_p95"].passed
+    assert checks["memory_flatness"].measured == pytest.approx(0.029, abs=0.002)
+    r4 = b.check_plateau(s, 3, 12 * HOUR, pre)
+    assert not r4.passed and r4.measured == pytest.approx(0.25, abs=0.001)
+    assert not b.Verdict("x", [*checks.values(), r4]).passed  # a hard check: it fails the verdict
+
+
+def test_plateau_reads_the_last_window_and_neither_more_nor_less() -> None:
+    def climb_before_the_window(t: float) -> float:  # +20 MB a symbol over hours 0-12, flat after
+        return 170.0 + 20.0 * min(t, 12 * HOUR) / (12 * HOUR)
+
+    def climb_inside_the_window(t: float) -> float:  # +10 MB a symbol over hours 12-18, flat after
+        return 170.0 + 10.0 * max(0.0, min(t, 18 * HOUR) - 12 * HOUR) / (6 * HOUR)
+
+    before = b.check_plateau(_lane_curve(climb_before_the_window), 3, 12 * HOUR)
+    assert before.passed  # the window is flat: the climb before it is not read
+    inside = b.check_plateau(_lane_curve(climb_inside_the_window), 3, 12 * HOUR)
+    assert not inside.passed and inside.measured == pytest.approx(10.0 / 12.0, abs=0.01)
+
+
+def test_plateau_reads_a_step_only_near_the_middle_and_under_reads_late_growth() -> None:
+    """A step moves the median only if it separates more than half of the pairs: +10 MB a symbol
+    (+30 MiB over three symbols) fails at hour 18, the window's middle, and reads 0 at hours 16 and
+    20 (measured: it reads non-zero only within about 13 minutes of the middle). Growth of 4 MB/h a
+    symbol from hour 22 (+8 MB, inside R2's band) reads 0 too: R4 reads sustained growth, and R2's
+    band (5 % of the process RSS) stays the guard for a large step."""
+
+    def step(hour: float, mb: float) -> b.Check:
+        s = _lane_curve(lambda t: 170.0 + (mb if t >= hour * HOUR else 0.0))
+        return b.check_plateau(s, 3, 12 * HOUR)
+
+    middle, small = step(18, 10.0), step(18, 1.0)  # the small one is +3 MiB
+    assert not middle.passed and middle.measured > 0.5
+    assert small.passed and 0.05 < small.measured < b.SLOPE_LIMIT_MB_PER_H
+    assert step(16, 10.0).measured == 0.0 and step(20, 10.0).measured == 0.0
+    late = _lane_curve(lambda t: 170.0 + 4.0 * max(0.0, t - 22 * HOUR) / HOUR)
+    assert b.check_plateau(late, 3, 12 * HOUR).measured == 0.0
+
+
+def test_plateau_passes_noise_around_a_flat_level_and_a_decline() -> None:
+    noisy = b.check_plateau(_lane_curve(lambda t: 170.0 + 2 * _wobble(t)), 3, 12 * HOUR)
+    assert noisy.passed and abs(noisy.measured) < 0.01
+    falling = b.check_plateau(_lane_curve(lambda t: 200.0 - 0.5 * t / HOUR), 3, 12 * HOUR)
+    assert falling.passed and falling.measured == pytest.approx(-0.5, abs=0.001)  # not growth
+
+
+def test_plateau_reads_budget_8s_figure_the_rss_the_lanes_added() -> None:
+    """The figure is the RSS since before the lanes, never below 0: the first half of the window
+    here sits under it and reads 0, so the climb that follows is 10 MB over 6 h, not 20 over 12."""
+    pre = 600 * MiB
+    s = _lane_curve(lambda t: -10.0 + 20.0 * (t - 12 * HOUR) / (12 * HOUR), pre=pre)
+    c = b.check_plateau(s, 3, 12 * HOUR, pre)
+    assert c.measured == pytest.approx(10.0 / 12.0, abs=0.01) and not c.passed
+    # a whole-process RSS (nothing taken out) would read the climb as 20 MB over 12 h
+    assert b.check_plateau(s, 3, 12 * HOUR).measured == pytest.approx(20.0 / 12.0, abs=0.01)
+
+
+def test_plateau_is_in_the_unit_of_budget_8_a_mebibyte_not_a_million_bytes() -> None:
+    """The harness's "MB" is 2**20 bytes: R1's 300 is compared in it, and so is R4's 0.18."""
+    # one symbol, 2**20 bytes more each hour, a sample an hour for 100 hours
+    s = _lane_curve(lambda t: t / HOUR, pre=0, symbols=1, end_s=100 * HOUR, step_s=HOUR)
+    r1_figure = b.rss_per_symbol_mb(s, 1)
+    assert r1_figure[1] - r1_figure[0] == 1.0  # R1's figure rises by 1 MB each hour
+    assert b.check_plateau(s, 1, 99 * HOUR).measured == 1.0  # and R4 reads 1 MB/h, not 1.048576
+
+
+def test_plateau_is_per_symbol() -> None:
+    s = _lane_curve(lambda t: 170.0 + 0.15 * t / HOUR)  # three symbols, 0.45 MB/h in all
+    assert b.check_plateau(s, 3, 12 * HOUR).passed
+    one = b.check_plateau(s, 1, 12 * HOUR)  # the same bytes on one symbol
+    assert not one.passed and one.measured == pytest.approx(0.45, abs=0.001)
+
+
+def test_plateau_passes_a_slope_exactly_at_the_limit_and_fails_just_over_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(b, "SLOPE_LIMIT_MB_PER_H", 0.5)  # 0.5 MB an hour is exact in binary
+    at = _lane_curve(lambda t: 0.5 * t / HOUR, pre=0, symbols=1, end_s=100 * HOUR, step_s=HOUR)
+    exact = b.check_plateau(at, 1, 99 * HOUR)  # 100 samples, one an hour: 0.5 MiB between two
+    assert exact.measured == 0.5 and exact.limit == 0.5 and exact.passed  # "<=", not "<"
+    over = _lane_curve(lambda t: 0.5001 * t / HOUR, pre=0, symbols=1, end_s=100 * HOUR, step_s=HOUR)
+    assert not b.check_plateau(over, 1, 99 * HOUR).passed
+
+
+def test_plateau_wants_100_samples_in_the_window_and_fails_with_a_note_on_fewer() -> None:
+    s = _lane_curve(lambda t: 170.0, end_s=300.0, step_s=1.0)  # 301 samples, one a second
+    enough = b.check_plateau(s, 3, 99.0)  # t >= 201: 100 samples, both ends in
+    assert enough.passed and enough.measured == 0.0 and "100 samples" in enough.note
+    few = b.check_plateau(s, 3, 98.0)  # 99 samples
+    assert not few.passed and few.hard and few.measured == math.inf
+    assert "99 samples" in few.note and "no reading" in few.note
+    assert not b.check_plateau([], 3, 12 * HOUR).passed  # no sample at all

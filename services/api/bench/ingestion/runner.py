@@ -94,6 +94,10 @@ async def run_soak(sc: Scenario, sampler: ProcSampler, **over: Any) -> budgets.V
         v.metrics["bars_setup_mb_per_symbol"] = budgets.summary(
             [max(0, after - before) / 2**20 / n_sym]
         )
+    if "plateau_window_s" in sc.params:  # R4 (#399 D2-G4): a profile that sets the window has it
+        plateau = budgets.check_plateau(res.samples, n_sym, float(sc.p("plateau_window_s")), pre)
+        v.add(plateau)
+        v.metrics["rss_slope_mb_per_h_per_symbol"] = budgets.summary([plateau.measured])
     return v
 
 

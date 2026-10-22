@@ -8,6 +8,10 @@ This document defines every performance/load budget referenced by `11-user-stori
 
 ## 1. Performance philosophy
 
+<!-- 06 is not prettier-clean on main: this fence goes when 06 is reformatted on its own (#399 D2-G4). -->
+
+<!-- prettier-ignore-start -->
+
 1. **Budgets, not hopes.** Every number below is a testable budget with a defined measurement method (§7) and a CI regression gate (§8) — not an aspiration.
 2. **Frame budget is sacred.** The chart engine's job is to never miss a frame under realistic load; every other subsystem (ingestion, WS fan-out, React state) is designed to protect that budget, including deliberately shedding update *frequency* (not correctness) under load.
 3. **Perceived-latency budgets for trading, not just raw throughput.** Order submit→ack and WS tick→screen budgets are set to what a discretionary trader operating at human reaction-time speed needs, calibrated against the **demo/paper environment** (v1 has no live order entry until R4 pen-test gate); live numbers are re-validated before Live enablement.
@@ -205,7 +209,7 @@ Every scenario below cites the exact §2 budget row(s) it validates; "Budget #" 
 | Ingestion soak, 24h, 10 symbols | Standalone ingestion soak harness (§7.3) | Zero *undetected* message loss (Budget #5); memory ceiling ≤300MB/symbol p95 holds throughout (Budget #8), no unbounded growth |
 | Ingestion burst, synthetic 5x/60s | Ingestion soak harness with burst injector | No dropped/undetected messages (Budget #5); per-symbol task isolation confirmed — other 9 symbols' Budget #3/#6 latency unaffected during the burst |
 | Frontend memory soak, 2h | Playwright memory-soak harness (§7.3) | ≤1.5GB steady state (Budget #7), no monotonic growth trend beyond documented variance band |
-| Backend memory, per-symbol steady state | Sampled during ingestion soak | ≤300MB/symbol p95 over the 24h run (Budget #8) |
+| Backend memory, per-symbol steady state | Sampled during ingestion soak | ≤300MB/symbol p95 over the 24h run (Budget #8). On the bars soak (`soak_bars`, #399 D2-G4) also a plateau: Theil-Sen slope of the per-symbol RSS over the last 12h ≤0.18MB/h over ≥100 samples ((300−170)MB over 720h, 30 days; MB here is the harness's own unit, a MiB), which for the bars soak is the number for "no unbounded growth" in the soak row above |
 | Backend CPU, per-symbol steady state | Sampled during ingestion soak | ≤0.5 vCPU-equivalent p95 per symbol over a 1h steady-state window (Budget #11) |
 | Storage growth, 24h × 10 symbols | Sampled during ingestion soak | ≤0.75GB/day/symbol observed delta (Budget #12, upper-bound planning figure) |
 | Bundle size | CI bundle-analyzer step, every merge to `main` | ≤8MB gzipped initial bundle (Budget #9); regression >+10% vs. last-tagged baseline fails the soft gate and opens a tracked ticket |
@@ -238,6 +242,8 @@ Every scenario below cites the exact §2 budget row(s) it validates; "Budget #" 
 - This capacity plan is re-validated (not just assumed to hold) at each of: R1 exit (chart-engine spike results), R2 exit (order-flow engines under real multi-symbol load), R3 exit (first real demo-trading multi-account fan-out under load), and before R4 (Live enablement) as part of the pen-test/PRR gate in `07-release-and-prr.md`.
 - **Re-planning triggers** (any of these means this section's numbers must be revisited before proceeding): recorded-symbol count trending toward >10 as a steady habit (not occasional), sub-account count growing toward Bybit's Business-KYC 20-cap tier, concurrent-user count growing beyond 5, or any hard-budget CI gate (§8) failing repeatedly at the *current* target scale even after the profiling playbook (§9) has been exhausted (signalling the architecture, not just the code, needs to change).
 - **Explicitly out of scope for this capacity plan**: multi-tenant SaaS scaling, horizontal backend scale-out, CDN/edge considerations, and any Android/mobile client capacity — all excluded per the locked scope decision; if a future mobile client is added (kept possible via the client-agnostic protocol requirement), it would be re-planned as a new, additive load source at that time, not retrofitted into these numbers now.
+
+<!-- prettier-ignore-end -->
 
 ## 11. Cross-references
 
