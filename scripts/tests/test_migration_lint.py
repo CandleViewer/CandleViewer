@@ -11,7 +11,10 @@ import codecs
 import hashlib
 import importlib.util
 import itertools
+import random
+import re
 import sys
+import time
 import tracemalloc
 from pathlib import Path
 
@@ -1056,6 +1059,36 @@ def test_a_chunk_of_many_block_openers_is_read_in_linear_memory(tmp_path: Path) 
         tracemalloc.stop()
     assert "append-only table 'audit_log'" in message
     assert peak < 16 * 2**20
+
+
+#: The continuation pattern the linear scan replaced (CodeQL py/redos), kept as its oracle.
+_BACKTRACKING_CONTINUED = re.compile(r"(?:\s|--[^\n\r]*|/\*.*?\*/)*\|\|", re.DOTALL)
+
+
+def test_the_continuation_scan_answers_as_the_pattern_it_replaced() -> None:
+    """Every short string over the characters either reads, at every position (a seeded
+    sample): the scan changes the time, never the answer."""
+    rng = random.Random(4061)
+    for _ in range(20_000):
+        text = "".join(rng.choice("-/*| \n\rax'") for _ in range(rng.randint(0, 12)))
+        pos = rng.randint(0, len(text))
+        expected = _BACKTRACKING_CONTINUED.match(text, pos) is not None
+        assert migration_lint._continued(text, pos) is expected, (text, pos)
+
+
+@pytest.mark.parametrize(
+    ("run", "then"),
+    [("--" * 50_000, "||"), ("/*" + "*//*" * 25_000, "*/||")],
+    ids=["dashes", "block-comments"],
+)
+def test_a_run_of_comment_openers_is_read_in_linear_time(run: str, then: str) -> None:
+    """The two shapes the replaced pattern took exponential time on, at 100,000
+    characters: one pass, well inside the bound (a quadratic read would not be). A
+    `||` after the run continues once its comment is over."""
+    started = time.perf_counter()
+    assert migration_lint._continued(run + "x", 0) is False
+    assert migration_lint._continued(run + then, 0) is True
+    assert time.perf_counter() - started < 2.0
 
 
 def test_a_mutating_grant_on_every_table_of_a_schema_is_flagged(tmp_path: Path) -> None:
