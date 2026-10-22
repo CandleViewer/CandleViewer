@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
-import { buildRoutes } from "../../src/routes/tree";
+import { buildRoutes, V7_RENDER_FLAGS, V7_ROUTER_FLAGS } from "../../src/routes/tree";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
 import { setMeClaims, resetMeClaims } from "../../src/lib/auth/meCache";
 import type { Role } from "../../src/routes/rbac";
@@ -14,8 +14,11 @@ import type { Role } from "../../src/routes/rbac";
  * unit-level test proves the guard composition and the admin-404 rule.
  */
 function renderAt(path: string) {
-  const router = createMemoryRouter(buildRoutes(), { initialEntries: [path] });
-  return render(<RouterProvider router={router} />);
+  const router = createMemoryRouter(buildRoutes(), {
+    initialEntries: [path],
+    future: V7_ROUTER_FLAGS,
+  });
+  return render(<RouterProvider router={router} future={V7_RENDER_FLAGS} />);
 }
 
 function claimsFor(role: Role | null, elevatedAt: string | null = null) {
@@ -34,8 +37,11 @@ describe("route tree x RBAC matrix", () => {
 
   it("redirects an unauthenticated user hitting a protected deep link to /login, not the terminal stub", async () => {
     claimsFor(null);
-    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/terminal/abc?tf=15"] });
-    render(<RouterProvider router={router} />);
+    const router = createMemoryRouter(buildRoutes(), {
+      initialEntries: ["/terminal/abc?tf=15"],
+      future: V7_ROUTER_FLAGS,
+    });
+    render(<RouterProvider router={router} future={V7_RENDER_FLAGS} />);
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
     expect(router.state.location.search).toBe("?next=%2Fterminal%2Fabc%3Ftf%3D15");
   });
@@ -94,8 +100,11 @@ describe("route tree x RBAC matrix", () => {
       if (entry.access.roles === "public") continue;
       if (!entry.access.roles.includes("owner")) continue;
       const concretePath = entry.path.replace(/:[a-zA-Z]+/g, "x");
-      const router = createMemoryRouter(buildRoutes(), { initialEntries: [concretePath] });
-      const { unmount } = render(<RouterProvider router={router} />);
+      const router = createMemoryRouter(buildRoutes(), {
+        initialEntries: [concretePath],
+        future: V7_ROUTER_FLAGS,
+      });
+      const { unmount } = render(<RouterProvider router={router} future={V7_RENDER_FLAGS} />);
       await waitFor(() => expect(screen.getByRole("main")).toBeInTheDocument());
       unmount();
     }

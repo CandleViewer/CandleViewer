@@ -6,7 +6,7 @@ import { startTelemetry } from "./lib/telemetry/aggregator";
 import { KeymapHost } from "./keymap/KeymapHost";
 import { PreferencesProvider } from "./features/a11y-preferences/PreferencesContext";
 import { usePublishEngineFlags } from "./features/a11y-preferences/consumers";
-import { createRouteTree } from "./routes/tree";
+import { createRouteTree, V7_RENDER_FLAGS } from "./routes/tree";
 import { APP_THEME_OPTIONS } from "./shell/bootstrap/themeStore";
 
 /**
@@ -26,7 +26,7 @@ export function App(): JSX.Element {
   return (
     <ThemeProvider options={APP_THEME_OPTIONS}>
       <PreferencesProvider onEngineFlags={publishFlags}>
-        <RouterProvider router={router} />
+        <RouterProvider router={router} future={V7_RENDER_FLAGS} />
         <WsErrorHost />
         <KeymapHost />
       </PreferencesProvider>

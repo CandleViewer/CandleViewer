@@ -94,8 +94,21 @@ function buildRoutes(): RouteObject[] {
   return routes;
 }
 
+/**
+ * TEMPORARY, deleted by the react-router 7 upgrade: the v7 behaviour flags, switched on for 6.30
+ * so the app and its tests run the v7 semantics before the version moves.
+ */
+export const V7_ROUTER_FLAGS = {
+  v7_relativeSplatPath: true,
+  v7_fetcherPersist: true,
+  v7_normalizeFormMethod: true,
+  v7_partialHydration: true,
+  v7_skipActionErrorRevalidation: true,
+} as const;
+export const V7_RENDER_FLAGS = { v7_startTransition: true } as const;
+
 export function createRouteTree(): ReturnType<typeof createBrowserRouter> {
-  return createBrowserRouter(buildRoutes());
+  return createBrowserRouter(buildRoutes(), { future: V7_ROUTER_FLAGS });
 }
 
 export { buildRoutes };
