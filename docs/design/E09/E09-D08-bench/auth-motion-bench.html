@@ -142,6 +142,11 @@
       #warn.in {
         opacity: 1;
       }
+      /* CMP-098 as the merged E09-D06 frame draws it: a centred modal over the scrim (the chassis card
+         with the warning rule), present in frame 0 as a cut; only the scrim fades. Second run, r3. */
+      .warncard {
+        border-left: 4px solid var(--color-status-warning-strong);
+      }
       .alert {
         padding: 6px 8px;
         border-left: 4px solid var(--color-status-danger-default);
@@ -203,6 +208,20 @@
     </div>
     <div id="warn" role="alertdialog" aria-label="Session timeout warning">
       Session locks in 60 s. <button>Extend</button>
+    </div>
+    <div
+      id="warncard"
+      class="card warncard"
+      role="alertdialog"
+      aria-labelledby="wt"
+      aria-describedby="wd"
+    >
+      <h2 id="wt">Your session will lock soon</h2>
+      <p id="wd">
+        No activity detected. The workspace locks in 60 seconds. Live data keeps updating.
+      </p>
+      <p>Lock in 1:00</p>
+      <button id="wlock">Lock now</button> <button id="wstay">Stay signed in</button>
     </div>
     <div id="auth" class="card">
       <h2 id="at">Sign in</h2>
@@ -288,7 +307,9 @@
       // Scenario actions, one token each: L± locked body · S+/S-/Sb scrim on / exit / on+blur ·
       // Cv:<variant> card variant · C+/C- card in / exit · K lock shown instantly · A auth card shown
       // instantly · A~ auth card re-faded in · T2/T3 auth title swap · E! failure text + field borders ·
-      // Ae login alert text · B! busy label swap · F<id> focus.
+      // Ae login alert text · B! busy label swap · F<id> focus. Second run (r3): Ci card present
+      // in frame 0 (a cut, no transition) · Wm / Wm- the CMP-098 modal card in (a cut) / exit ·
+      // Km scrim + modal shown instantly (the pre-state of the modal's exit).
       const ACT = {
         "L+": () => body.classList.add("locked"),
         "L-": () => body.classList.remove("locked"),
@@ -316,6 +337,11 @@
         Ws: () => ($("warn").className = "slow"),
         Wi: () => instant(() => ($("warn").className = "in")),
         "B!": () => ($("abtn").innerHTML = '<span class="spin"></span> Signing in…'),
+        Ci: () =>
+          instant(() => ($("card").className = $("card").className.replace(" in", "") + " in")),
+        Wm: () => instant(() => ($("warncard").className = "card warncard in")),
+        "Wm-": () => ($("warncard").className += " exit"),
+        Km: () => instant(() => act("S+ Wm")),
       };
       function act(str) {
         for (const tok of str.split(" ")) {
@@ -331,6 +357,7 @@
           $("card").className = "card";
           $("scrim").className = "";
           $("warn").className = "";
+          $("warncard").className = "card warncard";
           $("auth").className = "card";
           $("cerr").textContent = $("aerr").textContent = "";
           $("pw").className = $("otp").className = "";
@@ -360,6 +387,12 @@
         ["forbid-blur", 1, 0, "", "L+ Sb C+"],
         ["forbid-shadow", 1, 0, "Cv:shadow", "S+ C+"],
         ["forbid-height", 1, 0, "Cv:height", "S+ C+"],
+        // Second run (r3, the orchestrator's text round 1): the card is a cut at frame 0 and only the
+        // scrim fades (lock-in, step-up open); CMP-098 is the modal over the scrim, in (a cut) and out.
+        ["lock-in-cut", 1, 0, "", "L+ S+ Ci Fpw"],
+        ["stepup-open-cut", 1, 0, "", "S+ Ci Fpw"],
+        ["cmp098-in-modal", 1, 0, "", "S+ Wm Fwstay"],
+        ["cmp098-out-modal", 1, 0, "Km", "S- Wm-"],
       ];
       const pct = (a, p) =>
         [...a].sort((x, y) => x - y)[Math.min(a.length - 1, Math.floor(a.length * p))];
