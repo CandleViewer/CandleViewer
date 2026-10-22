@@ -44,7 +44,12 @@ from candleviewer.storage.repositories.indicator_presets import (
     PresetShapeError,
     name_candidates,
 )
-from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
+from candleviewer.storage.repositories.relational_sqlalchemy import (
+    SqlAlchemyRelationalRepository,
+    constraint_of,
+    query_failure,
+    sqlstate_of,
+)
 
 #: Explicit read allow-list (`deleted_at` is never read). Literal SQL only, so every statement
 #: repeats it; a unit test pins each copy.
@@ -192,7 +197,7 @@ async def _free_name(session: AsyncSession, name: str, taken: set[str]) -> tuple
 
 def map_integrity(exc: IntegrityError) -> PresetConflictError | PresetShapeError | None:
     """unique_violation (23505) on `ux_ip_name` -> `name_taken`; check_violation (23514) on a
-    JSON shape CHECK -> `PresetShapeError`; anything else -> None (a bug: the caller re-raises)."""
+    JSON shape CHECK -> `PresetShapeError`; anything else -> None (the caller's `query_failure`)."""
     state, name = _sqlstate_and_constraint(exc)
     if state == "23505" and name == "ux_ip_name":
         return PresetConflictError("name_taken")
@@ -235,7 +240,6 @@ class SqlAlchemyIndicatorPresetRepository:
 
     async def create(self, owner: str, preset_id: str, fields: PresetFields) -> PresetRow:
         params = _write_params(preset_id, owner, fields)
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_LOCK_OWNER, {"owner": owner})
@@ -245,13 +249,13 @@ class SqlAlchemyIndicatorPresetRepository:
                 row = (await uow.session.execute(_INSERT, params)).mappings().one()
                 await uow.commit()
         except IntegrityError as exc:
-            raise map_integrity(exc) or exc from exc
+            mapped = map_integrity(exc)
+            raise mapped or query_failure(sqlstate_of(exc), constraint_of(exc)) from None
         return _to_row(row)
 
     async def update(self, owner: str, preset_id: str, fields: PresetFields) -> PresetRow:
         params = _write_params(preset_id, owner, fields)
         del params["indicator_code"]  # immutable: never written by an UPDATE
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 row = (await uow.session.execute(_UPDATE, params)).mappings().first()
@@ -259,7 +263,8 @@ class SqlAlchemyIndicatorPresetRepository:
                     raise PresetNotFoundError(preset_id)
                 await uow.commit()
         except IntegrityError as exc:
-            raise map_integrity(exc) or exc from exc
+            mapped = map_integrity(exc)
+            raise mapped or query_failure(sqlstate_of(exc), constraint_of(exc)) from None
         return _to_row(row)
 
     async def soft_delete(self, owner: str, preset_id: str) -> bool:
@@ -276,7 +281,6 @@ class SqlAlchemyIndicatorPresetRepository:
         if not items:
             return []
         rows: list[Any] = []
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_LOCK_OWNER, {"owner": owner})
@@ -295,7 +299,8 @@ class SqlAlchemyIndicatorPresetRepository:
                     rows.append((await uow.session.execute(_INSERT, params)).mappings().one())
                 await uow.commit()
         except IntegrityError as exc:
-            raise map_integrity(exc) or exc from exc
+            mapped = map_integrity(exc)
+            raise mapped or query_failure(sqlstate_of(exc), constraint_of(exc)) from None
         return [_to_row(r) for r in rows]
 
     async def count_live_by_builtin(self) -> dict[bool, int]:

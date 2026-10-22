@@ -33,6 +33,9 @@ import sqlalchemy as sa
 
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    query_failure,
+    sqlstate_of,
 )
 
 #: `auth.session_repository.StepUpState`, restated: storage may not import `auth` (C-3.1).
@@ -467,12 +470,11 @@ class SqlAlchemySessionRepository:
             "started_at": state.started_at,
             "view_as_expires_at": state.expires_at,
         }
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             return await self._one(_VIEW_AS_START_SQL, params)
         except sa.exc.IntegrityError as exc:
             if not _violates(exc, _VIEW_AS_SHAPE):
-                raise
+                raise query_failure(sqlstate_of(exc), constraint_of(exc)) from None
             # Only the row knows its user, so a state naming it is refused here, by the CHECK, and
             # only where the write would apply (a row that refuses a start answers None before).
             # Never chained: the driver's DETAIL carries the failing row (C-12.6).

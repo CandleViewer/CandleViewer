@@ -9,6 +9,7 @@ Real-Postgres behaviour (the cap race, `ux_ip_name`, round trips) lives in
 from __future__ import annotations
 
 import inspect
+import traceback
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -17,6 +18,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
+from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories import indicator_presets_sqlalchemy as mod
 from candleviewer.storage.repositories.indicator_presets import (
     MAX_IMPORT_PRESETS,
@@ -36,6 +38,7 @@ _STATEMENTS = {n: v for n, v in vars(mod).items() if isinstance(v, sa.TextClause
 _WRITES = ("_INSERT", "_UPDATE", "_SOFT_DELETE")
 #: Statements that read no table: the owner lock and Postgres's own `lower()` of given names.
 _TABLELESS = frozenset({"_LOCK_OWNER", "_FOLD"})
+_ROW = "canary-2748-row"  # a value the server's DETAIL would quote
 
 
 def _fields(name: str = "Fast", code: str = "ema") -> PresetFields:
@@ -141,7 +144,7 @@ def test_soft_delete_sets_deleted_at_and_keeps_the_row() -> None:
 
 class _Orig(Exception):
     def __init__(self, sqlstate: str, constraint: str | None) -> None:
-        super().__init__("boom")
+        super().__init__(f"Failing row contains ({_ROW})")
         self.sqlstate = sqlstate
         self.constraint_name = constraint
 
@@ -388,18 +391,30 @@ async def test_create_maps_a_unique_violation_to_name_taken() -> None:
     assert err.value.rule == "name_taken" and rel.uow.commits == 0
 
 
-async def test_create_reraises_an_unmapped_integrity_error() -> None:
+@pytest.mark.parametrize(
+    ("constraint", "refusal"),
+    [("ux_ip_name", PresetConflictError), ("indicator_presets_pkey", StorageConstraintViolated)],
+)
+@pytest.mark.parametrize("write", ["create", "update", "import_many"])
+async def test_a_refused_write_is_typed_and_chains_nothing(
+    write: str, constraint: str, refusal: type[Exception]
+) -> None:
     class _Raising(_Session):
         async def execute(
             self, stmt: sa.TextClause, params: dict[str, Any] | None = None
         ) -> _Result:
-            raise _err("23505", "indicator_presets_pkey")
+            raise _err("23505", constraint)
 
     rel = _Rel()
     rel.uow.session = _Raising([])
     repo = mod.SqlAlchemyIndicatorPresetRepository(rel)  # type: ignore[arg-type]  # stub UoW
-    with pytest.raises(IntegrityError):
-        await repo.create(_OWNER, "p1", _fields())
+    args = ([("p1", _fields())],) if write == "import_many" else ("p1", _fields())
+    with pytest.raises(refusal) as err:
+        await getattr(repo, write)(_OWNER, *args)
+    assert err.value.__cause__ is None and err.value.__suppress_context__
+    assert _ROW not in "".join(traceback.format_exception(err.value))
+    if isinstance(err.value, StorageConstraintViolated):
+        assert (err.value.sqlstate, err.value.constraint) == ("23505", constraint)
 
 
 async def test_update_writes_everything_but_the_code_and_misses_are_not_found() -> None:

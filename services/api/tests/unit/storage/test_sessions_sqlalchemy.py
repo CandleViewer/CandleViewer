@@ -4,6 +4,7 @@ real-Postgres round trip is an integration test, not run locally: no docker)."""
 from __future__ import annotations
 
 import re
+import traceback
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -17,6 +18,7 @@ from sqlalchemy.dialects.postgresql import asyncpg
 
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
+from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories import sessions_sqlalchemy
 from candleviewer.storage.repositories.sessions_sqlalchemy import (
     _COLUMNS,
@@ -536,17 +538,19 @@ async def test_start_of_a_state_naming_the_rows_own_user_is_a_value_error_naming
     [("sessions_view_as_target_user_id_fkey", "23503"), ("sessions_view_as_end_reason", "23514")],
     ids=["no-such-target", "unknown-reason"],
 )
-async def test_start_lets_any_other_refusal_by_the_database_through(
+async def test_start_types_any_other_refusal_by_the_database_as_a_store_failure(
     constraint: str, sqlstate: str
 ) -> None:
     """Only the self-target is the caller's error: a missing target or a bad stored value is a
-    store failure and must not read as one."""
+    store failure and must not read as one. Typed by its SQLSTATE and constraint alone (#2748):
+    nothing chains the driver error, whose DETAIL is the failing row."""
     repo, rel = _repo([])
-    error = _violation(constraint, sqlstate)
-    rel.session = _Refusing(error)
-    with pytest.raises(sa.exc.IntegrityError) as refused:
+    rel.session = _Refusing(_violation(constraint, sqlstate))
+    with pytest.raises(StorageConstraintViolated) as refused:
         await repo.start_view_as("sid", _LIVE, now=_T0)
-    assert refused.value is error
+    assert (refused.value.sqlstate, refused.value.constraint) == (sqlstate, constraint)
+    assert refused.value.__cause__ is None and refused.value.__suppress_context__
+    assert "Failing row" not in "".join(traceback.format_exception(refused.value))
 
 
 @pytest.mark.parametrize("state", list(_STATES.values()), ids=list(_STATES))

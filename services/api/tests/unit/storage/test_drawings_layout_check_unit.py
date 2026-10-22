@@ -8,6 +8,7 @@ semantics are raced by the CI-only `test_drawings_layout_race.py`, added with th
 
 from __future__ import annotations
 
+import traceback
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,12 +16,17 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import (
+    StorageConstraintViolated,
+    StorageQueryFailed,
+    StorageTierUnavailable,
+)
 from candleviewer.storage.repositories import drawings_sqlalchemy as mod
 from candleviewer.storage.repositories.drawings import (
     CreateOp,
     DeleteOp,
     DrawingFields,
+    DrawingIdUnavailableError,
     DrawingLayoutNotFoundError,
     UpdateOp,
 )
@@ -28,12 +34,19 @@ from candleviewer.storage.repositories.drawings import (
 _T = datetime(2026, 10, 15, tzinfo=UTC)
 _NAMES = {id(v): k for k, v in vars(mod).items() if isinstance(v, sa.TextClause)}
 Step = list[dict[str, object]] | BaseException
+_ROW = "canary-2748-row"  # a value the server's DETAIL would quote
 
 
 class _Driver(Exception):
     def __init__(self, sqlstate: str, constraint: str | None = None) -> None:
-        super().__init__("driver error")
+        super().__init__(f"Failing row contains ({_ROW})")
         self.sqlstate, self.constraint_name = sqlstate, constraint
+
+
+def _unchained(err: BaseException) -> bool:
+    """Raised after its handler (#2748): no cause, no context, no text of the driver's."""
+    text = "".join(traceback.format_exception(err))
+    return err.__cause__ is None and err.__context__ is None and _ROW not in text
 
 
 class _Result:
@@ -183,13 +196,23 @@ async def test_the_layout_fk_backstop_maps_to_the_same_refusal(call: str) -> Non
     rel = _Rel(*_ok(call)[:-1], _fk())  # the check passed, the write then hit the FK
     with pytest.raises(DrawingLayoutNotFoundError) as err:
         await _write(rel, call)
-    assert err.value.fields == (_FIELD[call],) and rel.commits == 0
+    assert err.value.fields == (_FIELD[call],) and rel.commits == 0 and _unchained(err.value)
 
 
 async def test_another_integrity_error_is_not_a_layout_refusal() -> None:
-    rel = _Rel([{"id": "l1"}], _fk("fk_drawings_owner_user_id_users"))
-    with pytest.raises(IntegrityError):
+    fk = "fk_drawings_owner_user_id_users"
+    rel = _Rel([{"id": "l1"}], _fk(fk))
+    with pytest.raises(StorageConstraintViolated) as err:
         await _write(rel, "create")
+    assert (err.value.sqlstate, err.value.constraint, rel.opened) == ("23503", fk, 1)
+    assert _unchained(err.value)
+
+
+async def test_a_primary_key_collision_is_id_unavailable() -> None:
+    rel = _Rel([{"id": "l1"}], IntegrityError("stmt", {}, _Driver("23505", "drawings_pkey")))
+    with pytest.raises(DrawingIdUnavailableError) as err:
+        await _write(rel, "create")
+    assert err.value.args == ("d",) and rel.opened == 1 and _unchained(err.value)
 
 
 @pytest.mark.parametrize("call", CALLS)
@@ -203,16 +226,33 @@ async def test_a_deadlock_reruns_the_whole_transaction_once(call: str) -> None:
 @pytest.mark.parametrize("call", CALLS)
 async def test_a_second_deadlock_is_a_store_outage(call: str) -> None:
     rel = _Rel([{"id": "l1"}], _deadlock(), [{"id": "l1"}], _deadlock())
-    with pytest.raises(StorageTierUnavailable):
+    with pytest.raises(StorageTierUnavailable) as err:
         await _write(rel, call)
-    assert rel.opened == 2 and rel.commits == 0
+    assert rel.opened == 2 and rel.commits == 0 and _unchained(err.value)
 
 
-async def test_other_database_errors_are_not_retried() -> None:
-    rel = _Rel(DBAPIError("stmt", {}, _Driver("57014")))  # statement_timeout
-    with pytest.raises(DBAPIError):
+async def test_a_refusal_on_the_rerun_is_typed_as_on_the_first_run() -> None:
+    fk = "fk_drawings_owner_user_id_users"
+    rel = _Rel([{"id": "l1"}], _deadlock(), [{"id": "l1"}], _fk(fk))
+    with pytest.raises(StorageConstraintViolated) as err:
         await _write(rel, "create")
-    assert rel.opened == 1
+    assert (err.value.sqlstate, err.value.constraint, rel.opened) == ("23503", fk, 2)
+    assert _unchained(err.value)
+
+
+@pytest.mark.parametrize(
+    ("state", "refusal", "sqlstate"),
+    [("57014", StorageTierUnavailable, None), ("22P02", StorageQueryFailed, "22P02")],
+    ids=["statement-timeout-503", "bad-input-500"],
+)
+async def test_other_database_errors_are_not_retried(
+    state: str, refusal: type[Exception], sqlstate: str | None
+) -> None:
+    rel = _Rel(DBAPIError("stmt", {}, _Driver(state)))
+    with pytest.raises(refusal) as err:
+        await _write(rel, "create")
+    assert type(err.value) is refusal and getattr(err.value, "sqlstate", None) == sqlstate
+    assert rel.opened == 1 and _unchained(err.value)
 
 
 def test_a_deadlock_is_read_from_the_wrapper_or_the_driver_cause() -> None:

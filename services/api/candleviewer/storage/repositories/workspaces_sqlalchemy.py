@@ -29,6 +29,9 @@ from sqlalchemy.exc import IntegrityError
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     SqlAlchemyUnitOfWork,
+    constraint_of,
+    query_failure,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.workspaces import (
     LayoutFields,
@@ -374,7 +377,6 @@ class SqlAlchemyWorkspaceRepository:
         self, owner: str, workspace_id: str, fields: WorkspaceFields
     ) -> WorkspaceRow:
         params = {"wid": workspace_id, "owner": owner, **ws_params(fields)}
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_LOCK_USER, {"owner": owner})
@@ -387,7 +389,8 @@ class SqlAlchemyWorkspaceRepository:
                 row = await self._ws(uow, owner, workspace_id)
                 await uow.commit()
         except IntegrityError as exc:
-            raise map_integrity(exc) or exc from exc
+            mapped = map_integrity(exc)
+            raise mapped or query_failure(sqlstate_of(exc), constraint_of(exc)) from None
         return row
 
     async def _ws(self, uow: SqlAlchemyUnitOfWork, owner: str, wid: str) -> WorkspaceRow:
@@ -408,7 +411,6 @@ class SqlAlchemyWorkspaceRepository:
         *,
         if_match: datetime | None,
     ) -> WriteResult[WorkspaceRow]:
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_LOCK_USER, {"owner": owner})
@@ -428,7 +430,8 @@ class SqlAlchemyWorkspaceRepository:
                 row = await self._ws(uow, owner, workspace_id)
                 await uow.commit()
         except IntegrityError as exc:
-            raise map_integrity(exc) or exc from exc
+            mapped = map_integrity(exc)
+            raise mapped or query_failure(sqlstate_of(exc), constraint_of(exc)) from None
         return WriteResult(row, True)
 
     async def soft_delete_workspace(self, owner: str, workspace_id: str) -> None:
@@ -453,7 +456,6 @@ class SqlAlchemyWorkspaceRepository:
         self, owner: str, workspace_id: str, layout_id: str, fields: LayoutFields
     ) -> LayoutRow:
         ids = {"wid": workspace_id, "owner": owner}
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._lock_workspace(uow, owner, workspace_id)
@@ -468,7 +470,8 @@ class SqlAlchemyWorkspaceRepository:
                 row = await self._get_layout(uow, owner, workspace_id, layout_id)
                 await uow.commit()
         except IntegrityError as exc:
-            raise map_integrity(exc) or exc from exc
+            mapped = map_integrity(exc)
+            raise mapped or query_failure(sqlstate_of(exc), constraint_of(exc)) from None
         if row is None:  # unreachable: read back inside the inserting transaction
             raise WorkspaceNotFoundError("layout")
         return row
@@ -490,7 +493,6 @@ class SqlAlchemyWorkspaceRepository:
         if_match: datetime | None,
     ) -> WriteResult[LayoutRow]:
         ids = {"wid": workspace_id, "owner": owner}
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._lock_workspace(uow, owner, workspace_id)
@@ -514,7 +516,8 @@ class SqlAlchemyWorkspaceRepository:
                 row = await self._get_layout(uow, owner, workspace_id, layout_id)
                 await uow.commit()
         except IntegrityError as exc:
-            raise map_integrity(exc) or exc from exc
+            mapped = map_integrity(exc)
+            raise mapped or query_failure(sqlstate_of(exc), constraint_of(exc)) from None
         if row is None:  # unreachable: read back inside the writing transaction
             raise WorkspaceNotFoundError("layout")
         return WriteResult(row, True)

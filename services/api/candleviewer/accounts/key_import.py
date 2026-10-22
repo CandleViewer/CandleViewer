@@ -58,6 +58,7 @@ from candleviewer.accounts.verification import (
     verify,
 )
 from candleviewer.observability.secret_type import Secret
+from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.accounts import OwnerScope, VerifiedKey
 
 ACTION: Final = "api_key.import"
@@ -303,7 +304,9 @@ class KeyImport:
         except (AccountNotFoundError, AccountScopeDeniedError, AccountConflictError):
             raise
         except Exception as exc:  # TimeoutError included; cancellation propagates
-            sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
+            # A typed store failure names its SQLSTATE itself; a driver error, on its `orig`.
+            facts = exc if isinstance(exc, StorageQueryFailed) else getattr(exc, "orig", None)
+            sqlstate = getattr(facts, "sqlstate", None)
             _log().error("key_import_store_failed", error=type(exc).__name__, sqlstate=sqlstate)
             raise KeyImportFailed(STORE, "The relational store is unavailable.") from None
 

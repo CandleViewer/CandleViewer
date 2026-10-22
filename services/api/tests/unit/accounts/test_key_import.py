@@ -35,6 +35,7 @@ from candleviewer.observability.logging import reset_logging
 from candleviewer.observability.secret_type import Secret
 from candleviewer.secrets import WithdrawPermissionRejected
 from candleviewer.secrets.errors import SnapshotInvalid
+from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories.accounts import (
     AccountsStoreConflictError,
     ApiKeyRow,
@@ -401,6 +402,19 @@ async def test_a_store_outage_or_hang_is_store_unavailable_and_never_its_text(
     with capture_logs() as logs, pytest.raises(KeyImportFailed) as failed:
         await w.run()
     assert failed.value.code == "store_unavailable" and "DETAIL" not in repr(logs)
+
+
+async def test_a_typed_store_refusal_is_logged_by_its_own_sqlstate() -> None:
+    """#2748: the store raises a refused write typed (`StorageQueryFailed`), chaining no driver
+    error, so the store-failure log reads the SQLSTATE from the typed error itself."""
+    w = World()
+    w.transition_error = StorageConstraintViolated("23503", "api_keys_exchange_account_id_fkey")
+    reset_logging()
+    with capture_logs() as logs, pytest.raises(KeyImportFailed) as failed:
+        await w.run()
+    store = [(e["error"], e["sqlstate"]) for e in logs if e["event"] == "key_import_store_failed"]
+    assert failed.value.code == "store_unavailable"
+    assert store == [("StorageConstraintViolated", "23503")]
 
 
 async def test_a_refusal_of_m2_is_recorded_and_stores_nothing() -> None:
