@@ -59,12 +59,27 @@ def _send_all(world: World, target: str) -> None:
         )
 
 
+#: The kinds of record every sweep must see, so that the actor check is not vacuous: a refused
+#: read's and an admin-area entry's, which no budget caps. A refused write's
+#: (`admin.view_as_refused`) and an audit read's are capped per viewer, and the Owner views every
+#: target, so a sweep that runs after another in this module may find them suppressed.
+_MUST_SEE = frozenset({"rbac.denied", "admin.area_entered"})
+
+
 @pytest.mark.parametrize("target", VIEW_TARGETS)
 def test_every_record_names_the_viewer_as_its_actor(world: World, target: str) -> None:
     _send_all(world, target)
     actors = {(r["action"], str(r.get("actor_user_id"))) for r in world.audit.records}
-    viewer = str(user_id_of("owner"))
-    assert actors and {actor for _, actor in actors} == {viewer}, sorted(actors)
+    assert {actor for _, actor in actors} == {str(user_id_of("owner"))}, sorted(actors)
+
+
+@pytest.mark.parametrize("target", VIEW_TARGETS)
+def test_the_sweep_sees_each_kind_of_record_a_viewing_session_causes(
+    world: World, target: str
+) -> None:
+    _send_all(world, target)
+    seen = {r["action"] for r in world.audit.records}
+    assert _MUST_SEE <= seen, sorted(seen)
 
 
 @pytest.mark.parametrize("target", VIEW_TARGETS)

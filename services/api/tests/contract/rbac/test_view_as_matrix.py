@@ -83,21 +83,38 @@ def _classify(status: int) -> str:
 
 @pytest.mark.parametrize("target", VIEW_TARGETS)
 @pytest.mark.parametrize("key", _READS)
-def test_owner_viewing_as_actor_reads_like_actor(world: World, key: str, target: str) -> None:
+def test_an_owner_viewing_as_a_target_reads_as_the_target(
+    world: World, key: str, target: str
+) -> None:
+    """Plan section 4, item 5 (its `test_owner_viewing_as_actor_reads_like_actor`)."""
     own = _as_viewed(key, _answer(_get(world.client, key, bearer(target))), target)
     viewing = _answer(_get(world.client, key, bearer_viewing(target)))
     assert viewing == own, f"{key} viewed as {target}: {viewing} differs from its own {own}"
-    if target not in _OPS[key].get("pending", {}):
-        assert _classify(viewing[0]) == _OPS[key]["outcomes"][target], key
 
 
-def test_the_reads_include_rows_each_target_is_refused_and_the_owner_is_not() -> None:
+#: Each read and target whose outcome the matrix has reviewed (no `pending` row).
+_REVIEWED = tuple(
+    (key, target)
+    for key in _READS
+    for target in VIEW_TARGETS
+    if target not in _OPS[key].get("pending", {})
+)
+
+
+@pytest.mark.parametrize(("key", "target"), _REVIEWED)
+def test_an_owner_viewing_as_a_target_gets_the_targets_reviewed_outcome(
+    world: World, key: str, target: str
+) -> None:
+    status, _ = _answer(_get(world.client, key, bearer_viewing(target)))
+    assert _classify(status) == _OPS[key]["outcomes"][target], key
+
+
+@pytest.mark.parametrize("target", VIEW_TARGETS)
+def test_some_read_refuses_the_target_and_answers_the_owner(target: str) -> None:
     """The matrix test discriminates: for every target, some read the Owner is answered refuses
     the target, so an answer in the Owner's scope fails it."""
-    for target in VIEW_TARGETS:
-        rows = [k for k in _READS if (_OPS[k]["outcomes"]["owner"], _OPS[k]["outcomes"][target])
-                == ("allow", "403")]  # fmt: skip
-        assert rows, target
+    outcomes = [(_OPS[k]["outcomes"]["owner"], _OPS[k]["outcomes"][target]) for k in _READS]
+    assert ("allow", "403") in outcomes
 
 
 @pytest.mark.parametrize("target", VIEW_TARGETS)

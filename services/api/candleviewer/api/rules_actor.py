@@ -28,12 +28,11 @@ from candleviewer.api.step_up import (
     consume_bound_grant,
 )
 from candleviewer.api.step_up_challenge import raw_request_target, request_fingerprint
-from candleviewer.api.view_as_subject import view_as_subject
+from candleviewer.api.view_as_subject import acting_user, view_as_subject
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.errors import AuthError, SessionReadOnly, SessionRevoked
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.step_up import StepUpChallenge
-from candleviewer.auth.view_as import current_view_as
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.rules.manager import Actor, RuleAuditUnavailable, RuleError
 
@@ -102,20 +101,12 @@ def _unanswerable(exc: SessionReadOnly | SessionRevoked) -> RuleError:
     return RuleError(401, "unauthorized", "no verified session")
 
 
-def _acting(actor: Any) -> Any:
-    """The record's actor: the viewer when the running request views as `actor` (#3085, Q2), so a
-    rules record never names the target as its actor; else `actor` itself."""
-    ctx = current_view_as()
-    if ctx is not None and ctx.is_viewing_as_target and str(ctx.target_user_id) == str(actor):
-        return str(ctx.viewer_user_id)
-    return actor
-
-
 def make_rules_audit(emitter: Any) -> Callable[[str, dict[str, Any]], Any]:
     """Write-ahead audit callback (C-2.9) for `RulesManager`: ir_hash, environment, scope."""
 
     async def audit(action: str, payload: dict[str, Any]) -> None:
-        actor = _acting(payload.get("actor"))
+        named = payload.get("actor")
+        actor = None if named is None else acting_user(str(named))  # the viewer while viewing
         await emitter.emit(
             _ACTIONS.get(action, "rules.version_create"),
             actor_label=str(actor or "system"),

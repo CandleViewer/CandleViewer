@@ -254,9 +254,11 @@ def make_me_router(
                 "session_id": str(caller.record.id),  # the viewer's own, while viewing (Q10)
                 "environment": environment.value,
                 # A view elevates nothing and arms nothing (Q10): it changes nothing.
-                "elevated_until": None
-                if caller.viewing
-                else grace_expires_at(caller.record.step_up_elevations, now()),
+                "elevated_until": (
+                    None
+                    if caller.viewing
+                    else grace_expires_at(caller.record.step_up_elevations, now())
+                ),
                 "one_click_armed_until": None,  # one-click arming is not served yet
             },
         }

@@ -171,14 +171,12 @@ from candleviewer.api.users import (
     make_users_router,
 )
 from candleviewer.api.view_as import make_view_as_router
-from candleviewer.api.view_as_guard import (
-    ViewAsUnstamped,
-    make_view_as_guard,
-    view_as_unstamped_handler,
-)
+from candleviewer.api.view_as_guard import make_view_as_guard, view_as_unstamped_handler
 from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
+from candleviewer.api.view_as_subject import ViewAsUnstamped
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
+from candleviewer.audit.writer import TargetNamedAsActor
 from candleviewer.audit_lane_wiring import lane_key_loader
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.metrics import export_auth_metrics
@@ -519,12 +517,6 @@ class AppContext:
     # (`23-ws-protocol.md` §6) so the mandatory blocking banner is actually
     # published, not merely mechanically possible via `ReadOnlyGate.subscribe`.
     mesh_system_topic_publisher: SystemTopicPublisher
-
-
-class TargetNamedAsActor(RuntimeError):
-    """A record written while a request views as another user names that user as its actor
-    (#3085, Q2): the viewer acts, so the site that wrote it is a defect. Refused before the write,
-    so the caller's audit failure path answers (fail closed)."""
 
 
 def _refuse_target_as_actor(action: str, fields: dict[str, Any]) -> None:

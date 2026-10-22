@@ -138,7 +138,7 @@ async def _arm_consume(
 
     class _Sessions:
         async def authenticate_access_token(self, token: str, touch: bool = True) -> object:
-            return SimpleNamespace(user_id=_UID, id="s1")
+            return SimpleNamespace(user_id=_UID, id="s1", view_as=None)
 
     class _Identity:
         async def user(self, uid: str) -> dict[str, object]:
@@ -312,7 +312,7 @@ def _resolver(roles: list[str]) -> object:
 
     class _Sessions:
         async def authenticate_access_token(self, token: str, touch: bool = True) -> object:
-            return SimpleNamespace(user_id=_UID, id="s1")
+            return SimpleNamespace(user_id=_UID, id="s1", view_as=None)
 
     class _Identity:
         async def user(self, uid: str) -> dict[str, object]:

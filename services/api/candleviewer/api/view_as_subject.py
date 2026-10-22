@@ -14,7 +14,7 @@ from uuid import UUID
 from fastapi import Request
 
 from candleviewer.auth.models import SessionRecord
-from candleviewer.auth.view_as import ViewAsRequestContext
+from candleviewer.auth.view_as import ViewAsRequestContext, current_view_as
 
 #: Where a passing request carries its context (plan 1.3), beside the `bound_view_as` contextvar.
 STATE_KEY: Final = "cv.view_as"
@@ -49,3 +49,13 @@ def view_as_subject(request: Request, record: SessionRecord) -> UUID:
     ):
         raise ViewAsUnstamped
     return stamp.subject_user_id
+
+
+def acting_user(user_id: str) -> str:
+    """The actor a record names for `user_id` (#3085, Q2): the viewer when the running request
+    views as `user_id`, so no record names the target as its actor; else `user_id` itself. For a
+    record written from a principal with no actor fields, as the rules `Actor`."""
+    ctx = current_view_as()
+    if ctx is not None and ctx.is_viewing_as_target and str(ctx.target_user_id) == user_id:
+        return str(ctx.viewer_user_id)
+    return user_id

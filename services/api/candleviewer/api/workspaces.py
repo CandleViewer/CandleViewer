@@ -571,9 +571,9 @@ def make_workspaces_router(
         """Same 404 for a missing, deleted or foreign id; a foreign live id is audited once."""
         owner = str(p.user_id)
         if await store().exists_for_other_owner(owner, kind, oid):
-            await audit.emit(
-                "rbac.denied", actor_label=owner, actor_user_id=p.user_id, actor_ip=p.ip,
-                session_id=p.session_id, request_id=p.request_id, object_kind=kind,
+            await audit.emit(  # the viewer acts while viewing (#3085)
+                "rbac.denied", actor_label=str(p.actor_id), actor_user_id=p.actor_id,
+                actor_ip=p.ip, session_id=p.session_id, request_id=p.request_id, object_kind=kind,
                 object_id=oid, outcome=AuditOutcome.DENIED, severity=Severity.WARNING,
                 reason=f"not_owner:workspaces:{mode}:self",
             )  # fmt: skip
@@ -677,11 +677,11 @@ def make_workspaces_router(
         elif await store().exists_for_other_owner(owner, "workspace", wid):
             found = ("workspace", wid)
         if found is not None:
-            await audit.emit(
-                "rbac.denied", actor_label=owner, actor_user_id=p.user_id, actor_ip=p.ip,
-                session_id=p.session_id, request_id=p.request_id, object_kind=found[0],
-                object_id=found[1], outcome=AuditOutcome.DENIED, severity=Severity.WARNING,
-                reason=f"not_owner:workspaces:{mode}:self",
+            await audit.emit(  # the viewer acts while viewing (#3085)
+                "rbac.denied", actor_label=str(p.actor_id), actor_user_id=p.actor_id,
+                actor_ip=p.ip, session_id=p.session_id, request_id=p.request_id,
+                object_kind=found[0], object_id=found[1], outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING, reason=f"not_owner:workspaces:{mode}:self",
             )  # fmt: skip
         return _not_found("workspace" if lid is None else "layout")
 
