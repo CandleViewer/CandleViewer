@@ -7,7 +7,8 @@ import type { AuditRecord } from "../src/keymap/audit";
  * their listeners, the registered command handlers, the editor's pending bindings. Every test loads
  * its own copy after a reset, so none sees another's state or depends on the order they run in, and
  * the components under test and the functions the assertions call are the same instance. (A static
- * import is a second copy once the reload test below has reset the registry.)
+ * import is bound once, at file load, so after the reload test below resets the registry it is a
+ * different copy from every later import.)
  */
 const load = async () => ({
   ...(await import("../src/keymap/KeymapHost")),
