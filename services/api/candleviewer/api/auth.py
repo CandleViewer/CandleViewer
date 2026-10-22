@@ -10,8 +10,16 @@ specify, and — when a live `AuditWriter` is injected — emits the
 `candleviewer.audit.actions.AUDIT_ACTIONS`. `api` (M23) is on the allow-list
 to import `candleviewer.audit`; `auth` itself is not (see
 `auth/login_service.py`'s module docstring) — that boundary is exactly why
-the audit calls live in this router. On the fake/CI default backend
-(`audit_writer=None`) the routes still work; they just skip the audit call.
+the audit calls live in this router.
+
+**Audit lane (ADR-0037 Q2, #2914):** a row written after its decision (a refused
+or locked sign-in, the password step that passed, a failed second factor, a refused
+mint, the recovery's and the confirm's refusal rows, the recovery's `unplanned`
+revocations) goes to `AuditService.lane`, the writer its fallback (`_audit_outcome`); one
+both refuse, or whose write times out or is cancelled, or that has no sink, is
+counted lost (`auth_audit_outcome_lost_total`) and the answer stands. Every
+write-ahead record stays on the writer, a mint's in particular, so a mint fails
+closed while the sink refuses, whatever the lane would take (U42).
 
 **Enrolment (#2295; formerly Deviation 1, PR #1618 review finding 1):**
 `/auth/mfa/enroll` and `/auth/mfa/enroll/confirm` act only for the user of
@@ -55,6 +63,7 @@ session router and the CSRF guard record. `X-Forwarded-For` is never read here.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any, Protocol
 
@@ -62,7 +71,7 @@ import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from candleviewer.api.csrf import set_csrf_cookie
+from candleviewer.api.csrf import AUDIT_TIMEOUT_S, set_csrf_cookie
 from candleviewer.api.csrf import source_ip as admitted_source_ip
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.sessions import (
@@ -76,6 +85,7 @@ from candleviewer.api.sessions import (
 )
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.audit.service import LaneNotWired
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     AccountDisabled,
@@ -94,11 +104,13 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.hashing import last_verify_ms
 from candleviewer.auth.login_service import EnrolmentOnlyLogin
 from candleviewer.auth.metrics import (
+    auth_audit_outcome_lost_total,
     auth_enrolment_only_sessions_total,
     auth_enrolments_total,
     auth_login_failures_total,
     auth_recovery_codes_used_total,
     auth_session_fixation_attempts_total,
+    normalise_outcome_action,
     normalise_role,
 )
 from candleviewer.auth.models import (
@@ -257,26 +269,11 @@ class AuditServiceLike(Protocol):
     @property
     def writer(self) -> AuditWriterLike: ...
 
-
-async def _audit(
-    audit_service: AuditServiceLike | None,
-    action: str,
-    *,
-    actor_label: str,
-    actor_ip: str | None,
-    outcome: AuditOutcome,
-    severity: Severity = Severity.INFO,
-) -> None:
-    if audit_service is None or not audit_service.is_active:
-        return
-    await audit_service.writer.emit(
-        action,
-        actor_label=actor_label,
-        actor_ip=actor_ip,
-        outcome=outcome,
-        severity=severity,
-        request_id=current_request_uuid(),
-    )
+    @property
+    def lane(self) -> AuditWriterLike:
+        """The journal-first façade (ADR-0037) of a started service, for the outcome and refusal
+        rows only; `LaneNotWired` while there is none, as `AuditService.lane` raises."""
+        ...
 
 
 def _problem(status_code: int, title: str, detail: str, *, code: str | None = None) -> JSONResponse:
@@ -340,6 +337,49 @@ def make_auth_router(
     other response, so it never helps tell a wrong password from an unknown user
     (SR-014)."""
     router = APIRouter(tags=["auth"])
+    lane_unwired_logged = False
+
+    def _lane_unwired(action: str) -> None:
+        """A row goes to the writer alone, as before the lane, because the service has no façade
+        (`LaneNotWired`). One warning per router, with the action alone."""
+        nonlocal lane_unwired_logged
+        if not lane_unwired_logged:
+            lane_unwired_logged = True
+            _log().warning("auth.login_audit.lane_unavailable", action=action)
+
+    def _outcome_lost(action: str, error: str) -> None:
+        auth_audit_outcome_lost_total.labels(action=normalise_outcome_action(action)).inc()
+        _log().error("auth.login_audit.outcome_lost", action=action, error=error)
+
+    async def _audit_outcome(action: str, **row: Any) -> None:
+        """An outcome or refusal row (04-security-program.md §8.3 rule 1: written after its
+        decision), through the lane's façade (ADR-0037 Q2): the lane first, the writer its
+        fallback, the two together bounded by the audit timeout. The answer is decided already, so
+        a row both refuse, or whose write times out or is cancelled, is counted lost and logged
+        (action and error class only, C-12.6) and the answer stands; any other error is a defect,
+        counted too, and propagates. A mint's write-ahead records never come here: they stay on
+        the writer, so a mint fails closed while the sink refuses (U42)."""
+        if audit_service is None or not audit_service.is_active:
+            _outcome_lost(action, "inactive")
+            return
+        try:
+            async with asyncio.timeout(AUDIT_TIMEOUT_S):
+                try:
+                    sink = audit_service.lane
+                except LaneNotWired:  # stopping, or never started: the writer alone
+                    _lane_unwired(action)
+                    sink = audit_service.writer
+                await sink.emit(action, request_id=current_request_uuid(), **row)
+        except AuditError as exc:
+            _outcome_lost(action, type(exc).__name__)
+        except TimeoutError:
+            _outcome_lost(action, "timeout")
+        except asyncio.CancelledError:
+            _outcome_lost(action, "cancelled")
+            raise
+        except Exception as exc:
+            _outcome_lost(action, type(exc).__name__)
+            raise
 
     async def _audit_carried_sessions(request: Request, user_id: uuid.UUID, *, stage: str) -> bool:
         """U6/SR-013 (E09-X02 AC2): a session credential carried into the step that mints a
@@ -397,27 +437,20 @@ def make_auth_router(
         after_state: dict[str, Any] | None = None,
     ) -> None:
         """#2911: record a disabled user's refused mint. Not write-ahead (the refusal is
-        already decided and nothing was minted): a record that cannot be written is logged,
+        already decided and nothing was minted): an outcome row through the lane (`_audit_outcome`),
         and the caller's refusal (403 at sign-in, 401 at the MFA step or the confirm) stands.
         *session_id* and *after_state* void a session a write-ahead record announced (#2295)."""
-        if audit_service is None or not audit_service.is_active:
-            _log().error("auth.login_failed.audit_unavailable", error="inactive")
-            return
-        try:
-            await audit_service.writer.emit(
-                "auth.login_failed",
-                actor_label=str(user_id),
-                actor_user_id=user_id,
-                actor_ip=_client_ip(request),
-                outcome=AuditOutcome.DENIED,
-                severity=Severity.WARNING,
-                reason="user_disabled",
-                session_id=session_id,
-                after_state=after_state,
-                request_id=current_request_uuid(),
-            )
-        except AuditError as exc:
-            _log().error("auth.login_failed.audit_unavailable", error=type(exc).__name__)
+        await _audit_outcome(
+            "auth.login_failed",
+            actor_label=str(user_id),
+            actor_user_id=user_id,
+            actor_ip=_client_ip(request),
+            outcome=AuditOutcome.DENIED,
+            severity=Severity.WARNING,
+            reason="user_disabled",
+            session_id=session_id,
+            after_state=after_state,
+        )
 
     def _enrolment_ready(
         *, mfa: bool, status: int = 503, title: str = "Service unavailable"
@@ -548,8 +581,7 @@ def make_auth_router(
             result = await auth_service.login.login(body, source_ip=audit_ip or "unknown")
         except InvalidCredentials as exc:
             auth_login_failures_total.labels(method="password").inc()  # SR-125
-            await _audit(
-                audit_service,
+            await _audit_outcome(
                 "auth.login_failed",
                 actor_label=_redact_identifier(body.identifier),
                 actor_ip=audit_ip,
@@ -558,8 +590,7 @@ def make_auth_router(
             return _problem(401, "Invalid credentials", str(exc))
         except AccountDisabled as exc:
             auth_login_failures_total.labels(method="password").inc()
-            await _audit(
-                audit_service,
+            await _audit_outcome(
                 "auth.login_failed",
                 actor_label=_redact_identifier(body.identifier),
                 actor_ip=audit_ip,
@@ -567,8 +598,7 @@ def make_auth_router(
             )
             return _problem(403, "Account disabled", str(exc))
         except AccountLocked as exc:
-            await _audit(
-                audit_service,
+            await _audit_outcome(
                 "auth.account_locked",
                 actor_label=_redact_identifier(body.identifier),
                 actor_ip=audit_ip,
@@ -589,8 +619,8 @@ def make_auth_router(
 
         if isinstance(result, EnrolmentOnlyLogin):
             return await _enrolment_only_sign_in(request, body.identifier, result.user_id)
-        await _audit(
-            audit_service,
+        # The password step's outcome: no session exists yet (the mint's records are MFA's).
+        await _audit_outcome(
             "auth.login",
             actor_label=body.identifier,
             actor_ip=audit_ip,
@@ -617,8 +647,7 @@ def make_auth_router(
             result = await auth_service.mfa.verify(body)
         except (MfaChallengeInvalid, MfaChallengeLocked, MfaCodeInvalid, MfaCodeReused):
             auth_login_failures_total.labels(method=body.method.value).inc()
-            await _audit(
-                audit_service,
+            await _audit_outcome(
                 "auth.mfa_failed",
                 actor_label="(mfa_token)",
                 actor_ip=_client_ip(request),
@@ -636,48 +665,84 @@ def make_auth_router(
             # (SCR-002's "locked after 5 tries" state), not via this text.
             return _problem(401, "MFA verification failed", "invalid or expired code")
 
-        await _audit(
-            audit_service,
-            "auth.mfa_verified",
-            actor_label=str(result.user_id),
-            actor_ip=_client_ip(request),
-            outcome=AuditOutcome.SUCCESS,
-        )
+        # Fail closed (C-2.9 write-ahead): a record that cannot be written mints nothing. 401 is
+        # this operation's documented refusal (its 503 is #2152's `AuthUnavailable`).
+        unaudited = _problem(401, "MFA verification failed", "audit sink not active")
+        if audit_service is not None and audit_service.is_active:
+            # The mint's first write-ahead record (ADR-0037 decision 3): the writer's, never the
+            # lane's (U42), so while the sink refuses nothing is minted (the step stays spent).
+            try:
+                await audit_service.writer.emit(
+                    "auth.mfa_verified",
+                    actor_label=str(result.user_id),
+                    actor_ip=_client_ip(request),
+                    outcome=AuditOutcome.SUCCESS,
+                    request_id=current_request_uuid(),
+                )
+            except AuditError:
+                return unaudited
         if identity is None or not auth_service.sessions_is_active:
             # No session backend wired (fake/CI default): E09-S02 behaviour.
             return JSONResponse(status_code=200, content={"status": "authenticated"})
         # QA #1658: second factor satisfied -> mint the session (ADR-0020),
         # set the `cv_refresh` cookie and return `AuthenticatedResponse`.
         if not await _audit_carried_sessions(request, result.user_id, stage="mfa_verify"):
-            # Fail closed (C-2.9 write-ahead): the attempt could not be recorded, so nothing is
-            # minted. 401 is this operation's documented refusal (no 503 in its contract).
-            return _problem(401, "MFA verification failed", "audit sink not active")
+            return unaudited
+        session_id = uuid.uuid4()  # named by its write-ahead record, as at sign-in (#2914)
+        if audit_service is not None and audit_service.is_active:
+            try:
+                await audit_service.writer.emit(
+                    "auth.session_created",
+                    actor_label=str(result.user_id),
+                    actor_user_id=result.user_id,
+                    actor_ip=_client_ip(request),
+                    session_id=session_id,
+                    outcome=AuditOutcome.SUCCESS,
+                    after_state={"mfa_method": "totp", "mfa_satisfied": True},
+                    request_id=current_request_uuid(),
+                )
+            except AuditError:
+                return unaudited
         try:
             minted = await auth_service.sessions.mint(
                 str(result.user_id),
                 ip=_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
+                session_id=session_id,
             )
         except UserDisabled:
             # #2911: disabled (or deleted) since the password step; nothing was minted.
             # Counted and audited like login's refusal of a disabled account, then this
             # operation's 401 whether or not the record could be written. The count is one per
             # `auth.login_failed` row, on the factor the request named: the code was right, so
-            # neither `totp` nor `webauthn` is the wrong one (#3054).
+            # neither `totp` nor `webauthn` is the wrong one (#3054). Its row voids the session
+            # `auth.session_created` announced (C-2.9).
             auth_login_failures_total.labels(method=body.method.value).inc()
-            await _audit_refusal(request, result.user_id)
+            voided = {"voids_session_created": str(session_id)}
+            await _audit_refusal(request, result.user_id, session_id=session_id, after_state=voided)
             return _problem(401, "MFA verification failed", "account is disabled")
-        if audit_service is not None and audit_service.is_active:
-            await audit_service.writer.emit(
-                "auth.session_created",
+        except Exception as exc:  # a store failure: nothing was minted, and the 500 stands
+            # Its `auth.mfa_failed` row voids the session `auth.session_created` announced (C-2.9)
+            # and counts as this route's other `auth.mfa_failed` rows do (SR-125). The error log
+            # names both ids and the error class only (C-12.6), in case that row is lost too.
+            auth_login_failures_total.labels(method=body.method.value).inc()
+            _log().error(
+                "auth.mfa_verify.unminted",
+                user_id=str(result.user_id),
+                new_session_id=str(session_id),
+                error=type(exc).__name__,
+            )
+            await _audit_outcome(
+                "auth.mfa_failed",
                 actor_label=str(result.user_id),
                 actor_user_id=result.user_id,
                 actor_ip=_client_ip(request),
-                session_id=minted.session_id,
-                outcome=AuditOutcome.SUCCESS,
-                after_state={"mfa_method": "totp", "mfa_satisfied": True},
-                request_id=current_request_uuid(),
+                outcome=_FAILED,
+                session_id=session_id,
+                reason="unminted",
+                after_state={"voids_session_created": str(session_id)},
             )
+            raise
         response = JSONResponse(
             status_code=200,
             content={
@@ -724,20 +789,9 @@ def make_auth_router(
 
         async def failed(action: str, outcome: AuditOutcome, **row: Any) -> JSONResponse:
             """A refusal's row, counted once (SR-125). It follows the refusal, never ahead of it:
-            one that cannot be written is logged and the answer stands, the same either way."""
+            an outcome row through the lane (`_audit_outcome`), and the answer stands either way."""
             auth_login_failures_total.labels(method=MfaMethodKind.RECOVERY_CODE.value).inc()
-            try:
-                await writer.emit(
-                    action,
-                    actor_ip=ip,
-                    outcome=outcome,
-                    request_id=current_request_uuid(),
-                    **row,
-                )
-            except AuditError as exc:
-                _log().error(
-                    "auth.recovery.audit_unavailable", action=action, error=type(exc).__name__
-                )
+            await _audit_outcome(action, actor_ip=ip, outcome=outcome, **row)
             return refused
 
         try:
@@ -833,10 +887,19 @@ def make_auth_router(
         # either, because nothing is spent without its record (written ahead above).
         auth_recovery_codes_used_total.inc()
         created = {"session_id": new_id, "after_state": {"voids_session_created": str(new_id)}}
+        unplanned: list[uuid.UUID] = []  # minted since the plan, so its records do not name them
         try:
             revoked = await sessions.revoke_all(str(uid), reason=RECOVERED_REASON)
-            for sid in [row.id for row in revoked if row.id not in ending]:  # minted since the plan
-                await write("auth.session_revoked", sid, RECOVERED_REASON, {"unplanned": True})
+            unplanned = [row.id for row in revoked if row.id not in ending]
+            for sid in unplanned:  # outcome rows: each revocation has happened
+                await _audit_outcome(
+                    "auth.session_revoked",
+                    actor_ip=ip,
+                    session_id=sid,
+                    reason=RECOVERED_REASON,
+                    after_state={"unplanned": True},
+                    **mine,
+                )
             minted = await sessions.mint_enrolment_only(
                 str(uid), session_id=new_id, ip=ip, user_agent=request.headers.get("user-agent")
             )
@@ -848,7 +911,7 @@ def make_auth_router(
                 "auth.recovery.completed_unminted",
                 user_id=str(uid),
                 new_session_id=str(new_id),
-                revoked_session_ids=[str(sid) for sid in ending],
+                revoked_session_ids=[str(sid) for sid in (*ending, *unplanned)],
                 error=type(exc).__name__,
             )
             await failed("auth.mfa_failed", _FAILED, reason="unminted", **mine, **created)  # C-2.9
@@ -950,9 +1013,7 @@ def make_auth_router(
             return _problem(503, "Service unavailable", "audit sink not active")
         except (MfaEnrollmentNotFound, MfaCodeInvalid):  # wrong code, no such pending method
             auth_enrolments_total.labels(result="refused").inc()
-            await _audit(
-                audit_service, "auth.mfa_failed", actor_label=uid, actor_ip=ip, outcome=_FAILED
-            )
+            await _audit_outcome("auth.mfa_failed", actor_label=uid, actor_ip=ip, outcome=_FAILED)
             return invalid
 
         void: dict[str, Any] = {"voids_session_created": str(new_id)}
@@ -969,7 +1030,7 @@ def make_auth_router(
             if reason == "user_disabled":  # the row of a disabled user's refused mint
                 await _audit_refusal(request, user.id, session_id=new_id, after_state=void)
                 return
-            await writer.emit(
+            await _audit_outcome(
                 "auth.mfa_failed",
                 actor_label=uid,
                 actor_user_id=user.id,
@@ -978,7 +1039,6 @@ def make_auth_router(
                 session_id=new_id,
                 reason=reason,
                 after_state=void,
-                request_id=current_request_uuid(),
             )
 
         try:

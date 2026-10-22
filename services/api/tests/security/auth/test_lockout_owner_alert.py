@@ -36,6 +36,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_DURATION, LOCKOUT_THRESHOLD, LoginService
 from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES, export_auth_metrics
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from tests.unit.api._fakes import WriterLane
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 
 _CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
@@ -79,6 +80,7 @@ class _Audit:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.lane = WriterLane(self)  # ADR-0037's façade as its fallback: each record to the writer
 
     @property
     def writer(self) -> _Audit:

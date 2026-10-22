@@ -18,6 +18,7 @@ from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LoginService
 from candleviewer.domain.text import UNSTORABLE_TEXT
+from tests.unit.api._fakes import WriterLane
 from tests.unit.audit.audit_fakes import FakeClock, PgTextAuditRepository
 from tests.unit.auth.auth_fakes import FakeUserRepository
 
@@ -39,6 +40,7 @@ class _Audit:
 
     def __init__(self, writer: AuditWriter) -> None:
         self.writer = writer
+        self.lane = WriterLane(self)  # ADR-0037's façade as its fallback: each record to the writer
 
 
 async def test_failed_login_with_a_nul_identifier_is_refused_and_not_audited(

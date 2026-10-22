@@ -218,7 +218,8 @@ async def test_mfa_verify_after_a_disable_mints_nothing(
     pg_dsn: str, client: httpx.AsyncClient
 ) -> None:
     """#2911: a user disabled between the password step and the TOTP step gets the operation's
-    401 and no session, and the refusal is audited (`auth.login_failed`, denied)."""
+    401 and no session, and the refusal is audited (`auth.login_failed`, denied), through the lane
+    since #2914's PR C."""
     await seed(pg_dsn, "e2e_keeper", _PASSWORD, _PEPPER)  # the owner floor keeps an active owner
     user_id, secret = await _seed_owner_with_totp(pg_dsn, "e2e_disabled")
     r = await client.post("/auth/login", json={"identifier": "e2e_disabled", "password": _PASSWORD})
@@ -242,6 +243,7 @@ async def test_mfa_verify_after_a_disable_mints_nothing(
     finally:
         await engine.dispose()
     ctx = client.app_context  # type: ignore[attr-defined]  # set by the client fixture
+    await ctx.audit.lane.flush(10.0)  # the refusal row is the lane's (ADR-0037 Amendment 2)
     await ctx.audit.writer.flush(10.0)
     rows = await _audit_rows(pg_dsn, user_id)
     assert ("auth.login_failed", "denied", "user_disabled") in {
@@ -294,8 +296,8 @@ async def test_audit_rows_for_login_failure_totp_failure_success_and_logout(
     pg_dsn: str, client: httpx.AsyncClient
 ) -> None:
     """C-2.9: each step writes an append-only, hash-chained audit_log row
-    through the real AuditWriter -> SqlAlchemyAuditRepository wiring; the sign-out's go through
-    the lane (ADR-0037)."""
+    through the real AuditWriter -> SqlAlchemyAuditRepository wiring; the sign-out's and the login
+    routes' outcome rows go through the lane (ADR-0037)."""
     ctx = client.app_context  # type: ignore[attr-defined]  # set by the client fixture
     user_id, secret = await _seed_owner_with_totp(pg_dsn, "e2e_audited")
     bad = await client.post("/auth/login", json={"identifier": "e2e_audited", "password": "nope"})
@@ -311,7 +313,7 @@ async def test_audit_rows_for_login_failure_totp_failure_success_and_logout(
     token = ok.json()["tokens"]["access_token"]
     hdrs = {"Authorization": f"Bearer {token}", CSRF_HEADER: ok.cookies[CSRF_COOKIE]}
     assert (await client.post("/auth/logout", headers=hdrs)).status_code == 204
-    await ctx.audit.lane.flush(10.0)  # the sign-out's rows are the lane's (ADR-0037)
+    await ctx.audit.lane.flush(10.0)  # the sign-out's and the login rows are the lane's
     await ctx.audit.writer.flush(10.0)
 
     failed = await _audit_rows(pg_dsn, "e2e***%")

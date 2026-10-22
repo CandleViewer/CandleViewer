@@ -35,7 +35,7 @@ from candleviewer.auth.models import UserRecord, UserStatus
 from candleviewer.auth.recovery_codes import hash_recovery_code
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
-from tests.unit.api._fakes import Identity, sessions
+from tests.unit.api._fakes import Identity, WriterLane, sessions
 
 from .mfa_fakes import FakeMfaRepository
 
@@ -92,6 +92,7 @@ class _Audit:
 
     def __init__(self, *, fail: bool = False) -> None:
         self.writer = _Writer(fail=fail)
+        self.lane = WriterLane(self)  # ADR-0037's façade as its fallback: each record to the writer
 
 
 def _used() -> float:

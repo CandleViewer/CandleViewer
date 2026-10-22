@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7). Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2). Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -170,8 +170,10 @@ Expected `200` with `status: authenticated`, `tokens`, a `user` with `mfa_requir
 again, and every other session of the user. A code is single use. A wrong or spent code, an
 expired or locked challenge and any other refusal answer the same `401` and spend nothing; five
 wrong codes lock the challenge, so sign in with the password again. That `401` also answers a
-user disabled since the password step (`auth.login_failed`, reason `user_disabled`) and an audit
-record that cannot be written (error log `auth.recovery.audit_unavailable` names the action).
+user disabled since the password step (`auth.login_failed`, reason `user_disabled`) and a
+write-ahead audit record that cannot be written (error log `auth.recovery.audit_unavailable` names
+the action). A refusal's own row goes to the audit lane first; one the lane and the sink both
+refuse is counted lost (section 10) and the answer stands.
 Before anything changes, `auth.recovery_code_used`, one `auth.session_revoked` (reason
 `mfa_recovery`) per ended session and `auth.session_created` (`enrolment_only: true`,
 `mfa_method: recovery_code`) are written; `auth.recovery_codes_exhausted` is written when none
@@ -183,13 +185,15 @@ with no method left, that sign-in is enrolment-only too.
 
 If the answer is `401` with `sign in again with your password`, the code was spent and every method
 revoked, but no session was minted: the error log `auth.recovery.completed_unminted` names the
-`user_id`, the `new_session_id` and the `revoked_session_ids` the call meant to end, and an
+`user_id`, the `new_session_id` and the `revoked_session_ids` the call meant to end, or ended
+beyond its records (the `unplanned` ones below), and an
 `auth.mfa_failed` row (reason `unminted`) voids the `auth.session_created` written ahead. Those
 sessions may still be live, but while the user has no method one that proved a second factor
 answers `401` except to `POST /auth/logout`, one minted on the password alone reaches only the
 enrolment operations, and the confirm ends them. Sign in with the password alone (enrolment-only)
 and re-enrol. A session minted while the recovery ran ends with the others under its own
-`auth.session_revoked` with `unplanned: true`. A recovery whose
+`auth.session_revoked` with `unplanned: true`, an outcome row through the lane: one the lane and
+the sink both refuse is counted lost (section 10) and the recovery goes on. A recovery whose
 transaction did not commit changes nothing, and its refusal row names the records it voids:
 `auth.mfa_failed` with reason `lost_race` (a concurrent recovery won) or `store_error` (error log
 `auth.recovery.commit_failed`), or `auth.login_failed` (`user_disabled`) when the user was disabled
@@ -1188,6 +1192,20 @@ only: at most 4096 session ids (the oldest forgotten first), each for 3600 s sin
 containment (a replay the service refuses renews it). After a restart, an eviction or that hour, the
 next replay of a family writes one `critical` row again.
 
+The login routes (`api/auth.py`, #2914) write their outcome and refusal rows after the decision too,
+and through the lane (ADR-0037 Amendment 2): `auth.login_failed` for a refused sign-in (`401`,
+`403`) or a disabled user's refused mint (reason `user_disabled`), `auth.account_locked` (`423`),
+`auth.login` for a password step that passed (`200`; no session exists yet), `auth.mfa_failed`
+for a refused second factor, recovery or confirm (`401`, `422`) or for a second factor whose mint
+then failed in the store (`500`, reason `unminted`: it voids the `auth.session_created` written
+ahead, and the error log `auth.mfa_verify.unminted` names the `user_id` and the `new_session_id`),
+`auth.recovery_codes_exhausted`, and a recovery's `unplanned` `auth.session_revoked`. Each lost one
+is counted under its action and logs one error, `auth.login_audit.outcome_lost`, with `action` and
+`error` only (no identifier, address or session id, C-12.6); the answer stands, and the counter the
+route moves before the row (`auth_login_failures_total`, `auth_enrolments_total`), where there is
+one, still shows the attempt. A mint's write-ahead records are not among them: they stay on the
+writer (U42).
+
 Each lost row adds one to `auth_audit_outcome_lost_total{action}` and logs one error,
 `auth.session_audit.outcome_lost`, with `action`, `session_id` and `error` (the writer's refusal
 class, `inactive`, `cancelled` for a request cancelled part-way, `timeout` for a write that did not
@@ -1229,13 +1247,14 @@ revoke the session and toward the SR-016 lockout, which it can apply with no `au
 `auth.account_locked` row (only `auth_lockouts_total` moves), so ask users not to retry an unlock
 meanwhile. A lock the chart must still record (first seen meanwhile, or again after a restart) gets
 `503` at its `auth.idle_locked` record, before the password check, and counts nothing. A sign-in
-fails closed (nothing is minted), since the write-ahead record of a mint never goes to the lane: an
-access token lapses within 12 minutes and a longer refusal ends every session and sign-in. A
-sign-in that fails closed answers `500 internal_error`, not `503`: `POST /auth/login` and
-`POST /auth/mfa/verify` write through `_audit` (`api/auth.py`), which has no `AuditError` handler,
-so the refusal reaches the boundary handler, which logs `unhandled_exception` with a traceback that
-names the error (`AuditUnavailable` or `AuditWriterStopped`). During an outage that is the sink, not
-a defect: `cv_audit_writer_refused_total{domain="auth"}` counts each one. An enrolment-only sign-in
+fails closed (nothing is minted), since the write-ahead records of a mint never go to the lane: an
+access token lapses within 12 minutes and a longer refusal ends every session and sign-in. The
+password step of `POST /auth/login` still answers (its row is an outcome row), and
+`POST /auth/mfa/verify` then fails closed with its `401` (`audit sink not active`) at its first
+write-ahead record, `auth.mfa_verified`, as at the carried-session record and at the
+`auth.session_created` it writes ahead of the mint: the TOTP step is spent, so the user signs in
+again from the password step once the sink is back. During an outage that is the sink, not a
+defect: `cv_audit_writer_refused_total{domain="auth"}` counts each one. An enrolment-only sign-in
 and the enrolment steps answer `503`, and `POST /auth/mfa/recovery` its uniform `401`.
 Sign-out, revoke-my-session and reuse containment go to the lane first and answer `503` only while
 it refuses too, as a full or read-only audit volume makes it do (accepted residual risk RR-16,
@@ -1255,7 +1274,8 @@ last loss, so a lone loss at night is not delivered and the page (more than 5 in
 not cover it (#2621, section 1): in the morning, read the counter and `outcome_lost` log lines.
 
 No page does not mean the sink is healthy: the page reads only outcome rows lost after an action,
-while the lane takes the rows of a sign-out, a revoke-my-session and reuse containment, and a
+while the lane takes the rows of a sign-out, a revoke-my-session, reuse containment and the login
+routes' outcomes, and a
 refusing sink makes every refresh, extend and unlock fail closed at its write-ahead record with a
 `503`, and every sign-in fail closed (nothing is minted). Those refusals
 show as `auth.session_audit.writer_refused` log lines (the alert
@@ -1429,8 +1449,6 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 | No alert rule reads the enrolment-only refusal series (section 7)         | #2746          |
 | `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747          |
 | An outcome record the lane and the sink both refuse is lost (counted)     | RR-16          |
-| Mint refusal row only logged: `auth.login_failed.audit_unavailable`       | EX-10, #2914   |
-| Recovery refusal row only logged: `auth.recovery.audit_unavailable`       | EX-10, #2914   |
 | Compose runs the fake backend (no lane); the lane's alerts are tickets    | #3009, #2701   |
 
 ## Execution record

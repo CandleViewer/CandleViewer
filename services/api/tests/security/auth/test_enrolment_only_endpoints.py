@@ -1005,8 +1005,9 @@ def test_a_refusal_whose_row_cannot_be_written_keeps_its_answer_and_logs_why(
     stack: Stack, monkeypatch: pytest.MonkeyPatch, refusal: str
 ) -> None:
     """No code-validity oracle while the audit sink fails: a refusal's row follows it, so one
-    that cannot be written leaves the answer as it is (a wrong code used to answer 500 then,
-    unlike a valid one) and the error log names the action; nothing is spent."""
+    that cannot be written (this app has no lane, so the writer alone) leaves the answer as it is
+    (a wrong code used to answer 500 then, unlike a valid one), and it is counted lost and logged
+    with the action (#2914); nothing is spent."""
     uid, _ = stack.add_user("alice")
     codes, token = _codes(stack, uid), _challenge(stack, "alice")
     sent = {"wrong_code": "0000-0000-0000-0000", "lost_race": codes[0]}[refusal]
@@ -1016,17 +1017,20 @@ def test_a_refusal_whose_row_cannot_be_written_keeps_its_answer_and_logs_why(
 
     monkeypatch.setattr(_store(stack), "complete_recovery", lost)
     _fail_on(stack, monkeypatch, "auth.mfa_failed")
+    counted = stack.in_process("auth_audit_outcome_lost_total", action="auth.mfa_failed")
     with structlog.testing.capture_logs() as logs:
         resp = _recover(stack, token, sent)
 
     assert (resp.status_code, resp.json()["detail"]) == _RECOVERY_REFUSED
-    (cause,) = [e for e in logs if e["event"] == "auth.recovery.audit_unavailable"]
+    (cause,) = [e for e in logs if e["event"] == "auth.login_audit.outcome_lost"]
     assert cause == {
-        "event": "auth.recovery.audit_unavailable",
+        "event": "auth.login_audit.outcome_lost",
         "log_level": "error",
         "action": "auth.mfa_failed",
         "error": "AuditError",
     }
+    lost_now = stack.in_process("auth_audit_outcome_lost_total", action="auth.mfa_failed")
+    assert lost_now - counted == 1
     assert (_unused(stack, uid), stack.audit.of("auth.mfa_failed")) == (len(codes), [])
 
 

@@ -5,12 +5,13 @@ from __future__ import annotations
 import uuid
 from collections.abc import MutableMapping
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.api.auth import AuditServiceLike, make_auth_router
@@ -38,6 +39,7 @@ from candleviewer.auth.models import (
     MfaVerifyRequest,
     MintedSession,
 )
+from tests.unit.api._fakes import WriterLane
 from tests.unit.auth.totp_code_cases import NON_ASCII_DIGIT_CODES
 
 _CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
@@ -136,14 +138,21 @@ class _FakeAuthService:
 class _FakeMinter:
     def __init__(self) -> None:
         self.minted_for: list[str] = []
+        self.session_ids: list[uuid.UUID | None] = []  # the id each mint was told to use
 
     async def mint(
-        self, user_id: str, *, ip: str | None = None, user_agent: str | None = None
+        self,
+        user_id: str,
+        *,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        session_id: uuid.UUID | None = None,
     ) -> MintedSession:
         self.minted_for.append(user_id)
+        self.session_ids.append(session_id)
         now = datetime(2026, 10, 1, tzinfo=UTC)
         return MintedSession(
-            session_id=uuid.uuid4(),
+            session_id=session_id or uuid.uuid4(),
             access_token_jti=uuid.uuid4(),
             access_token="acc",
             refresh_token="ref",
@@ -223,6 +232,7 @@ class _RecordingAuditWriter:
 class _RecordingAuditService:
     def __init__(self) -> None:
         self.writer = _RecordingAuditWriter()
+        self.lane = WriterLane(self)  # ADR-0037's façade as its fallback: each record to the writer
 
     @property
     def is_active(self) -> bool:
@@ -482,13 +492,98 @@ def test_mfa_verify_with_session_backend_mints_session_and_sets_cookie() -> None
         "auth.mfa_verified",
         "auth.session_created",
     ]
+    # The record written ahead names the session the mint then creates (#2914).
+    assert auth.minter.session_ids == [audit_service.writer.calls[1]["session_id"]]
+
+
+@pytest.mark.parametrize("identity", [_FakeIdentity(), None], ids=["minting", "no_session_backend"])
+def test_mfa_verify_with_its_verified_record_refused_is_401_and_mints_nothing(
+    identity: _FakeIdentity | None,
+) -> None:
+    """D1 (#2914): `auth.mfa_verified` is the mint's first write-ahead record, so the writer
+    refusing it answers the operation's 401, never a 500, and nothing is minted (the TOTP step
+    stays spent); with no session backend wired too."""
+    auth = _MintingAuthService(MfaVerifiedResult(user_id=uuid.uuid4()))
+    audit_service = _RecordingAuditService()
+    audit_service.writer = _RefusingAuditWriter("auth.mfa_verified")
+    app = FastAPI()
+    app.include_router(
+        make_auth_router(
+            cast(Any, auth), audit_service=audit_service, identity=identity, csrf=_CSRF_CODEC
+        )
+    )
+
+    response = TestClient(app).post(
+        "/auth/mfa/verify", json={"mfa_token": "tok", "method": "totp", "code": "123456"}
+    )
+
+    assert (response.status_code, response.json()["detail"]) == (401, "audit sink not active")
+    assert "set-cookie" not in response.headers
+    assert auth.minter.minted_for == [] and audit_service.writer.calls == []
+
+
+class _FailingMinter(_FakeMinter):
+    """A store failure at the mint (a timeout, a lost connection): not a refusal."""
+
+    async def mint(self, user_id: str, **_kw: Any) -> MintedSession:
+        self.minted_for.append(user_id)
+        raise OSError("session store unavailable")
+
+
+def test_mfa_verify_whose_mint_fails_voids_the_session_it_announced_and_still_answers_500() -> None:
+    """`auth.session_created` is written ahead of the mint, so a mint that then fails for another
+    reason than a disabled user leaves an `auth.mfa_failed` row (reason `unminted`, through the
+    lane) voiding that session, counted on the factor named, and an error log naming both ids and
+    the error class (#2914); the 500 stands."""
+    uid = uuid.uuid4()
+    auth = _MintingAuthService(MfaVerifiedResult(user_id=uid))
+    auth.minter = _FailingMinter()
+    audit_service = _RecordingAuditService()
+    app = FastAPI()
+    app.include_router(
+        make_auth_router(
+            cast(Any, auth), audit_service=audit_service, identity=_FakeIdentity(), csrf=_CSRF_CODEC
+        )
+    )
+    failures = _failures("totp")
+
+    with capture_logs() as logs:
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/auth/mfa/verify", json={"mfa_token": "tok", "method": "totp", "code": "123456"}
+        )
+
+    assert response.status_code == 500 and "set-cookie" not in response.headers
+    _verified, created, voiding = audit_service.writer.calls
+    assert (voiding["action"], voiding["outcome"], voiding["reason"]) == (
+        "auth.mfa_failed",
+        AuditOutcome.FAILURE,
+        "unminted",
+    )
+    assert voiding["session_id"] == created["session_id"]
+    assert voiding["after_state"] == {"voids_session_created": str(created["session_id"])}
+    assert audit_service.lane.actions == ["auth.mfa_failed"]
+    assert _failures("totp") - failures == 1
+    assert [e for e in logs if e["event"] == "auth.mfa_verify.unminted"] == [
+        {
+            "event": "auth.mfa_verify.unminted",
+            "log_level": "error",
+            "user_id": str(uid),
+            "new_session_id": str(created["session_id"]),
+            "error": "OSError",
+        }
+    ]
 
 
 class _RefusingMinter(_FakeMinter):
     """#2911: the user was disabled after the password step, so the mint is refused."""
 
     async def mint(
-        self, user_id: str, *, ip: str | None = None, user_agent: str | None = None
+        self,
+        user_id: str,
+        *,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        session_id: uuid.UUID | None = None,
     ) -> MintedSession:
         self.minted_for.append(user_id)
         raise UserDisabled("disabled")
@@ -511,6 +606,18 @@ class _InactiveAuditService(_RecordingAuditService):
     @property
     def is_active(self) -> bool:
         return False
+
+
+def _lost(action: str) -> float:
+    """`auth_audit_outcome_lost_total{action}` on the process-default registry."""
+    return float(
+        REGISTRY.get_sample_value("auth_audit_outcome_lost_total", {"action": action}) or 0
+    )
+
+
+def _failures(method: str) -> float:
+    """`auth_login_failures_total{method}` (SR-125) on the process-default registry."""
+    return float(REGISTRY.get_sample_value("auth_login_failures_total", {"method": method}) or 0)
 
 
 def _verify_for_a_disabled_user(
@@ -538,7 +645,8 @@ def _verify_for_a_disabled_user(
 
 
 def test_mfa_verify_for_a_disabled_user_mints_nothing_and_audits_the_refusal() -> None:
-    """The operation's 401 and no session; the refusal is audited like login's disabled one."""
+    """The operation's 401 and no session; the refusal is audited like login's disabled one, and
+    voids the session `auth.session_created` announced ahead of the mint (C-2.9, #2914)."""
     audit_service = _RecordingAuditService()
 
     response, uid, attempts, _ = _verify_for_a_disabled_user(audit_service)
@@ -546,34 +654,42 @@ def test_mfa_verify_for_a_disabled_user_mints_nothing_and_audits_the_refusal() -
     assert (response.status_code, response.json()["detail"]) == (401, "account is disabled")
     assert "set-cookie" not in response.headers
     assert attempts == [str(uid)]
-    calls = audit_service.writer.calls
-    assert [(c["action"], c["outcome"]) for c in calls] == [
+    verified, created, refused = audit_service.writer.calls
+    assert [(c["action"], c["outcome"]) for c in (verified, created, refused)] == [
         ("auth.mfa_verified", AuditOutcome.SUCCESS),
+        ("auth.session_created", AuditOutcome.SUCCESS),
         ("auth.login_failed", AuditOutcome.DENIED),
     ]
-    assert (calls[-1]["reason"], calls[-1]["actor_user_id"]) == ("user_disabled", uid)
+    assert (refused["reason"], refused["actor_user_id"]) == ("user_disabled", uid)
+    assert refused["session_id"] == created["session_id"]
+    assert refused["after_state"] == {"voids_session_created": str(created["session_id"])}
 
 
 def test_mfa_verify_for_a_disabled_user_with_the_refusal_record_refused_is_still_401() -> None:
-    """Error path: the writer refuses `auth.login_failed`. Not write-ahead (nothing was minted),
-    so the 401 stands, never a 500, and the lost record is logged."""
+    """Error path: the writer refuses `auth.login_failed`, and so would the lane. Not write-ahead
+    (nothing was minted), so the 401 stands, never a 500, and the lost record is counted and
+    logged (#2914)."""
     audit_service = _RecordingAuditService()
     audit_service.writer = _RefusingAuditWriter("auth.login_failed")
+    lost_before = _lost("auth.login_failed")
 
     response, uid, attempts, logs = _verify_for_a_disabled_user(audit_service)
 
     assert (response.status_code, response.json()["detail"]) == (401, "account is disabled")
     assert "set-cookie" not in response.headers
     assert attempts == [str(uid)]
-    assert [c["action"] for c in audit_service.writer.calls] == ["auth.mfa_verified"]
-    (lost,) = [e for e in logs if e["event"] == "auth.login_failed.audit_unavailable"]
+    actions = [c["action"] for c in audit_service.writer.calls]
+    assert actions == ["auth.mfa_verified", "auth.session_created"]
+    assert _lost("auth.login_failed") - lost_before == 1
+    (lost,) = [e for e in logs if e["event"] == "auth.login_audit.outcome_lost"]
     assert (lost["log_level"], lost["error"]) == ("error", "AuditUnavailable")
 
 
 def test_mfa_verify_for_a_disabled_user_with_audit_inactive_is_still_401_and_logged() -> None:
     """Error path: no audit sink. The 401 stands, nothing is minted, and the unrecorded refusal
-    is logged."""
+    is counted and logged."""
     audit_service = _InactiveAuditService()
+    lost_before = _lost("auth.login_failed")
 
     response, uid, attempts, logs = _verify_for_a_disabled_user(audit_service)
 
@@ -581,5 +697,6 @@ def test_mfa_verify_for_a_disabled_user_with_audit_inactive_is_still_401_and_log
     assert "set-cookie" not in response.headers
     assert attempts == [str(uid)]
     assert audit_service.writer.calls == []
-    (lost,) = [e for e in logs if e["event"] == "auth.login_failed.audit_unavailable"]
+    assert _lost("auth.login_failed") - lost_before == 1
+    (lost,) = [e for e in logs if e["event"] == "auth.login_audit.outcome_lost"]
     assert (lost["log_level"], lost["error"]) == ("error", "inactive")
