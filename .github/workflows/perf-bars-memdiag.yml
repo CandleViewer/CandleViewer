@@ -4,22 +4,32 @@ name: perf-bars-memdiag
 # self-hosted runner never runs a PR's code), and not a required check (C-9.2). The leg runs the
 # unchanged soak on the synthetic feed: no exchange, no credential, no egress beyond the dependency
 # sync (C-13.5). The legs, in order: default (24 h, the reading) -> tracemalloc (12 h, attribution
-# only) -> malloc -> mmap128k (24 h each). The rule that reads them is in
-# docs/qa/perf/e12-bars-r4-diagnosis.md; `memdiag judge` applies it to the downloaded artifacts.
+# only) -> malloc -> mmap128k (24 h each). Those are scenario hours on the soak's virtual clock (a
+# 24 h leg took 2.7 h of wall time on a laptop); the 22 h deadline and the 23 h timeout below are
+# wall time, and the tracemalloc leg's wall time here is not yet measured. The rule that reads the
+# legs is in docs/qa/perf/e12-bars-r4-diagnosis.md; `memdiag judge` applies it to the artifacts.
+#
 # All four legs, and any re-run, run at one commit: `judge` compares a leg with the default only at
-# the same head, so dispatch each with `--ref` set to one tag at a single `main` commit, never `main`.
+# the same head. So dispatch each from the tag bench/r4-legs-1 (one `main` commit, left in place as
+# the evidence anchor): `gh workflow run perf-bars-memdiag.yml --ref bench/r4-legs-1 -f leg=<leg>`.
+# The first step refuses a dispatch from anything but a tag.
 #
 # One leg a dispatch, never two at once, and never beside the 24 h full pack: concurrent legs
 # contend for memory and CPU and distort the very RSS and lag figures they read. This job and
 # perf-ingestion-nightly.yml's perf-pack-full share the concurrency group `cv-bench-01`, so the two
 # serialise across workflows (the orchestrator's ruling (a), 2026-10-22). GitHub keeps one PENDING
-# run per group: a second dispatch while a leg or the pack runs replaces a queued one (never the
-# running one; cancel-in-progress is false). So dispatch one at a time, after checking
-# `gh run list --workflow perf-bars-memdiag.yml`, `--workflow perf-ingestion-nightly.yml` and
-# `--workflow perf-ws-load.yml` (whose guard doesn't know this job) for a queued or running soak. The allocator variables are set here, before the interpreter starts
-# (it reads PYTHONMALLOC and glibc's MALLOC_* only then); any already set are dropped first, and the
-# leg records what it saw and checks pymalloc against it. Every input reaches the script through
-# env and is checked first; the checkout drops its token.
+# run per group: a dispatch while one is pending replaces it, never the running one
+# (cancel-in-progress is false). So dispatch the next leg only when none is queued (a running leg is
+# fine), and never while the pack is queued or running: check `gh run list --workflow` for
+# perf-bars-memdiag.yml, perf-ingestion-nightly.yml and perf-ws-load.yml (whose guard doesn't know
+# this job yet; #568's lane extends it).
+#
+# The allocator variables are set here, before the interpreter starts (it reads PYTHONMALLOC and
+# glibc's MALLOC_* only then): any already set are dropped first, and the leg records what it saw
+# and checks pymalloc against it. LD_PRELOAD and PYTHONDEVMODE are left alone: no leg sets them, and
+# memdiag refuses a leg that inherits either (exit 2, naming it), so a host that sets them is seen
+# and fixed. Every input reaches the script through env and is checked first; the checkout drops
+# its token.
 on:
   workflow_dispatch:
     inputs:
@@ -42,13 +52,18 @@ jobs:
       CV_BENCH_MACHINE_PROFILE: bench-runner
       PYTHONUNBUFFERED: "1"
     steps:
+      - name: Refuse a dispatch that is not from a tag (every leg runs at one commit)
+        if: github.ref_type != 'tag'
+        run: |
+          echo "dispatch from the tag bench/r4-legs-1, not $GITHUB_REF_TYPE $GITHUB_REF_NAME" >&2
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - id: sync
         run: uv sync --frozen --project services/api
-      - name: memdiag leg (${{ inputs.leg }})
+      - name: memdiag leg
         id: leg
         working-directory: services/api
         env:

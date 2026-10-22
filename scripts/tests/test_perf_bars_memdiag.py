@@ -26,7 +26,13 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "perf-bars-memdiag.yml"
 PACK = ROOT / ".github" / "workflows" / "perf-ingestion-nightly.yml"
 MEMDIAG = ROOT / "services" / "api" / "bench" / "ingestion" / "memdiag.py"
-ALLOCATOR = ("PYTHONMALLOC", "PYTHONTRACEMALLOC", "GLIBC_TUNABLES", "MALLOC_ARENA_MAX")
+ALLOCATOR = (
+    "PYTHONMALLOC",
+    "PYTHONTRACEMALLOC",
+    "GLIBC_TUNABLES",
+    "MALLOC_ARENA_MAX",
+    "MALLOC_MMAP_THRESHOLD_",  # the knob under test, the likeliest inherited one
+)
 FAKE_UV = f"""import json, os, sys
 seen = {{k: os.environ[k] for k in {ALLOCATOR!r} + ("MALLOC_MMAP_THRESHOLD_",) if k in os.environ}}
 with open(os.environ["UV_LOG"], "a", encoding="utf-8") as fh:
@@ -73,6 +79,18 @@ def test_dispatch_only_read_only_pinned_and_one_soak_at_a_time_on_the_bench_runn
     ]
     job = doc["jobs"]["leg"]
     assert job["runs-on"] == ["self-hosted", "Linux", "X64", "bench"]
+    assert job["env"] == {
+        "CV_ENV": "test",
+        "CV_BENCH_MACHINE_PROFILE": "bench-runner",
+        "PYTHONUNBUFFERED": "1",
+    }  # the profile a report's `ALIKE` compares with the pack's reading
+    pack_env = _doc(PACK)["jobs"]["perf-pack-full"]["env"]
+    assert (
+        job["env"]["CV_BENCH_MACHINE_PROFILE"] == pack_env["CV_BENCH_MACHINE_PROFILE"]
+    )
+    # every leg runs at one commit: the first step refuses a dispatch from anything but a tag
+    first = job["steps"][0]
+    assert first["if"] == "github.ref_type != 'tag'" and "exit 1" in first["run"]
     assert (
         job["concurrency"]
         == GROUP
@@ -85,12 +103,35 @@ def test_dispatch_only_read_only_pinned_and_one_soak_at_a_time_on_the_bench_runn
     )
     assert checkout["with"] == {"persist-credentials": False}
     assert _leg_step()["env"] == {"LEG": "${{ inputs.leg }}"}
-    # no input is interpolated into a script
+    # no input is interpolated into a script or a step title
     assert all("${{" not in s.get("run", "") for s in job["steps"])
+    assert all("inputs." not in s.get("name", "") for s in job["steps"])
     # every uv call installs from the hash-locked uv.lock, never a fresh resolve (C-12.3)
     uv = [s["run"] for s in job["steps"] if s.get("run", "").lstrip().startswith("uv ")]
     leg_run = _leg_step()["run"]
     assert len(uv) == 2 and all(" --frozen " in r for r in [*uv, leg_run])
+
+
+def test_a_stopped_leg_is_still_judged_and_uploaded_inside_the_job_timeout() -> None:
+    """The leg reports at its 22 h deadline (wall time) and exits 1; the job's own timeout
+    (never the 360 min default) leaves room for the judge and the upload, which run anyway.
+    """
+    job = _doc()["jobs"]["leg"]
+    assert 22 * 60 < job["timeout-minutes"] <= 24 * 60
+    assert "--deadline-h 22" in _leg_step()["run"]
+    assert '"$RUNNER_TEMP/memdiag/$LEG"' in _leg_step()["run"]
+    assert any(s.get("id") == "sync" for s in job["steps"])
+    judge = next(s for s in job["steps"] if " judge " in s.get("run", ""))
+    assert judge["if"] == "always() && steps.sync.outcome == 'success'"
+    assert judge["run"].rstrip().endswith('judge "$RUNNER_TEMP/memdiag"')
+    upload = job["steps"][-1]
+    assert upload["uses"].startswith("actions/upload-artifact@")
+    assert upload["if"] == "always()" and upload["with"] == {
+        "name": "memdiag-${{ inputs.leg }}",
+        "path": "${{ runner.temp }}/memdiag/",
+        "retention-days": 30,
+        "if-no-files-found": "error",
+    }
 
 
 def _leg(tmp_path: Path, leg: str) -> tuple[int, list[Any]]:
