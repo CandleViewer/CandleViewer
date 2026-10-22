@@ -290,6 +290,7 @@ async def test_disable_commit_timeout_is_raised_as_is_with_the_outcome_unknown()
         ("owner", "23505", "sessions_pkey", StorageConstraintViolated),
         ("manager", "23514", None, StorageConstraintViolated),  # not this change's floor
         ("owner", "23514", "users_purge_shape", StorageConstraintViolated),  # a named CHECK
+        ("owner", "23502", None, StorageConstraintViolated),  # NOT NULL: unnamed, not 23514
     ],
 )
 async def test_disable_trigger_check_before_audit_maps_only_the_floor(

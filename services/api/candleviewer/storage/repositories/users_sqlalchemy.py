@@ -240,9 +240,9 @@ class SqlAlchemyUserAdminStore:
     ) -> UserUpdate | None:
         """Apply `patch` (new grants record `actor`); `None` if the user does not exist. Raises
         what `check`, the owner-floor check or `audit` raises, `PurgeUserAnonymisedError` for any
-        change to an anonymised user, the typed `query_failure` for any other refused statement
-        (#2748), or `WriteAheadTimeout` when `audit` outlives its bound;
-        each rolls the transaction back, so nothing changes."""
+        change to an anonymised user, `StorageConstraintViolated` for any constraint other than
+        the floor's (#2748), or `WriteAheadTimeout` when `audit` outlives its bound; each rolls
+        the transaction back, so nothing changes."""
         uid, counted = str(user_id), _NO_ROLES
         wanted = _NO_ROLES if patch.roles is None else patch.roles
         try:

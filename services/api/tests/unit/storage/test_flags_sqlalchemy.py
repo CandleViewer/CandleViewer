@@ -297,12 +297,13 @@ async def test_a_writer_deleted_meanwhile_stays_a_bug() -> None:
 
 
 @pytest.mark.parametrize(
-    "refused",  # an `OSError`, then a driver error: each an outage if it were the store's own
-    [
+    "refused",  # an `OSError` and a driver error, each an outage if it were the store's own,
+    [  # then a constraint error, a typed bug if it were
         ConnectionRefusedError("the audit disk"),
         sa_exc.OperationalError("SELECT 1", None, Exception("gone")),
+        _db("23505", sa_exc.IntegrityError, _UX),
     ],
-    ids=["oserror", "operational"],
+    ids=["oserror", "operational", "integrity"],
 )
 async def test_what_prepare_raises_reaches_the_caller_as_is_never_as_an_outage(
     refused: Exception,

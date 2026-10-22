@@ -335,11 +335,19 @@ async def test_a_trigger_violation_maps_onto_the_floor_refusal() -> None:
     assert db.commits == 0 and db.users[_A]["roles"] == {"owner"}
 
 
-async def test_a_named_check_violation_is_never_the_floor_refusal() -> None:
-    """The floor's trigger raises 23514 naming no constraint; a named CHECK's 23514 in a change
-    that drops an owner is a defect, never a false `owner_floor` refusal (#2748)."""
+@pytest.mark.parametrize(
+    ("sqlstate", "constraint"),
+    [("23514", "users_purge_shape"), ("23502", None)],
+    ids=["named-check", "not-null"],
+)
+async def test_only_the_triggers_unnamed_23514_is_the_floor_refusal(
+    sqlstate: str, constraint: str | None
+) -> None:
+    """The floor's trigger raises 23514 naming no constraint; a named CHECK's 23514, or a NOT
+    NULL refusal (23502, which names none), in a change that drops an owner is a defect, never a
+    false `owner_floor` refusal (#2748)."""
     db = _Db(a=("active", ("owner",)), b=("active", ("viewer",)))
-    db.raise_at, db.sqlstate, db.constraint = f.CONSTRAINTS_NOW, "23514", "users_purge_shape"
+    db.raise_at, db.sqlstate, db.constraint = f.CONSTRAINTS_NOW, sqlstate, constraint
     store = m.SqlAlchemyUserAdminStore(_rel(db), owner_floor=_lenient_then_strict())
     with pytest.raises(StorageConstraintViolated) as refused:
         await store.update_user(
@@ -349,7 +357,8 @@ async def test_a_named_check_violation_is_never_the_floor_refusal() -> None:
             check=_no_check,
             audit=_Hook(db),
         )
-    assert refused.value.constraint == "users_purge_shape" and db.commits == 0
+    assert (refused.value.sqlstate, refused.value.constraint) == (sqlstate, constraint)
+    assert db.commits == 0
 
 
 def _lenient_then_strict() -> Any:

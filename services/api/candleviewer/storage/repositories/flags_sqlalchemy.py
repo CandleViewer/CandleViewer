@@ -162,14 +162,14 @@ def _log() -> Any:
 @contextmanager
 def _outage(own: Sequence[BaseException] = ()) -> Iterator[None]:
     """A database that cannot serve the call becomes `StorageTierUnavailable`, any other database
-    error the typed `query_failure` (#2748), each raised `from None`; what `prepare` raised (`own`,
-    by identity) passes as it is, re-raised after the handler."""
+    error a `StorageQueryFailed` typed by its facts (#2748), each raised `from None`; what
+    `prepare` raised (`own`, by identity) passes as it is, re-raised after the handler."""
     passing: BaseException | None = None
     try:
         yield
     except (OSError, sa_exc.SQLAlchemyError) as exc:
         if any(exc is mine for mine in own):
-            passing = exc
+            passing = exc  # the object `prepare` raised, which the unit of work stripped in place
         elif not is_outage(exc):
             raise query_failure(sqlstate_of(exc), constraint_of(exc)) from None
         else:
@@ -264,8 +264,9 @@ class SqlAlchemyFlagRepository:
                 try:
                     await s.execute(_PUT_USERS, put)
                 except sa_exc.IntegrityError as exc:
-                    if sqlstate_of(exc) != _FOREIGN_KEY:
-                        raise query_failure(sqlstate_of(exc), constraint_of(exc)) from None
+                    state, name = sqlstate_of(exc), constraint_of(exc)
+                    if state != _FOREIGN_KEY:
+                        raise query_failure(state, name) from None
                     raise FlagRowMissingError("an override's user") from None
                 await uow.commit()
         new = dict(change.user_overrides)
