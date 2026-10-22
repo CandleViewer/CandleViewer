@@ -7,7 +7,7 @@
 > **low-confidence** because it rests on heuristics alone. The instruments in this directory let the owner run the
 > study later; results are added here as a dated addendum, and each label then becomes `(session: Pn)`.
 
-- **Ticket:** E15-D01 (#205) · **Status:** draft, text pass; boards follow · **Owner approval pending** (Agent-delivery
+- **Ticket:** E15-D01 (#205) · **Status:** draft; text pass and boards r1 done · **Owner approval pending** (Agent-delivery
   adaptations, owner decision 2026-09-25) · **Method:** heuristic and documentation review; no session was run.
 - **Scope:** SCR-011, SCR-020..029, SCR-049, SCR-150, SCR-153; CMP-073, CMP-080..083, CMP-196, CMP-214..218;
   US-LAY-001..008. Feeds E15-D02 (#248), then D04 (#320), D05 (#321), D06 (#360), D08 (#362), D15 (#369), the K01 spike
@@ -61,24 +61,28 @@ pending the owner run; **open** = needs sessions or an owner decision; **deviati
 | DoD: walkthrough with CDO, Architect and FE lead, attendance recorded                                                                 | §17, ready to post on #205; the owner's walk through it is the attendance record                                                                                                                                                                                                                                                   | open (not yet posted)                  |
 | DoD: CDO sign-off recorded on the ticket                                                                                              | the owner's `approved` comment on #205 (§17 item 7)                                                                                                                                                                                                                                                                                | open                                   |
 | Test plan 5: every US-LAY story named, or recorded as not covered                                                                     | US-LAY-001 §2, §6; US-LAY-002 §5, §8; US-LAY-003 §3; US-LAY-004 only §3.1 (Y-scale is its per-pane link, not a group axis; the link UI is E15-D06's and S05's); US-LAY-005 §4; US-LAY-006 §2, §6; US-LAY-007 (SCR-026) **not covered** (no research question: E15-D09, S07); US-LAY-008 only §7's 1280×800 findings (E15-D12, S08) | done                                   |
-| Penpot boards and PNGs (`docs/design/README.md` approval rule)                                                                        | Research boards, below                                                                                                                                                                                                                                                                                                             | open (boards pass follows)             |
+| Penpot boards and PNGs (`docs/design/README.md` approval rule)                                                                        | Research boards, below; six boards drawn 2026-10-22                                                                                                                                                                                                                                                                                | done (boards r1)                       |
 
 ## Research boards (Penpot)
 
-Page **`E15-D01 Layout UX research`** in the project's Penpot file; its page id is recorded here when the boards are
-built (page name and page id only, per `docs/design/README.md`). Greyscale research boards, not visual design: one frame
-per board, `E15-D01 / 0n <slug>`, exported with `docs/design/_tools/penpot_export.py` to `docs/design/E15/img/`
-(README's `<epic>/img/` rule). Boards 03 and 04 double as the sync stimulus: each configuration frame is letters only,
-text at 16 px or more; the board also carries the facilitator copy.
+Page **`E15-D01 Layout UX research`** · page id `f624df56-f905-8048-8008-d3a73fdb2b4b` (page name and id only). Six
+greyscale research boards, not visual design, drawn 2026-10-22 from board script `r1` (posted on PR #4079 with its
+sha256; not in this diff): one board per call, relaid out, in one row, exported as PNG at scale 1 by the plugin's
+`shape.export` (the bridge's export call timed out) to `docs/design/E15/img/`. Boards 03 and 04 are the sync stimulus,
+with the facilitator copy: each configuration frame (`E15-D01 / 03 / C1` to `/ 04 / C6`) exports alone, letters only,
+text 16 px or more, its `/ reveal` frame (shared axes) hidden but for step (2); board 05 holds `E15-D01 / 05 / focus`.
 
-| #   | Board and planned PNG                                                   | Illustrates                                                                    |
-| --- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 01  | `E15-D01 / 01 journey` · `E15-D01-01-journey.png`                       | §2–§5: set up, arrange, trade, switch, recover, save; three lanes              |
-| 02  | `E15-D01 / 02 presets` · `E15-D01-02-presets.png`                       | §2.2: the ten presets and two grids ranked, storable today, first-run defaults |
-| 03  | `E15-D01 / 03 sync-c1-c3` · `E15-D01-03-sync-c1-c3.png`                 | §3.2: configurations C1–C3 (stimulus)                                          |
-| 04  | `E15-D01 / 04 sync-c4-c6` · `E15-D01-04-sync-c4-c6.png`                 | §3.2: configurations C4–C6 (stimulus)                                          |
-| 05  | `E15-D01 / 05 dock-and-keys` · `E15-D01-05-dock-and-keys.png`           | §4, §6: the reduce proposal, move mode step by step, the key map               |
-| 06  | `E15-D01 / 06 findings-decisions` · `E15-D01-06-findings-decisions.png` | §9, §13, §14: findings, decisions, amendments                                  |
+| #   | Board · board id · PNG                                                                                                              | Illustrates                                                                    |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 01  | `E15-D01 / 01 journey` · `f624df56-f905-8048-8008-d3b39a22c02e` · [PNG](../../E15/img/E15-D01-01-journey.png)                       | §2–§5: set up, arrange, trade, switch, recover, save; three lanes              |
+| 02  | `E15-D01 / 02 presets` · `f624df56-f905-8048-8008-d3b3f02ab78c` · [PNG](../../E15/img/E15-D01-02-presets.png)                       | §2.2: the ten presets and two grids ranked, storable today, first-run defaults |
+| 03  | `E15-D01 / 03 sync-c1-c3` · `f624df56-f905-8048-8008-d3a740291634` · [PNG](../../E15/img/E15-D01-03-sync-c1-c3.png)                 | §3.2: configurations C1–C3 (stimulus)                                          |
+| 04  | `E15-D01 / 04 sync-c4-c6` · `f624df56-f905-8048-8008-d3b33cf6efe7` · [PNG](../../E15/img/E15-D01-04-sync-c4-c6.png)                 | §3.2: configurations C4–C6 (stimulus)                                          |
+| 05  | `E15-D01 / 05 dock-and-keys` · `f624df56-f905-8048-8008-d3b449b46e1e` · [PNG](../../E15/img/E15-D01-05-dock-and-keys.png)           | §4, §6: the reduce proposal, move mode step by step, the key map               |
+| 06  | `E15-D01 / 06 findings-decisions` · `f624df56-f905-8048-8008-d3b4b1aaedb2` · [PNG](../../E15/img/E15-D01-06-findings-decisions.png) | §9, §13, §14: findings, decisions, amendments                                  |
+
+Contrast (`docs/design/_tools/contrast_check.py`, dark; canvas / raised / sunken): text primary 15.20 / 14.35 / 17.42,
+secondary 9.33 / 8.81 / 10.69 (also the cue outlines), tertiary 5.96 / 5.62 / 6.83 (footnotes); borders are decorative.
 
 ## Method note (Agent-delivery adaptation, owner decision 2026-09-25)
 
