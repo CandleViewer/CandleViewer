@@ -74,7 +74,7 @@ async def test_a_failed_context_close_is_counted_and_a_later_revoke_still_reache
     assert ws_revocation_close_failures_total._value.get() == before + 1
     assert live.closes == [("view_as_expired", 4403)]
     # The session stays live, so the socket whose close failed stays registered: a sign-out's
-    # revoke still reaches it (#4064 security L-2).
+    # revoke still reaches it.
     assert await hub.revoke("s1") == 2
 
 

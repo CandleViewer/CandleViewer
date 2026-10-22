@@ -89,14 +89,18 @@ class HubSocketCloser:
     """`ViewAsService`'s socket closer: across `session_id`'s rotation family, the sockets bound
     to the ended context, and only those (`RevocationHub.close_context`). A socket stays
     registered under its predecessor's id until it re-`auth`s, so the whole family is walked;
-    a successor already on a newer context keeps its sockets (S5-SEC-03's go-live condition)."""
+    a successor already on a newer context keeps its sockets (S5-SEC-03's go-live condition).
+    The session's own sockets close first: that needs no read, so a walk that fails (its error
+    reaches the service, which logs it) still closes them."""
 
     def __init__(self, hub: RevocationHub, store: AuthSessionStore) -> None:
         self._hub, self._store = hub, store
 
     async def close_family(self, session_id: str, *, context_id: UUID, reason: CloseReason) -> None:
+        await self._hub.close_context(session_id, str(context_id), reason)
         for member in await self._store.walk_rotation_family(session_id):
-            await self._hub.close_context(member, str(context_id), reason)
+            if member != session_id:  # the walk includes the session itself
+                await self._hub.close_context(member, str(context_id), reason)
 
 
 class SessionViewAs:

@@ -1,11 +1,12 @@
 """#3100: the token-expiry and heartbeat closes run on a timer the connection owns, flag off and on.
 
 From the first `auth_ok` the connection arms one loop timer at its next deadline (`close_in`): the
-token expiry on either clock and the heartbeat deadline, read again at least every
-`CLOSE_RECHECK_TICKS` ticks. It runs the writer's own check (`_Connection.watch`), so the close is
-queued at the deadline on the injected clock even while the writer is parked in a send. Flag on,
-its flush deadline starts then (`23-ws-protocol.md` §8.4); flag off, the reader's next frame starts
-the flush (§4.4). The first close wins (§8.6). Teardown cancels the timer (C-2.18, TG5).
+token expiry on either clock, the heartbeat deadline and a view-as context's expiry (§9.6), read
+again at least every `CLOSE_RECHECK_TICKS` ticks. It runs the writer's own check
+(`_Connection.watch`), so the close is queued at the deadline on the injected clock even while the
+writer is parked in a send. Flag on, its flush deadline starts then (`23-ws-protocol.md` §8.4); flag
+off, the reader's next frame starts the flush (§4.4). The first close wins (§8.6). Teardown cancels
+the timer (C-2.18, TG5).
 
 The real router runs on the test's own loop behind `_Wire`, whose `hold()` parks the writer's send:
 no threads, no sleeps. While the writer is parked only the timer reads the watchdog, so a spy on
@@ -624,11 +625,11 @@ async def test_the_timer_is_armed_at_the_next_deadline_on_either_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`close_in` reads each deadline as `due` compares it: the token expiry on the monotonic and
-    the wall clock, and the heartbeat deadline. The timer is armed at it, or at `recheck_s` if
-    that is sooner, and replaces the one before. After a check that found nothing due the rest is
-    waited to the millisecond (`CLOSE_REARM_MIN_S`, pinned by value). After one that raised it is
-    a tick, on the defensive path that no real flow reaches (the fail-closed close sets
-    `closing`); only a stubbed `close_with` does."""
+    the wall clock, the heartbeat deadline and a view-as context's expiry. The timer is armed at it,
+    or at `recheck_s` if that is sooner, and replaces the one before. After a check that found
+    nothing due the rest is waited to the millisecond (`CLOSE_REARM_MIN_S`, pinned by value). After
+    one that raised it is a tick, on the defensive path that no real flow reaches (the fail-closed
+    close sets `closing`); only a stubbed `close_with` does."""
     clock = _Clock()
     kw: dict[str, Any] = {"encoding": _JSON, "clock": clock, "wall_ms": clock.wall_ms}
     conn = _Conn(cast(Any, _Wire()), **kw, auth_timeout_s=10.0)
@@ -641,6 +642,9 @@ async def test_the_timer_is_armed_at_the_next_deadline_on_either_clock(
     assert conn.close_in() == 25.0  # the wall clock's
     dog.token_expires_at, conn.token_expires_at_ms = 60.0, BASE_MS + 60_000
     assert conn.close_in() == 40.0  # the heartbeat deadline
+    conn.view_as_expires_at_ms = BASE_MS + 12_000
+    assert conn.close_in() == 2.0  # a view-as context's expiry, on the wall clock (§9.6)
+    conn.view_as_expires_at_ms = None
     loop = asyncio.get_running_loop()
     timers: list[asyncio.TimerHandle] = []
     for recheck, delay in ((3600.0, 40.0), (1.0, 1.0)):

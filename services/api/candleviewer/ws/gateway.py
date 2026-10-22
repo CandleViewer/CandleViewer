@@ -1496,7 +1496,7 @@ def make_ws_router(
             auth_call_late(conn, str(late), reauth=reauth, fresh=fresh)
             return
         except AuthRefused as refused:
-            # §4.3: refused at once, never `auth_ok`, not counted as a failure, nothing
+            # §4.3: refused at once, never `auth_ok`, not counted as a failure, nothing left
             # registered; a re-auth ends the earlier identity too (#2295).
             if fresh and conn.authz is not None:  # §9.6's re-read refuses after registering
                 registry.unregister(conn.authz)
@@ -1578,8 +1578,8 @@ def make_ws_router(
         conn.watchdog.token_expires_at = now + (expires_ms - now_ms) / 1000
         conn.token_expires_at_ms = expires_ms  # the same instant on the wall clock
         conn.view_as_context_id = _context_of(bound)
-        conn.view_as_expires_at_ms = (
-            None if bound is None else int(bound.expires_at.timestamp() * 1000)
+        conn.view_as_expires_at_ms = (  # floored, as the token's expiry is
+            None if bound is None else (bound.expires_at - _EPOCH) // _ONE_MS
         )
         conn.arm_close_timer()  # #3100: at the new expiry, a re-auth's too
         conn.stop_flush_deadline()  # #415: the bound from `accept` ends at the first `auth_ok`

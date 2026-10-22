@@ -29,6 +29,7 @@ from candleviewer.view_as_wiring import (
     SessionViewAs,
     build_view_as,
 )
+from candleviewer.ws import gateway
 from candleviewer.ws.revocation import RevocationHub
 from tests.unit.admin.test_view_as_service import _TARGET, _VIEWER, _Ports, _Runner
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -187,6 +188,58 @@ def test_create_app_puts_the_service_and_its_sweeper_on_app_state() -> None:
     assert state.view_as_sweeper._service is state.view_as
 
 
+def _spy_on_the_ws_router(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Record the keyword arguments `create_app` gives `make_ws_router`, then build it."""
+    import candleviewer.app as appmod
+
+    seen: list[dict[str, Any]] = []
+    real = gateway.make_ws_router
+
+    def spy(**kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(appmod, "make_ws_router", spy)
+    return seen
+
+
+def test_create_app_gives_the_socket_the_services_read_of_the_sessions_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§9.6: on the real backend an `auth` reads its session's binding through the app's one
+    service, over the auth module's session store. Without it no socket would be refused, bound
+    or closed at its context's expiry."""
+    seen = _spy_on_the_ws_router(monkeypatch)
+    app = create_app(_real())
+    (kwargs,) = seen
+    read = kwargs["view_as"]
+    assert isinstance(read, SessionViewAs)
+    assert read._store is app.state.app_context.auth.view_as_store
+    assert read._views() is app.state.view_as
+
+
+def test_create_app_gives_the_socket_no_view_as_read_on_the_fake_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fake backend stores no context, so its sockets bind none."""
+    seen = _spy_on_the_ws_router(monkeypatch)
+    create_app(Settings())
+    (kwargs,) = seen
+    assert kwargs["view_as"] is None
+
+
+def test_the_sockets_read_fails_when_the_app_has_no_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read as S7's guard reads it: a missing service fails the `auth`, never binds nothing."""
+    seen = _spy_on_the_ws_router(monkeypatch)
+    app = create_app(_real())
+    (kwargs,) = seen
+    del app.state.view_as
+    with pytest.raises(AttributeError):
+        kwargs["view_as"]._views()
+
+
 class _Family:
     """A session store's two reads `HubSocketCloser` and `SessionViewAs` make."""
 
@@ -224,6 +277,23 @@ async def test_the_closer_closes_the_ended_contexts_sockets_across_the_family_on
     await closer.close_family("pred", context_id=ended, reason="view_as_expired")
     assert old.reasons == successor_old.reasons == ["view_as_expired"]
     assert successor_new.reasons == []
+
+
+class _Unwalkable(_Family):
+    async def walk_rotation_family(self, session_id: str) -> tuple[str, ...]:
+        raise ConnectionError("the session store is down")
+
+
+async def test_the_closer_closes_the_sessions_own_sockets_before_walking_its_family() -> None:
+    """They need no read, so a walk that fails still closes them; its error reaches the
+    service, which logs it."""
+    hub, ended, own = RevocationHub(), uuid4(), _Closes()
+    hub.register("s1", own)
+    hub.bind("s1", own, str(ended))
+    closer = HubSocketCloser(hub, cast(Any, _Unwalkable(())))
+    with pytest.raises(ConnectionError):
+        await closer.close_family("s1", context_id=ended, reason="view_as_expired")
+    assert own.reasons == ["view_as_expired"]
 
 
 class _Evaluates:

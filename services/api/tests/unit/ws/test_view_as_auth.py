@@ -53,9 +53,32 @@ async def _first_frame_after_auth(bindings: _Bindings, *tokens: str) -> list[dic
     return frames
 
 
+class _Fails:
+    """The `view_as` port, failing every read as a store fault would."""
+
+    async def __call__(self, session_id: str) -> ViewAsBinding | None:
+        raise ConnectionError("the session store is down")
+
+
 def _failures() -> float:
-    """Every failed `auth` counted so far, whatever its reason (a strike is one of them)."""
-    return sum(sample.value for sample in cv_ws_auth_failures_total.collect()[0].samples)
+    """Every failed `auth` counted so far, whatever its reason (a strike is one of them). Only
+    the `_total` samples: a reason's first count also adds its `_created` timestamp."""
+    (family,) = cv_ws_auth_failures_total.collect()
+    return sum(s.value for s in family.samples if s.name.endswith("_total"))
+
+
+async def test_a_view_as_read_that_fails_fails_the_auth_with_a_strike() -> None:
+    """A store fault is never read as no context: the `auth` fails as a failed `authenticate`
+    does, with `err auth_failed` and a strike, never `auth_ok`."""
+    rig, sock = Rig(options={"view_as": _Fails()}), Sock()
+    before = _failures()
+    async with asyncio.timeout(DEADLINE_S):
+        handler = await rig.open(sock)
+        frame = await rig.auth(sock, "good-1")
+        hang_up(sock)
+        await handler
+    assert (frame["t"], frame["p"]["code"]) == ("err", "auth_failed")
+    assert _failures() == before + 1
 
 
 async def test_a_held_context_refuses_the_auth_with_view_as_expired_and_no_strike() -> None:

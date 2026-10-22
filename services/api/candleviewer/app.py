@@ -1657,10 +1657,11 @@ def create_app(
             flag_visible=default_registry().visible_to,
             backpressure=ws_backpressure,
             # §9.6 (#3085): an `auth` reads its session's view-as binding through the service
-            # built below, read per call; none on the fake backend, which binds no session.
+            # built below, read per call as S7's guard reads it, so a missing one fails the
+            # `auth`; none on the fake backend, which binds no session.
             view_as=(
                 SessionViewAs(
-                    lambda: getattr(app.state, "view_as", None),
+                    lambda: app.state.view_as,
                     ctx.auth.view_as_store,
                     clock=auth_clock or (lambda: datetime.now(UTC)),
                 )

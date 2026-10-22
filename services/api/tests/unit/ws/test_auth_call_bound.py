@@ -1,11 +1,11 @@
 """#2155 item 1: each call an `auth` makes is bounded (C-2.18; `23-ws-protocol.md` §4.3).
 
-`authenticate`, the principal read and a first `auth`'s SR-189 re-read each get
-`auth_call_timeout_s`. Past it: `bye internal_error` + `1011`, a re-`auth`'s too, no strike, no
+`authenticate`, the principal read, a first `auth`'s SR-189 re-read and §9.6's view-as reads each
+get `auth_call_timeout_s`. Past it: `bye internal_error` + `1011`, a re-`auth`'s too, no strike, no
 `auth.login_failed` row and no registration left. The bound is on the loop's clock: a test whose
 call `hangs` past it gets a 10 ms one from the rig, which parks the call on an event. Every async
-test runs on a `VirtualTimeLoop` (`@virtual`, #3938): that clock, each bound on it and
-`DEADLINE_S` are fake seconds, which a slow host cannot spend.
+test runs on a `VirtualTimeLoop` (`@virtual`, #3938): that clock, each bound on it and `DEADLINE_S`
+are fake seconds, which a slow host cannot spend.
 """
 
 from __future__ import annotations
@@ -81,6 +81,35 @@ async def test_auth_call_times_out_reauth_closes_with_internal_error(call: str) 
     assert _timed_out(logs) == [(call, True)]
     rows = [(r["action"], r["reason"], r["severity"]) for r in rig.audit.records]
     assert rows == [("ws.connection.closed", "internal_error", Severity.WARNING)]
+
+
+class _HangsAfter:
+    """The `view_as` port (§9.6): answers no context `answers` times, then never returns."""
+
+    def __init__(self, answers: int) -> None:
+        self.answers = answers
+
+    async def __call__(self, session_id: str) -> None:
+        if self.answers == 0:
+            await asyncio.Event().wait()  # never set: only the bound ends it
+        self.answers -= 1
+
+
+@pytest.mark.parametrize("reauth", [False, True], ids=["first_auth", "reauth"])
+@virtual
+async def test_a_view_as_read_past_its_bound_closes_with_internal_error(reauth: bool) -> None:
+    """§9.6's reads are bounded as the other calls are: a re-`auth` runs under no auth window,
+    so an unbounded read would hold it for good. A first `auth` reads twice before `auth_ok`."""
+    rig, sock = Rig(hangs=True, options={"view_as": _HangsAfter(2 if reauth else 0)}), Sock()
+    with capture_logs() as logs:
+        async with asyncio.timeout(DEADLINE_S):
+            handler = await rig.open(sock)
+            if reauth:
+                assert (await rig.auth(sock, "good-1"))["t"] == "auth_ok"
+            assert bye_of(await rig.auth(sock, "good-1", "re")) == _FAULT
+            await handler
+    assert (sock.codes, rig.leftovers()) == ([1011], NOTHING_LEFT)
+    assert _timed_out(logs) == [("view_as", reauth)]
 
 
 @virtual
