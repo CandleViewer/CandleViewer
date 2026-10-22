@@ -28,15 +28,16 @@ _OPS = {
 _WRITES = ("createAccountProfile", "updateAccountProfile", "deleteAccountProfile")
 _READ = "401:Unauthorized 403:Forbidden 404:NotFound"
 _WRITE = f"{_READ} 409:Conflict 503:ProfileSaveUnavailable"
-_STALE, _REFUSED = "412:PreconditionFailed", "422:ProfileRejected"
+_STALE, _REFUSED = "412:PreconditionFailed 428:PreconditionRequired", "422:ProfileRejected"
 _KEYED = "IdempotencyKey CsrfToken"
+_TAGGED = f"IfMatchRequired {_KEYED}"  # a replace or delete of risk caps needs the current `ETag`
 #: operationId -> (answers `status[:component]`, a bare status is inline; parameters; idempotency)
 _DECLARED = {
     "listAccountProfiles": (f"200 {_READ} 503:ServiceUnavailable", "", None),
     "createAccountProfile": (f"201 {_REFUSED} {_WRITE}", _KEYED, "recommended"),
     "getAccountProfile": (f"200 {_READ} 503:ServiceUnavailable", "", None),
-    "updateAccountProfile": (f"200 {_STALE} {_REFUSED} {_WRITE}", f"IfMatch {_KEYED}", "optional"),
-    "deleteAccountProfile": (f"204 {_STALE} {_WRITE}", f"IfMatch {_KEYED}", "optional"),
+    "updateAccountProfile": (f"200 {_STALE} {_REFUSED} {_WRITE}", _TAGGED, "optional"),
+    "deleteAccountProfile": (f"204 {_STALE} {_WRITE}", _TAGGED, "optional"),
 }
 
 
@@ -103,6 +104,7 @@ def test_every_code_the_operations_cite_is_registered() -> None:
     cited = {(int(status), code) for status, code in pairs}
     codes = {code for _, code in cited}
     assert {"step_up_required", "conflict", "version_conflict", "audit_unavailable"} <= codes
+    assert "precondition_required" in codes  # the 428 of a replace or delete without `If-Match`
     # The registry has `validation_failed` at 400, the order routes' status; the profile operations
     # answer 422 as the exchange-accounts routes do (`createApiKey`, `testApiKey`).
     assert _CODES["validation_failed"]["status"] == 400 and (422, "validation_failed") in cited
@@ -126,6 +128,15 @@ def test_instrument_cache_unavailable_is_a_retryable_rest_503() -> None:
     assert shown["retry_after_seconds"] > 0
 
 
+def test_precondition_required_is_a_non_retryable_rest_428() -> None:
+    entry = _CODES["precondition_required"]
+    meta = ERROR_META[ErrorCode.PRECONDITION_REQUIRED]
+    assert (entry["status"], entry["retryable"], "surface" in entry) == (428, False, False)
+    assert (meta.surfaces, meta.retryable, meta.title) == (("rest",), False, entry["title"])
+    generated = (ROOT / "packages/protocol/src/errorCodes.ts").read_text(encoding="utf-8")
+    assert '  "precondition_required",\n' in generated  # in the TS list as in `ErrorCode`
+
+
 def test_profile_refusals_name_the_member_the_symbol_and_the_limit() -> None:
     items = _COMPONENTS["schemas"]["Problem"]["properties"]["errors"]["items"]["properties"]
     assert (_ref(items["symbol"]), _ref(items["limit"])) == ("Symbol", "Decimal")
@@ -140,7 +151,9 @@ def test_profile_refusals_name_the_member_the_symbol_and_the_limit() -> None:
     assert refusals == [("require_native_stop", "native_stop_mandatory")]
 
 
-@pytest.mark.parametrize("response", ["ProfileRejected", "ProfileSaveUnavailable"])
+@pytest.mark.parametrize(
+    "response", ["ProfileRejected", "ProfileSaveUnavailable", "PreconditionRequired"]
+)
 def test_every_profile_problem_example_is_a_valid_problem(response: str) -> None:
     content = _COMPONENTS["responses"][response]["content"]
     for name, example in content["application/problem+json"]["examples"].items():
@@ -153,15 +166,26 @@ def test_every_profile_problem_example_is_a_valid_problem(response: str) -> None
 def test_the_refusal_rules_are_one_list_in_two_passes() -> None:
     _, first, second, *_ = [_text(part) for part in _REJECTED["description"].split("\n\n")]
     one = "native_stop_mandatory stop_defines_r required not_allowed range precision ladder_sum"
-    one += " above_leverage_cap default_moves_alone"
+    one += " above_leverage_cap cap_unbounded default_moves_alone"
     two = "max_leverage min_order_qty qty_step min_notional symbol_not_listed"
     assert [rule for rule in one.split() if f"`{rule}`" not in first] == []
     assert [rule for rule in two.split() if f"`{rule}`" not in second or f"`{rule}`" in first] == []
     assert "the second only when the first passes" in first
     # R1S-05 (#4083): a pattern that matches every listed symbol allows what `all_symbols` does.
     assert "a universal pattern such as `*USDT` counts as `all_symbols`" in second
-    audited = "`native_stop_mandatory`, `above_leverage_cap` and every refusal of the second pass"
-    assert second.endswith(f"{audited} are audited as `profile.save_refused`.")
+    # The unbounded cap is a cap removed rather than raised (PF-T02, R1S-04): audited, and one name.
+    assert "a cap removed rather than raised (PF-T02)" in _text(_REJECTED["description"])
+    for name in ("ProfileRiskCaps", "AccountProfileInput"):
+        assert "`cap_unbounded`" in _text(_COMPONENTS["schemas"][name]["description"])
+    # It covers every bound `ap_trading_caps` requires, not the loss caps alone (R4-02, #4087).
+    assert "`cap_unbounded` and `default_moves_alone`." in first  # listed with the first pass
+    unbounded = "a trading-enabled profile with a loss-bounding cap left unbounded"
+    assert f"{unbounded} (`ap_trading_caps`, decision D11)" in first
+    caps = _text(_COMPONENTS["schemas"]["ProfileRiskCaps"]["description"])
+    bounds = ["`max_open_positions`", "`max_concurrent_orders`", "`max_leverage_cap`"]
+    assert [bound for bound in [*bounds, "position size", "daily loss"] if bound not in caps] == []
+    audited = "`native_stop_mandatory`, `above_leverage_cap`, `cap_unbounded` and every refusal"
+    assert second.endswith(f"{audited} of the second pass are audited as `profile.save_refused`.")
 
 
 def test_a_put_replaces_the_whole_profile_and_says_what_omitting_risk_caps_does() -> None:
@@ -179,3 +203,33 @@ def test_a_stale_if_match_is_version_conflict() -> None:
         assert "`412 version_conflict`" in _text(_OPS[name]["description"])
     doc = AccountVersionConflictError.__doc__ or ""
     assert "version_conflict" in doc and "precondition_failed" not in doc
+
+
+def _users(parameter: str) -> set[str]:
+    """The operations anywhere in the contract that take the component parameter."""
+    ref, methods = f"#/components/parameters/{parameter}", ("get", "post", "put", "patch", "delete")
+    return {
+        op["operationId"]
+        for item in _PATHS.values()
+        for method, op in item.items()
+        if method in methods and any(p.get("$ref") == ref for p in op.get("parameters", []))
+    }
+
+
+def test_a_replace_or_delete_of_risk_caps_needs_the_current_etag() -> None:
+    needed, shared = (_COMPONENTS["parameters"][name] for name in ("IfMatchRequired", "IfMatch"))
+    assert [(p["name"], p["in"], p["required"]) for p in (needed, shared)] == [
+        ("If-Match", "header", True),
+        ("If-Match", "header", False),  # every other user of `If-Match` keeps this one
+    ]
+    assert _users("IfMatchRequired") == {"updateAccountProfile", "deleteAccountProfile"}
+    assert not _users("IfMatch") & set(_OPS)
+    said = _text(needed["description"])
+    assert "needs the current `ETag`: last-write-wins is refused by contract" in said
+    assert "`428 precondition_required`" in said
+    put = _text(_OPS["updateAccountProfile"]["description"])
+    delete = _text(_OPS["deleteAccountProfile"]["description"])
+    assert "a replace needs the current `ETag`" in put
+    assert "a delete needs the current `ETag`" in delete
+    assert all("`428 precondition_required`" in words for words in (put, delete))
+    assert "last write wins" not in f"{put} {delete}"  # "Without `If-Match` the last write wins"

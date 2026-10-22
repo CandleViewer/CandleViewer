@@ -50,6 +50,7 @@ class ErrorCode(StrEnum):
     KEK_ROTATION_IN_PROGRESS = "kek_rotation_in_progress"
     STOP_REQUEST_IN_FLIGHT = "stop_request_in_flight"
     VERSION_CONFLICT = "version_conflict"
+    PRECONDITION_REQUIRED = "precondition_required"
     PAYLOAD_TOO_LARGE = "payload_too_large"
     GONE = "gone"
     ORDER_NOT_AMENDABLE = "order_not_amendable"
@@ -147,6 +148,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.KEK_ROTATION_IN_PROGRESS: ErrorMeta(("rest",), None, True, None, None, "A KEK re-wrap run is already in progress for this environment"),
     ErrorCode.STOP_REQUEST_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None, "A stop request for this position is still in flight"),
     ErrorCode.VERSION_CONFLICT: ErrorMeta(("rest",), None, False, None, None, "If-Match / ETag precondition failed"),
+    ErrorCode.PRECONDITION_REQUIRED: ErrorMeta(("rest",), None, False, None, None, "The request must carry If-Match with the current ETag"),
     ErrorCode.PAYLOAD_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Request body or batch exceeds the operation's size ceiling"),
     ErrorCode.GONE: ErrorMeta(("rest",), None, False, None, None, "Resource existed but was purged by retention, or a one-time link that expired or was used"),
     ErrorCode.ORDER_NOT_AMENDABLE: ErrorMeta(("rest",), None, False, None, None, "Order is in a terminal or transitional state and cannot be amended"),

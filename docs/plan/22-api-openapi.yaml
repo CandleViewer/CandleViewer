@@ -625,6 +625,10 @@ x-error-codes:
     status: 412
     title: If-Match / ETag precondition failed
     retryable: false
+  - code: precondition_required
+    status: 428
+    title: The request must carry If-Match with the current ETag
+    retryable: false
   - code: payload_too_large
     status: 413
     title: Request body or batch exceeds the operation's size ceiling
@@ -3185,15 +3189,17 @@ paths:
         (decision D7). Such a body must equal the stored profile in every other member, and no
         other change of `is_default` is accepted (`default_moves_alone`).
 
-        A stale `If-Match` is `412 version_conflict` and nothing changes: reload, then edit again.
-        Without `If-Match` the last write wins. Audited write-ahead as `profile.updated` with the
-        profile before and after: when that record cannot be written nothing changes
-        (`503 audit_unavailable`). A change that raises or removes a cap, or widens the symbols,
-        is labelled relaxing in that record and notifies the Owner (SR-E28-01).
+        `If-Match` is required: a replace needs the current `ETag`, and last-write-wins is refused
+        on risk caps by contract. Without it the answer is `428 precondition_required`; a stale
+        one is `412 version_conflict`. Either way nothing changes: reload, then edit again.
+        Audited write-ahead as `profile.updated` with the profile before and after: when that
+        record cannot be written nothing changes (`503 audit_unavailable`). A change that raises
+        or removes a cap, or widens the symbols, is labelled relaxing in that record and notifies
+        the Owner (SR-E28-01).
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
-        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IfMatchRequired"
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/CsrfToken"
       requestBody:
@@ -3216,6 +3222,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "422": { $ref: "#/components/responses/ProfileRejected" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/ProfileSaveUnavailable" }
     delete:
       tags: [exchange-accounts]
@@ -3227,13 +3234,15 @@ paths:
         keeps its version. Refused with `409 conflict`, nothing changed and `detail` naming each
         blocker, while the profile is the account's default (make another profile the default
         first) or while any rule scoped to the account is armed, named by its id and name (a rule
-        cannot name a profile yet). A stale `If-Match` is `412 version_conflict`. Audited
-        write-ahead as `profile.deleted`: when that record cannot be written nothing changes
+        cannot name a profile yet). `If-Match` is required: a delete needs the current `ETag`, and
+        last-write-wins is refused on risk caps by contract. Without it the answer is
+        `428 precondition_required`; a stale one is `412 version_conflict`. Audited write-ahead
+        as `profile.deleted`: when that record cannot be written nothing changes
         (`503 audit_unavailable`).
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
-        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IfMatchRequired"
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/CsrfToken"
       responses:
@@ -3246,6 +3255,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/ProfileSaveUnavailable" }
 
   /exchange-accounts/{accountId}/fee-rate:
@@ -13882,6 +13892,16 @@ components:
       required: false
       description: ETag of the version the client believes it is editing. Omitting it accepts last-write-wins.
       schema: { type: string }
+    IfMatchRequired:
+      name: If-Match
+      in: header
+      required: true
+      description: >
+        ETag of the version the client last read. A replace or delete of a risk-caps resource
+        needs the current `ETag`: last-write-wins is refused by contract, so a request without
+        this header is `428 precondition_required`, and one with a stale value is
+        `412 version_conflict`.
+      schema: { type: string }
     UserId:
       name: userId
       in: path
@@ -14750,7 +14770,10 @@ components:
         Then two passes run, each listing every failure it finds, the second only when the first
         passes. The first needs no data: `required` and `not_allowed` (the rules of
         `AccountProfileInput`), `range` and `precision` (`limit` holds the bound broken, or the
-        decimal places allowed), `ladder_sum`, `above_leverage_cap` and `default_moves_alone`.
+        decimal places allowed), `ladder_sum`, `above_leverage_cap`, `cap_unbounded` and
+        `default_moves_alone`. `cap_unbounded` is a trading-enabled profile with a loss-bounding
+        cap left unbounded (`ap_trading_caps`, decision D11): any of the five bounds
+        `ProfileRiskCaps` requires.
 
         The second checks the exchange's current limits for the account's environment, from an
         instrument cache at most 15 minutes old (refreshed first when older): `max_leverage`
@@ -14759,8 +14782,11 @@ components:
         `*USDT` counts as `all_symbols`), `min_order_qty` and `qty_step` (`sizing.qty`),
         `min_notional` (`risk_caps.max_position_notional_usd` below a symbol's minimum notional)
         and `symbol_not_listed` (an entry that names no listed, trading linear USDT perpetual).
-        `native_stop_mandatory`, `above_leverage_cap` and every refusal of the second pass are
-        audited as `profile.save_refused`.
+        `native_stop_mandatory`, `above_leverage_cap`, `cap_unbounded` and every refusal of the
+        second pass are audited as `profile.save_refused`.
+
+        `cap_unbounded` is audited though it arrives as a missing member: it is a cap removed
+        rather than raised (PF-T02), a refusal of the risk policy and not of shape.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -14842,6 +14868,25 @@ components:
                   detail: "Resource was modified at 2026-09-14T10:30:00Z by another session.",
                   instance: "urn:cv:req:0193f2bb-6666",
                   code: version_conflict,
+                }
+    PreconditionRequired:
+      description: >
+        The write needs `If-Match` with the resource's current `ETag` and carried none
+        (`precondition_required`): last-write-wins is refused on risk caps by contract. Nothing
+        changed; read the resource, then send its `ETag` back.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            missing:
+              value:
+                {
+                  type: "https://candleviewer.local/errors/precondition_required",
+                  title: "The request must carry If-Match with the current ETag",
+                  status: 428,
+                  detail: "This write needs the current ETag; send it as If-Match. Nothing was changed.",
+                  instance: "urn:cv:req:0193f2bc-6a05-7c3e-9a11-2f8e4b1c9e05",
+                  code: precondition_required,
                 }
     PayloadTooLarge:
       description: "The request body or the number of batch operations exceeds the operation's ceiling (`payload_too_large`). Checked before per-item validation."
@@ -16654,7 +16699,7 @@ components:
       additionalProperties: false
       description: >
         Server-enforced caps, one gate each (SR-052, SR-053); `null` is no cap. A trading-enabled
-        profile bounds every one (decision D11, `required`): `max_open_positions`,
+        profile bounds every one (decision D11, `cap_unbounded`): `max_open_positions`,
         `max_concurrent_orders`, `max_leverage_cap`, and one cap of each pair, position size and
         daily loss.
       properties:
@@ -16718,8 +16763,8 @@ components:
         amount of `sizing.mode` and no other (`required`, `not_allowed`); a `stop_loss` when
         `sizing.mode` is `risk_based` (`required`); no `allowed_symbols` with `all_symbols`
         (`not_allowed`); every cap of `ProfileRiskCaps` bounded when `trading_enabled` is set
-        (`required`); `leverage` at most `risk_caps.max_leverage_cap` (`above_leverage_cap`); and
-        rungs that take at most the whole leg (`ladder_sum`).
+        (`cap_unbounded`); `leverage` at most `risk_caps.max_leverage_cap`
+        (`above_leverage_cap`); and rungs that take at most the whole leg (`ladder_sum`).
       properties:
         name:
           type: string
