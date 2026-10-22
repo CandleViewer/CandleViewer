@@ -15,7 +15,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — compact 24 px row / `space.inset.sm`, comfortable 32 px / `space.inset.md`; smallest target the 24 × 24 menu button (spec §2, §5); Density table
 - [x] **Essential-exceptions log** — none (every target reaches 24 px by padding)
 - [x] **Tokens used** — `color.text.primary` / `.secondary` / `.tertiary`, `color.surface.canvas` / `.raised`, `color.status.danger.default` + `border.thick` (invalid), `color.status.danger.strong` (glyph), `color.status.info.subtle` + `color.status.info.default` (CMP-227), `color.focus.ring`, `type.ui.body`, `type.num.sm`, `font.family.mono`, `size.control.height`, `size.target.min`, `space.inset.sm` / `.md`, `space.field.gap`, `radius.control`; `font.mono` and `color.border.invalid` are MISSING (spec §15 request 1); Penpot token sets = `packages/ui/tokens` at `6e15cae88235d42b123ca6662481379b6ace13be`
-- [x] **Data contract confirmed** — `GET /api/v1/rules/vocabulary` `signals[]` (`display_name`, `unit`, `description`, `estimated`, `available`, `unavailable_reason`, `recorder_action`) and `operators[]` (`id`, `arity`, `operand_types`); `Comparison` (`right2`, `set_values`, `tolerance`), `TemporalNode.sustained_for` (`24` §11.2); gaps: no `display_name` per operator (G4), no row anchor in diagnostics (G5)
+- [x] **Data contract confirmed** — `GET /api/v1/rules/vocabulary` `signals[]` (`display_name`, `unit`, `description`, `estimated`, `available`, `unavailable_reason`, `recorder_action`) and `operators[]` (`id`, `arity`, `operand_types`); `Comparison` (`right2`, `set_values`, `tolerance`), `TemporalNode.sustained_for` (`24` §11.2); gaps: no `display_name` per operator (D02-G4), no row anchor in diagnostics (D02-G5)
 - [ ] **Contrast and CVD** — PENDING (the PROPOSED `pairs.mjs` rows are registered by E36-S01; CVD planned on the exports): spec §15 rows 1–3, 17, 21, 27 — 15.20 / 9.33 / 5.96 text on canvas, the invalid outline 3.63 / 9.62 / 4.30, the focus ring 7.05 / 6.30 / 18.32, all PASS
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B below
 - [ ] **Sign-off** — owner approval pending (owner `approved` comment or merged spec PR)
@@ -33,7 +33,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — rows as CMP-140; the indent `space.inset.lg` in both modes; smallest target the 24 × 24 "+ any-of group" button; Density table
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — inherits CMP-140 plus `space.inset.lg` (indent), `color.text.tertiary` (the 2 px bracket ink, 5.96:1), `color.border.selected` (the current row); `space.rulegroup.indent` is MISSING (spec §15 request 1); Penpot token sets = `packages/ui/tokens` at `6e15cae88235d42b123ca6662481379b6ace13be`
-- [x] **Data contract confirmed** — the form subset of `rules/ir/form.py` (`form_incompatibility_reasons`), `compile_form`'s root pass-through, `MAX_BOOLEAN_CHILDREN` 32 (`ir/models.py`); the per-subtree projection is missing (G2)
+- [x] **Data contract confirmed** — the form subset of `rules/ir/form.py` (`form_incompatibility_reasons`), `compile_form`'s root pass-through, `MAX_BOOLEAN_CHILDREN` 32 (`ir/models.py`); the per-subtree projection is missing (D02-G2)
 - [ ] **Contrast and CVD** — PENDING: spec §15 rows 3 and 27 — the bracket 5.96 / 6.36 / 11.87, the current-row outline 5.18 / 4.44 / 7.05, PASS; `color.border.strong` on canvas (1.91) is rejected as the ink
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B
 - [ ] **Sign-off** — owner approval pending
@@ -50,8 +50,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Motion pair** — none animated (`16` §7); Table 4
 - [x] **Density notes** — rows 24 / 32 px; the parameter form's fields `size.control.height`; smallest target the 24 × 24 menu button; Density table
 - [x] **Essential-exceptions log** — none
-- [x] **Tokens used** — inherits CMP-140 plus `color.status.danger.strong` (destructive-class glyph), `color.status.danger.default` + `color.text.on-action` (the Arm path's button), `color.status.info.subtle` (`sl.note`), `color.buy.default` / `color.sell.default` (the side control's glyph + word); Penpot token sets = `packages/ui/tokens` at `6e15cae88235d42b123ca6662481379b6ace13be`
-- [x] **Data contract confirmed** — `GET /api/v1/rules/vocabulary` `actions[]` (`display_name`, `params_schema`, `required_permissions`, `loosens_risk`, `available`, `simulate_only`, `restriction`, `notes`, `targets`); the validator's `permission_required` and `native_stop_violation` (`validator.py` lines 194, 200); undocumented parameter semantics (G6)
+- [x] **Tokens used** — inherits CMP-140 plus `color.status.danger.strong` (destructive-class glyph), `color.status.danger.default` + `color.text.on-action` (Arm… against LIVE — the destructive class; `color.action.primary.default` on demo), `color.status.info.subtle` (`sl.note`), `color.buy.default` / `color.sell.default` (the side control's glyph + word); Penpot token sets = `packages/ui/tokens` at `6e15cae88235d42b123ca6662481379b6ace13be`
+- [x] **Data contract confirmed** — `GET /api/v1/rules/vocabulary` `actions[]` (`display_name`, `params_schema`, `required_permissions`, `loosens_risk`, `available`, `simulate_only`, `restriction`, `notes`, `targets`); the validator's `permission_required` and `native_stop_violation` (`validator.py` lines 194, 200); `restriction` is id-bearing ("Requires rules.loosen_stop." / `_SIM_TEXT`) and the vocabulary carries no display reason — the T2 sentence ("Only the owner can loosen a stop." for `widen_stop`; "Your role can't place orders on these accounts — available in simulate mode only.", PROPOSED, for the simulate-only order actions) is mapped client-side from E09-D09 §3, the shipped string in the details (D02-G14); undocumented parameter semantics (D02-G6)
 - [ ] **Contrast and CVD** — PENDING: spec §15 rows 4–6, 13, 19, 29 — card text 14.35 / 8.81 / 5.62, the destructive glyph 7.83 / 3.85 / 7.83, `sl.note` 10.74, the Arm label 5.05 / 10.31 / 4.54, all PASS
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B
 - [ ] **Sign-off** — owner approval pending
@@ -69,7 +69,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — compact 24 px fields / `space.inset.sm`, comfortable 32 px / `space.inset.md`; the action bar 48 px; smallest target 24 × 24 (the indicator chip); Density table
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — `color.surface.canvas` / `.raised` / `.hover`, `color.text.primary` / `.secondary` / `.tertiary` / `.on-action`, `color.action.primary.default`, `color.status.success.subtle` / `.strong`, `color.status.warning.subtle` / `.strong`, `color.status.danger.subtle` / `.strong` / `.default`, `color.status.info.subtle`, `color.focus.ring`, `elevation.chrome`, `type.ui.heading-md` / `.body` / `.caption`, `space.inset.md` / `.lg`, `space.stack.md`, `space.button.paddingX`, `radius.badge`; Penpot token sets = `packages/ui/tokens` at `6e15cae88235d42b123ca6662481379b6ace13be`
-- [x] **Data contract confirmed** — `GET /api/v1/rules/{id}`, `PUT /api/v1/rules/{id}`, `POST /api/v1/rules/validate`, `POST /api/v1/rules/{ruleId}/compile` (`ir`, `ir_hash`, `issues`, `round_trip`); gaps: no `summary` (G1), no per-subtree projection (G2), no compile timestamp (G11)
+- [x] **Data contract confirmed** — `GET /api/v1/rules/{id}`, `PUT /api/v1/rules/{id}`, `POST /api/v1/rules/validate`, `POST /api/v1/rules/{ruleId}/compile` (`ir`, `ir_hash`, `issues[]`, `blocks_arming`, and `round_trip {match, diff[]}` only when a `counterpart_model` is sent — no four-state `result`: the indicator derives it client-side, `identical` = `match: true`, `mismatch` = `match: false` + `diff[]`, `graph_only_construct` = the form projection's refusal (`to_form_model`), `unverified` = 503 / transport failure, D02-G13); gaps: no `summary` (D02-G1), no per-subtree projection (D02-G2), no compile timestamp (D02-G11)
 - [ ] **Contrast and CVD** — PENDING: spec §15 rows 1–2, 7–16, 21–26, 28–29 — the four indicator fills 10.21 / 9.86 / 12.06 / 12.22 with glyphs 6.69 / 7.56 / 7.83 / 7.50, all PASS; the greyscale strip (board 12) keeps the four apart by glyph + word
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B
 - [ ] **Sign-off** — owner approval pending
@@ -87,7 +87,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — option rows 24 / 32 px; the chip inside an option 20 px in a 24 px row (CMP-227's sm); smallest target 24 × ≥160 (an option row); Density table
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — `color.surface.overlay` (the popover), `elevation.popover`, `color.text.primary` / `.secondary`, `color.surface.hover` / `.selected` (the active option), `color.status.info.subtle` / `.default` (CMP-227), `color.focus.ring`, `type.ui.body` / `.caption`, `size.control.height`, `space.inset.sm`, `radius.control`; Penpot token sets = `packages/ui/tokens` at `6e15cae88235d42b123ca6662481379b6ace13be`
-- [x] **Data contract confirmed** — `GET /api/v1/rules/vocabulary` `signals[]` (`display_name`, `description`, `unit`, `confidence`, `estimated`, `dependencies`, `requires_recording`, `available`, `unavailable_reason`, `missing_dependency`, `recorder_action`), `ETag` per permission set + symbol (`build.py` line 142); no `category` / `scope` on the signal (G8) — derived client-side
+- [x] **Data contract confirmed** — `GET /api/v1/rules/vocabulary` `signals[]` (`display_name`, `description`, `unit`, `confidence`, `estimated`, `dependencies`, `requires_recording`, `available`, `unavailable_reason`, `missing_dependency`, `recorder_action`), `ETag` per permission set + symbol (`build.py` line 142); no `category` / `scope` on the signal (D02-G8) — derived client-side
 - [ ] **Contrast and CVD** — PENDING: spec §15 rows 2, 19, 20, 26 — descriptions 9.33, the chip word 10.74 / 15.44 / 12.16, the chip glyph 4.64 / 3.44 / 4.64, the ring on the chip 4.98, all PASS
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B
 - [ ] **Sign-off** — owner approval pending
@@ -123,7 +123,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — entries 24 / 32 px; smallest target 24 × ≥200 (an entry); Density table
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — `color.status.danger.default` / `.strong` / `.subtle`, `color.status.warning.default` / `.strong` / `.subtle`, `color.text.primary` / `.secondary`, `space.3`, `color.focus.ring`; `color.status.warn` and bare `color.status.danger` are MISSING (spec §15 request 1); Penpot token sets = `packages/ui/tokens` at `6e15cae88235d42b123ca6662481379b6ace13be`
-- [x] **Data contract confirmed** — `POST /api/v1/rules/validate` issues (`code`, `message`, `path`, class — `validator.py`); form and graph report identical diagnostics (OD#11); the `anchor` row id is populated by E36-T01 from the form model (G5)
+- [x] **Data contract confirmed** — `POST /api/v1/rules/validate` issues (`code`, `message`, `path`, class — `validator.py`); form and graph report identical diagnostics (OD#11); the `anchor` row id is populated by E36-T01 from the form model (D02-G5)
 - [ ] **Contrast and CVD** — PENDING: spec §15 rows 12, 17, 18 — 12.06 / 14.64 / 13.66 and the outline 3.63 / 3.43, PASS
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B
 - [ ] **Sign-off** — owner approval pending
@@ -141,7 +141,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — 24 / 32 px control; smallest target 24 × ≥48 (a segment); Density table
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — inherits CMP-003 (`color.surface.raised` / `.selected`, `color.text.primary`, `color.focus.ring`, `radius.control`); Penpot token sets = `packages/ui/tokens` at `6e15cae88235d42b123ca6662481379b6ace13be`
-- [x] **Data contract confirmed** — the compile's `round_trip` result; `lossyWarning.constructs` = `form_incompatibility_reasons` (per construct); the switch is allowed, the card renders in place (memo C10)
+- [x] **Data contract confirmed** — the compile's `round_trip {match, diff[]}` — no four-state `result` on the response: `graph_only_construct` comes from the form projection's refusal (`to_form_model` → `FormUnrepresentableError`), `unverified` from the 503 / transport outcome, derived client-side (D02-G13); `lossyWarning.constructs` = `form_incompatibility_reasons` (per construct); the switch is allowed, the card renders in place (memo C10)
 - [ ] **Contrast and CVD** — PENDING: spec §15 rows 1, 4, 30 — 15.20 / 14.35 / 10.17, PASS
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B
 - [ ] **Sign-off** — owner approval pending
@@ -233,7 +233,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] Motion-safe / motion-reduce pair specified: none animated (Table 4).
 - [x] Hit targets ≥24 px in compact, ≥32 px in comfortable; no essential exception.
 - [ ] Accessibility role sign-off — the owner's `approved` comment, pending.
-- [x] Confirm-gate variant stated: Arm against live = CMP-044 `variant="typed"` (CMP-145 A11y); the mismatch recovery = CMP-044 `standard`; the keyboard path for both is Table 2.
+- [x] Confirm-gate variant stated: Arm against live = CMP-044 `variant="typed"` on a CMP-001 `danger` button (CMP-145 A11y); Arm on demo = a `primary` button into SCR-085 (CMP-044 `standard` PROPOSED, E35-D02 decides); the mismatch recovery = CMP-044 `standard`; the keyboard path for all three is Table 2.
 - [x] Every heuristic / estimated value is chip-tagged (CMP-227) and links to SCR-058.
 - [x] Demo / Live context unambiguous: the chrome's band and the `ARMED-LIVE` word; a LIVE frame never without the red band and the text badge.
 - [x] Reuses existing `CMP-*` (CMP-140 … CMP-235, CMP-001 / 003 / 009 / 011 / 026 / 028 / 040 / 043 / 044 / 048 / 050 / 054 / 065 / 079 / 105 / 227 / 239); no new id requested.

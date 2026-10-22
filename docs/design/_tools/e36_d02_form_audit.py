@@ -118,7 +118,7 @@ focus ring on indicator 1 | color.focus.ring | color.status.success.subtle | non
 focus ring on the chip | color.focus.ring | color.status.info.subtle | non-text
 the selected / current row outline | color.border.selected | color.surface.canvas | non-text
 Save draft, Create draft | color.text.on-action | color.action.primary.default | text
-Arm (the destructive class) | color.text.on-action | color.status.danger.default | text
+Arm against LIVE (the destructive class) | color.text.on-action | color.status.danger.default | text
 the selected template card | color.text.primary | color.surface.selected | text
 the amber chip outline on canvas | color.status.warning.default | color.surface.canvas | non-text
 the sentence in high contrast (claimed) | color.text.primary | color.surface.canvas | hc-text
@@ -496,9 +496,9 @@ def main(argv: list[str]) -> int:
         "pairs_registered": gated - proposed,
         "pairs_proposed": proposed,
         "pairs_fail": fails,
-        "c_rows": len(re.findall(r"^\| C\d+ +\|", sec20, MULTI)),
-        "g_rows": len(re.findall(r"^\| G\d+ +\|", sec20, MULTI)),
-        "q_rows": len(re.findall(r"^\| Q\d+ +\|", sec20, MULTI)),
+        "c_rows": len(re.findall(r"^\| D02-C\d+ +\|", sec20, MULTI)),
+        "g_rows": len(re.findall(r"^\| D02-G\d+ +\|", sec20, MULTI)),
+        "q_rows": len(re.findall(r"^\| (?:BQ-\d+|D02-Q\d+) +\|", sec20, MULTI)),
         "handoff_blocks": len(re.findall(r"^## Handoff checklist — ", hand, MULTI)),
         "amendment_rows": len(re.findall(r"^\| CMP-\d+ +\|", sec16, MULTI)),
         "destructive": len(voc["destructive"]),
