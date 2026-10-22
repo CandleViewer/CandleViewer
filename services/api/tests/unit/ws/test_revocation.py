@@ -644,15 +644,20 @@ def _user_registry(
 
 
 def _connect(
-    registry: ConnectionRegistry, closer: Closer, user: uuid.UUID = _USER
+    registry: ConnectionRegistry,
+    closer: Closer,
+    user: uuid.UUID = _USER,
+    *,
+    viewer: uuid.UUID | None = None,
 ) -> ConnectionAuthz:
-    """A live socket of `user` that the per-user close ends through `closer`."""
+    """A live socket of `user` that the per-user close ends through `closer`; with `viewer`,
+    another user's socket viewing as `user` (#3085 S11)."""
     principal = PrincipalSnapshot(user, frozenset({"manager"}), frozenset())
 
     async def send(frame: dict[str, Any]) -> None:
         return None
 
-    authz = ConnectionAuthz(principal, registry.services)
+    authz = ConnectionAuthz(principal, registry.services, viewer_user_id=viewer)
     registry.register(authz, send, None, closer)
     return authz
 
@@ -842,10 +847,11 @@ async def test_user_disabled_whose_bye_cannot_be_built_still_closes_the_other_so
     close_failures: Callable[[], float], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Each socket's `bye` is built inside its own guard (#3635): a fault there is that
-    close's failure, counted, and the user's next socket is still closed."""
+    close's failure, counted, and the user's next socket is still closed. The first is a
+    socket viewing as the user, whose `bye` is built on its own branch (#3085 S11)."""
     first, survivor = _Socket(), _Socket()
     registry = _user_registry(_Clock())
-    _connect(registry, first.close)
+    _connect(registry, first.close, viewer=uuid.uuid4())
     _connect(registry, survivor.close)
     reads = iter([_NOW_MS, None, _NOW_MS])  # the memory's instant, then one per socket
 

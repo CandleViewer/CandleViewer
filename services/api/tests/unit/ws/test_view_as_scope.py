@@ -57,8 +57,8 @@ async def test_auth_ok_names_the_session_with_the_targets_scope_and_registers_th
 
 
 async def test_a_viewing_sockets_flag_push_is_resolved_for_its_target() -> None:
-    """Its flags are its subject's, with the subject's roles, as REST resolves them (plan
-    §1.5): never the viewer's overrides or rollout bucket."""
+    """Its flags are its subject's, with the subject's roles, as REST will once S8 resolves
+    the subject (plan §1.5): never the viewer's overrides or rollout bucket."""
     rig, sock = _viewing(), Sock()
     async with asyncio.timeout(DEADLINE_S):
         handler = await rig.open(sock)

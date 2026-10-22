@@ -242,7 +242,7 @@ def test_create_app_gives_the_socket_the_apps_refusal_recorder(
     assert refusals._recorder() is app.state.view_as_refusals
 
 
-def test_the_sockets_refusal_record_fails_when_the_app_has_no_recorder(
+async def test_the_sockets_refusal_record_fails_when_the_app_has_no_recorder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Read as S7's guard reads it: a missing recorder fails the record, which the gateway
@@ -252,7 +252,9 @@ def test_the_sockets_refusal_record_fails_when_the_app_has_no_recorder(
     (kwargs,) = seen
     del app.state.view_as_refusals
     with pytest.raises(AttributeError):
-        kwargs["view_as_refusals"]._recorder()
+        await kwargs["view_as_refusals"].refuse_frame(
+            viewer_user_id=uuid4(), viewer_session_id=str(uuid4()), frame_type="act", ip=None
+        )
 
 
 async def test_the_sockets_read_fails_when_the_app_has_no_service(

@@ -19,6 +19,7 @@ import pytest
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
 from candleviewer.view_as_wiring import SessionViewAsRefusals
 from candleviewer.ws import gateway
+from candleviewer.ws.metrics import cv_ws_audit_failures_total
 from tests.unit.ws._auth_rig import DEADLINE_S, LATER, Rig, Sock, hang_up, user_of
 
 _VIEWER, _TARGET = user_of("good-1"), user_of("good-9")
@@ -81,8 +82,11 @@ async def test_a_refusal_record_that_never_returns_is_cut_at_its_bound(
     is served."""
     monkeypatch.setattr(gateway, "ACTION_FRAME_TYPES", frozenset({"act"}))
     monkeypatch.setattr(gateway, "CLOSE_AUDIT_TIMEOUT_S", 0.01)
+    timeouts = cv_ws_audit_failures_total.labels(reason="timeout")
+    before = timeouts._value.get()
     reply, _ = await _send_action(cast(Any, _Hangs()), viewing=True)
     assert (reply["t"], reply["p"]["code"]) == ("err", "view_as_read_only")
+    assert timeouts._value.get() == before + 1  # SR-E17-04: the cut record is counted
 
 
 async def test_a_viewing_sessions_action_frame_is_refused_recorded_and_the_socket_stays(
@@ -106,8 +110,11 @@ async def test_the_err_is_sent_when_the_record_cannot_be_written(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(gateway, "ACTION_FRAME_TYPES", frozenset({"act"}))
+    errors = cv_ws_audit_failures_total.labels(reason="error")
+    before = errors._value.get()
     reply, _ = await _send_action(_Refusals(fails=True), viewing=True)
     assert (reply["t"], reply["p"]["code"]) == ("err", "view_as_read_only")
+    assert errors._value.get() == before + 1  # SR-E17-04: the failed record is counted
 
 
 async def test_an_action_frame_outside_a_view_is_an_unknown_frame_as_before(
