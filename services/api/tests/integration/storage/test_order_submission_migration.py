@@ -354,8 +354,22 @@ def test_no_role_truncates_the_record(db: str, table: str) -> None:
     assert f"table {table} is append-only: TRUNCATE refused" in str(error)
 
 
+#: Every reference the two tables hold (21 Sec.3.3.10, Sec.3.3.11), each `ON DELETE RESTRICT`.
+_KEPT = (
+    "idempotency_anchors_created_by_fkey",
+    "idempotency_anchors_trade_group_id_fkey",
+    "idempotency_anchors_order_id_fkey",
+    "recorded_stops_exchange_account_id_fkey",
+    "recorded_stops_order_id_fkey",
+    "recorded_stops_actor_user_id_fkey",
+)
+
+
 def test_the_rows_the_record_names_are_kept(db: str) -> None:
-    """RESTRICT: an order, a group or a user the record names is never deleted under it."""
+    """RESTRICT: an order, a group or a user the record names is never deleted under it. Where
+    two references name one row, the RI triggers' name order, which their OIDs set, picks the
+    one that refuses, so the test asks only that one of them does, and reads each reference's
+    action from the catalogue."""
     other = uuid.UUID(int=0xA2)
     with _conn(db) as c:
         _seed(c)
@@ -372,11 +386,16 @@ def test_the_rows_the_record_names_are_kept(db: str) -> None:
             "trade_groups": _refused(c, "DELETE FROM trade_groups WHERE id = %s", (_GROUP,)),
             "users": _refused(c, "DELETE FROM users WHERE id = %s", (other,)),
         }
-    assert {name: (e.diag.sqlstate, e.diag.constraint_name) for name, e in refused.items()} == {
-        "orders": ("23503", "recorded_stops_order_id_fkey"),
-        "trade_groups": ("23503", "idempotency_anchors_trade_group_id_fkey"),
-        "users": ("23503", "idempotency_anchors_created_by_fkey"),
+        actions = c.execute(
+            "SELECT conname, confdeltype FROM pg_constraint WHERE conname = ANY(%s)", (list(_KEPT),)
+        ).fetchall()
+    assert {name: e.diag.sqlstate for name, e in refused.items()} == dict.fromkeys(refused, "23503")
+    assert refused["orders"].diag.constraint_name in {
+        "idempotency_anchors_order_id_fkey",
+        "recorded_stops_order_id_fkey",
     }
+    assert refused["users"].diag.constraint_name == "idempotency_anchors_created_by_fkey"
+    assert dict(actions) == dict.fromkeys(_KEPT, "r")
 
 
 def test_one_request_in_flight_and_one_row_in_force_per_position(db: str) -> None:
