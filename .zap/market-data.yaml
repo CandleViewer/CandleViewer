@@ -1,61 +1,82 @@
-# E12-X03: OWASP ZAP automation plan for the market-data read surface (/market/klines, /market/bars).
-# Run: zap.sh -cmd -autorun .zap/market-data.yaml  (nightly only: .github/workflows/dast-market-nightly.yml)
-# Authenticated, LOW privilege: ZAP_LOWPRIV_TOKEN is a CI secret for the seeded read-only demo user
-# (same secret and seeding as dast-rules-nightly.yml; never committed; rotation per
-# docs/plan/security/ci-gates-e12.md "DAST"). Local compose stack only, never a live exchange.
+# E12-X03, #3991: the OWASP ZAP plan for the market-data read surface (/market/klines,
+# /market/bars), authenticated as a low-privilege (marketdata:read) synthetic Viewer with a real
+# TOTP method and no MFA exception, against the throwaway CI stack of
+# .github/workflows/_dast-low-priv.yml (called by dast-market-nightly.yml), never a live exchange.
+# Never run as it is: security/zap/nightly_plans.py writes the plan from it, importing the
+# contract cut to this surface. The Viewer's bearer and SR-041 CSRF pair come from ZAP_AUTH_TOKEN
+# and ZAP_CSRF_TOKEN at run time (security/zap/mint_sessions.py). ZAP expands no variable inside
+# a replacer rule, so security/zap/role_session.js (ZAP_PROFILE=market) reads them from the
+# environment once, when ZAP loads it, and adds them to each request to the surface and to /me,
+# the liveness check. No credential is committed or written.
 env:
   contexts:
     - name: market-data
-      urls: ["http://127.0.0.1:8000"]
+      urls: ["${ZAP_TARGET}/market/klines", "${ZAP_TARGET}/market/bars"]
       includePaths:
-        - "http://127.0.0.1:8000/market/klines.*"
-        - "http://127.0.0.1:8000/market/bars.*"
+        - "${ZAP_TARGET}/market/klines([/?].*)?"
+        - "${ZAP_TARGET}/market/bars([/?].*)?"
   parameters:
     failOnError: true
     failOnWarning: false
     progressToStdout: true
 jobs:
-  - type: openapi
+  - type: script # the Viewer's session, from the environment (security/zap/role_session.js)
     parameters:
-      apiFile: docs/plan/22-api-openapi.yaml
-      targetUrl: http://127.0.0.1:8000
-      context: market-data
-  - type: replacer
-    rules:
-      - description: low-privilege session (market-data read only)
-        matchType: req_header
-        matchString: Authorization
-        replacementString: "Bearer ${ZAP_LOWPRIV_TOKEN}"
-        initiators: []
-  # Tuning: documented 400 validation_failed / 422 bar_window_too_large|no_data_recorded|
-  # response_too_large problem+json responses are the CONTRACT (22-api, E12-X02 inputs), not
-  # findings. Only the alerts ZAP raises purely because a 4xx came back are filtered, and only
-  # on these two paths; injection/disclosure rules are never filtered.
+      action: add
+      type: httpsender
+      engine: "ECMAScript : Graal.js"
+      name: cv-role-session
+      source: /zap/wrk/security/zap/role_session.js # the checkout, mounted at /zap/wrk
+  # Tuning, before any request so it covers every alert: the documented 400 validation_failed and
+  # 422 bar_window_too_large|no_data_recorded|response_too_large problem+json responses are the
+  # CONTRACT (22-api, E12-X02 inputs), not findings. Only the alert ZAP raises purely because a
+  # 4xx came back is filtered, and only on these two paths; injection and disclosure rules are
+  # never filtered. (10049, once filtered here too, and the active rule 40024 are not in the
+  # pinned 2.17.0 image: ZAP exits non-zero on a plan that names either.)
   - type: alertFilter
     alertFilters:
       # reason: "Application Error Disclosure" matches the RFC 7807 `detail` text of a 422
-      - { ruleId: 90022, newRisk: "False Positive", url: "http://127.0.0.1:8000/market/(klines|bars).*", urlRegex: true, evidence: 'problem\+json|bar_window_too_large|validation_failed|no_data_recorded|response_too_large', evidenceRegex: true }
-      # reason: 4xx problem responses are intentionally non-cacheable
-      - { ruleId: 10049, newRisk: "False Positive", url: "http://127.0.0.1:8000/market/(klines|bars).*", urlRegex: true }
+      - ruleId: 90022
+        newRisk: "False Positive"
+        url: ".*/market/(klines|bars)([/?].*)?"
+        urlRegex: true
+        evidence: 'problem\+json|bar_window_too_large|validation_failed|no_data_recorded|response_too_large'
+        evidenceRegex: true
+  - type: requestor
+    name: session-live-before-scan
+    requests:
+      - url: "${ZAP_TARGET}/me"
+        method: GET
+        responseCode: 200 # a 401 here fails the run: an unauthenticated scan is no clean scan
+  - type: openapi
+    parameters:
+      apiFile: /zap/wrk/docs/plan/22-api-openapi.yaml # replaced by the cut market-openapi.yaml
+      context: market-data
+      targetUrl: "${ZAP_TARGET}"
+  # The import, at most 2 minutes of passive wait and at most 8 of active scan stay inside the
+  # 12-minute access token (ADR-0020), so the after-scan /me still holds the scan's live bearer.
   - type: passiveScan-wait
-    parameters: { maxDuration: 5 }
+    parameters: { maxDuration: 2 }
   - type: activeScan
     parameters:
       context: market-data
-      maxScanDurationInMins: 20
+      maxScanDurationInMins: 8
     policyDefinition:
       defaultStrength: Medium
       defaultThreshold: Medium
       rules:
         - { id: 40018, name: SQL Injection, strength: High, threshold: Low }
-        - { id: 40024, name: SQL Injection - SQLite (generic SQL), strength: High, threshold: Low }
         - { id: 40027, name: SQL Injection - MsSQL (generic SQL), strength: Medium, threshold: Low }
         - { id: 90019, name: Server Side Include, strength: Medium, threshold: Low }
         - { id: 90020, name: Command injection, strength: Medium, threshold: Low }
         - { id: 40012, name: Reflected XSS, strength: Medium, threshold: Low }
+  - type: requestor
+    name: session-live-after-scan
+    requests:
+      - url: "${ZAP_TARGET}/me"
+        method: GET
+        responseCode: 200
   - type: report
     parameters:
-      template: traditional-json
-      reportDir: zap-reports
-      reportFile: market-data
+      { template: traditional-json, reportDir: /zap/wrk/zap-reports, reportFile: market-viewer }
     risks: [high, medium, low, info]

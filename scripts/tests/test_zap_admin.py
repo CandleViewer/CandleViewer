@@ -393,6 +393,9 @@ def test_the_session_goes_only_to_the_admin_surface_and_the_liveness_check(
         ("/admin/..%5Cauth/logout", False),
         ("/admin/..\\auth/logout", False),
         ("/admin/..;/auth/logout", False),  # a path parameter after the dots
+        ("/admin/x%5c../auth/logout", False),  # a separator before the dots, encoded or not
+        ("/admin/x\\../auth/logout", False),
+        ("/admin/..%5cauth/logout", False),  # an encoded separator in either case
         ("/admin/audit?path=../../etc/passwd", True),  # the scan's traversal payloads: a query
         ("/admin/audit?next=/../x", True),
         ("/admin/v1.0/audit..json", True),  # dots in a name are no dot segment

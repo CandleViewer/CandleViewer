@@ -94,6 +94,39 @@ def test_zap_gate_new_medium_alert_fails() -> None:
     assert keys == {"40018 GET /market/bars": "x"}
 
 
+def _high(pluginid: str, *, confidence: str, paths: tuple[str, ...] = ()) -> dict[str, object]:
+    """A High alert at ZAP's `confidence`. An alertFilter `newRisk: "False Positive"` keeps the
+    risk, sets the confidence to 0 and leaves no instance (#3991, dast-rules-nightly run 2)."""
+    instances = [{"uri": f"http://127.0.0.1:8000{path}", "method": "GET"} for path in paths]
+    return {"pluginid": pluginid, "riskcode": "3", "confidence": confidence, "name": pluginid,
+            "instances": instances}  # fmt: skip
+
+
+def test_zap_gate_alert_the_plan_marked_false_positive_does_not_count() -> None:
+    alerts = [_high("6", confidence="0"), _high("40018", confidence="2", paths=("/rules",))]
+    report: dict[str, object] = {"site": [{"alerts": alerts}]}
+    assert gate.alert_keys(report) == {"40018 GET /rules": "40018"}
+
+
+def test_zap_gate_a_low_confidence_alert_still_counts() -> None:
+    """Only the filter's "False Positive" (0) is dropped: ZAP's Low (1) is a finding."""
+    alerts = [_high("6", confidence="1", paths=("/rules/vocabulary",))]
+    report: dict[str, object] = {"site": [{"alerts": alerts}]}
+    assert gate.alert_keys(report) == {"6 GET /rules/vocabulary": "6"}
+
+
+def test_zap_gate_names_each_alert_the_plan_waived(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A waiver is seen on every run: the gate passes, and names the alert it left out."""
+    rep, base = tmp_path / "r.json", tmp_path / "b.json"
+    rep.write_text(json.dumps({"site": [{"alerts": [_high("6", confidence="0")]}]}), "utf-8")
+    base.write_text(json.dumps({"accepted": []}), encoding="utf-8")
+    assert gate.main([str(rep), str(base), "--today", "2026-10-22"]) == 0
+    out = capsys.readouterr().out
+    assert "zap-baseline: waived by the plan's alertFilter (False Positive): 6 6" in out
+
+
 def test_zap_gate_baselined_alert_passes_and_expired_entry_fails(tmp_path: Path) -> None:
     rep, base = tmp_path / "r.json", tmp_path / "b.json"
     rep.write_text(json.dumps(_report(("10202", 2, "/market/klines"))), encoding="utf-8")

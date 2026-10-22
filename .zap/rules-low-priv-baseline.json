@@ -1,0 +1,4 @@
+{
+  "$comment": "#3991: accepted ZAP alerts for /rules* and /schemas/rule-ir.json (the low-privilege nightly, .zap/rules-low-priv.yaml). The nightly fails on any High/Medium alert NOT listed here (key = pluginId + method + path without query). Every entry needs reason, owner and review (<= 180 days, 04-security-program.md §16.2). Empty at merge: additions are a reviewed PR, never a workflow edit.",
+  "accepted": []
+}

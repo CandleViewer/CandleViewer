@@ -2,8 +2,11 @@
 """E12-X03: fail a ZAP run on any High/Medium alert not in the committed baseline.
 
 Key = `<pluginId> <METHOD> <path>` (query string dropped, so fuzzed parameter values do not
-mint "new" alerts). Baseline entries must carry `reason`, `owner` and `review` (ISO date, not
-in the past); an expired entry no longer protects. Stdlib only; no network.
+mint "new" alerts). An alert the plan's `alertFilter` marked "False Positive" (ZAP's confidence 0)
+never counts: the plan's filter, a reviewed file, is its disposition (#3991), and each one is
+named in the run's output, so a waiver is seen on every run. Baseline entries must carry
+`reason`, `owner` and `review` (ISO date, not in the past); an expired entry no longer protects.
+Stdlib only; no network.
 
 Usage: baseline_gate.py <zap traditional-json report> <baseline.json> [--today YYYY-MM-DD]
 Exit: 0 clean, 1 new medium+ alert or invalid baseline, 2 unreadable input.
@@ -16,9 +19,12 @@ import json
 import sys
 from datetime import date
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
-MEDIUM = 2
+MEDIUM = 2  # ZAP's risk code for Medium: Medium and High fail the gate
+FALSE_POSITIVE = 0  # ZAP's confidence for an alert a plan's alertFilter marked "False Positive"
+UNSTATED_CONFIDENCE = 2  # an alert that states no confidence is read as ZAP's Medium: it counts
 
 
 def alert_keys(report: dict[str, object]) -> dict[str, str]:
@@ -28,11 +34,25 @@ def alert_keys(report: dict[str, object]) -> dict[str, str]:
         for alert in site.get("alerts", []):
             if int(alert.get("riskcode", 0)) < MEDIUM:
                 continue
+            if int(alert.get("confidence", UNSTATED_CONFIDENCE)) == FALSE_POSITIVE:
+                continue
             for inst in alert.get("instances", []) or [{"uri": "", "method": ""}]:
                 path = urlsplit(inst.get("uri", "")).path
                 key = f"{alert.get('pluginid', '?')} {inst.get('method', '').upper()} {path}"
                 keys[key] = str(alert.get("name", ""))
     return keys
+
+
+def waived(report: dict[str, Any]) -> list[str]:
+    """`<pluginId> <name>` of each Medium+ alert the plan's `alertFilter` marked "False
+    Positive": the alerts `alert_keys` leaves out."""
+    names: list[str] = []
+    for site in report.get("site", []) or []:
+        for alert in site.get("alerts", []):
+            confidence = int(alert.get("confidence", UNSTATED_CONFIDENCE))
+            if int(alert.get("riskcode", 0)) >= MEDIUM and confidence == FALSE_POSITIVE:
+                names.append(f"{alert.get('pluginid', '?')} {alert.get('name', '')}")
+    return names
 
 
 def baseline_problems(baseline: dict[str, object], today: date) -> tuple[set[str], list[str]]:
@@ -67,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
         print("zap-baseline: report has no 'site' (scan did not run)", file=sys.stderr)
         return 2
     accepted, problems = baseline_problems(baseline, a.today)
+    for name in waived(report):
+        print(f"zap-baseline: waived by the plan's alertFilter (False Positive): {name}")
     new = {k: n for k, n in alert_keys(report).items() if k not in accepted}
     for k, n in sorted(new.items()):
         problems.append(f"NEW medium+ alert (triage SLA: ci-gates-e12.md#dast): {n} [{k}]")
