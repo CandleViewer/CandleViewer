@@ -223,7 +223,8 @@ Screen readers: NVDA by E26-D06 and E26-Q05; no exception is claimed.
   and coalesced back-steps (D-16); the thumb moved by transform; motion suppressed above a stated speed (E26-D06, D01 Q8).
 - **Analytics:** spec §13 (`replay.started`, `replay.seek`, `replay.paper_fill`).
 - **Before E26-S02 is Ready:** the owner's OQ-1 to OQ-10 and OQ-12; CC-1 to CC-20 (their owners) and D01's open
-  G-list; the contradictions X-1 to X-10 routed; E26-D05's entries for CMP-170 and CMP-171; D01 C3 for the fills panel.
+  G-list; the contradictions X-1 to X-10 routed; E26-D05's entries for CMP-170 and CMP-171; D01 C3 for any panel
+  that renders a row's `environment`.
 - **Design-QA checklist for E26-D08** (from the SCR-097 sign-off checklist):
   1. Transport: the five glyphs, the step unit, the seven presets and custom, `Go to`; each control's disabled reason
      (spec §5.1) appears with its state.
