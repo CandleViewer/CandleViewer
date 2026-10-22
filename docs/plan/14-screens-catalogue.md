@@ -975,7 +975,7 @@ Drag preview                Drop zones
 ### SCR-046 — Chart engine diagnostics overlay
 
 - **Type:** Overlay (`Ctrl+Shift+D`, developer/owner). Shows FPS, frame time p50/p95, draw calls, GPU memory, buffer uploads/s, WS message rate, dropped frames, and a "copy diagnostics" button used in bug reports.
-- **Data:** local engine telemetry + `system`.
+- **Data:** local engine telemetry + `system`; counter vocabulary shared with the E06-K01 harness: [E06-D02](../design/E06/E06-D02.md) §2.5.
 - **Components:** CMP-024 Sparkline, CMP-036 KeyValueRow, CMP-069 InfoPanel, CMP-178 SystemHealthTile.
 - **Stories:** US-SET-008, US-OBS-002.
 - **A11y:** The overlay is a text panel, not a canvas; values update politely (not assertively) so a screen reader is not flooded; it can be pinned open and read as a static table.
