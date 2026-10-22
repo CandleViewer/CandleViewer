@@ -59,6 +59,9 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     # #2300: the lock lift is no elevation. The password alone lifts the idle lock and the contract
     # says it restores no step-up; 04 §7.2.2 rows 1 and 4a, the authentication rows, demand none.
     ("POST", "/auth/unlock"): "authUnlock: lifts the idle lock, password only; restores no step-up",
+    # #2914: a refresh rotates the session and carries the step-up penalty, never a grant: it
+    # elevates nothing and demands no step-up.
+    ("POST", "/auth/refresh"): "authRefresh: rotates the session, carries the penalty, no grant",
     ("GET", "/me"): "getMe: reads the session's own `elevated_until`",
     ("GET", "/users/invites"): "listPendingInvites: a read; the invite writes are gated (`users`)",
     ("GET", "/users/{userId}/mfa/reset-preview"): "previewMfaReset: a read; the reset is gated",
@@ -698,6 +701,7 @@ _UNPARSED_STEP_UP_TEXT: dict[str, str] = {
     "listUserSessions": "a read: the contract says listing needs no step-up (04 row 40a)",
     # The lock lift is no elevation: it takes the password only and restores no grant.
     "authUnlock": "lifts the idle lock with the password only; restores no step-up (#2290)",
+    "authRefresh": "rotates the session; carries the step-up penalty over, never a grant (#4051)",
     # The contract rules a step-up out in so many words, so the registry gates none of these:
     # the rule writes (`_NOT_DANGEROUS`) say none applies to a saved version (#3209).
     "createRule": "no step-up: stored disabled, runs nothing (04 §7.2.2 rows 22, 27)",
