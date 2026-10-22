@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { createMemoryRouter, RouterProvider } from "react-router-dom";
-import { buildRoutes, V7_RENDER_FLAGS, V7_ROUTER_FLAGS } from "../../src/routes/tree";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createMemoryRouter, RouterProvider } from "react-router";
+import { buildRoutes } from "../../src/routes/tree";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
 import { setMeClaims, resetMeClaims } from "../../src/lib/auth/meCache";
 import type { Role } from "../../src/routes/rbac";
@@ -14,11 +14,8 @@ import type { Role } from "../../src/routes/rbac";
  * unit-level test proves the guard composition and the admin-404 rule.
  */
 function renderAt(path: string) {
-  const router = createMemoryRouter(buildRoutes(), {
-    initialEntries: [path],
-    future: V7_ROUTER_FLAGS,
-  });
-  return render(<RouterProvider router={router} future={V7_RENDER_FLAGS} />);
+  const router = createMemoryRouter(buildRoutes(), { initialEntries: [path] });
+  return render(<RouterProvider router={router} />);
 }
 
 function claimsFor(role: Role | null, elevatedAt: string | null = null) {
@@ -35,13 +32,14 @@ describe("route tree x RBAC matrix", () => {
     resetMeClaims();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("redirects an unauthenticated user hitting a protected deep link to /login, not the terminal stub", async () => {
     claimsFor(null);
-    const router = createMemoryRouter(buildRoutes(), {
-      initialEntries: ["/terminal/abc?tf=15"],
-      future: V7_ROUTER_FLAGS,
-    });
-    render(<RouterProvider router={router} future={V7_RENDER_FLAGS} />);
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/terminal/abc?tf=15"] });
+    render(<RouterProvider router={router} />);
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
     expect(router.state.location.search).toBe("?next=%2Fterminal%2Fabc%3Ftf%3D15");
   });
@@ -86,6 +84,26 @@ describe("route tree x RBAC matrix", () => {
     );
   });
 
+  it("returns to /admin when Continue is pressed after a successful step-up", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ elevated_until: new Date().toISOString() }),
+      }),
+    );
+    claimsFor("owner", null);
+    renderAt("/admin");
+    fireEvent.change(await screen.findByLabelText("Password"), { target: { value: "pw" } });
+    fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    expect(
+      await screen.findByRole("heading", { name: /R-300 — owned by E18/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("renders the admin stub for an owner with fresh step-up", async () => {
     claimsFor("owner", new Date().toISOString());
     renderAt("/admin");
@@ -100,11 +118,8 @@ describe("route tree x RBAC matrix", () => {
       if (entry.access.roles === "public") continue;
       if (!entry.access.roles.includes("owner")) continue;
       const concretePath = entry.path.replace(/:[a-zA-Z]+/g, "x");
-      const router = createMemoryRouter(buildRoutes(), {
-        initialEntries: [concretePath],
-        future: V7_ROUTER_FLAGS,
-      });
-      const { unmount } = render(<RouterProvider router={router} future={V7_RENDER_FLAGS} />);
+      const router = createMemoryRouter(buildRoutes(), { initialEntries: [concretePath] });
+      const { unmount } = render(<RouterProvider router={router} />);
       await waitFor(() => expect(screen.getByRole("main")).toBeInTheDocument());
       unmount();
     }
@@ -119,5 +134,25 @@ describe("E49-S07 reachability through the real route tree", () => {
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: /hotkeys|keyboard/i })).toBeInTheDocument(),
     );
+  });
+});
+
+describe("route ranking: a static path outranks its dynamic sibling", () => {
+  beforeEach(() => claimsFor("owner", new Date().toISOString()));
+  it.each([
+    ["/trade-groups/new", "R-142"],
+    ["/trade-groups/g1", "R-141"],
+    ["/rules/new", "R-163"],
+    ["/rules/r1", "R-161"],
+    ["/journal/analytics", "R-182"],
+    ["/journal/t1", "R-181"],
+    ["/admin/users/new", "R-303"],
+    ["/admin/users/u1", "R-302"],
+    ["/admin/accounts/new", "R-312"],
+    ["/admin/accounts/a1", "R-311"],
+  ])("%s resolves to %s", (path, routeId) => {
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: [path] });
+    expect(router.state.matches.at(-1)?.route.id).toBe(routeId);
+    router.dispose();
   });
 });

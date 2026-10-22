@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { resetSharedThemeStores } from "@candleviewer/ui";
-import { createMemoryRouter, RouterProvider } from "react-router-dom";
-import { buildRoutes, V7_RENDER_FLAGS, V7_ROUTER_FLAGS } from "../../src/routes/tree";
+import { createMemoryRouter, RouterProvider } from "react-router";
+import { buildRoutes } from "../../src/routes/tree";
 import { setMeClaims, resetMeClaims } from "../../src/lib/auth/meCache";
 import {
   DragOnly,
@@ -119,13 +119,10 @@ describe("SCR-117 routed in the real app", () => {
     vi.stubGlobal("fetch", f);
     setMeClaims({ authenticated: true, role: "owner", permissions: [], elevatedAt: null });
     const flags = vi.fn();
-    const router = createMemoryRouter(buildRoutes(), {
-      initialEntries: ["/settings/appearance"],
-      future: V7_ROUTER_FLAGS,
-    });
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/settings/appearance"] });
     render(
       <PreferencesProvider onEngineFlags={flags}>
-        <RouterProvider router={router} future={V7_RENDER_FLAGS} />
+        <RouterProvider router={router} />
       </PreferencesProvider>,
     );
     fireEvent.click(await screen.findByLabelText("Disable canvas animation"));

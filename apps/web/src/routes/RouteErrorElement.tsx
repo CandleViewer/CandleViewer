@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { isRouteErrorResponse, useRouteError } from "react-router-dom";
+import { isRouteErrorResponse, useRouteError } from "react-router";
 import { ForbiddenError, StepUpRequiredError } from "./guards";
 import { ForbiddenState, NotFoundState } from "./ErrorStates";
 import { StepUpGate } from "./StepUpGate";

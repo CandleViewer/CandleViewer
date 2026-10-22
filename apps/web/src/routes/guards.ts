@@ -7,7 +7,7 @@
  * server-side. Denials are logged at info with the route id and reason
  * (never audited client-side; the server-side 403 is the audited event).
  */
-import { redirect } from "react-router-dom";
+import { redirect } from "react-router";
 import { getMeClaims } from "../lib/auth/meCache";
 import { evaluateAccess, type RouteAccess } from "./rbac";
 
