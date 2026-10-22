@@ -149,7 +149,8 @@ class Audit:
 
 
 class Env:
-    """App with two users; `as_user` switches the caller, `perms` the caller's grants."""
+    """App with two users: `user` is the caller, `perms` its permissions, `granted` its account
+    grants and `owner` whether it holds the Owner role."""
 
     def __init__(self, *, wired: bool = True) -> None:
         self.repo, self.audit = FakeAlertRepo(), Audit()

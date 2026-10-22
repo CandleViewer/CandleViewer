@@ -47,10 +47,13 @@ def _scan() -> tuple[set[str], set[str]]:
     named: set[str] = set()
     for path in sorted(_ROOT.rglob("*.py")):
         module = path.relative_to(_ROOT).as_posix()
+        text = path.read_text(encoding="utf-8")
+        if _NAME not in text:  # every use of the name contains its text: nothing to parse
+            continue
         with warnings.catch_warnings():
             # A migration's SQL literal holds `\:`: its SyntaxWarning is no concern of this scan.
             warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = ast.parse(text, filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and _is_tick(node.func):
                 built.add(module)

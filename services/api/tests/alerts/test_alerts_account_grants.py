@@ -92,6 +92,46 @@ def test_update_operand_on_ungranted_account_403_row_unchanged_refusal_audited(e
     assert record["after_state"] == {"op": "update"} and record["object_id"] == alert_id
 
 
+def _spread(first: str, second: str) -> dict[str, Any]:
+    """A condition that names two accounts: one compared with the other."""
+    ir = {
+        "ir_version": 1,
+        "trigger": {"type": "on_price_update", "debounce_ms": 250},
+        "conditions": {
+            "node_id": "c1",
+            "op": "lt",
+            "left": {"metric": "account_equity", "account_id": first},
+            "right": {"metric": "account_equity", "account_id": second},
+        },
+    }
+    return PRICE_CROSS | {"name": "equity spread", "condition_ir": ir}
+
+
+# Every account counts, wherever it sits: the ungranted one first and last.
+@pytest.mark.parametrize("pair", [(ACCT_A, ACCT_B), (ACCT_B, ACCT_A)])
+def test_create_condition_naming_a_granted_and_an_ungranted_account_403_audited(
+    env: Env, pair: tuple[str, str]
+) -> None:
+    r = env.c.post("/alerts", json=_spread(*pair))
+    assert r.status_code == 403 and r.json()["detail"] == DETAIL and env.repo.rows == {}
+    assert [kw["reason"] for kw in _refusals(env)] == ["account_not_granted"]
+
+
+def test_update_operand_on_granted_account_200_no_refusal(env: Env) -> None:
+    alert_id = env.create()["id"]
+    r = env.c.put(f"/alerts/{alert_id}", json=_equity(ACCT_A))
+    assert r.status_code == 200, r.text
+    assert env.audit.actions() == ["alert.created", "alert.updated"]
+
+
+def test_update_owner_names_ungranted_account_200(env: Env) -> None:
+    alert_id = env.create()["id"]
+    env.owner, env.granted = True, frozenset()
+    r = env.c.put(f"/alerts/{alert_id}", json=_equity(ACCT_B) | {"exchange_account_id": ACCT_B})
+    assert r.status_code == 200, r.text
+    assert env.audit.actions() == ["alert.created", "alert.updated"]
+
+
 def test_create_owner_names_ungranted_accounts_201(env: Env) -> None:
     env.owner, env.granted = True, frozenset()
     r = env.c.post("/alerts", json=_equity(ACCT_B) | {"exchange_account_id": ACCT_B})
@@ -126,7 +166,7 @@ def test_create_account_key_in_metric_params_not_granted_403_audited(env: Env, k
 
 # The top-level check keeps its place (before the compile) and its detail, and is now audited.
 @pytest.mark.parametrize("op", ["create", "update"])
-def test_write_top_level_account_not_granted_same_403_now_audited(env: Env, op: str) -> None:
+def test_write_top_level_account_not_granted_403_audited_before_compile(env: Env, op: str) -> None:
     method, path = _target(env, op)
     before, compiled = dict(env.repo.rows), len(env.compiles)
     r = env.c.request(method, path, json=PRICE_CROSS | {"exchange_account_id": ACCT_B})
