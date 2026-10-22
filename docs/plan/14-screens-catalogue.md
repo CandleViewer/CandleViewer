@@ -368,7 +368,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 
 ### SCR-014 — Notification centre (right-rail drawer)
 
-- **Type:** Drawer. Streams fired alerts, rule actions, order rejects, risk events, system warnings.
+- **Type:** Drawer. Streams fired alerts, rule actions, order updates, risk events, system warnings.
 
 ```
 +-- Notifications ------------[clear all]-+
@@ -381,7 +381,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 
 - **Data:** WS `alerts`, `rules`, `orders`, `system`; history `GET /api/v1/notifications`.
 - **Interactions:** click deep-links to the source (chart at timestamp / rule / order); mute per category; `Shift+click` marks everything above as read.
-- **States:** empty ("Nothing yet today") · loading · error · unread badge (alert rows only) · grouped repeats ("12 similar alerts") · storm summary row · muted-category indicator ("Muted · recorded") · new rows while scrolled ("3 new — Back to top") · disconnected, then resyncing (last update shown) · overflow (keeps newest 500; older via history) · role variants (`system` rows are the Owner's).
+- **States:** empty ("Nothing yet today") · loading · error · unread badge (alert rows only) · grouped repeats ("12 similar alerts") · storm summary row · muted-category indicator ("Muted · recorded") · new rows while scrolled ("3 new — Back to top") · disconnected, then resyncing (last data shown) · overflow (keeps newest 500; older via history) · role variants (`system` rows are the Owner's).
 - **A11y:** the list is `role="log"` (CMP-060), `aria-live="off"`, read by navigation; announcements come from CMP-212's two regions: polite for user alerts, rule fires (E40-D01 RF-B) and system and recorder information, `role="alert"` for order rejects, risk lockouts, the kill switch, an incomplete trade group, the position-protection banner and a rule action sent on a live account (E40-D01 RF-B; connection loss is CMP-076's); absolute timestamps available (E40-D01 AM-1).
 - **Components:** CMP-026 EmptyState, CMP-055 FilterBar, CMP-060 NotificationCenter, CMP-163 AlertRow, CMP-165 AlertFiredToastGroup, CMP-209 RightRail.
 - **Stories:** US-ALRT-004, US-ALRT-006, US-OBS-004.
@@ -1925,13 +1925,13 @@ Drag preview                Drop zones
 - **A11y:** Alerts are a table (name, symbol, condition, status, last fired, delivery); status is text; the create button is reachable from the page heading level.
 - **Performance:** Alert evaluation is server-side; the list is cursor-paginated and live-updated over `alerts` at <=1 Hz.
 - **Analytics/audit:** `alert.created`, `alert.updated`, `alert.enabled` / `alert.disabled`, `alert.deleted` - **audited** (an alert can trigger a rule chain); `alert.fired` is recorded server-side; analytics: `alerts.list_viewed`, `alerts.filtered`.
-- **Design sign-off acceptance checklist:** [ ] active / triggered / expired / disabled states drawn [ ] filters by symbol and status [ ] bulk enable/disable/delete with confirmation [ ] delivery-channel summary per alert [ ] empty state [ ] alerts depending on estimated detectors flagged
+- **Design sign-off acceptance checklist:** [ ] armed / fired / expired / disabled states drawn (E40-D02 X-29) [ ] filters by symbol and status [ ] bulk enable/disable/delete with confirmation [ ] delivery-channel summary per alert [ ] empty state [ ] alerts depending on estimated detectors flagged
 - **UX research / a11y contract (E40-D01):** [e40-alert-attention.md](../design/research/e40-alert-attention.md) §6 (storm rule and the `suppressed` row state, PROPOSED) and [e40-alerts-a11y-review.md](../design/a11y/e40-alerts-a11y-review.md) §3 KM-7, §5 NC-3..NC-8, §6 (measured contrast).
 - **Hi-fi (E40-D02):** [E40-D02.md](../design/E40/E40-D02.md) §2 (tabs and row groups, status derivation, states with their sources, snooze, bulk, roles); boards A1–A7, A14, A15 (pending).
 
 ### SCR-091 — Alert editor
 
-- **Type:** Modal. Reuses the rule condition editor (SCR-081) **minus execution actions**: condition builder, symbol/interval scope, evaluation on bar close or intrabar, one-shot vs recurring vs once per bar, cooldown, expiry, delivery channels (in-app: toast and notification centre, always recorded; desktop notification; sound, a per-category preference layered on in-app, with a preview button — E40-D01 AM-3; email, webhook and push are not offered), message template with variable interpolation (`{{market.symbol}} crossed {{market.price}}`).
+- **Type:** Modal. Reuses the rule condition editor (SCR-081) **minus execution actions**: condition builder, symbol/interval scope, evaluation on bar close or intrabar, one-shot vs recurring vs once per bar, cooldown, expiry, delivery channels (in-app: toast and notification centre, always recorded; desktop notification; sound, a per-alert preference layered on in-app, with a preview button (E40-D02 D-11; until CC-8 stores it, the SCR-115 Alerts row decides) — E40-D01 AM-3; email, webhook and push are not offered), message template with variable interpolation (`{{market.symbol}} crossed {{market.price}}`).
 - **Validation:** at least one condition and one delivery channel; cooldown ≥ 5 s; expiry must be in the future; "Sound requires the desktop shell" note in the browser.
 - **States:** new · edit · duplicate · prefilled from an entry point · validating (≤300 ms, an explicit pending state) · invalid (the server's messages verbatim) · estimated-metric warning · rule engine vocabulary unavailable (read-only, saving disabled) · metric needs recorded history · saving · name taken (409) · changed in another session (412) · read-only (no `alerts:write`) · test shown.
 - **A11y:** sound is never the only channel; the preview button is keyboard-reachable; message template has a live preview.
@@ -1948,7 +1948,7 @@ Drag preview                Drop zones
 - **Type:** Toast + drawer. Shows the alert name, the value that triggered it, the symbol/timeframe, and actions: open chart at that moment, snooze, disable, open detail; the detail drawer adds a "Create a rule from this alert" link-out (a link, never a binding).
 - **Components:** CMP-021 Link, CMP-036 KeyValueRow, CMP-045 Toast / Notification, CMP-046 Drawer, CMP-165 AlertFiredToastGroup.
 - **Stories:** US-ALRT-005, US-ALRT-007.
-- **A11y:** The toast is `role="status"` (not assertive, to avoid interrupting order entry), Error and Critical alerts included, which persist until dismissed instead (E40-D01 AM-2 under the interim UA-A); it names the alert, symbol, metric value and time; the detail view is a dialog with a heading and a full context table.
+- **A11y:** The toast is `role="status"` (not assertive, to avoid interrupting order entry), Error and Critical alerts included, which persist until dismissed instead (E40-D01 AM-2 under the interim UA-A); it names the alert, symbol, metric value and time; the detail view is a dialog with a heading and the full context in CMP-036 rows, one `<dl>` per group (E40-D02 X-32).
 - **States:** one toast per severity (Info and Warning close after 20 s; Error and Critical stay) · repeat ("×7 in 2 min") · symbol batch ("3 alerts fired for BTCUSDT") · overflow (at most 3 on screen, then a counted toast) · storm summary · disarm notice (persistent; Why, Enable…) · a fired one-shot (Enable again) · one digest after a reconnect · snoozed and disabled confirmations · test · detail drawer loading · populated · unavailable · alert deleted · values at fire time not yet available.
 - **Performance:** Toast render is immediate on the `alerts` message; the detail fetch is lazy. Alert delivery end to end targets <=2 s from condition met to visible toast.
 - **Analytics/audit:** `alert.fired` is recorded server-side with the metric snapshot; the UI emits `alert.toast_shown`, `alert.toast_actioned`, `alert.detail_opened`, `alert.snoozed` (analytics).
