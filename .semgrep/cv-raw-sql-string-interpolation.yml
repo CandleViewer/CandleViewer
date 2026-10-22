@@ -19,3 +19,8 @@ rules:
           - pattern: text(f"...")
           - pattern: text("..." % ...)
           - pattern: text("...".format(...))
+    paths:
+      exclude:
+        # Design and planning tooling under docs/ reads files, never a database; a helper named
+        # `text(...)` there matched the SQLAlchemy `text()` arm in the merge group (CI-SEC-001).
+        - "docs/**"
