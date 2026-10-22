@@ -151,7 +151,7 @@ the server's `s-rtt-*` probes, and no product code is added. `runner w5` runs 10
 baseline, the mixed workspace in each class, and book, trades and bars alone, healthy and saturated) and writes
 `w5.json`; the tables below take its rows. It exits 1, never green, when there is no usable answer (no data, or a
 mixed phase left out because it was INVALID or the server applied another class), and when its table has no row;
-its first line then reads `W5: no usable answer`, naming any mixed phase left out, never a recommendation.
+its first line then reads `W5: no usable answer`, counting any mixed phase left out, never a recommendation.
 `--duration-s` and `--warmup-s` replace every phase's window and warm-up, so `runner w5 --duration-s 30 --warmup-s
 10` is a dry run of the whole plan (about 9 minutes; the W5 profile does not wait for a 60 s bandwidth window).
 The workflow's `duration_s` input sets the window alone, so there the phases keep their own warm-ups (60 s for the

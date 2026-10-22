@@ -805,7 +805,9 @@ def test_a_red_w5_answer_leads_with_the_red_line_even_with_a_table() -> None:
     healthy = mixed("mixed-healthy", 0, None, hold=50.0)
     short = w5.analyze([healthy, mixed("mixed-saturated", 700, "saturated", hold=200.0)])
     assert short["rows"] and w5.exit_code(short) == 1
-    assert w5.headline(short) == "W5: no usable answer (mixed-lagging left out)"
+    assert w5.headline(short) == "W5: no usable answer (1 mixed phase left out)"
+    two = {"recommendation": "no_data", "reasons": [], "rows": [], "skipped": ["a", "b"]}
+    assert w5.headline(two) == "W5: no usable answer (2 mixed phases left out)"
 
 
 def mixed(name: str, rtt: int, cls: str | None, *, hold: float | None) -> w5.Phase:
