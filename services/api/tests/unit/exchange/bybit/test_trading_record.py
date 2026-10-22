@@ -252,7 +252,11 @@ async def _cancel_all(port: BybitTradingPort) -> OrderAck:
 async def _stop(port: BybitTradingPort) -> OrderAck:
     return await port.set_trading_stop(
         TradingStopRequest(
-            account=account(), symbol="BTCUSDT", stop_loss=Decimal("58000"), tpsl_mode="partial"
+            account=account(),
+            symbol="BTCUSDT",
+            stop_loss=Decimal("58000"),
+            tpsl_mode="partial",
+            sl_size=Decimal("0.01"),
         )
     )
 
@@ -344,8 +348,17 @@ def test_the_wire_names_are_the_contracts_in_full() -> None:
         "tpslMode": "tpsl_mode",
         "trailingStop": "trailing_stop",
         "activePrice": "activation_price",
+        "tpSize": "tp_size",
+        "slSize": "sl_size",
         "orderFilter": "order_filter",
     }
+
+
+def test_a_push_record_never_names_a_key_only_a_request_carries() -> None:
+    """G-8b: a Partial-mode stop's sizes and the cancel-all filter are recorded from the
+    request that sent them; no pushed row holds them, so the push allow-list leaves them out."""
+    assert {"tpSize", "slSize", "orderFilter"} <= set(rec.WIRE_NAMES)
+    assert not {"tpSize", "slSize", "orderFilter"} & set(rec.PUSH_NAMES)
 
 
 @pytest.mark.parametrize(

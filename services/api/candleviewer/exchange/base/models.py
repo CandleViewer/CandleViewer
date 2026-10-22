@@ -432,7 +432,8 @@ class CancelOrderRequest(BaseModel):
 class TradingStopRequest(BaseModel):
     """§8.9: attach/replace native TP/SL/trailing on an open position via
     `POST /v5/position/trading-stop`. **Always writes both TP and SL sides**
-    in one call (one-sided writes break the exchange's OCO pairing, §8.9 caveat)."""
+    in one call (one-sided writes break the exchange's OCO pairing, §8.9 caveat).
+    `tp_size` and `sl_size` size a Partial-mode stop (G-8b, #3963; 24 §14.4)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -446,6 +447,27 @@ class TradingStopRequest(BaseModel):
     tp_trigger_by: Literal["last", "mark", "index"] = "last"
     sl_trigger_by: Literal["last", "mark", "index"] = "mark"
     tpsl_mode: Literal["full", "partial"] = "full"
+    tp_size: Qty | None = None
+    sl_size: Qty | None = None
+
+    @model_validator(mode="after")
+    def _sized(self) -> TradingStopRequest:
+        """24 §8.9 and §14.4: a size is a Partial-mode stop's alone, a positive number beside
+        its side's price, every Partial-mode price has its size, and the venue requires the two
+        sizes equal. A Full-mode stop covers the whole position and takes none. Refused here,
+        before anything is signed or sent."""
+        if self.tpsl_mode == "full":
+            if self.tp_size is not None or self.sl_size is not None:
+                raise ValueError("a Full-mode stop covers the whole position and takes no size")
+            return self
+        for price, size in ((self.take_profit, self.tp_size), (self.stop_loss, self.sl_size)):
+            if (price is None) != (size is None):
+                raise ValueError("a Partial-mode stop sends each price with its size")
+            if size is not None and size <= 0:  # NaN and infinity never reach here (pydantic)
+                raise ValueError("a Partial-mode stop's size is a positive number")
+        if self.tp_size is not None and self.sl_size is not None and self.tp_size != self.sl_size:
+            raise ValueError("a Partial-mode stop's two sizes are equal, as the venue requires")
+        return self
 
 
 _DecimalText = Annotated[str, StringConstraints(pattern=r"^-?[0-9]+(\.[0-9]+)?$")]

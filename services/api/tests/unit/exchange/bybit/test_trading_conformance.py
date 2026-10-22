@@ -651,6 +651,85 @@ async def test_both_write_a_stop_in_the_critical_lane(harness: Harness) -> None:
     assert ack.ok and harness.lanes() == ["critical"]
 
 
+async def test_both_write_a_partial_stop_with_its_size_in_the_critical_lane(
+    harness: Harness,
+) -> None:
+    """G-8b (24 §8.9, §14.4): a Partial-mode stop carries its size and is still a protective,
+    critical write; both answer one `ok` ack that names no order."""
+    harness.prime_position_writes()
+    stop = TradingStopRequest(
+        account=account(),
+        symbol="BTCUSDT",
+        tpsl_mode="partial",
+        stop_loss=Decimal("58000"),
+        sl_size=Decimal("0.01"),
+    )
+    ack = await harness.port.set_trading_stop(stop)
+    assert (ack.ok, ack.order_link_id, ack.exchange_order_id) == (True, None, None)
+    assert harness.lanes() == ["critical"]
+
+
+# -- a stop is never removed implicitly (C-2.6; the orchestrator's ruling 2 on #2877) ------------
+
+#: Stop values the venue would read as a cancel (`0`), or that are no stop at all.
+NOT_POSITIVE = ["0", "-1", "-0.0"]
+
+
+def _partial(**fields: Any) -> TradingStopRequest:
+    return TradingStopRequest(account=account(), symbol="BTCUSDT", tpsl_mode="partial", **fields)
+
+
+def _sized(side: str, value: Decimal) -> TradingStopRequest:
+    """A valid Partial-mode stop with `value` put in its size afterwards: `model_copy` skips the
+    model's own refusal, as the port must refuse whatever built the request."""
+    if side == "sl":
+        valid = _partial(stop_loss=Decimal("58000"), sl_size=Decimal("0.01"))
+        return valid.model_copy(update={"sl_size": value})
+    valid = _partial(take_profit=Decimal("65000"), tp_size=Decimal("0.01"))
+    return valid.model_copy(update={"tp_size": value})
+
+
+#: Every path that sends a stop-loss or a stop size, given the value it sends.
+STOP_PATHS: dict[str, Callable[[TradingPort, Decimal], Awaitable[object]]] = {
+    "place_order": lambda port, v: port.place_order(place(stop_loss=v)),
+    "place_batch": lambda port, v: port.place_batch(
+        [place(order_link_id=link(seq=1)), place(order_link_id=link(seq=2), stop_loss=v)]
+    ),
+    "amend_order": lambda port, v: port.amend_order(
+        AmendOrderRequest(account=account(), symbol="BTCUSDT", order_link_id=link(), stop_loss=v)
+    ),
+    "set_trading_stop": lambda port, v: port.set_trading_stop(
+        TradingStopRequest(account=account(), symbol="BTCUSDT", stop_loss=v)
+    ),
+    "sl_size": lambda port, v: port.set_trading_stop(_sized("sl", v)),
+    "tp_size": lambda port, v: port.set_trading_stop(_sized("tp", v)),
+}
+
+
+@pytest.mark.parametrize("value", NOT_POSITIVE)
+@pytest.mark.parametrize("path", sorted(STOP_PATHS))
+async def test_both_refuse_a_stop_that_is_not_positive_before_anything(
+    harness: Harness, path: str, value: str
+) -> None:
+    """The venue reads a stop-loss of `0` as "cancel the stop": no path sends one, nor a stop
+    size that is not positive (a batch's every item included), and nothing is sent, no token
+    taken and nothing signed for it."""
+    with pytest.raises(ValueError, match="positive number"):
+        await STOP_PATHS[path](harness.port, Decimal(value))
+    assert harness.sent() == 0
+
+
+@pytest.mark.parametrize("path", sorted(STOP_PATHS))
+async def test_both_still_send_a_positive_stop_on_every_path(harness: Harness, path: str) -> None:
+    harness.prime_create(link())
+    harness.prime_batch([link(seq=1), link(seq=2)])
+    harness.prime_amend(link())
+    harness.prime_position_writes()
+    value = Decimal("0.01") if path.endswith("_size") else Decimal("58000")
+    await STOP_PATHS[path](harness.port, value)
+    assert harness.sent() > 0
+
+
 async def test_both_answer_a_cancel_naming_our_id_and_another_exchange_id_not_found(
     harness: Harness,
 ) -> None:

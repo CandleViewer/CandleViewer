@@ -22,12 +22,20 @@ from candleviewer.domain.primitives import (
     Environment,
     Exchange,
     OrderLinkId,
+    Side,
     Symbol,
     TsUs,
 )
 
 from .errors import AmbiguousResultError, DuplicateClientIdError, NotFoundError, OmsErrorCode
-from .guards import check_create_id, check_exit_ids, check_key_ref, check_lookup_id, check_window
+from .guards import (
+    check_create_id,
+    check_exit_ids,
+    check_key_ref,
+    check_lookup_id,
+    check_stop,
+    check_window,
+)
 from .models import (
     AccountInfo,
     AccountRef,
@@ -233,6 +241,8 @@ class LandedThenAmbiguous:
 
 
 type FakeOutcome = BaseException | FakeReject | LandedThenAmbiguous
+#: The order kinds a Partial-mode stop write adds (`set_trading_stop`, G-8b).
+type _PartialStop = Literal["partial_take_profit", "partial_stop_loss"]
 #: What an account's private queue holds; `None` ends the stream (`end_stream`).
 type _Pushed = PrivateEvent | PrivateStreamStatus | None
 
@@ -400,6 +410,7 @@ class FakeTradingPort:
 
     async def place_order(self, req: PlaceOrderRequest) -> OrderAck:
         check_create_id(req.account, req.order_link_id)
+        check_stop(req.stop_loss)
         self._enter("place_order", req.account, req, req.lane)
         outcome = self._outcome("place_order")
         if isinstance(outcome, FakeReject):
@@ -420,6 +431,7 @@ class FakeTradingPort:
         account = reqs[0].account
         for req in reqs:
             check_create_id(account, req.order_link_id)
+            check_stop(req.stop_loss)
         self._enter("place_batch", account, tuple(reqs), reqs[0].lane)
         outcome = self._outcome("place_batch")
         if isinstance(outcome, FakeReject):
@@ -435,6 +447,7 @@ class FakeTradingPort:
 
     async def amend_order(self, req: AmendOrderRequest) -> OrderAck:
         check_exit_ids(req.order_link_id, req.exchange_order_id)
+        check_stop(req.stop_loss)
         self._enter("amend_order", req.account, req, req.lane)
         outcome = self._outcome("amend_order")
         if isinstance(outcome, FakeReject):
@@ -486,24 +499,70 @@ class FakeTradingPort:
         return acks or [_ack(None, None)]  # accepted, nothing cancelled: names no order
 
     async def set_trading_stop(self, req: TradingStopRequest) -> OrderAck:
+        check_stop(req.stop_loss, req.sl_size, req.tp_size)
         self._enter("set_trading_stop", req.account, req, "critical")
         outcome = self._outcome("set_trading_stop")
         if isinstance(outcome, FakeReject):
             return _rejected(None, outcome)
+        key = (req.account.account_id, req.symbol, req.position_idx)
+        partial = req.tpsl_mode == "partial"
+        if partial:
+            self._add_partial_stops(req, key)
         changes = {
             name: value
             for name, value in (
-                ("take_profit", req.take_profit),
-                ("stop_loss", req.stop_loss),
+                ("take_profit", None if partial else req.take_profit),
+                ("stop_loss", None if partial else req.stop_loss),
                 ("trailing_stop_distance", req.trailing_distance),
             )
             if value is not None
         }
-        key = (req.account.account_id, req.symbol, req.position_idx)
         self._positions = [
             p.model_copy(update=changes) if _position_key(p) == key else p for p in self._positions
         ]
         return _ack(None, None)
+
+    def _add_partial_stops(self, req: TradingStopRequest, key: tuple[AccountId, str, int]) -> None:
+        """A Partial-mode stop adds what the venue adds (its trading-stop page: such a call can
+        only add partial TP/SL orders): one reduce-only conditional order per sized side,
+        `partial_take_profit` or `partial_stop_loss`, closing the held position and under no id
+        of ours; the position's own stop is left as it was. A flat or absent position takes none
+        (the venue's refusal is scripted). The shapes are the documented ones, pending E29-K01
+        (24 §8.8 rule 6, `[O-4]`)."""
+        held = next((p for p in self._positions if _position_key(p) == key), None)
+        if held is None or held.side is None:
+            return
+        closing: Side = "sell" if held.side == "buy" else "buy"
+        sides: tuple[tuple[_PartialStop, Decimal | None, Decimal | None], ...] = (
+            ("partial_take_profit", req.take_profit, req.tp_size),
+            ("partial_stop_loss", req.stop_loss, req.sl_size),
+        )
+        for kind, trigger, size in sides:
+            if trigger is None or size is None:
+                continue
+            self._next_id += 1
+            exchange_order_id = f"fake-{self._next_id:012d}"
+            self._open[exchange_order_id] = Order(
+                order_link_id=ext_key(exchange_order_id),
+                exchange_order_id=exchange_order_id,
+                account_id=req.account.account_id,
+                symbol=req.symbol,
+                side=closing,
+                order_type="market",
+                qty=size,
+                price=None,
+                state="untriggered",
+                filled_qty=Decimal(0),
+                leaves_qty=size,
+                avg_fill_price=None,
+                created_at=self._now_us(),
+                terminal_at=None,
+                reduce_only=True,
+                trigger_price=trigger,
+                tpsl_mode="partial",
+                order_kind=kind,
+                position_idx=req.position_idx,
+            )
 
     async def set_leverage(self, account: AccountRef, symbol: Symbol, leverage: Decimal) -> None:
         if not leverage.is_finite() or leverage <= 0:

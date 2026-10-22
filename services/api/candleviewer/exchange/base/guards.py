@@ -7,6 +7,7 @@ does. No exchange vocabulary: the ids are this product's (`domain.order_link`).
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID
 
 from candleviewer.domain.order_link import (
@@ -21,7 +22,14 @@ from candleviewer.domain.primitives import OrderLinkId, TsUs
 
 from .models import AccountRef
 
-__all__ = ["check_create_id", "check_exit_ids", "check_key_ref", "check_lookup_id", "check_window"]
+__all__ = [
+    "check_create_id",
+    "check_exit_ids",
+    "check_key_ref",
+    "check_lookup_id",
+    "check_stop",
+    "check_window",
+]
 
 
 def check_key_ref(account: AccountRef) -> UUID:
@@ -59,6 +67,17 @@ def check_exit_ids(link: str | None, exchange_order_id: str | None) -> None:
         return
     if link is None or EXT_ID.fullmatch(link) is not None or OUR_ID.fullmatch(link) is None:
         raise ValueError("this order can only be named by its exchange_order_id")
+
+
+def check_stop(*values: Decimal | None) -> None:
+    """C-2.6, the orchestrator's ruling 2 on #2877: a stop-loss, or a stop's size, that a call
+    sends is a positive number. The venue reads a stop-loss of `0` as "cancel the stop", so a
+    zero, negative or non-finite one is refused here, before any token is taken or anything is
+    signed, whatever built the request: a stop is never removed implicitly. A value left `None`
+    is not sent."""
+    for value in values:
+        if value is not None and (not value.is_finite() or value <= 0):
+            raise ValueError("a stop-loss or a stop size must be a positive number")
 
 
 def check_lookup_id(link: OrderLinkId | None) -> None:

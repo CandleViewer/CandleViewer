@@ -58,6 +58,7 @@ from candleviewer.exchange.base.guards import (
     check_exit_ids,
     check_key_ref,
     check_lookup_id,
+    check_stop,
     check_window,
 )
 from candleviewer.exchange.base.models import (
@@ -513,6 +514,7 @@ class BybitTradingPort:
     async def place_order(self, req: PlaceOrderRequest) -> OrderAck:
         self._check_environment(req.account)
         check_create_id(req.account, req.order_link_id)
+        check_stop(req.stop_loss)
         body = {"category": "linear", **_create_item(req)}
         answer = await self._trade(
             "place_order", req.account, lane=req.lane, body=body, create=True
@@ -537,6 +539,7 @@ class BybitTradingPort:
         self._check_environment(account)
         for req in reqs:
             check_create_id(account, req.order_link_id)
+            check_stop(req.stop_loss)
         items = [_create_item(r) for r in reqs]
         answer = await self._trade(
             "place_batch",
@@ -590,6 +593,7 @@ class BybitTradingPort:
     async def amend_order(self, req: AmendOrderRequest) -> OrderAck:
         self._check_environment(req.account)
         check_exit_ids(req.order_link_id, req.exchange_order_id)
+        check_stop(req.stop_loss)
         body = _amend_body(req)
         answer = await self._trade("amend_order", req.account, lane=req.lane, body=body)
         fields = rec.request_fields(body)
@@ -657,6 +661,7 @@ class BybitTradingPort:
         """Both sides go in one call (24 §8.9): the OMS sends the unchanged side's value; a side
         left `None` is not sent."""
         self._check_environment(req.account)
+        check_stop(req.stop_loss, req.sl_size, req.tp_size)
         body = _stop_body(req)
         answer = await self._trade("set_trading_stop", req.account, body=body)
         fields = rec.request_fields(body)
@@ -921,7 +926,9 @@ def _cancel_all_body(symbol: Symbol | None) -> dict[str, Any]:
 
 
 def _stop_body(req: TradingStopRequest) -> dict[str, Any]:
-    """§8.9's stop write: a side left `None` is not sent, nor its trigger source."""
+    """§8.9's stop write: a side left `None` is not sent, nor its trigger source. A side's size
+    (`tpSize`, `slSize`) goes beside it in Partial mode only: the request refuses a size in Full
+    mode and a Partial-mode price without its size (24 §14.4)."""
     body: dict[str, Any] = {
         "category": "linear",
         "symbol": req.symbol,
@@ -931,9 +938,13 @@ def _stop_body(req: TradingStopRequest) -> dict[str, Any]:
     if req.take_profit is not None:
         body["takeProfit"] = _text(req.take_profit)
         body["tpTriggerBy"] = _TRIGGER[req.tp_trigger_by]
+        if req.tp_size is not None:
+            body["tpSize"] = _text(req.tp_size)
     if req.stop_loss is not None:
         body["stopLoss"] = _text(req.stop_loss)
         body["slTriggerBy"] = _TRIGGER[req.sl_trigger_by]
+        if req.sl_size is not None:
+            body["slSize"] = _text(req.sl_size)
     if req.trailing_distance is not None:
         body["trailingStop"] = _text(req.trailing_distance)
     if req.active_price is not None:

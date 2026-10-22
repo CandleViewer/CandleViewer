@@ -58,14 +58,18 @@ WIRE_NAMES: Final[Mapping[str, str]] = MappingProxyType(
         "tpslMode": "tpsl_mode",
         "trailingStop": "trailing_stop",
         "activePrice": "activation_price",
+        "tpSize": "tp_size",
+        "slSize": "sl_size",
         "orderFilter": "order_filter",
     }
 )
+#: Keys only a request carries: a push never holds them, so its record never names them.
+_REQUEST_ONLY: Final = frozenset({"orderFilter", "tpSize", "slSize"})
 #: A pushed order, execution or fast-execution row's keys as the contract names them (24 §14.2 rule
 #: 13); any other key is never recorded.
 PUSH_NAMES: Final[Mapping[str, str]] = MappingProxyType(
     {
-        **{key: WIRE_NAMES[key] for key in WIRE_NAMES if key != "orderFilter"},
+        **{key: WIRE_NAMES[key] for key in WIRE_NAMES if key not in _REQUEST_ONLY},
         "orderStatus": "order_status",
         "cumExecQty": "filled_qty",
         "leavesQty": "remaining_qty",

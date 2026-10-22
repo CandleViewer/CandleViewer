@@ -397,6 +397,55 @@ async def test_position_writes_change_the_seeded_position() -> None:
     assert (await port.set_trading_stop(stop)).ok is False
 
 
+async def test_a_partial_stop_adds_the_venues_partial_orders_and_leaves_the_position_stop() -> None:
+    """G-8b (24 §8.9, §14.4): a Partial-mode write adds one reduce-only conditional order per
+    sized side, closing the held position under no id of ours, as the venue adds them; the
+    position's own stop is unchanged, a trailing distance still lands on it, and a cancel-all
+    (plain orders only) leaves the stop orders in place."""
+    port = _port()
+    port.seed_position(_position())
+    stop = TradingStopRequest(
+        account=_ref(),
+        symbol="BTCUSDT",
+        tpsl_mode="partial",
+        stop_loss=Decimal("58000"),
+        sl_size=Decimal("0.4"),
+        take_profit=Decimal("65000"),
+        tp_size=Decimal("0.4"),
+        trailing_distance=Decimal("150"),
+    )
+    assert (await port.set_trading_stop(stop)).ok
+    [held] = await port.positions(_ref())
+    assert (held.stop_loss, held.take_profit, held.trailing_stop_distance) == (
+        None,
+        None,
+        Decimal("150"),
+    )
+    await port.cancel_all(_ref(), None)
+    orders = await port.open_orders(_ref())
+    assert sorted((o.order_kind, o.trigger_price, o.qty) for o in orders) == [
+        ("partial_stop_loss", Decimal("58000"), Decimal("0.4")),
+        ("partial_take_profit", Decimal("65000"), Decimal("0.4")),
+    ]
+    for order in orders:
+        assert (order.side, order.reduce_only, order.tpsl_mode) == ("sell", True, "partial")
+        assert order.order_link_id == ext_key(order.exchange_order_id)
+
+
+async def test_a_partial_stop_on_a_flat_book_adds_no_order() -> None:
+    """No position, no side to close: the fake adds nothing (a venue refusal is scripted)."""
+    port = _port()
+    stop = TradingStopRequest(
+        account=_ref(),
+        symbol="BTCUSDT",
+        tpsl_mode="partial",
+        stop_loss=Decimal("58000"),
+        sl_size=Decimal("0.4"),
+    )
+    assert (await port.set_trading_stop(stop)).ok
+    assert await port.open_orders(_ref()) == []
+
+
 async def test_reads_answer_the_seeded_state_by_account_and_window() -> None:
     port = _port()
     fill = Execution(
