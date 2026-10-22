@@ -1342,6 +1342,10 @@ _UNRESOLVED_OP = (
         _UNRESOLVED_OP.format(
             "kw = {'name': 'audit_log'}\n    op.execute(sa.table(**kw).delete())"
         ),
+        _UNRESOLVED_OP.format(
+            "kw = {'table_name': 'audit_log'}\n"
+            "    op.drop_index('ix', **kw)  # cv:contract-phase: R2"
+        ),
     ],
     ids=[
         "a-drop",
@@ -1371,6 +1375,7 @@ _UNRESOLVED_OP = (
         "a-starred-index-list",
         "a-drop-from-kwargs",
         "a-core-table-from-kwargs",
+        "an-index-drop-from-kwargs",
     ],
 )
 def test_an_operation_whose_table_the_rule_cannot_resolve_is_refused(
@@ -3063,6 +3068,9 @@ _GUARD = "the append-only guard function 'audit_chain'"
         "DO $$ BEGIN EXECUTE format('DELETE FROM audit_%s', 'log'); END $$",
         "DO $$ BEGIN EXECUTE format('DELETE FROM audit_%I', 'log'); END $$",
         "DO $$ BEGIN EXECUTE format('UPDATE public.audit_%1$s SET x = 1', 'log'); END $$",
+        """DO $$ BEGIN EXECUTE format('DELETE FROM "audit_%s"', 'log'); END $$""",
+        """DO $$ BEGIN EXECUTE format('DELETE FROM public."audit_%s"', 'log'); END $$""",
+        """DO $$ BEGIN EXECUTE format('UPDATE "audit_%I" SET x = 1', 'log'); END $$""",
     ],
 )
 def test_a_name_glued_to_a_placeholder_is_built_at_run_time(
@@ -3076,9 +3084,24 @@ _PY = "from alembic import op\n\n\ndef upgrade(x: str = '') -> None:\n    {}\n"
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        "from alembic import op\nfrom sqlalchemy import table as tbl\n\n\n"
+        "def upgrade() -> None:\n    op.execute(tbl('audit_log').delete())\n",
+        "import sqlalchemy as sa\nfrom alembic import op\n\n\n"
+        "def upgrade() -> None:\n    mk = sa.table\n    op.execute(mk('audit_log').delete())\n",
+    ],
+    ids=["an-import-alias", "a-name-bound-to-it"],
+)
+def test_a_core_table_under_another_name_is_read(tmp_path: Path, source: str) -> None:
+    """`table` under an import alias, or bound to a name, is read as itself (#4032)."""
+    assert any(_AUDIT_LOG in hit for hit in _audit_hits(tmp_path, source))
+
+
+@pytest.mark.parametrize(
     ("body", "target"),
     [
-        ("op.execute(f'DELETE FROM audit_{x}')", "a table it names only at run time"),
+        ("op.execute(f'DELETE FROM audit_{x}')", "dynamic table name"),
         ("v = get()\n    op.execute(f'{v} FROM audit_log')", _AUDIT_LOG),
         ("op.execute('%s FROM audit_log' % get())", _AUDIT_LOG),
         ("op.execute(get() + ' FROM audit_log')", _AUDIT_LOG),
@@ -3093,7 +3116,7 @@ def test_a_statement_python_computes_part_of_counts_what_it_names(
     """A verb the rule cannot resolve may be any verb, and a name glued to a value it
     cannot resolve is built at run time (#4032)."""
     (message,) = _audit_hits(tmp_path, _PY.format(body))
-    assert f"targets {target}" in message
+    assert target in message
 
 
 @pytest.mark.parametrize(

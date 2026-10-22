@@ -975,7 +975,8 @@ def _reach(chunk: _Chunk, at: int) -> str | None:
 def _named(chunk: _Chunk, at: int) -> bool:
     """Whether a name starts at token `at`, after `ONLY`, `TABLE` or `IF EXISTS`:
     one to three parts joined by `.`, each a quoted name or a word that is not a
-    number. A part glued to a placeholder (`audit_%s`) is built at run time."""
+    number. A part glued to a placeholder (`audit_%s`), or a quoted part holding one
+    (`"audit_%s"`), is built at run time."""
     tokens = chunk.tokens
     while at < len(tokens) and tokens[at].upper() in _SLOT_WORDS:
         at += 1
@@ -983,6 +984,10 @@ def _named(chunk: _Chunk, at: int) -> bool:
         if at >= len(tokens) or not (tokens[at][0] in '"_' or tokens[at][0].isalpha()):
             return False
         if chunk.glued[at] and tokens[at + 1] in _PLACEHOLDER_MARKS:
+            return False
+        if tokens[at][0] == '"' and (
+            _PLACEHOLDER_RE.search(tokens[at]) or _UNRESOLVED_PLACEHOLDER in tokens[at]
+        ):
             return False
         if tokens[at + 1 : at + 2] != ["."]:
             return True
@@ -1535,7 +1540,7 @@ def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
     through a name or not) or given to it (`sa.delete(t)`, under any import name); a
     `DropTable(...)` or a `.drop(...)` of one; and any `drop_all(...)` (#4032)."""
     names = _resolve_simple_name_constants(tree)
-    imported = {"delete", "update", "DropTable"}
+    imported = {"delete", "update", "DropTable", "table", "Table"}
     canonical = {name: name for name in imported}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
@@ -1545,6 +1550,15 @@ def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
                 alias.asname: alias.name
                 for alias in node.names
                 if alias.asname and alias.name in imported
+            }
+    for node in ast.walk(tree):  # `t = sa.table`: the name is the constructor
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr in {"table", "Table"}
+        ):
+            canonical |= {
+                t.id: node.value.attr for t in node.targets if isinstance(t, ast.Name)
             }
     bound: dict[str, str] = {}
 
@@ -1563,9 +1577,10 @@ def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
         func = node.func
         if isinstance(func, ast.Attribute) and func.attr == "alias":
             return audit_table(func.value)
-        callee = (
-            func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-        )
+        if isinstance(func, ast.Name):  # an import alias, or a name bound to it
+            callee: str | None = canonical.get(func.id, func.id)
+        else:
+            callee = func.attr if isinstance(func, ast.Attribute) else None
         if callee in {"table", "Table"} and (first := _core_table_name(node)):
             if not isinstance(first, ast.Constant) and not (
                 isinstance(first, ast.Name) and first.id in names
