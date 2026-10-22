@@ -200,6 +200,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Electron 42 and later ship no postinstall, so the install leaves no binary: the SR-138
+      # runner fetches it through electron's own install-electron bin before any launch (#1819).
+      - name: Fetch the Electron binary (SR-138 allowlist runner)
+        run: node tools/ci/run-allowed-postinstall.mjs
+
       # vite resolves `@candleviewer/ui/theme.css` and the token CSS to packages/ui's built files,
       # and this job runs pnpm directly, so turbo's `^build` does not build them first (#3272).
       - name: Build the workspace packages apps/web depends on

@@ -103,6 +103,7 @@ READ_INPUTS = (
     ("security", "scripts/check_secrets_hygiene.py", ".env.example"),
     ("js", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
     ("engine-bench", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
+    ("e2e", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),  # #1819
     ("migrations", "tools/ci/migration_lint.py", "tools/ci/security-sensitive-tables.txt"),
     ("pin-check", "tools/ci/check_action_pins.py", ".github/actions-pins.md"),  # #3580
 )

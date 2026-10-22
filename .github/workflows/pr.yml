@@ -266,6 +266,9 @@ jobs:
               - '.npmrc' # pnpm's config: every pnpm install reads it
               - 'tools/ci/check_demo_rest_only_tag.mjs'
               - 'tools/ci/check_built_exports.mjs'
+              # e2e-electron fetches the Electron binary with the postinstall runner (#1819).
+              - 'tools/ci/run-allowed-postinstall.mjs'
+              - 'tools/ci/allowed-postinstall.json'
             rules:
               - 'services/api/candleviewer/rules/ir/**'
               - 'services/api/candleviewer/rules/compiler/**'
