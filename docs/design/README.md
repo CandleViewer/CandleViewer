@@ -80,6 +80,9 @@ the same rule applies to them. Skills: the official `penpot-*` skill set (penpot
   4. For `CMP-*` tickets (and `SCR-*` tickets that change a component contract): the handoff checklist
      `docs/design/<epic>/<ticket>-handoff.md`, per `16-design-system-brief.md` §11.4 / §13.3 item 8.
 - Design sign-off = PR merge of the spec + exports; the Penpot reference goes in the ticket comment.
+- Every spec, writer brief and pre-lens brief applies the standing gates in `.claude/rules/32-design-specs.md`
+  (E09-D09's T2 form for every gated control, the reason vocabulary, the recurring a11y and contract-pinning
+  items); a miss is a Major in the pre-lens.
 - `execute_code` runs arbitrary JS in the plugin sandbox: only mutate the file named in the ticket; never
   delete pages/components you did not create; export before and after large mutations.
 
