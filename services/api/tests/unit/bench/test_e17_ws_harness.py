@@ -505,7 +505,7 @@ def post(port: int, path: str, body: str) -> dict[str, str]:
 # -- the runner's pure parts, on saved artefacts ---------------------------------------------------
 
 HEALTHY_FANOUT = {0.01: 2900, 0.02: 3150, 0.03: 3200}
-STALL = {"timeout_s": 15.0, "attempted": 12, "timed_out_ms": [15003], "missing": []}
+TIMED_OUT_SCRAPE = {"timeout_s": 15.0, "attempted": 12, "timed_out_ms": [15003], "missing": []}
 
 
 def make_run(
@@ -604,7 +604,8 @@ def test_a_scrape_timeout_reads_fail_and_lists_the_guard_that_also_tripped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
-    run = make_run(tmp_path / "run", k6_exit=107, scrapes=STALL)  # k6 exit 107 trips a guard
+    # k6 exit 107 trips a guard
+    run = make_run(tmp_path / "run", k6_exit=107, scrapes=TIMED_OUT_SCRAPE)
     assert runner.finish(run, 0.10) == 1
     console, report = capsys.readouterr().out, (run / "report.md").read_text(encoding="utf-8")
     assert "FAIL, failed: scrape.metrics_timeout" in console and "also invalid: k6_exit" in console
@@ -617,7 +618,7 @@ def test_the_report_heads_the_guards_a_scrape_line_outranks_as_also_invalid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
-    run = make_run(tmp_path / "run", k6_exit=107, scrapes=STALL)
+    run = make_run(tmp_path / "run", k6_exit=107, scrapes=TIMED_OUT_SCRAPE)
     runner.finish(run, 0.10)
     head = "Also invalid (a validity guard tripped; scrape.metrics_timeout decides FAIL):"
     assert f"{head}\n- k6_exit: 107" in (run / "report.md").read_text(encoding="utf-8")
@@ -1072,7 +1073,7 @@ def test_a_lost_boundary_reads_fail_and_the_report_says_what_it_left_unjudged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
 ) -> None:
     monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
-    run = make_run(tmp_path / "run", scrapes=STALL | {"missing": [boundary]})
+    run = make_run(tmp_path / "run", scrapes=TIMED_OUT_SCRAPE | {"missing": [boundary]})
     assert runner.finish(run, 0.10) == 1
     report = (run / "report.md").read_text(encoding="utf-8")
     assert "backend did not answer /metrics within 15 s, 1 of 12 scrapes" in report
@@ -1190,7 +1191,7 @@ def test_w5_gives_every_phase_the_cli_window_and_refuses_a_pong_delay(
 
 LOST_T1, LATE_T0 = {"missing": ["t1"]}, {"timed_out_ms": [15000, 15000], "retried": ["t0"]}
 OUT, KEPT = "a boundary scrape timed out, left out", "scrapes timed out"
-STALLED = {"timed_out_ms": [15000]}
+ONE_TIMEOUT = {"timed_out_ms": [15000]}
 
 
 @pytest.mark.parametrize(
@@ -1199,8 +1200,8 @@ STALLED = {"timed_out_ms": [15000]}
         ("mixed-lagging", LOST_T1, ["mixed-lagging"], f"phase mixed-lagging: {OUT}", 1),
         ("idle", LOST_T1, [], f"phase idle: {OUT}", 1),
         ("book-healthy", LATE_T0, [], f"phase book-healthy: 2 of 7 {KEPT} (t0 retried), kept", 0),
-        ("idle", STALLED, [], f"phase idle: 1 of 7 {KEPT}, kept", 0),
-        ("mixed-lagging", STALLED, [], f"phase mixed-lagging: 1 of 7 {KEPT}, kept", 0),
+        ("idle", ONE_TIMEOUT, [], f"phase idle: 1 of 7 {KEPT}, kept", 0),
+        ("mixed-lagging", ONE_TIMEOUT, [], f"phase mixed-lagging: 1 of 7 {KEPT}, kept", 0),
     ],
 )
 def test_a_w5_phase_that_had_a_scrape_time_out_is_left_out_if_a_boundary_was_lost_else_kept(
@@ -1230,7 +1231,7 @@ def test_a_w5_phase_that_had_a_scrape_time_out_is_left_out_if_a_boundary_was_los
     assert not any("not in the plan" in n for n in answer["notes"])  # noted once
 
 
-def feeder_skips(out: Path) -> None:  # the stall made the feeder skip 5 of its 100 slots
+def feeder_skips(out: Path) -> None:  # the 15 s gap made the feeder skip 5 of its 100 slots
     text = (out / "scrape1.txt").read_text(encoding="utf-8")
     skipped = text.replace('published_total{kind="book"} 100', 'published_total{kind="book"} 95')
     (out / "scrape1.txt").write_text(skipped, encoding="utf-8")
@@ -1243,7 +1244,7 @@ def server_closes(out: Path) -> None:  # and the server closed two of k6's socke
 
 
 @pytest.mark.parametrize("guard", [feeder_skips, server_closes])
-def test_a_w5_mixed_phase_that_stalled_and_tripped_a_guard_is_left_out_and_noted_once(
+def test_a_w5_mixed_phase_with_a_scrape_timeout_and_a_guard_is_left_out_and_noted_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1253,7 +1254,8 @@ def test_a_w5_mixed_phase_that_stalled_and_tripped_a_guard_is_left_out_and_noted
         out = w5_phase(p)
         if p.out.name == "mixed-saturated":
             facts = json.loads((out / "run.json").read_text(encoding="utf-8"))
-            (out / "run.json").write_text(json.dumps(facts | {"scrapes": STALL}), encoding="utf-8")
+            tally = facts | {"scrapes": TIMED_OUT_SCRAPE}
+            (out / "run.json").write_text(json.dumps(tally), encoding="utf-8")
             guard(out)
         return out
 
@@ -1378,7 +1380,11 @@ def test_a_shortened_run_is_never_recorded_as_the_full_baseline(
     [
         ([{}, {"k6_exit": 107}, {}], 2, "run1 is INVALID"),
         ([{}, {"k6_exit": 107, "bandwidth": 1126.4}, {}], 2, "(k6_exit: 107; missed: s16_3.band"),
-        ([{}, {"k6_exit": 107, "scrapes": STALL}, {}], 2, "is FAIL (k6_exit: 107; missed: scrape"),
+        (
+            [{}, {"k6_exit": 107, "scrapes": TIMED_OUT_SCRAPE}, {}],
+            2,
+            "is FAIL (k6_exit: 107; missed: scrape",
+        ),
         ([{}, {"flag": "off"}, {}], 2, "differ in flag"),
         ([{}, {"loop": "uvloop"}, {}], 2, "differ in loop: asyncio, uvloop"),
         ([{}, {}, {"steady_s": 600.0}], 2, "differ in steady_s"),
@@ -1403,7 +1409,8 @@ def test_the_gate_names_why_it_refuses_runs_it_cannot_compare_or_that_missed(
 def test_repro_names_the_headlines_it_could_not_compare_when_a_run_lost_a_boundary(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    a, b = make_run(tmp_path / "a"), make_run(tmp_path / "b", scrapes=STALL | {"missing": ["t1"]})
+    lost_t1 = TIMED_OUT_SCRAPE | {"missing": ["t1"]}
+    a, b = make_run(tmp_path / "a"), make_run(tmp_path / "b", scrapes=lost_t1)
     assert runner.cmd_repro(argparse.Namespace(dir_a=str(a), dir_b=str(b), variance_source=[])) == 0
     out = capsys.readouterr().out
     assert "not compared (no reading in one run): fanout_ms, backend_cpu_s_per_s" in out

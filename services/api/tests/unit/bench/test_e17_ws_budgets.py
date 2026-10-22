@@ -296,11 +296,11 @@ def test_the_selfcheck_profile_fails_budget_6_on_a_rig_whose_hello_transit_is_13
     assert (res.status, res.invalid, ok) == ("FAIL", [], True), text
 
 
-def test_the_selfcheck_is_not_ok_when_a_guard_tripped_under_a_scrape_stall() -> None:
+def test_the_selfcheck_is_not_ok_when_a_guard_tripped_under_a_scrape_timeout() -> None:
     prof = profiles.resolve(profiles.load(), "selfcheck") | {"name": "selfcheck"}
     slow = scrape({0.01: 100, 0.02: 400, 0.03: 900, 0.05: 3200})  # budget 6 fails, as inflated
     res = evaluate(summary(cv_unplanned_closes=2), slow, prof, scraped(15003.0))
-    assert res.status == "FAIL" and prof["expect_fail"] in res.failed()  # the stall wins
+    assert res.status == "FAIL" and prof["expect_fail"] in res.failed()  # the scrape line wins
     ok, text = budgets.expect_failure(res, prof["expect_fail"])
     assert not ok and "cv_unplanned_closes" in text
 
@@ -353,11 +353,12 @@ def test_one_scrape_in_eight_that_timed_out_fails_the_run_with_the_cause_not_inv
 @pytest.mark.parametrize(
     ("summ", "t1", "cause"),
     [
-        (summary(), scrape(fed=(1000, 975)), "feeder_behind"),  # the stall skipped 2.5 % of 600 s
+        # 15 s without answers skipped 2.5 % of 600 s
+        (summary(), scrape(fed=(1000, 975)), "feeder_behind"),
         (summary(cv_unplanned_closes=2), None, "cv_unplanned_closes"),  # and the server closed two
     ],
 )
-def test_a_scrape_stall_outranks_the_guard_it_trips(summ: Any, t1: Any, cause: str) -> None:
+def test_a_scrape_timeout_outranks_the_guard_it_trips(summ: Any, t1: Any, cause: str) -> None:
     res = evaluate(summ, t1, facts=scraped(15003.0))  # FAIL on the scrape; the guard stays listed
     assert (res.status, res.exit_code, res.failed()) == ("FAIL", 1, ["scrape.metrics_timeout"])
     assert [x.split(":")[0] for x in res.invalid] == [cause]

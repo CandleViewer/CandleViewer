@@ -6,7 +6,7 @@ counting as 0, because most series are bound lazily). What it gives: a `Verdict`
 (`bench.ingestion.budgets`), the headline `metrics` the baseline gate compares, and the run's
 validity. A budget miss fails the run with its check named; a run that trips a validity guard is
 INVALID, never a pass or a fail of a budget. The one exception: a failed `scrape.metrics_timeout`
-line outranks INVALID, as the stall that trips a guard is the finding.
+line outranks INVALID, as the unanswered scrape that trips a guard is the finding.
 
 Budget #6 is read exactly at its bucket edge (`cv_ws_fanout_seconds_bucket{le="0.02"}`), with no
 interpolation: the pass rule is that at least 95 % of the weighted samples are at or under 20 ms.

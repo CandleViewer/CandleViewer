@@ -16,11 +16,11 @@ steady-start (t0), every 60 s and at the end (t1), and runs k6 from `K6_BIN`, th
 the pinned version, never taken from PATH. The verdict (`budgets.evaluate`) reads the k6 summary
 and the t1 - t0 deltas. A scrape the backend leaves unanswered for 15 s is a finding, not a crash:
 it is counted (`run.json` `scrapes`), the run goes on and the verdict FAILs on
-`scrape.metrics_timeout`, even when a guard trips too (one stall explains both; the guard stays
-listed); a lost t0 or t1 is retried once, and the deltas are not judged if it stays lost. Exit 0
-pass, 1 a budget missed (named), 2 INVALID (a validity guard tripped, named). `duration_s` is the
-steady window; warm-up comes before it. A single run only warns about a regression against its
-baseline: the gate fails on the median of 3 runs (`gate`).
+`scrape.metrics_timeout`, even when a guard trips too (one unanswered 15 s window explains both;
+the guard stays listed); a lost t0 or t1 is retried once, and the deltas are not judged if it
+stays lost. Exit 0 pass, 1 a budget missed (named), 2 INVALID (a validity guard tripped, named).
+`duration_s` is the steady window; warm-up comes before it. A single run only warns about a
+regression against its baseline: the gate fails on the median of 3 runs (`gate`).
 
 `--staging` reproduces the VPS-class profile on a larger machine: the backend in a systemd user
 scope (`CPUQuota=400%`, `MemoryMax=8G`, no swap) on cpuset 0-7, k6 on 8-15, so they never share
