@@ -28,8 +28,9 @@ class KekCheckResult:
 @dataclass(frozen=True)
 class RewrapReport:
     """One KEK re-wrap run (#2266). `remaining` counts the environment's rows left at
-    `from_version`: unrevoked API key rows, failed ones included, plus auth keyring rows (none
-    counted while no keyring store is wired, and then the run is not `complete`, #3505)."""
+    `from_version`: unrevoked API key rows, failed ones included, plus auth keyring rows and
+    signing keys holding a seed (each none while its store is not wired, and then the run is not
+    `complete`, #3505; #889)."""
 
     from_version: int
     to_version: int

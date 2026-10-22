@@ -155,10 +155,11 @@ Rotation procedure (owner-run, per environment; the re-wrap call latches new ord
    record. Ciphertext and `enc_nonce` untouched. Idempotent and resumable: the Owner calls again
    until the run is complete.
 4. Audit `security.kek_rotated` (from, to, row count; no key material) once no unrevoked API key
-   row and no auth keyring row of the environment is left at v(n) and no row failed, else
-   `security.kek_rotation_incomplete`. Then restart without `CV_KEK_PREV_HANDLE`, keeping v(n) in
-   custody: health must be OK with no stranded rows (a boot that finds some degrades with
-   `kek_rows_stranded`).
+   row, no auth keyring row and no audit export signing key holding its seed of the environment is
+   left at v(n) and no row failed, else `security.kek_rotation_incomplete`. The latter two move
+   only at a rotation boot: restart as in step 1, then call again. Then restart without
+   `CV_KEK_PREV_HANDLE`, keeping v(n) in custody: health must be OK with no stranded rows (a boot
+   that finds some degrades with `kek_rows_stranded`).
 5. Only then set `kek_versions.retired_at` for v(n), under change control, and destroy v(n): in a
    routine rotation once every pre-rotation backup has expired (the owner's offline copy keeps it
    until then), in a compromise rotation at once (`docs/ops/runbooks/kek-custody.md`).
@@ -166,7 +167,9 @@ Rotation procedure (owner-run, per environment; the re-wrap call latches new ord
    recovery-code keys (FU-3 #2152, ADR-0009 Amendment 4): they are two `auth_keys` rows per environment
    (`21-database-schema.md` §3.1.5a), which M2 re-wraps itself at the rotation boot, each new wrap
    verified before a compare-and-set. Seeds and code hashes never change, and `kek_rotated` waits until
-   no auth row is left at v(n).
+   no auth row is left at v(n). The audit export signing keys (`audit_signing_keys`, 21 §3.1.5b)
+   follow the same rule: M2 re-wraps them at that boot, and `kek_rotated` waits until none holding
+   its seed is left at v(n) (#889, ADR-0039 decision 6, Q3).
 
 ## 6. Degraded mode (fail CLOSED)
 

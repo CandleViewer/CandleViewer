@@ -31,6 +31,7 @@ from candleviewer.secrets.service import SecretsService
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
 from candleviewer.storage.repositories.auth_keys_sqlalchemy import SqlAlchemyAuthKeyStore
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
+from candleviewer.storage.repositories.export_keys_sqlalchemy import SqlAlchemyExportKeyStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -94,6 +95,7 @@ async def test_a_staged_rotation_runs_end_to_end_through_the_route(
         sources=_bound_sources(_Src(KEK_V2, 2), _Src(KEK_V1, 1)),
         harden=lambda: True,
         auth_keys=SqlAlchemyAuthKeyStore(rel, env="demo"),
+        export_keys=SqlAlchemyExportKeyStore(rel, env="demo", audit_row=_audit_row),  # #889
     )
     w, ctx = deploy(monkeypatch, staged)
     await w.auth.start(ctx)

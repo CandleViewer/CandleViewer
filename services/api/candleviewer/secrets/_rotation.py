@@ -13,17 +13,27 @@ from candleviewer.secrets._kek import LoadedKek, kcv_matches
 from candleviewer.secrets.broker import _SYSTEM, CredentialBroker
 from candleviewer.secrets.errors import KekLoadError, KekUnavailable
 from candleviewer.secrets.models import CredentialRow, RewrapReport
-from candleviewer.secrets.store import AuthKeyStore, KcvStore
+from candleviewer.secrets.signing import scrub_frames
+from candleviewer.secrets.store import AuthKeyStore, ExportKeyStore, KcvStore
 
 
 class RotatingBroker(CredentialBroker):
     """The broker the service runs: borrow/store/destroy plus KCV and KEK re-wrap."""
 
-    async def verify_kcv(self, kek: LoadedKek, kcvs: KcvStore, *, must_exist: bool) -> None:
+    async def verify_kcv(
+        self,
+        kek: LoadedKek,
+        kcvs: KcvStore,
+        *,
+        must_exist: bool,
+        export_keys: ExportKeyStore | None = None,
+    ) -> None:
         """No trust-on-first-use, inside this process's environment lineage (#2338).
 
         An unknown KCV is recorded only if no live row exists at that version, or after a
-        trial unwrap of one such row succeeds; `must_exist` (previous KEK) refuses unknown.
+        trial unwrap of one such row succeeds: an API key row's, else, with none, the active
+        audit export signing key's when it is wrapped at that version, so a wrong KEK never pins
+        the lineage (#889, ADR-0039 decision 6); `must_exist` (previous KEK) refuses unknown.
         An enrolment commits its `security.kek_enrolled` record with the row (#2266), and the
         KCV the store holds afterwards, a concurrent winner's included, is the one checked.
         """
@@ -40,6 +50,8 @@ class RotatingBroker(CredentialBroker):
                     env.zero(kek.unwrap_dek(row.dek_ref, credential_id=row.id))
                 except (InvalidTag, ValueError):
                     raise KekLoadError("kek_mismatch") from None
+            elif export_keys is not None:  # no API key row as evidence: the signing key
+                await self._trial_export(kek, export_keys)
             kind, role, _ = _SYSTEM
             fields = {"actor_kind": kind, "actor_role": role, "env": self._env}
             fields |= {"kek_version": str(kek.version), "kcv": kek.kcv().hex()}
@@ -50,6 +62,21 @@ class RotatingBroker(CredentialBroker):
             expected = stored
         if not kcv_matches(kek, expected):
             raise KekLoadError("kek_mismatch")
+
+    async def _trial_export(self, kek: LoadedKek, keys: ExportKeyStore) -> None:
+        """The active signing key, when wrapped at `kek`'s version, opens under `kek`, else
+        `kek_mismatch`; its DEK is zeroed and a failure's frames cleared (they hold the KEK)."""
+        rec = await self._io(keys.active(self._env), "store")
+        if rec is None or rec["kek_version"] != kek.version:
+            return
+        try:
+            env.zero(kek.unwrap_export_dek(rec["dek_ref"], key_id=rec["key_id"]))
+            return
+        except BaseException as exc:
+            scrub_frames(exc)
+            if not isinstance(exc, InvalidTag | ValueError):
+                raise  # not the KEK's doing (a cancellation): scrubbed, never a mismatch
+        raise KekLoadError("kek_mismatch")  # after the handler: nothing chained
 
     def staged(self, to_version: int) -> tuple[LoadedKek, LoadedKek]:
         """The current and previous KEK of a rotation to `to_version` this broker was booted for:
@@ -69,6 +96,7 @@ class RotatingBroker(CredentialBroker):
         actor: tuple[str, str, str | None] = _SYSTEM,
         batch: int = 50,
         auth_keys: AuthKeyStore | None = None,
+        export_keys: ExportKeyStore | None = None,
     ) -> RewrapReport:
         """Re-wrap every DEK at `new_kek_version - 1` under the current KEK (e27-kek.md §5).
 
@@ -78,9 +106,10 @@ class RotatingBroker(CredentialBroker):
         left, else `kek_rotation_started`; every record carries its `run_id` (#2266). Each
         listed row is re-read and fenced (`_fenced`). Keyset paging terminates; failures are
         audited as they occur; `kek_rotated` only when nothing is left (the environment's auth
-        keyring rows in `auth_keys` included) and no row failed, otherwise
-        `kek_rotation_incomplete`. With `auth_keys` None (no keyring store wired) the keyring is
-        unchecked: `auth_left` reads `unchecked` and the run is never complete (#3505).
+        keyring rows in `auth_keys` and signing keys holding a seed in `export_keys` included,
+        #889) and no row failed, otherwise `kek_rotation_incomplete`. Either store None (not
+        wired) is unchecked: `auth_left` or `export_left` reads `unchecked`, and the run is never
+        complete (#3505).
         """
         kek, prev = self.staged(new_kek_version)
         # Before the first await: a `stop()` that zeroes the KEKs mid-run cannot skip the opening
@@ -144,7 +173,9 @@ class RotatingBroker(CredentialBroker):
                     if await self._io(cas, "store"):
                         done += 1
                         m.credential_rewrap_rows_total.inc()
-            left, auth_left = await self._left(prev.version, auth_keys)
+            v = prev.version
+            left = await self._io(self._store.count_at_kek_version(v, self._env), "store")
+            auth_left, export_left = [await self._left(v, k) for k in (auth_keys, export_keys)]
         except BaseException:
             try:  # terminal record for a run that died mid-way (resumable: rows are CAS'd)
                 await self._audit(
@@ -154,27 +185,27 @@ class RotatingBroker(CredentialBroker):
             except Exception:
                 m.credential_outcome_audit_failures_total.inc()
             raise
-        left += auth_left or 0
+        left += (auth_left or 0) + (export_left or 0)
         fields = {
             **base,
             "rows": str(done),
             "left": str(left),
             "auth_left": "unchecked" if auth_left is None else str(auth_left),
+            "export_left": "unchecked" if export_left is None else str(export_left),
             "failed": str(len(failed)),
         }
-        complete = left == 0 and not failed and auth_left is not None
+        complete = left == 0 and not failed and None not in (auth_left, export_left)
         action = "security.kek_rotated" if complete else "security.kek_rotation_incomplete"
         await self._audit(action, fields)
         report = (prev.version, kek.version, done, left, tuple(failed))
         return RewrapReport(*report, run_id=run_id, resumed=resumed, complete=complete)
 
-    async def _left(self, version: int, auth_keys: AuthKeyStore | None) -> tuple[int, int | None]:
-        """`(API key rows, auth keyring rows)` of this environment still at `version`: the rows
-        `ids_at_kek_version` lists, and those of `auth_keys`, None (unchecked) without one."""
-        api = await self._io(self._store.count_at_kek_version(version, self._env), "store")
-        if auth_keys is None:
-            return api, None
-        return api, await self._io(auth_keys.count_at_kek_version(version, self._env), "store")
+    async def _left(self, version: int, keys: AuthKeyStore | ExportKeyStore | None) -> int | None:
+        """The rows of `keys` (auth keyring rows, or signing keys holding a seed, Q3) of this
+        environment still at `version`, besides the API key rows; None (unchecked) without it."""
+        if keys is None:
+            return None
+        return await self._io(keys.count_at_kek_version(version, self._env), "store")
 
     def _fenced(self, row: CredentialRow, key_id: UUID, version: int) -> bool:
         """The round-5 fence (#2266): a row revoked by either signal, destroyed in this process

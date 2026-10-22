@@ -327,14 +327,17 @@ async def test_the_keyring_fake_refuses_another_environment_as_the_adapter_does(
 def test_the_real_backend_hands_m2_the_keyring_store_of_its_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#3505: the production `rewrap_deks` counts the auth keyring rows of its environment."""
+    """#3505: the production `rewrap_deks` counts the auth keyring rows of its environment, and
+    #889 its signing keys: both stores reach M2 through `build_secrets_service`."""
     from candleviewer import app
     from candleviewer.admin import wiring
     from candleviewer.settings import Environment, Settings
     from candleviewer.storage.repositories.auth_keys_sqlalchemy import SqlAlchemyAuthKeyStore
+    from candleviewer.storage.repositories.export_keys_sqlalchemy import SqlAlchemyExportKeyStore
 
     monkeypatch.setattr(wiring, "SecretsService", spy := Mock(wraps=SecretsService))
     settings = Settings(storage_backend="real", environment=Environment.TESTNET)
     app._build_secrets(settings, app._build_audit(settings))
-    keyring = spy.call_args.kwargs["auth_keys"]
+    keyring, keys = (spy.call_args.kwargs[k] for k in ("auth_keys", "export_keys"))
     assert isinstance(keyring, SqlAlchemyAuthKeyStore) and keyring._env == "testnet"
+    assert isinstance(keys, SqlAlchemyExportKeyStore) and keys._env == "testnet"

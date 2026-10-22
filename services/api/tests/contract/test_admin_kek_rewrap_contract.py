@@ -52,20 +52,24 @@ _EXAMPLES = support.example_cases([(_PATH, "post"), (_ROT_PATH, "post")]) + [
     (f"post request {name}", "/components/schemas/KekRewrapRequest", example["value"])
     for name, example in _BODY["examples"].items()
 ]
-#: The terminal record waits for both kinds of row (ruling item 2; ADR-0009 Amendment 4).
+#: The terminal record waits for every kind of row (ruling item 2; ADR-0009 Amendment 4;
+#: ADR-0039 decision 6).
 _TERMINAL = (
-    "a terminal `security.kek_rotated` when no unrevoked API key row and no auth keyring row of "
-    "the environment is left at the previous version and no row failed, else "
-    "`security.kek_rotation_incomplete`."
+    "a terminal `security.kek_rotated` when no unrevoked API key row, no auth keyring row and no "
+    "signing key holding a seed of the environment is left at the previous version and no row "
+    "failed, else `security.kek_rotation_incomplete`."
 )
 #: KekRewrapResult member -> the rows it counts, in the schema and the generated model.
 _COUNTS = {
     "rewrapped": "API key rows this run moved to `to_version`.",
     "remaining": "Rows of the environment still at `from_version` after this run: unrevoked API "
-    "key rows, failed rows included, plus auth keyring rows, which only the rotation boot moves.",
+    "key rows, failed rows included, plus auth keyring rows and the environment's audit export "
+    "signing keys still holding a seed (`audit_signing_keys`, ADR-0039 decision 6, Q3), which "
+    "only the rotation boot moves.",
     "failed": "API key rows this run could not re-wrap.",
-    "complete": "True when the run ended with `security.kek_rotated`: no unrevoked API key row "
-    "and no auth keyring row is left at `from_version`, and no row failed.",
+    "complete": "True when the run ended with `security.kek_rotated`: no unrevoked API key row, "
+    "no auth keyring row and no signing key holding a seed is left at `from_version`, and no row "
+    "failed.",
 }
 
 
@@ -227,19 +231,22 @@ def test_revoked_rows_neither_move_nor_hold_back_completion() -> None:
 
 
 def test_auth_keyring_rows_hold_back_completion_and_move_only_at_the_rotation_boot() -> None:
-    """ADR-0009 Amendment 4 (#2152): M2 re-wraps the environment's `auth_keys` rows at the
-    rotation boot, and `security.kek_rotated` waits until none is left at the previous version
+    """ADR-0009 Amendment 4 (#2152), and ADR-0039 decision 6 for the signing keys (#889): M2
+    re-wraps the environment's `auth_keys` rows and signing keys at the rotation boot, and
+    `security.kek_rotated` waits until none is left at the previous version
     (`docs/plan/spikes/e27-kek.md` section 5)."""
     boot = (
-        "The environment's auth keyring rows (`auth_keys`) are not re-wrapped here: M2 re-wraps "
-        "them at the rotation boot (ADR-0009 Amendment 4, #2152). The call counts them, and the "
-        "rotation is complete only once none of them is left at the previous version."
+        "The environment's auth keyring rows (`auth_keys`) and its audit export signing keys "
+        "still holding a seed (`audit_signing_keys`, ADR-0039 decision 6, Q3) are not re-wrapped "
+        "here: M2 re-wraps them at the rotation boot (ADR-0009 Amendment 4, #2152). The call "
+        "counts them, and the rotation is complete only once none of them is left at the "
+        "previous version."
     )
     assert boot in _DESC and _TERMINAL in _DESC
     assert (
-        "Calling again moves API key rows only: an auth keyring row left at `from_version` "
-        "moves at the next rotation boot (ADR-0009 Amendment 4)."
-        in text(_OP["responses"]["200"]["description"])
+        "Calling again moves API key rows only: an auth keyring row or a signing key left at "
+        "`from_version` moves at the next rotation boot (ADR-0009 Amendment 4; ADR-0039 "
+        "decision 6)." in text(_OP["responses"]["200"]["description"])
     )
     for name, rule in _COUNTS.items():
         _assert_result_member_says(name, rule)

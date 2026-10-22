@@ -260,12 +260,15 @@ Adds one key class to M2 (Design §8): the audit export signing key, which ADR-0
 - **Unavailable degrades export only.** A signing key that is missing or cannot be opened makes
   export unavailable and nothing else: `start()` latches no order entry for it, while a KEK failure
   still does (Amendment 1). A key that exists but cannot be opened is never generated over.
+  2026-10-22 (#889 S6a-2a): at a KEK's enrolment boot with no API key row as evidence, the signing
+  key's failed trial unwrap is such a KEK failure (`kek_mismatch`; ADR-0039 decision 6).
 - **Rotation.** `POST /admin/keys/audit-signing/rotate`, beside `rewrapKek`: Owner only
   (`keys:manage`), step-up class `keys`, CSRF, idempotent and audited in its own transaction
   (ADR-0039 decision 7). The old key stays
   listed for verification (`GET /admin/audit/signing-keys`) and never signs again.
 - **KEK rotation and backups.** M2 re-wraps the signing-key rows at the rotation boot, as it does
-  `auth_keys` (Amendment 4), and the call counts them; the KCV trial unwrap covers them, and
+  `auth_keys` (Amendment 4), and the call counts them; the KCV trial unwrap reaches them when no
+  API key row is evidence, and
   `security.kek_rotated` (retired rows whose seed is destroyed aside, ADR-0039 Q3) waits until none is left at the
   previous version. Database backups hold only the sealed seed (Design §7). Losing the KEK loses
   the key, an accepted loss: exports signed before still verify with the listed public key, and a

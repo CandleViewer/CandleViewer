@@ -32,11 +32,11 @@ from candleviewer.secrets import (
     mint_borrower,
     mint_candidate_keys,
 )
-from candleviewer.secrets.store import InMemoryAuthKeyStore, InMemoryCredentialStore
+from candleviewer.secrets.store import InMemoryCredentialStore
 from tests.unit.api.test_invites_create_app_e2e import _h, _login, _World
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
-from tests.unit.credentials_m2._service_fakes import _boot, _Src, _store_one, _svc
+from tests.unit.credentials_m2._service_fakes import _boot, _counted, _Src, _store_one, _svc
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, AuditLog
 from tests.unit.credentials_m2.test_rotation_preconditions import _hold
 
@@ -105,7 +105,7 @@ async def kek(monkeypatch: pytest.MonkeyPatch) -> _Kek:
     for _ in range(2):
         await _store_one(v1)
     staged = (_Src(KEK_V2, 2), _Src(KEK_V1, 1))
-    svc = _svc(*staged, store=store, audit=audit, auth_keys=InMemoryAuthKeyStore())
+    svc = _svc(*staged, store=store, audit=audit, **_counted())  # a run counts both (#889)
     w, ctx = deploy(monkeypatch, svc)
     await w.auth.start(ctx)
     await svc.start(ctx)

@@ -1307,7 +1307,10 @@ Non-secret key-check values identifying each KEK version (`e27-kek.md` §5). `kc
 HMAC-SHA256(KEK, `"cv-kek-kcv-v1"`), compared in constant time at start-up. No trust-on-first-use: a
 KCV is recorded only when no unrevoked `api_keys` row and no `auth_keys` row (§3.1.5a) of the
 process's environment exists at that version, or after a trial unwrap of one such row succeeds; the
-previous KEK's KCV must already exist. Data class: Internal (`env` and `kcv`).
+previous KEK's KCV must already exist. With no `api_keys` row as evidence, the trial unwraps the
+environment's active audit export signing key when it is wrapped at that version (§3.1.5b; #889,
+ADR-0039 decision 6): its failure is `kek_mismatch`, an unreadable table `kcv_store_unavailable`.
+Data class: Internal (`env` and `kcv`).
 
 Each environment has its own KEK lineage (#2338, ADR-0009 Amendment 3). Rows are keyed
 `(env, version)` and each lineage is numbered from 1. The version policy (retired, out of sequence)

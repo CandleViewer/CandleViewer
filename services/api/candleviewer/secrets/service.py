@@ -48,6 +48,7 @@ from candleviewer.secrets.store import AuditSink, AuthKeyStore, CredentialStore,
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.secrets.store import ExportKeyStore
     from candleviewer.settings import Settings
 
 REMEDIATION = (
@@ -224,12 +225,16 @@ class SecretsService:
         harden: Callable[[], bool] = _kek.harden_process,
         load_timeout_s: float = 10.0 + _LOAD_MARGIN_S,
         auth_keys: AuthKeyStore | None = None,
+        export_keys: ExportKeyStore | None = None,
     ) -> None:
         self._store, self._kcv, self._audit_sink = store, kcv_store, audit
         self._sources, self._harden = sources, harden
         self._load_timeout = load_timeout_s
         #: The environment's auth keyring rows a re-wrap run counts (#3505).
         self._auth_keys = auth_keys
+        #: Its audit export signing keys: a re-wrap run counts them, and a KEK enrolment with no
+        #: API key row as evidence trials the active one (#889, ADR-0039 decision 6).
+        self._export_keys = export_keys
         self._broker: RotatingBroker | None = None
         self._kek_version: int | None = None
         self._reason: str | None = None
@@ -365,7 +370,9 @@ class SecretsService:
             try:  # #2266: the previous KEK first, so a wrong one never pins v(n+1)
                 if prev is not None:
                     await broker.verify_kcv(prev, self._kcv, must_exist=True)
-                await broker.verify_kcv(kek, self._kcv, must_exist=False)
+                await broker.verify_kcv(
+                    kek, self._kcv, must_exist=False, export_keys=self._export_keys
+                )
             except KekLoadError:
                 raise
             except Exception:
@@ -481,7 +488,7 @@ class SecretsService:
         this process's and its KEKs are at `to_version` and `to_version - 1`, and
         `kek_rotation_in_progress` while a run is under way. Otherwise order entry is latched
         before the run's opening record, until restart, and the run counts the auth keyring
-        (#3505). The Owner is recorded on every record."""
+        (#3505) and the signing keys (#889). The Owner is recorded on every record."""
         actor = ("user", actor_role, actor_user_id)
         broker, gate = self._broker, self._gate
         if broker is None or gate is None:
@@ -501,7 +508,9 @@ class SecretsService:
         self._rotating = True  # no await since the check: single-flight
         try:
             self._latch_rotation(gate)
-            return await broker.rewrap_all(to_version, actor=actor, auth_keys=self._auth_keys)
+            return await broker.rewrap_all(
+                to_version, actor=actor, auth_keys=self._auth_keys, export_keys=self._export_keys
+            )
         except CredentialUnavailable as exc:
             audit = str(exc) in _AUDIT_FAILURES
             raise KekRotationError("audit_unavailable" if audit else "store_unavailable") from None

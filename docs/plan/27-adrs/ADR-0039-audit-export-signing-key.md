@@ -100,6 +100,7 @@ Option (a), with Ed25519.
    it. Nothing outside `secrets` sees it, and no route, record, log or metric carries it. A key that is missing or
    cannot be opened makes export unavailable and nothing else: `start()` latches no order entry for it, while a KEK
    failure still does (ADR-0009 Amendment 1). A key that exists but cannot be opened is never generated over.
+   2026-10-22 (#889 S6a-2a): one exception, at a KEK's enrolment boot, is decision 6's dated clause.
 3. **An injected signer, no new module edge (ruling 1).** `audit` owns a `Signer` Protocol with one call,
    `sign_audit_export(key_id, digest, job_id, actor_user_id) -> signature`: `digest` is the 32 raw bytes of the file's
    SHA-256, `job_id` and `actor_user_id` (the acting Owner, passed as for `CandidateSigner`, SR-E27-09) are for its
@@ -173,6 +174,13 @@ Option (a), with Ed25519.
    waits until none is left at the previous version. A re-wrap that skipped them would break signing silently, at
    the next export rather than at the rotation. Losing the KEK loses the key, the accepted model (D1 item 6): exports
    signed before still verify with the listed public key, and a rotation (decision 5) provides the next key.
+   2026-10-22 (#889 S6a-2a, the orchestrator's ruling 2): at a boot that enrols a KEK version, the signing key is part
+   of the KEK's no-trust-on-first-use proof only when no API key row is evidence at that version. Then a failed trial
+   unwrap of the active key is `kek_mismatch`, a KEK failure that latches order entry, so a wrong KEK never pins the
+   lineage. A signing-key store that cannot be read there latches with the existing `kcv_store_unavailable`. When an
+   API key row proved the KEK, the signing key is not trialled, and its own failure at the boot check only degrades
+   export. The call's `remaining` counts the keys still holding a seed (`export_left` in its records); an unwired
+   store reads `unchecked`, and the run is never complete.
 7. **Records (C-2.9).** The signer writes `security.audit_export_signed` before it signs, through M2's audit port
    (`admin/wiring.py:114-120`), naming the job id, the acting Owner (`actor_user_id`), the file's digest and the key's
    id and fingerprint. The download writes `admin.audit_export` with reason `downloaded` before any byte is streamed
