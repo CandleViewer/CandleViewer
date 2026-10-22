@@ -32,6 +32,8 @@ from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories import replay_sessions_sqlalchemy as mod
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.replay_sessions import (
     ReplaySessionConstraintError,
@@ -275,10 +277,10 @@ async def test_a_real_check_violation_leaves_no_row_values_in_the_chain(
                 await uow.session.execute(insert)
     finally:
         await rel.dispose()
-    # Control: the engine hides the bound values, but the server's `DETAIL: Failing row contains
-    # (...)` still rides in the cause chain, which is why the adapter must not chain the error.
-    assert "[parameters:" not in _rendered(raw.value)
-    assert _NOTE in _rendered(raw.value)
+    # #2748: the engine hides the bound values, and the unit of work strips the server's
+    # `DETAIL: Failing row contains (...)`; the raw failure keeps only its SQLSTATE and constraint.
+    assert "[parameters:" not in _rendered(raw.value) and _NOTE not in _rendered(raw.value)
+    assert (sqlstate_of(raw.value), constraint_of(raw.value)) == ("23514", "rps_range")
     with pytest.raises(ReplaySessionConstraintError) as err:
         await h.make(user, bookmarks=notes, range_end=T0)
     assert err.value.constraint == "rps_range"

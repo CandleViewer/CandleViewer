@@ -34,6 +34,7 @@ from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import (
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    sqlstate_of,
 )
 
 pytestmark = pytest.mark.integration
@@ -215,8 +216,9 @@ async def test_a_read_is_cut_near_read_timeout_and_leaves_the_pooled_default(
     before, pid_sql = await _pooled(relational), sa.text("SELECT pg_backend_pid() AS pid")
     read = await SqlAlchemyAdminCounts(relational, env="demo")._row(pid_sql)  # same backend
     started = time.monotonic()
-    with pytest.raises(DBAPIError, match="statement timeout"):
+    with pytest.raises(DBAPIError) as raised:
         await SqlAlchemyAdminCounts(relational, env="demo")._row(sa.text("SELECT pg_sleep(5)"))
+    assert sqlstate_of(raised.value) == "57014"  # statement timeout; its text is stripped (#2748)
     assert time.monotonic() - started < 2.5
     assert repo.READ_TIMEOUT == "1s" and await _pooled(relational) == before
     assert read["pid"] == before[0]  # one pooled backend throughout: the check is not vacuous

@@ -30,6 +30,7 @@ from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
 from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as lifecycle
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.user_lifecycle import GrantLevel, UserStatusChange
 from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import (
@@ -276,8 +277,9 @@ async def test_disable_rolls_back_when_a_cascade_statement_fails(db: Any, table:
             await conn.exec_driver_sql(ddl)
         await conn.execute(_FAIL_ON, {"tbl": table, "id": str(user)})
     before, hook = await _snapshot(engine, user), _Hook()
-    with pytest.raises(sa.exc.DBAPIError, match=f"injected failure on {table}"):
+    with pytest.raises(sa.exc.DBAPIError) as raised:
         await _store(rel).disable(user, actor=actor, now=_NOW, audit=hook)
+    assert sqlstate_of(raised.value) == "P0001"  # the injected RAISE; its text is stripped (#2748)
     assert hook.calls == [] and await _snapshot(engine, user) == before
 
 
