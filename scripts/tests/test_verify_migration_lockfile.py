@@ -15,6 +15,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.ci import verify_migration_lockfile as gate
@@ -133,6 +135,43 @@ def test_verify_revision_id_mismatch_fails(tmp_path: Path) -> None:
     violations = gate.verify(lockfile, versions_dir, repo_root)
 
     assert any(v.code == "CI-MIG-LOCK-004" for v in violations)
+
+
+def _rewrite_0001(lockfile: Path, versions_dir: Path, text: str) -> None:
+    """Replace 0001's file and keep its lockfile sha256 current, as a PR adding it would."""
+    (versions_dir / "0001_initial.py").write_text(text, encoding="utf-8")
+    lock_data = json.loads(lockfile.read_text(encoding="utf-8"))
+    lock_data["revisions"]["0001_initial"]["sha256"] = _sha256(text.encode("utf-8"))
+    lockfile.write_text(json.dumps(lock_data), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "revision",
+    [
+        'REV = "0001_initial"\nrevision = REV',  # Alembic reads it; this tool cannot
+        'revision = "0001_initial"\nrevision = REV',  # a later non-constant assignment wins
+        "",  # no module-level revision at all
+    ],
+    ids=["non-constant", "constant-then-non-constant", "missing"],
+)
+def test_verify_a_revision_that_is_not_a_string_constant_fails(
+    tmp_path: Path, revision: str
+) -> None:
+    """#4032: the lockfile key must match a module-level string constant, the last assignment;
+    anything this tool cannot read is refused, never skipped."""
+    lockfile, versions_dir, repo_root = _make_repo(tmp_path)
+    text = _REV_0001.replace('revision: str = "0001_initial"', revision)
+    _rewrite_0001(lockfile, versions_dir, text)
+    violations = gate.verify(lockfile, versions_dir, repo_root)
+    assert [v.code for v in violations] == ["CI-MIG-LOCK-004"]
+
+
+def test_verify_a_non_constant_down_revision_fails(tmp_path: Path) -> None:
+    lockfile, versions_dir, repo_root = _make_repo(tmp_path)
+    text = _REV_0001.replace("down_revision: str | None = None", "down_revision = PARENT")
+    _rewrite_0001(lockfile, versions_dir, text)
+    violations = gate.verify(lockfile, versions_dir, repo_root)
+    assert [v.code for v in violations] == ["CI-MIG-LOCK-005"]
 
 
 def test_verify_down_revision_mismatch_fails(tmp_path: Path) -> None:
