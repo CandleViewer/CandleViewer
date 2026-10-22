@@ -612,27 +612,68 @@ def _lost() -> Exception:
     )
 
 
+class _Exit(BaseException):
+    """An exit other than a cancellation, as `KeyboardInterrupt` or `SystemExit` is; a task
+    keeps it as its result where those two would stop the event loop of the test run."""
+
+
+_EXITS = pytest.mark.parametrize("failure", [asyncio.CancelledError, _Exit], ids=["cancel", "exit"])
+
+
+@_EXITS
 @pytest.mark.parametrize("at", ["connection", "set-local-1", "set-local-2"])
-async def test_a_cancelled_start_still_leaves_cancelled_when_its_close_fails(at: str) -> None:
+async def test_a_cancelled_start_still_leaves_cancelled_when_its_close_fails(
+    at: str, failure: type[BaseException]
+) -> None:
     lost = _lost()
-    session = _StartingSession(at, asyncio.CancelledError(), lost)
+    assert _P1 in _rendered(lost)  # the control: the server's text is there before the strip
+    session = _StartingSession(at, failure(), lost)
     pending = relational._PendingUnitOfWork(cast(Any, lambda: session), "test")
-    with pytest.raises(asyncio.CancelledError) as raised:
+    with pytest.raises(failure) as raised:
         async with pending:
             pytest.fail("the unit of work must not start")
     assert raised.value.__context__ is lost and session.calls == ["connection", "close"]
     assert _P1 not in _rendered(raised.value)
 
 
+@_EXITS
 @pytest.mark.parametrize("step", ["rollback", "close"])
-async def test_a_cancelled_block_still_leaves_cancelled_when_its_cleanup_fails(step: str) -> None:
+async def test_a_cancelled_block_still_leaves_cancelled_when_its_cleanup_fails(
+    step: str, failure: type[BaseException]
+) -> None:
     lost = _lost()
+    assert _P1 in _rendered(lost)  # the control: the server's text is there before the strip
     session = _Session(**{step: lost})
-    with pytest.raises(asyncio.CancelledError) as raised:
+    with pytest.raises(failure) as raised:
         async with _uow(session):
-            raise asyncio.CancelledError
+            raise failure
     assert raised.value.__context__ is lost and session.calls == ["rollback", "close"]
     assert _P1 not in _rendered(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("failure", "exit_"),
+    [(asyncio.CancelledError, _Exit), (_Exit, asyncio.CancelledError)],
+    ids=["cancel-then-exit", "exit-then-cancel"],
+)
+@pytest.mark.parametrize("at", ["connection", "started"], ids=["start", "block"])
+async def test_an_exit_from_the_cleanup_itself_still_leaves(
+    at: str, failure: type[BaseException], exit_: type[BaseException]
+) -> None:
+    first, second = failure(), exit_()  # the cleanup is the close, at the start and the block
+    session = _StartingSession(at, first, second)
+    with pytest.raises(exit_) as raised:
+        async with relational._PendingUnitOfWork(cast(Any, lambda: session), "test"):
+            raise first
+    assert raised.value is second and raised.value.__context__ is first
+
+
+async def test_a_cancellation_over_a_plain_close_error_leaves_with_no_cycle() -> None:
+    gone = OSError("the socket is gone")  # no driver text: CPython, not the strip, cuts its link
+    with pytest.raises(asyncio.CancelledError) as raised:
+        async with _uow(_Session(close=gone)):
+            raise asyncio.CancelledError
+    assert raised.value.__context__ is gone and gone.__context__ is None
 
 
 @pytest.mark.parametrize(
@@ -644,10 +685,11 @@ async def test_a_deadline_still_reads_as_a_timeout_when_the_cleanup_fails(
     at: str, calls: list[str]
 ) -> None:
     lost = _lost()
+    assert _P1 in _rendered(lost)  # the control: the server's text is there before the strip
     session = _StartingSession(at, None, lost)
     pending = relational._PendingUnitOfWork(cast(Any, lambda: session), "test")
     with pytest.raises(TimeoutError) as raised:
-        async with asyncio.timeout(0.01), pending:
+        async with asyncio.timeout(0), pending:  # fires at the first wait: no real timer
             await _never()  # the block's statement, when the start gets through
     cancelled = raised.value.__cause__  # `asyncio.timeout` raises from the cancellation
     assert isinstance(cancelled, asyncio.CancelledError) and cancelled.__context__ is lost
@@ -689,8 +731,8 @@ async def test_a_pool_log_line_during_the_cleanup_chains_the_error_already_strip
                 raise _unique()
     finally:
         pool.removeHandler(rendering)
-    [line] = rendering.lines
-    assert line.startswith("Exception during reset or similar") and _P1 not in line
+    [line] = [x for x in rendering.lines if x.startswith("Exception during reset or similar")]
+    assert _P1 not in line
     # the block's error is in the line, as the reset's context, without the server's text
     assert "IntegrityError: database error (sqlstate 23505, constraint users_email_key)" in line
 
