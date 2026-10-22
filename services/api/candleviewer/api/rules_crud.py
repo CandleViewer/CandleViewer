@@ -6,7 +6,7 @@ Thin HTTP adapter over `rules.manager.RulesManager` (`22-api-openapi.yaml`
 fresh step-up) or `None` (401). `rules:read` gates reads, `rules:write` gates writes;
 live arming additionally needs `rules:arm_live` + a fresh one-shot step-up, enforced by the
 manager's synchronous arming check (statecharts record, code enforces - C-2.21). Bodies are read
-under `MAX_RULE_BODY_BYTES` (413 `payload_too_large`) before anything parses them.
+through `api/rule_body.py` (413 `payload_too_large`) before anything parses them.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from candleviewer.api.rule_body import MAX_RULE_BODY_BYTES, read_object
+from candleviewer.api.rule_body import read_object
 from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.ir.models import RuleScope
@@ -316,7 +316,7 @@ def make_rules_crud_router(
             }
         ):
             return _bad("body must be {mode, reason?, acknowledge_flatten_all?}")
-        if (refused := _unstorable(body, "reason")) is not None:
+        if (refused := _unstorable(body, "mode") or _unstorable(body, "reason")) is not None:
             return refused
         try:
             if body["mode"] == "armed":
@@ -340,4 +340,4 @@ def make_rules_crud_router(
     return router
 
 
-__all__ = ["MAX_RULE_BODY_BYTES", "make_rules_crud_router"]
+__all__ = ["make_rules_crud_router"]

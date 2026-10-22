@@ -44,7 +44,10 @@ async def _read_capped(request: Request, cap: int) -> bytes | None:
         raw += chunk
         if len(raw) > cap:
             return None
-    return bytes(raw)
+    # Starlette's own body cache: `Request.body()` fills it, and `body()`, `json()` and `stream()`
+    # reuse it, so a later reader of this request (live arming's step-up) sees these bytes.
+    request._body = data = bytes(raw)
+    return data
 
 
 async def read_object(
