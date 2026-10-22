@@ -190,7 +190,7 @@ export const PAIRS = [
   { fg: "color.neutral.default", bg: "color.surface.app", threshold: THRESHOLD.NON_TEXT },
 
   // --- Drawer surfaces and notice tints (E08-D06 SCR-103, spec §13) --
-  // Held out: `color.text.link` on `color.surface.overlay`, 6.15:1 in high contrast (E08-D06 H-8).
+  // Held out (E47-D03 retune): `color.text.link` on `color.surface.overlay`, 6.15:1 in HC (H-8).
   { fg: "color.text.primary", bg: "color.surface.overlay", threshold: THRESHOLD.TEXT },
   { fg: "color.text.secondary", bg: "color.surface.overlay", threshold: THRESHOLD.TEXT },
   { fg: "color.text.tertiary", bg: "color.surface.overlay", threshold: THRESHOLD.TEXT },
