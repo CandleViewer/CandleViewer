@@ -5138,3 +5138,4 @@ tracker).
 - **infra-devops**: the Postgres server log no longer records a failed statement's row values or bound parameters (#2748) (#4080)
 - **accounts-admin**: every audit insert now draws its row id under the chain lock, and `audit_chain()` resolves what it calls through a search path of its own rather than the inserting session's (#889) (#4094)
 - **backend-platform**: a unit of work that cannot start gives its database connection back, and no database error leaves one with the server's text, the driver's own error and a rolled-back session's report included (#2748) (#4090)
+- **frontend-platform**: the web client's nightly frame-decoding fuzz check passes again, and every refusal message the binary frame decoders can give is now checked against its log-safe list on each pull request (#4112) (#4116)
