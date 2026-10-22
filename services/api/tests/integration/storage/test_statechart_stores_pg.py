@@ -459,6 +459,7 @@ async def test_a_snapshot_with_a_short_tag_leaves_without_its_row(
         await SqlAlchemySnapshotStore(rel).upsert(row)
     assert err.value.sqlstate == "23514"  # `ms_tag_len`: a typed refusal names only the state
     assert (err.value.__cause__, err.value.__context__) == (None, None)  # raised outside its except
+    assert any("statechart_store_failed" in line for line in seen.logs)  # control: its log line
     assert_no_row_values(err.value, seen, _NOTE, _TAG)
 
 

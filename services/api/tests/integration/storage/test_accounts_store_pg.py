@@ -62,7 +62,8 @@ _SNAPSHOT: dict[str, object] = {
 # the calling line (#2748). `ux_ea_label` is on lower(label), so its DETAIL prints lower case.
 _KEY_ID_ENC, _SECRET_ENC = b"\x01" * 28, b"\x02" * 28
 _LABEL, _LABEL2, _BAD_UID, _IP = "secret-label-1", "secret-label-2", "SECRET-uid", "198.51.100.23"
-_TYPED = (None, True)  # `(__cause__, __suppress_context__)` of an error raised `from None`
+# `(__cause__, __suppress_context__)` of an error raised `from None`, or of a stripped driver error
+_TYPED = (None, True)
 
 
 @pytest.fixture(scope="module")
@@ -512,6 +513,7 @@ async def test_a_pass_that_is_trade_and_read_only_leaves_without_the_key_row(
     with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
         await SqlAlchemyKeySelfCheckStore(rel, env="demo").record_pass(kid, verified)
     assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "ak_readonly_excl")
+    assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
     assert_no_row_values(err.value, seen, _IP, _KEY_ID_ENC, _SECRET_ENC)
 
 

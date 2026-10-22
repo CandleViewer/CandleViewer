@@ -54,6 +54,7 @@ _TERMINATE = "SELECT pg_terminate_backend(%s)"
 # S ciphertexts and a wrapped-DEK ref, planted by name (#2748); under 31 bytes, so `\x<hex>` fits
 # DETAIL's cut.
 _KEY_ID_ENC, _SECRET_ENC, _DEK_REF = b"SECRET-KEY-ID-ENC", b"SECRET-SECRET-ENC", "v1:SECRET-DEK-REF"
+_TYPED = (None, True)  # `(__cause__, __suppress_context__)` of a stripped driver error
 #: A backend waiting for the chain lock while it holds the api_keys lock of an UPDATE it ran.
 _WAITER = (
     "SELECT w.pid FROM pg_locks w JOIN pg_locks r ON r.pid = w.pid "
@@ -222,6 +223,7 @@ async def test_an_insert_with_a_short_nonce_leaves_without_the_ciphertexts(pg_ds
         with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
             await store.insert(row.to_record())
         assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "ak_nonce_len")
+        assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
         assert_no_row_values(err.value, seen, _KEY_ID_ENC, _SECRET_ENC, _DEK_REF)
     finally:
         await rel.dispose()

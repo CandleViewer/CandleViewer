@@ -357,6 +357,7 @@ async def test_wal_path_and_in_transaction_inserts_interleave_into_one_verified_
 
 # What a record `au_action_fmt` refuses carries (P1/P2 values, planted by name: #2748, C-12.6).
 _ACTION, _ACTOR, _IP, _NOTE = "Bad Action", "secret-actor-label", "198.51.100.23", "SECRET-NOTE"
+_TYPED = (None, True)  # `(__cause__, __suppress_context__)` of a stripped driver error
 
 
 async def test_a_refused_audit_insert_leaves_without_the_records_values(pg_dsn: str) -> None:
@@ -366,6 +367,7 @@ async def test_a_refused_audit_insert_leaves_without_the_records_values(pg_dsn: 
         with server_text(relational) as seen, pytest.raises(sa.exc.IntegrityError) as err:
             await SqlAlchemyAuditRepository(relational).insert(refused)
         assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "au_action_fmt")
+        assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
         assert_no_row_values(err.value, seen, _ACTION, _ACTOR, _IP, _NOTE)
     finally:
         await relational.dispose()
