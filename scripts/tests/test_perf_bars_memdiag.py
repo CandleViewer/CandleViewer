@@ -34,7 +34,7 @@ ALLOCATOR = (
     "MALLOC_MMAP_THRESHOLD_",  # the knob under test, the likeliest inherited one
 )
 FAKE_UV = f"""import json, os, sys
-seen = {{k: os.environ[k] for k in {ALLOCATOR!r} + ("MALLOC_MMAP_THRESHOLD_",) if k in os.environ}}
+seen = {{k: os.environ[k] for k in {ALLOCATOR!r} if k in os.environ}}
 with open(os.environ["UV_LOG"], "a", encoding="utf-8") as fh:
     fh.write(json.dumps([sys.argv[1:], seen]) + "\\n")
 """
@@ -83,14 +83,22 @@ def test_dispatch_only_read_only_pinned_and_one_soak_at_a_time_on_the_bench_runn
         "CV_ENV": "test",
         "CV_BENCH_MACHINE_PROFILE": "bench-runner",
         "PYTHONUNBUFFERED": "1",
-    }  # the profile a report's `ALIKE` compares with the pack's reading
+    }  # the pack's profile: reading 2 is read beside the legs
     pack_env = _doc(PACK)["jobs"]["perf-pack-full"]["env"]
     assert (
         job["env"]["CV_BENCH_MACHINE_PROFILE"] == pack_env["CV_BENCH_MACHINE_PROFILE"]
     )
     # every leg runs at one commit: the first step refuses a dispatch from anything but a tag
     first = job["steps"][0]
-    assert first["if"] == "github.ref_type != 'tag'" and "exit 1" in first["run"]
+    assert set(first) == {"name", "if", "run"} and "exit 1" in first["run"]
+    assert (
+        first["if"]
+        == "github.ref_type != 'tag' || !startsWith(github.ref_name, 'bench/')"
+    )
+    # nothing between the refusal and the leg may run past it
+    assert all(
+        "if" not in s and "continue-on-error" not in s for s in job["steps"][1:-2]
+    )
     assert (
         job["concurrency"]
         == GROUP
