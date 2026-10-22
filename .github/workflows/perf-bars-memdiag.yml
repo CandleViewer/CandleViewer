@@ -11,8 +11,10 @@ name: perf-bars-memdiag
 # contend for memory and CPU and distort the very RSS and lag figures they read. This job and
 # perf-ingestion-nightly.yml's perf-pack-full share the concurrency group `cv-bench-01`, so the two
 # serialise across workflows (the orchestrator's ruling (a), 2026-10-22). GitHub keeps one PENDING
-# run per group and cancels the older pending one when another queues: dispatch a leg only once the
-# one before it has started. The allocator variables are set here, before the interpreter starts
+# run per group: a second dispatch while a leg or the pack runs replaces a queued one (never the
+# running one; cancel-in-progress is false). So dispatch one at a time, after checking
+# `gh run list --workflow perf-bars-memdiag.yml` and `--workflow perf-ingestion-nightly.yml` for a
+# queued or running soak. The allocator variables are set here, before the interpreter starts
 # (it reads PYTHONMALLOC and glibc's MALLOC_* only then); any already set are dropped first, and the
 # leg records what it saw and checks pymalloc against it. Every input reaches the script through
 # env and is checked first; the checkout drops its token.
