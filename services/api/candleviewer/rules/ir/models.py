@@ -28,7 +28,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from candleviewer.domain.primitives import AccountId, Environment, Notional, RuleId, Symbol, UserId
-from candleviewer.domain.text import UNPAIRED_SURROGATE, unpaired_surrogate
+from candleviewer.domain.text import UNPAIRED_SURROGATE, UNSTORABLE_TEXT, unpaired_surrogate
 
 METRIC_PATTERN = r"^[a-z][a-z0-9_]{1,48}$"
 MAX_BOOLEAN_CHILDREN = 32
@@ -114,6 +114,21 @@ def _paired(v: Any) -> Any:
 
 #: Text the model refuses itself when it holds a lone surrogate (see ``_paired``).
 PairedStr = Annotated[str, AfterValidator(_paired)]
+
+
+def storable_text(v: Any) -> Any:
+    """``v``, refused if any text in it (keys too) holds U+0000, which Postgres cannot store. Each
+    document root (``Rule``, the alerts' condition) runs it once, before its fields."""
+    todo = [v]
+    while todo:
+        cur = todo.pop()
+        if isinstance(cur, str) and "\x00" in cur:
+            raise PydanticCustomError("unstorable_text", UNSTORABLE_TEXT)
+        if isinstance(cur, dict):
+            todo += [*cur, *cur.values()]
+        elif isinstance(cur, (list, tuple)):
+            todo += cur
+    return v
 
 
 class MetricRef(BaseModel):
@@ -314,6 +329,11 @@ class Rule(BaseModel):
     created_at: int | None = None
     updated_at: int | None = None
     ir_version: Literal[1] = 1
+
+    @model_validator(mode="before")
+    @classmethod
+    def _storable(cls, data: Any) -> Any:
+        return storable_text(data)
 
 
 for _m in (ArithmeticNode, Comparison, BooleanNode, TemporalNode, Rule):
