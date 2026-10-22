@@ -270,10 +270,11 @@ always" bindings: `Esc` is "Clear ticket" and `Space` re-centres the DOM (`defau
 `05` §3.2, `Ctrl+Alt+1..9` SCR-049 cells) put a layout switch one modifier from a group key; explicit save recovers it.
 
 **1280×800** (no persona sits there: `10` §1 gives trading personas a 2560×1440 monitor and the viewer 1920×1080; it is
-`16` §8's minimum). (1) E10-D02's TopBar and StatusBar take 48 px each, so the canvas is at most 1216×704 px with the
-nav rail collapsed to 64 px and the right rail collapsed (its collapsed width is unstated), or 976 px wide with the
-right rail open (240 px), before SCR-020's tab strip and panel headers, whose budget E15-D02 sets. (2) A 2×2 then leaves
-each panel at most 608×352 px; the first-run default (§2) uses one primary panel and two stacked ones. (3) `10` §3 has a
+`16` §8's minimum). (1) E10-D02's TopBar takes 80 px (a 48 px row over the 32 px HealthChips row, as its rework in
+PR #4163 has it) and its StatusBar 48, so the canvas is at most 1216×672 px with the nav rail collapsed to 64 px and the
+right rail collapsed (its collapsed width is unstated), or 976 px wide with the right rail open (240 px), before
+SCR-020's tab strip and panel headers, whose budget E15-D02 sets. (2) A 2×2 then leaves each panel at most 608×336 px;
+the first-run default (§2) uses one primary panel and two stacked ones. (3) `10` §3 has a
 manager who "prefers larger UI scale (125 %)": as text scale, E10-D02 reflows it (US-SET-007); as OS scaling, it leaves
 1024×640 CSS px, below the minimum: `16` §8 shows an "increase window size" advisory with no reflow, while US-LAY-008
 collapses panels into tabs under 1280 px; which wins is open (OQ-12).
