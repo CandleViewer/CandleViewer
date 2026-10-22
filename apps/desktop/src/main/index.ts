@@ -279,8 +279,9 @@ function installAppProtocol(csp: string): void {
  * request is therefore explicitly denied rather than left to Electron's
  * default (which varies by permission). Device access (WebHID, WebUSB, Web
  * Serial) goes through a separate check, which is denied the same way: the app
- * uses no device, and Electron 41's check can attribute a device permission to
- * the wrong origin (GHSA-fw47-9c62-h3vw, accepted until Electron 42.11.3, #3639).
+ * uses no device. The denial stays after the Electron upgrade; until then it
+ * also covers Electron 41's check, which can attribute a device permission to
+ * the wrong origin (GHSA-fw47-9c62-h3vw, #3639).
  */
 function installPermissionHandler(): void {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
