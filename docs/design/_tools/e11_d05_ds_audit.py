@@ -861,14 +861,15 @@ pattern.dashed.estimated | 1 px dashed 4 / 3 | the mark's own hue | 1.0 | estima
   level | estimated series lines; the CMP-227 marker outline; a regime line at low confidence | "
   (estimated)" | 0 passes: a dash-pattern LUT stroke (26 section 3.10) | E25-D05 CR-1; 16 section
   6 rule 5
-pattern.hatch.gap | 45°, 1 px lines, 6 px pitch; dashed 4 / 4 edges | lines color.border.strong
-  (texture, decorative); edges color.text.tertiary | 1.0 | gap: absent coverage (maintenance
+pattern.hatch.gap | 45°, 1 px lines, 6 px pitch; dashed 4 / 4 edges | lines
+  color.chart.hatch.texture (= color.border.strong; texture, decorative); edges
+  color.chart.boundary (= color.text.tertiary) | 1.0 | gap: absent coverage (maintenance
   window; 26 section 10 coverage gap) | CMP-189 maintenance band; replay coverage gaps (E26);
   recorder gaps (E16) | "exchange maintenance" / "no recorded data" in the readout and the label |
   +1 draw per pane while a window is in view | E11-D02 D8, CR-6
-pattern.hatch.absent | pattern.hatch.gap's geometry: 45°, 1 px, 6 px pitch | color.text.tertiary
-  (meaning-carrying) | 1.0 | absent / broken: a status | CMP-132 broken zone | the status word
-  "broken" | +1 draw per pane while visible | E25-D05 CR-1, C14
+pattern.hatch.absent | pattern.hatch.gap's geometry: 45°, 1 px, 6 px pitch | color.chart.boundary
+  (= color.text.tertiary; meaning-carrying) | 1.0 | absent / broken: a status | CMP-132 broken zone
+  | the status word "broken" | +1 draw per pane while visible | E25-D05 CR-1, C14
 pattern.dashed.tested | 1 px dashed 4 / 3 | the side hue at opacity.muted over the .subtle fill |
   0.7 | tested: a status, never a side | CMP-132 tested zone | the status word "tested" | 0 passes
   | E25-D05 CR-1, C17
@@ -1228,8 +1229,8 @@ def measure(reg: set[tuple[str, str]], exempt: set[str]) -> list[PairRow]:
 # section 10.1 stands unchanged. A row with no section-10.1 twin is measured here only.
 CHROME_TABLE = """
 CR:color.chart.boundary | color.surface.canvas | non-text | session / day boundary lines, band
-  edges (pattern.hatch.gap), the mark-price line (dash.2-6), the splitter grip | E11-D02 D1, D7,
-  D8, D14
+  edges (pattern.hatch.gap), the mark-price line (dash.2-6), the splitter grip, the
+  pattern.hatch.absent ink (CMP-132's broken zone, row 59) | E11-D02 D1, D7, D8, D14
 CR:color.chart.rule | color.surface.canvas | decorative | the axis rule (CMP-188) and the strip
   rule (CMP-189): the hairline between a gutter / the strip and the pane; the splitter hairline |
   E11-D02 D7, D8, D14
