@@ -131,8 +131,9 @@ def test_round_trip_removes_only_what_the_revision_added(pg_dsn: str, seed: bool
         assert _catalog(c) == head and c.execute(_ROWS).fetchall() == rows
 
 
-def test_a_purged_users_rows_lose_their_address_and_stay(pg_dsn: str) -> None:
-    """`ON DELETE SET NULL`, as `resolved_by`: the row stays, the Owner's alone."""
+def test_a_hard_deleted_users_rows_lose_their_address_and_stay(pg_dsn: str) -> None:
+    """`ON DELETE SET NULL`, as `resolved_by`: a hard delete, which no path issues (a purge
+    anonymises the user in place), nulls the address; the row stays, the Owner's alone."""
     dsn = _fresh(pg_dsn)
     with _conn(dsn) as c:
         row = c.execute(_EVENT, (_TARGET,)).fetchone()

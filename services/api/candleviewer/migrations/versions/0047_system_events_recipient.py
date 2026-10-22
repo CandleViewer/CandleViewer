@@ -10,8 +10,11 @@ one `view_as_started` row addressed to the target, in the start's own transactio
 Q1 ruling, option A; `04-security-program.md` Sec.7.2.2 row 34b). Every other row stays
 unaddressed, and the whole stream stays the Owner's alone.
 
-* `REFERENCES users(id) ON DELETE SET NULL`, as `resolved_by`: a purged user's notices lose their
-  address and stay the Owner's, as every unaddressed row is.
+* `REFERENCES users(id) ON DELETE SET NULL`, as `resolved_by`. No `users` row is ever deleted:
+  the E42-T10 purge anonymises a user in place (schema doc Sec.3.1.1), so a purged user's notices
+  stay addressed to them, readable by the Owner alone (an anonymised user cannot sign in). Only a
+  hard delete, which no path issues, nulls the address; the rows stay, the Owner's as every
+  unaddressed row is.
 * `ix_se_recipient (recipient_user_id, event_ts DESC) WHERE recipient_user_id IS NOT NULL` serves
   the addressed read. It is built in this transaction, not CONCURRENTLY (`0034_order_vocabulary`:
   that waits on a second booting process holding the migration lock): `system_events` is far below

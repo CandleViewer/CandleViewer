@@ -18,7 +18,8 @@ carries the caller's view, already resolved from the caller's permissions and gr
 - order: `order_events` of orders on the caller's accounts (`orders:read`; `accounts`, None for
   the Owner) - the outcomes in `ORDER_EVENT_KINDS`; `ret_code` only, never `ret_msg`
   (SR-E29-09) or `payload`;
-- system: the Owner's alone (04 §7.2.2 row 34b), `message` only, never `details`;
+- system: the whole stream for the Owner, and to any caller the rows addressed to them
+  (`recipient_user_id`; 04 §7.2.2 row 34b), `message` only, never `details`;
 - risk: no source table yet (`risk_lockouts`, E39), so a `risk` filter matches nothing.
 
 Order rows, rule-run rows and account-scoped system rows are the process's own exchange

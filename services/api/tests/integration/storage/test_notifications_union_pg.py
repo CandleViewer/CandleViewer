@@ -4,7 +4,8 @@ Covers what a fake unit of work cannot:
 
 - each source's own visibility filter applied in SQL: the caller's in-app record only (no other
   channel, nothing undelivered, no other user's); readable rules; granted accounts' orders - none
-  at all without `orders:read`; `system_events` the Owner's alone (04 §7.2.2 row 34b);
+  at all without `orders:read`; `system_events` the Owner's, but for the rows addressed to the
+  caller (04 §7.2.2 row 34b);
 - the process's exchange environment on every account-bound row (C-2.11);
 - one total order across sources when timestamps tie, keyset paging without gaps or repeats;
 - the inbox's list (one user's rows, keyset pages across a tied `queued_at`, the window and

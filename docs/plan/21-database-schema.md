@@ -3536,8 +3536,11 @@ addressed to; it is NULL on every other row. The view-as start writes one
 own transaction, whose `message` names the viewer and the window and never the reason.
 `GET /notifications` serves a caller the rows addressed to them as `system` notifications
 (`04-security-program.md` §7.2.2 row 34b); the whole stream stays the Owner's alone.
-`ix_se_recipient` serves that read. A purged user's rows lose their address (`ON DELETE SET NULL`,
-as `resolved_by`) and stay the Owner's. The downgrade refuses while any row is addressed.
+`ix_se_recipient` serves that read. The FK is `ON DELETE SET NULL`, as `resolved_by`. No `users`
+row is ever deleted (the E42-T10 purge anonymises a user in place, §3.1.1), so a purged user's rows
+stay addressed to them and only the Owner can read them, since an anonymised user cannot sign in.
+Only a hard delete, which no path issues, nulls the address; the rows stay, the Owner's. The
+downgrade refuses while any row is addressed.
 
 The offline break-glass Owner reset (E09-S11, SR-023) writes `component='auth'`,
 `kind='break_glass_used'`, `severity='critical'`, unresolved, in the same transaction that revokes

@@ -10,7 +10,7 @@ rules module's own visibility predicate (`RulesManager.visible_rule_ids`), so a 
 visible here exactly when the rule itself is. `system_events` is the Owner's alone
 (04-security-program.md §7.2.2 row 34b, C-12.4): the role-neutral view row 48 and SR-188 give
 Managers and Viewers on the `system` topic is not defined for these rows, so nothing of it is
-served to them, but for a row addressed to the caller (`recipient_user_id`: #3085's view-as
+served to them, except for a row addressed to the caller (`recipient_user_id`: #3085's view-as
 notice, row 34b's one exception). A system `message` passes the shared redaction first, as
 `admin/ops/incidents.py` does, off the event loop once a page holds more than
 `OFFLOAD_SYSTEM_ROWS` of them (C-2.17).

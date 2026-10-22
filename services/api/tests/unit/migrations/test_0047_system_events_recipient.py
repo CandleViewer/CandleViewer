@@ -62,11 +62,12 @@ def _ddl() -> str:
     return _norm(section.split("```sql", 2)[2].split("```", 1)[0])
 
 
-def _in_order(sql: str, steps: list[str]) -> bool:
+def _assert_in_order(sql: str, steps: list[str]) -> None:
     missing = [step for step in steps if step not in sql]
     assert not missing, f"not in the rendered SQL: {missing}"
     positions = [sql.index(step) for step in steps]
-    return positions == sorted(positions)
+    found = sorted(zip(positions, steps, strict=True))
+    assert positions == sorted(positions), f"out of order: {found}"
 
 
 def test_revision_chains_onto_the_head_it_was_written_on_and_is_registered() -> None:
@@ -79,7 +80,7 @@ def test_upgrade_is_the_plan_doc_block_verbatim_adding_one_nullable_column() -> 
     """Sec.3.10.2's second block, verbatim, under `lock_timeout` (C-5.6): one nullable column with
     no default (C-5.1, Sec.9.3 rule 2) and its partial index, no GRANT, no backfill."""
     assert _ddl() == f"{_ADD} {_INDEX}"
-    assert _in_order(_up(), [_LOCK, _ADD, _INDEX, _RESET, "UPDATE alembic_version"])
+    _assert_in_order(_up(), [_LOCK, _ADD, _INDEX, _RESET, "UPDATE alembic_version"])
     for absent in ("GRANT", "COMMENT ON", "UPDATE system_events", "DEFAULT ", "CONCURRENTLY"):
         assert absent not in _up(), f"{absent!r} is outside this revision"
 
@@ -87,7 +88,7 @@ def test_upgrade_is_the_plan_doc_block_verbatim_adding_one_nullable_column() -> 
 def test_downgrade_refuses_while_a_row_is_addressed_then_drops_only_what_upgrade_added() -> None:
     """C-5.2: it refuses while any row is addressed (a user's notice would become the Owner's
     alone); otherwise it drops the index and the column (the FK goes with it), and nothing else."""
-    assert _in_order(
+    _assert_in_order(
         _down(),
         [
             _LOCK,
@@ -99,7 +100,8 @@ def test_downgrade_refuses_while_a_row_is_addressed_then_drops_only_what_upgrade
             _RESET,
         ],
     )
-    assert _down().count("DROP ") == 2 and "(C-5.2)" in _down()
+    assert _down().count("DROP ") == 2
+    assert "(C-5.2)" in _down()
 
 
 def test_the_model_mirrors_the_column_its_fk_and_the_partial_index() -> None:

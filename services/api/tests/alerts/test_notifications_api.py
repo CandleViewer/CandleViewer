@@ -121,7 +121,8 @@ def test_viewer_scope_is_every_source_it_holds_on_its_granted_accounts(env: Env)
 
 
 #: What a Viewer and a Manager hold of the sources' read and write permissions (`alerts`, `rules`,
-#: `orders`, `positions`), and nothing: none of these reaches a system row.
+#: `orders`, `positions`), and nothing: none of these reaches the system stream, only the system
+#: rows addressed to the caller.
 _ROLE_PERMS = {
     "viewer": VIEWER,
     "manager": VIEWER | {"rules:write", "alerts:write", "orders:write", "positions:write"},
