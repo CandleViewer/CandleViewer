@@ -355,6 +355,7 @@ from candleviewer.storage.repositories.auth_keys_sqlalchemy import SqlAlchemyAut
 from candleviewer.storage.repositories.break_glass_sqlalchemy import SqlAlchemyBreakGlassEvents
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.drawings_sqlalchemy import SqlAlchemyDrawingRepository
+from candleviewer.storage.repositories.export_keys_sqlalchemy import SqlAlchemyExportKeyStore
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.incidents_sqlalchemy import SqlAlchemyIncidents
 from candleviewer.storage.repositories.indicator_presets_sqlalchemy import (
@@ -837,13 +838,13 @@ def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsBundle:
     if settings.storage_backend != "real":
         return build_secrets_service(audit=audit)
     relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "secrets")
-    store = SqlAlchemyCredentialStore(
-        relational,
-        audit_row=secrets_audit_row(settings.environment.value),  # #2266: re-wrap/enrolment records
-    )
+    audit_row = secrets_audit_row(settings.environment.value)
+    store = SqlAlchemyCredentialStore(relational, audit_row=audit_row)  # #2266: in-tx records
     # #3505: a KEK re-wrap run counts this environment's auth keyring rows.
     keyring = SqlAlchemyAuthKeyStore(relational, env=settings.environment.value)
-    return build_secrets_service(store, store, audit, auth_keys=keyring)
+    # #889: a re-wrap counts the audit export signing keys, and a KEK enrolment may trial one.
+    keys = SqlAlchemyExportKeyStore(relational, env=settings.environment.value, audit_row=audit_row)
+    return build_secrets_service(store, store, audit, auth_keys=keyring, export_keys=keys)
 
 
 def _record_factory(model: Any) -> Callable[..., Any]:

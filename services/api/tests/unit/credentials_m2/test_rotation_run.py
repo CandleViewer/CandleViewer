@@ -10,8 +10,14 @@ import pytest
 
 from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.errors import CredentialUnavailable
-from candleviewer.secrets.store import InMemoryAuthKeyStore, InMemoryCredentialStore
+from candleviewer.secrets.store import (
+    InMemoryAuthKeyStore,
+    InMemoryCredentialStore,
+    InMemoryExportKeyStore,
+)
+from tests.unit.credentials_m2 import test_export_key_store as m1
 from tests.unit.credentials_m2._helpers import _store
+from tests.unit.credentials_m2._service_fakes import _counted
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, AuditLog, kek
 
 _STARTED, _RESUMED = "security.kek_rotation_started", "security.kek_rotation_resumed"
@@ -66,7 +72,7 @@ async def test_a_rerun_after_a_run_that_moved_rows_opens_as_resumed() -> None:
     aborted = await _aborted(s, 2)
     assert [a for a, _ in aborted.records] == [_STARTED, _INCOMPLETE]
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2, auth_keys=InMemoryAuthKeyStore())
+    rep = await _rot(s, audit).rewrap_all(2, **_counted())
     assert _opening(audit) == (_RESUMED, "3", "2") and rep.resumed
     assert (rep.rewrapped, rep.remaining, audit.actions()[-1]) == (3, 0, _ROTATED)
 
@@ -145,7 +151,7 @@ async def test_a_row_fenced_after_it_was_listed_never_reaches_the_cas(
 
     s.get, s.rewrap = reread, cas  # type: ignore[method-assign]
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2, auth_keys=InMemoryAuthKeyStore())
+    rep = await _rot(s, audit).rewrap_all(2, **_counted())
     assert tried == [ids[1]] and s.rows[ids[0]]["dek_ref"] == wrap
     assert (rep.rewrapped, rep.remaining, audit.actions()[-1]) == (1, 0, _ROTATED)
 
@@ -163,7 +169,7 @@ async def test_rows_of_every_other_status_are_rewrapped_and_none_is_left() -> No
     for key_id, status in zip(ids, statuses, strict=True):
         s.activate(key_id, status)
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2, auth_keys=InMemoryAuthKeyStore())
+    rep = await _rot(s, audit).rewrap_all(2, **_counted())
     assert (rep.rewrapped, rep.remaining, audit.actions()[-1]) == (5, 0, _ROTATED)
 
 
@@ -171,7 +177,7 @@ async def test_every_record_of_a_run_carries_its_run_id() -> None:
     s, ids = await _seed(3)
     s.rows[ids[1]]["dek_ref"] = "v2:" + bytes(40).hex()  # this row's new wrap fails
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2, batch=2, auth_keys=InMemoryAuthKeyStore())
+    rep = await _rot(s, audit).rewrap_all(2, batch=2, **_counted())
     assert audit.actions() == [_STARTED, "security.kek_rotation_failed", _INCOMPLETE]
     records = audit.records + s.rewrap_audit
     assert len(records) == 5 and {f["run_id"] for _, f in records} == {str(rep.run_id)}
@@ -195,12 +201,12 @@ async def test_an_auth_keyring_row_left_keeps_the_run_incomplete_until_it_moves(
         {"env": "live", "kek_version": 1},  # another environment's keyring is not this run's
     ]
     audit = AuditLog()
-    rep = await _rot(s, audit).rewrap_all(2, auth_keys=auth)
+    rep = await _rot(s, audit).rewrap_all(2, **_counted(auth))
     assert (rep.rewrapped, rep.remaining, rep.failed) == (1, 1, ())
     assert (audit.actions()[-1], audit.records[-1][1]["auth_left"]) == (_INCOMPLETE, "1")
     auth.rows[0]["kek_version"] = 2  # the next rotation boot re-wrapped it
     again = AuditLog()
-    rep = await _rot(s, again).rewrap_all(2, auth_keys=auth)
+    rep = await _rot(s, again).rewrap_all(2, **_counted(auth))
     assert (rep.remaining, again.actions()[-1]) == (0, _ROTATED)
     assert again.records[-1][1]["auth_left"] == "0"
 
@@ -215,5 +221,31 @@ async def test_a_run_whose_last_count_fails_is_closed_as_aborted() -> None:
     auth.count_at_kek_version = down  # type: ignore[method-assign]
     audit = AuditLog()
     with pytest.raises(CredentialUnavailable):
-        await _rot(s, audit).rewrap_all(2, auth_keys=auth)
+        await _rot(s, audit).rewrap_all(2, **_counted(auth))
     assert (audit.actions()[-1], audit.records[-1][1]["aborted"]) == (_INCOMPLETE, "true")
+
+
+@pytest.mark.parametrize(("seed", "left"), [(None, 0), (m1.SEED, 1)], ids=["destroyed", "kept"])
+async def test_a_run_waits_for_a_signing_key_holding_its_seed_only(seed: bytes, left: int) -> None:
+    """#889 S6a (ADR-0039 decision 6, Q3): a retired key at the previous KEK version is counted
+    while it holds its seed, and skipped once its seed is destroyed."""
+    keys = InMemoryExportKeyStore()
+    await keys.insert_first(m1.export_key(1), audit=m1.GENERATED)
+    v2 = m1.export_key(2, **m1.rotation_request()) | {"kek_version": 2}
+    await keys.rotate(v2, retire=m1.key_id(1), reason="scheduled", audit=m1.ROTATED)
+    keys.rows[0]["sealed_seed"] = seed  # v1, retired under KEK v1
+    s, audit = (await _seed(1))[0], AuditLog()
+    rep = await _rot(s, audit).rewrap_all(2, auth_keys=InMemoryAuthKeyStore(), export_keys=keys)
+    assert (rep.remaining, rep.complete) == (left, not left)
+    assert (audit.actions()[-1], audit.records[-1][1]["export_left"]) == (
+        _INCOMPLETE if left else _ROTATED, str(left)
+    )  # fmt: skip
+
+
+async def test_a_run_without_the_signing_key_store_is_never_complete() -> None:
+    """Fail closed, as for the auth keyring (#3505): signing keys not counted are `unchecked`."""
+    s, audit = (await _seed(1))[0], AuditLog()
+    rep = await _rot(s, audit).rewrap_all(2, auth_keys=InMemoryAuthKeyStore())
+    assert (rep.remaining, rep.complete, audit.records[-1][1]["export_left"]) == (
+        0, False, "unchecked"
+    )  # fmt: skip

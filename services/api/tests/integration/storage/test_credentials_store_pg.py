@@ -33,6 +33,7 @@ from candleviewer.secrets.errors import CredentialUnavailable, SnapshotInvalid
 from candleviewer.secrets.secret import Secret
 from candleviewer.storage.repositories.auth_keys_sqlalchemy import SqlAlchemyAuthKeyStore
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
+from candleviewer.storage.repositories.export_keys_sqlalchemy import SqlAlchemyExportKeyStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -627,11 +628,13 @@ async def test_a_run_counts_its_environment_keyring_through_the_auth_key_adapter
     previous version keeps the run incomplete, counted; once it has moved, the run completes."""
     rel, store = _store(pg_dsn)
     keyring, ring = SqlAlchemyAuthKeyStore(rel, env="demo"), uuid4()
+    # #889: a run also counts the signing keys; none here, so the keyring alone holds it back
+    signing = SqlAlchemyExportKeyStore(rel, env="demo", audit_row=secrets_audit_row("demo"))
     row = {"id": ring, "env": "demo", "purpose": "totp_seal", "origin": "generated"}
 
     async def run(audit: AuditLog) -> Any:
         rot = CredentialBroker(store, audit, _kek(190, 41), prev_kek=_kek(180, 40))
-        return await rot.rewrap_all(41, auth_keys=keyring)
+        return await rot.rewrap_all(41, auth_keys=keyring, export_keys=signing)
 
     try:
         await _keys(CredentialBroker(store, _audit, _kek(180, 40)), pg_dsn, 1, "RING")

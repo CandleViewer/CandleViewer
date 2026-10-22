@@ -16,7 +16,11 @@ from candleviewer.secrets._source import KekSources
 from candleviewer.secrets.errors import KekLoadError
 from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.service import SecretsService, mint_borrower
-from candleviewer.secrets.store import InMemoryCredentialStore
+from candleviewer.secrets.store import (
+    InMemoryAuthKeyStore,
+    InMemoryCredentialStore,
+    InMemoryExportKeyStore,
+)
 from candleviewer.settings import Settings
 from tests.unit.credentials_m2._vectors import ACCOUNT, KEK_V1, KEK_V2, SNAPSHOT, AuditLog
 
@@ -67,6 +71,16 @@ def _bound_sources(
     return sources
 
 
+def _counted(auth_keys: Any = None) -> dict[str, Any]:
+    """The stores a KEK re-wrap run counts besides the API key rows, fresh: the auth keyring
+    (`auth_keys`, or an empty one) and the signing keys; without both a run is never complete
+    (#3505; #889, ADR-0039 decision 6)."""
+    return {
+        "auth_keys": auth_keys or InMemoryAuthKeyStore(),
+        "export_keys": InMemoryExportKeyStore(),
+    }
+
+
 def _ctx(**kw: Any) -> Any:
     return SimpleNamespace(settings=_settings(**kw), oms_read_only_gate=ReadOnlyGate())
 
@@ -81,11 +95,13 @@ def _svc(
     ack: Path | None = None,
     timeout: float = 15.0,
     auth_keys: Any = None,
+    export_keys: Any = None,
 ) -> SecretsService:
     st = store if store is not None else InMemoryCredentialStore()
     return SecretsService(
         store=st, kcv_store=st, audit=audit or AuditLog(), sources=_bound_sources(cur, prev, ack),
         harden=lambda: hardened, load_timeout_s=timeout, auth_keys=auth_keys,
+        export_keys=export_keys,
     )  # fmt: skip
 
 
@@ -112,12 +128,14 @@ async def _boot(store: Any, cur: _Src, prev: _Src | None = None) -> SecretsServi
 async def _staged(
     audit: AuditLog, auth_keys: Any = None
 ) -> tuple[SecretsService, Any, InMemoryCredentialStore]:
-    """Two keys stored under v1, then the rotation boot: v2 with v1 beside it (#2266)."""
+    """Two keys stored under v1, then the rotation boot: v2 with v1 beside it (#2266), its
+    signing-key store empty (#889)."""
     store = InMemoryCredentialStore()
     v1 = await _boot(store, _Src(KEK_V1, 1))
     for _ in range(2):
         await _store_one(v1)
-    svc = _svc(_Src(KEK_V2, 2), _Src(KEK_V1, 1), store=store, audit=audit, auth_keys=auth_keys)
+    keys = {"auth_keys": auth_keys, "export_keys": InMemoryExportKeyStore()}  # a keyring if given
+    svc = _svc(_Src(KEK_V2, 2), _Src(KEK_V1, 1), store=store, audit=audit, **keys)
     ctx = _ctx()
     await svc.start(ctx)
     return svc, ctx, store
