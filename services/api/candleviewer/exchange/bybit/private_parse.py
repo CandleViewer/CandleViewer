@@ -71,6 +71,7 @@ __all__ = [
     "PUSH_MODEL_LABELS",
     "TOPICS",
     "FrameRejected",
+    "FrameRejection",
     "Push",
     "PushRefusal",
     "PushTopic",
@@ -129,9 +130,10 @@ TOPICS: Final[Mapping[str, PushTopic]] = MappingProxyType(
         "wallet": "wallet",
     }
 )
-#: A USDT linear perpetual's symbol, the only ones the product trades (C-1.2): the contract's own
-#: record pattern; linear USDC perpetuals and dated futures are another product.
-_USDT_PERPETUAL: Final = re.compile(r"[A-Z0-9]{2,20}USDT")
+#: A USDT linear perpetual's symbol, the only ones the product trades (C-1.2), no longer than a
+#: `Symbol` (20): linear USDC perpetuals and dated futures are another product, and a longer
+#: symbol is dropped as one, never a frame its model would reject (CR-G8B-B-06).
+_USDT_PERPETUAL: Final = re.compile(r"[A-Z0-9]{2,16}USDT")
 _SETTLE: Final = "USDT"
 #: Plausible exchange clock (ms) for a push's `creationTime`: 2018-01-01 to 2100-01-01.
 _MS_MIN: Final = 1_514_764_800_000
@@ -425,9 +427,14 @@ def _wallet(
     push: Push, raw: Mapping[str, Any], account: AccountRef, now_us: TsUs
 ) -> PrivateEvent | None:
     """The unified account's USDT figures; an account with no USDT row is dropped and counted
-    (`no_settle_coin`), one with two is malformed."""
-    unified = _parse(WalletPushAccount, raw)
-    rows = [coin for coin in unified.coins if coin.coin == _SETTLE]
+    (`no_settle_coin`), one with two is malformed. Only the USDT rows are read: the push carries
+    every coin, and an odd row of another coin never rejects the account (CR-G8B-B-03)."""
+    coins = raw.get("coin")
+    if not isinstance(coins, list):
+        raise FrameRejected("malformed")
+    settle = [coin for coin in coins if isinstance(coin, dict) and coin.get("coin") == _SETTLE]
+    unified = _parse(WalletPushAccount, {**raw, "coin": settle})
+    rows = list(unified.coins)
     if not rows:
         _refuse("wallet", "no_settle_coin", raw)
         return None

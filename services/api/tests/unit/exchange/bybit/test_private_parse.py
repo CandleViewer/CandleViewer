@@ -1,7 +1,7 @@
 """Reading the private stream's frames (G-8b, #3963; 24 §14.2 rule 13), on the docs-transcribed
 corpus frames and rows derived from them in-test (`_private.py`).
 
-A frame is a reply or a push of a subscribed topic, else rejected whole; a push's rows become
+A frame is a reply or a push of a private topic, else rejected whole; a push's rows become
 events of the stream's account, with G-8's mappers, and a row the stream may not deliver is
 dropped and counted, never raised; a row it cannot read rejects its frame, so no event of a
 frame is yielded unless all of it was read.
@@ -14,6 +14,9 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.models import Execution, FastExecution, Order, Position, Wallet
@@ -23,6 +26,7 @@ from candleviewer.exchange.bybit.metrics import (
     bybit_private_rows_refused_total,
     cv_bybit_unknown_fields_total,
 )
+from candleviewer.exchange.bybit.private_stream import OPTIONAL_OPS, REQUIRED_OPS
 from tests.unit.exchange.bybit._private import (
     frame,
     linear_order,
@@ -32,7 +36,7 @@ from tests.unit.exchange.bybit._private import (
     row,
     usdt_wallet,
 )
-from tests.unit.exchange.bybit._trading import account
+from tests.unit.exchange.bybit._trading import ACCOUNT_B, account, link
 
 NOW_US = 1_790_000_000_000_000
 LABELS = tp.MODEL_LABELS | pp.PUSH_MODEL_LABELS
@@ -119,6 +123,14 @@ def test_a_documented_push_reads_as_its_topic(name: str, label: str) -> None:
     assert pushed.created_ms == frame(name)["creationTime"] and len(pushed.rows) == 1
 
 
+def test_every_topic_the_stream_subscribes_is_one_the_parser_reads() -> None:
+    """CR-G8B-B-05: the subscribe ops name only topics `TOPICS` reads; it also reads the
+    all-in-one names the documentation's samples use (24 §14.2 rule 13)."""
+    subscribed = {topic for ops in (*REQUIRED_OPS, *OPTIONAL_OPS) for topic in ops}
+    assert subscribed <= set(pp.TOPICS)
+    assert set(pp.TOPICS) - subscribed == {"order", "execution", "execution.fast", "position"}
+
+
 @pytest.mark.parametrize("topic", sorted(pp.TOPICS))
 def test_a_categorised_or_all_in_one_topic_is_the_same_topic(topic: str) -> None:
     pushed = pp.classify(push(topic))
@@ -171,8 +183,9 @@ def test_a_frame_the_stream_cannot_read_is_rejected_whole(text: str, reason: str
 
 
 def test_a_frame_of_more_than_1000_rows_is_rejected_before_any_is_read() -> None:
+    """Rows that would be malformed if read still meet the count first (CR-G8B-B-04)."""
     with pytest.raises(pp.FrameRejected) as info:
-        pp.classify(push("order.linear", *[linear_order()] * (pp.FRAME_ROWS_MAX + 1)))
+        pp.classify(push("order.linear", *[{}] * (pp.FRAME_ROWS_MAX + 1)))
     assert info.value.reason == "too_many_rows"
     assert len(_read(push("order.linear", *[linear_order()] * pp.FRAME_ROWS_MAX))) == 1000
 
@@ -182,16 +195,20 @@ def test_each_documented_row_maps_to_its_events_payload_and_record() -> None:
     """The documented execution, fast-execution and position rows as they are, the order and
     wallet rows derived as linear USDT ones: every field known to its model, each event of the
     stream's account, stamped with the push's creation time and the read's ingest time."""
-    [order] = _read(push("order.linear", linear_order()))
-    [fill] = _read(raw("execution"))
-    [fast] = _read(raw("execution-fast"))
-    [position] = _read(raw("position"))
-    [wallet] = _read(push("wallet", usdt_wallet()))
+    texts = [
+        push("order.linear", linear_order()),
+        raw("execution"),
+        raw("execution-fast"),
+        raw("position"),
+        push("wallet", usdt_wallet()),
+    ]
+    [order], [fill], [fast], [position], [wallet] = (_read(text) for text in texts)
     kinds = [type(e.payload) for e in (order, fill, fast, position, wallet)]
     assert kinds == [Order, Execution, FastExecution, Position, Wallet]
-    for event in (order, fill, fast, position, wallet):
+    for event, text in zip((order, fill, fast, position, wallet), texts, strict=True):
         assert event.account_id == event.payload.account_id == account().account_id
         assert event.ts_ingest == NOW_US
+        assert event.ts_event == json.loads(text)["creationTime"] * 1000
     assert fill.ts_event == frame("execution")["creationTime"] * 1000
     assert (order.seq, fill.seq, fast.seq, position.seq, wallet.seq) == (
         None,
@@ -250,6 +267,17 @@ NOT_DELIVERED: dict[str, tuple[str, str, str]] = {
     "documented-btc-wallet": (raw("wallet"), "wallet", "no_settle_coin"),
     "usdc-perpetual": (push("order.linear", linear_order(symbol="BTCPERP")), "order", "symbol"),
     "dated-future": (_execution(symbol="BTC-26DEC25"), "execution", "symbol"),
+    "dated-usdt-future": (
+        push("order.linear", linear_order(symbol="BTCUSDT-26DEC25")),
+        "order",
+        "symbol",
+    ),
+    "trailing-newline": (push("order.linear", linear_order(symbol="BTCUSDT\n")), "order", "symbol"),
+    "longer-than-a-symbol": (
+        push("order.linear", linear_order(symbol="A" * 17 + "USDT")),
+        "order",
+        "symbol",
+    ),
     "inverse-position": (
         push("position", row("position") | {"category": "inverse"}),
         "position",
@@ -311,10 +339,19 @@ def test_a_limit_push_without_a_price_never_counts_as_a_rest_reply_of_unknown_ou
     assert unknown._value.get() == before
 
 
+def test_a_wallet_reads_only_its_usdt_row_so_an_odd_other_coin_is_ignored() -> None:
+    """CR-G8B-B-03: the push carries every coin of the account; a row of another coin that
+    would fail its model never rejects the account's USDT figures."""
+    wallet = usdt_wallet()
+    odd = {"coin": "BTC", "walletBalance": "not a number", "equity": []}
+    [event] = _read(push("wallet", wallet | {"coin": [*wallet["coin"], odd, "not a row"]}))
+    assert isinstance(event.payload, Wallet)
+
+
 def test_a_wallet_the_stream_cannot_read_rejects_its_frame() -> None:
     """Two USDT rows (which is the account's is unknown), or no account type to check."""
     [coin] = usdt_wallet()["coin"]
-    for wallet in (usdt_wallet(coin=[coin, coin]), {"accountIMRate": "0"}):
+    for wallet in (usdt_wallet(coin=[coin, coin]), {"accountIMRate": "0"}, usdt_wallet(coin={})):
         with pytest.raises(pp.FrameRejected) as info:
             _read(push("wallet", wallet))
         assert info.value.reason == "malformed"
@@ -329,3 +366,79 @@ def test_a_reply_never_reads_its_text_or_connection_id() -> None:
     planted = reply("auth-ok", ret_msg="key DUMMYKEY_x refused", conn_id="c", req_id="r")
     assert pp.classify(planted) == pp.Reply("auth", True)
     assert json.loads(planted)["ret_msg"] not in repr(pp.classify(planted))
+
+
+def test_a_dropped_row_logs_our_id_or_its_documented_type_never_the_venues_text() -> None:
+    """CR-G8B-B-02 (24 §14.2 rule 13, "logged with its id"): another account's row logs our id,
+    a fill set aside logs its documented `execType`, and a link that is the venue's own text is
+    never logged."""
+    theirs = link(ACCOUNT_B)
+    with capture_logs() as logs:
+        _read(push("order.linear", linear_order(orderLinkId=theirs)))
+        _read(push("execution", row("execution") | {"execType": "Funding"}))
+        _read(push("order.linear", linear_order(orderLinkId="venue text 9f", category="spot")))
+    lines = [entry for entry in logs if entry["event"] == "bybit_private_row_refused"]
+    assert [(e["reason"], e["order_link_id"], e["exec_type"]) for e in lines] == [
+        ("account", theirs, None),
+        ("not_a_fill", None, "Funding"),
+        ("category", None, None),
+    ]
+    assert "venue text" not in str(logs)
+
+
+@pytest.mark.parametrize(
+    ("topic", "base", "key"),
+    [
+        ("order.linear", linear_order(), "triggerDirection"),
+        ("order.linear", linear_order(), "side"),
+        ("execution.linear", row("execution"), "orderType"),
+        ("execution.fast.linear", row("execution-fast"), "orderType"),
+    ],
+    ids=["order-trigger-direction", "order-side", "execution-order-type", "fast-order-type"],
+)
+@pytest.mark.parametrize("value", [[], {}, True, 1.5], ids=["list", "map", "boolean", "float"])
+def test_a_spelled_field_of_another_type_reads_or_rejects_never_raises_else(
+    topic: str, base: dict[str, Any], key: str, value: object
+) -> None:
+    """CR-G8B-B-01: a field the record spells (`side`, `orderType`, `triggerDirection`) holding
+    a list, a map, a boolean or a float reads, its record spelling nothing, or rejects the frame;
+    it never raises a `TypeError` out of the parser, which would end the socket uncounted."""
+    try:
+        events = _read(push(topic, base | {key: value}))
+    except pp.FrameRejected:
+        return
+    [event] = events
+    assert event.record is not None
+
+
+_JSON: st.SearchStrategy[object] = st.recursive(
+    st.none() | st.booleans() | st.integers() | st.floats() | st.text(max_size=6),
+    lambda children: (
+        st.lists(children, max_size=3) | st.dictionaries(st.text(max_size=4), children, max_size=3)
+    ),
+    max_leaves=6,
+)
+#: A valid row of each topic, and where it sits: a row, or the wallet's USDT coin row.
+_FUZZED: dict[str, tuple[str, dict[str, Any]]] = {
+    "order": ("order.linear", linear_order()),
+    "execution": ("execution.linear", row("execution")),
+    "execution-fast": ("execution.fast.linear", row("execution-fast")),
+    "position": ("position.linear", row("position")),
+    "wallet": ("wallet", usdt_wallet()),
+    "wallet-coin": ("wallet", usdt_wallet()["coin"][0]),
+}
+
+
+@settings(max_examples=400, deadline=None)
+@given(kind=st.sampled_from(sorted(_FUZZED)), data=st.data())
+def test_any_json_value_in_any_field_reads_or_rejects_the_frame(kind: str, data: Any) -> None:
+    """CR-G8B-B-01: whatever a field holds, a push reads or is `FrameRejected`, never another
+    error, so the reader never dies on a value and every rejected frame is counted."""
+    topic, base = _FUZZED[kind]
+    key = data.draw(st.sampled_from(sorted(base)), label="key")
+    changed = base | {key: data.draw(_JSON, label="value")}
+    rows = usdt_wallet(coin=[changed]) if kind == "wallet-coin" else changed
+    try:
+        _read(push(topic, rows))
+    except pp.FrameRejected:
+        pass

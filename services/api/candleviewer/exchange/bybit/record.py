@@ -119,7 +119,7 @@ def request_fields(body: Mapping[str, object]) -> Fields:
         name = WIRE_NAMES.get(key)
         if name is not None:
             spelled = _WIRE_VALUES.get(key)
-            fields[name] = value if spelled is None else spelled.get(value)
+            fields[name] = value if spelled is None else _spelled(spelled, value)
     return fields
 
 
@@ -131,8 +131,16 @@ def push_fields(row: Mapping[str, object]) -> Fields:
         name = PUSH_NAMES.get(key)
         if name is not None:
             spelled = _WIRE_VALUES.get(key)
-            fields[name] = value if spelled is None else spelled.get(value)
+            fields[name] = value if spelled is None else _spelled(spelled, value)
     return fields
+
+
+def _spelled(spelled: Mapping[object, str], value: object) -> str | None:
+    """A venue value's contract spelling, or `None`: a value of another type (a list, a map, a
+    boolean, a float) spells nothing, so an odd push is never a `TypeError` (CR-G8B-B-01)."""
+    if isinstance(value, bool) or not isinstance(value, str | int):
+        return None
+    return spelled.get(value)
 
 
 def push_record(topic: str, response: Fields) -> ExchangeRecord:

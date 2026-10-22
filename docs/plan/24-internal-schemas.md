@@ -4162,8 +4162,10 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
       (`transport` `ws_private`, the push's `topic`, the row's own fields only: never a `ret_msg`, a
       `conn_id`, an `auth` frame or a URL; SR-E29-08); position and wallet events carry none.
     - **Frames and the queue.** A frame above 1 MiB recycles the socket (`down`,
-      `socket_closed`). A frame nested deeper than 32, holding more than 1,000 rows, malformed, or
-      neither a documented reply nor a push of a subscribed topic is rejected whole: no event of it
+      `socket_closed`) and counts as `oversize`. A frame nested deeper than 32, holding more than
+      1,000 rows, malformed, or neither a documented reply nor a push of a private topic
+      (categorised, as the adapter subscribes them, or all-in-one, as the documentation's samples
+      name them) is rejected whole: no event of it
       is yielded, it is counted in `bybit_private_frames_rejected_total{reason}`, and `resyncing`
       (`rejected_frame`) follows. The stream's queue holds 2,048 events and 8 statuses; an event
       that finds it full ends the epoch (`down`, `slow_consumer`), so no event is dropped
