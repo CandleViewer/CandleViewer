@@ -157,6 +157,9 @@ def targeted() -> dict[str, str]:
         "refused/metric-param-nan": dump(edited(left={"n": SLOT}), "NaN"),
         "refused/action-param-nan": dump(edited(act={"channel": "ui", "w": SLOT}), "NaN"),
         "refused/lone-surrogate": dump(edited(name=SLOT), '"x\\ud800"'),
+        "refused/action-param-key-surrogate": dump(edited(act={SLOT: "x"}), '"\\ud800"'),
+        "refused/action-param-surrogate": dump(edited(act={"note": SLOT}), '"\\udc00"'),
+        "refused/metric-param-surrogate": dump(edited(left={"n": SLOT}), '"\\ud800"'),
         "refused/unknown-key": dump(edited(variables={})),
     }
 
