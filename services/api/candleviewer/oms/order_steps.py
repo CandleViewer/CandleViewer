@@ -274,6 +274,13 @@ class OrderStepWriter:
         while len(self._expected) > MAX_EXPECTED:
             self._expected.popitem(last=False)
 
+    def forget(self, order_id: UUID) -> None:
+        """Drop the order's registration if its first step did not spend it: a step the chart
+        refused before it reached this writer (a verdict-refused entry, `draft -> rejected`)
+        writes no row, and its first persist (the request's key, its fingerprint and the audit
+        hook) would otherwise wait for eviction (C-2.18)."""
+        self._expected.pop(order_id, None)
+
     async def __call__(self, step: Step) -> int:
         """Commit *step* and answer its event's `seq`; raise, with nothing written, otherwise."""
         account, order_id = _uuid(step.account_id), _uuid(step.order_id)

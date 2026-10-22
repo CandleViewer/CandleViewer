@@ -141,6 +141,15 @@ async def test_the_native_stop_backstop_is_logged_and_counted_once(rig: Rig) -> 
     assert rig.count("oms_native_stop_backstop_total") == 1
 
 
+async def test_a_first_step_the_chart_refuses_leaves_no_registration(rig: Rig) -> None:
+    """A verdict-refused entry (`draft -> rejected`) writes no row, so the writer never spends
+    its registration; `_first` drops it, so a refused request's key and audit hook do not wait
+    for eviction (C-2.18)."""
+    state = await rig.start(order_of(stop_loss=None))
+    assert state == "rejected"
+    assert order_of().id not in rig.facade._ports.steps._expected  # the writer's registrations
+
+
 async def _unknown(rig: Rig) -> NewOrder:
     async def ambiguous(_command: b01.Command) -> Mapping[str, Any]:
         raise TimeoutError

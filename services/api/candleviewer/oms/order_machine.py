@@ -920,17 +920,20 @@ class OrderMachines:
         order's lock, as every resync is, so a caller that waited on it follows the order."""
         o = await self._open(order.id, order.exchange_account_id, environment, event)
         self._ports.steps.expect(order, first=first)
-        async with self._holding(o):
-            try:
-                await self._send_order(o, event, payload)
-                await self._settle(o)
-            except BaseException:
-                if o.resync:
-                    await self._resync(o)
-                else:
-                    await self._close(o, publish=False)
-                raise
-            return o.lifecycle
+        try:
+            async with self._holding(o):
+                try:
+                    await self._send_order(o, event, payload)
+                    await self._settle(o)
+                except BaseException:
+                    if o.resync:
+                        await self._resync(o)
+                    else:
+                        await self._close(o, publish=False)
+                    raise
+                return o.lifecycle
+        finally:  # a first step the chart refused never reached the writer to spend it
+            self._ports.steps.forget(order.id)
 
     async def _open(
         self,

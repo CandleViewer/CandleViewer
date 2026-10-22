@@ -96,7 +96,7 @@ class NewAnchor:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AnchorOutcome:
     """The first answer of the anchored request, recorded once (`ia_decided`): `code` is its
-    problem code when it was a refusal, and `ret_code` the exchange's `retCode` of an
+    problem code when it was a refusal, and `ret_code` the exchange's return code, of an
     `exchange_error` only (`ia_code`, `ia_ret_code`)."""
 
     status: AnchorStatus
