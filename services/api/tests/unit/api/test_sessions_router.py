@@ -371,9 +371,17 @@ def test_only_these_routes_skip_the_backstop() -> None:
             warnings.simplefilter("ignore", SyntaxWarning)
             found.visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
 
-    # `enrolment_only_guard` (`api/enrolment_guard.py`, #2295) is middleware, not a route: it reads
-    # a session with `allow_locked=True` only to classify it; a disabled user's goes to the route.
-    routes = {"POST /auth/logout", "DELETE /me/sessions/{sessionId}", "enrolment_only_guard"}
+    # `enrolment_only_guard` (`api/enrolment_guard.py`, #2295) and `view_as_guard`
+    # (`api/view_as_guard.py`, #3085) are middleware, not routes. Each reads a session with
+    # `allow_locked=True` only to classify it: the request it passes still meets its route's
+    # `require_active`, and the one it refuses reaches no route, so neither admits a disabled
+    # user's session to anything.
+    routes = {
+        "POST /auth/logout",
+        "DELETE /me/sessions/{sessionId}",
+        "enrolment_only_guard",
+        "view_as_guard",
+    }
     assert found.routes == routes
 
 
