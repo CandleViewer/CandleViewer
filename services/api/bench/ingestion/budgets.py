@@ -423,13 +423,35 @@ def check_latency(stage_ms: Sequence[float], budget_ms: float = B6_BACKEND_SLICE
 
 
 def check_rest(
-    p95_by_route: Mapping[str, float], cold_p95: float, warm_p95: float, min_speedup: float
+    p95_by_route: Mapping[str, float],
+    cold_p95: float,
+    warm_p95: float,
+    min_speedup: float,
+    *,
+    budget_hard: bool = True,
 ) -> list[Check]:
+    """Budget #13's 150 ms per route, and the klines cache speed-up. `budget_hard=False` reports
+    the 150 ms rows without failing the verdict: `06` measures #13 with k6 on the bench runner
+    (the full profile), never the smoke's in-process driver on a shared runner (#399). The
+    speed-up stays hard, and an unmeasured (NaN) cold or warm p95 fails it, never `inf`."""
+    soft = "" if budget_hard else "reported, not gated, in the smoke profile (#399)"
     out = [
-        Check(f"rest_p95[{r}]", "#13", p, B13_READ_P95_MS, "ms", p <= B13_READ_P95_MS)
+        Check(
+            f"rest_p95[{r}]",
+            "#13",
+            p,
+            B13_READ_P95_MS,
+            "ms",
+            p <= B13_READ_P95_MS,
+            budget_hard,
+            soft,
+        )
         for r, p in sorted(p95_by_route.items())
     ]
-    speedup = cold_p95 / warm_p95 if warm_p95 > 0 else math.inf
+    if math.isnan(cold_p95) or math.isnan(warm_p95):
+        speedup = math.nan  # a cold or warm route not measured: never a pass
+    else:
+        speedup = cold_p95 / warm_p95 if warm_p95 > 0 else math.inf
     out.append(
         Check(
             "klines_cache_speedup",

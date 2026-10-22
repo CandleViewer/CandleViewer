@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import shutil
 import socket
 import subprocess
@@ -127,15 +128,21 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
 
 
 def verdict(sc: Scenario, lat: dict[str, list[float]]) -> budgets.Verdict:
+    """Budget #13 over every route of `requests_plan()`. A route the driver did not measure (k6
+    wrote no `p(95)` for it) fails, named, in every profile: never a 0.0 that passes (#399)."""
     v = budgets.Verdict(sc.name)
     p95 = {r: budgets.percentile(x, 0.95) for r, x in lat.items() if x}
     v.checks.extend(
+        budgets.Check(f"rest_measured[{r}]", "#13", 0.0, 1.0, "p95", False, note="no reading")
+        for r in sorted(set(requests_plan()) - set(p95))
+    )
+    v.checks.extend(
         budgets.check_rest(
-            {r: p for r, p in p95.items() if r != "klines_cold"}
-            | {"klines_cold": p95.get("klines_cold", 0.0)},
-            p95.get("klines_cold", 0.0),
-            p95.get("klines_warm", 0.0),
+            p95,
+            p95.get("klines_cold", math.nan),
+            p95.get("klines_warm", math.nan),
             float(sc.p("min_cache_speedup")),
+            budget_hard=sc.profile != "smoke",
         )
     )
     v.metrics = {f"rest_{r}_ms": budgets.summary(x) for r, x in lat.items()}
