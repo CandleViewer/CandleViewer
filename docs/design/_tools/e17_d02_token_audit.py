@@ -25,8 +25,9 @@ nothing is imported from it), and prints, with a source label on every row:
    `color.data-confidence.delayed.*` group are expected MISSING: catalogue drift or an open
    change request); `elevation.5` is reported as a primitive with its semantic alias.
 3. which pairs are present in `tools/contrast/pairs.mjs` (a text scan of its `fg` / `bg`
-   literals) and which are PROPOSED additions for E17-T04, plus whether
-   `tools/contrast/encodings.json` carries a `connection` encoding row.
+   literals) and which are PROPOSED additions for E17-T04, plus which of this spec's surfaces
+   the existing `tools/contrast/encodings.json` `connection-health` row already lists and which
+   it lacks (the spec extends that row, CR-7; it never asks for a parallel `connection` key).
 4. the counts the Penpot boards quote (components, matrix rows and no-treatment cells, chip
    values, stories, pairs, close codes, bye reasons, announcement and motion rows, the anatomy px).
 
@@ -126,7 +127,8 @@ rejected: the connection-reconnecting indicator as the chip glyph |
   color.data-confidence.reconnecting.indicator | color.surface.raised | rejected-non-text | spec
   s5 (chip uses danger.strong on danger.subtle)
 StatusBar ws dot (CMP-208) disconnected | color.data-confidence.disconnected.indicator |
-  color.surface.raised | non-text | spec s5 (StatusBar duplicate, Q)
+  color.surface.sunken | non-text | spec s5 (StatusBar duplicate, Q3; 15 CMP-208 binds
+  surface.sunken)
 chip hover and tooltip-open fill | color.text.primary | color.surface.hover | text | spec s5
 focus ring on the bar (chip) | color.focus.ring | color.surface.raised | non-text | 05 s3.4 item 6
 popover body (connection quality numbers) | color.text.secondary | color.surface.overlay | text |
@@ -185,11 +187,14 @@ color.text.on-action | Retry now label
 color.text.disabled | CMP-079 disabled control (exempt)
 color.action.primary.default | Retry now pill
 color.surface.raised | TopBar (CMP-072), the chip's bar, SCR-001 card
+color.surface.sunken | CMP-208 StatusBar (the ws dot's surface)
 color.surface.hover | chip hover / tooltip-open
 color.surface.overlay | popover; the scrim colour (at opacity.scrim)
 color.surface.canvas | panels under the dim and the scrim
 color.surface.app | E08-D03 s6 pair 6
 color.focus.ring | every interactive element
+color.data-confidence.live.text | CMP-239 format (reported; the chip word stays text.primary)
+color.data-confidence.live.indicator | CMP-076 live glyph (quiet)
 color.data-confidence.stale.text | CMP-078 (CMP-239 format)
 color.data-confidence.stale.indicator | CMP-076 stale glyph, CMP-078 chip
 color.data-confidence.stale.surface | CMP-078 dim (15 % composite); the color.overlay.stale alias
@@ -248,9 +253,11 @@ reconnecting (Disconnected) | TransportState reconnecting; Link.reconnecting.att
 degraded:lagging | connection_quality.class lagging | global chrome, panel chrome, copy,
   announcement, motion
 degraded:saturated (Delayed) | connection_quality.class saturated or overflowing; applied | -
-offline (retry stopped) | TransportState offline; Link.offline.cause fatal, bye.reconnect false | -
-offline: shell cause (SCR-001 inline, SCR-159) | OfflineCause offline, tailnet_unreachable,
-  backend_unreachable | panel chrome
+offline (retry stopped; a fatal close or a shell cause in a mounted workspace) | TransportState
+  offline; Link.offline.cause fatal (1002, 1009, 4400) or offline / tailnet_unreachable /
+  backend_unreachable | -
+offline: shell cause on the login screen (SCR-001 inline, SCR-159) | OfflineCause offline,
+  tailnet_unreachable, backend_unreachable with no workspace mounted | panel chrome
 shutdown_pending (Read-only, countdown) | system shutdown_notice: closing_in_ms,
   expected_downtime_ms, message | panel chrome
 topic_resyncing (Resyncing) | TopicStatus resyncing; exchange_state.public_ws resyncing +
@@ -261,25 +268,34 @@ stale (server) | snap meta.stale true, held until the next snap | global chrome 
   book)
 stale: upstream feed down | system exchange_state.public_ws connecting or disconnected; err
   exchange_unavailable | motion
-book rebuilt | incident snap (upstream_desync, backpressure) on a consumable book | global chrome,
-  announcement
+book rebuilt | incident snap (upstream_desync, backpressure, upstream_reconnect) on a consumable
+  book | global chrome, announcement
 topic_revoked / permission change | revoked (reason, resubscribe_allowed, removed_accounts);
   permission_change | global chrome, motion
 recovered / reconciling | auth_ok + public snapshots; then private snapshots + system or
   auth_ok.kill_switch | -
-read-only reason (generic overlay slot) | system health, clock_drift, kill_switch, notice,
-  account_notice; auth_ok.kill_switch | panel chrome
+read-only reason (the region's slot) | system kill_switch, clock_drift; auth_ok.kill_switch;
+  B20 lockout; exchange.private_ws down; view-as (23 s9.6) | panel chrome
 system unknown (D11) | WsState.systemStream not live; KillSwitchView unknown | panel chrome, motion
 flapping (T5) | >= 3 transport changes in 5 s (transitionSeq) | panel chrome
 long-outage / T4 steps (10 s, 30 s, 5 min) | continuous Disconnected (client clock) | panel chrome
+session ended (no retry) | bye.reconnect false: session_revoked (4401), user_disabled (4403),
+  mfa_enrollment_required (4403) | -
+read-only: backend-health / D17 condition (CMP-092) | system health components[] down or
+  degraded, notice read-only codes, account_notice, maintenance.enabled; wallet health[] per
+  account (23 s15.4) | panel chrome
+err by errorMapping class (23 s10.3) | err protocol_violation / frame_malformed / invalid_options
+  (client bug); subscription_limit / client_rate_limited (capacity); resync_rate_limited (rebuild
+  budget, 23 s7.5) | global chrome
 """
 
 # group | stories  -- the Storybook list (spec section 15; PROPOSED).
 STORIES_TABLE = """
 Organisms/ConnectionStatus | Live, Delayed, Stale, StaleEscalated, StaleServer, UpstreamDown,
   Reconnecting, Offline, Compact, Comfortable, TooltipOpen, HighContrast, Greyscale
-Organisms/ReconnectOverlay | Reconnecting, Offline, Recovered, LongOutage, ReadOnlyShutdown,
-  ReadOnlyKillSwitch, DetailsOwner, DetailsViewer, Keyboard, ReducedMotion
+Organisms/ReconnectOverlay | Reconnecting, OfflineFatal, OfflineUnreachable, SessionEnded,
+  Recovered, LongOutage, ReadOnlyShutdown, ReadOnlyKillSwitch, DetailsOwner, DetailsViewer,
+  Keyboard, ReducedMotion
 Molecules/StaleDataShade | Fresh, Stale, Escalated, StaleServer, Disconnected, ReducedMotion
 Molecules/DegradedModeBanner | SingleIssue, MultipleIssues, Blocking, DismissedReappears,
   HighContrast
@@ -337,7 +353,7 @@ DIMENSIONS = (
 PX_TYPES = ("sizing", "spacing", "borderRadius", "borderWidth", "fontSizes")
 FIXED: dict[str, int | float] = {
     "boards": 12,
-    "announcement_rows": 15,
+    "announcement_rows": 16,
     "motion_rows": 17,
     "hit_target_px": 24,
     "banner_slot_px": 96,
@@ -476,9 +492,26 @@ def registered_pairs() -> set[tuple[str, str]]:
     return set(re.findall(r'fg:\s*"([^"]+)",\s*bg:\s*"([^"]+)"', text))
 
 
-def encodings_has_connection() -> bool:
+ENCODING_ROW = "connection-health"
+#: The surfaces this spec draws the connection state on (CR-7 extends the existing row with them).
+ENCODING_SURFACES = (
+    "status bar",
+    "chart overlay",
+    "TopBar chip (CMP-076)",
+    "SCR-152 region (CMP-077)",
+    "panel shade (CMP-078)",
+    "issue rows (CMP-092)",
+)
+
+
+def encodings_connection_health() -> dict[str, list[str]]:
+    """The `connection-health` row: the surfaces it lists, and this spec's surfaces it lacks."""
     data = cast(dict[str, object], json.loads(ENCODINGS.read_text(encoding="utf-8")))
-    return "connection" in cast(dict[str, object], data.get("encodings", {}))
+    encodings = cast(dict[str, object], data.get("encodings", {}))
+    row = cast(dict[str, object], encodings.get(ENCODING_ROW, {}))
+    present = sorted(cast(dict[str, object], row.get("surfaces", {})))
+    missing = [surface for surface in ENCODING_SURFACES if surface not in present]
+    return {"present": present, "missing": missing}
 
 
 def measure(themes: dict[str, Tokens], reg: set[tuple[str, str]]) -> list[PairRow]:
@@ -628,7 +661,10 @@ def print_markdown(
     listing = ", ".join(f"`{a}` on `{b}`" for a, b in proposed)
     print(f"- registered pairs scanned: {reg_count}; PROPOSED additions ({len(proposed)}):")
     print(f"  {listing}")
-    print(f"- `encodings.json` has a `connection` row: {encodings_has_connection()}")
+    enc = encodings_connection_health()
+    print(f"- `encodings.json` `{ENCODING_ROW}` row: surfaces {enc['present']};")
+    print(f"  this spec's surfaces it lacks ({len(enc['missing'])}; CR-7 extends it):")
+    print(f"  {enc['missing']}")
     e08 = [p for p in pairs if (p["fg"], p["bg"]) in E08_D03_PAIRS]
     print(f"- E08-D03 section 6 pairs reproduced from the tokens: {len(e08)} of 6")
     print("\n## 5. Counts the boards quote\n")
@@ -658,7 +694,7 @@ def main(argv: list[str]) -> int:
             "dimensions": dims,
             "counts": nums,
             "proposed_pairs": [list(p) for p in proposed],
-            "encodings_has_connection": encodings_has_connection(),
+            "encodings_connection_health": encodings_connection_health(),
             "states": STATES,
             "stories": STORIES,
             "chip_values": list(CHIP_VALUES),
