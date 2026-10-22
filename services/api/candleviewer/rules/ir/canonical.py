@@ -5,8 +5,9 @@ sha256 over UTF-8 bytes. Computed server-side only, before persistence (never fr
 round-trip). Any change to this algorithm changes every hash: bump ``IR_HASH_VERSION`` and ship an
 upcaster. A float (only an untyped ``params`` holds one) hashes as ``Decimal(float.__repr__(x))``;
 a value with no canonical form is refused with ``IrValueError`` (``422 rule_ir_invalid``, not 500):
-a non-finite number, a number outside the decimal context's range, or text holding a lone
-surrogate (it has no UTF-8 form, so no hash holds it).
+a non-finite number, a number whose plain form would exceed 64 characters (``MAX_PLAIN_WIDTH``;
+every number outside the decimal context's range is one), or text holding a lone surrogate (it
+has no UTF-8 form, so no hash holds it).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from candleviewer.domain.plain_decimal import PlainWidthError, plain_decimal
 from candleviewer.domain.text import UNPAIRED_SURROGATE, escape_unpaired, unpaired_surrogate
 from candleviewer.rules.errors import RulesError
 from candleviewer.rules.ir.models import Rule
@@ -31,7 +33,7 @@ PRESENTATION_KEYS = frozenset({"graph_layout", "editor"})
 METADATA_KEYS = frozenset({"created_by", "created_at", "updated_at"})
 _EXCLUDED = PRESENTATION_KEYS | METADATA_KEYS
 
-#: The refusals of a number: no finite value, and a value the decimal context cannot hold.
+#: The refusals of a number: no finite value, and a form too wide to hash.
 NOT_FINITE = "Input should be a finite number"
 OUT_OF_RANGE = "Number is outside the range a rule can hold"
 
@@ -79,18 +81,16 @@ def parse_ir_json(text: str) -> Rule:
 def dec_str(d: Decimal) -> str:
     """Plain notation, no exponent, no trailing fractional zeros, no ``+``, ``-0`` -> ``0``.
 
-    A number the decimal context cannot hold is an ``IrValueError``: one past its largest, where
-    ``normalize`` signals ``Overflow``, or a non-zero one below its smallest, which reads as zero.
+    A number whose plain form would exceed 64 characters (``MAX_PLAIN_WIDTH``) is an
+    ``IrValueError``, decided before the form is built: every number outside the decimal context's
+    range is one.
     """
     try:
-        if d == 0:
-            return "0"
-        normal = d.normalize()
-    except decimal.DecimalException as exc:  # Overflow past Emax; InvalidOperation: an sNaN
+        return plain_decimal(d)
+    except PlainWidthError as exc:
+        raise IrValueError((), OUT_OF_RANGE) from exc
+    except decimal.DecimalException as exc:  # InvalidOperation: an sNaN
         raise IrValueError((), OUT_OF_RANGE if d.is_finite() else NOT_FINITE) from exc
-    if not normal:  # d is not zero but its normal form is: it fell below the smallest number
-        raise IrValueError((), OUT_OF_RANGE)
-    return format(normal, "f")
 
 
 def _strip(node: Any) -> Any:

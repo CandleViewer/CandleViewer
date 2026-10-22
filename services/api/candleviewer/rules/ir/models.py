@@ -8,7 +8,7 @@ control (nothing may be smuggled into a stored IR). The IR is data, never code (
 from __future__ import annotations
 
 import math
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -27,6 +27,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
+from candleviewer.domain.plain_decimal import PlainWidthError, plain_decimal
 from candleviewer.domain.primitives import AccountId, Environment, Notional, RuleId, Symbol, UserId
 from candleviewer.domain.text import UNPAIRED_SURROGATE, UNSTORABLE_TEXT, unpaired_surrogate
 
@@ -64,10 +65,13 @@ _TEMPORAL_OPS = frozenset({"sustained_for", "occurred_within", "count_within", "
 
 
 def _plain_decimal(d: Decimal) -> str:
-    """The JSON form of a ``Decimal`` param: ``canonical.dec_str``'s digits, so a stored or returned
-    value re-hashes as it hashed (``1E-7`` is ``"0.0000001"``, ``3.0`` is ``"3"``). Mirrored, not
-    imported: ``canonical`` imports these models."""
-    return "0" if d == 0 else format(d.normalize(), "f")
+    """The JSON form of a ``Decimal`` param: ``canonical.dec_str``'s digits (the same function), so
+    a stored or returned value re-hashes as it hashed (``1E-7`` is ``"0.0000001"``, ``3.0`` is
+    ``"3"``), for every value the hash accepts. A number the hash refuses keeps its own text."""
+    try:
+        return plain_decimal(d)
+    except (PlainWidthError, DecimalException):
+        return str(d)
 
 
 def _one_refusal(v: Any) -> Any:

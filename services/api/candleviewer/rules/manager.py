@@ -541,7 +541,7 @@ class RulesManager:
             raise _ir_invalid(res.errors)
         try:
             return rule, ir_hash(rule)
-        except IrValueError as exc:  # NaN / Infinity in an untyped params: 422, never a 500
+        except IrValueError as exc:  # a value the hash cannot hold: 422, never a 500
             raise RuleError(
                 422,
                 "rule_ir_invalid",
