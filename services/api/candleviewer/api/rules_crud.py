@@ -22,11 +22,13 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from candleviewer.rules.compiler.common import MAX_ITEMS
+from candleviewer.domain.text import refuse_unstorable_text
+from candleviewer.rules.compiler.common import MAX_DEPTH, MAX_ITEMS
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.ir.models import RuleScope
 from candleviewer.rules.manager import Actor, RuleError, RulesManager
 from candleviewer.rules.scope import ScopeResolver
+from candleviewer.ws.limits import json_depth_exceeds
 
 _READ = "rules:read"
 _WRITE = "rules:write"
@@ -34,6 +36,9 @@ _WRITE = "rules:write"
 #: (`check_bounds`): `MAX_ITEMS` values at 100 bytes each. The densest corpus rule takes a fifth
 #: of that per value as compact JSON and under a third indented, so a rule at the bounds fits.
 MAX_RULE_BODY_BYTES: Final = MAX_ITEMS * 100
+#: The deepest body a rule within the bounds needs: `MAX_DEPTH + 1` nested objects and arrays (a
+#: value at depth `MAX_DEPTH` may be one) inside the body's own object.
+_MAX_JSON_DEPTH: Final = MAX_DEPTH + 2
 _LENGTH: Final = re.compile(r"[0-9]{1,19}")  # a usable `Content-Length`, as `api/drawings.py`
 _TOO_LARGE: Final = "Request body or batch exceeds the operation's size ceiling"
 
@@ -143,16 +148,27 @@ def make_rules_crud_router(
         return actor, mgr
 
     async def _body(request: Request) -> dict[str, Any] | JSONResponse | None:
-        """The JSON object sent (None for anything else), or the 413 past the ceiling."""
+        """The JSON object sent (else None), or the 413 or 400 for a body too large or too deep."""
         raw = await _read_capped(request, MAX_RULE_BODY_BYTES)
         if raw is None:
             detail = f"The request body exceeds {MAX_RULE_BODY_BYTES} bytes."
             return _problem(413, "payload_too_large", _TOO_LARGE, detail)
         try:
-            body = json.loads(raw)
-        except ValueError:
+            text = raw.decode("utf-8")
+            if json_depth_exceeds(text, _MAX_JSON_DEPTH):  # as `api/drawings.py`
+                return _bad(f"JSON nesting is deeper than {_MAX_JSON_DEPTH} levels.")
+            body = json.loads(text)
+        except ValueError:  # not UTF-8 JSON
             return None
         return body if isinstance(body, dict) else None
+
+    def _unstorable(body: dict[str, Any], field: str) -> JSONResponse | None:
+        """400 when `field` holds text Postgres cannot store, naming the field, never its value."""
+        try:
+            refuse_unstorable_text(body.get(field, ""))
+        except ValueError as exc:
+            return _bad(f"'{field}' {exc}")
+        return None
 
     def _bad(detail: str) -> JSONResponse:
         return _problem(400, "validation_failed", "Bad request", detail)
@@ -193,6 +209,8 @@ def make_rules_crud_router(
         doc = _doc(body) if body is not None else None
         if body is None or doc is None:
             return _bad("body needs an 'ir' object")
+        if (refused := _unstorable(body, "note")) is not None:
+            return refused
         denied = await _scope_check(actor, doc.get("scope"), arming=False)
         if denied is not None:
             return denied
@@ -229,6 +247,8 @@ def make_rules_crud_router(
             return _bad("body needs an 'ir' object")
         if not raw.isdigit():
             return _bad("send the version you edited in If-Match (or expected_version)")
+        if (refused := _unstorable(body, "note")) is not None:
+            return refused
         try:
             # The stored rule first (owner, every version's accounts), then the submitted scope.
             await mgr.require_visible(str(ruleId), actor, "update")
@@ -290,6 +310,8 @@ def make_rules_crud_router(
             return body
         if body is None or not isinstance(body.get("version_id"), str):
             return _bad("body needs 'version_id'")
+        if (refused := _unstorable(body, "note")) is not None:
+            return refused
         try:
             # Visibility first (#2574): on a rule the caller cannot see, a real version and a
             # missing rule or version are one 404, never the scope pre-check's 403 (04 §7.3).
@@ -326,6 +348,8 @@ def make_rules_crud_router(
             }
         ):
             return _bad("body must be {mode, reason?, acknowledge_flatten_all?}")
+        if (refused := _unstorable(body, "reason")) is not None:
+            return refused
         try:
             if body["mode"] == "armed":
                 denied = await _scope_check(
