@@ -126,7 +126,7 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
 
     k6 = shutil.which("k6")
     if k6 is None:
-        raise RuntimeError("k6 not on PATH (nightly installs it via grafana/setup-k6-action)")
+        raise RuntimeError("k6 not on PATH (the full pack's workflow installs the pinned k6)")
     port = _free_port()
     base = f"http://127.0.0.1:{port}"
     assert_loopback_target(base)

@@ -5,7 +5,7 @@ name: perf-ingestion-nightly
 # E08-Q04: + the seven-scenario perf pack (bench/ingestion) vs bench/baselines/e08 (WARN > 10 %,
 # FAIL > per-metric band, only against a same-machine-profile, non-warn-only baseline: the
 # committed baselines are laptop numbers, so this only WARNs until a CI-runner baseline is
-# recorded). Weekly (Sun) and on dispatch with profile=full: 24 h soak + k6. Never on PRs.
+# recorded). Full profile: on a dispatch with profile=full (24 h soak + k6), rest_k6 weekly.
 # #399 D2-G4: the pack's soak_bars is the soak with the bars path at its cap, bar builders and the
 # WS series store at 32 specs x 1 000 bars a symbol (budget #8). Its smoke runs in both pack
 # steps below: 28 s each on the laptop that recorded its baseline, where soak_steady's takes 7 s
@@ -19,9 +19,20 @@ name: perf-ingestion-nightly
 # reports of the scenarios that finished (the upload below runs on a cancel too).
 # A red signal comments on its open issue, or opens one (_nightly-issue.yml, #1849). No
 # workflow-level concurrency group (#3449): the report job has a per-signal group instead.
+# #2825: the weekly cron (Sun 05:17Z) runs only perf-pack-full, scenario rest_k6 (about 15 min,
+# so a 90-minute timeout). k6 is v2.3.0, fetched and checked as perf-ws-load.yml does, and sends
+# no usage report; its summary export, a refused run's too, is kept in the artifact as
+# bench/reports/rest_k6-k6-summary.json (CV_BENCH_K6_EXPORT). A guard job, bench-free (on
+# ubuntu-latest, so it never queues behind a soak), lets the pack start only while no other
+# perf-pack-full, perf-bars-memdiag.yml leg or perf-ws-load.yml ws-load is queued or running, so
+# the weekly run joins the cv-bench-01 group it shares with the leg only while that group is idle:
+# a group keeps one pending run and replaces the older one (perf-ws-load.yml's header). Busy: a
+# scheduled run skips the pack with a notice (green, no issue), a dispatch fails. Any API error
+# fails it, a 404 too: all three are on main.
 on:
   schedule:
     - cron: "37 3 * * *"
+    - cron: "17 5 * * 0" # #2825: weekly, perf-pack-full's rest_k6 alone
   workflow_dispatch:
     inputs:
       profile:
@@ -39,6 +50,7 @@ env:
   PYTHONUNBUFFERED: "1" # every print reaches the log as it happens, also when a run is cancelled
 jobs:
   ingestion-soak:
+    if: github.event.schedule != '17 5 * * 0' # the weekly cron is perf-pack-full's alone (#2825)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -92,12 +104,50 @@ jobs:
             services/api/bench/reports/
           if-no-files-found: ignore
 
+  bench-free:
+    if: (github.event_name == 'workflow_dispatch' && inputs.profile == 'full') || github.event.schedule == '17 5 * * 0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # lists the runs and jobs of the workflows that use the bench runner
+    outputs:
+      free: ${{ steps.guard.outputs.free }}
+    steps:
+      - name: Start the full pack only while no other job holds the bench runner
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          busy=""
+          for held in perf-ingestion-nightly.yml:perf-pack-full perf-bars-memdiag.yml:leg perf-ws-load.yml:ws-load; do
+            wf=${held%%:*} job=${held#*:} n=0
+            for status in in_progress queued; do
+              ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=${status}&per_page=50" --paginate --jq '.workflow_runs[].id')
+              for id in $ids; do
+                [ "$id" != "$GITHUB_RUN_ID" ] || continue # this run: its own perf-pack-full waits for this job
+                c=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs?per_page=100" --jq "[.jobs[] | select(.name == \"${job}\" and (.status == \"in_progress\" or .status == \"queued\"))] | length")
+                n=$((n + c))
+              done
+            done
+            [ "$n" -eq 0 ] || busy="${busy:+$busy, }${wf} (job ${job})"
+          done
+          [ -n "$busy" ] || { echo "free=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          if [ "$EVENT" = schedule ]; then # the busy rule (#2825, ruling pending): a schedule steps aside
+            echo "::notice::the bench runner is busy (${busy}): this week's rest_k6 run is skipped"
+          else # and a dispatch fails, as perf-ws-load's guard does
+            echo "::error::refusing to start: the bench runner is busy: ${busy}; dispatch again when it has finished" >&2
+            exit 1
+          fi
+
   perf-pack-full:
     # E08-Q04 full profile: 24 h 1x soak (3 symbols) + 10-symbol aggregate + burst + k6 REST,
     # and soak_bars: 24 h of scenario time, about 3 h on the laptop that recorded its baseline.
     # GitHub-hosted jobs cap at 6 h, so this targets the self-hosted bench runner (E04 bench
-    # environment); dispatch-only until that runner is registered.
-    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'full'
+    # environment), on bench-free's all-clear (#2825).
+    needs: bench-free
+    if: needs.bench-free.outputs.free == 'true'
     runs-on: [self-hosted, bench]
     # shared with perf-bars-memdiag.yml's leg: one soak at a time on cv-bench-01 (#399); a pack
     # dispatched while a leg is queued replaces that leg (one pending run per group); a run that
@@ -105,23 +155,42 @@ jobs:
     concurrency:
       group: cv-bench-01
       cancel-in-progress: false
-    timeout-minutes: 2100 # 24 h soak + 6 h soak_bars + 1 h aggregate + 30 m latency + rest/burst
+    # 24 h soak + 6 h soak_bars + 1 h aggregate + 30 m latency + rest/burst; weekly rest_k6 ~15 min
+    timeout-minutes: ${{ github.event_name == 'schedule' && 90 || 2100 }}
     env:
       CV_ENV: test
       CV_BENCH_MACHINE_PROFILE: bench-runner
+      SCENARIO: ${{ github.event_name == 'schedule' && 'rest_k6' || inputs.scenario }}
+      K6_VERSION: v2.3.0
+      # sha256 of k6-v2.3.0-linux-amd64.tar.gz, as perf-ws-load.yml pins it
+      K6_SHA256: 39c3117b6af817592dcd0ce4242105c0a7af10948c2a425306f0be8f7a8a8ab1
+      K6_NO_USAGE_REPORT: "true"
+      K6_AUTO_EXTENSION_RESOLUTION: "false"
     outputs:
       failed: ${{ steps.pack.outcome == 'failure' }}
       report: ${{ steps.handoff.outputs.report }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      - uses: grafana/setup-k6-action@43b9fc21641a76002687994433dd586f56e791b1 # v1.2.2
+      - name: Install the pinned k6 (sha256 verified twice)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/k6"
+          mkdir -p "$dir"
+          cd "$dir"
+          tarball="k6-${K6_VERSION}-linux-amd64.tar.gz"
+          gh release download "$K6_VERSION" -R grafana/k6 -p "$tarball" -p "k6-${K6_VERSION}-checksums.txt" --clobber
+          echo "${K6_SHA256}  ${tarball}" | sha256sum -c -
+          grep " ${tarball}\$" "k6-${K6_VERSION}-checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
+          ./k6 version | grep -F "k6 ${K6_VERSION} "
+          echo "$dir" >> "$GITHUB_PATH"
       - id: sync
         run: uv sync --project services/api
       - name: Check the scenario name (its own step, so a refused name files no pack issue)
         id: scenario
-        env:
-          SCENARIO: ${{ inputs.scenario }}
         run: |
           export LC_ALL=C # [a-z] is ASCII only in the C locale
           [[ "$SCENARIO" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || { echo "scenario must be all or a scenario name" >&2; exit 2; }
@@ -131,7 +200,7 @@ jobs:
         id: pack
         working-directory: services/api
         env:
-          SCENARIO: ${{ inputs.scenario }}
+          CV_BENCH_K6_EXPORT: bench/reports/rest_k6-k6-summary.json # k6's own summary, kept
         run: uv run python -m bench.ingestion.runner "$SCENARIO" --profile full --out-dir bench/reports
       - name: Hand the gate diff to the issue job
         id: handoff
