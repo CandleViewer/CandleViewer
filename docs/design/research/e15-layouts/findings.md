@@ -68,7 +68,8 @@ pending the owner run; **open** = needs sessions or an owner decision; **deviati
 Page **`E15-D01 Layout UX research`** in the project's Penpot file; its page id is recorded here when the boards are
 built (page name and page id only, per `docs/design/README.md`). Greyscale research boards, not visual design: one frame
 per board, `E15-D01 / 0n <slug>`, exported with `docs/design/_tools/penpot_export.py` to `docs/design/E15/img/`
-(README's `<epic>/img/` rule). Boards 03 and 04 double as the sync stimulus: letters only, text at 16 px or more.
+(README's `<epic>/img/` rule). Boards 03 and 04 double as the sync stimulus: each configuration frame is letters only,
+text at 16 px or more; the board also carries the facilitator copy.
 
 | #   | Board and planned PNG                                                   | Illustrates                                                                    |
 | --- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
