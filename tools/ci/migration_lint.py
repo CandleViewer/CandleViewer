@@ -104,23 +104,57 @@ _DYNAMIC_MUTATION_RE = re.compile(
 
 
 def _resolve_simple_name_constants(tree: ast.AST) -> dict[str, str]:
-    """Map `Name = Constant(str)` module/function-level assignments
-    (`tbl = "audit_log"`) to their string value, so an f-string placeholder
-    that is just a `Name` reference can be substituted before matching.
-    Last assignment wins if a name is reassigned; conditional/loop-only
-    assignments are still collected (fail-closed: over-resolving only ever
-    adds table names to check, it never removes a real finding)."""
-    values: dict[str, str] = {}
+    """Map a name to the string constant it is bound to (`tbl = "audit_log"`), so a
+    placeholder or an argument that is just a `Name` can be read as that constant. A name
+    is resolved only when every binding of it in the file gives it that one constant (an
+    assignment, a loop, `with` or `except` target, a parameter, an import, a definition):
+    which of two values a statement sees depends on the order the code runs in, so such a
+    name reads as unresolved, and an unresolved name where a table goes is refused."""
+    # The `Name` targets of an assignment of a string constant, by node.
+    constants: dict[int, str] = {}
     for node in ast.walk(tree):
         if (
-            isinstance(node, ast.Assign)
+            isinstance(node, (ast.Assign, ast.AnnAssign))
             and isinstance(node.value, ast.Constant)
             and isinstance(node.value.value, str)
         ):
-            for target in node.targets:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
                 if isinstance(target, ast.Name):
-                    values[target.id] = node.value.value
-    return values
+                    constants[id(target)] = node.value.value
+    values: dict[str, set[str | None]] = {}
+    for node in ast.walk(tree):
+        bound: list[tuple[str, str | None]] = []
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            bound = [(node.id, constants.get(id(node)))]
+        elif isinstance(node, ast.arg):
+            bound = [(node.arg, None)]
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound = [((a.asname or a.name).split(".")[0], None) for a in node.names]
+        elif isinstance(
+            node,
+            (
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.ClassDef,
+                ast.ExceptHandler,
+                ast.MatchAs,
+                ast.MatchStar,
+            ),
+        ) and (name := node.name):
+            bound = [(name, None)]
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            bound = [(node.rest, None)]
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            bound = [(name, None) for name in node.names]
+        for name, value in bound:
+            values.setdefault(name, set()).add(value)
+    resolved: dict[str, str] = {}
+    for name, bound_to in values.items():
+        (value,) = bound_to if len(bound_to) == 1 else (None,)
+        if value is not None:
+            resolved[name] = value
+    return resolved
 
 
 def _iter_string_literals(
@@ -318,6 +352,15 @@ _BLOCK_OPENERS = frozenset(
 _MUTATING_GRANTS = frozenset({"UPDATE", "DELETE", "TRUNCATE", "ALL", "TRIGGER"})
 # A placeholder in dynamic SQL: its target is an argument, read where it is passed.
 _PLACEHOLDER_RE = re.compile(r"%[IsL]|\$\d+")
+_SETS = frozenset({"SET", "RESET"})
+#: A setting set under a name the rule cannot read: a placeholder, a Python value it
+#: cannot resolve (`_UNRESOLVED_PLACEHOLDER`), or a name its fragment ends on, which
+#: the code may go on to build.
+_DYNAMIC_SETTING_RE = re.compile(
+    r"\s*(?:SET(?:\s+(?:SESSION|LOCAL))?|ALTER\s+(?:ROLE|USER|DATABASE|SYSTEM|FUNCTION"
+    r"|PROCEDURE|ROUTINE)\b.*?\bSET)\s+(?:[%$\x00]|[\w.\"]*\s*\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
 #: The revision that creates the audit tables and their guard functions (21 §3.10).
 #: It is exempt for three statement kinds, wherever they stand in it: `CREATE TRIGGER`
 #: on the audit tables; `DROP TABLE` and `DROP TRIGGER` on them, which its downgrade
@@ -494,8 +537,11 @@ def _reach(words: list[str], names: set[str]) -> str | None:
     a table, or None: a role's membership (`role`; whoever owns the audit tables can
     drop their triggers), a schema with everything in it, or its owner (`schema`),
     every object a role owns (`owned`), the extension `audit_chain` hashes with
-    (`pgcrypto`), or the `search_path` a role or a database resolves the chain's calls
-    through (`search_path`)."""
+    (`pgcrypto`), the `search_path` a role or a database resolves the chain's calls
+    through (`search_path`), a mutating privilege every table created later gets by
+    default (`default_privileges`), as a new audit table would, the setting that turns
+    the tables' triggers off (`replication_role`), a setting set through `set_config()`
+    (`set_config`), or an event trigger, which runs on later DDL (`event_trigger`)."""
     head = words[:2]
     if (
         head[:1] == ["GRANT"]
@@ -509,6 +555,22 @@ def _reach(words: list[str], names: set[str]) -> str | None:
         return "schema"
     if head in (["DROP", "OWNED"], ["REASSIGN", "OWNED"]):
         return "owned"
+    if head == ["ALTER", "DEFAULT"] and "GRANT" in words:
+        granted = words[words.index("GRANT") + 1 :]
+        on = granted.index("ON") if "ON" in granted else len(granted)
+        if granted[on + 1 : on + 2] == ["TABLES"] and _MUTATING_GRANTS & set(
+            granted[:on]
+        ):
+            return "default_privileges"
+    if (
+        head[:1] in (["SET"], ["RESET"])
+        or (head[:1] == ["ALTER"] and _SETS & set(words))
+    ) and any(name.lower() == "session_replication_role" for name in names):
+        return "replication_role"
+    if "set_config" in names:
+        return "set_config"
+    if words[:3] in (["CREATE", "EVENT", "TRIGGER"], ["ALTER", "EVENT", "TRIGGER"]):
+        return "event_trigger"
     if head in (["DROP", "EXTENSION"], ["ALTER", "EXTENSION"]) and "pgcrypto" in names:
         return "pgcrypto"
     settings = (["ALTER", "ROLE"], ["ALTER", "USER"], ["ALTER", "DATABASE"])
@@ -539,6 +601,8 @@ def _audit_mutations(sql: str, tables: frozenset[str], *, owner: bool) -> set[st
         dynamic = False
         if _unicode_escaped(statement):
             hits.add("unicode")
+        if _DYNAMIC_SETTING_RE.match(_code_text(statement)):
+            hits.add("reach:set_config")
         for nested in _nested_sql(statement):
             found = _audit_mutations(nested, tables, owner=owner)
             hits |= found
@@ -934,6 +998,14 @@ _REACHES = {
     "reach:schema": "a schema, its owner or its objects, the append-only tables too",
     "reach:owned": "every object a role owns, the append-only tables too",
     "reach:pgcrypto": "the extension the audit hash chain hashes with",
+    "reach:default_privileges": "a mutating privilege every table created later gets by "
+    "default, a new append-only table too",
+    "reach:replication_role": "the setting that turns the append-only tables' triggers "
+    "off (session_replication_role)",
+    "reach:set_config": "a setting set through set_config() or under a computed name, "
+    "which the rule cannot read: it could turn the append-only tables' triggers off",
+    "reach:event_trigger": "an event trigger, which runs on later DDL, the append-only "
+    "tables' too",
     "reach:search_path": "the search_path a role or a database resolves the audit "
     "hash chain's calls through",
     "unicode": "a name or a string spelled with Unicode escapes (U&), which the rule "

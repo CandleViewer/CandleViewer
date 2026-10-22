@@ -984,6 +984,10 @@ def _audit_hits(tmp_path: Path, source: str, name: str = "0050_audit.py") -> lis
         "DO $$ BEGIN EXECUTE format('DELETE FROM %s', 'audit_log'); END $$",
         "DO $$ BEGIN EXECUTE format('DELETE FROM %L', 'audit_log'); END $$",
         "DO $$ BEGIN EXECUTE 'DELETE FROM $1' USING 'audit_log'; END $$",
+        "ALTER TABLE audit_log DISABLE TRIGGER ALL",
+        "ALTER TABLE audit_log ENABLE REPLICA TRIGGER trg_audit_append",
+        "ALTER TABLE audit_log ENABLE ALWAYS TRIGGER trg_audit_append",
+        "ALTER TABLE audit_log DISABLE RULE r",
     ],
 )
 def test_audit_mutation_spelled_these_ways_is_flagged(tmp_path: Path, sql: str) -> None:
@@ -1092,6 +1096,16 @@ def test_a_drop_whose_table_name_is_on_the_next_line_is_flagged(tmp_path: Path) 
         "DROP SCHEMA staging",
         "INSERT INTO verbs (v) VALUES ('create')",  # a bare word: no statement
         "DROP EXTENSION citext",  # not the extension the chain hashes with
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO cv_ro",
+        "ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO cv_app",
+        "ALTER DEFAULT PRIVILEGES REVOKE DELETE ON TABLES FROM cv_app",
+        "ALTER DEFAULT PRIVILEGES GRANT UPDATE ON SEQUENCES TO cv_app",
+        "SET LOCAL lock_timeout = '5s'",
+        "SET CONSTRAINTS ALL DEFERRED",
+        "RESET lock_timeout",
+        "ALTER TABLE orders DISABLE TRIGGER ALL",
+        "ALTER TABLE orders ALTER COLUMN note SET DEFAULT 'x'",
+        "UPDATE orders SET note = 'x'",
     ],
 )
 def test_a_statement_that_mutates_no_audit_table_is_not_flagged(
@@ -1205,6 +1219,48 @@ def test_a_revision_nested_too_deeply_is_refused_and_the_others_still_report(
         ("0050_deep.py", True),
         ("0051_other.py", False),
     ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "t = 'audit_log'\n    op.execute(f'DELETE FROM {t}')\n    t = 'orders'\n",
+        "t = 'orders'\n    t = 'audit_log'\n    op.execute(f'DELETE FROM {t}')\n",
+        "for t in ('orders', 'audit_log'):\n        op.execute(f'DELETE FROM {t}')\n",
+        "t = 'audit_log'\n    op.drop_table(t)\n    t = 'orders'\n",
+        "purge('audit_log')\n\n\nt = 'orders'\n\n\ndef purge(t: str) -> None:\n"
+        "    op.execute(f'DELETE FROM {t}')\n",
+    ],
+    ids=[
+        "rebound-after",
+        "rebound-before",
+        "a-loop-target",
+        "an-op-argument",
+        "a-parameter",
+    ],
+)
+def test_a_name_bound_to_more_than_one_value_reads_as_unresolved(
+    tmp_path: Path, body: str
+) -> None:
+    """Which value a statement sees depends on the order the code runs in, so a name
+    bound more than once is unresolved, and an unresolved name where a table goes is
+    refused."""
+    source = f"from alembic import op\n\n\ndef upgrade() -> None:\n    {body}"
+    assert _audit_hits(tmp_path, source)
+
+
+def test_a_name_bound_to_one_constant_in_two_functions_still_resolves(
+    tmp_path: Path,
+) -> None:
+    """The same table named in `upgrade()` and `downgrade()` is one value, not two."""
+    fn = "    tbl = 'orders'\n    op.execute(f'ALTER TABLE {tbl} ADD COLUMN note text')\n"
+    source = (
+        "from alembic import op\n\n\ndef upgrade() -> None:\n"
+        + fn
+        + "\n\ndef downgrade() -> None:\n"
+        + fn
+    )
+    assert _audit_hits(tmp_path, source) == []
 
 
 def test_a_python_revision_nested_too_deeply_is_refused_by_the_cli_with_its_sibling(
@@ -1935,6 +1991,31 @@ def test_a_routine_named_as_a_function_the_hash_chain_calls_is_flagged(
     assert f"the function '{callee}' the audit hash chain calls" in message
 
 
+_DEFAULT_GRANT = "a mutating privilege every table created later gets"
+_TRIGGERS_OFF = "the setting that turns the append-only tables' triggers off"
+_SETTING = "a setting set through set_config() or under a computed name"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "op.execute(f'SET {name} = replica')",
+        "op.execute('SET ' + name + ' = replica')",
+        "op.execute('SET session_' + 'replication_role = replica')",
+        "v = 'SET'\n    op.execute(f'{v} {name} = replica')",
+    ],
+    ids=["an-f-string", "a-concatenation", "a-split-name", "a-resolved-verb"],
+)
+def test_a_setting_python_computes_the_name_of_is_flagged(
+    tmp_path: Path, body: str
+) -> None:
+    source = (
+        f"from alembic import op\n\n\ndef upgrade(name: str) -> None:\n    {body}\n"
+    )
+    hits = _audit_hits(tmp_path, source)
+    assert hits and all(_SETTING in hit for hit in hits)
+
+
 @pytest.mark.parametrize(
     ("sql", "target"),
     [
@@ -1964,6 +2045,49 @@ def test_a_routine_named_as_a_function_the_hash_chain_calls_is_flagged(
         ),
         ("ALTER ROLE cv_app RESET search_path", "the search_path"),
         ("ALTER ROLE cv_app RESET ALL", "the search_path"),
+        (
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT DELETE ON TABLES TO cv_app",
+            _DEFAULT_GRANT,
+        ),
+        (
+            "ALTER DEFAULT PRIVILEGES FOR ROLE cv_owner GRANT ALL ON TABLES TO cv_app",
+            _DEFAULT_GRANT,
+        ),
+        ("SET session_replication_role = replica", _TRIGGERS_OFF),
+        ("SET LOCAL session_replication_role TO replica", _TRIGGERS_OFF),
+        ('SET "SESSION_REPLICATION_ROLE" = replica', _TRIGGERS_OFF),
+        ("DO $$ BEGIN SET session_replication_role = replica; END $$", _TRIGGERS_OFF),
+        (
+            "DO $$ BEGIN EXECUTE 'SET session_replication_role = replica'; END $$",
+            _TRIGGERS_OFF,
+        ),
+        ("ALTER ROLE cv_app SET session_replication_role = replica", _TRIGGERS_OFF),
+        ("ALTER FUNCTION f() SET session_replication_role = replica", _TRIGGERS_OFF),
+        ("SELECT set_config('session_replication_role', 'replica', false)", _SETTING),
+        ("SELECT set_config('lock_timeout', '5s', true)", _SETTING),
+        (
+            "DO $$ BEGIN EXECUTE format('SET %I = %L', 'session_replication_role',"
+            " 'replica'); END $$",
+            _SETTING,
+        ),
+        (
+            "DO $$ BEGIN EXECUTE format('SET LOCAL %I = %L', 'session_replication_role',"
+            " 'replica'); END $$",
+            _SETTING,
+        ),
+        (
+            "DO $$ BEGIN EXECUTE 'SET session_' || 'replication_role = replica'; END $$",
+            _SETTING,
+        ),
+        (
+            "DO $$ BEGIN EXECUTE 'ALTER ROLE cv_app SET ' || n || ' = replica'; END $$",
+            _SETTING,
+        ),
+        (
+            "CREATE EVENT TRIGGER et ON ddl_command_start EXECUTE FUNCTION f()",
+            "an event trigger",
+        ),
+        ("ALTER EVENT TRIGGER et DISABLE", "an event trigger"),
     ],
 )
 def test_a_statement_that_reaches_the_audit_tables_without_naming_one_is_flagged(
