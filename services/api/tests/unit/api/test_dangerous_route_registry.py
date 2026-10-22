@@ -127,10 +127,11 @@ def test_a_dangerous_write_with_a_path_convertor_is_reported() -> None:
     router = APIRouter(prefix="/exchange-accounts")
     router.add_api_route("/{accountId:path}/profiles", _stand_in, methods=["POST"])
     item = "/{accountId}/profiles/{profileId:path}"
-    router.add_api_route(item, _stand_in, methods=["PUT", "DELETE"])
+    router.add_api_route(item, _stand_in, methods=["PUT", "PATCH", "DELETE"])
     app.include_router(router)
     assert _convertor_writes(app) == [
         ("DELETE", "/exchange-accounts" + item),
+        ("PATCH", "/exchange-accounts" + item),
         ("POST", "/exchange-accounts/{accountId:path}/profiles"),
         ("PUT", "/exchange-accounts" + item),
     ]

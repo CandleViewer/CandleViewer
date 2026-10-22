@@ -32,6 +32,7 @@ _REASONS = frozenset(
     {
         "native_stop_mandatory",
         "above_leverage_cap",
+        "cap_unbounded",  # PF-T02: a removed cap is a policy refusal (ruling of 2026-10-22 07:10Z)
         "max_leverage",
         "min_order_qty",
         "qty_step",
@@ -58,7 +59,7 @@ def test_a_profile_action_outside_the_vocabulary_is_refused(name: str) -> None:
         validate_action(name)
 
 
-def test_save_refused_reasons_are_the_native_stop_rule_and_the_exchange_limits() -> None:
+def test_save_refused_reasons_are_the_profile_policy_refusals() -> None:
     assert PROFILE_SAVE_REFUSED_REASONS == _REASONS
     assert all(re.fullmatch(r"[a-z][a-z0-9_]*", reason) for reason in _REASONS)
 
