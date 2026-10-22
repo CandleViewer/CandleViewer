@@ -10,7 +10,8 @@ additive and an old test can pin an old corpus (`corpus_path(..., capture_date=.
 recorded later for fields the corpus lacks join the current directory instead, each with its
 own `capture_date` (the `recorded_*` files below).
 
-- `ws/*.jsonl` - raw public WS frames, one per line, exactly as received.
+- `ws/*.jsonl` - raw public WS frames, one per line, exactly as received, and the private stream's
+  docs-transcribed frames (below).
 - `rest/*.json` - REST response bodies (`http_status` is recorded in the manifest).
 - `manifest.json` - one entry per file: `path`, `symbol`, `stream`, `host`, `capture_date`,
   `source`, `notable_event`, `http_status`, `size_cap_bytes`, `window_ms` (first and last frame
@@ -34,6 +35,7 @@ own `capture_date` (the `recorded_*` files below).
 | Delisted symbol + changed tick size                   | `rest/instruments_before.json` -> `rest/instruments_after.json`              |
 | Live feed fields (#3447): `RPI`, `seq`, newer tickers | `ws/recorded_publicTrade_BTCUSDT.jsonl`, `ws/recorded_tickers_BTCUSDT.jsonl` |
 | Order path (#2877): trade replies, reads, two errors  | `rest/trading-*.json` (docs-transcribed, below)                              |
+| Private stream (#3963): replies and topic pushes      | `ws/private-*.jsonl` (docs-transcribed, below)                               |
 
 ## Provenance and size
 
@@ -111,6 +113,38 @@ account id.
 - `trading-account-info.json`: source: docs-transcribed, `account/account-info`; 2026-10-21; symbol none; env none; redaction none.
 - `trading-error-110072.json`: source: docs-transcribed, `error (UTA table, 110072)`; 2026-10-21; symbol none; env none; redaction none.
 - `trading-error-110001.json`: source: docs-transcribed, `error (UTA table, 110001)`; 2026-10-21; symbol none; env none; redaction none.
+
+### Docs-transcribed private-stream frames (#3963, G-8b ruling 11)
+
+No recording holds a private-stream frame yet (E29-K01, #843, records them). Under the same #1778
+group A pattern each `ws/private-*.jsonl` file is one frame transcribed from the Bybit v5
+documentation: a reply sample of the Connect page (`ws/connect`, source
+`websocket/wss-authentication.mdx`) or a private topic's Stream Example, keys and values
+unchanged (whitespace compacted), at the same `bybit-exchange/docs` commit `19518b90fb36`. Each
+manifest `stream` is the topic as the adapter subscribes it (`order.linear`, `wallet`, ...) or
+`op <name>` for a reply; the samples use the all-in-one topics, the order sample is an option's,
+the fast fill an `ICPUSDT` one and the wallet a BTC row, and tests derive linear USDT rows from
+them in-test, never presenting a derived value as evidence. `test_contract_trading_drift.py`
+compares each with every recording of the same topic or op (all-in-one and categorised names
+alike, `.jsonl.gz` too) and fails the moment one disagrees, and it fails on a private recording
+it cannot pair. Not documented, so not transcribed: a linear order push, and the two refused
+replies below, which tests derive from the granted ones (E29-K01, #843, records them).
+
+- refused `auth` reply (`op auth`, `success` false): no public example — K01.
+- refused `subscribe` reply (`op subscribe`, `success` false): no public example — K01.
+
+Each line: file; source; date; symbol; env; redaction. Every env is none (a documentation
+example, from no account), and no redaction is needed: no file holds a key, a signature or an
+account id.
+
+- `private-auth-ok.jsonl`: source: docs-transcribed, `ws/connect`; 2026-10-21; symbol none; env none; redaction none.
+- `private-subscribe-ok.jsonl`: source: docs-transcribed, `ws/connect` (Private tab); 2026-10-21; symbol none; env none; redaction none.
+- `private-pong.jsonl`: source: docs-transcribed, `ws/connect` (private channels); 2026-10-21; symbol none; env none; redaction none.
+- `private-order.jsonl`: source: docs-transcribed, `websocket/private/order`; 2026-10-21; symbol ETH-30DEC22-1400-C (option); env none; redaction none.
+- `private-execution.jsonl`: source: docs-transcribed, `websocket/private/execution`; 2026-10-21; symbol BTCUSDT; env none; redaction none.
+- `private-execution-fast.jsonl`: source: docs-transcribed, `websocket/private/fast-execution`; 2026-10-21; symbol ICPUSDT; env none; redaction none.
+- `private-position.jsonl`: source: docs-transcribed, `websocket/private/position`; 2026-10-21; symbol BTCUSDT; env none; redaction none.
+- `private-wallet.jsonl`: source: docs-transcribed, `websocket/private/wallet`; 2026-10-21; symbol none (one BTC coin row); env none; redaction none.
 
 ## Gates
 

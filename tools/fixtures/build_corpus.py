@@ -254,6 +254,37 @@ _DOCS_SHAPES: dict[str, tuple[str, str, str, str]] = {
     "trading-wallet-balance": ("GET /v5/account/wallet-balance", "account/wallet-balance", "*",
                                "a unified wallet with one BTC coin row"),
 }  # fmt: skip
+#: G-8b (#3963, ruling 11; the #1778 group A pattern, as R2): the private stream's documented
+#: frames, one per `ws/private-*.jsonl` file, each its page's sample as written (keys and values
+#: unchanged, whitespace compacted): a reply on the Connect page or a topic's Stream Example. No
+#: page shows a refused `auth` or `subscribe` reply, so none is transcribed (tests derive them):
+#: each is "no public example — K01" in the fixtures README.
+#: Each `stream` is the topic as the adapter subscribes it, or `op <name>` for a reply; the samples
+#: themselves use the all-in-one topics, and the order sample is an option's (ruling 11: kept
+#: verbatim, linear rows derived in-test). E29-K01's recordings replace them;
+#: `tests/contract/bybit/test_contract_trading_drift.py` fails the moment one disagrees.
+#: name -> (stream, published page, source page, symbol, what it shows)
+_DOCS_FRAMES: dict[str, tuple[str, str, str, str, str]] = {
+    "private-auth-ok": ("op auth", "ws/connect", "websocket/wss-authentication", "*",
+                        "private auth granted: success, ret_msg, op, conn_id"),
+    "private-subscribe-ok": ("op subscribe", "ws/connect", "websocket/wss-authentication", "*",
+                             "private subscribe acknowledged, no req_id"),
+    "private-pong": ("op pong", "ws/connect", "websocket/wss-authentication", "*",
+                     "private pong: op pong with args and req_id"),
+    "private-order": ("order.linear", "websocket/private/order", "websocket/private/order",
+                      "ETH-30DEC22-1400-C", "one option order push (all-in-one topic)"),
+    "private-execution": ("execution.linear", "websocket/private/execution",
+                          "websocket/private/execution", "BTCUSDT",
+                          "one linear Trade fill push, an empty orderLinkId"),
+    "private-execution-fast": ("execution.fast.linear", "websocket/private/fast-execution",
+                               "websocket/private/fast-execution", "ICPUSDT",
+                               "one linear fast fill push, a foreign orderLinkId"),
+    "private-position": ("position.linear", "websocket/private/position",
+                         "websocket/private/position", "BTCUSDT",
+                         "one empty linear position push, positionIdx 2"),
+    "private-wallet": ("wallet", "websocket/private/wallet", "websocket/private/wallet", "*",
+                       "one unified wallet push with one BTC coin row"),
+}  # fmt: skip
 _MAX = 1_500_000  # bytes; the E08-S05 3 h depth-200 book is the only file near it
 
 
@@ -341,6 +372,12 @@ def build() -> list[dict[str, Any]]:
                cap=4_000) | _TRANSCRIBED
         | {"source_url": _docs_url(page), "source_ref": f"{_DOCS_REF}:docs/v5/{page}.mdx"}
         for name, (stream, page, symbol, event) in _DOCS_SHAPES.items()
+    ]  # fmt: skip
+    m += [
+        _entry(f"ws/{name}.jsonl", symbol, stream, event, host="bybit-exchange.github.io",
+               cap=4_000) | _TRANSCRIBED
+        | {"source_url": _DOCS_URL + page, "source_ref": f"{_DOCS_REF}:docs/v5/{source}.mdx"}
+        for name, (stream, page, source, symbol, event) in _DOCS_FRAMES.items()
     ]  # fmt: skip
     return sorted(m, key=lambda e: str(e["path"]))
 
