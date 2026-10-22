@@ -134,6 +134,8 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
     # `DuplicateOrderLinkId`, which `OrderRepository.create` raises when `ux_orders_link` already
     # holds the id.
     # E29-T03 (#847): the B1 order-machine facade, its ports, and its typed refusals.
+    # E29-T04 (#913, slice 2b): the submission pipeline slice 3's route calls, its request, its
+    # context and principal, its answer and its collaborators.
     "M14": {
         "Validator",
         "ReadOnlyCheck",
@@ -149,6 +151,13 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "OrderMachinePorts",
         "OrderMachines",
         "ReconcileAnomaly",
+        "OrderRequest",
+        "OrderSubmission",
+        "OrderTrigger",
+        "SubmissionDeps",
+        "SubmitActor",
+        "SubmitContext",
+        "SubmitOutcome",
     },
     # E27-T01 (#2495): the accounts facade and the domain types it returns, consumed by the
     # E27-S01 routes. No store, row type or SQL adapter is exported (SR-051 scoping stays in

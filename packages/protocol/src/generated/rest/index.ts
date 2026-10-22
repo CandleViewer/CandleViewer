@@ -3711,11 +3711,12 @@ export interface paths {
      *       otherwise `risk_limit_breached` (24-internal-schemas.md section 9.3 step 1; the profile
      *       an account is created with is not trading-enabled, `21-database-schema.md` section
      *       3.2.4).
-     *     * Price, trigger price and stop are held to the instrument's `min_price` to `max_price`,
-     *       and the quantity above zero and within its ceiling (`max_order_qty`, or
+     *     * Price, trigger price, stop and take-profit are held to the instrument's `min_price` to
+     *       `max_price`, and the quantity above zero and within its ceiling (`max_order_qty`, or
      *       `max_mkt_order_qty` for a market order): each figure outside is listed in `errors[]`
-     *       with its `field` (`price`, `trigger.price`, `stop_loss`, `qty`) and the bound it breaks
-     *       as its `rule` (`min_price`, `max_price`, `min_order_qty`, `max_order_qty`,
+     *       with its `field` (`price`, `trigger.price`, `stop_loss`, `take_profit`, `qty`) and the
+     *       bound it breaks as its `rule` (`min_price`, `max_price`, `min_order_qty`,
+     *       `max_order_qty`,
      *       `max_mkt_order_qty`), answered `lot_size_violation` when the quantity is listed and
      *       `validation_failed` otherwise. Price is also snapped/validated against `tick_size`;
      *       qty against `qty_step`/min/max (`tick_size_violation` / `lot_size_violation`).
@@ -3737,7 +3738,10 @@ export interface paths {
      *       only: another `sizing.mode` is refused with `validation_failed` /
      *       `sizing_mode_unsupported`, and a stop in `atr` or `r_multiple` units, whether
      *       `stop_loss` or the profile's offset, with `validation_failed` / `stop_unit_unsupported`
-     *       (#913 ruling R4); the `marketWithBracket` and `conditional` examples need #907.
+     *       (#913 ruling R4); the `marketWithBracket` and `conditional` examples need #907. A
+     *       `take_profit` in `price`, `ticks` or `percent` lands on a tick rounded toward the entry;
+     *       one in `atr` or `r_multiple` is `stop_unit_unsupported` on `take_profit`, and one that is
+     *       no finite price above zero on the profit side is `take_profit_side`.
      *     * These refusals answer with their `x-error-codes` status: `400` for `validation_failed`
      *       (each failing rule in `errors[]`), `tick_size_violation` and `lot_size_violation`, and
      *       `403` for `risk_limit_breached`.
@@ -3774,8 +3778,11 @@ export interface paths {
      *       answers `502 exchange_error` with that `ret_code`, and the halt starts with it.
      *     * An order is recorded before it is sent (24-internal-schemas.md section 8.4), so while
      *       Postgres is unavailable the request is refused with `503 store_unavailable` before any
-     *       exchange call. A store failure after the send is never a `503`: the request answers
-     *       its outcome, `202` with the order's last known state or the `502`.
+     *       exchange call. A request whose send step's outcome is not known, its order still
+     *       `validated`, answers that `503` too: this request sends nothing, and a `submitting` row
+     *       whose commit was lost is sent by a restart's hydration. A store failure after the send
+     *       is never a `503`: the request answers its outcome, `202` with the order's last known
+     *       state or the `502`.
      *     * An entry's stop request is recorded with its order, one stop request in flight per
      *       position (`21-database-schema.md` section 3.3.11, the recorded stop, which lands with
      *       E29-T04's slice 2a). An entry whose stop request collides with one still in flight on

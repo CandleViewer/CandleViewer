@@ -37,6 +37,11 @@ docs/plan/20-architecture.md Sec.3 and the module table in CONSTITUTION.md Sec.3
 - The OMS facade (E29-T03): `OrderMachines` (`order_machine`), one B1 machine per order behind a
   keyed lock, with legality from the chart's static table (`IllegalTransition`), S5, S6
   (`ReconcileAnomaly`), S9, the outbox, the publish port and eviction. E29-T04 wires its ports.
+- The submission pipeline (E29-T04, #913, slice 2b): `OrderSubmission` (`submit`) with its
+  request (`OrderRequest`, `OrderTrigger`), its context (`SubmitContext`, `SubmitActor`), its
+  answer (`SubmitOutcome`) and its collaborators (`SubmissionDeps`), over the replay anchor
+  (`idempotency`), the routing (`routing`), the clock halt (`clock_halt`) and B1's command port
+  (`commands`); slice 3's route calls it once its own admission passed.
 - Recovery (E29-T03): `rebuild`, the fold of an order's `order_events` that equals its row, and
   `replay_plan` (`recovery`), with which `OrderMachines.hydrate` replays an order's recorded steps
   on a fresh machine after a restart; a history that does not rebuild its row raises
@@ -59,6 +64,15 @@ from .repository import (
     PositionSnapshotRepository,
     WriteTimer,
 )
+from .submit import (
+    OrderRequest,
+    OrderSubmission,
+    OrderTrigger,
+    SubmissionDeps,
+    SubmitActor,
+    SubmitContext,
+    SubmitOutcome,
+)
 from .validator import OrderPlacementRefused, ReadOnlyCheck, Validator
 
 __all__: list[str] = [
@@ -70,10 +84,17 @@ __all__: list[str] = [
     "OrderMachines",
     "OrderPlacementRefused",
     "OrderRepository",
+    "OrderRequest",
+    "OrderSubmission",
+    "OrderTrigger",
     "PositionRepository",
     "PositionSnapshotRepository",
     "ReadOnlyCheck",
     "ReconcileAnomaly",
+    "SubmissionDeps",
+    "SubmitActor",
+    "SubmitContext",
+    "SubmitOutcome",
     "Validator",
     "WriteTimer",
 ]

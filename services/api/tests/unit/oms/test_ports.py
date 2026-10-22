@@ -8,7 +8,8 @@ at startup and is counted in `oms_interim_ports{port}`. A `SizedOrder` is as str
 `classify.stop_errors`: an entry carries a stop, and any stop is finite, above zero and on the
 protective side of its reference price (C-2.6); its effect is an `OrderEffect`, and any effect but
 `REDUCE` is an entry's (fail closed). The arm token travels masked (C-12.6) and compares in
-constant time (SR-043).
+constant time (SR-043). Slice 2b: the take-profit interim (S2-Q6, Q-L), an offset that is no finite
+figure passed through for the guard (#2877 ruling 2), and the request's records (C-2.9).
 """
 
 from __future__ import annotations
@@ -65,16 +66,19 @@ from candleviewer.oms.ports import (
     Interim,
     InterimRiskGate,
     InterimStopResolver,
+    KeyedRecord,
     NoArmRecords,
     NoHandoverStore,
     OrderEffect,
     PositionKey,
+    Profiles,
     RateReading,
     RefuseWhileWaiting,
     SizedOrder,
     SizingRequest,
     StopOffset,
     SubmissionPorts,
+    SubmitActor,
     TradingAccounts,
     Verdict,
     announce_interim_ports,
@@ -716,3 +720,112 @@ async def test_the_lockout_fake_opens_once_per_finding() -> None:
     assert lockout.findings == {account: {("order", "x1"), ("execution", "e1")}}
     assert lockout.opens == 3 and lockout.is_open(account)
     assert not lockout.is_open(AccountId(UUID(int=8)))
+
+
+# --- the take-profit (S2-Q6, Q-L), and an offset that is no finite figure (#2877 ruling 2) --------
+
+
+def _take_profit(
+    take_profit: StopOffset | None, *, side: Side = "buy", reference: str = "63100"
+) -> Decimal | None:
+    return InterimStopResolver().resolve_take_profit(
+        take_profit,
+        side=side,
+        reference_price=Decimal(reference),
+        instrument=INSTRUMENT,
+        profile=_profile("fixed_qty"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("side", "unit", "value", "expected"),
+    [
+        ("buy", "price", "64000.07", "64000.0"),  # off-tick: rounded toward the entry
+        ("sell", "price", "62000.03", "62000.1"),
+        ("buy", "ticks", "200", "63120.0"),
+        ("sell", "ticks", "200", "63080.0"),
+        ("buy", "percent", "0.4", "63352.4"),  # 0.4 % as a client writes it
+        ("sell", "percent", "0.4", "62847.6"),
+        ("buy", "percent", "0.33", "63308.2"),  # 63308.23 floored, toward the entry
+        ("sell", "percent", "0.33", "62891.8"),  # 62891.77 ceiled, toward the entry
+    ],
+)
+def test_the_interim_take_profit_lands_on_a_tick_rounded_toward_the_entry(
+    side: Side, unit: Any, value: str, expected: str
+) -> None:
+    assert _take_profit(StopOffset(unit=unit, value=Decimal(value)), side=side) == Decimal(expected)
+
+
+@pytest.mark.parametrize("unit", ["atr", "r_multiple"])
+def test_the_interim_take_profit_refuses_atr_and_r_multiple_on_its_own_field(unit: Any) -> None:
+    with pytest.raises(StopUnitUnsupported) as refused:
+        _take_profit(StopOffset(unit=unit, value=Decimal("2")))
+    message = "Take-profits in atr or r_multiple units are not available yet."
+    errors = (FieldError("take_profit", RULE_STOP_UNIT_UNSUPPORTED, message),)
+    assert refused.value.errors == errors
+
+
+def test_the_interim_take_profit_is_none_unasked_whatever_the_profile_offers() -> None:
+    """The profile's offset (here `r_multiple`) is not applied to an order unasked: a take-profit
+    is optional, unlike the stop (C-2.6)."""
+    assert _profile("fixed_qty").tp_offset_unit is not None
+    assert _take_profit(None) is None
+
+
+@pytest.mark.parametrize("value", ["NaN", "sNaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize("unit", ["price", "ticks", "percent"])
+def test_an_offset_that_is_no_finite_figure_is_passed_through_unresolved(
+    unit: Any, value: str
+) -> None:
+    """#2877 ruling 2: nothing is computed from it, a signalling NaN included, so the guard
+    refuses it (`stop_errors`, `take_profit_errors`) rather than the arithmetic raising."""
+    offset = StopOffset(unit=unit, value=Decimal(value))
+    resolved = [_resolve(offset), _take_profit(offset)]
+    assert all(r is not None and not r.is_finite() for r in resolved)
+
+
+def test_sized_order_takes_a_take_profit_on_the_profit_side() -> None:
+    assert _order("demo", take_profit=Decimal("63500.0")).take_profit == Decimal("63500.0")
+    sell = {"side": "sell", "stop_loss": Decimal("63300.0"), "take_profit": Decimal("62800.0")}
+    assert _order("demo", **sell).take_profit == Decimal("62800.0")
+    assert _order("demo").take_profit is None
+
+
+@pytest.mark.parametrize(
+    "take_profit", ["0", "-1", "NaN", "Infinity", "63100.0", "63000.0"],
+    ids=["zero", "negative", "nan", "infinite", "at_reference", "wrong_side"],
+)  # fmt: skip
+def test_sized_order_refuses_a_take_profit_off_the_profit_side(take_profit: str) -> None:
+    with pytest.raises(ValueError, match="take_profit"):
+        _order("demo", take_profit=Decimal(take_profit))
+
+
+# --- the request's records (C-2.9) ----------------------------------------------------------------
+
+
+_ACTOR = SubmitActor(user_id=SESSION, role="owner", session_id=SESSION, ip="100.64.0.7")
+
+
+def test_a_submit_actor_never_shows_its_address() -> None:
+    assert "100.64.0.7" not in repr(_ACTOR)
+
+
+def test_a_keyed_records_actor_is_its_actor_user_id() -> None:
+    fields: dict[str, Any] = {
+        "action": "sl.attached", "name": "n", "account_id": ACCOUNT,
+        "object_kind": "recorded_stop", "object_id": SESSION, "outcome": "success",
+        "severity": "info", "reason": "entry_attach", "detail": {},
+    }  # fmt: skip
+    assert KeyedRecord(**fields, actor_user_id=SESSION, actor=_ACTOR).actor == _ACTOR
+    assert KeyedRecord(**fields, actor_user_id=None).actor is None
+    with pytest.raises(ValueError, match="actor"):
+        KeyedRecord(**fields, actor_user_id=None, actor=_ACTOR)
+
+
+def test_the_profile_cache_as_it_stands_is_a_profiles_port() -> None:
+    """Slice 3 wires `EffectiveProfiles` with no adapter (mypy checks the list's type)."""
+    from candleviewer.accounts.profile_cache import EffectiveProfiles
+
+    port: type[Profiles] = EffectiveProfiles
+    member = inspect.signature(port.get_effective_profile)
+    assert list(member.parameters) == ["self", "account_id", "profile_id"]

@@ -1460,6 +1460,18 @@ async def test_an_attach_leaves_out_a_take_profit_the_reading_shows_as_no_price(
     )
 
 
+async def test_forget_drops_an_unspent_registration_and_answers_its_watch_none() -> None:
+    """S2-Q5: a `SEND` that did not commit sends nothing, so the pipeline drops the order's
+    registration; a later `place` of it is a resumed create, never a first send."""
+    rig = build_rig()
+    order = new_order()
+    watch = rig.port.expect(order)
+    rig.port.forget(order.id)
+    assert watch.answered and await watch.answer() is None
+    rig.port.forget(order.id)  # nothing registered: nothing to drop
+    assert rig.calls() == []
+
+
 # --- the venue's outage (#4092, #2863): raised, never a refusal, never repeated ------------------
 
 

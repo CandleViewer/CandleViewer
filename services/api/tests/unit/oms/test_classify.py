@@ -37,11 +37,13 @@ from candleviewer.oms.classify import (
     effect_of,
     intent_errors,
     stop_errors,
+    take_profit_errors,
 )
 from candleviewer.oms.errors import (
     RULE_INTENT_MISMATCH,
     RULE_NATIVE_STOP_REQUIRED,
     RULE_STOP_UNIT_UNSUPPORTED,
+    RULE_TAKE_PROFIT_SIDE,
     OrderInvalid,
     StopUnitUnsupported,
 )
@@ -107,12 +109,18 @@ class _Echo:
         self.calls += 1
         return self.stop
 
+    def resolve_take_profit(self, take_profit: StopOffset | None, **_: object) -> Px | None:
+        return None
+
 
 class _Raises:
     def __init__(self, error: Exception) -> None:
         self.error = error
 
     def resolve(self, stop: StopOffset | None, **_: object) -> Px | None:
+        raise self.error
+
+    def resolve_take_profit(self, take_profit: StopOffset | None, **_: object) -> Px | None:
         raise self.error
 
 
@@ -542,3 +550,48 @@ def test_property_the_effect_decides_the_stop_and_the_intent_never_the_label(
         assert expected == [] and admitted == stop
         if effect is ENTRY:  # C-2.6: no entry is ever admitted without a protective stop
             assert admitted is not None and protective
+
+
+# --- the take-profit rule (S2-Q6; #2877 ruling 2) ------------------------------------------------
+
+
+def test_take_profit_errors_an_order_without_one_has_none() -> None:
+    assert take_profit_errors(side="buy", reference_price=REF, take_profit=None) == []
+
+
+@pytest.mark.parametrize("take_profit", ["0", "-0.1", "NaN", "sNaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize("side", ["buy", "sell"])
+def test_take_profit_errors_a_take_profit_not_above_zero_is_refused(
+    side: Side, take_profit: str
+) -> None:
+    """Finite first: a NaN, a signalling one included, is never ordered (it would raise)."""
+    errors = take_profit_errors(side=side, reference_price=REF, take_profit=Decimal(take_profit))
+    assert [(e.field, e.rule, e.message) for e in errors] == [
+        (
+            "take_profit",
+            RULE_TAKE_PROFIT_SIDE,
+            "The take-profit price must be a finite price above zero.",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("side", "take_profit", "profitable"),
+    [
+        ("buy", "100.1", True),
+        ("buy", "100", False),  # no distance: no profit
+        ("buy", "99.9", False),
+        ("sell", "99.9", True),
+        ("sell", "100", False),
+        ("sell", "100.1", False),
+    ],
+)
+def test_take_profit_errors_a_take_profit_must_sit_on_the_profit_side(
+    side: Side, take_profit: str, profitable: bool
+) -> None:
+    wrong = (
+        RULE_TAKE_PROFIT_SIDE,
+        "The take-profit must be above the entry price for a buy and below it for a sell.",
+    )
+    errors = take_profit_errors(side=side, reference_price=REF, take_profit=Decimal(take_profit))
+    assert [(e.rule, e.message) for e in errors] == ([] if profitable else [wrong])

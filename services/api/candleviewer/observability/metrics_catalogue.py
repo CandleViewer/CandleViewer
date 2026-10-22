@@ -2594,6 +2594,30 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=4,
     ),
     _s(
+        "oms_submit_rejected_total",
+        "counter",
+        "requests",
+        ("code",),
+        "Order requests the submission pipeline did not accept, by problem code (E29-T04): each "
+        "refusal, recorded before it is answered, and each 429 or 502 its create was answered. "
+        "code is one of the OMS problem codes (oms.errors.PROBLEMS) or internal_error.",
+        "store_unavailable, audit_unavailable or internal_error > 0 for 5 min (page)",
+        _P,
+        "E29",
+        max_series=20,
+    ),
+    _s(
+        "oms_clock_drift_blocked_total",
+        "counter",
+        "requests",
+        (),
+        "Order requests refused 503 clock_drift while order entry is halted for clock drift "
+        "(24 Sec.8.6 10002), before anything is read, recorded or sent (E29-T04).",
+        "> 0 (alert)",
+        _P,
+        "E29",
+    ),
+    _s(
         "naked_position_alerts_total",
         "counter",
         "alerts",

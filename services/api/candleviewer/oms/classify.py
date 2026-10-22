@@ -19,6 +19,8 @@ intent of an order that only reduces a reducing one (`stop_loss`, `take_profit`,
 `flatten`); the server-assigned `reverse` and `algo_child` are refused either way. `errors[]`
 lists every rule that fails, the stop's first (22-api-openapi.yaml `placeOrder`). Both rules fail
 closed on the effect they are given: any effect but `OrderEffect.REDUCE` is an entry's.
+`take_profit_errors` judges a take-profit the same way (S2-Q6): a finite price above zero on the
+profit side of the reference price, above it for a buy and below it for a sell (#2877 ruling 2).
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from candleviewer.domain.primitives import AccountId, Px, Qty, Side, Symbol
 from .errors import (
     RULE_INTENT_MISMATCH,
     RULE_NATIVE_STOP_REQUIRED,
+    RULE_TAKE_PROFIT_SIDE,
     FieldError,
     OrderInvalid,
     StopUnitUnsupported,
@@ -59,6 +62,10 @@ _STOP_WRONG_SIDE: Final = (
 _SERVER_INTENT: Final = "This intent is assigned by the server and cannot be requested."
 _REDUCING_ON_ENTRY: Final = "This order opens or adds exposure, so its intent cannot reduce."
 _OPENING_ON_REDUCE: Final = "This order only reduces the position, so its intent cannot open."
+_TAKE_PROFIT_NOT_POSITIVE: Final = "The take-profit price must be a finite price above zero."
+_TAKE_PROFIT_WRONG_SIDE: Final = (
+    "The take-profit must be above the entry price for a buy and below it for a sell."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +135,21 @@ def stop_errors(
     protective = stop < reference_price if side == "buy" else stop > reference_price
     if not protective:
         return [FieldError("stop_loss", RULE_NATIVE_STOP_REQUIRED, _STOP_WRONG_SIDE)]
+    return []
+
+
+def take_profit_errors(
+    *, side: Side, reference_price: Px, take_profit: Px | None
+) -> list[FieldError]:
+    """S2-Q6 and #2877 ruling 2: a take-profit, where the order names one, is a finite price above
+    zero (finite first: ordering a NaN raises) on the profit side of `reference_price`."""
+    if take_profit is None:
+        return []
+    if not take_profit.is_finite() or take_profit <= 0:
+        return [FieldError("take_profit", RULE_TAKE_PROFIT_SIDE, _TAKE_PROFIT_NOT_POSITIVE)]
+    profitable = take_profit > reference_price if side == "buy" else take_profit < reference_price
+    if not profitable:
+        return [FieldError("take_profit", RULE_TAKE_PROFIT_SIDE, _TAKE_PROFIT_WRONG_SIDE)]
     return []
 
 

@@ -520,6 +520,13 @@ class OmsCommandPort:
             dropped.resolve(None)
         return watch
 
+    def forget(self, order_id: UUID) -> None:
+        """Drop the order's registration while `place` has not spent it: the pipeline's `SEND` did
+        not commit, so no create leaves for it (S2-Q5). Its watch answers None."""
+        watch = self._watches.pop(order_id, None)
+        if watch is not None:
+            watch.resolve(None)
+
     async def place(self, command: b01.Command) -> Mapping[str, Any]:
         """B1's create (module docstring); the order's registration, if any, is spent here."""
         watch = self._watches.pop(_uuid(command.order.get("order_id")), None)

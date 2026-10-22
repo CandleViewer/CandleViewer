@@ -775,20 +775,46 @@ def test_the_catalogue_records_the_recorded_stop_entry_and_the_unkeepable_ack() 
 
 def test_place_order_names_the_bounds_the_validator_applies() -> None:
     """Slice 1's validator (#913; its round-4 Low): each figure outside the instrument's bounds is
-    listed in `errors[]` with its field and, as its rule, the bound it breaks."""
+    listed in `errors[]` with its field and, as its rule, the bound it breaks; slice 2b's
+    take-profit (S2-Q6) among them."""
     assert not _missing(
         _words(_PLACE["description"]),
-        "Price, trigger price and stop are held to the instrument's `min_price` to `max_price`, "
-        "and the quantity above zero and within its ceiling (`max_order_qty`, or "
+        "Price, trigger price, stop and take-profit are held to the instrument's `min_price` to "
+        "`max_price`, and the quantity above zero and within its ceiling (`max_order_qty`, or "
         "`max_mkt_order_qty` for a market order)",
         "each figure outside is listed in `errors[]` with its `field` (`price`, `trigger.price`, "
-        "`stop_loss`, `qty`) and the bound it breaks as its `rule` (`min_price`, `max_price`, "
-        "`min_order_qty`, `max_order_qty`, `max_mkt_order_qty`)",
+        "`stop_loss`, `take_profit`, `qty`) and the bound it breaks as its `rule` (`min_price`, "
+        "`max_price`, `min_order_qty`, `max_order_qty`, `max_mkt_order_qty`)",
         "answered `lot_size_violation` when the quantity is listed and `validation_failed` "
         "otherwise",
     )
     item = _SCHEMAS["Problem"]["properties"]["errors"]["items"]["properties"]
     assert {"field", "rule"} <= set(item)
+
+
+def test_the_pipelines_own_rules_are_in_22_and_24() -> None:
+    """Slice 2b (#913): #4006's follow-ups and the pipeline's rulings (Q-B, Q-D, S2-Q5, S2-Q6), as
+    22 `placeOrder`, 22 Idempotency and 24 section 8.4 state them (C-6.1 inside the PR)."""
+    assert not _missing(
+        _words(_PLACE["description"]),
+        "this request sends nothing, and a `submitting` row whose commit was lost is sent by a "
+        "restart's hydration",
+        "one in `atr` or `r_multiple` is `stop_unit_unsupported` on `take_profit`",
+    )
+    general = _words(_SPEC["info"]["description"]).split("### Idempotency", 1)[1]
+    assert (
+        "The 24 h record holds only a `2xx`: the `429` and `502` a `placeOrder` request answers "
+        "once its order is recorded are replayed from the anchor"
+    ) in general
+    rules = _between(_INTERNAL_DOC, "**The pipeline's own rules", "**8.4.1 ")
+    assert not _missing(
+        rules,
+        "is `503 exchange_unavailable` with `Retry-After`, nothing written or sent",
+        "tried again twice, after 0.1 s and 0.25 s, then answered `409` with `Retry-After: 1`",
+        "the startup kills every `validated` row before order entry opens",
+        "total 17 s, under `CV_OMS_INFLIGHT_STUCK_S`",
+        "carries its correlation id (`X-Correlation-Id`)",
+    )
 
 
 def test_the_rules_the_provenance_texts_cite_are_in_24() -> None:
