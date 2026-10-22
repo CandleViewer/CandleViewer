@@ -96,6 +96,7 @@ def test_enum_literals_mirror_the_database_types(literal: Any, enum: Any) -> Non
         (port.TriggerBy, models.orders, "ord_trigby"),
         (port.TpslMode, models.orders, "ord_tpslmode"),
         (port.IdempotencyState, models.orders, "ord_idem"),
+        (port.OrderProvenance, models.orders, "ord_provenance"),
         (port.OrderEventSource, models.order_events, "oe_source"),
     ],
 )
@@ -272,6 +273,7 @@ _STATEMENTS: dict[str, Any] = {
     "list_events_statement": mod.list_events_statement(ACCOUNT, ORDER, 3, 50),
     "transition_statement": mod.transition_statement(_STEP),
     "fill_statement": mod.fill_statement(_FILL),
+    "settle_entry_stops_statement": mod.settle_entry_stops_statement(ACCOUNT, ORDER, "void", T0),
 }
 
 
@@ -282,7 +284,11 @@ def test_the_statement_set_is_pinned() -> None:
 
 @pytest.mark.parametrize("name", sorted(_STATEMENTS))
 def test_every_statement_but_create_and_the_id_check_is_account_scoped(name: str) -> None:
-    scoped = "orders.exchange_account_id = $" in _sql(_STATEMENTS[name])
+    """The entry-stop settle is scoped by its own table's account (E29-T04)."""
+    sql = _sql(_STATEMENTS[name])
+    scoped = "orders.exchange_account_id = $" in sql or (
+        name == "settle_entry_stops_statement" and "recorded_stops.exchange_account_id = $" in sql
+    )
     assert scoped is (name not in mod.UNSCOPED)
 
 
@@ -953,3 +959,82 @@ async def test_cancellation_passes_through_the_error_mapping(call: str) -> None:
     with pytest.raises(asyncio.CancelledError):
         await _CALLS[call][0](_store(rel))
     assert rel.commits == 0
+
+
+# -- E29-T04: the send's attempt count and the entry's recorded stops ------------------------------
+
+
+def test_the_sends_step_counts_an_attempt_from_the_stored_count() -> None:
+    sent = step(_HELD, "submitted", bump_submit_attempts=True, idempotency_state="in_flight")
+    sql = _sql(mod.transition_statement(sent))
+    assert "submit_attempts=(orders.submit_attempts + $" in sql
+    assert "idempotency_state=$" in sql
+    plain = _sql(mod.transition_statement(step(_HELD, "submitted")))
+    assert "submit_attempts=" not in plain.split(" RETURNING ", 1)[0]  # only the send counts
+
+
+@pytest.mark.parametrize(
+    ("over", "rule"),
+    [
+        ({"bump_submit_attempts": True}, "only the send's step"),
+        ({"idempotency_state": "lost"}, "ord_idem"),
+        ({"entry_stops": "ended"}, "answered or void"),
+    ],
+)
+def test_a_step_names_only_values_its_columns_and_rules_take(
+    over: dict[str, Any], rule: str
+) -> None:
+    with pytest.raises(ValueError, match=rule):
+        step(_HELD, "cancelled", **over)
+
+
+@pytest.mark.parametrize(
+    ("settle", "sets", "only"),
+    [
+        ("answered", "answered_at=$1::TIMESTAMP WITH TIME ZONE", "answered_at IS NULL"),
+        ("void", "status=$1::VARCHAR, closed_at=$2::TIMESTAMP WITH TIME ZONE", None),
+    ],
+)
+def test_the_settle_touches_only_the_orders_pending_entry_rows(
+    settle: Any, sets: str, only: str | None
+) -> None:
+    sql = " ".join(_sql(mod.settle_entry_stops_statement(ACCOUNT, ORDER, settle, T0)).split())
+    assert sql.startswith("UPDATE recorded_stops SET ")
+    assert sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0] == sets
+    where = sql.split(" WHERE ", 1)[1]
+    for term in ("exchange_account_id = $", "order_id = $", "source = $", "status = $"):
+        assert f"recorded_stops.{term}" in where
+    assert (only is not None and f"recorded_stops.{only}" in where) or "answered_at" not in where
+
+
+#: SEC-2A-01: the void's own check that its order holds no recorded fill.
+_NO_FILL = (
+    "NOT (EXISTS (SELECT $7::INTEGER AS anon_1 FROM orders WHERE orders.id = "
+    "recorded_stops.order_id AND orders.cum_exec_qty > $8::INTEGER))"
+)
+
+
+@pytest.mark.parametrize("settle", ["answered", "void"])
+def test_a_void_never_meets_a_fill_its_order_holds(settle: Any) -> None:
+    """Belt and braces under the step's rule (SEC-2A-01): only the void needs it, the answer may
+    meet a fill, and the bound is zero."""
+    stmt = mod.settle_entry_stops_statement(ACCOUNT, ORDER, settle, T0)
+    sql = " ".join(_sql(stmt).split())
+    assert sql.endswith(f" AND {_NO_FILL}") is (settle == "void")
+    assert ("EXISTS" in sql) is (settle == "void")
+    if settle == "void":
+        assert _bound(stmt)[-2:] == [1, 0]  # SELECT 1 ... cum_exec_qty > 0
+
+
+async def test_a_step_settles_its_entry_stops_in_its_own_transaction() -> None:
+    """R10: after the compare-and-set and the event, before the one commit, so the void's own
+    check (SEC-2A-01) reads the totals this step wrote."""
+    rel = _Rel(_LOCKED, _CAS, _EVENT, _Result())
+    move = step(_HELD, "cancelled", entry_stops="void")
+    await _store(rel).transition(move)
+    verbs = [_sql(stmt).split()[:2] for stmt in rel.statements]
+    assert verbs == [["SELECT", "orders.order_link_id,"], ["UPDATE", "orders"],
+                     ["INSERT", "INTO"], ["UPDATE", "recorded_stops"]]  # fmt: skip
+    assert rel.commits == 1
+    assert move.event.event_ts in _bound(rel.statements[-1])  # the step's own time
+    assert _NO_FILL in " ".join(_sql(rel.statements[-1]).split())

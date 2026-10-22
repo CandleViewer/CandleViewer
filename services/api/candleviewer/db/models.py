@@ -2198,7 +2198,8 @@ backups = Table(
 #: append-only triggers and the C-5.7 revocations are asserted by the 0029 tests, not autogenerate.
 #: 0034_order_vocabulary (E29-T03) appends to `order_state` and `order_event_kind`, adds
 #: `order_lifecycle_state` (the B1 chart's states verbatim), `orders.lifecycle_state` and the
-#: `ord_lifecycle` CHECK that pairs it with `state` (`ORDER_STATE_OF`).
+#: `ord_lifecycle` CHECK that pairs it with `state` (`ORDER_STATE_OF`). 0043_order_submission
+#: (E29-T04) appends `orders.provenance` and `ord_provenance` (21 Sec.3.3.4).
 ORDER_INTENTS = (
     "entry", "stop_loss", "take_profit", "scale_in", "scale_out", "flatten", "reverse",
     "algo_child",
@@ -2290,6 +2291,7 @@ orders = Table(
     Column("last_reconciled_at", TIMESTAMP(timezone=True)),
     Column("is_paper", Boolean, nullable=False, server_default=text("false")),
     Column("lifecycle_state", order_lifecycle_state),
+    Column("provenance", Text, nullable=False, server_default=text("'placed'")),
     CheckConstraint("side IN ('Buy','Sell')", name="ord_side"),
     CheckConstraint("order_type IN ('Market','Limit')", name="ord_type"),
     CheckConstraint("qty > 0", name="ord_qty"),
@@ -2325,6 +2327,9 @@ orders = Table(
         "('held','held'),('filled','filled'),('cancelled','cancelled'),('rejected','rejected'),"
         "('expired','expired'),('killed','killed'))",
         name="ord_lifecycle",
+    ),
+    CheckConstraint(
+        "provenance IN ('placed','reconciliation','recorded_stop')", name="ord_provenance"
     ),
     Index("ux_orders_link", "order_link_id", unique=True),
     Index(
@@ -2783,6 +2788,164 @@ trade_group_legs = Table(
         "account_profile_id",
         postgresql_where=text("account_profile_id IS NOT NULL"),
     ),
+)
+
+#: E29-T04 (#913), revision 0043_order_submission: 21 Sec.3.3.10 and Sec.3.3.11. The write-once,
+#: guard and TRUNCATE triggers and the revocations are asserted by the 0043 tests, not
+#: autogenerate. C-5.9 / Sec.12 class P1 on the anchor's key and fingerprint (SR-E29-07) and on the
+#: recorded stops' money columns (`OMS_MONEY_COMMENT`); byte-identical to the 0043 COMMENT
+#: statements, with no quote, as each sits in a SQL string literal.
+ANCHOR_KEY_COMMENT = (
+    "PII: a client idempotency key or the digest of its order request (21 Sec.12, class P1); "
+    "never logged or returned"
+)
+#: The operations that keep a permanent anchor (`ia_operation`, SR-E29-07, OM-T11).
+ANCHOR_OPERATIONS: tuple[str, ...] = (
+    "placeOrder",
+    "closePosition",
+    "reversePosition",
+    "closeAllPositions",
+)
+
+idempotency_anchors = Table(
+    "idempotency_anchors",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("created_by", ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("operation", Text, nullable=False),
+    Column("client_ref", Text, nullable=False, comment=ANCHOR_KEY_COMMENT),
+    Column("request_sha256", _sha256_hex, nullable=False, comment=ANCHOR_KEY_COMMENT),
+    Column("trade_group_id", ForeignKey("trade_groups.id", ondelete="RESTRICT")),
+    Column("order_id", ForeignKey("orders.id", ondelete="RESTRICT")),
+    Column("outcome_status", SmallInteger),
+    Column("outcome_code", Text),
+    Column("outcome_ret_code", Integer),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("decided_at", TIMESTAMP(timezone=True)),
+    CheckConstraint(
+        "operation IN ('placeOrder','closePosition','reversePosition','closeAllPositions')",
+        name="ia_operation",
+    ),
+    CheckConstraint(f"client_ref ~ '{GROUP_REF_PATTERN}'", name="ia_ref_fmt"),
+    CheckConstraint(
+        "num_nonnulls(trade_group_id, order_id) <= 1 "
+        "AND (operation <> 'placeOrder' OR num_nonnulls(trade_group_id, order_id) = 1)",
+        name="ia_target",
+    ),
+    CheckConstraint(
+        "(outcome_status IS NULL) = (decided_at IS NULL) "
+        "AND (outcome_status IS NULL OR outcome_status BETWEEN 200 AND 599)",
+        name="ia_decided",
+    ),
+    CheckConstraint(
+        "(outcome_code IS NOT NULL) = COALESCE(outcome_status >= 400, false) "
+        "AND (outcome_code IS NULL OR outcome_code ~ '^[a-z][a-z0-9_]{1,63}$')",
+        name="ia_code",
+    ),
+    CheckConstraint(
+        "(outcome_ret_code IS NULL OR outcome_code = 'exchange_error') IS TRUE",
+        name="ia_ret_code",
+    ),
+    UniqueConstraint("created_by", "operation", "client_ref", name="ux_ia_principal_ref"),
+)
+
+recorded_stops = Table(
+    "recorded_stops",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "exchange_account_id",
+        ForeignKey("exchange_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("symbol", symbol_code, nullable=False),
+    Column("position_idx", SmallInteger, nullable=False),
+    Column("position_side", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("source", Text, nullable=False),
+    Column("order_id", ForeignKey("orders.id", ondelete="RESTRICT")),
+    Column("tpsl_mode", Text, nullable=False),
+    Column("trigger_price", _MONEY, nullable=False, comment=_P1),
+    Column("size", _MONEY, comment=_P1),
+    Column("trailing_distance", _MONEY, comment=_P1),
+    Column("trailing_active_price", _MONEY, comment=_P1),
+    Column("exchange_order_id", Text),
+    Column("status", Text, nullable=False, server_default=text("'pending'")),
+    Column("audit_record_id", UUID(as_uuid=True), nullable=False),
+    Column("actor_user_id", ForeignKey("users.id", ondelete="RESTRICT")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("answered_at", TIMESTAMP(timezone=True)),
+    Column("in_force_at", TIMESTAMP(timezone=True)),
+    Column("closed_at", TIMESTAMP(timezone=True)),
+    Column("released_at", TIMESTAMP(timezone=True)),
+    Column("position_marker", Text),
+    CheckConstraint("position_idx IN (0,1,2)", name="rs_posidx"),
+    CheckConstraint("position_side IN ('Buy','Sell')", name="rs_side"),
+    CheckConstraint("kind IN ('stop_loss','take_profit')", name="rs_kind"),
+    CheckConstraint("source IN ('entry_attach','trading_stop','restore')", name="rs_source"),
+    CheckConstraint("(source = 'entry_attach') = (order_id IS NOT NULL)", name="rs_entry"),
+    CheckConstraint("source <> 'restore' OR kind = 'stop_loss'", name="rs_restore"),
+    CheckConstraint("tpsl_mode IN ('Full','Partial')", name="rs_mode"),
+    CheckConstraint("trigger_price > 0", name="rs_px"),
+    CheckConstraint(
+        "(tpsl_mode = 'Partial' AND size > 0 OR tpsl_mode = 'Full' AND size IS NULL) IS TRUE",
+        name="rs_size",
+    ),
+    CheckConstraint(
+        "num_nonnulls(trailing_distance, trailing_active_price) <> 1 "
+        "AND (trailing_distance IS NULL OR (kind = 'stop_loss' AND trailing_distance > 0 "
+        "AND trailing_active_price > 0))",
+        name="rs_trail",
+    ),
+    CheckConstraint(
+        "trigger_price <> 'NaN' AND size <> 'NaN' AND trailing_distance <> 'NaN' "
+        "AND trailing_active_price <> 'NaN'",
+        name="rs_finite",
+    ),
+    CheckConstraint("status IN ('pending','in_force','replaced','ended','void')", name="rs_status"),
+    CheckConstraint(
+        "(closed_at IS NOT NULL) = (status IN ('replaced','ended','void')) "
+        "AND (in_force_at IS NOT NULL OR status <> 'in_force') "
+        "AND (status <> 'ended' OR num_nonnulls(in_force_at, answered_at) > 0) "
+        "AND (in_force_at IS NULL OR status IN ('in_force','replaced','ended'))",
+        name="rs_times",
+    ),
+    CheckConstraint("released_at IS NULL OR exchange_order_id IS NULL", name="rs_release"),
+    CheckConstraint(
+        "position_marker IS NULL OR char_length(position_marker) BETWEEN 1 AND 64",
+        name="rs_marker",
+    ),
+    Index(
+        "ux_rs_in_flight",
+        "exchange_account_id",
+        "symbol",
+        "position_idx",
+        unique=True,
+        postgresql_where=text("status = 'pending' AND answered_at IS NULL AND kind = 'stop_loss'"),
+    ),
+    Index(
+        "ux_rs_in_force",
+        "exchange_account_id",
+        "symbol",
+        "position_idx",
+        "kind",
+        unique=True,
+        postgresql_where=text("status = 'in_force'"),
+    ),
+    Index(
+        "ix_rs_live",
+        "exchange_account_id",
+        "symbol",
+        "position_idx",
+        postgresql_where=text("status IN ('pending','in_force')"),
+    ),
+    Index(
+        "ix_rs_exch_id",
+        "exchange_account_id",
+        "exchange_order_id",
+        postgresql_where=text("exchange_order_id IS NOT NULL"),
+    ),
+    Index("ix_rs_order", "order_id", postgresql_where=text("order_id IS NOT NULL")),
 )
 
 

@@ -82,10 +82,12 @@ from candleviewer.storage.repositories.orders import (
     OrderStoreError,
     StaleOrderState,
 )
+from candleviewer.storage.repositories.submissions import FirstPersist
 
 from .errors import (
     POST_TERMINAL_PUSH,
     IllegalTransition,
+    OmsError,
     OrderBufferFull,
     OrderHistoryRefused,
     OrderMachinesFull,
@@ -594,6 +596,13 @@ class OrderMachines:
         self._transitions = counter("oms_state_transitions_total")
         self._illegal = counter("oms_illegal_transitions_total").child()
         self._anomalies = counter("oms_reconcile_anomaly_total").child()
+        self._backstops = counter("oms_native_stop_backstop_total").child()
+        unknown = specs["oms_unknown_orders"]
+        self._unknown_gauge = metrics.gauge(
+            unknown.name, unknown.help, unknown.labels, max_series=unknown.max_series
+        ).child()
+        #: The live orders whose machine is in `unknown`, for `oms_unknown_orders` (R13).
+        self._unknown: set[UUID] = set()
         b01.set_ports(b01.OrderPorts(persist=self._persist, commands=ports.commands, now_us=now_us))
         b01.set_audit_hook(self._audited)
         b01.set_fill_core(apply_fields)
@@ -614,20 +623,27 @@ class OrderMachines:
         environment: str,
         gates: Mapping[str, str],
         rate_reservation: str | None = None,
+        first: FirstPersist | None = None,
     ) -> str:
         """E29-T04's pipeline, once its synchronous gates ran (C-2.21): build the order's machine
         and record `VALIDATE` with their verdicts. The order's first row is written at `validated`
-        (24 Sec.8.4), or none when a verdict refused it. An order that would open a position with
-        no stop is refused whatever its gates say: its native-stop verdict is recorded as `FAILED`
-        (C-2.6), so no caller places it unprotected. Answers the lifecycle state."""
+        (24 Sec.8.4), with `first`'s rows in the same transaction when given, or none when a
+        verdict refused it. An order that would open a position with no stop is refused whatever
+        its gates say: its native-stop verdict is recorded as `FAILED` (C-2.6), so no caller
+        places it unprotected, and the backstop is logged at ERROR and counted, as a caller that
+        reaches it has a defect. Answers the lifecycle state."""
         if not order.reduce_only and order.stop_loss is None:
+            logger().error(
+                "oms_native_stop_backstop", order_link_id=order.order_link_id, symbol=order.symbol
+            )
+            self._backstops.inc()
             gates = {**gates, "native_stop": b01.FAILED}
         payload: dict[str, Any] = {"gates": dict(gates), "order": _order_fields(order)}
         if rate_reservation is not None:
             payload["rate_reservation"] = rate_reservation
         attrs = {"order_link_id": order.order_link_id, "symbol": order.symbol, "env": environment}
         with span("oms.validate", attrs):
-            return await self._first(order, environment, "VALIDATE", payload)
+            return await self._first(order, environment, "VALIDATE", payload, first=first)
 
     async def discover(
         self, order: NewOrder, *, environment: str, pass_id: str | None = None
@@ -769,6 +785,36 @@ class OrderMachines:
             o = o.successor  # a resync rebuilt the order while this push waited
         await self._unloaded(account_id, order_id, event, payload)
 
+    async def abandon(self, account_id: UUID, order_id: UUID, reason: str) -> str:
+        """E29-T04 (S2-Q5): an order whose `SEND` step was refused is never sent, and nothing
+        would send it again, so the pipeline ends it with a KILL from `validated` only. B1 takes
+        it to `killed` with nothing to cancel (`skip_kill_cancel`, audited
+        `kill_no_cancel_unsubmitted`). The order was never sent, as the send's step commits its
+        attempt before any create can leave, so the step voids the entry's recorded stops (21
+        Sec.3.3.11's table); a KILL after the send leaves them waiting for the complete read.
+        Answers `killed`; `IllegalTransition` in any other state, nothing sent; `OrderStepRefused`
+        when the KILL's step rolled back; `OrderNotLoaded` when no machine of the account holds
+        the order. A reason B1's schema would refuse is cut, as `kill` cuts it."""
+        reason = reason[: b01.MAX_TEXT] or "abandoned"
+        o = self._live(account_id, order_id)
+        for _ in range(FOLLOWS):
+            if o is None:
+                break
+            async with self._holding(o):
+                if o.interp is not None:
+                    if o.lifecycle != "validated":
+                        raise self._refuse(o.lifecycle, "ABANDON")
+                    try:
+                        await self._kill(o, reason)
+                    finally:
+                        await self._settle(o)
+                    return o.lifecycle
+            o = o.successor  # a resync rebuilt the order while this call waited
+        state = await self._stored(account_id, order_id)
+        if state is not None and state in self.legality.finals:
+            raise self._refuse(state, "ABANDON")
+        raise OrderNotLoaded("no machine in this process holds the order")
+
     async def kill(self, reason: str, *, account_id: UUID | None = None) -> tuple[UUID, ...]:
         """B18's kill switch, recorded on every live machine (of *account_id*, if given) once it
         is enforced synchronously (C-2.21): each order reaches `killed` and cancels at most once
@@ -860,25 +906,34 @@ class OrderMachines:
     # --- Build, lookup and eviction (C-2.18, MUST-11, OM-I02) -----------------------------------
 
     async def _first(
-        self, order: NewOrder, environment: str, event: str, payload: Mapping[str, Any]
+        self,
+        order: NewOrder,
+        environment: str,
+        event: str,
+        payload: Mapping[str, Any],
+        *,
+        first: FirstPersist | None = None,
     ) -> str:
         """Build the order's machine and send its first event. A machine whose first step was
         refused is dropped again, so a refused order leaves nothing behind (S7); one whose first
         row may have committed all the same is rebuilt from it, if it did (`_resync`), under the
         order's lock, as every resync is, so a caller that waited on it follows the order."""
         o = await self._open(order.id, order.exchange_account_id, environment, event)
-        self._ports.steps.expect(order)
-        async with self._holding(o):
-            try:
-                await self._send_order(o, event, payload)
-                await self._settle(o)
-            except BaseException:
-                if o.resync:
-                    await self._resync(o)
-                else:
-                    await self._close(o, publish=False)
-                raise
-            return o.lifecycle
+        self._ports.steps.expect(order, first=first)
+        try:
+            async with self._holding(o):
+                try:
+                    await self._send_order(o, event, payload)
+                    await self._settle(o)
+                except BaseException:
+                    if o.resync:
+                        await self._resync(o)
+                    else:
+                        await self._close(o, publish=False)
+                    raise
+                return o.lifecycle
+        finally:  # a first step the chart refused never reached the writer to spend it
+            self._ports.steps.forget(order.id)
 
     async def _open(
         self,
@@ -924,7 +979,9 @@ class OrderMachines:
         final one (23 Sec.6.4)."""
         interp, o.interp = o.interp, None
         self._gateway.unregister(o.key)
-        self._orders.pop(o.order_id, None)
+        if self._orders.pop(o.order_id, None) is o:
+            self._unknown.discard(o.order_id)
+            self._unknown_gauge.set(len(self._unknown))
         if interp is not None:
             if publish:
                 self._publish(o, interp, last=True)
@@ -1135,7 +1192,8 @@ class OrderMachines:
             if isinstance(error, _BEHIND_ROW):
                 raise OrderStepUnknown(event, type(error).__name__)
             data = _data_refusal(error)
-            raise OrderStepRefused(event, type(error).__name__, deterministic=data)
+            typed = error if isinstance(error, OmsError) else None  # names no value (C-12.6)
+            raise OrderStepRefused(event, type(error).__name__, deterministic=data) from typed
 
     async def _take(self, o: _Order, event: str, push: dict[str, Any]) -> bool:
         """S5 and S6 for one push to a live machine; True when the push is an S6 anomaly."""
@@ -1444,6 +1502,11 @@ class OrderMachines:
         leaves = _leaves(interp)
         o.lifecycle = leaves.get("lifecycle", o.lifecycle)
         o.protection = leaves.get("protection", o.protection)
+        if o.lifecycle == "unknown" and self._orders.get(o.order_id) is o:
+            self._unknown.add(o.order_id)
+        else:
+            self._unknown.discard(o.order_id)
+        self._unknown_gauge.set(len(self._unknown))
         o.view = {key: ctx.get(key) for key in _VIEW}
         o.steps += 1
         raw = ctx.get("outbox")

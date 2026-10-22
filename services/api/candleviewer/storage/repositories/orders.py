@@ -73,6 +73,14 @@ TimeInForce = Literal["GTC", "IOC", "FOK", "PostOnly"]
 TriggerBy = Literal["LastPrice", "MarkPrice", "IndexPrice"]
 TpslMode = Literal["Full", "Partial"]
 IdempotencyState = Literal["unsent", "in_flight", "acked", "failed"]
+#: How the row came to exist (21 Sec.3.3.4 `ord_provenance`, 22 `OrderProvenance`), set at insert
+#: and never changed: the OMS's own submission, a reconciliation adoption, or a recorded stop's
+#: TP/SL order (24 Sec.8.3 rule 7).
+OrderProvenance = Literal["placed", "reconciliation", "recorded_stop"]
+#: How a step settles its entry's recorded stops (21 Sec.3.3.11's table, E29-T04): `answered` once
+#: the entry is accepted or fills, `void` only once the exchange confirms it ended unfilled; a step
+#: that leaves them waiting for the complete read (24 Sec.8.8 rule 6) names neither.
+EntryStopSettle = Literal["answered", "void"]
 
 #: 24-internal-schemas.md Sec.8.2: the `order_state` value that persists each chart state. One to
 #: one; six names differ, and `submitted` names a different state on each side, so a reader of
@@ -113,6 +121,8 @@ EXCHANGE_SOURCES: Final = frozenset[OrderEventSource]({"rest", "ws_private", "re
 FILL_KINDS: Final = frozenset[OrderEventKind]({"fill", "partial_fill"})
 #: The values a step's `from_state`, `to_state`, `kind` and `source` may take (OM-T04).
 _LITERALS: Final = tuple(map(get_args, (OrderState, OrderState, OrderEventKind, OrderEventSource)))
+_IDEMPOTENCY_STATES: Final = frozenset(get_args(IdempotencyState))
+_ENTRY_STOP_SETTLES: Final = frozenset(get_args(EntryStopSettle))
 #: The order terms an accepted amend may change (22-api-openapi.yaml `AmendOrderRequest`).
 AMENDABLE: Final = ("qty", "price", "trigger_price", "take_profit", "stop_loss")
 #: The unique index that makes `order_link_id` an idempotency key (21 Sec.3.3.4).
@@ -197,6 +207,7 @@ class NewOrder:
     exchange_updated_ts: datetime | None = None
     is_paper: bool = False
     lifecycle_state: LifecycleState | None = None
+    provenance: OrderProvenance = "placed"
 
     def __post_init__(self) -> None:
         check_fields(self, _NEW_ORDER_MONEY, _NEW_ORDER_STAMPS)
@@ -263,7 +274,11 @@ class OrderTransition:
     the columns' values, so every store refuses anything else alike, before any statement
     (OM-T04). The reject columns are the event's: a step into `rejected` names its event's
     `ret_code` and `ret_msg` as them, and no other step names any, so a fold of the order's events
-    rebuilds them (OM-T03)."""
+    rebuilds them (OM-T03). E29-T04: `idempotency_state` when given; `bump_submit_attempts`, the
+    send's step only (into `submitted`), counts `submit_attempts` up by one in SQL (`ord_attempts`
+    refuses an eleventh); and `entry_stops` settles the entry's recorded stops in the step's own
+    transaction (21 Sec.3.3.11's table), a step that leaves them waiting for the complete read
+    naming none."""
 
     account_id: UUID
     order_id: UUID
@@ -275,6 +290,9 @@ class OrderTransition:
     lifecycle_state: LifecycleState | None = None
     exchange_order_id: str | None = None
     terms: Mapping[str, Decimal] = field(default_factory=dict)
+    idempotency_state: IdempotencyState | None = None
+    bump_submit_attempts: bool = False
+    entry_stops: EntryStopSettle | None = None
 
     def __post_init__(self) -> None:
         require_exchange_record(self.event)
@@ -290,6 +308,14 @@ class OrderTransition:
             raise ValueError("a step changes only the terms an amend may change")
         for name, value in self.terms.items():
             require_money(name, value)
+        if self.idempotency_state not in (None, *_IDEMPOTENCY_STATES):
+            raise ValueError("idempotency_state must be a value of its column (ord_idem)")
+        if self.bump_submit_attempts is not False and (
+            self.bump_submit_attempts is not True or self.to_state != "submitted"
+        ):
+            raise ValueError("only the send's step, into submitted, counts an attempt")
+        if self.entry_stops not in (None, *_ENTRY_STOP_SETTLES):
+            raise ValueError("a step settles its entry's stops as answered or void")
 
     def changes(self) -> dict[str, object]:
         """The columns it sets, the exchange's text redacted like `ret_msg` (#845 decision 2)."""
@@ -298,6 +324,8 @@ class OrderTransition:
             values["lifecycle_state"] = self.lifecycle_state
         if self.exchange_order_id is not None:
             values["exchange_order_id"] = self.exchange_order_id
+        if self.idempotency_state is not None:
+            values["idempotency_state"] = self.idempotency_state
         values.update(self.terms)
         if self.reject_code is not None:
             values["reject_code"] = redact_exchange_text(self.reject_code, max_chars=MAX_CODE_CHARS)
@@ -350,6 +378,7 @@ class OrderRow:
     last_reconciled_at: datetime | None
     is_paper: bool
     lifecycle_state: LifecycleState | None
+    provenance: OrderProvenance
 
 
 @dataclass(frozen=True, slots=True)

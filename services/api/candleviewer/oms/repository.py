@@ -10,24 +10,38 @@ order, event and fill write (ADR-0006 rule 1). Every read takes the exchange acc
 `ret_code`, `ret_msg`) before binding it (21 Sec.3.3.5; the #845 security notes). A `WriteTimer`
 times every write on `oms_db_write_seconds{table}`. `transition` and `commit_fill` (E29-T03) return
 only once a step is committed with its event; any refusal writes nothing (24 Sec.8.2 S7, S8).
+
+E29-T04 (#913) adds the order's first persist (`SubmissionRepository`), the replay anchor
+(`IdempotencyAnchorRepository`) and the recorded stops (`RecordedStopRepository`). Each maps its
+store's refusals to the OMS's typed errors, raised `from None`, and logs ids only: never the
+client's key, the request's fingerprint or a price (21 Sec.12, C-12.6).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections import Counter
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import datetime
 from time import perf_counter
+from types import MappingProxyType
 from typing import Final, Literal, cast, get_args
 from uuid import UUID
 
 import structlog
 
 from candleviewer.observability.metrics import BoundedMetric
+from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.executions import (
     ExecutionRow,
     ExecutionStore,
     NewExecution,
     OrderFill,
+)
+from candleviewer.storage.repositories.idempotency_anchors import (
+    AnchorOutcome,
+    AnchorRow,
+    IdempotencyAnchorStore,
 )
 from candleviewer.storage.repositories.orders import (
     MAX_EVENT_PAGE,
@@ -50,17 +64,55 @@ from candleviewer.storage.repositories.positions import (
     PositionState,
     PositionStore,
 )
+from candleviewer.storage.repositories.recorded_stops import (
+    SWEEP_REASON,
+    UX_RS_IN_FLIGHT,
+    NewRecordedStop,
+    RecordedStopRow,
+    RecordedStopStore,
+    SettleWriteAhead,
+    StopOutcome,
+    SweepScope,
+    SweepWriteAhead,
+    SweptStop,
+)
+from candleviewer.storage.repositories.submissions import (
+    AnchorTakenError,
+    FirstPersist,
+    FirstPersisted,
+    SubmissionRefusal,
+    SubmissionStore,
+)
+from candleviewer.storage.repositories.trade_groups import (
+    ACCOUNT_NOT_LIVE,
+    PROFILE_CHANGED,
+    TradeGroupStoreRefusedError,
+)
 
-from .errors import DuplicateOrderLinkId
+from .errors import (
+    AnchorTaken,
+    AuditNotDurable,
+    DuplicateOrderLinkId,
+    StopRequestInFlight,
+    SubmissionRefused,
+)
 
 __all__ = [
-    "WRITE_TABLES", "ExecutionRepository", "OrderEventRepository", "OrderRepository",
-    "PositionRepository", "PositionSnapshotRepository", "WriteTimer",
+    "WRITE_TABLES", "ExecutionRepository", "IdempotencyAnchorRepository", "OrderEventRepository",
+    "OrderRepository", "PositionRepository", "PositionSnapshotRepository",
+    "RecordedStopRepository", "SubmissionRepository", "WriteTimer",
 ]  # fmt: skip
 
-WriteTable = Literal["orders", "order_events", "executions", "positions", "position_snapshots"]
+WriteTable = Literal[
+    "orders", "order_events", "executions", "positions", "position_snapshots",
+    "idempotency_anchors", "recorded_stops",
+]  # fmt: skip
 #: The `table` values of `oms_db_write_seconds`; the metric catalogue caps it at as many series.
 WRITE_TABLES: Final = get_args(WriteTable)
+#: The trade-group store's refusals a first persist can meet, as the OMS names them (SEC-2A-06).
+_SUBMISSION_REFUSALS: Final[Mapping[str, SubmissionRefusal]] = MappingProxyType(
+    {ACCOUNT_NOT_LIVE: "account_not_live", PROFILE_CHANGED: "profile_changed"}
+)
 
 
 def _log() -> structlog.stdlib.BoundLogger:
@@ -257,3 +309,188 @@ class PositionSnapshotRepository:
     async def append(self, snapshot: NewPositionSnapshot) -> PositionSnapshotRow:
         with self._timer.measure("position_snapshots"):
             return await self._store.append(snapshot)
+
+
+class SubmissionRepository:
+    """An order's first persist (E29-T04, 24 Sec.8.4 step 5), through a `SubmissionStore`: the
+    entry's group and leg, the `validated` row and its event, the recorded stops and the anchor
+    in one transaction, timed as an `orders` write."""
+
+    def __init__(self, store: SubmissionStore, timer: WriteTimer = _UNTIMED) -> None:
+        self._store = store
+        self._timer = timer
+
+    async def create_first(
+        self, first: FirstPersist, order: NewOrder, event: NewOrderEvent
+    ) -> FirstPersisted:
+        """Raise, with nothing written: `ValueError` before any statement when `first` carries
+        no write-ahead audit hook, as every first persist is audited (C-2.9, CR-2A-02);
+        `DuplicateOrderLinkId` for a second row under the id, `AnchorTaken` when the request's
+        key is held, `StopRequestInFlight` when a stop request is in flight for the position,
+        `SubmissionRefused` when the account or the leg's profile is not live, `AuditNotDurable`
+        when the write-ahead audit outlasts its bound; any other store refusal as it is."""
+        if first.write_ahead is None:
+            raise ValueError("a first persist is audited write-ahead (C-2.9): no hook was given")
+        try:
+            with self._timer.measure("orders"):
+                persisted = await self._store.create_first(first, order, event)
+        except OrderConstraintError as exc:
+            if exc.constraint == UX_ORDERS_LINK:
+                raise DuplicateOrderLinkId(order.order_link_id) from None
+            if exc.constraint == UX_RS_IN_FLIGHT:
+                raise StopRequestInFlight("a stop request is in flight for the position") from None
+            raise
+        except AnchorTakenError as exc:
+            raise AnchorTaken(exc.constraint) from None
+        except TradeGroupStoreRefusedError as exc:
+            reason = _SUBMISSION_REFUSALS.get(exc.reason)
+            if reason is None:  # a refusal no first persist can meet: the store's own error
+                raise
+            raise SubmissionRefused(reason) from None
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the order's write-ahead audit did not land in time") from None
+        row = persisted.order
+        _log().info(
+            "oms_order_first_persisted",
+            order_link_id=row.order_link_id,
+            order_id=str(row.id),
+            account_id=str(row.exchange_account_id),
+            state=row.state,
+            anchor_id=str(persisted.anchor_id),
+            trade_group_id=None if persisted.group is None else str(persisted.group.group.id),
+            recorded_stops=[str(stop.id) for stop in persisted.recorded_stops],
+        )
+        return persisted
+
+
+class IdempotencyAnchorRepository:
+    """The replay anchor of `placeOrder` (SR-E29-07), through an `IdempotencyAnchorStore`."""
+
+    def __init__(self, store: IdempotencyAnchorStore, timer: WriteTimer = _UNTIMED) -> None:
+        self._store = store
+        self._timer = timer
+
+    async def find(
+        self, created_by: UUID, client_ref: UUID, request_sha256: str
+    ) -> AnchorRow | None:
+        """The principal's `placeOrder` anchor of the key, its canonical text the column's
+        (`ia_ref_fmt`); another principal's reads as missing."""
+        return await self._store.find(created_by, "placeOrder", str(client_ref), request_sha256)
+
+    async def record_outcome(self, anchor_id: UUID, outcome: AnchorOutcome) -> bool:
+        """The first answer, by compare-and-set from NULL: False when one was recorded first."""
+        with self._timer.measure("idempotency_anchors"):
+            recorded = await self._store.record_outcome(anchor_id, outcome)
+        _log().info(
+            "oms_anchor_decided",
+            anchor_id=str(anchor_id),
+            status=outcome.status,
+            code=outcome.code,
+            recorded=recorded,
+        )
+        return recorded
+
+
+class RecordedStopRepository:
+    """The recorded stops (SR-E29-06, 21 Sec.3.3.11), through a `RecordedStopStore`."""
+
+    def __init__(self, store: RecordedStopStore, timer: WriteTimer = _UNTIMED) -> None:
+        self._store = store
+        self._timer = timer
+
+    async def record(self, stops: Sequence[NewRecordedStop]) -> tuple[RecordedStopRow, ...]:
+        """One request's rows, ahead of it: `StopRequestInFlight` when a request is in flight
+        for the position, with nothing written."""
+        try:
+            with self._timer.measure("recorded_stops"):
+                rows = await self._store.insert(stops)
+        except OrderConstraintError as exc:
+            if exc.constraint != UX_RS_IN_FLIGHT:
+                raise
+            raise StopRequestInFlight("a stop request is in flight for the position") from None
+        _log_stops("oms_stops_recorded", rows)
+        return rows
+
+    async def settle(
+        self,
+        account_id: UUID,
+        record_ids: Sequence[UUID],
+        outcome: StopOutcome,
+        *,
+        at: datetime,
+        write_ahead: SettleWriteAhead | None = None,
+    ) -> tuple[RecordedStopRow, ...]:
+        """One request's answer, all its rows together; `StaleRecordedStop` when one is no
+        longer in flight, with nothing written. `write_ahead`, the writer's audit of the answer
+        (a void is `sl.modified` or `tp.modified`, 21 Sec.3.3.11), is awaited before the commit:
+        `AuditNotDurable` when it outlasts its bound, with nothing written (C-2.9, SEC-2A-05). A
+        void (`refused`, `not_shown`) needs it: with none, `ValueError` before the store
+        (SEC-2A-D1-03), as a first persist with no hook is refused."""
+        if outcome != "answered" and write_ahead is None:
+            raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
+        try:
+            with self._timer.measure("recorded_stops"):
+                rows = await self._store.settle(
+                    account_id, record_ids, outcome, at=at, write_ahead=write_ahead
+                )
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the settle's write-ahead audit did not land in time") from None
+        _log_stops("oms_stops_settled", rows, outcome=outcome)
+        return rows
+
+    async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:
+        return await self._store.for_order(account_id, order_id)
+
+    async def void_orphans(
+        self, scope: UUID | SweepScope, *, at: datetime, write_ahead: SweepWriteAhead
+    ) -> tuple[SweptStop, ...]:
+        """R10's startup sweep (21 Sec.3.3.11): the pending stop rows of an entry never placed
+        become `void`: one never sent (`UNSENT_ENTRY`: still `pending_submit`, or killed before its
+        send, its create `unsent`, no attempt counted, nothing filled), or one its create's own
+        answer refused (`REFUSED_ENTRY`: `rejected` out of `submitting`, nothing filled). Each is
+        audited write-ahead by `write_ahead` (`sl.modified`, or `tp.modified`, reason
+        `SWEEP_REASON`, ids only). It never voids a row blind (C-2.6): an order's killed after its
+        send, one's that ended out of `unknown` and one's whose end the exchange did not confirm
+        unfilled stay `pending`, waiting for the complete read. Slice 3's startup wiring
+        (`oms_wiring.py`) calls it once per process, with `EVERY_ACCOUNT`, before the order machines
+        hydrate and before order entry opens: a never-sent order is an orphan only while no request
+        can still send it. `AuditNotDurable` when the audit outlasts its bound, with nothing voided.
+        Logged as one WARNING line with the count per account, and a line per row at INFO
+        (SEC-2A-07)."""
+        try:
+            with self._timer.measure("recorded_stops"):
+                swept = await self._store.void_orphans(scope, at=at, write_ahead=write_ahead)
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the sweep's write-ahead audit did not land in time") from None
+        if swept:
+            per_account = Counter(str(stop.exchange_account_id) for stop in swept)
+            _log().warning(
+                "oms_stops_unplaced_entries_swept",
+                reason=SWEEP_REASON,
+                swept=len(swept),
+                per_account=dict(sorted(per_account.items())),
+            )
+        for stop in swept:
+            _log().info(
+                "oms_stop_unplaced_entry_swept",
+                record_id=str(stop.id),
+                account_id=str(stop.exchange_account_id),
+                order_id=str(stop.order_id),
+                kind=stop.kind,
+            )
+        return swept
+
+
+def _log_stops(name: str, rows: Sequence[RecordedStopRow], **extra: str) -> None:
+    """Ids, kinds and statuses only: a recorded stop's prices and sizes are P1 (21 Sec.12)."""
+    for row in rows:
+        _log().info(
+            name,
+            record_id=str(row.id),
+            account_id=str(row.exchange_account_id),
+            order_id=None if row.order_id is None else str(row.order_id),
+            kind=row.kind,
+            source=row.source,
+            status=row.status,
+            **extra,
+        )

@@ -301,6 +301,7 @@ def test_the_anchor_table_is_principal_scoped_permanent_and_written_with_its_ord
         "CREATE TRIGGER trg_ia_no_truncate BEFORE TRUNCATE ON idempotency_anchors\n"
         "  FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();\n"
         "ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_no_truncate;\n"
+        "-- REVOKE DELETE, TRUNCATE ON idempotency_anchors FROM cv_app, cv_ro;\n"
     )
     assert "CREATE FUNCTION audit_refuse_truncate() RETURNS trigger" in _SCHEMA_DOC  # 0003's
     assert (
@@ -314,10 +315,10 @@ def test_the_anchor_table_is_principal_scoped_permanent_and_written_with_its_ord
     assert "| `idempotency_anchors` (PG) " in _between(_SCHEMA_DOC, "\n## 7. ", "\n## 8. ")
     assert "| `idempotency_anchors` | `client_ref`" in _words(_SCHEMA_DOC.split("\n## 12. ")[1])
     revisions = _between(_SCHEMA_DOC, "### 9.4 ", "### 9.5 ")
-    revision = revisions.split("| `NNNN_idempotency_anchors` ")[1]
+    revision = revisions.split("| `0043_order_submission` ")[1]
     assert revision.startswith(
-        "| `idempotency_anchors`, its six CHECKs, `ux_ia_principal_ref`, its two triggers, no "
-        "`DELETE` or `TRUNCATE` for `cv_app` (§3.3.10), `orders.provenance` (§3.3.4)"
+        "| `idempotency_anchors` (§3.3.10), `recorded_stops` (§3.3.11) and `orders.provenance` "
+        "(§3.3.4), their guard and TRUNCATE triggers; no `DELETE` or `TRUNCATE` for `cv_app`"
     )
     assert "NULL for adopted orders and groupless ones (§3.3.10)" in _SCHEMA_DOC
 

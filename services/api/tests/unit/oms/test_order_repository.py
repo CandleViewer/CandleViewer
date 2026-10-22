@@ -5,7 +5,9 @@ enforced by the database", unit half), the 24 Sec.8.3 rule 5 lookup the #846 all
 account passed through on every read, and the `order_link_id` logged on every write (ADR-0006
 rule 1). The stores themselves are tested in `tests/unit/storage/test_orders_store.py` and against
 Postgres in `tests/integration/storage/test_orders_store_pg.py`. Below them: the execution,
-position and snapshot repositories and `oms_db_write_seconds{table}` on every write.
+position and snapshot repositories and `oms_db_write_seconds{table}` on every write. Last, E29-T04's
+first persist, replay anchor and recorded stops: their refusals as the OMS's typed errors, raised
+`from None`, and log lines that carry ids only.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from dataclasses import fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import pytest
 from structlog.testing import capture_logs
@@ -33,11 +35,24 @@ from candleviewer.oms import (
     PositionSnapshotRepository,
     WriteTimer,
 )
-from candleviewer.oms.errors import OmsError
+from candleviewer.oms.errors import (
+    AnchorTaken,
+    AuditNotDurable,
+    OmsError,
+    StopRequestInFlight,
+    SubmissionRefused,
+)
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator, OrderLinkLookup
-from candleviewer.oms.repository import WRITE_TABLES
+from candleviewer.oms.repository import (
+    WRITE_TABLES,
+    IdempotencyAnchorRepository,
+    RecordedStopRepository,
+    SubmissionRepository,
+)
+from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.executions import NewExecution
+from candleviewer.storage.repositories.idempotency_anchors import AnchorOutcome, NewAnchor
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
     CommittedStep,
@@ -50,6 +65,23 @@ from candleviewer.storage.repositories.orders import (
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
 from candleviewer.storage.repositories.positions import NewPositionSnapshot, PositionState
+from candleviewer.storage.repositories.recorded_stops import (
+    EVERY_ACCOUNT,
+    NewRecordedStop,
+    RecordedStopRow,
+    SweptStop,
+)
+from candleviewer.storage.repositories.submissions import (
+    AnchorConstraint,
+    AnchorTakenError,
+    FirstPersist,
+    FirstPersisted,
+    SubmissionRefusal,
+)
+from candleviewer.storage.repositories.trade_groups import (
+    TradeGroupRefusal,
+    TradeGroupStoreRefusedError,
+)
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 ACCOUNT, ORDER = uuid.UUID(int=1), uuid.UUID(int=2)
@@ -243,7 +275,7 @@ class _AnyStore:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
     def __getattr__(self, name: str) -> Callable[..., Awaitable[object]]:
-        async def call(*args: Any) -> object:
+        async def call(*args: Any, **kwargs: Any) -> object:  # a keyword (`at=`) is not recorded
             self.calls.append((name, args))
             if self.error is not None:
                 raise self.error
@@ -257,6 +289,36 @@ _DONE = CommittedStep(
     _row(state="accepted"), _event_row(from_state="pending_submit", source="rest")
 )
 _FILLED = cast(Any, SimpleNamespace(execution=FILL, step=SimpleNamespace(order_id=ORDER)))
+#: E29-T04's writes: a reduce-only order's first persist, its anchor's outcome, a stop request.
+REF, SHA = "9b2f7c1e-4d3a-4f6b-8a0c-5e1d2c3b4a59", "ab" * 32
+ANCHOR = uuid.UUID(int=3)
+REDUCE = replace(
+    ORDER_IN, reduce_only=True, stop_loss=None, state="pending_submit", lifecycle_state="validated"
+)
+
+
+async def _audited(persisted: FirstPersisted) -> None:
+    return None  # the caller's write-ahead audit (C-2.9)
+
+
+FIRST = FirstPersist(
+    anchor=NewAnchor(id=ANCHOR, created_by=uuid.UUID(int=4), operation="placeOrder",
+                     client_ref=REF, request_sha256=SHA, order_id=ORDER),
+    write_ahead=_audited,
+)  # fmt: skip
+STOP = NewRecordedStop(
+    id=uuid.UUID(int=5), exchange_account_id=ACCOUNT, symbol="BTCUSDT", position_idx=0,
+    position_side="Buy", kind="stop_loss", source="trading_stop", order_id=None,
+    tpsl_mode="Full", trigger_price=Decimal("62000"), size=None,
+    audit_record_id=uuid.UUID(int=6), actor_user_id=None,
+)  # fmt: skip
+STOP_ROW = RecordedStopRow(
+    **{f.name: getattr(STOP, f.name) for f in fields(NewRecordedStop)},
+    exchange_order_id=None, status="pending", created_at=T0, answered_at=None, in_force_at=None,
+    closed_at=None, released_at=None,
+)  # fmt: skip
+OUTCOME = AnchorOutcome(status=202, decided_at=T0)
+PERSISTED = FirstPersisted(order=_row(), anchor_id=ANCHOR, group=None, recorded_stops=())
 #: Each write by its table (the label it is timed on), and the call where a table has two.
 _WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]] = {
     "orders": (lambda s, t: OrderRepository(s, t).create(ORDER_IN, EVENT_IN), _row()),
@@ -267,6 +329,13 @@ _WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]
     "executions": (lambda s, t: ExecutionRepository(s, t).insert(FILL), True),
     "positions": (lambda s, t: PositionRepository(s, t).upsert(STATE), object()),
     "position_snapshots": (lambda s, t: PositionSnapshotRepository(s, t).append(SNAP), object()),
+    "orders create_first": (lambda s, t: SubmissionRepository(s, t).create_first(FIRST, REDUCE,
+                            EVENT_IN), PERSISTED),
+    "idempotency_anchors": (lambda s, t: IdempotencyAnchorRepository(s, t).record_outcome(ANCHOR,
+                            OUTCOME), True),
+    "recorded_stops": (lambda s, t: RecordedStopRepository(s, t).record([STOP]), (STOP_ROW,)),
+    "recorded_stops settle": (lambda s, t: RecordedStopRepository(s, t).settle(ACCOUNT,
+                              [STOP.id], "answered", at=T0), (STOP_ROW,)),
 }  # fmt: skip
 
 
@@ -276,7 +345,7 @@ async def test_every_write_is_timed_on_its_table_a_failed_one_too(table: str) ->
     order path as long."""
     metrics = Metrics("dev")
     histogram = metrics.histogram(
-        "oms_db_write_seconds", "OMS writes", ("table",), buckets=OMS_WRITE_BUCKETS, max_series=5
+        "oms_db_write_seconds", "OMS writes", ("table",), buckets=OMS_WRITE_BUCKETS, max_series=7
     )
     ticks = iter([10.0, 10.25, 20.0, 22.0])
     timer = WriteTimer(histogram, clock=lambda: next(ticks))
@@ -345,3 +414,202 @@ async def test_the_execution_and_position_reads_pass_the_account_through() -> No
     assert all(answer is rows for answer in got)
     reads = [("get", (ACCOUNT, "E7")), ("list_open", (ACCOUNT,)), ("list_unprotected", (ACCOUNT,))]
     assert store.calls == reads
+
+
+# -- E29-T04: the first persist, the replay anchor and the recorded stops -------------------------
+
+_TYPED = [
+    (OrderConstraintError("ux_orders_link"), DuplicateOrderLinkId),
+    (OrderConstraintError("ux_rs_in_flight"), StopRequestInFlight),
+    (AnchorTakenError("ux_ia_principal_ref"), AnchorTaken),
+    (AnchorTakenError("ux_tg_creator_ref"), AnchorTaken),
+    (TradeGroupStoreRefusedError("account_not_live"), SubmissionRefused),
+    (TradeGroupStoreRefusedError("profile_changed"), SubmissionRefused),
+    (WriteAheadTimeout("write-ahead audit exceeded 0.5 s"), AuditNotDurable),
+]
+
+
+@pytest.mark.parametrize(("error", "typed"), _TYPED, ids=[t.__name__ for _, t in _TYPED])
+async def test_a_refused_first_persist_is_a_typed_oms_error_with_nothing_chained(
+    error: Exception, typed: type[OmsError]
+) -> None:
+    """B1 reads any `TimeoutError` as an outcome in doubt; `AuditNotDurable` is a refusal, as the
+    unit of work rolled back, so it is never one (R5)."""
+    with capture_logs() as logs, pytest.raises(typed) as err:
+        await SubmissionRepository(cast(Any, _AnyStore(error=error))).create_first(
+            FIRST, REDUCE, EVENT_IN
+        )
+    assert (err.value.__cause__, err.value.__suppress_context__, logs) == (None, True, [])
+    assert not isinstance(err.value, TimeoutError)
+    assert getattr(err.value, "constraint", getattr(err.value, "reason", "")) in str(error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OrderConstraintError("tg_ref_fmt"), TradeGroupStoreRefusedError("definition_not_live")],
+)
+async def test_any_other_refusal_of_the_first_persist_passes_unchanged(error: Exception) -> None:
+    """A refusal no first persist can meet (it locks no definition) is the store's own error,
+    never a `SubmissionRefused` outside its closed vocabulary (SEC-2A-06)."""
+    with pytest.raises(type(error)) as err:
+        await SubmissionRepository(cast(Any, _AnyStore(error=error))).create_first(
+            FIRST, REDUCE, EVENT_IN
+        )
+    assert err.value is error
+
+
+async def test_a_first_persist_without_its_audit_hook_never_reaches_the_store() -> None:
+    """C-2.9 (CR-2A-02): every first persist is audited write-ahead, in its own transaction."""
+    store = _AnyStore(PERSISTED)
+    with pytest.raises(ValueError, match="audited write-ahead"):
+        await SubmissionRepository(cast(Any, store)).create_first(
+            replace(FIRST, write_ahead=None), REDUCE, EVENT_IN
+        )
+    assert store.calls == []
+
+
+def test_the_typed_refusals_name_closed_vocabularies() -> None:
+    """SEC-2A-06: the OMS's two refusals carry the storage Literals' values, and a first persist
+    can meet two of the trade-group store's three refusals."""
+    assert get_args(AnchorConstraint) == ("ux_ia_principal_ref", "ux_tg_creator_ref")
+    assert get_args(SubmissionRefusal) == ("account_not_live", "profile_changed")
+    assert set(get_args(SubmissionRefusal)) < set(get_args(TradeGroupRefusal))
+    refused, taken = SubmissionRefused("profile_changed"), AnchorTaken("ux_tg_creator_ref")
+    assert (refused.reason, taken.constraint) == ("profile_changed", "ux_tg_creator_ref")
+
+
+async def test_a_first_persist_logs_ids_only() -> None:
+    with capture_logs() as logs:
+        await SubmissionRepository(cast(Any, _AnyStore(PERSISTED))).create_first(
+            FIRST, REDUCE, EVENT_IN
+        )
+    assert logs == [
+        {
+            "event": "oms_order_first_persisted", "log_level": "info", **_IDS,
+            "state": "pending_submit", "anchor_id": str(ANCHOR), "trade_group_id": None,
+            "recorded_stops": [],
+        }
+    ]  # fmt: skip
+
+
+async def test_the_anchor_is_found_by_its_canonical_key_on_place_order() -> None:
+    store = _AnyStore(None)
+    found = await IdempotencyAnchorRepository(cast(Any, store)).find(
+        uuid.UUID(int=4), uuid.UUID(REF.upper()), SHA
+    )
+    assert found is None
+    assert store.calls == [("find", (uuid.UUID(int=4), "placeOrder", REF, SHA))]
+
+
+async def test_an_entrys_stops_are_read_in_its_account() -> None:
+    store = _AnyStore((STOP_ROW,))
+    assert await RecordedStopRepository(cast(Any, store)).for_order(ACCOUNT, ORDER) == (STOP_ROW,)
+    assert store.calls == [("for_order", (ACCOUNT, ORDER))]
+
+
+async def test_a_stop_request_in_flight_refuses_the_next_one_and_logs_nothing() -> None:
+    error = OrderConstraintError("ux_rs_in_flight")
+    with capture_logs() as logs, pytest.raises(StopRequestInFlight) as err:
+        await RecordedStopRepository(cast(Any, _AnyStore(error=error))).record([STOP])
+    assert (err.value.__cause__, logs) == (None, [])
+
+
+async def test_the_anchor_and_stop_lines_carry_no_key_fingerprint_or_price() -> None:
+    with capture_logs() as logs:
+        await IdempotencyAnchorRepository(cast(Any, _AnyStore(True))).record_outcome(
+            ANCHOR, OUTCOME
+        )
+        await RecordedStopRepository(cast(Any, _AnyStore((STOP_ROW,)))).record([STOP])
+    assert [line["event"] for line in logs] == ["oms_anchor_decided", "oms_stops_recorded"]
+    text = repr(logs)
+    assert REF not in text and SHA not in text and "62000" not in text
+    assert logs[1]["record_id"] == str(STOP.id) and logs[1]["kind"] == "stop_loss"
+
+
+async def _no_audit(swept: tuple[SweptStop, ...]) -> None:
+    return None
+
+
+async def test_the_sweep_logs_one_warning_with_its_count_per_account_and_each_row_at_info() -> None:
+    """SEC-2A-07: after an incident the startup sweep may void many rows; one WARNING summarises
+    them and each row, by its ids only, is an INFO line."""
+    other = uuid.UUID(int=0xB2)
+    swept = (
+        SweptStop(STOP.id, ACCOUNT, ORDER, "take_profit"),
+        SweptStop(uuid.UUID(int=9), other, uuid.UUID(int=10), "stop_loss"),
+        SweptStop(uuid.UUID(int=11), ACCOUNT, ORDER, "stop_loss"),
+    )
+    store = _AnyStore(swept)
+    with capture_logs() as logs:
+        got = await RecordedStopRepository(cast(Any, store)).void_orphans(
+            EVERY_ACCOUNT, at=T0, write_ahead=_no_audit
+        )
+    assert got == swept and store.calls == [("void_orphans", (EVERY_ACCOUNT,))]
+    assert logs[0] == {
+        "event": "oms_stops_unplaced_entries_swept", "log_level": "warning",
+        "reason": "unplaced_entry_swept", "swept": 3,
+        "per_account": {str(ACCOUNT): 2, str(other): 1},
+    }  # fmt: skip
+    rows = [(line["log_level"], line["record_id"], line["account_id"]) for line in logs[1:]]
+    assert rows == [("info", str(stop.id), str(stop.exchange_account_id)) for stop in swept]
+    assert {line["event"] for line in logs[1:]} == {"oms_stop_unplaced_entry_swept"}
+    with capture_logs() as quiet:
+        await RecordedStopRepository(cast(Any, _AnyStore(()))).void_orphans(
+            ACCOUNT, at=T0, write_ahead=_no_audit
+        )
+    assert quiet == []
+
+
+class _Settles:
+    """A `RecordedStopStore` whose settle keeps the hook it was handed, then answers or raises."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error, self.hooks = error, list[object]()
+
+    async def settle(self, *args: Any, write_ahead: object = None, **kwargs: Any) -> object:
+        self.hooks.append(write_ahead)
+        if self.error is not None:
+            raise self.error
+        return (STOP_ROW,)
+
+
+async def test_a_settle_hands_its_audit_to_the_store_and_a_late_audit_writes_nothing() -> None:
+    """SEC-2A-05 (C-2.9): the writer's audit of an answer is awaited in the settle's transaction;
+    one past its bound is `AuditNotDurable`, never an outcome in doubt."""
+
+    async def audit(rows: tuple[RecordedStopRow, ...]) -> None:
+        return None
+
+    store = _Settles()
+    repo = RecordedStopRepository(cast(Any, store))
+    rows = await repo.settle(ACCOUNT, [STOP.id], "refused", at=T0, write_ahead=audit)
+    assert rows == (STOP_ROW,)
+    late = _Settles(WriteAheadTimeout("write-ahead audit exceeded 5.0 s"))
+    with capture_logs() as logs, pytest.raises(AuditNotDurable) as err:
+        await RecordedStopRepository(cast(Any, late)).settle(
+            ACCOUNT, [STOP.id], "refused", at=T0, write_ahead=audit
+        )
+    assert store.hooks == late.hooks == [audit] and logs == []
+    assert err.value.__cause__ is None and not isinstance(err.value, TimeoutError)
+
+
+@pytest.mark.parametrize("outcome", ["refused", "not_shown"])
+async def test_a_void_with_no_audit_reaches_no_store(outcome: str) -> None:
+    """SEC-2A-D1-03 (C-2.9): a void is audited write-ahead, as a first persist is, so with no hook
+    it is refused before the store; an answer may go without one."""
+    store = _Settles()
+    repo = RecordedStopRepository(cast(Any, store))
+    with pytest.raises(ValueError, match="audited write-ahead"):
+        await repo.settle(ACCOUNT, [STOP.id], cast(Any, outcome), at=T0)
+    assert store.hooks == []
+    assert await repo.settle(ACCOUNT, [STOP.id], "answered", at=T0) == (STOP_ROW,)
+    assert store.hooks == [None]
+
+
+async def test_a_sweep_whose_audit_did_not_land_voided_nothing() -> None:
+    error = WriteAheadTimeout("write-ahead audit exceeded 5.0 s")
+    with pytest.raises(AuditNotDurable) as err:
+        await RecordedStopRepository(cast(Any, _AnyStore(error=error))).void_orphans(
+            ACCOUNT, at=T0, write_ahead=_no_audit
+        )
+    assert err.value.__cause__ is None and not isinstance(err.value, TimeoutError)

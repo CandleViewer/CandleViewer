@@ -37,6 +37,8 @@ _NUL_TEXT: Final = "22021"
 #: a value of the types can break, each true where SQL's is false: a NULL leaves a CHECK unknown,
 #: which passes it.
 _ORDER_CHECKS: Final[dict[str, Callable[[port.NewOrder | Row], bool]]] = {
+    # a `NewOrder` has no count: the column's default, 0
+    "ord_attempts": lambda o: not 0 <= getattr(o, "submit_attempts", 0) <= 10,
     "ord_cum": lambda o: not 0 <= o.cum_exec_qty <= o.qty,
     "ord_lifecycle": lambda o: (
         o.lifecycle_state is not None and port.ORDER_STATE_OF.get(o.lifecycle_state) != o.state
@@ -133,7 +135,9 @@ class InMemoryOrderStore:
     every event as a fresh copy, and refuses text holding NUL (22021). Each call yields to the
     event loop once, before it reads or checks anything, as a driver call suspends: a timeout or
     another task can come between two calls, never between a check and its commit. `fail_next`
-    injects a fault at the next commit (S7)."""
+    injects a fault at the next commit (S7). The send's step counts `submit_attempts` up, as the
+    store does in SQL; a step's `entry_stops` settles recorded stops, which this fake does not
+    hold (E29-T04's Postgres tests prove that settle)."""
 
     def __init__(self, clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self._clock = clock
@@ -262,6 +266,8 @@ class InMemoryOrderStore:
         """The compare-and-set and its event, or `StaleOrderState`."""
         order = self._owned(step.account_id, step.order_id)
         changes: dict[str, Any] = {**step.changes(), **(totals or {})}
+        if step.bump_submit_attempts:
+            changes["submit_attempts"] = order.submit_attempts + 1
         _bindable(changes.values())  # the UPDATE's values are bound before it runs
         if order.state != step.from_state:
             raise port.StaleOrderState(step.order_id, step.from_state)

@@ -2539,10 +2539,22 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "gauge",
         "orders",
         (),
-        "Orders on the exchange unknown to the OMS.",
+        "Live orders whose B1 machine is in unknown: the outcome of their last create or step is "
+        "not known, so nothing is sent for them until reconciliation decides (E29-T04).",
         "> 0 for 60s (page)",
         _P,
-        "E45",
+        "E29",
+    ),
+    _s(
+        "oms_native_stop_backstop_total",
+        "counter",
+        "orders",
+        (),
+        "Entries that reached the order facade without a native stop, refused at VALIDATE by "
+        "the start() backstop (C-2.6): a caller defect, logged at ERROR (E29-T04).",
+        "> 0 (page)",
+        _P,
+        "E29",
     ),
     _s(
         "oms_interim_ports",
@@ -2573,12 +2585,13 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "seconds",
         ("table",),
         "OMS Postgres write time per table, failed writes included (orders: an order with its "
-        "first event); recorded by the M14 repositories (E29-T01).",
+        "first event, or its first persist with its group, stops and anchor); recorded by the "
+        "M14 repositories (E29-T01, E29-T04).",
         "p99 near the store's 2 s statement cap: order writes at risk of refusal",
         _P,
         "E29",
         OMS_WRITE_BUCKETS,
-        max_series=5,
+        max_series=7,
     ),
     _s(
         "oms_state_transitions_total",

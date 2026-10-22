@@ -509,9 +509,11 @@ def _found(event: Any) -> Mapping[str, Any] | None:
     return found
 
 
-def _full_match(context: Mapping[str, Any], found: Mapping[str, Any]) -> bool:
+def full_match(context: Mapping[str, Any], found: Mapping[str, Any]) -> bool:
     """SR-E29-03: the found order is the row's, field for field; its type is `limit` exactly
-    when the row has a price (`ValueError` on malformed money, which the guard denies)."""
+    when the row has a price (`ValueError` on malformed money, which the guard denies). Public:
+    E29-T04's command port decides a duplicate's hand-over by it, so the port and B1's guards
+    can never disagree."""
     order_type = "limit" if context.get("price") is not None else "market"
     return (
         _id(found.get("exchange_order_id")) is not None
@@ -529,7 +531,7 @@ def is_duplicate_link_id_full_match(context: dict[str, Any], event: Any) -> bool
 
     def check() -> bool:
         found = _found(event)
-        return found is not None and _full_match(context, found)
+        return found is not None and full_match(context, found)
 
     return _total("is_duplicate_link_id_full_match", check)
 
@@ -540,7 +542,7 @@ def is_link_id_mismatch(context: dict[str, Any], event: Any) -> bool:
 
     def check() -> bool:
         found = _found(event)
-        return found is not None and not _full_match(context, found)
+        return found is not None and not full_match(context, found)
 
     return _total("is_link_id_mismatch", check)
 

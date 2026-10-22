@@ -65,8 +65,9 @@ rules:
       # wire (#2787 D2-G2, questdb_pgwire_*): a `LazyPgWire`'s name, a required argument from the
       #   closed `WireName` set {bars, bars_hydrate, budget, replay, retention, rolloff, storage}
       #   (`observability/pgwire_metrics.py`; `storage` is #3874's); max_series=7, or 21 with `reason`.
-      # table, also (E29-T01, #845): the five tables the OMS repositories write {orders, order_events,
-      #   executions, positions, position_snapshots}, a `Literal` in code; max_series=5.
+      # table, also (E29-T01, #845; E29-T04, #913): the seven tables the OMS repositories write
+      #   {orders, order_events, executions, positions, position_snapshots, idempotency_anchors,
+      #   recorded_stops}, a `Literal` in code; max_series=7.
       # reason (E42-T03, #837 Q5, cv_order_entry_refusals_total): the closed order-entry
       #   `RefusalReason` set (4 values, checked when a refusal is built); max_series=4.
       # port (E29-T04, #913 ruling R4, oms_interim_ports): the four order-path ports an interim

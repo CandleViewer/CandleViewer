@@ -2,9 +2,10 @@
 
 SQLAlchemy Core over `db.models.orders` and `db.models.order_events`: every value is a bound
 parameter and nothing is built from strings. Reads select the explicit allow-lists `ORDER_COLUMNS`
-and `EVENT_COLUMNS`, never `*`. Every statement filters on `orders.exchange_account_id` (C-12.4)
-except the two in `UNSCOPED`: the insert, which writes the account it is given, and the 24 Sec.8.3
-rule 5 yes/no over the global `ux_orders_link`. A unit test pins that set.
+and `EVENT_COLUMNS`, never `*`. Every statement filters on `orders.exchange_account_id` (C-12.4),
+or for the entry-stop settle on `recorded_stops.exchange_account_id`, except the two in
+`UNSCOPED`: the insert, which writes the account it is given, and the 24 Sec.8.3 rule 5 yes/no
+over the global `ux_orders_link`. A unit test pins that set.
 
 `create` writes the order and its first event (`seq` 0) in one statement, a data-modifying CTE:
 one round trip in one transaction (#845 performance notes). `append` first locks the order row
@@ -16,7 +17,11 @@ anything is bound, `payload` passes `redact_exchange_payload()` and `ret_msg` an
 
 A write-ahead step (E29-T03: `transition`; `commit_fill` in `executions_sqlalchemy.py`) locks its
 order row in the account, runs the compare-and-set UPDATE, appends the event with both states and
-commits; a missed compare-and-set raises `StaleOrderState` and rolls back (24 Sec.8.2 S7, S8).
+commits; a missed compare-and-set raises `StaleOrderState` and rolls back (24 Sec.8.2 S7, S8). The
+send's step counts `submit_attempts` up in SQL, and a step that names `entry_stops` settles its
+entry's recorded stops (`settle_entry_stops_statement`, scoped by `recorded_stops`' account and the
+order) before that commit, in the same transaction (E29-T04, 21 Sec.3.3.11); a void there also
+needs the order to hold no recorded fill, read after the step's own update (SEC-2A-01).
 Before any statement, `transition` refuses a fill's event and `filled`, `append` a fill's event
 (`require_no_fill`): a fill comes with its execution.
 
@@ -33,23 +38,30 @@ connection the store cannot get or loses (an `OSError` from the driver, connect 
 included, the pool's checkout `TimeoutError`, or a `DBAPIError` that is `connection_invalidated`,
 of SQLSTATE class 08, as asyncpg reports a connection lost mid-statement, or of a server that
 does not serve, `_NOT_SERVING`) as `StorageTierUnavailable` (24 Sec.8.2 S7: Postgres is
-unavailable). Cancellation passes through unchanged. So a caller meets `OrderStoreError` or
-`StorageError`, never a driver or pool exception.
+unavailable). A write-ahead hook's `WriteAheadTimeout` (E29-T04's first persist) passes as it is:
+the unit of work rolled back, so it is no outcome in doubt. Cancellation passes through unchanged.
+So a caller meets `OrderStoreError` or `StorageError`, never a driver or pool exception.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, fields
+from datetime import datetime
 from typing import Any, Final
 from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 
-from candleviewer.db.models import order_events, orders
-from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
+from candleviewer.db.models import order_events, orders, recorded_stops
+from candleviewer.storage.errors import (
+    StorageQueryFailed,
+    StorageTierUnavailable,
+    WriteAheadTimeout,
+)
 from candleviewer.storage.repositories.exchange_payload import (
     MAX_CODE_CHARS,
     redact_exchange_payload,
@@ -61,6 +73,7 @@ from candleviewer.storage.repositories.orders import (
     MAX_EVENT_PAGE,
     OPEN_STATES,
     CommittedStep,
+    EntryStopSettle,
     NewOrder,
     NewOrderEvent,
     OrderConstraintError,
@@ -91,6 +104,17 @@ _SET_TIMEOUT: Final = sa.text("SELECT set_config('statement_timeout', :timeout, 
 _NAMED_VIOLATIONS: Final = frozenset({"23505", "23514", "23503"})
 #: A server that does not serve: shut down (57P01, 57P02), starting (57P03), full (53300).
 _NOT_SERVING: Final = frozenset({"57P01", "57P02", "57P03", "53300"})
+
+
+def require_audit_bound(seconds: float) -> float:
+    """A store's write-ahead audit bound, in seconds: finite and above zero, as a NaN or an
+    infinity would leave the hook unbounded (C-2.18); `ValueError` otherwise. The OMS stores that
+    await a caller's audit hook (`submissions_sqlalchemy`, `recorded_stops_sqlalchemy`) share it."""
+    if isinstance(seconds, bool) or not (
+        isinstance(seconds, int | float) and math.isfinite(seconds) and seconds > 0
+    ):
+        raise ValueError("audit_timeout_s must be a finite number of seconds above zero")
+    return seconds
 
 
 def _event_values(event: NewOrderEvent) -> dict[str, Any]:
@@ -174,9 +198,13 @@ def append_statement(account_id: UUID, order_id: UUID, event: NewOrderEvent) -> 
 
 
 def transition_statement(step: OrderTransition) -> sa.Update:
-    """The compare-and-set: the row moves only while it holds `step.from_state`."""
+    """The compare-and-set: the row moves only while it holds `step.from_state`. The send's step
+    counts an attempt in SQL, from the stored count."""
     held = (_O.exchange_account_id == step.account_id, _O.id == step.order_id)
-    stmt = sa.update(orders).where(*held, _O.state == step.from_state).values(step.changes())
+    values: dict[str, Any] = step.changes()
+    if step.bump_submit_attempts:
+        values["submit_attempts"] = _O.submit_attempts + 1
+    stmt = sa.update(orders).where(*held, _O.state == step.from_state).values(values)
     return stmt.returning(*ORDER_COLUMNS)
 
 
@@ -185,6 +213,27 @@ def fill_statement(fill: OrderFill) -> sa.Update:
     plus this fill's `exec_qty` is the new one: totals computed from an older row write nothing."""
     held = _O.cum_exec_qty + fill.execution.exec_qty == fill.totals.cum_exec_qty
     return transition_statement(fill.step).values(asdict(fill.totals)).where(held)
+
+
+def settle_entry_stops_statement(
+    account_id: UUID, order_id: UUID, settle: EntryStopSettle, at: datetime
+) -> sa.Update:
+    """The entry's attach rows still pending (21 Sec.3.3.11): `answered` stamps the ones in flight,
+    `void` ends every one; a row in force or ended is left as it is. `void` also needs the order to
+    hold no recorded fill (SEC-2A-01): `commit_step` runs it after the step's own compare-and-set
+    and a fill's totals, in the same transaction, so a fill the store holds is never voided,
+    whatever the caller decided."""
+    rs = recorded_stops.c
+    stmt = sa.update(recorded_stops).where(
+        rs.exchange_account_id == account_id,
+        rs.order_id == order_id,
+        rs.source == "entry_attach",
+        rs.status == "pending",
+    )
+    if settle == "answered":
+        return stmt.where(rs.answered_at.is_(None)).values(answered_at=at)
+    filled = sa.select(sa.literal(1)).where(_O.id == rs.order_id, _O.cum_exec_qty > 0)
+    return stmt.where(~sa.exists(filled)).values(status="void", closed_at=at)
 
 
 def list_events_statement(
@@ -223,11 +272,17 @@ async def commit_step(
     stmt = append_statement(step.account_id, step.order_id, step.event)
     states = {"from_state": step.from_state, "to_state": step.to_state}
     event = (await uow.session.execute(stmt.values(states))).mappings().one()
+    if step.entry_stops is not None:
+        settle = settle_entry_stops_statement(
+            step.account_id, step.order_id, step.entry_stops, step.event.event_ts
+        )
+        await uow.session.execute(settle)
     await uow.commit()
-    return CommittedStep(_order(row), _event(event, row["order_link_id"]))
+    return CommittedStep(order_row(row), _event(event, row["order_link_id"]))
 
 
-def _order(row: Mapping[Any, Any]) -> OrderRow:
+def order_row(row: Mapping[Any, Any]) -> OrderRow:
+    """An `orders` row as read (`ORDER_COLUMNS`); the first persist reuses it."""
     return OrderRow(**{f.name: row[f.name] for f in fields(OrderRow)})
 
 
@@ -267,6 +322,8 @@ def _constraints() -> Iterator[None]:
         if name is None:
             raise StorageQueryFailed(_sqlstate(exc)) from None
         raise OrderConstraintError(name) from None
+    except WriteAheadTimeout:
+        raise  # a write-ahead hook's bound, not the database's, although it is a `TimeoutError` too
     except (OSError, sa.exc.TimeoutError) as exc:
         raise StorageTierUnavailable(f"postgres unreachable ({type(exc).__name__})") from None
 
@@ -310,7 +367,7 @@ class SqlAlchemyOrderStore(CappedStore):
         async with self._unit_of_work() as uow:
             row = (await uow.session.execute(stmt)).mappings().one()
             await uow.commit()
-        return _order(row)
+        return order_row(row)
 
     async def transition(self, step: OrderTransition) -> CommittedStep:
         require_no_fill(step.event, step.to_state)
@@ -329,7 +386,7 @@ class SqlAlchemyOrderStore(CappedStore):
     ) -> tuple[OrderRow, ...]:
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(list_open_statement(account_id, symbol))
-            return tuple(_order(row) for row in result.mappings())
+            return tuple(order_row(row) for row in result.mappings())
 
     async def link_id_taken(self, order_link_id: str) -> bool:
         async with self._unit_of_work() as uow:
@@ -361,13 +418,13 @@ class SqlAlchemyOrderStore(CappedStore):
     async def _one(self, stmt: sa.Select[Any]) -> OrderRow | None:
         async with self._unit_of_work() as uow:
             row = (await uow.session.execute(stmt)).mappings().first()
-        return None if row is None else _order(row)
+        return None if row is None else order_row(row)
 
 
 __all__ = [
     "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "UNSCOPED", "CappedStore",
     "SqlAlchemyOrderStore", "append_statement", "commit_step", "create_statement",
     "fill_statement", "get_by_link_statement", "get_statement", "link_taken_statement",
-    "list_events_statement", "list_open_statement", "lock_order", "lock_statement",
-    "transition_statement",
+    "list_events_statement", "list_open_statement", "lock_order", "lock_statement", "order_row",
+    "require_audit_bound", "settle_entry_stops_statement", "transition_statement",
 ]  # fmt: skip
