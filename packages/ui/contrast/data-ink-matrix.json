@@ -1805,6 +1805,50 @@
       "pass": true
     },
     {
+      "kind": "text",
+      "theme": "dark",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.raised",
+      "key": "dark:comfortable:color.text.tertiary on color.surface.raised",
+      "ratio": 5.62,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.raised",
+      "key": "dark:compact:color.text.tertiary on color.surface.raised",
+      "ratio": 5.62,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.selected",
+      "key": "dark:comfortable:color.text.primary on color.surface.selected",
+      "ratio": 10.17,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "dark",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.selected",
+      "key": "dark:compact:color.text.primary on color.surface.selected",
+      "ratio": 10.17,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
       "kind": "cvd",
       "cvdKind": "buy-sell",
       "theme": "dark",
@@ -4101,6 +4145,50 @@
       "pass": true
     },
     {
+      "kind": "text",
+      "theme": "light",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.raised",
+      "key": "light:comfortable:color.text.tertiary on color.surface.raised",
+      "ratio": 5.92,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.raised",
+      "key": "light:compact:color.text.tertiary on color.surface.raised",
+      "ratio": 5.92,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.selected",
+      "key": "light:comfortable:color.text.primary on color.surface.selected",
+      "ratio": 12.82,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "light",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.selected",
+      "key": "light:compact:color.text.primary on color.surface.selected",
+      "ratio": 12.82,
+      "threshold": 4.5,
+      "pass": true
+    },
+    {
       "kind": "cvd",
       "cvdKind": "buy-sell",
       "theme": "light",
@@ -6393,6 +6481,50 @@
       "id": "color.text.primary on color.status.danger.subtle",
       "key": "high-contrast:compact:color.text.primary on color.status.danger.subtle",
       "ratio": 13.66,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.raised",
+      "key": "high-contrast:comfortable:color.text.tertiary on color.surface.raised",
+      "ratio": 11.21,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.tertiary on color.surface.raised",
+      "key": "high-contrast:compact:color.text.tertiary on color.surface.raised",
+      "ratio": 11.21,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "comfortable",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.selected",
+      "key": "high-contrast:comfortable:color.text.primary on color.surface.selected",
+      "ratio": 11.51,
+      "threshold": 7,
+      "pass": true
+    },
+    {
+      "kind": "text",
+      "theme": "high-contrast",
+      "density": "compact",
+      "palette": "default",
+      "id": "color.text.primary on color.surface.selected",
+      "key": "high-contrast:compact:color.text.primary on color.surface.selected",
+      "ratio": 11.51,
       "threshold": 7,
       "pass": true
     },

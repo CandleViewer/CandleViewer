@@ -57,11 +57,6 @@
       "owner": "basiltt"
     },
     {
-      "token": "color.surface.selected",
-      "reason": "Row/control selected-state surface tint; color.text.primary-on-surface.raised is already declared and selected uses the same text token, so no independent pair is needed.",
-      "owner": "basiltt"
-    },
-    {
       "token": "color.text.disabled",
       "reason": "WCAG 1.4.3/1.4.11 explicitly exempt disabled/inactive UI component text and controls from the contrast requirement.",
       "owner": "basiltt"
