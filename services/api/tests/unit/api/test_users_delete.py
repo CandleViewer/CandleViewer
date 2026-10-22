@@ -290,7 +290,8 @@ def test_the_cascade_is_given_the_elevated_session(
 
     monkeypatch.setattr(w.svc, "disable", recording)
     r = _client(w, _principal("owner", spec)).delete(_PATH.format(TARGET))
-    assert r.status_code == 204 and given == [SESSION]
+    assert r.status_code == 204
+    assert given == [SESSION]
 
 
 def test_self_target_403(spec: dict[str, Any]) -> None:

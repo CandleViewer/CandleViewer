@@ -59,8 +59,9 @@ async def refusal_session(auth: SessionsLike | None, request: Request) -> uuid.U
 
 
 class NamesSession:
-    """An emitter naming the caller's session on each record it writes, read only when one is:
-    `enforce` names none."""
+    """An emitter that names the caller's session on each record it writes, in place of the
+    `None` that `enforce` passes. It reads the session store only when `emit` runs, so an allowed
+    request pays no read."""
 
     def __init__(self, emitter: _Emitter, auth: SessionsLike | None, request: Request) -> None:
         self._emitter, self._auth, self._request = emitter, auth, request

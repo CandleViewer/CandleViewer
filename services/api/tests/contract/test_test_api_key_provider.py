@@ -254,12 +254,13 @@ async def test_the_store_gates_refusal_is_audited_as_enforce_audits_its_own() ->
     )  # fmt: skip
 
 
-async def test_each_layers_refusal_names_the_callers_session() -> None:
-    """#4174: `enforce`'s and the store gate's, as the `users:read` refusal names it."""
+@pytest.mark.parametrize("who", ["manager", "reader"], ids=["enforce", "store-gate"])
+async def test_each_layers_refusal_names_the_callers_session(who: str) -> None:
+    """#4174: `enforce`'s (no keys:read) and the store's live-owner gate's, as the `users:read`
+    refusal names it."""
     route = Route(auth=SessionAuth())
-    answer(await route.post("manager"), 403, _PROBLEM)  # `enforce`: no keys:read
-    answer(await route.post("reader"), 403, _PROBLEM)  # the store's live-owner gate
-    assert [e[2]["session_id"] for e in route.w.of("audit")] == [SESSION, SESSION]
+    answer(await route.post(who), 403, _PROBLEM)
+    assert [e[2]["session_id"] for e in route.w.of("audit")] == [SESSION]
 
 
 @pytest.mark.parametrize(

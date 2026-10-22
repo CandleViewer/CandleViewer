@@ -11,6 +11,8 @@ from starlette.requests import Request
 from structlog.testing import capture_logs
 
 from candleviewer.api.refusal_session import NamesSession, refusal_session
+from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.scopes import PrincipalSnapshot, enforce
 
 SESSION = uuid.UUID(int=4174)
 
@@ -85,10 +87,15 @@ async def test_the_emitter_names_the_session_over_the_none_enforce_passes() -> N
     ]
 
 
-def test_the_emitter_reads_the_session_only_when_it_writes() -> None:
-    sessions = _Sessions()
-    NamesSession(_Emitter(), _Auth(sessions), _request())
-    assert sessions.read == []
+async def test_an_allowed_request_reads_no_session() -> None:
+    sessions, em = _Sessions(), _Emitter()
+    allowed = PrincipalSnapshot(
+        user_id=uuid.uuid4(), roles=frozenset({"owner"}), permissions=frozenset({"users:write"})
+    )
+    await enforce(
+        allowed, Permission.USERS_WRITE, emitter=NamesSession(em, _Auth(sessions), _request())
+    )
+    assert (sessions.read, em.calls) == ([], [])
 
 
 async def test_the_emitter_still_writes_when_the_session_store_fails() -> None:
