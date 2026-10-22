@@ -106,6 +106,30 @@ def test_every_mounted_dangerous_write_route_is_gated() -> None:
     assert _ungated_dangerous_writes(create_app()) == []
 
 
+def _convertor_writes(app: FastAPI) -> list[tuple[str, str]]:
+    # A row matches the decoded path with `[^/]+`, which a `{name:path}` segment can outrun: the
+    # sweep would certify `/exchange-accounts/{aid:path}/profiles` while `a/b` slips the guard.
+    writes = sorted(op for op in served_operations(app) if op[0] in _WRITE)
+    return [
+        (m, p)
+        for m, p in writes
+        if DANGEROUS_PATH_PATTERN.match(p) and re.search(r"\{[^}:]+:[^}]+\}", p)
+    ]
+
+
+def test_no_mounted_dangerous_write_uses_a_path_convertor() -> None:
+    assert _convertor_writes(create_app()) == []
+
+
+def test_a_dangerous_write_with_a_path_convertor_is_reported() -> None:
+    """The self-test of the check above (#4087 security lens R1S-01)."""
+    app = create_app()
+    router = APIRouter(prefix="/exchange-accounts")
+    router.add_api_route("/{accountId:path}/profiles", _stand_in, methods=["POST"])
+    app.include_router(router)
+    assert _convertor_writes(app) == [("POST", "/exchange-accounts/{accountId:path}/profiles")]
+
+
 def test_gate_sees_a_route_mounted_through_an_included_router() -> None:
     """Regression (#2751): the gate filtered the top level of `app.routes` for `APIRoute`,
     found none on FastAPI 0.141 and passed whatever was mounted (the ungated audit export)."""
@@ -831,6 +855,8 @@ def test_a_profile_write_is_path_gated_with_the_risk_caps_class(method: str, pat
         ("POST", _PROFILE),
         ("PATCH", _PROFILE),
         ("POST", _PROFILE + "/clone"),
+        ("PUT", _PROFILE + "/clone"),  # the PUT and DELETE rows end at the profile id (`$`)
+        ("DELETE", _PROFILE + "/clone"),
     ],
 )
 def test_no_other_method_or_path_of_the_profile_prefix_is_path_gated(
@@ -875,9 +901,7 @@ def test_every_contract_profile_write_is_path_gated_with_risk_caps() -> None:
         ["createAccountProfile", "updateAccountProfile", "deleteAccountProfile"], gated
     )
     reads = [key for key in found if key[0] == "GET"]
-    assert len(reads) == 2 and all(
-        dangerous_action_class(m, _concrete(p)) is None for m, p in reads
-    )
+    assert reads and all(dangerous_action_class(m, _concrete(p)) is None for m, p in reads)
 
 
 @pytest.mark.parametrize(("method", "path"), _PROFILE_WRITES)
