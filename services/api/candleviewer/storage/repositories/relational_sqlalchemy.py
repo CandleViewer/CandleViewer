@@ -122,7 +122,8 @@ def strip_driver_text(exc: BaseException) -> None:
             node.orig, node.statement, node.params, node.detail = facts, None, None, []
             node.__cause__ = node.__context__ = None
             node.__suppress_context__ = True
-            vars(node).pop("__notes__", None)
+            if hasattr(node, "__notes__"):  # `add_note()` text can quote the server too
+                del node.__notes__
             continue
         if isinstance(node, BaseExceptionGroup):
             todo.extend(node.exceptions)

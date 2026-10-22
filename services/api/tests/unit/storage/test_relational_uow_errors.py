@@ -227,6 +227,13 @@ async def test_a_cancellation_leaves_with_its_driver_context_stripped() -> None:
     assert _P1 not in _rendered(raised.value)
 
 
+def test_a_note_added_to_a_driver_error_goes_with_its_text() -> None:
+    error = _unique()
+    error.add_note(f"while writing {_P1}")
+    strip_driver_text(error)
+    assert not hasattr(error, "__notes__") and _P1 not in _rendered(error)
+
+
 def test_a_stripped_error_survives_a_pickle_round_trip() -> None:
     error = _unique()
     strip_driver_text(error)
