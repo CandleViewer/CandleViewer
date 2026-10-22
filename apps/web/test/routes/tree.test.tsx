@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-// RouterProvider comes from "react-router", not "react-router/dom" as in App.tsx: under Vitest 3 on
-// Node >= 20.19 the dom entry loads a second router copy and error elements lose their context (#1819).
+// RouterProvider comes from "react-router", not "react-router/dom" as in App.tsx: under
+// Vitest 3 on Node >= 20.19 the dom entry loads a second router copy and error elements
+// lose their context (#1819).
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { buildRoutes } from "../../src/routes/tree";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";

@@ -5110,7 +5110,7 @@ tracker).
 
 ### Security
 
-- **frontend-platform**: the web app moves from react-router 6.30 to 7.18, the first release with the fixes for two Medium findings in 6.30; routes, route guards and the step-up flow behave as before (#1819)
+- **frontend-platform**: the web app moves from react-router 6.30 to 7.18, the first release with the fixes for two Medium findings in 6.30; routes, route guards and the step-up flow behave as before (#1819) (#4099)
 - **electron-shell**: with the desktop connection flag on, a response that issues the CSRF token to a request from a listed origin also carries it in an `X-CSRF-Token` header, and every response that issues the CSRF cookie is now `Cache-Control: no-store` (#3519) (#4044)
 - **auth-rbac**: a token refresh no longer counts as user activity, so a session with no activity locks after its idle timeout (#4012) (#4041)
 - **backend-platform**: a failed or cancelled first bars build keeps the other consumers' leases on its series, and a series whose saved state cannot be caught up starts afresh (#2762) (#3880)
