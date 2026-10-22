@@ -4032,10 +4032,11 @@ export interface paths {
      *       stop-loss moved to loosen it (a long position's lower, a short's higher, than the trigger
      *       in force, which under a recorded trail is the tighter of the record's and the stop the
      *       position reports; in Partial mode an `sl_size` below the lesser of the recorded cover
-     *       and the position's size; or a trail that is wider, armed later or, until the venue's
-     *       behaviour is confirmed, arming further from the market than that trigger; section 8.8
-     *       rule 5 defines it) needs the owner's role and a live `sl_loosen` step-up, a no-grace
-     *       class (one fresh code per loosening, bound to the request): the owner without one gets
+     *       and the position's size; or a trail that is wider or armed later or, until the venue's
+     *       behaviour is confirmed, one not yet armed that arms further from the market than that
+     *       trigger, or an armed one that re-arms there; section 8.8 rule 5 defines it) needs the
+     *       owner's role and a live `sl_loosen` step-up, a no-grace class (one fresh code per
+     *       loosening, bound to the request): the owner without one gets
      *       `403 step_up_required` (`action_class: sl_loosen`), and any other role
      *       `403 risk_limit_breached`, its refusal audited (`sl.loosen_refused`), with nothing sent.
      *       The owner's loosening is audited before it is sent (`sl.loosened`). The check sits
@@ -13641,7 +13642,7 @@ export interface operations {
             | "sl_loosen";
           /**
            * Format: uuid
-           * @description The `challenge_id` of the `403 step_up_required` being answered (#2304). Required for a no-grace class (`live_enablement`, `killswitch` or `backups`, named by the live challenge or by `action_class`): omitting it is `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a grace class: without it the server uses the session's live challenge. This grace-class optionality is transitional and ends with #2725 (the web client sends `challenge_id` on every step-up); from then on it is required whenever the session has a live challenge. A value that does not name the live challenge (expired, superseded, already used or unknown), or that is sent when there is none, gets `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is decided before the password and code are checked: no factor is verified, no failure is counted and nothing is elevated. The client then drops the held request without sending it.
+           * @description The `challenge_id` of the `403 step_up_required` being answered (#2304). Required for a no-grace class (`live_enablement`, `killswitch`, `backups` or `sl_loosen`, named by the live challenge or by `action_class`): omitting it is `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a grace class: without it the server uses the session's live challenge. This grace-class optionality is transitional and ends with #2725 (the web client sends `challenge_id` on every step-up); from then on it is required whenever the session has a live challenge. A value that does not name the live challenge (expired, superseded, already used or unknown), or that is sent when there is none, gets `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is decided before the password and code are checked: no factor is verified, no failure is counted and nothing is elevated. The client then drops the held request without sending it.
            */
           challenge_id?: string;
           code: string;

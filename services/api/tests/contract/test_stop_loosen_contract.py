@@ -83,8 +83,7 @@ def test_rule_5_puts_one_synchronous_check_at_the_recorded_stop_writer() -> None
         "the record's trail forward (rule 6), so only an explicit clear (`trailing_stop: null`) "
         "removes one",
         "the writer refuses a clear before any record or audit is written, the owner's included",
-        "a re-sent armed trail is compared by the trigger it re-arms at, against the trigger in "
-        "force",
+        "is compared by the trigger it re-arms at, against the trigger in force",
         "where a record is in force it attaches that recorded stop, audited as `sl.attached` with "
         "the reason `record_in_force`",
         "The check is synchronous (C-2.21) and sits once, at the recorded-stop writer (rule 6)",
@@ -119,7 +118,7 @@ def test_under_a_recorded_trail_the_trigger_in_force_is_the_trailed_stop() -> No
         "holds, the tighter of the record's and the stop the position reports in the writer's own "
         "read, as the venue moves a trailed stop with the price (§10.7) while the record keeps the "
         "trigger it was written with",
-        "a re-sent armed trail is compared by the trigger it re-arms at, against the trigger in "
+        "changed or re-sent, is compared by the trigger it re-arms at, against the trigger in "
         "force",
     ):
         assert phrase in rule, phrase
@@ -137,13 +136,30 @@ def test_a_trail_that_arms_beyond_the_trigger_in_force_is_looser_until_o4_answer
     rule = _rule_5()
     assert (
         "`[O-4]`: whether the venue keeps the fixed stop in force beside an active trail is open "
-        "(E29-K01); until it is confirmed, a trail, added or changed, is looser too where the "
-        "level it arms at is further from the market than the trigger in force: its activation "
-        "price (for a trail with none, the `sl_trigger_by` price of the writer's own read) less "
-        "its distance for a long, plus it for a short."
+        "(E29-K01); until it is confirmed, a trail that arms at the write or later, one added "
+        "where the record has none or a change to a recorded trail the market has not yet armed, "
+        "is looser too where the level it arms at is further from the market than the trigger in "
+        "force: its activation price (for a trail with none, the `sl_trigger_by` price of the "
+        "writer's own read) less its distance for a long, plus it for a short."
     ) in rule
+    assert "a trail, added or changed, is looser too" not in rule  # F2-4137-02
     text = _words(_OPS["setPositionTpSl"]["description"])
-    assert "until the venue's behaviour is confirmed, arming further from the market" in text
+    assert (
+        "until the venue's behaviour is confirmed, one not yet armed that arms further from the "
+        "market than that trigger, or an armed one that re-arms there"
+    ) in text
+
+
+def test_an_armed_trail_goes_by_the_trigger_it_re_arms_at_so_a_tighter_one_passes() -> None:
+    """F2-4137-02: the interim `[O-4]` clause would read a tighter distance on an armed trail as
+    looser (its activation price lies behind the trailed stop), refusing a tightening (C-2.6), so
+    an armed trail, changed or re-sent, is compared by the trigger it re-arms at."""
+    assert (
+        "until it is confirmed, an armed trail (the record's, once the market has passed its "
+        "activation price, or one recorded at once), changed or re-sent, is compared by the "
+        "trigger it re-arms at, against the trigger in force, never by its activation price, so "
+        "a tighter distance on an armed trail is no loosening"
+    ) in _rule_5()
 
 
 def test_a_trail_with_no_activation_price_is_recorded_with_the_writers_one() -> None:
@@ -314,7 +330,7 @@ def test_set_position_tp_sl_lets_only_the_owner_loosen_under_a_step_up() -> None
         "(`sl.loosen_refused`), with nothing sent",
         "The owner's loosening is audited before it is sent (`sl.loosened`)",
         "in Partial mode an `sl_size` below the lesser of the recorded cover and the position's "
-        "size; or a trail that is wider, armed later or",
+        "size; or a trail that is wider or armed later or",
         "pass `null` explicitly to clear the take-profit (the stop-loss of an open position is "
         "never cleared, below)",
         "**A trail is never cleared here.** `trailing_stop: null` over a trail is refused for "
