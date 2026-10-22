@@ -3,8 +3,8 @@
 The base compose file starts Postgres with `log_error_verbosity=terse`, which drops an error's
 DETAIL, HINT, QUERY and CONTEXT (`Failing row contains (...)`, `Key (col)=(val)`), and pins
 `log_parameter_max_length_on_error=0`. The deploys start it with the dev override
-(`tools/ci/deploy_dev.py`), and the VPS override exists too: neither may replace the command.
-Pure unit test: it reads the committed files; no docker.
+(`tools/ci/deploy_dev.py`), and the VPS override exists too: no override may replace the
+command or the entrypoint. Pure unit test: it reads the committed files; no docker.
 """
 
 from __future__ import annotations
@@ -16,6 +16,9 @@ import pytest
 import yaml
 
 _COMPOSE_DIR = Path(__file__).resolve().parents[5] / "infra" / "compose"
+_OVERRIDES = sorted(
+    p.name for p in _COMPOSE_DIR.glob("docker-compose*.yml") if p.name != "docker-compose.yml"
+)
 
 
 def _postgres(name: str) -> dict[str, Any]:
@@ -26,14 +29,19 @@ def _postgres(name: str) -> dict[str, Any]:
 
 def test_the_base_file_starts_postgres_with_terse_error_lines() -> None:
     command = _postgres("docker-compose.yml")["command"]
-    assert command[0] == "postgres"
+    assert command[0] == "postgres", "the command is a list: `postgres`, then `-c` pairs"
     flags, values = command[1::2], command[2::2]
-    assert len(flags) == len(values) and set(flags) == {"-c"}
+    pairs = len(flags) == len(values) and set(flags) == {"-c"}
+    assert pairs, "write each setting as its own `-c`, `name=value` pair"
     settings = dict(value.split("=", 1) for value in values)
     assert settings["log_error_verbosity"] == "terse"
     assert settings["log_parameter_max_length_on_error"] == "0"
 
 
-@pytest.mark.parametrize("override", ["docker-compose.dev.yml", "docker-compose.vps.yml"])
+def test_every_override_is_checked() -> None:
+    assert {"docker-compose.dev.yml", "docker-compose.vps.yml"} <= set(_OVERRIDES)
+
+
+@pytest.mark.parametrize("override", _OVERRIDES)
 def test_no_override_replaces_the_postgres_command(override: str) -> None:
-    assert "command" not in _postgres(override)
+    assert not {"command", "entrypoint"} & set(_postgres(override))

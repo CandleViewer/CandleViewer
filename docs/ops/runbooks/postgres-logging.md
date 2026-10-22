@@ -19,15 +19,16 @@ deploys start that file with `docker-compose.dev.yml` (`tools/ci/deploy_dev.py`,
   statement's bound parameters would be logged as a `CONTEXT` line, which `terse` already drops; the
   pin keeps them out if the verbosity is ever relaxed.
 
-Clients still receive every field. From #2748 slice 1a (#4074) on, the API strips them from an
-error as it leaves a unit of work, so its log lines carry the error's class, SQLSTATE and
+Clients still receive every field. Once #4074 (#2748 slice 1a) is merged, the API strips them from
+an error as it leaves a unit of work, so its log lines carry the error's class, SQLSTATE and
 constraint name instead.
 
 What the server log still holds for a failed statement:
 
 - **The `ERROR:` line, with the message.** A data error's message can quote the bad input (22P02:
   `invalid input syntax for type uuid: "..."`). A trigger's `RAISE` message holds what the trigger
-  formats into it. A trigger must not format a row value into its message; none does today.
+  formats into it. A trigger must not format a P1 or S value into its message; none does today
+  (some format an environment name).
 - **The `STATEMENT:` line** (`log_min_error_statement = error`, the default). It is the statement's
   text:
   - The API binds every value, so its statements hold `$1`-style placeholders.
@@ -36,11 +37,27 @@ What the server log still holds for a failed statement:
     `\password`, which sends a hashed verifier, or run that session with
     `SET log_min_error_statement = panic`.
 
-On a host that holds real data, do not:
+On a host that holds real data, do not, except as "When the detail is needed" below allows:
 
-- lower either setting;
+- relax either setting: `log_error_verbosity` to `default` or `verbose`, or
+  `log_parameter_max_length_on_error` to anything but `0`;
 - raise `log_statement` above `none`;
 - turn on `log_min_duration_statement` or `auto_explain`.
+
+## What it costs
+
+`terse` drops the `DETAIL`, `HINT`, `QUERY` and `CONTEXT` of every message, not only an integrity
+error's: a deadlock's participants and queries, a lock timeout's holder, a serialization failure's
+reason and an authentication failure's reason leave the server log too. They cannot be reproduced
+on demand against a dev database.
+
+## When the detail is needed
+
+With the Owner's approval, for a bounded time, give one role back the detail for its new sessions:
+`ALTER ROLE <role> SET log_error_verbosity = default`. End it with
+`ALTER ROLE <role> RESET log_error_verbosity`. While it is set, the server log holds that role's
+row values again, so keep the window short. The check below counts it, so one left behind is a
+finding.
 
 ## Check it
 
@@ -81,7 +98,8 @@ stack was started with `docker-compose.vps.yml`, use it in place of the dev file
 A setting given on the command line overrides `postgresql.conf` and `ALTER SYSTEM`. It does not
 override an `ALTER DATABASE ... SET`, an `ALTER ROLE ... SET` or a session's `SET`:
 
-- Only a superuser can change `log_error_verbosity`.
+- Only a superuser, or a role granted `SET` on it, can change `log_error_verbosity`. Any role can
+  change `log_parameter_max_length_on_error`, which `terse` makes moot.
 - The API's bootstrapped role, `cv_app` (`infra/scripts/pg_bootstrap.sql`), is not a superuser. With
   the compose file's default DSN, the API connects as the image's `POSTGRES_USER`, which is one.
 - The application never sets either setting.
