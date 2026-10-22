@@ -1896,8 +1896,10 @@ def create_app(
     )
     admin_jobs = AdminJobStore()
     app.state.admin_jobs = admin_jobs  # cancelled by the lifespan at shutdown
-    # #889 S9: the export files the download serves, found in the job store it shares.
+    # #889 S9: the export files the download serves, found in the job store it shares; the
+    # lifespan probes and sweeps them.
     audit_exports = AuditExports(admin_jobs, resolved.data_dir, ttl_s=resolved.audit_export_ttl_s)
+    app.state.audit_exports = audit_exports
     app.include_router(
         make_audit_router(
             ctx.audit,
