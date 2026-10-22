@@ -169,6 +169,19 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/3639"
+  # GHSA-cg8m-r9f2-5wm2 (CVE-2026-114134, High): black's bundled GitHub Action reads its version
+  # from `tool.black.required-version` when `use_pyproject` is set. No workflow here uses black's
+  # Action; black runs only as the dev formatter locked in services/api/uv.lock. The fix, black
+  # 26.10.1, restyles 10 files against the pinned `ruff format` and moves `noqa`/`nosec`
+  # suppressions off their lines, so it lands as its own formatter-alignment slice inside C-12.3's
+  # 7 days for a High; this entry expires then.
+  - id: "GHSA-cg8m-r9f2-5wm2"
+    tool: pip-audit
+    severity: HIGH
+    reason: "black 26.5.1, the dev formatter: the advisory is in black's bundled GitHub Action (action.yml / use_pyproject), and no workflow in this repository uses psf/black. The fix is deferred because black 26.10.1 reformats 10 files and conflicts with the pinned ruff format; its formatter-alignment slice lands within C-12.3's 7 days"
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation (issuecomment-6284192190); ratification listed on #2701
+    expires: "2026-10-29"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/3639"
   # #3549: CI's Semgrep venv (tools/ci/requirements-semgrep.txt). semgrep 1.181.0, the newest
   # release, pins mcp==1.29.0 exactly, and only mcp 1.30.0 has the fix. The entry ends inside
   # C-12.3's 30 days, so it needs no exception. No gate reads it until the alert gate lands, so
