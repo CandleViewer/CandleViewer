@@ -25,13 +25,23 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.rule_body import MAX_RULE_BODY_BYTES, read_object
 from candleviewer.domain.text import UNSTORABLE_TEXT
+from candleviewer.rules.compiler import compile_graph, to_graph_model
 from candleviewer.rules.compiler.common import MAX_DEPTH, MAX_ITEMS, check_bounds
+from candleviewer.rules.ir import ir_hash
 from candleviewer.rules.issues import RuleCompileError
 from candleviewer.rules.manager import RuleError, is_reserved_name
 from tests.rules.test_rules_manager import OWNER, _mgr
 from tests.rules.test_rules_routes import A1, A2, _Env, _ir, _scoped
 from tests.rules.test_scope_crud import A, C, _setup
-from tests.rules.test_validator_endpoints import _P, RULE_ID, _client
+from tests.rules.test_validator_endpoints import (
+    _P,
+    RULE_ID,
+    _assert_median_within,
+    _client,
+    _jsonable,
+    _rule,
+)
+from tests.unit.rules_ir.test_ir_hash_base_pins import IR_HASHES
 
 CORPUS = Path(__file__).parents[1] / "fixtures/rule_corpus"
 GOLDEN = json.loads((CORPUS / "golden_hashes.json").read_text(encoding="utf-8"))["hashes"]
@@ -49,6 +59,12 @@ JSON = {"content-type": "application/json"}
 NESTING = MAX_RULE_BODY_BYTES // 2 - 16
 #: The reader's own 400: a rule within the bounds nests `MAX_DEPTH + 2` levels in its body.
 DEEPER = f"JSON nesting is deeper than {MAX_DEPTH + 2} levels."
+#: Shared-node depths from the bounds: within them once every copy is charged, past them, and as
+#: deep as the depth bound allows. The first one's hash is the one it compiled to before.
+SHARED_WITHIN = (MAX_ITEMS // 16).bit_length() - 1
+SHARED_OVER = MAX_ITEMS.bit_length()
+SHARED_DEEP = MAX_DEPTH - 2
+SHARED_WITHIN_HASH = "d8f0e59db169fde7356c9e6da7aef40e226c5ffc5fc0c58f627d494d42779f58"
 WRITES = pytest.mark.parametrize("route", ["", "/{rid}", "/{rid}/active-version", "/{rid}/mode"])
 CHECKS = pytest.mark.parametrize("path", ["/rules/validate", f"/rules/{RULE_ID}/compile"])
 
@@ -131,6 +147,17 @@ def _deep(levels: int) -> bytes:
     return ('{"ir":' + "[" * (levels - 1) + "]" * (levels - 1) + "}").encode()
 
 
+def _shared(levels: int) -> dict[str, Any]:
+    """A graph model whose condition nodes are shared, `levels` deep."""
+    g, prev = _jsonable(to_graph_model(_rule())), "c1"
+    for k in range(1, levels + 1):
+        g["nodes"].append({"id": f"b{k}", "type": "boolean", "data": {"op": "all_of"}})
+        g["edges"] += [{"from": prev, "to": f"b{k}", "port": "in"}] * 2
+        prev = f"b{k}"
+    g["edges"] = [{**e, "from": prev} if e["port"] == "when" else e for e in g["edges"]]
+    return g
+
+
 def _write(c: TestClient, route: str, rid: str, content: bytes) -> httpx.Response:
     """POST `/rules`, or a PUT to the write `route` names; raw bytes, so `\\u` escapes survive."""
     hdr = {**JSON, "If-Match": "1", "Idempotency-Key": "k"}
@@ -175,6 +202,36 @@ def test_check_bounds_wide_container_over_the_bound_is_refused_before_it_is_walk
     check_bounds({"pad": [0] * (MAX_ITEMS - 2)}, "rule")  # exactly at the bound: no refusal
     with pytest.raises(RuleCompileError, match="too large"):
         check_bounds({"pad": _Unwalked([0] * (MAX_ITEMS + 1))}, "rule")
+
+
+def test_compile_graph_shared_nodes_within_the_bounds_keep_their_ir_hash() -> None:
+    """The graph compiler charges shared-node copies against the document bounds: a model within
+    them compiles to the hash it had before."""
+    fanout = _rule("shared_node_fanout.json")
+    graph = _jsonable(to_graph_model(fanout))
+    assert ir_hash(compile_graph(graph, fanout.rule_id)) == IR_HASHES["shared_node_fanout"]
+    assert ir_hash(compile_graph(_shared(SHARED_WITHIN))) == SHARED_WITHIN_HASH
+
+
+def test_compile_graph_shared_node_copies_past_the_bounds_are_the_bounds_issue() -> None:
+    """The graph compiler charges shared-node copies against the document bounds."""
+    with pytest.raises(RuleCompileError) as refused:
+        compile_graph(_shared(SHARED_OVER))
+    assert _issues([i.to_dict() for i in refused.value.issues]) == BOUNDS
+    assert LIMITS in refused.value.issues[0].message
+
+
+@pytest.mark.perf
+def test_compile_graph_shared_node_copies_are_refused_within_the_perf_budget() -> None:
+    """The graph compiler charges shared-node copies against the document bounds, before each
+    copy is built."""
+    model = _shared(SHARED_DEEP)
+
+    def refuse() -> None:
+        with pytest.raises(RuleCompileError):
+            compile_graph(model)
+
+    _assert_median_within(refuse, budget_ms=50)
 
 
 async def test_import_rule_over_a_bound_is_refused_before_the_bundle_is_walked() -> None:
