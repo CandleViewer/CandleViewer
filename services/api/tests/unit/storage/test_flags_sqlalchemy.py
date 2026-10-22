@@ -5,6 +5,7 @@ The SQL runs on Postgres in `tests/integration/storage/test_flags_store_pg.py`."
 from __future__ import annotations
 
 import json
+import traceback
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -17,7 +18,11 @@ import sqlalchemy as sa
 from sqlalchemy import exc as sa_exc
 from structlog.testing import capture_logs
 
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import (
+    StorageConstraintViolated,
+    StorageQueryFailed,
+    StorageTierUnavailable,
+)
 from candleviewer.storage.repositories import flags_sqlalchemy as m
 from candleviewer.storage.repositories.flags_sqlalchemy import (
     FlagChange,
@@ -32,12 +37,13 @@ _T1, _T2 = datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 2, 3, 4, 5, 6, 
 _HEAD: dict[str, Any] = {"id": _ID, "kind": "boolean", "default_value": False, "rollout_pct": None}
 _HEAD |= {"updated_at": _T1, "updated_by": None}
 _LOCKED = FlagRow(False, {}, {"manager": True}, _T1, None)
+_ROW = "canary-2748-row"  # a value the server's DETAIL would quote
 
 
 class _PgError(Exception):
-    def __init__(self, sqlstate: str) -> None:
-        super().__init__(sqlstate)
-        self.sqlstate = sqlstate
+    def __init__(self, sqlstate: str, constraint: str | None = None) -> None:
+        super().__init__(f"Failing row contains ({_ROW})")
+        self.sqlstate, self.constraint_name = sqlstate, constraint
 
 
 class _Rel:
@@ -77,8 +83,18 @@ def _repo(rel: _Rel) -> m.SqlAlchemyFlagRepository:
     return m.SqlAlchemyFlagRepository(rel, read_budget_ms=500)  # type: ignore[arg-type]  # fake
 
 
-def _db(sqlstate: str, cls: type[sa_exc.DBAPIError] = sa_exc.DBAPIError) -> BaseException:
-    return cls("SELECT 1", None, _PgError(sqlstate))
+def _db(
+    sqlstate: str, cls: type[sa_exc.DBAPIError] = sa_exc.DBAPIError, constraint: str | None = None
+) -> BaseException:
+    return cls("SELECT 1", None, _PgError(sqlstate, constraint))
+
+
+def _typed(raised: StorageQueryFailed, expected: StorageQueryFailed) -> None:
+    """Typed by its SQLSTATE and constraint alone, raised `from None` (#2748): no driver text."""
+    facts = [(type(e), e.sqlstate, getattr(e, "constraint", None)) for e in (raised, expected)]
+    assert facts[0] == facts[1]
+    assert raised.__cause__ is None and raised.__suppress_context__
+    assert _ROW not in "".join(traceback.format_exception(raised))
 
 
 def _writable(head: dict[str, Any] | None = _HEAD) -> _Rel:
@@ -175,14 +191,15 @@ _OUTAGES = [
     sa_exc.DBAPIError("SELECT 1", None, Exception("lost"), connection_invalidated=True),
     *(_db(state) for state in ("08006", "40P01", "53300", "57014", "58000", "55P03")),
 ]
-_BUGS = [
-    _db("22P02", sa_exc.DataError),
-    _db("23505", sa_exc.IntegrityError),
-    _db("42P01", sa_exc.ProgrammingError),
-    _db(""),  # no SQLSTATE
-    sa_exc.InvalidRequestError("bad state"),
-    RuntimeError("boom"),
+_UX = "ux_ffo_user"
+_BUGS = [  # a database error that is no outage, and the typed error it leaves as (#2748)
+    (_db("22P02", sa_exc.DataError), StorageQueryFailed("22P02")),
+    (_db("23505", sa_exc.IntegrityError, _UX), StorageConstraintViolated("23505", _UX)),
+    (_db("42P01", sa_exc.ProgrammingError), StorageQueryFailed("42P01")),
+    (_db(""), StorageQueryFailed(None)),  # no SQLSTATE
+    (sa_exc.InvalidRequestError("bad state"), StorageQueryFailed(None)),
 ]
+_BUG_IDS = ["data", "unique", "programming", "no-sqlstate", "invalid-request"]
 
 
 @pytest.mark.parametrize("error", _OUTAGES, ids=lambda e: type(e).__name__)
@@ -205,13 +222,23 @@ async def test_a_database_that_cannot_serve_the_call_is_an_outage(
     assert "pw@db" not in repr(logs) and not rel.committed
 
 
-@pytest.mark.parametrize("error", _BUGS, ids=lambda e: type(e).__name__)
-async def test_any_other_error_is_a_bug_and_keeps_its_type(error: BaseException) -> None:
-    assert not m._is_outage(error)
+@pytest.mark.parametrize(("error", "typed"), _BUGS, ids=_BUG_IDS)
+async def test_any_other_database_error_is_a_bug_typed_by_its_facts(
+    error: BaseException, typed: StorageQueryFailed
+) -> None:
     rel = _Rel()
     rel.fail_at, rel.error = m._LOAD, error
-    with pytest.raises(type(error)):
+    with pytest.raises(StorageQueryFailed) as raised:
         await _repo(rel).load()
+    _typed(raised.value, typed)
+
+
+async def test_an_error_that_is_not_the_databases_keeps_its_type() -> None:
+    rel, error = _Rel(), RuntimeError("boom")
+    rel.fail_at, rel.error = m._LOAD, error
+    with pytest.raises(RuntimeError) as raised:
+        await _repo(rel).load()
+    assert raised.value is error
 
 
 async def test_a_write_locks_prepares_on_the_locked_row_then_writes_and_commits() -> None:
@@ -262,21 +289,32 @@ async def test_an_override_user_deleted_meanwhile_is_a_missing_row() -> None:
 
 async def test_a_writer_deleted_meanwhile_stays_a_bug() -> None:
     rel = _writable()  # `updated_by` names the writer: only the override insert maps 23503
-    rel.fail_at, rel.error = m._UPDATE, _db("23503", sa_exc.IntegrityError)
-    with pytest.raises(sa_exc.IntegrityError):
+    fkey = "feature_flags_updated_by_fkey"
+    rel.fail_at, rel.error = m._UPDATE, _db("23503", sa_exc.IntegrityError, fkey)
+    with pytest.raises(StorageConstraintViolated) as raised:
         await _write(rel)
+    _typed(raised.value, StorageConstraintViolated("23503", fkey))
 
 
-async def test_what_prepare_raises_reaches_the_caller_as_is_never_as_an_outage() -> None:
-    refused = ConnectionRefusedError("the audit disk")  # an OSError: an outage if it were ours
-
+@pytest.mark.parametrize(
+    "refused",  # an `OSError`, then a driver error: each an outage if it were the store's own
+    [
+        ConnectionRefusedError("the audit disk"),
+        sa_exc.OperationalError("SELECT 1", None, Exception("gone")),
+    ],
+    ids=["oserror", "operational"],
+)
+async def test_what_prepare_raises_reaches_the_caller_as_is_never_as_an_outage(
+    refused: Exception,
+) -> None:
     async def prepare(_: FlagRow) -> FlagChange:
         raise refused
 
     rel = _writable()
-    with pytest.raises(ConnectionRefusedError) as raised:
+    with pytest.raises(type(refused)) as raised:
         await _repo(rel).write("trading.one_click", prepare)
     assert raised.value is refused and not rel.committed
+    assert refused.__cause__ is None and refused.__context__ is None  # passed on untouched
 
 
 @pytest.mark.parametrize("error", _OUTAGES, ids=lambda e: type(e).__name__)
@@ -294,10 +332,13 @@ async def test_a_database_that_cannot_serve_the_write_is_an_outage(
     assert "pw@db" not in repr(logs)
 
 
-@pytest.mark.parametrize("error", _BUGS, ids=lambda e: type(e).__name__)
-async def test_any_other_error_in_a_write_is_a_bug(error: BaseException) -> None:
+@pytest.mark.parametrize(("error", "typed"), _BUGS, ids=_BUG_IDS)
+async def test_any_other_error_in_a_write_is_a_bug(
+    error: BaseException, typed: StorageQueryFailed
+) -> None:
     rel = _writable()
     rel.fail_at, rel.error = m._PUT_USERS, error
-    with pytest.raises(type(error)):
+    with pytest.raises(StorageQueryFailed) as raised:
         await _write(rel)
+    _typed(raised.value, typed)
     assert not rel.committed

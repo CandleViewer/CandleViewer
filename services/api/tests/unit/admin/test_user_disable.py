@@ -15,7 +15,6 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 from structlog.testing import capture_logs
 
 from candleviewer.admin import errors
@@ -38,6 +37,7 @@ from candleviewer.auth.session_service import SessionService
 from candleviewer.observability.context import bind_context
 from candleviewer.rules.manager import RuleError
 from candleviewer.rules.scope_state import SnapshotScopeState
+from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories import identity_sqlalchemy
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW, LOCK_USER
 from candleviewer.storage.repositories.user_lifecycle import UserSelfTargetError, UserStatusChange
@@ -246,7 +246,7 @@ async def test_b16_revoke_per_session(b16_audit: RecordingAuditSink) -> None:
     [
         (lambda: _World(_Rel(roles=("owner",), owners=1)), errors.LastOwnerError),
         (lambda: _World(fail={"users.disable": [AuditUnavailable("wal")]}), _AUDIT_DOWN),
-        (lambda: _World(_Rel(raise_at=CONSTRAINTS_NOW, sqlstate="40001")), IntegrityError),
+        (lambda: _World(_Rel(raise_at=CONSTRAINTS_NOW, sqlstate="40001")), StorageQueryFailed),
         (lambda: _World(_Rel(status=None)), errors.UserNotFoundError),
     ],
     ids=["last_owner", "audit_down", "store_error", "not_found"],
@@ -801,7 +801,7 @@ _RESULTS: list[tuple[str, Callable[[], _World], PrincipalSnapshot, Any]] = [
     ("version_conflict", _stale, _OWNER, errors.UserVersionConflictError),
     ("last_owner", lambda: _World(_Rel(roles=("owner",), owners=1)), _OWNER, errors.LastOwnerError),
     ("audit_unavailable", _audit_down, _OWNER, _AUDIT_DOWN),
-    ("error", _store_error, _OWNER, IntegrityError),
+    ("error", _store_error, _OWNER, StorageQueryFailed),
 ]
 
 

@@ -11,7 +11,7 @@ a COMMIT that fails after the hook can leave a record for an unchanged setting: 
 over-report an attempt, never under-report (as `SqlAlchemyUserRoleStore.apply_roles`).
 
 A database that cannot serve the call is `StorageTierUnavailable` with a fixed message (no driver
-text, no bound value: C-12.6); any other database error is a bug and keeps its type.
+text, no bound value: C-12.6); any other database error is a bug, raised as `query_failure` (#2748).
 """
 
 from __future__ import annotations
@@ -29,6 +29,10 @@ from sqlalchemy import exc as sa_exc
 from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    is_outage,
+    query_failure,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.system_settings import StoredSetting, WriteAhead
 from candleviewer.storage.repositories.user_roles_sqlalchemy import (
@@ -38,12 +42,6 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import (
 
 #: Server-side cap per read, above the admin slice's 300 ms budget, which cancels client-side first.
 READ_TIMEOUT: Final = "1s"
-#: SQLSTATE classes of "the database cannot serve this now": connection (08), transaction rollback
-#: incl. deadlock (40), resources (53), operator intervention incl. statement timeout 57014 (57),
-#: system (58); plus lock_not_available 55P03. Data (22), integrity (23) and syntax or access (42)
-#: errors are bugs, and so is a missing SQLSTATE.
-_OUTAGE_CLASSES: Final = frozenset({"08", "40", "53", "57", "58"})
-_LOCK_NOT_AVAILABLE: Final = "55P03"
 
 _TIMEOUT = sa.text("SELECT set_config('statement_timeout', :timeout, true)")
 _LOCK = sa.text(
@@ -75,43 +73,19 @@ def _log() -> Any:
     return structlog.get_logger(__name__)
 
 
-def _sqlstate(exc: BaseException) -> str | None:
-    """The SQLSTATE a driver error carries: its wrapped error (`orig`), then its causes."""
-    orig = getattr(exc, "orig", None)
-    for src in (orig, getattr(orig, "__cause__", None), exc.__cause__):
-        for attr in ("sqlstate", "pgcode"):
-            code = getattr(src, attr, None)
-            if isinstance(code, str) and len(code) == 5:
-                return code
-    return None
-
-
-def _is_outage(exc: BaseException) -> bool:
-    if isinstance(
-        exc, OSError | sa_exc.OperationalError | sa_exc.InterfaceError | sa_exc.TimeoutError
-    ):
-        return True  # unreachable, closed, pool exhausted
-    if not isinstance(exc, sa_exc.DBAPIError):
-        return False
-    if exc.connection_invalidated:
-        return True
-    state = _sqlstate(exc)
-    return state is not None and (state[:2] in _OUTAGE_CLASSES or state == _LOCK_NOT_AVAILABLE)
-
-
 @contextmanager
 def _outage() -> Iterator[None]:
-    """A database that cannot serve the call becomes `StorageTierUnavailable`; a bug stays one."""
-    # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
+    """A database that cannot serve the call becomes `StorageTierUnavailable`, a bug the typed
+    `query_failure` (#2748), each raised `from None`."""
     try:
         yield
     except WriteAheadTimeout:
         raise  # the hook's bound, not the database's, although it is a `TimeoutError` too
     except (OSError, sa_exc.SQLAlchemyError) as exc:
-        if not _is_outage(exc):
-            raise
+        if not is_outage(exc):
+            raise query_failure(sqlstate_of(exc), constraint_of(exc)) from None
         _log().error(
-            "settings_store_unavailable", error=type(exc).__name__, sqlstate=_sqlstate(exc)
+            "settings_store_unavailable", error=type(exc).__name__, sqlstate=sqlstate_of(exc)
         )
         raise StorageTierUnavailable("the settings store is unavailable") from None
 

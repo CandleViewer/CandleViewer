@@ -5,6 +5,7 @@ SQL itself runs on Postgres in `tests/integration/storage/test_system_settings_p
 from __future__ import annotations
 
 import asyncio
+import traceback
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -17,7 +18,12 @@ import sqlalchemy as sa
 from sqlalchemy import exc as sa_exc
 from structlog.testing import capture_logs
 
-from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
+from candleviewer.storage.errors import (
+    StorageConstraintViolated,
+    StorageQueryFailed,
+    StorageTierUnavailable,
+    WriteAheadTimeout,
+)
 from candleviewer.storage.repositories import system_settings_sqlalchemy as m
 from candleviewer.storage.repositories.system_settings import StoredSetting
 
@@ -26,12 +32,13 @@ _T1, _T2 = datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 2, 3, 4, 5, tzi
 _BEFORE = {"value": "regular", "updated_at": _T1}
 # Self-discovering: a statement added later cannot dodge the scope guard.
 _STATEMENTS = {n: v for n, v in vars(m).items() if isinstance(v, sa.TextClause)}
+_ROW = "canary-2748-row"  # a value the server's DETAIL would quote
 
 
 class _PgError(Exception):
-    def __init__(self, sqlstate: str) -> None:
-        super().__init__(sqlstate)
-        self.sqlstate = sqlstate
+    def __init__(self, sqlstate: str, constraint: str | None = None) -> None:
+        super().__init__(f"Failing row contains ({_ROW})")
+        self.sqlstate, self.constraint_name = sqlstate, constraint
 
 
 class _Rel:
@@ -162,8 +169,10 @@ async def test_a_hook_that_outlives_its_bound_is_a_write_ahead_timeout_not_an_ou
 # -- which database errors are an outage ---------------------------------------------------------
 
 
-def _db(sqlstate: str, cls: type[sa_exc.DBAPIError] = sa_exc.DBAPIError) -> BaseException:
-    return cls("SELECT 1", None, _PgError(sqlstate))
+def _db(
+    sqlstate: str, cls: type[sa_exc.DBAPIError] = sa_exc.DBAPIError, constraint: str | None = None
+) -> BaseException:
+    return cls("SELECT 1", None, _PgError(sqlstate, constraint))
 
 
 # A DSN with a fake password, which must never be echoed. It is never written whole in source, so
@@ -177,28 +186,43 @@ _OUTAGES = [
     sa_exc.DBAPIError("SELECT 1", None, Exception("lost"), connection_invalidated=True),
     *(_db(state) for state in ("08006", "40P01", "53300", "57014", "58000", "55P03")),
 ]
-_BUGS = [
-    _db("23505", sa_exc.IntegrityError),
-    _db("42P01", sa_exc.ProgrammingError),
-    _db(""),  # no SQLSTATE
-    sa_exc.InvalidRequestError("bad state"),
-    RuntimeError("boom"),
+_UX = "ux_settings_sys"
+_BUGS = [  # a database error that is no outage, and the typed error it leaves as (#2748)
+    (_db("23505", sa_exc.IntegrityError, _UX), StorageConstraintViolated("23505", _UX)),
+    (_db("42P01", sa_exc.ProgrammingError), StorageQueryFailed("42P01")),
+    (_db(""), StorageQueryFailed(None)),  # no SQLSTATE
+    (sa_exc.InvalidRequestError("bad state"), StorageQueryFailed(None)),
 ]
 
 
 @pytest.mark.parametrize("error", _OUTAGES, ids=lambda e: type(e).__name__)
 def test_a_database_that_cannot_serve_the_call_is_an_outage(error: BaseException) -> None:
-    assert m._is_outage(error)
+    with capture_logs(), pytest.raises(StorageTierUnavailable), m._outage():
+        raise error
 
 
-@pytest.mark.parametrize("error", _BUGS, ids=lambda e: type(e).__name__)
-async def test_any_other_error_is_a_bug_and_keeps_its_type(error: BaseException) -> None:
-    assert not m._is_outage(error)
+@pytest.mark.parametrize(
+    ("error", "typed"), _BUGS, ids=["unique", "programming", "no-sqlstate", "invalid-request"]
+)
+async def test_any_other_database_error_is_a_bug_typed_by_its_facts(
+    error: BaseException, typed: StorageQueryFailed
+) -> None:
     rel = _Rel()
     rel.fail_at, rel.error = m._UPSERT, error
-    with pytest.raises(type(error)):
+    with pytest.raises(StorageQueryFailed) as raised:
         await _put(rel)
-    assert not rel.committed
+    facts = [(type(e), e.sqlstate, getattr(e, "constraint", None)) for e in (raised.value, typed)]
+    assert facts[0] == facts[1] and not rel.committed
+    assert raised.value.__cause__ is None and raised.value.__suppress_context__
+    assert _ROW not in "".join(traceback.format_exception(raised.value))
+
+
+async def test_an_error_that_is_not_the_databases_keeps_its_type() -> None:
+    rel, error = _Rel(), RuntimeError("boom")
+    rel.fail_at, rel.error = m._UPSERT, error
+    with pytest.raises(RuntimeError) as raised:
+        await _put(rel)
+    assert raised.value is error and not rel.committed
 
 
 @pytest.mark.parametrize("step", ["enter", m._LOCK, m._UPSERT, "hook", "commit"])

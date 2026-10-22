@@ -33,11 +33,13 @@ from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     OwnerFloorCheck,
     counted_roles,
     effective_roles,
+    floor_refusal,
     lock_active_owners,
-    refuse_floor_violation,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.user_lifecycle import (
     REVOKED_REASON,
@@ -118,7 +120,6 @@ class SqlAlchemyUserLifecycleStore:
             raise UserSelfTargetError(str(user_id))
         uid = str(user_id)
         counted = _NO_ROLES  # the roles the owner floor counts: an active user's
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session
@@ -148,8 +149,8 @@ class SqlAlchemyUserLifecycleStore:
                 await bounded_write_ahead(audit(change), self._audit_timeout_s)
                 await uow.commit()
         except IntegrityError as exc:
-            refuse_floor_violation(exc, self._owner_floor, counted, _NO_ROLES)
-            raise
+            state, name = sqlstate_of(exc), constraint_of(exc)
+            raise floor_refusal(self._owner_floor, counted, _NO_ROLES, state, name) from None
         return change
 
     async def read_back_disable(

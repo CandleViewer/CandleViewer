@@ -34,11 +34,13 @@ from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     OwnerFloorCheck,
     counted_roles,
     effective_roles,
+    floor_refusal,
     lock_active_owners,
-    refuse_floor_violation,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
 
 #: Write-ahead audit of the change, given the role set read under lock.
@@ -116,7 +118,6 @@ class SqlAlchemyUserRoleStore:
         uid, wanted = str(user_id), sorted(roles)
         current: frozenset[str] = frozenset()
         counted = current  # what the floor counts of `current` (`counted_roles`)
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session
@@ -132,6 +133,6 @@ class SqlAlchemyUserRoleStore:
                 await bounded_write_ahead(audit(current), self._audit_timeout_s)
                 await uow.commit()
         except IntegrityError as exc:
-            refuse_floor_violation(exc, self._owner_floor, counted, roles)
-            raise
+            state, name = sqlstate_of(exc), constraint_of(exc)
+            raise floor_refusal(self._owner_floor, counted, roles, state, name) from None
         return True

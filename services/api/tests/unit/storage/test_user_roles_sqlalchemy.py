@@ -4,6 +4,7 @@ concurrent-demotion race: tests/integration/auth/test_user_roles_pg.py)."""
 from __future__ import annotations
 
 import asyncio
+import traceback
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -15,18 +16,19 @@ from sqlalchemy.exc import IntegrityError
 
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
-from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.errors import StorageConstraintViolated, WriteAheadTimeout
 from candleviewer.storage.repositories import owner_floor_sqlalchemy as f
 from candleviewer.storage.repositories import user_roles_sqlalchemy as m
 
 _UID, _ACTOR = uuid.uuid4(), uuid.uuid4()
 _LOCKED_OWNERS = [f.LOCK_OWNERS, f.COUNT_OWNERS]
+_ROW = "canary-2748-row"  # a value the server's DETAIL would quote
 
 
 class _PgError(Exception):
-    def __init__(self, sqlstate: str) -> None:
-        super().__init__(sqlstate)
-        self.sqlstate = sqlstate
+    def __init__(self, sqlstate: str, constraint: str | None = None) -> None:
+        super().__init__(f"Failing row contains ({_ROW})")
+        self.sqlstate, self.constraint_name = sqlstate, constraint
 
 
 class _Rel:
@@ -43,6 +45,7 @@ class _Rel:
             f.COUNT_OWNERS: [(owners if counted is None else counted,)],
         }
         self.raise_at, self.sqlstate = raise_at, "23514"
+        self.constraint: str | None = None
         self.ran, self.committed = list[Any](), False
 
     @asynccontextmanager
@@ -50,7 +53,8 @@ class _Rel:
         async def execute(stmt: Any, params: Any = None) -> Any:
             self.ran.append((stmt, params))
             if stmt is self.raise_at:
-                raise IntegrityError("SET CONSTRAINTS", None, _PgError(self.sqlstate))
+                error = _PgError(self.sqlstate, self.constraint)
+                raise IntegrityError("SET CONSTRAINTS", None, error)
             rows = self.rows.get(stmt, [])
             return SimpleNamespace(
                 first=lambda: rows[0] if rows else None,
@@ -137,21 +141,28 @@ async def test_apply_roles_refused_audit_write_rolls_the_change_back() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "sqlstate", "raised"),
+    ("status", "sqlstate", "constraint", "raised"),
     [
-        ("active", "23514", OwnerFloorError),
-        ("active", "23505", IntegrityError),
-        ("disabled", "23514", IntegrityError),  # not this change's floor: re-raised as is
+        ("active", "23514", None, OwnerFloorError),
+        ("active", "23505", "user_roles_pkey", StorageConstraintViolated),
+        ("disabled", "23514", None, StorageConstraintViolated),  # not this change's floor
     ],
 )
 async def test_apply_roles_trigger_check_before_audit_maps_only_the_floor(
-    status: str, sqlstate: str, raised: type[Exception]
+    status: str, sqlstate: str, constraint: str | None, raised: type[Exception]
 ) -> None:
+    """#2748: the floor's refusal, else typed by the SQLSTATE and constraint alone; neither
+    chains the driver error, whose text quotes the row."""
     rel = _Rel(owners=2, raise_at=f.CONSTRAINTS_NOW)
-    rel.rows[f.LOCK_USER], rel.sqlstate = [(status,)], sqlstate
-    with pytest.raises(raised):
+    rel.rows[f.LOCK_USER], rel.sqlstate, rel.constraint = [(status,)], sqlstate, constraint
+    with pytest.raises(raised) as refused:
         await _apply(rel)
     assert "AUDIT" not in rel.order() and not rel.committed
+    assert refused.value.__cause__ is None and refused.value.__suppress_context__
+    assert isinstance(refused.value.__context__, IntegrityError)  # the trigger's, not shown
+    assert _ROW not in "".join(traceback.format_exception(refused.value))
+    if isinstance(refused.value, StorageConstraintViolated):
+        assert (refused.value.sqlstate, refused.value.constraint) == (sqlstate, constraint)
 
 
 async def test_apply_roles_hung_audit_is_bounded_and_rolls_back() -> None:

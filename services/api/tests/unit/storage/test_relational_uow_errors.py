@@ -14,12 +14,14 @@ import asyncio
 import pickle
 import traceback
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from typing import Any, cast
 
 import asyncpg
 import pytest
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi as _Dbapi
+from structlog.testing import capture_logs
 
 from candleviewer.api import storage_outage
 from candleviewer.api.storage_outage import is_storage_outage
@@ -35,9 +37,11 @@ from candleviewer.storage.repositories import account_access_sqlalchemy as accou
 from candleviewer.storage.repositories import audit_sqlalchemy as audit
 from candleviewer.storage.repositories import backups_sqlalchemy as backups
 from candleviewer.storage.repositories import drawings_sqlalchemy as drawings
+from candleviewer.storage.repositories import flags_sqlalchemy as flags
 from candleviewer.storage.repositories import orders_sqlalchemy as orders
 from candleviewer.storage.repositories import relational_sqlalchemy as relational
 from candleviewer.storage.repositories import statechart_sqlalchemy as statechart
+from candleviewer.storage.repositories import system_settings_sqlalchemy as system_settings
 from candleviewer.storage.repositories import trade_groups_sqlalchemy as trade_groups
 from candleviewer.storage.repositories import workspaces_codec
 from candleviewer.storage.repositories.account_access import AccessBusyError
@@ -591,6 +595,37 @@ async def test_a_unit_of_work_starts_with_its_statement_timeout_and_application_
 # -- the shared classifier and the typed error a refused statement leaves as (#2748 slice 2a) -----
 
 
+def _store_outage(
+    outage: Callable[[], AbstractContextManager[None]],
+) -> Callable[[Exception], bool]:
+    """Whether an error leaves a store's `_outage` as `StorageTierUnavailable`: the flag and
+    settings stores class it with `is_outage` (slice 2c), any other database error leaving typed
+    and unchained, and any other error as it is."""
+
+    def classify(error: Exception) -> bool:
+        try:
+            with capture_logs(), outage():
+                raise error
+        except StorageTierUnavailable:
+            return True
+        except StorageQueryFailed as typed:
+            assert typed.__cause__ is None and typed.__suppress_context__
+        except Exception as other:
+            assert other is error
+        return False
+
+    return classify
+
+
+#: Every classifier `is_outage` must agree with: the HTTP edge's, and the stores' that use it.
+_CLASSIFIERS = {
+    "http-edge": is_storage_outage,
+    "flags": _store_outage(flags._outage),
+    "settings": _store_outage(system_settings._outage),
+}
+
+
+@pytest.mark.parametrize("classify", list(_CLASSIFIERS.values()), ids=list(_CLASSIFIERS))
 @pytest.mark.parametrize(
     ("driver_cls", "invalidated"),
     [
@@ -614,14 +649,15 @@ async def test_a_unit_of_work_starts_with_its_statement_timeout_and_application_
         *("22P02", "42P01", "P0001", "25P02", "53300", "58030", "08003"),
     ],
 )
-def test_is_outage_classes_a_driver_error_as_the_http_edge_does(
-    driver_cls: type[Exception], invalidated: bool
+def test_is_outage_classes_a_driver_error_as_the_http_edge_and_the_stores_do(
+    classify: Callable[[Exception], bool], driver_cls: type[Exception], invalidated: bool
 ) -> None:
     raw, stripped = _twins(driver_cls, f"server says: {_P1}", invalidated=invalidated)
     for error in (raw, stripped):
-        assert is_outage(error) is is_storage_outage(error)
+        assert is_outage(error) is classify(error)
 
 
+@pytest.mark.parametrize("classify", list(_CLASSIFIERS.values()), ids=list(_CLASSIFIERS))
 @pytest.mark.parametrize(
     "error",
     [
@@ -643,8 +679,10 @@ def test_is_outage_classes_a_driver_error_as_the_http_edge_does(
         "other",
     ],
 )
-def test_is_outage_classes_the_other_failures_as_the_http_edge_does(error: Exception) -> None:
-    assert is_outage(error) is is_storage_outage(error)
+def test_is_outage_classes_the_other_failures_as_the_http_edge_and_the_stores_do(
+    classify: Callable[[Exception], bool], error: Exception
+) -> None:
+    assert is_outage(error) is classify(error)
 
 
 def test_is_outage_reads_the_http_edges_sqlstate_classes() -> None:

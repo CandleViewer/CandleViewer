@@ -29,11 +29,13 @@ from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     LOCK_USER,
     OwnerFloorCheck,
     counted_roles,
+    floor_refusal,
     lock_active_owners,
-    refuse_floor_violation,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.user_lifecycle import (
     UserPatch,
@@ -242,7 +244,6 @@ class SqlAlchemyUserAdminStore:
         each rolls the transaction back, so nothing changes."""
         uid, counted = str(user_id), _NO_ROLES
         wanted = _NO_ROLES if patch.roles is None else patch.roles
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session
@@ -277,6 +278,6 @@ class SqlAlchemyUserAdminStore:
                 await bounded_write_ahead(audit(change), self._audit_timeout_s)
                 await uow.commit()
         except IntegrityError as exc:
-            refuse_floor_violation(exc, self._owner_floor, counted, wanted)
-            raise
+            state, name = sqlstate_of(exc), constraint_of(exc)
+            raise floor_refusal(self._owner_floor, counted, wanted, state, name) from None
         return change

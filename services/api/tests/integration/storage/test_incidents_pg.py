@@ -20,11 +20,10 @@ from uuid import UUID
 import psycopg
 import pytest
 import sqlalchemy as sa
-from sqlalchemy import exc as sa_exc
 from structlog.testing import capture_logs
 from testcontainers.postgres import PostgresContainer
 
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories import incidents_sqlalchemy as repo
 from candleviewer.storage.repositories.incidents_sqlalchemy import SqlAlchemyIncidents
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -138,6 +137,6 @@ async def test_a_refused_statement_is_a_bug_with_the_drivers_own_sqlstate(
     reader: SqlAlchemyIncidents, monkeypatch: pytest.MonkeyPatch, statement: str, sqlstate: str
 ) -> None:
     monkeypatch.setattr(repo, "page_statement", lambda *_: sa.text(statement))
-    with pytest.raises(sa_exc.DBAPIError) as refused:  # keeps its type: not a 503 with a retry
+    with pytest.raises(StorageQueryFailed) as refused:  # typed (#2748): not a 503 with a retry
         await reader.page(status=None, after=None, limit=1)
-    assert getattr(refused.value.orig, "sqlstate", None) == sqlstate
+    assert refused.value.sqlstate == sqlstate and refused.value.__cause__ is None

@@ -1,7 +1,8 @@
 """`SqlAlchemyIncidents` with a fake unit of work (E42-T05): the statement is an explicit-column,
 bound keyset page; an error is classed by the SQLSTATE the driver reports, not by its SQLAlchemy
 type: a database that cannot serve the read leaves as `StorageTierUnavailable` without its text,
-and a statement the database refuses keeps its type. The real driver's SQLSTATEs are checked by
+and a statement the database refuses as the typed error naming only its SQLSTATE and constraint
+(#2748). The real driver's SQLSTATEs are checked by
 `tests/integration/storage/test_incidents_pg.py`. The acknowledge transition is at the end; its
 row lock is checked on a real database in `tests/integration/storage/test_incident_ack_pg.py`.
 """
@@ -9,6 +10,7 @@ row lock is checked on a real database in `tests/integration/storage/test_incide
 from __future__ import annotations
 
 import asyncio
+import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -22,7 +24,12 @@ import sqlalchemy as sa
 from sqlalchemy import exc as sa_exc
 from structlog.testing import capture_logs
 
-from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
+from candleviewer.storage.errors import (
+    StorageConstraintViolated,
+    StorageQueryFailed,
+    StorageTierUnavailable,
+    WriteAheadTimeout,
+)
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import _TIMEOUT, READ_TIMEOUT
 from candleviewer.storage.repositories.incidents import AckOutcome, AckResult, IncidentRow
 from candleviewer.storage.repositories.incidents_sqlalchemy import (
@@ -37,6 +44,7 @@ from tests.unit.admin._ops_fakes import row
 NOW = datetime(2026, 10, 15, 9, 0, tzinfo=UTC)
 #: Built by concatenation so no scanner sees a credential: what a driver error can carry.
 _DSN = "postgresql://cv:" + "hunter2" + "@db/cv"
+_UX = "ux_incidents_group"
 
 
 class _Rel:
@@ -64,13 +72,23 @@ class _Rel:
 class _Driver(Exception):
     """What the driver adapter hangs on `DBAPIError.orig`: its text and its SQLSTATE."""
 
-    def __init__(self, text: str, sqlstate: str | None) -> None:
+    def __init__(self, text: str, sqlstate: str | None, constraint: str | None = None) -> None:
         super().__init__(text)
-        self.sqlstate = sqlstate
+        self.sqlstate, self.constraint_name = sqlstate, constraint
 
 
-def _dbapi(kind: type[sa_exc.DBAPIError], sqlstate: str | None) -> sa_exc.DBAPIError:
-    return kind("SELECT 1", {}, _Driver(_DSN, sqlstate))
+def _dbapi(
+    kind: type[sa_exc.DBAPIError], sqlstate: str | None, constraint: str | None = None
+) -> sa_exc.DBAPIError:
+    return kind("SELECT 1", {}, _Driver(_DSN, sqlstate, constraint))
+
+
+def _typed(raised: StorageQueryFailed, expected: StorageQueryFailed) -> None:
+    """Typed by its SQLSTATE and constraint alone, raised `from None` (#2748): no driver text."""
+    facts = [(type(e), e.sqlstate, getattr(e, "constraint", None)) for e in (raised, expected)]
+    assert facts[0] == facts[1]
+    assert raised.__cause__ is None and raised.__suppress_context__
+    assert "hunter2" not in "".join(traceback.format_exception(raised))
 
 
 async def _page(rel: _Rel) -> list[IncidentRow]:
@@ -135,21 +153,24 @@ async def test_a_sqlstate_that_is_text_is_neither_trusted_nor_logged() -> None:
 
 
 @pytest.mark.parametrize(
-    "error",
+    ("error", "typed"),
     [
-        _dbapi(sa_exc.DBAPIError, "22P02"),  # asyncpg reports a data error as the generic type
-        _dbapi(sa_exc.DataError, "22012"),
-        _dbapi(sa_exc.IntegrityError, "23505"),
-        _dbapi(sa_exc.ProgrammingError, "42703"),
-        _dbapi(sa_exc.InternalError, "XX000"),
-        sa_exc.ArgumentError("bad statement"),  # not the database's at all
+        # asyncpg reports a data error as the generic type
+        (_dbapi(sa_exc.DBAPIError, "22P02"), StorageQueryFailed("22P02")),
+        (_dbapi(sa_exc.DataError, "22012"), StorageQueryFailed("22012")),
+        (_dbapi(sa_exc.IntegrityError, "23505", _UX), StorageConstraintViolated("23505", _UX)),
+        (_dbapi(sa_exc.ProgrammingError, "42703"), StorageQueryFailed("42703")),
+        (_dbapi(sa_exc.InternalError, "XX000"), StorageQueryFailed("XX000")),
+        (sa_exc.ArgumentError("bad statement"), StorageQueryFailed(None)),  # not the database's
     ],
     ids="data-22P02 data-22012 integrity-23 programming-42 internal-XX argument".split(),
 )
-async def test_a_refused_statement_is_a_bug_that_keeps_its_type(error: Exception) -> None:
-    with pytest.raises(type(error)) as raised:
+async def test_a_refused_statement_is_a_bug_typed_by_its_facts(
+    error: Exception, typed: StorageQueryFailed
+) -> None:
+    with pytest.raises(StorageQueryFailed) as raised:  # a 500, never a 503
         await _page(_Rel(error=error))
-    assert raised.value is error  # as it came, not wrapped and not a 503
+    _typed(raised.value, typed)
 
 
 # -- acknowledge (E42-T05): the transaction in order, the statements, the errors ------------------
@@ -252,6 +273,8 @@ async def test_a_database_that_cannot_serve_the_write_leaves_without_its_text() 
     assert [log["event"] for log in logs] == ["incidents_write_failed"]
 
 
-async def test_a_statement_the_database_refuses_is_a_bug_and_keeps_its_type() -> None:
-    with pytest.raises(sa_exc.DBAPIError):
-        await _ack(_AckRel(_OPEN, _dbapi(sa_exc.DBAPIError, "23503")))  # an unknown user
+async def test_a_statement_the_database_refuses_is_a_bug_typed_by_its_facts() -> None:
+    fkey = "incidents_acknowledged_by_fkey"  # an unknown user
+    with pytest.raises(StorageConstraintViolated) as raised:
+        await _ack(_AckRel(_OPEN, _dbapi(sa_exc.DBAPIError, "23503", fkey)))
+    _typed(raised.value, StorageConstraintViolated("23503", fkey))
