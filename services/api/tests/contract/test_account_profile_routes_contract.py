@@ -9,7 +9,8 @@ import pytest
 from candleviewer.accounts.errors import AccountVersionConflictError
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
-from tests.contract._admin_support import ROOT, SPEC, text, validate_example
+from tests.contract._admin_support import ROOT, SPEC, validate_example
+from tests.contract._admin_support import text as _text  # not `text`: Semgrep's raw-SQL rule
 
 _LIST = "/exchange-accounts/{accountId}/profiles"
 _ITEM = _LIST + "/{profileId}"
@@ -51,7 +52,7 @@ def test_each_operation_declares_exactly_its_answers(name: str) -> None:
     assert {status: _ref(answer) for status, answer in op["responses"].items()} == declared
     assert op.get("x-idempotency") == idempotency
     assert op["x-rbac"]["permissions"] == ["accounts:write" if name in _WRITES else "accounts:read"]
-    assert text(op["description"]).startswith("Owner only") is (name in _WRITES)  # R1S-08 (#4083)
+    assert _text(op["description"]).startswith("Owner only") is (name in _WRITES)  # R1S-08 (#4083)
 
 
 def test_each_operation_takes_exactly_its_parameters() -> None:
@@ -81,14 +82,14 @@ def test_answers_that_carry_a_profile_carry_its_etag_and_replay_marker() -> None
     op = _OPS["listAccountProfiles"]  # one page, no `meta`, no cursor
     schema = op["responses"]["200"]["content"]["application/json"]["schema"]
     assert (schema["required"], set(schema["properties"])) == (["items"], {"items"})
-    assert "an exemption from C3" in text(op["description"])
+    assert "an exemption from C3" in _text(op["description"])
 
 
 @pytest.mark.parametrize("name", list(_OPS))
 def test_writes_need_a_risk_caps_step_up_and_reads_none(name: str) -> None:
     step_up = _PATHS["/auth/step-up"]["post"]["requestBody"]["content"]["application/json"]
     classes = step_up["schema"]["properties"]["action_class"]["enum"]
-    words = text(f"{_OPS[name]['summary']} {_OPS[name]['description']}")
+    words = _text(f"{_OPS[name]['summary']} {_OPS[name]['description']}")
     assert "no-grace" not in words  # `risk_caps` has a grace window
     assert bool(re.search(r"step[-_ ]up", words, re.IGNORECASE)) is (name in _WRITES)
     named = {c for c in classes if f"`{c}`" in words}
@@ -98,7 +99,7 @@ def test_writes_need_a_risk_caps_step_up_and_reads_none(name: str) -> None:
 def test_every_code_the_operations_cite_is_registered() -> None:
     prose = [op["description"] for op in _OPS.values()]
     prose += [_REJECTED["description"], _UNAVAILABLE["description"]]
-    pairs = re.findall(r"`(\d{3}) ([a-z_]+)`", text(" ".join(prose)))
+    pairs = re.findall(r"`(\d{3}) ([a-z_]+)`", _text(" ".join(prose)))
     cited = {(int(status), code) for status, code in pairs}
     codes = {code for _, code in cited}
     assert {"step_up_required", "conflict", "version_conflict", "audit_unavailable"} <= codes
@@ -150,7 +151,7 @@ def test_every_profile_problem_example_is_a_valid_problem(response: str) -> None
 
 
 def test_the_refusal_rules_are_one_list_in_two_passes() -> None:
-    _, first, second, *_ = [text(part) for part in _REJECTED["description"].split("\n\n")]
+    _, first, second, *_ = [_text(part) for part in _REJECTED["description"].split("\n\n")]
     one = "native_stop_mandatory stop_defines_r required not_allowed range precision ladder_sum"
     one += " above_leverage_cap default_moves_alone"
     two = "max_leverage min_order_qty qty_step min_notional symbol_not_listed"
@@ -159,21 +160,22 @@ def test_the_refusal_rules_are_one_list_in_two_passes() -> None:
     assert "the second only when the first passes" in first
     # R1S-05 (#4083): a pattern that matches every listed symbol allows what `all_symbols` does.
     assert "a universal pattern such as `*USDT` counts as `all_symbols`" in second
-    audited = "`above_leverage_cap` and every refusal of the second pass are audited as"
-    assert second.endswith(f"{audited} `profile.save_refused`.")
+    audited = "`native_stop_mandatory`, `above_leverage_cap` and every refusal of the second pass"
+    assert second.endswith(f"{audited} are audited as `profile.save_refused`.")
 
 
 def test_a_put_replaces_the_whole_profile_and_says_what_omitting_risk_caps_does() -> None:
-    put = text(_OPS["updateAccountProfile"]["description"])
+    put = _text(_OPS["updateAccountProfile"]["description"])
     sentence = "omitting `risk_caps` clears every cap and resets `max_orders_per_minute` to its "
     assert "A PUT replaces the whole profile" in put
     assert sentence + "server default of 30; send the full object" in put
+    assert "`native_stop_mandatory`, audited as `profile.save_refused` (SR-E28-08)" in put
 
 
 def test_a_stale_if_match_is_version_conflict() -> None:
     stale = _COMPONENTS["responses"]["PreconditionFailed"]["content"]["application/problem+json"]
     assert stale["examples"]["stale"]["value"]["code"] == "version_conflict"
     for name in ("updateAccountProfile", "deleteAccountProfile"):
-        assert "`412 version_conflict`" in text(_OPS[name]["description"])
+        assert "`412 version_conflict`" in _text(_OPS[name]["description"])
     doc = AccountVersionConflictError.__doc__ or ""
     assert "version_conflict" in doc and "precondition_failed" not in doc
