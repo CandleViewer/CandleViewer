@@ -122,12 +122,18 @@ def test_no_mounted_dangerous_write_uses_a_path_convertor() -> None:
 
 
 def test_a_dangerous_write_with_a_path_convertor_is_reported() -> None:
-    """The self-test of the check above (#4087 security lens R1S-01)."""
+    """The self-test of the check above (#4087 security lens R1S-01; R2S-01: every write method)."""
     app = create_app()
     router = APIRouter(prefix="/exchange-accounts")
     router.add_api_route("/{accountId:path}/profiles", _stand_in, methods=["POST"])
+    item = "/{accountId}/profiles/{profileId:path}"
+    router.add_api_route(item, _stand_in, methods=["PUT", "DELETE"])
     app.include_router(router)
-    assert _convertor_writes(app) == [("POST", "/exchange-accounts/{accountId:path}/profiles")]
+    assert _convertor_writes(app) == [
+        ("DELETE", "/exchange-accounts" + item),
+        ("POST", "/exchange-accounts/{accountId:path}/profiles"),
+        ("PUT", "/exchange-accounts" + item),
+    ]
 
 
 def test_gate_sees_a_route_mounted_through_an_included_router() -> None:

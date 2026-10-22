@@ -297,8 +297,10 @@ for _action in AUDIT_ACTIONS:
     if not _ACTION_FMT_RE.match(_action):  # pragma: no cover - defends the registry itself
         raise AuditError(f"registry action {_action!r} violates au_action_fmt")
 
-#: `profile.save_refused`'s `reason` (E28-T02, #906; E28 threat model Sec.8.1), a closed set: the
-#: native-stop rule (`require_native_stop` set to `false`, SR-E28-08) and the exchange limits the
+#: `profile.save_refused`'s `reason` (E28-T02, #906; E28 threat model Sec.8.1), a closed set of the
+#: refusals of the profile's risk policy (ruling of 2026-10-22: a malformed body is not audited):
+#: the native-stop rule (`require_native_stop` set to `false`, SR-E28-08), `leverage` above the
+#: profile's own `max_leverage_cap` (the first pass's one policy rule), and the exchange limits the
 #: second validation pass refuses: leverage above an allowed symbol's maximum, a fixed size below
 #: its minimum quantity or off its step, a notional cap below its minimum notional, and a symbol
 #: the exchange does not list. A missing step-up is none (ruling B4): the path guard refuses it
@@ -306,6 +308,7 @@ for _action in AUDIT_ACTIONS:
 PROFILE_SAVE_REFUSED_REASONS: frozenset[str] = frozenset(
     {
         "native_stop_mandatory",
+        "above_leverage_cap",
         "max_leverage",
         "min_order_qty",
         "qty_step",

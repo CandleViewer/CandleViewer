@@ -25,11 +25,13 @@ _ACTIONS = frozenset(
     f"profile.{verb}"
     for verb in ("created", "updated", "deleted", "bound", "unbound", "save_refused")
 )
-#: `native_stop_mandatory` (SR-E28-08) and the exchange limits of the second validation pass; no
-#: `step_up`: the path guard refuses a missing one before the handler and B16 audits it (ruling B4).
+#: `native_stop_mandatory` (SR-E28-08), the first pass's `above_leverage_cap` and the exchange
+#: limits of the second validation pass; no `step_up`: the path guard refuses a missing one before
+#: the handler and B16 audits it (ruling B4). A malformed body is not audited (ruling, 2026-10-22).
 _REASONS = frozenset(
     {
         "native_stop_mandatory",
+        "above_leverage_cap",
         "max_leverage",
         "min_order_qty",
         "qty_step",
