@@ -285,14 +285,21 @@ async def test_a_settle_locks_then_answers_every_row_of_the_request_or_none() ->
 
 
 @pytest.mark.parametrize(
-    ("ids", "at"), [([], _T), ([_SL, _SL], _T), ([_SL], datetime(2026, 10, 21))]
+    ("ids", "at", "reason"),
+    [
+        ([], _T, "names each row of the request once"),
+        ([_SL, _SL], _T, "names each row of the request once"),
+        ([_SL], datetime(2026, 10, 21), "timezone-aware"),
+    ],
 )
 async def test_a_settle_refuses_a_malformed_call_before_any_statement(
-    ids: list[uuid.UUID], at: datetime
+    ids: list[uuid.UUID], at: datetime, reason: str
 ) -> None:
+    """An `answered` settle needs no hook, so only the call's own shape can refuse it here
+    (RC-4057-01: a void's hook check must not mask these)."""
     rel = _Rel()
-    with pytest.raises(ValueError):
-        await _store(rel).settle(_ACCOUNT, ids, "refused", at=at)
+    with pytest.raises(ValueError, match=reason):
+        await _store(rel).settle(_ACCOUNT, ids, "answered", at=at)
     assert rel.statements == []
 
 
