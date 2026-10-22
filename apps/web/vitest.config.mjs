@@ -1,6 +1,5 @@
 import { resolve } from "node:path";
 import process from "node:process";
-import { defaultClientConditions } from "vite";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { vitestPreset } from "@candleviewer/config/vitest";
@@ -12,10 +11,10 @@ export default defineConfig({
     __CV_ALLOW_FAULT_INJECTION__: JSON.stringify(process.env.CV_ALLOW_FAULT_INJECTION === "1"),
   },
   resolve: {
-    // Vite's own conditions plus `module-sync` (Node >= 20.19), which points `react-router` and
-    // `react-router/dom` at one ESM build: the dom entry and the app share one router copy, so
-    // error elements keep their router context.
-    conditions: [...defaultClientConditions, "module-sync"],
+    // Vitest resolves this jsdom project with node-style conditions, where react-router's `node`
+    // export falls through to its CommonJS `default` while the dom entry's own import loads ESM
+    // via `module-sync`: two router copies. Adding `module-sync` selects the ESM build for both.
+    conditions: ["module-sync"],
     alias: [
       // Exact match for the entry only: `@candleviewer/ui/theme.css` and the token CSS must resolve through
       // the package `exports` (built files), not turn into `src/index.ts/theme.css`.
