@@ -21,9 +21,10 @@ from typing import Any, Protocol
 
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import Topic
+from candleviewer.exchange.base.reconnect import ConnectionGuard
 from candleviewer.ingestion.metrics import ingest_ws_up
 from candleviewer.ingestion.planner import SubscriptionPlanner
-from candleviewer.ingestion.reconnect import ConnectionRateGuard, ReconnectPolicy
+from candleviewer.ingestion.reconnect import ReconnectPolicy
 from candleviewer.ingestion.watchdog import (
     FeedHealthEvent,
     StalenessWatchdog,
@@ -69,7 +70,7 @@ class ConnectionManager:
         planner: SubscriptionPlanner,
         watchdog: StalenessWatchdog,
         policy: ReconnectPolicy,
-        guard: ConnectionRateGuard,
+        guard: ConnectionGuard,
         on_message: Callable[[str], None],
         *,
         sleep: Sleep = asyncio.sleep,
@@ -234,7 +235,7 @@ class ConnectionManager:
 
     async def resubscribe_topic(self, topic: str) -> None:
         """Force a fresh snapshot for one topic: unsubscribe then subscribe,
-        shaped by the E08-T04 connection budget (`ConnectionRateGuard`)."""
+        shaped by the E08-T04 connection budget (the guard, `ConnectionGuard`)."""
         sock = self._sock
         if sock is None or topic not in self._desired:
             return  # not connected: the (re)subscribe on connect yields the snapshot

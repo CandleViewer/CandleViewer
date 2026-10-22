@@ -2,26 +2,19 @@
 
 Full-jitter exponential backoff (0.5 s -> 30 s) and a sliding-window guard that
 keeps connection opens below the per-IP limit (500 / 5 min; default headroom 480).
+`ReconnectPolicy` lives in `exchange.base.reconnect` (G-8b, #3963), beside the adapter's
+one `ConnectionBudget`, whose public lane the composition root gives the public stream; it is
+re-exported here for ingestion's callers.
 """
 
 from __future__ import annotations
 
-import random
 from collections import deque
 from collections.abc import Callable
 
+from candleviewer.exchange.base.reconnect import ReconnectPolicy
 
-class ReconnectPolicy:
-    def __init__(
-        self, *, base_s: float = 0.5, cap_s: float = 30.0, rng: random.Random | None = None
-    ) -> None:
-        self._base = base_s
-        self._cap = cap_s
-        self._rng = rng or random.Random()  # noqa: S311  (jitter, not crypto)
-
-    def next_delay(self, attempt: int) -> float:
-        ceiling = min(self._cap, self._base * (2 ** min(max(attempt, 0), 32)))
-        return self._rng.uniform(0, ceiling)
+__all__ = ["ConnectionRateGuard", "ReconnectPolicy"]
 
 
 class ConnectionRateGuard:

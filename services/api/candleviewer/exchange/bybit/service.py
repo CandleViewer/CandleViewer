@@ -8,12 +8,14 @@ module, but it does no real work until its owning epic lands.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 import httpx
 
+from candleviewer.exchange.base.reconnect import ConnectionBudget
 from candleviewer.exchange.bybit.archive import (
     DEFAULT_ARCHIVE_BASE,
     ArchiveConfig,
@@ -80,6 +82,7 @@ class ExchangeBybitService:
         rest_transport: httpx.AsyncBaseTransport | None = None,
         private_ws_connect: PrivateWsConnect | None = None,
         environment: str | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._started = False
         #: E27-T02: the one caller-bound signing capability, injected by `admin.wiring`.
@@ -97,11 +100,18 @@ class ExchangeBybitService:
         self._rest_transport = (
             None if rest_transport is None else _NonClosingTransport(rest_transport)
         )
+        #: G-8b (#3963): the one per-IP WebSocket connection budget (C-12.7, OM-D07; 24 §14.2 rule
+        #: 13) every socket of this process draws on: the public stream's lane (the composition
+        #: root hands it over), the private streams' and the key probe's.
+        self._ws_budget = ConnectionBudget(monotonic)
         #: #836 slice 2b5: `testApiKey`'s private-WS `auth` probe. One per adapter, so one open
-        #: budget per deployment (SR-E27-05). It dials with production's connector unless the
-        #: composition root passes the dev-only account fixture's, behind its door (#2893).
+        #: budget per deployment (SR-E27-05), counted in the connection budget. It dials with
+        #: production's connector unless the composition root passes the dev-only account
+        #: fixture's, behind its door (#2893).
         self._ws_probe = (
-            KeyWsProbe() if private_ws_connect is None else KeyWsProbe(private_ws_connect)
+            KeyWsProbe(budget=self._ws_budget)
+            if private_ws_connect is None
+            else KeyWsProbe(private_ws_connect, budget=self._ws_budget)
         )
         #: The process's own environment (`Settings.environment`), the only one whose keys M2
         #: signs: a stored key's probe dials no other stream (C-2.11). None refuses every probe.
@@ -109,6 +119,13 @@ class ExchangeBybitService:
 
     #: E08-T06: venue name for the `exchange` metric label (owned here, C-2.2).
     venue = "bybit"
+
+    @property
+    def ws_connection_budget(self) -> ConnectionBudget:
+        """G-8b: the process's one WebSocket connection budget (24 §14.2 rule 13); the composition
+        root gives its `public` lane to the public stream."""
+        return self._ws_budget
+
     #: E08-T04: venue topic -> neutral stream kind, for ingestion's watchdog.
     topic_kind = staticmethod(topic_kind)
     #: #1916: raw frame -> (topic, kind, symbol) for per-topic dispatch lanes.

@@ -13,10 +13,12 @@ never finishes the close, and a cancellation propagates. Diagnostic only: it enf
 (ruling 11 on #836).
 SR-E27-05: at most `OPENS_PER_WINDOW` probes per `WINDOW_S` per deployment (the adapter holds one
 probe), then `rate_limited` at once with nothing signed or dialled; the scheduled self-check never
-names it (`test_ws_probe_callers.py`). Results are `KeyProbeError` names (SR-E27-08), never
-exchange text: a refused `auth` is `auth_error`, no answer `timeout`, a failed or dropped
-connection or a frame that does not decode as JSON `transport_error`, any other reply
-`exchange_unknown`.
+names it (`test_ws_probe_callers.py`). The adapter's probe draws on its one per-IP connection
+budget (`ConnectionBudget`, 24 §14.2 rule 13): the same cap, counted with every other open, and
+refused too while only the private streams' reserve is left (KV-D01). Results are
+`KeyProbeError` names (SR-E27-08), never exchange text: a refused `auth` is `auth_error`, no
+answer `timeout`, a failed or dropped connection or a frame that does not decode as JSON
+`transport_error`, any other reply `exchange_unknown`.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
 from websockets.protocol import State
 
+from candleviewer.exchange.base.reconnect import ConnectionBudget
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.signer import BybitSigner
 
@@ -166,7 +169,8 @@ def _wall_ms() -> int:
 
 
 class KeyWsProbe:
-    """The adapter's one private-WS `auth` probe, holding the deployment's open budget."""
+    """The adapter's one private-WS `auth` probe, holding the deployment's open budget: the
+    adapter's `ConnectionBudget` when one is given, else a window of its own."""
 
     def __init__(
         self,
@@ -174,13 +178,17 @@ class KeyWsProbe:
         *,
         monotonic: Callable[[], float] = time.monotonic,
         wall_ms: Callable[[], int] = _wall_ms,
+        budget: ConnectionBudget | None = None,
     ) -> None:
         self._connect, self._monotonic, self._wall_ms = connect, monotonic, wall_ms
+        self._budget = budget
         #: When each of the last `OPENS_PER_WINDOW` probes was admitted; bounded.
         self._opened: deque[float] = deque(maxlen=OPENS_PER_WINDOW)
 
     def _admit(self) -> bool:
         """A sliding window that refuses at once, and never queues, while it is full."""
+        if self._budget is not None:
+            return self._budget.admit_probe()
         now = self._monotonic()
         if len(self._opened) == OPENS_PER_WINDOW and now - self._opened[0] < WINDOW_S:
             return False

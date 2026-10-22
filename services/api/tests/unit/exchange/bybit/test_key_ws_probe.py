@@ -29,6 +29,7 @@ from websockets.http11 import Request
 from websockets.protocol import State
 from websockets.uri import parse_uri
 
+from candleviewer.exchange.base.reconnect import ConnectionBudget
 from candleviewer.exchange.bybit import key_ws_probe
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.key_info import PROBE_ERRORS
@@ -307,6 +308,32 @@ async def test_the_window_slides_so_no_300_s_ever_holds_more_than_10_opens() -> 
     assert [await at(0)] + [await at(299) for _ in range(9)] == [None] * 10
     later = [await at(second) for second in (300, 300, 301, 598, 599)]
     assert later == [None, "rate_limited", "rate_limited", "rate_limited", None]
+
+
+async def test_a_budget_backed_probe_counts_in_the_window_and_never_takes_the_reserve() -> None:
+    """G-8b (24 §14.2 rule 13, KV-D01): the adapter's probe draws on its one connection budget.
+    Its opens count with every other open, and it is refused at once, with nothing signed or
+    dialled, while only the private streams' reserve is left."""
+    clock, stream, calls = Clock(), Stream(), list[Call]()
+    budget = ConnectionBudget(clock)
+    probe = KeyWsProbe(stream.connect, monotonic=clock, wall_ms=lambda: NOW_MS, budget=budget)
+    assert (await probe.probe(fake_capability(MARK, calls), "demo", CREDENTIAL_ID)).ok
+    assert budget.remaining("private") == 479  # the probe's open is in the window
+    for _ in range(419):  # public opens take what public may: 420 with the probe's
+        budget.lane("public").reserve()
+    refused = await probe.probe(fake_capability(MARK, calls), "demo", CREDENTIAL_ID)
+    assert refused == WsProbeResult(ok=False, error="rate_limited", latency_ms=None)
+    assert (len(stream.dialled), len(calls), budget.remaining("private")) == (1, 1, 60)
+
+
+async def test_the_adapter_counts_its_probes_in_its_connection_budget() -> None:
+    stream = Stream()
+    svc = ExchangeBybitService(
+        credentials=fake_capability(), private_ws_connect=stream.connect, environment="demo"
+    )
+    before = svc.ws_connection_budget.remaining("private")
+    assert (await svc.key_ws_probe("demo", CREDENTIAL_ID)).ok
+    assert svc.ws_connection_budget.remaining("private") == before - 1
 
 
 async def test_a_refused_unknown_environment_takes_no_open_from_the_budget() -> None:
