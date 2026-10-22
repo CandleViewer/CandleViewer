@@ -71,6 +71,22 @@ async def test_user_unknown_raises_lookup_error() -> None:
         await _provider(_Rel([[]])).user("nope")
 
 
+async def test_names_reads_the_two_names_of_any_users_row() -> None:
+    """#3085 (Q12): a view-as target's names, by id alone, so a disabled, anonymised or
+    soft-deleted user is read too; no other column, and no row is a `LookupError`."""
+    rel = _Rel([[("bo", "Bo B.")], [("deleted-user-0123456789ab", None)], []])
+    provider = _provider(rel)
+    assert await provider.names("u1") == ("bo", "Bo B.")
+    assert await provider.names("u2") == ("deleted-user-0123456789ab", None)
+    with pytest.raises(LookupError):
+        await provider.names("u3")
+    sql, params = rel.calls[0]
+    assert params == {"id": "u1"}
+    assert " ".join(sql.split()) == (
+        "SELECT username::text AS username, display_name FROM users WHERE id = CAST(:id AS uuid)"
+    )
+
+
 async def test_session_info_lists_permissions_and_scope() -> None:
     rel = _Rel([[("orders:submit",), ("users:write",)], [("acc-1",)]])
     info = await _provider(rel).session_info("u1")

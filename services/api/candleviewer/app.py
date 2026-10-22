@@ -170,6 +170,7 @@ from candleviewer.api.users import (
     make_user_admin_router,
     make_users_router,
 )
+from candleviewer.api.view_as import make_view_as_router
 from candleviewer.api.view_as_guard import make_view_as_guard
 from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
@@ -1576,6 +1577,17 @@ def create_app(
             enrolment_refusals=enrolment_refusals,  # unlock answers as the guard does (#2295)
             # #2300: unlock records on B16 and checks the password on login's path (step-up).
             unlock_authority=lambda: ctx.auth.step_up if ctx.auth.step_up_is_active else None,
+        )
+    )
+    # #3085: the viewer reads and ends its own session's view-as context. The service is read per
+    # request (built below; `None` on the fake backend, where both answer 503 after
+    # authenticating), and the target's names come from the identity provider's narrow read.
+    app.include_router(
+        make_view_as_router(
+            ctx.auth,
+            views=lambda: app.state.view_as,
+            names=identity,
+            clock=auth_clock or (lambda: datetime.now(UTC)),
         )
     )
     # #2713: the shell bootstrap (`/me`, `/me/preferences`, `/me/keymap`), self only. Without an

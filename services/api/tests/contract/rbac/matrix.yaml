@@ -403,15 +403,13 @@ operations:
     permissions: []
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml (#3085 contract slice); its server slice mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   DELETE /auth/session/view-as:
     permissions: []
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml (#3085 contract slice); its server slice mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /auth/sessions:
     permissions: []
