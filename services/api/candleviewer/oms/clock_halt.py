@@ -11,10 +11,15 @@ it says. Untripped, `refusal()` refuses whenever `assert_healthy()` does (E08-S0
 blocks trading"). Each refusal is a fresh `ClockDriftBlocked`, 503 `clock_drift` with
 `Retry-After`, answered before anything is recorded or sent.
 
+The distinct alert (CR-2B1-06): each trip counts `oms_clock_halt_trips_total`, a counter of its
+own, registered from its catalogue entry, whose Prometheus rule (alert above 0) is E29-T08's to
+register as the OMS's other counters' are; the trip is logged too, and the command port that
+meets the `10002` logs `oms_clock_drift_halt` at CRITICAL.
+
 The clock (`ports.ClockHealth`, `ingestion.clock.ClockGuard` in slice 3's wiring) records the
 verdict; the halt enforces it, synchronously, with no await between its reads. One halt serves the
 process, as the block is system-wide. The order path that meets a `10002` trips it and asks for the
-resync (slice 2b's command port); the pipeline asks `refusal()` first.
+resync (`commands.OmsCommandPort`); the pipeline asks `refusal()` first.
 """
 
 from __future__ import annotations
@@ -26,16 +31,20 @@ from typing import Any, Final
 import structlog
 
 from candleviewer.exchange.base.errors import ClockDriftError
+from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 
 from .errors import ClockDriftBlocked
 from .ports import ClockHealth
 
-__all__ = ["CLOCK_HALT_RETRY_AFTER_S", "CLOCK_RESYNC_TIMEOUT_S", "ClockHalt"]
+__all__ = ["CLOCK_HALT_RETRY_AFTER_S", "CLOCK_RESYNC_TIMEOUT_S", "TRIPS_METRIC", "ClockHalt"]
 
 #: The `Retry-After`, in seconds, of an order refused while the clock is not cleared.
 CLOCK_HALT_RETRY_AFTER_S: Final = 5
 #: The bound on one resync the order path asks for, in seconds.
 CLOCK_RESYNC_TIMEOUT_S: Final = 10.0
+#: The counter each trip adds one to: 24 Sec.8.6's distinct alert (module docstring).
+TRIPS_METRIC: Final = "oms_clock_halt_trips_total"
 
 
 def _log() -> Any:
@@ -46,13 +55,14 @@ def _log() -> Any:
 class ClockHalt:
     """The clock gate ahead of every order request (module docstring). `monotonic` reads seconds
     at the rate of the clock behind `offset_age_s()`; only the two durations are compared, so the
-    two clocks need not share an origin."""
+    two clocks need not share an origin. `metrics` takes the trip counter (`TRIPS_METRIC`)."""
 
     def __init__(
         self,
         clock: ClockHealth,
         *,
         monotonic: Callable[[], float],
+        metrics: Metrics,
         retry_after_s: int = CLOCK_HALT_RETRY_AFTER_S,
     ) -> None:
         if isinstance(retry_after_s, bool) or not isinstance(retry_after_s, int):
@@ -63,12 +73,17 @@ class ClockHalt:
         self._monotonic = monotonic
         self._retry_after_s = retry_after_s
         self._tripped_at: float | None = None
+        spec = next(spec for spec in CATALOGUE if spec.name == TRIPS_METRIC)
+        trips = metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
+        self._trips = trips.child()
 
     def trip(self) -> None:
-        """Halt order entry: a `10002` reached an order. A trip while halted restarts the wait,
-        so only a measurement taken after the latest trip clears it."""
+        """Halt order entry: a `10002` reached an order. Counted (`TRIPS_METRIC`) and logged; a
+        trip while halted counts again and restarts the wait, so only a measurement taken after the
+        latest trip clears it."""
         again = self._tripped_at is not None
         self._tripped_at = self._monotonic()
+        self._trips.inc()
         _log().warning("oms_clock_halt_tripped", already_halted=again)
 
     def refusal(self) -> ClockDriftBlocked | None:

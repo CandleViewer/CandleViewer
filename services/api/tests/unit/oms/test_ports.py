@@ -22,7 +22,7 @@ import time
 from datetime import UTC, datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
-from typing import Any, Final, get_args, get_type_hints
+from typing import Any, Final, cast, get_args, get_type_hints
 from uuid import UUID
 
 import pytest
@@ -569,7 +569,7 @@ def test_announce_registers_the_gauge_from_its_catalogue_entry() -> None:
     assert family.documentation == spec.help
 
 
-# -- slice 2b: the clock and account ports --------------------------------------------------------
+# -- the clock and account ports (`ClockHealth`, `TradingAccounts`) -------------------------------
 
 _CLOCK_MEMBERS: Final = ("assert_healthy", "offset_age_s", "resync_after_signature_failure")
 
@@ -612,12 +612,12 @@ def test_a_rate_reading_admits_with_no_delay_and_refuses_with_one() -> None:
     assert RateReading(available=False, retry_after_s=1).retry_after_s == 1
     for refused in (None, 0, -1, 1.5, True, "2"):
         with pytest.raises(ValueError, match="at least one whole second"):
-            RateReading(available=False, retry_after_s=refused)  # type: ignore[arg-type]  # bad
+            RateReading(available=False, retry_after_s=cast(Any, refused))  # each one off the type
     with pytest.raises(ValueError, match="no retry_after_s"):
         RateReading(available=True, retry_after_s=1)
 
 
-# --- the command port's collaborators (slice 2b, C4) ---------------------------------------------
+# --- the command port's collaborators (`commands.OmsCommandPort`) --------------------------------
 
 
 class _Rows:

@@ -400,14 +400,14 @@ class RecordedStopRepository:
         self._timer = timer
 
     async def record(
-        self, stops: Sequence[NewRecordedStop], *, write_ahead: InsertWriteAhead | None
+        self, stops: Sequence[NewRecordedStop], *, write_ahead: InsertWriteAhead
     ) -> tuple[RecordedStopRow, ...]:
         """One request's rows, ahead of it, with `write_ahead`, the writer's audit of the request
         (`sl.attached`, and `tp.modified` for a take-profit side, 21 Sec.3.3.11), awaited before
-        the commit. Raise, with nothing written: `ValueError` before the store when no hook is
-        given, as every stop request is audited (C-2.9), as a first persist is;
-        `StopRequestInFlight` when a request is in flight for the position; `AuditNotDurable`
-        when the audit outlasts its bound."""
+        the commit: the hook is required, as every stop request is audited (C-2.9), as a first
+        persist is. Raise, with nothing written: `ValueError` before the store for a caller the
+        types do not hold that passes None; `StopRequestInFlight` when a request is in flight for
+        the position; `AuditNotDurable` when the audit outlasts its bound."""
         if write_ahead is None:
             raise ValueError("a stop request is audited write-ahead (C-2.9): no hook was given")
         try:

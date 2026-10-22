@@ -1,7 +1,8 @@
 """The clock halt (E29-T04 #913; 24-internal-schemas.md Sec.8.6, `10002`): a trip refuses order
 entry until a measurement taken after it passes `assert_healthy()`, and an unhealthy clock refuses
 it untripped too. Each refusal is a fresh `ClockDriftBlocked`, 503 `clock_drift` with its
-`Retry-After`. The fake clock answers as `ingestion.clock.ClockGuard` does."""
+`Retry-After`, and each trip counts on `oms_clock_halt_trips_total`, the distinct alert. The fake
+clock answers as `ingestion.clock.ClockGuard` does."""
 
 from __future__ import annotations
 
@@ -16,10 +17,13 @@ from structlog.testing import capture_logs
 
 from candleviewer.exchange.base.errors import ClockDriftError
 from candleviewer.ingestion.clock import ClockGuard
+from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms import clock_halt
-from candleviewer.oms.clock_halt import CLOCK_HALT_RETRY_AFTER_S, ClockHalt
+from candleviewer.oms.clock_halt import CLOCK_HALT_RETRY_AFTER_S, TRIPS_METRIC, ClockHalt
 from candleviewer.oms.errors import ClockDriftBlocked, problem_for
 from candleviewer.oms.fakes import FakeClockHealth
+from candleviewer.oms.ports import ClockHealth
 
 
 class Clock:
@@ -32,12 +36,17 @@ class Clock:
         return self.now
 
 
+def halt_over(health: ClockHealth, clock: Clock, **kwargs: Any) -> ClockHalt:
+    """A halt over `health`, its trip counter on a registry of its own."""
+    return ClockHalt(health, monotonic=clock, metrics=Metrics("demo"), **kwargs)
+
+
 def rig(**kwargs: Any) -> tuple[ClockHalt, FakeClockHealth, Clock]:
     """A halt over a fake clock measured healthy at 100 s."""
     clock = Clock()
     health = FakeClockHealth(clock)
     health.measure()
-    return ClockHalt(health, monotonic=clock, **kwargs), health, clock
+    return halt_over(health, clock, **kwargs), health, clock
 
 
 def refused(halt: ClockHalt) -> bool:
@@ -58,7 +67,7 @@ def test_an_unhealthy_clock_refuses_order_entry_untripped(offset_ms: float | Non
     health = FakeClockHealth(clock)
     if offset_ms is not None:
         health.measure(offset_ms)
-    halt = ClockHalt(health, monotonic=clock)
+    halt = halt_over(health, clock)
     assert refused(halt)
     health.measure(1_999.0)
     assert halt.refusal() is None
@@ -136,7 +145,7 @@ class _Unreadable:
 @pytest.mark.parametrize("age", [math.nan, math.inf])
 def test_an_age_that_shows_no_measurement_since_the_trip_fails_closed(age: float) -> None:
     clock = Clock()
-    halt = ClockHalt(_Unreadable(age), monotonic=clock)
+    halt = halt_over(_Unreadable(age), clock)
     assert halt.refusal() is None
     halt.trip()
     clock.now = 1e9
@@ -145,7 +154,7 @@ def test_an_age_that_shows_no_measurement_since_the_trip_fails_closed(age: float
 
 def test_each_refusal_is_a_fresh_503_clock_drift_with_its_retry_after() -> None:
     clock = Clock()
-    halt = ClockHalt(FakeClockHealth(clock), monotonic=clock, retry_after_s=7)
+    halt = halt_over(FakeClockHealth(clock), clock, retry_after_s=7)
     first, second = halt.refusal(), halt.refusal()
     assert isinstance(first, ClockDriftBlocked) and isinstance(second, ClockDriftBlocked)
     assert first is not second and (first.retry_after_s, second.retry_after_s) == (7, 7)
@@ -162,7 +171,7 @@ def test_a_retry_after_that_is_not_whole_seconds_from_one_is_refused(
 ) -> None:
     clock = Clock()
     with pytest.raises(error, match="retry_after_s"):
-        ClockHalt(FakeClockHealth(clock), monotonic=clock, retry_after_s=retry_after_s)
+        halt_over(FakeClockHealth(clock), clock, retry_after_s=retry_after_s)
 
 
 def test_a_trip_and_its_clearing_are_logged_once_each() -> None:
@@ -186,6 +195,34 @@ def test_a_trip_and_its_clearing_are_logged_once_each() -> None:
     assert logs[2]["halted_s"] == 2.0
 
 
+def test_each_trip_counts_on_the_counter_registered_from_its_catalogue_entry() -> None:
+    """CR-2B1-06, 24 Sec.8.6's distinct alert: every trip, a re-trip while halted too, adds one
+    to `oms_clock_halt_trips_total`, registered as the catalogue declares it, its help included;
+    a refusal or the halt's clearing adds nothing."""
+    [spec] = [s for s in CATALOGUE if s.name == TRIPS_METRIC]
+    declared = (spec.kind, spec.labels, spec.status, spec.owner_epic)
+    assert declared == ("counter", (), "planned", "E29")
+    metrics, clock = Metrics("demo"), Clock()
+    health = FakeClockHealth(clock)
+    health.measure()
+    halt = ClockHalt(health, monotonic=clock, metrics=metrics)
+
+    def trips() -> float | None:
+        return metrics.registry.get_sample_value(TRIPS_METRIC, {"env": "demo"})
+
+    assert trips() == 0.0
+    halt.trip()
+    halt.trip()
+    assert refused(halt) and trips() == 2.0
+    clock.now += 1
+    health.measure()
+    clock.now += 1
+    assert halt.refusal() is None and trips() == 2.0
+    family = TRIPS_METRIC.removesuffix("_total")
+    [documented] = [f.documentation for f in metrics.registry.collect() if f.name == family]
+    assert documented == spec.help
+
+
 @given(measured=st.integers(0, 10**6), tripped=st.integers(0, 10**6), later=st.integers(0, 10**6))
 def test_property_a_halt_clears_only_on_a_measurement_younger_than_its_trip(
     measured: int, tripped: int, later: int
@@ -193,7 +230,7 @@ def test_property_a_halt_clears_only_on_a_measurement_younger_than_its_trip(
     """Whole seconds keep the float arithmetic exact; at one instant, the measurement first."""
     clock = Clock(0.0)
     health = FakeClockHealth(clock)
-    halt = ClockHalt(health, monotonic=clock)
+    halt = halt_over(health, clock)
     for at, is_trip in sorted([(measured, False), (tripped, True)]):
         clock.now = float(at)
         if is_trip:
@@ -238,7 +275,7 @@ async def test_the_clock_guard_as_it_stands_is_the_halts_clock() -> None:
     guard = ClockGuard(
         server_time, sample_count=1, clock=mono, wall_ns=lambda: 0, mono_ns=lambda: 0
     )
-    halt = ClockHalt(guard, monotonic=mono)
+    halt = halt_over(guard, mono)
     assert refused(halt)
     await guard.measure_once()
     assert halt.refusal() is None

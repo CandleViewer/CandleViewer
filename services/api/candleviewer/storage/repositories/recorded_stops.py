@@ -88,12 +88,16 @@ UNSENT_ENTRY: Final[Mapping[str, object]] = MappingProxyType(
     }
 )
 #: The second: `rejected` with nothing filled, and its own `order_events` row into `rejected`
-#: (`REFUSED_BY`, the persisted states) came out of `submitting`, which only the create's answer
-#: leaves for `rejected`. A rejection out of `unknown` or `held` (reconciliation's, the operator's)
-#: is no such proof. No other order's rows are swept: its own steps settle them, voiding them only
-#: for an entry never sent or on an end the exchange confirmed unfilled, or leave them waiting for
-#: the complete read (24 Sec.8.8 rule 6), the rows of an order killed after its send and of one
-#: that ended out of `unknown` among them, so the sweep never voids a row blind (C-2.6).
+#: (`REFUSED_BY`, the persisted states) came out of `submitting`, which leaves for `rejected` only
+#: on an answer that the entry was never placed: the create's own refusal, or the command port's
+#: `EXPIRED_UNSENT` for a create a restart resumed that no lookup found within the venue's 24 h
+#: history, so it never landed (24 Sec.8.3 rule 6, [LANE-26]). Past that history a miss proves
+#: nothing, and the port answers `unknown` instead, never `rejected` (SEC-2B1-02). A rejection
+#: out of `unknown` or `held` (reconciliation's, the operator's) is no such proof. No other order's
+#: rows are swept: its own steps settle them, voiding them only for an entry never sent or on an
+#: end the exchange confirmed unfilled, or leave them waiting for the complete read (24 Sec.8.8
+#: rule 6), the rows of an order killed after its send and of one that ended out of `unknown`
+#: among them, so the sweep never voids a row blind (C-2.6).
 REFUSED_ENTRY: Final[Mapping[str, object]] = MappingProxyType(
     {"state": "rejected", "cum_exec_qty": Decimal(0)}
 )

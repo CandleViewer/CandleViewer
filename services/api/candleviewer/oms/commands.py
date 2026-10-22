@@ -11,22 +11,33 @@ answer is a mapping B1's guards read (24 Sec.14.4 `OrderAck`), never the exchang
 **place.** The request is built from the stored order only: the `NewOrder` the pipeline
 registered (`expect`), else the stored row, so a retry sends the same `order_link_id` and the same
 native stop (C-2.10, C-2.6). A stop or take-profit that is not a finite price above zero is
-refused before anything is sent, whatever the exchange port checks (#2877 ruling 2). A reduce-only
-order with a reducing intent takes the `critical` lane, any other the `entry` lane (SR-E29-01, 24
-Sec.8.7). A registered order is a first send (`place_or_adopt`). One not registered is a create a
-restart resumes (SR-E29-15, [LANE-26]), in this order:
+refused before anything is sent, whatever the exchange port checks (#2877 ruling 2), and so is an
+order that is not reduce-only and names no stop (C-2.6, SEC-2B1-04), which `FirstPersist.check`
+and B1's gate already refuse upstream. A reduce-only order with a reducing intent takes the
+`critical` lane, any other the `entry` lane (SR-E29-01, 24 Sec.8.7). A registered order is a first
+send (`place_or_adopt`). One not registered is a create a restart resumes (SR-E29-15, [LANE-26]),
+in this order:
 
 1. the id is looked up first, whatever the switches say, as reading is never an order: an order
    found is adopted and nothing is sent (C-2.10);
-2. the synchronous switches are asked (C-2.21): a refusal is `ResendRefused`, nothing sent;
+2. the synchronous switches, then the clock halt, are asked (C-2.21): a refusal is
+   `ResendRefused`, nothing sent, so no create is re-sent under a clock a `10002` tripped
+   (SEC-2B1-01);
 3. where history never expires (`order_retention_days` None: live), a create older than
-   `LIVE_RESEND_MAX_AGE_S` is never re-sent: it ends `rejected` with `b01.EXPIRED_UNSENT`, its
-   `oms.resend_refused` record (its age and the bound) written ahead and the user alerted
-   (`OrderNotices`, `alert` `order_never_sent`);
+   `LIVE_RESEND_MAX_AGE_S` is never re-sent. Within the venue's history span
+   (`LIVE_HISTORY_SPAN_S`, 24 h) the miss means it never landed: it ends `rejected` with
+   `b01.EXPIRED_UNSENT`, its `oms.resend_refused` record (its age and the bound) written ahead
+   and the user alerted (`OrderNotices`, `alert` `order_never_sent`, "not found within the
+   venue's 24 h history"). At or past the span the miss proves nothing (24 Sec.14.1): it is
+   answered as an empty lookup, so B1 lands it in `unknown` for reconciliation, and its entry's
+   attach rows are never voided blind (SEC-2B1-02);
 4. otherwise `adopt_or_resend` looks once more and re-sends the same request while history still
    covers the id (Sec.8.3 rule 6: demo keeps its 6 days).
 
-The exchange calls are bounded together by `SUBMIT_TIMEOUT_S`.
+One `SUBMIT_TIMEOUT_S` deadline bounds all of `place` (CR-2B1-04): the stored row's and the
+account's reads, the exchange calls, and the answer's record, hand-over, credential report or
+alert each end by it, each within its own bound too, so a best-effort one cut by it is logged and
+the answer stands, as on its own timeout.
 
 The answer: an accepted create names its exchange order id, text of 1 to `b01.MAX_TEXT`
 characters, printable, with no whitespace (#4020 Low 1), else `AckWithoutOrderId`, an ambiguous
@@ -51,7 +62,8 @@ which is B1's; a resumed create's and an attach's carry none (21 Sec.3.10.1).
 **24 Sec.8.6, before any answer.** An `AUTH_ERROR` that carries the exchange's return code, answered
 or raised, goes to `CredentialRejections` as it came (the orchestrator's Q-I ruling: `oms` holds no
 exchange code, C-2.2); a `CLOCK_DRIFT` trips the clock halt, which refuses order entry until a fresh
-measurement clears it, and starts one resync of the clock at a time.
+measurement clears it, and starts one resync of the clock at a time, which `aclose()` cancels at
+shutdown.
 
 **lookup.** The id in open orders, then in history: the order found, else an empty mapping, on
 which B1 sends. A found order is audited as above when it matches, and handed over first when it
@@ -60,14 +72,16 @@ does not; a hand-over that fails raises, as an empty answer would send the order
 **attach_stop** (24 Sec.8.8 rules 2 and 6). The position is read first. One that shows the
 requested stop is answered with that reading and audited (`sl.attached`, `already_set`), and
 nothing is recorded or sent (the orchestrator's Q-E ruling). Otherwise the gate clears the
-position's key (21 Sec.3.3.11), the request is recorded ahead (`trading_stop`, audited
-`sl.attached` in the insert's transaction), and one `trading-stop` call sends the stop with the
-take-profit the position shows (24 Sec.8.9: both sides), that side left out when the reading shows
-no finite price above zero, so nothing is removed by implication. Its answer settles the row
-(`answered`, or `refused` with its void audited `sl.modified`), and a read-back answers B1. A send
-that raises leaves the row in flight, for the complete read. A Partial-mode stop is refused,
-audited, before anything is sent (Q-F: no stop size can be sent until G-8b's `sl_size`, #3963), so
-B1 goes to `sl_missing` and B8.
+position's key (21 Sec.3.3.11, bounded as every other call), the request is recorded ahead
+(`trading_stop`, audited `sl.attached` in the insert's transaction), and one `trading-stop` call
+sends the stop with the take-profit the position shows (24 Sec.8.9: both sides), that side left
+out when the reading shows no finite price above zero, so nothing is removed by implication. Its
+answer settles the row (`answered`, or `refused` with its void audited `sl.modified`), and a
+read-back answers B1. A send that raises leaves the row in flight, for the complete read. A
+Partial-mode stop is refused, audited, before anything is sent (Q-F: no stop size can be sent
+until G-8b's `sl_size`, #3963), so B1 goes to `sl_missing` and B8. The kill switch, the switches
+and the clock halt never gate it: a protective write, which 24 Sec.8.10 carves out (C-2.6,
+C-4.14).
 """
 
 from __future__ import annotations
@@ -107,7 +121,7 @@ from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, Re
 
 from .classify import REDUCING_INTENTS
 from .clock_halt import ClockHalt
-from .errors import AckWithoutOrderId, HandoverUnavailable, ResendRefused
+from .errors import AckWithoutOrderId, HandoverUnavailable, OrderRefused, ResendRefused
 from .order_link_resolution import (
     Adopted,
     HistoryRetentionPolicy,
@@ -137,6 +151,7 @@ from .routing import RoutedPort, TradingRouter, read_position, retry_after
 __all__ = [
     "ALREADY_SET",
     "EXPIRED_UNSENT_REASON",
+    "LIVE_HISTORY_SPAN_S",
     "LIVE_RESEND_MAX_AGE_S",
     "MAX_WATCHES",
     "NEVER_SENT_ALERT",
@@ -152,20 +167,33 @@ __all__ = [
     "place_request",
 ]
 
-#: The bound on one `place`'s exchange calls together, in seconds: the create and, after a
-#: duplicate, its lookups; or a resumed create's lookups and re-send. An entry's stop request is
-#: answered within `CV_PERSIST_TIMEOUT` + this + `CV_PERSIST_TIMEOUT` ([LANE-25]).
+#: The bound on one `place` as a whole, in seconds (CR-2B1-04): one deadline that the stored
+#: row's and the account's reads, the exchange calls (the create and, after a duplicate, its
+#: lookups; or a resumed create's lookups and re-send) and the answer's record, hand-over,
+#: credential report or alert all end by. So an entry's stop request is answered within
+#: `CV_PERSIST_TIMEOUT` + this + `CV_PERSIST_TIMEOUT` ([LANE-25]), inside
+#: `ports.STOP_REQUEST_BOUND_S` and B1's own `CV_COMMAND_TIMEOUT`. It also bounds `attach_stop`'s
+#: one `trading-stop` call.
 SUBMIT_TIMEOUT_S: Final = 5.0
-#: The bound on each other call (a read, the store, an audit, a notice, a hand-over), in seconds.
+#: The bound on each other call (a read, the store, an audit, a notice, a hand-over, the stop
+#: gate), in seconds; inside `place` its deadline may end one sooner.
 PORT_TIMEOUT_S: Final = 5.0
 #: How old a create a restart resumes may be and still be re-sent where history never expires
 #: (`order_retention_days` None: live), in seconds ([LANE-26], binding). Tighten it, never raise
 #: it: a resumed send survives a restart or a dropped connection measured in seconds, and after
-#: minutes the market and the trader's intent have moved. It also sits far inside the 24 hours live
-#: history shows an order that ended unfilled (24 Sec.14.1, assumed pending E29-K01), so a miss in
-#: open orders and history within it means the create never landed. At exactly the bound the
-#: create is still re-sent; a microsecond past it, never. The constructor refuses a larger figure.
+#: minutes the market and the trader's intent have moved. It also sits far inside
+#: `LIVE_HISTORY_SPAN_S`, so a miss in open orders and history within it means the create never
+#: landed. At exactly the bound the create is still re-sent; a microsecond past it, never. The
+#: constructor refuses a larger figure.
 LIVE_RESEND_MAX_AGE_S: Final = 120.0
+#: How far back live's history read shows every order the venue took, in seconds: a `Cancelled`,
+#: `Rejected` or `Deactivated` order for 24 hours only, one with no fill for 7 days only (24
+#: Sec.14.1, assumed pending E29-K01). Read against the stored `created_ts`, which no order of the
+#: row can predate: a resumed create younger than it that no lookup found never landed, and ends
+#: unsent ([LANE-26]); from it on a miss proves nothing, and the create is answered as an empty
+#: lookup, `unknown` for reconciliation (SEC-2B1-02). At exactly the span a miss proves nothing.
+LIVE_HISTORY_SPAN_S: Final = 86_400.0
+_LIVE_HISTORY_SPAN_US: Final = round(LIVE_HISTORY_SPAN_S * 1_000_000)
 #: Registered orders not yet sent (C-2.18): past it the oldest is dropped, its watch answered None.
 MAX_WATCHES: Final = 1024
 #: `attach_stop`'s audit reasons and its local refusal's code.
@@ -343,13 +371,18 @@ def _price(value: Decimal) -> bool:
 
 
 def _check_stops(order: StoredOrder) -> None:
-    """#2877 ruling 2 (C-2.6): the create's stop and take-profit, where it names one, are finite
-    prices above zero, checked here before anything is sent and whatever the exchange port checks,
-    as a zero or a negative could remove a protection by implication. `ValueError` otherwise, so
-    B1 lands the order in `unknown` with nothing sent."""
+    """C-2.6, checked here before anything is sent, whatever the callers and the exchange port
+    check: an order that is not reduce-only carries its native stop (SEC-2B1-04; `FirstPersist`
+    and B1's gate refuse one without it upstream), and its stop and take-profit, where it names
+    one, are finite prices above zero (#2877 ruling 2), as a zero or a negative could remove a
+    protection by implication. `ValueError` otherwise, logged CRITICAL, so B1 lands the order in
+    `unknown` with nothing sent."""
+    link = order.order_link_id
+    if not order.reduce_only and order.stop_loss is None:
+        _log().critical("oms_create_stop_missing", order_link_id=link)
+        raise ValueError("an order that is not reduce-only carries its native stop (C-2.6)")
     for name, value in (("stop_loss", order.stop_loss), ("take_profit", order.take_profit)):
         if value is not None and not _price(value):
-            link = order.order_link_id
             _log().critical("oms_create_price_refused", order_link_id=link, side=name)
             raise ValueError(f"the order's {name} is not a price above zero")
 
@@ -369,7 +402,8 @@ def _seconds(us: int) -> str:
 
 @dataclass(frozen=True, slots=True)
 class _Expired:
-    """A resumed create no lookup found, older than the live re-send bound ([LANE-26])."""
+    """A resumed live create no lookup found, older than the live re-send bound and younger than
+    the venue's history span ([LANE-26], SEC-2B1-02)."""
 
     age_us: int
 
@@ -449,11 +483,23 @@ class OmsCommandPort:
         self._max_watches = max_watches
         self._watches: OrderedDict[UUID, PlaceWatch] = OrderedDict()
         self._resync: asyncio.Task[None] | None = None
+        self._closed = False
 
     @property
     def resync_task(self) -> asyncio.Task[None] | None:
         """The clock resync the last `CLOCK_DRIFT` started, while one runs or has run."""
         return self._resync
+
+    async def aclose(self) -> None:
+        """At shutdown (slice 3's lifecycle; every task owned, C-2.18): no `CLOCK_DRIFT` starts a
+        resync from here on, and the one running is cancelled and awaited. The halt stays as it
+        is. A second call does nothing more."""
+        self._closed = True
+        task = self._resync
+        if task is None or task.done():
+            return
+        task.cancel()
+        await asyncio.wait([task])  # its cancellation is its end; the caller's own propagates
 
     # --- place -----------------------------------------------------------------------------
 
@@ -489,16 +535,16 @@ class OmsCommandPort:
 
     async def _place(self, command: b01.Command, watch: PlaceWatch | None) -> dict[str, Any]:
         if watch is None:
-            return await self._resume(command, await self._stored(command))
+            return await self._resume(command)
         _check_names(command, watch.order)
         order = watch.order
-        account = await self._account(order)
+        _check_stops(order)
+        by = self._deadline(self._submit_timeout_s)  # all of `place` ends by it (CR-2B1-04)
+        account = await self._account(order, by=by)
         port = self._router.port_for(account.environment)
         request = place_request(order, account)
-        _check_stops(order)
         try:
-            async with asyncio.timeout(self._submit_timeout_s):
-                outcome = await self._venue_gated(account, place_or_adopt(port, request))
+            outcome = await self._venue_gated(account, place_or_adopt(port, request), by=by)
         except RateBudgetExceededError as exc:
             _log().warning("oms_create_rate_refused", order_link_id=order.order_link_id)
             return {
@@ -506,26 +552,30 @@ class OmsCommandPort:
                 "error_code": OmsErrorCode.RATE_BUDGET_EXCEEDED.value,
                 "retry_after_s": retry_after(exc.retry_after_s),
             }
-        return await self._answer(command, account, outcome, watch.request_id)
+        return await self._answer(command, account, outcome, watch.request_id, by=by)
 
-    async def _resume(self, command: b01.Command, row: OrderRow) -> dict[str, Any]:
-        """A create a restart resumes (module docstring, [LANE-26]). No refused rate token is
-        answered as a rejection here: the earlier create may have landed (`adopt_or_resend`)."""
-        account = await self._account(row)
+    async def _resume(self, command: b01.Command) -> dict[str, Any]:
+        """A create a restart resumes (module docstring, [LANE-26]), all of it by one deadline. No
+        refused rate token is answered as a rejection here: the earlier create may have landed
+        (`adopt_or_resend`)."""
+        by = self._deadline(self._submit_timeout_s)
+        row = await self._stored(command, by=by)
+        account = await self._account(row, by=by)
         port = self._router.port_for(account.environment)
         request = place_request(row, account)
-        async with asyncio.timeout(self._submit_timeout_s):
-            outcome = await self._venue_gated(account, self._resumed(account, port, request, row))
+        resumed = self._resumed(account, port, request, row)
+        outcome = await self._venue_gated(account, resumed, by=by)
         if isinstance(outcome, _Expired):
-            return await self._expire(account, row, outcome.age_us)
-        return await self._answer(command, account, outcome, None)
+            return await self._expire(account, row, outcome.age_us, by=by)
+        return await self._answer(command, account, outcome, None, by=by)
 
     async def _resumed(
         self, account: AccountRef, port: RoutedPort, request: PlaceOrderRequest, row: OrderRow
     ) -> PlaceOutcome | _Expired:
-        """[LANE-26]'s order: the lookup whatever the switches say, the switches, the live bound,
-        then `adopt_or_resend`, which looks once more just before its one re-send (SR-E29-15) and
-        applies rule 6 from the port's own retention (24 Sec.8.3: demo's 6 days)."""
+        """[LANE-26]'s order: the lookup whatever the switches say, the switches and the clock
+        halt, the live bounds, then `adopt_or_resend`, which looks once more just before its one
+        re-send (SR-E29-15) and applies rule 6 from the port's own retention (24 Sec.8.3: demo's 6
+        days)."""
         link = request.order_link_id
         try:
             found = await find_by_link_id(port, request)
@@ -536,38 +586,53 @@ class OmsCommandPort:
             return Unresolved(order_link_id=link, reason="lookup_failed")
         if found is not None:
             return Adopted(order=found[0], source=found[1])
-        refusal = self._switches.refusal(account.account_id, account.environment)
+        refusal: OrderRefused | None = self._switches.refusal(
+            account.account_id, account.environment
+        )
+        if refusal is None:  # SEC-2B1-01: never a re-send under a clock a `10002` tripped
+            refusal = self._clock_halt.refusal()
         if refusal is not None:
-            _log().warning("oms_resend_refused", order_link_id=link)
+            _log().warning("oms_resend_refused", order_link_id=link, refusal=type(refusal).__name__)
             raise ResendRefused(refusal)
         retention = HistoryRetentionPolicy.from_capabilities(port.capabilities)
         created, now = _us(row.created_ts), self._now_us()
-        if retention.retention_days is None and now - created > self._live_resend_max_age_us:
-            return _Expired(age_us=now - created)
+        age = now - created
+        if retention.retention_days is None and age > self._live_resend_max_age_us:
+            if age >= _LIVE_HISTORY_SPAN_US:  # SEC-2B1-02: a miss there proves nothing
+                _log().warning("oms_resend_past_history", order_link_id=link, age_s=_seconds(age))
+                return Unresolved(order_link_id=link, reason="history_expired")
+            return _Expired(age_us=age)
         _check_stops(row)
         return await adopt_or_resend(
             port, request, retention=retention, created_at=created, now=now
         )
 
-    async def _expire(self, account: AccountRef, row: OrderRow, age_us: int) -> dict[str, Any]:
-        """[LANE-26]: a resumed create past the live bound that no lookup found ends unsent, through
-        `submitting`'s last arm (`rejected`, `b01.EXPIRED_UNSENT`). Its record is written ahead
-        (C-2.9: one that does not land raises, so B1 lands the order in `unknown`), then the user is
-        alerted; an alert that does not land is logged CRITICAL, never dropped silently."""
+    async def _expire(
+        self, account: AccountRef, row: OrderRow, age_us: int, *, by: float
+    ) -> dict[str, Any]:
+        """[LANE-26]: a resumed create past the live bound that no lookup found within the venue's
+        history span ends unsent, through `submitting`'s last arm (`rejected`,
+        `b01.EXPIRED_UNSENT`). Its record is written ahead (C-2.9: one that does not land raises,
+        so B1 lands the order in `unknown`), then the user is alerted that the order was not found
+        within the venue's 24 h history; an alert that does not land, by `place`'s deadline or at
+        all, is logged CRITICAL, never dropped silently: the order's end and its record stand."""
         link = row.order_link_id
         age_s, bound_s = _seconds(age_us), _seconds(self._live_resend_max_age_us)
         detail = {"order_link_id": link, "age_s": age_s, "bound_s": bound_s}
         reason = EXPIRED_UNSENT_REASON
         await self._audit_order(
-            row.id, account.account_id, RESEND_REFUSED, "denied", "warning", reason, detail
+            row.id, account.account_id, RESEND_REFUSED, "denied", "warning", reason, detail, by=by
         )
         _log().warning("oms_resend_expired", order_link_id=link, age_s=age_s, bound_s=bound_s)
         when = row.created_ts.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         alert = {"alert": NEVER_SENT_ALERT, "created_at": row.created_ts.isoformat()}
-        alert["message"] = f"an order from {when} was never sent; re-enter it if still wanted"
+        alert["message"] = (
+            f"an order from {when} was not found within the venue's 24 h history and was not "
+            "placed; re-enter it if still wanted"
+        )
         notice = OrderNotice("alert", row.id, row.exchange_account_id, link, alert)
         try:
-            await self._bounded(self._notices.notify(notice))
+            await self._bounded(self._notices.notify(notice), by=by)
         except Exception as exc:  # the alert is lost, never the order's end or its record
             lost = type(exc).__name__
             _log().critical("oms_never_sent_alert_lost", order_link_id=link, failure=lost)
@@ -579,13 +644,15 @@ class OmsCommandPort:
         account: AccountRef,
         outcome: PlaceOutcome,
         request_id: UUID | None,
+        *,
+        by: float,
     ) -> dict[str, Any]:
         if isinstance(outcome, Sent):
-            return await self._sent(account, outcome.ack)
+            return await self._sent(account, outcome.ack, by=by)
         if isinstance(outcome, Adopted):
             found = found_view(outcome.order)
             order, source = outcome.order, outcome.source
-            if await self._settled_found(command, account, order, found, source, request_id):
+            if await self._settled_found(command, account, order, found, source, request_id, by=by):
                 return _duplicate(found)
             return _duplicate({})
         _log().warning(
@@ -598,7 +665,7 @@ class OmsCommandPort:
             return {"ok": False, "error_code": _DUPLICATE}
         return _duplicate({})
 
-    async def _sent(self, account: AccountRef, ack: OrderAck) -> dict[str, Any]:
+    async def _sent(self, account: AccountRef, ack: OrderAck, *, by: float) -> dict[str, Any]:
         if ack.ok:
             kept = order_id_kept(ack.exchange_order_id)
             if kept is None:
@@ -607,7 +674,7 @@ class OmsCommandPort:
                     "an accepted create names no exchange order id the OMS keeps"
                 )
             return {"ok": True, "exchange_order_id": kept, **_record(ack)}
-        await self._venue(account, ack.error_code, ack.exchange_ret_code)
+        await self._venue(account, ack.error_code, ack.exchange_ret_code, by=by)
         refused = {"ok": False, "error_code": ack.error_code}
         return {**refused, "exchange_ret_code": ack.exchange_ret_code, **_record(ack)}
 
@@ -619,11 +686,13 @@ class OmsCommandPort:
         found: Mapping[str, Any],
         source: str,
         request_id: UUID | None,
+        *,
+        by: float | None = None,
     ) -> bool:
         """What a lookup found under the row's id, settled before the answer: a full match is
         audited as adopted (C-2.9), with the registering request's id when there is one, and True;
         another order is handed to reconciliation first, True once it is, False when it cannot be
-        (S2-Q3)."""
+        (S2-Q3). Each call ends by `by`, `place`'s deadline, when there is one."""
         try:
             match = b01.full_match(command.order, found)
         except ValueError:  # malformed money, which B1's guards deny too
@@ -642,12 +711,13 @@ class OmsCommandPort:
                 ADOPTED,
                 detail,
                 request_id=request_id,
+                by=by,
             )
             _log().info("oms_create_adopted", order_link_id=link, source=source)
             return True
         _log().error("oms_link_id_held_by_another_order", order_link_id=link, source=source)
         try:
-            await self._bounded(self._handovers.hand_over_order(account.account_id, order))
+            await self._bounded(self._handovers.hand_over_order(account.account_id, order), by=by)
         except Exception as exc:  # S2-Q3: nothing handed over, so nothing is held on it
             _log().error("oms_handover_failed", order_link_id=link, failure=type(exc).__name__)
             return False
@@ -664,8 +734,8 @@ class OmsCommandPort:
         account = await self._account(order)
         port = self._router.port_for(account.environment)
         request = place_request(order, account)
-        async with asyncio.timeout(self._port_timeout_s):
-            found = await self._venue_gated(account, find_by_link_id(port, request))
+        by = self._deadline(self._port_timeout_s)
+        found = await self._venue_gated(account, find_by_link_id(port, request), by=by)
         if found is None:
             return {}
         exchange_order, source = found
@@ -706,7 +776,8 @@ class OmsCommandPort:
                 order_id, account_id, SL_ATTACHED, "success", "info", ALREADY_SET, detail
             )
             return {"ok": True, "position": _reading(before)}
-        await self._gate.clear(PositionKey(account.account_id, row.symbol, row.position_idx))
+        key = PositionKey(account.account_id, row.symbol, row.position_idx)
+        await self._bounded(self._gate.clear(key))  # whatever the gate bounds itself (C-2.18)
         recorded = await self._record_stop(row, stop, detail)
         request = TradingStopRequest(
             account=account,
@@ -715,8 +786,8 @@ class OmsCommandPort:
             stop_loss=stop,
             take_profit=_kept_take_profit(before),
         )
-        async with asyncio.timeout(self._submit_timeout_s):  # a raise leaves the row in flight
-            ack = await self._venue_gated(account, port.set_trading_stop(request))
+        by = self._deadline(self._submit_timeout_s)  # a raise leaves the row in flight
+        ack = await self._venue_gated(account, port.set_trading_stop(request), by=by)
         if not ack.ok:
             await self._venue(account, ack.error_code, ack.exchange_ret_code)
         await self._settle_stop(recorded, ack, detail)
@@ -800,13 +871,13 @@ class OmsCommandPort:
 
     # --- the rest ----------------------------------------------------------------------------
 
-    async def _stored(self, command: b01.Command) -> OrderRow:
+    async def _stored(self, command: b01.Command, *, by: float | None = None) -> OrderRow:
         """The command's order as stored: by its account and `order_link_id`, and the same id."""
         link = b01.text_id(command.order.get("order_link_id"))
         if link is None:
             raise ValueError("the command names no order_link_id")
         account_id = _uuid(command.order.get("account_id"))
-        row = await self._bounded(self._orders.get_by_link_id(account_id, link))
+        row = await self._bounded(self._orders.get_by_link_id(account_id, link), by=by)
         if row is None:
             raise ValueError("no stored order of the account holds the command's id")
         _check_names(command, row)
@@ -821,10 +892,10 @@ class OmsCommandPort:
         _check_names(command, watch.order)
         return watch.order, watch.request_id
 
-    async def _account(self, order: StoredOrder) -> AccountRef:
+    async def _account(self, order: StoredOrder, *, by: float | None = None) -> AccountRef:
         """The order's account as the trading port takes it, with its own key (SR-E27-21)."""
         account_id = AccountId(order.exchange_account_id)
-        account = await self._bounded(self._accounts.trading_account(account_id))
+        account = await self._bounded(self._accounts.trading_account(account_id), by=by)
         if account.account_id != order.exchange_account_id:
             raise ValueError("the trading account resolved is another account's")
         return account
@@ -833,36 +904,52 @@ class OmsCommandPort:
         self, account: AccountRef, port: RoutedPort, row: OrderRow
     ) -> Position | None:
         read = read_position(port, account, row.symbol, row.position_idx)
-        return await self._bounded(self._venue_gated(account, read))
+        return await self._venue_gated(account, read, by=self._deadline(self._port_timeout_s))
 
-    async def _bounded[T](self, call: Awaitable[T]) -> T:
-        async with asyncio.timeout(self._port_timeout_s):
+    def _deadline(self, seconds: float) -> float:
+        """The loop's time `seconds` from now: a deadline one call, or all of `place`, ends by."""
+        return asyncio.get_running_loop().time() + seconds
+
+    async def _bounded[T](self, call: Awaitable[T], *, by: float | None = None) -> T:
+        """`call` within `PORT_TIMEOUT_S`, and by `by` (`place`'s deadline, CR-2B1-04) when that
+        comes first: each call keeps a timeout of its own, so a caller that catches one (a
+        best-effort report, a hand-over, an alert) still catches it at the deadline."""
+        when = self._deadline(self._port_timeout_s)
+        async with asyncio.timeout_at(when if by is None else min(when, by)):
             return await call
 
-    async def _venue_gated[T](self, account: AccountRef, call: Awaitable[T]) -> T:
-        """`call`, with 24 Sec.8.6's branch for a raised `AuthError` or `ClockDriftError`."""
+    async def _venue_gated[T](self, account: AccountRef, call: Awaitable[T], *, by: float) -> T:
+        """The exchange `call`, by `by`; then, out of its window, 24 Sec.8.6's branch for a
+        raised `AuthError` or `ClockDriftError`, its report bounded on its own (and by `by`)."""
         try:
-            return await call
+            async with asyncio.timeout_at(by):
+                return await call
         except (AuthError, ClockDriftError) as exc:
-            await self._venue(account, exc.code.value, exc.exchange_ret_code)
+            await self._venue(account, exc.code.value, exc.exchange_ret_code, by=by)
             raise
 
-    async def _venue(self, account: AccountRef, code: str | None, ret_code: int | None) -> None:
+    async def _venue(
+        self,
+        account: AccountRef,
+        code: str | None,
+        ret_code: int | None,
+        *,
+        by: float | None = None,
+    ) -> None:
         """24 Sec.8.6, before the answer (module docstring). Its own failures are logged, never
         raised: the exchange's answer stands."""
         if code == OmsErrorCode.CLOCK_DRIFT:
             self._clock_halt.trip()
             _log().critical("oms_clock_drift_halt", environment=account.environment)
-            if self._resync is None or self._resync.done():
+            if not self._closed and (self._resync is None or self._resync.done()):
                 resync = self._clock_halt.resync(reason=CLOCK_RESYNC_REASON)
                 self._resync = spawn(resync, name="oms-clock-resync")
         elif code == OmsErrorCode.AUTH_ERROR and ret_code is not None:
+            refused = self._credentials.refused(
+                account.account_id, error_code=code, exchange_ret_code=ret_code
+            )
             try:
-                await self._bounded(
-                    self._credentials.refused(
-                        account.account_id, error_code=code, exchange_ret_code=ret_code
-                    )
-                )
+                await self._bounded(refused, by=by)
             except Exception as exc:  # the rejection is lost, never the order's answer
                 _log().critical("oms_auth_rejection_lost", failure=type(exc).__name__)
 
@@ -877,14 +964,15 @@ class OmsCommandPort:
         detail: Mapping[str, str | None],
         *,
         request_id: UUID | None = None,
+        by: float | None = None,
     ) -> None:
-        """A record about the order, written ahead of its answer (C-2.9): one that does not land
-        raises, so nothing is answered unrecorded. `request_id` is the registering request's
-        (#3990), never read from the context the call runs in."""
+        """A record about the order, written ahead of its answer (C-2.9): one that does not land,
+        by `by` when given, raises, so nothing is answered unrecorded. `request_id` is the
+        registering request's (#3990), never read from the context the call runs in."""
         record = OrderAuditRecord(
             action, order_id, account_id, outcome, severity, reason, detail, request_id
         )
-        await self._bounded(self._audit.write(record))
+        await self._bounded(self._audit.write(record), by=by)
 
 
 def _check_names(command: b01.Command, order: StoredOrder) -> None:

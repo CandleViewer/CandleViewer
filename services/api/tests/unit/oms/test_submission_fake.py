@@ -14,6 +14,8 @@ import pytest
 from sqlalchemy import CheckConstraint
 
 from candleviewer.db import models
+from candleviewer.domain.primitives import AccountId
+from candleviewer.exchange.base.models import AccountRef
 from candleviewer.oms import fakes
 from candleviewer.oms.fakes import InMemoryOrderStore as Fake
 from candleviewer.oms.fakes import InMemoryRecordedStopStore, InMemorySubmissionStore
@@ -58,6 +60,17 @@ def accounts() -> tuple[UUID, UUID]:
     return uuid4(), uuid4()
 
 
+def demo_account(fake: Fake) -> tuple[UUID, UUID]:
+    """A demo account, as the Postgres harness makes one, its environment seeded from its
+    `AccountRef` (`trg_tgl_env`, SEC-2B1-03), and its profile, of which the fake holds the id."""
+    account, profile = accounts()
+    ref = AccountRef(
+        account_id=AccountId(account), uid="100001", environment="demo", key_ref=str(uuid4())
+    )
+    fake.submissions.seed_account(ref)
+    return account, profile
+
+
 class TestInMemorySubmissionStores(SubmissionContract):
     @pytest.fixture
     def fake(self) -> Fake:
@@ -73,10 +86,19 @@ class TestInMemorySubmissionStores(SubmissionContract):
 
         return Harness(
             submissions=fake.submissions, anchors=fake.anchors, stops=fake.stops, orders=fake,
-            executions=fake.executions, new_user=uuid4, new_account=accounts,
+            executions=fake.executions, new_user=uuid4, new_account=lambda: demo_account(fake),
             refuse=fake.submissions.refuse, bounded=bounded,
             held=lambda first, order: held(fake, first, order),
         )  # fmt: skip
+
+    async def test_a_leg_on_an_account_never_seeded_passes_the_environment_trigger(
+        self, fake: Fake
+    ) -> None:
+        """`trg_tgl_env` passes a leg whose account's environment Postgres reads as NULL; here,
+        one no `AccountRef` seeded."""
+        first, order = entry(uuid4(), *accounts(), group={"env": "live"})
+        await fake.submissions.create_first(first, order, EVENT)
+        assert held(fake, first, order) == (1, 1, 1, 1, 1)
 
     @pytest.mark.parametrize("committed", [False, True])
     async def test_a_fault_at_the_commit(self, fake: Fake, committed: bool) -> None:

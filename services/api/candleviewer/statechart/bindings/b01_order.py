@@ -226,9 +226,10 @@ PAIRING: Final = ("exchange_order_id", *FACTS)
 #: two reconciliation passes that found nothing (Sec.8.5).
 NATIVE_STOP_REQUIRED: Final = "NATIVE_STOP_REQUIRED"
 UNRESOLVED_AFTER_RECONCILE: Final = "UNRESOLVED_AFTER_RECONCILE"
-#: The command port's answer to a resumed create too old to re-send that no lookup found
-#: (E29-T04, [LANE-26]; 24 Sec.8.3 rule 6): nothing was sent, so `submitting`'s last arm ends
-#: the order `rejected`, and `map_reject_code` keeps it as the row's reason.
+#: The command port's answer to a resumed create too old to re-send that no lookup found within
+#: the venue's 24 h history (E29-T04, [LANE-26]; 24 Sec.8.3 rule 6): nothing was sent, so
+#: `submitting`'s last arm ends the order `rejected`, and `map_reject_code` keeps it as the row's
+#: reason. Past that history the port answers an empty lookup instead (`unknown`, SEC-2B1-02).
 EXPIRED_UNSENT: Final = "EXPIRED_UNSENT"
 #: Bounds on what a payload may put into context (C-2.18): fills per order, id text, and money as
 #: 22's `Decimal` text (C6: no exponent, space or `_`) with numeric(38,18)'s 20 + 18 digits.

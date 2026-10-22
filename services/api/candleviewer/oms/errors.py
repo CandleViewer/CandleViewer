@@ -206,9 +206,9 @@ class AckWithoutOrderId(OmsError):
 
 
 class ResendRefused(OmsError):
-    """A create resumed after a restart, refused by the synchronous switches just before its
-    re-send (C-2.21: the kill switch, live enablement, the order-entry gate): nothing was sent.
-    `refusal` is the switch's own answer."""
+    """A create resumed after a restart, refused just before its re-send by the synchronous
+    switches (C-2.21: the kill switch, live enablement, the order-entry gate) or by the clock
+    halt (24 Sec.8.6 `10002`, SEC-2B1-01): nothing was sent. `refusal` is their own answer."""
 
     def __init__(self, refusal: OrderRefused) -> None:
         super().__init__(f"the resumed create was not sent: {type(refusal).__name__}")

@@ -166,9 +166,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # execution B1 refused as hostile (OM-T04); the OMS facade writes it ahead (system actor).
         "oms.reconcile_anomaly",
         # E29-T04 (#913, [LANE-26]; 24 Sec.8.3 rule 6): a create a restart resumed, which no lookup
-        # found and which is older than the live re-send bound, ended `rejected` unsent; the
-        # command port writes it ahead (system actor), the order its object, its age and the bound
-        # in the detail.
+        # found within the venue's 24 h history and which is older than the live re-send bound,
+        # ended `rejected` unsent; the command port writes it ahead (system actor), the order its
+        # object, its age and the bound in the detail.
         "oms.resend_refused",
         # E29-T04 (#913, 24 Sec.15.5, 21 Sec.3.3.11 "Audit"): a stop request the OMS records for a
         # position, written ahead with its row (`sl.attached`; `tp.modified` for a take-profit

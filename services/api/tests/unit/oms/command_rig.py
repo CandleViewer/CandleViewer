@@ -16,6 +16,7 @@ from candleviewer.domain.primitives import AccountId, Environment, GroupId, Side
 from candleviewer.exchange.base.errors import ServiceUnavailableError
 from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, Order, Position, RateLane
+from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.clock_halt import ClockHalt
 from candleviewer.oms.commands import OmsCommandPort
 from candleviewer.oms.errors import HandoverUnavailable, TradingDisabled
@@ -27,7 +28,12 @@ from candleviewer.oms.fakes import (
 )
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_machine import OrderAuditRecord, _order_fields
-from candleviewer.oms.ports import KeyedRecord, OrderHandovers, RefuseWhileWaiting
+from candleviewer.oms.ports import (
+    KeyedRecord,
+    OrderHandovers,
+    RefuseWhileWaiting,
+    StopRequestGate,
+)
 from candleviewer.oms.repository import OrderRepository, RecordedStopRepository
 from candleviewer.oms.routing import TradingRouter
 from candleviewer.statechart.bindings import b01_order as b01
@@ -298,6 +304,7 @@ class Rig:
     now: Now
     monotonic: Monotonic
     notices: Notices
+    metrics: Metrics
 
     def calls(self, port: FakeTradingPort | None = None) -> list[str]:
         return [call.method for call in (port or self.demo).calls]
@@ -314,6 +321,7 @@ class Rig:
 def build_rig(
     *,
     handovers: OrderHandovers | None = None,
+    gate: StopRequestGate | None = None,
     created_at: Callable[[], datetime] = lambda: T0,
     **port_kwargs: Any,
 ) -> Rig:
@@ -329,8 +337,11 @@ def build_rig(
     credentials, switches = Credentials(), Switches()
     health = FakeClockHealth(monotonic)
     health.measure()
-    halt = ClockHalt(health, monotonic=monotonic)
+    metrics = Metrics("demo")
+    halt = ClockHalt(health, monotonic=monotonic, metrics=metrics)
     notices = Notices()
+    if gate is None:
+        gate = RefuseWhileWaiting(stops, now=lambda: EPOCH + timedelta(microseconds=now.us))
     port = OmsCommandPort(
         router=TradingRouter({"demo": demo, "live": live}, lane_waits=LANE_WAITS),
         accounts=accounts,
@@ -342,12 +353,12 @@ def build_rig(
         switches=switches,
         audit=audits,
         submit_audit=audits,
-        gate=RefuseWhileWaiting(stops, now=lambda: EPOCH + timedelta(microseconds=now.us)),
+        gate=gate,
         notices=notices,
         now_us=now,
         **port_kwargs,
     )
     return Rig(
         port, demo, live, store, orders, stops, accounts, audits, chosen, credentials, switches,
-        health, halt, now, monotonic, notices,
+        health, halt, now, monotonic, notices, metrics,
     )  # fmt: skip

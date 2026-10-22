@@ -111,7 +111,7 @@ class Bounded:
 
 @dataclass(frozen=True)
 class Harness:
-    """`new_account` makes an account with its live profile at version 1; `refuse` makes the
+    """`new_account` makes a demo account with its live profile at version 1; `refuse` makes the
     share-locked re-check refuse it from now on (SR-E28-15); `held` counts a persist's anchor,
     group, leg, order and recorded-stop rows as stored."""
 
@@ -546,6 +546,17 @@ class SubmissionContract:
         with pytest.raises(OrderConstraintError) as err:
             await h.submissions.create_first(first, order, EVENT)
         assert err.value.constraint == constraint and h.held(first, order) == NOTHING
+
+    async def test_a_leg_outside_its_groups_environment_is_refused_by_name(
+        self, h: Harness
+    ) -> None:
+        """C-2.11 (`trg_tgl_env`, SEC-2B1-03): a demo account's leg in a live group writes
+        nothing, refused by the name Postgres gives it, so the fake is no laxer than Postgres."""
+        user, (account, profile) = h.new_user(), h.new_account()
+        first, order = entry(user, account, profile, group={"env": "live"})
+        with pytest.raises(OrderConstraintError) as err:
+            await h.submissions.create_first(first, order, EVENT)
+        assert err.value.constraint == "trg_tgl_env" and h.held(first, order) == NOTHING
 
     async def test_text_holding_nul_is_refused_whole_with_nothing_written(self, h: Harness) -> None:
         """OM-T04: Postgres refuses a statement whose bound text holds NUL (22021)."""

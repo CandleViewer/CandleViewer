@@ -655,7 +655,7 @@ async def test_a_stop_request_with_no_audit_reaches_no_store() -> None:
     """C-2.9, as a first persist and a void are: every stop request is audited write-ahead."""
     store = _Inserts()
     with pytest.raises(ValueError, match="audited write-ahead"):
-        await RecordedStopRepository(cast(Any, store)).record([STOP], write_ahead=None)
+        await RecordedStopRepository(cast(Any, store)).record([STOP], write_ahead=cast(Any, None))
     assert store.hooks == []
 
 

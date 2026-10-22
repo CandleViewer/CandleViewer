@@ -10,8 +10,10 @@ gives lands the order where 24-internal-schemas.md Sec.8.3, Sec.8.4 and Sec.8.6 
 - A create that landed and then went unanswered is `unknown` after one call (SR-E29-15), and so is
   one the venue's outage answers (#2863): raised, never a refusal.
 - A create a restart resumes is looked up before it is sent, under the same id and stop; on live,
-  one older than `LIVE_RESEND_MAX_AGE_S` is never sent and ends `rejected` with `EXPIRED_UNSENT`
-  ([LANE-26]), and a re-send met by a duplicate is bound through B1's lookup, never a new id.
+  one older than `LIVE_RESEND_MAX_AGE_S` is never sent: within the venue's 24 h history it ends
+  `rejected` with `EXPIRED_UNSENT` ([LANE-26]), and at or past it, where a miss proves nothing,
+  `unknown` (SEC-2B1-02); a re-send met by a duplicate is bound through B1's lookup, never a new
+  id.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -33,11 +35,11 @@ from candleviewer.oms.commands import found_view
 from candleviewer.oms.execution import apply_fields
 from candleviewer.oms.fakes import InMemoryExecutionStore
 from candleviewer.oms.order_machine import _order_fields
-from candleviewer.oms.order_steps import OrderStepWriter
+from candleviewer.oms.order_steps import OrderStepWriter, entry_stop_settle
 from candleviewer.oms.ports import NoHandoverStore, OrderHandovers
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.registry import Registry
-from candleviewer.storage.repositories.orders import NewOrder
+from candleviewer.storage.repositories.orders import LifecycleState, NewOrder
 from tests.unit.oms.command_rig import (
     ACCOUNT,
     LIVE_ACCOUNT,
@@ -70,17 +72,26 @@ class TrailHandovers(Handovers):
 
 @dataclass
 class Book:
-    """The OMS side of one test: the command rig, the step writer over its order store, and the
-    trail of each row written."""
+    """The OMS side of one test: the command rig, the step writer over its order store, the
+    trail of each row written, and the steps themselves."""
 
     rig: Rig
     writer: OrderStepWriter
     trail: list[tuple[str, str]]
+    steps: list[b01.Step] = field(default_factory=list)
 
     async def persist(self, step: b01.Step) -> int:
         seq = await self.writer(step)
         self.trail.append(("written", step.to_state))
+        self.steps.append(step)
         return seq
+
+
+def _settles(step: b01.Step) -> str | None:
+    """What the step writer does to an entry's attach rows on `step`, nothing filled (21
+    Sec.3.3.11's table, `entry_stop_settle`): `void`, `answered`, `waiting`, or None, nothing."""
+    frm, to = cast(LifecycleState, step.from_state), cast(LifecycleState, step.to_state)
+    return entry_stop_settle(frm, to, Decimal(0), trigger=step.event)
 
 
 def _book(monkeypatch: pytest.MonkeyPatch, handovers: OrderHandovers | None = None) -> Book:
@@ -272,6 +283,29 @@ async def test_a_live_create_past_the_resend_bound_ends_rejected_with_its_reason
     assert calls == ["open_orders", "order_history"]
     assert book.rig.audits.actions() == [("oms.resend_refused", "expired_unsent")]
     assert [notice.kind for notice in book.rig.notices.got] == ["alert"]
+    assert _settles(book.steps[-1]) == "void"  # an entry never placed (21 Sec.3.3.11)
+
+
+@pytest.mark.parametrize("age_s", [86_400, 30 * 86_400], ids=["exactly_the_span", "a_month"])
+async def test_a_live_create_past_the_venues_history_is_unknown_never_rejected(
+    age_s: int, monkeypatch: pytest.MonkeyPatch, charts: Charts
+) -> None:
+    """SEC-2B1-02: at or past the venue's 24 h history a miss proves nothing, so the port answers
+    an empty lookup and B1 lands the order in `unknown` for reconciliation: nothing sent, no
+    `EXPIRED_UNSENT`, no record of the port's and no alert, and the step into `unknown` leaves
+    its entry's attach rows as they are, never voided blind."""
+    book = _book(monkeypatch)
+    order = new_order(LIVE_ACCOUNT, "live")
+    book.rig.now.us = T0_US + age_s * 1_000_000
+    async with _machine(charts) as interp:
+        assert await _sent_unregistered(book, interp, order) == "unknown"
+        assert interp.context.get("reject_code") is None
+    row = await book.rig.orders.get(LIVE_ACCOUNT, order.id)
+    assert row is not None and (row.lifecycle_state, row.reject_code) == ("unknown", None)
+    assert book.rig.calls(book.rig.live) == ["open_orders", "order_history"]
+    assert book.rig.audits.written == [] and book.rig.notices.got == []
+    step = book.steps[-1]
+    assert (step.from_state, step.to_state, _settles(step)) == ("submitting", "unknown", None)
 
 
 async def test_a_resend_met_by_a_duplicate_is_bound_through_b1s_lookup(

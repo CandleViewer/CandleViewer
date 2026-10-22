@@ -230,12 +230,14 @@ def _never_sent(from_state: LifecycleState, to_state: LifecycleState) -> bool:
 def _confirms_unfilled(
     from_state: LifecycleState, to_state: LifecycleState, trigger: str, reported: Decimal | None
 ) -> bool:
-    """An exchange-confirmed end with nothing filled: the create's own answer refused it
-    (`submitting` -> `rejected` on `done.invoke.place`), or an exchange-confirmed terminal with
-    zero count: the exchange's own end push (`_CONFIRMED_ENDS`, `cancelled` or `expired`) reported
-    a zero cumulative fill for an order on its book. A cancel's ack and a locally timed expiry
-    report no exchange count, and nothing out of `unknown` is a confirmation: the rows of those
-    wait for the complete read."""
+    """An end that proves nothing filled: the create's own answer ended it unplaced (`submitting`
+    -> `rejected` on `done.invoke.place`: the exchange's refusal, or the command port's
+    `EXPIRED_UNSENT` for a resumed create no lookup found within the venue's 24 h history, which
+    therefore never landed; past that history the port answers `unknown`, SEC-2B1-02), or an
+    exchange-confirmed terminal with zero count: the exchange's own end push (`_CONFIRMED_ENDS`,
+    `cancelled` or `expired`) reported a zero cumulative fill for an order on its book. A cancel's
+    ack and a locally timed expiry report no exchange count, and nothing out of `unknown` is a
+    confirmation: the rows of those wait for the complete read."""
     if to_state == "rejected":
         return from_state == "submitting" and trigger == "done.invoke.place"
     return (

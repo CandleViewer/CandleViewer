@@ -264,7 +264,9 @@ def test_stop_errors_any_effect_but_reduce_needs_a_stop(effect: Any) -> None:
 
 
 @pytest.mark.parametrize("effect", [ENTRY, REDUCE])
-@pytest.mark.parametrize("stop", ["0", "-0.1", "-63000", "NaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize(
+    "stop", ["0", "-0", "-0.1", "-63000", "NaN", "sNaN", "Infinity", "-Infinity"]
+)
 def test_stop_errors_a_stop_not_above_zero_is_native_stop_required(
     effect: OrderEffect, stop: str
 ) -> None:

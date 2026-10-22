@@ -15,7 +15,7 @@ from typing import Any, Final, NamedTuple
 from uuid import UUID
 
 from candleviewer.domain.order_link import EXT_ID, OUR_ID
-from candleviewer.domain.primitives import AccountId, OrderLinkId
+from candleviewer.domain.primitives import AccountId, Environment, OrderLinkId
 from candleviewer.exchange.base.errors import ClockDriftError
 from candleviewer.exchange.base.models import AccountRef
 from candleviewer.storage.errors import (
@@ -154,6 +154,9 @@ _LEG_CHECKS: Final[dict[str, Callable[[NewTradeGroupLeg], bool]]] = {
         and not (leg.resolved_sl_price is not None and leg.resolved_sl_price > 0)
     ),
 }
+#: The leg trigger (`0039_trade_groups`, `USING CONSTRAINT`) that refuses a leg whose account is
+#: outside its group's environment (C-2.11), by the name Postgres reports.
+_TGL_ENV: Final = "trg_tgl_env"
 #: The write-ahead hooks' default bounds (s): `submissions_sqlalchemy.SUBMISSION_AUDIT_TIMEOUT_S`
 #: and the recorded stops' `WRITE_AHEAD_TIMEOUT_S`, which this driver-free module cannot import
 #: (ADR-0003); a unit test pins them equal.
@@ -343,6 +346,8 @@ class InMemoryOrderStore:
         self._anchors: dict[UUID, _StoredAnchor] = {}
         self._stops: dict[UUID, RecordedStopRow] = {}
         self._refusals: dict[UUID, SubmissionRefusal] = {}
+        #: Each seeded account's `exchange_accounts.env` (`InMemorySubmissionStore.seed_account`).
+        self._environments: dict[UUID, Environment] = {}
         self._held: asyncio.Event | None = None
         self._ids = count(1)
         self._fault: tuple[BaseException, bool] | None = None
@@ -567,8 +572,8 @@ class InMemoryOrderStore:
         else:
             head = self._new_group(first.group)
             self._recheck({leg.exchange_account_id for leg in first.legs}, first.legs)
-            legs = sorted(self._new_legs(head.id, first.legs), key=_leg_order)
-            group = TradeGroupRecord(head, tuple(legs))
+            legs = self._new_legs(head.id, first.legs, environment=first.group.env)
+            group = TradeGroupRecord(head, tuple(sorted(legs, key=_leg_order)))
         row, stored_event = self._new_order(order, event)
         stops = self._new_stops(first.recorded_stops, placed=order.id)
         anchor = self._new_anchor(first.anchor)
@@ -618,9 +623,14 @@ class InMemoryOrderStore:
             if moved or leg.profile_version < 1:
                 raise TradeGroupStoreRefusedError(PROFILE_CHANGED)
 
-    def _new_legs(self, group_id: UUID, legs: Sequence[NewTradeGroupLeg]) -> list[TradeGroupLegRow]:
-        """The legs' insert (`insert_legs_statement`): the rejection texts redacted and bound, then
-        each leg's CHECKs by name, its key and `ux_tgl_group_account`."""
+    def _new_legs(
+        self, group_id: UUID, legs: Sequence[NewTradeGroupLeg], *, environment: Environment
+    ) -> list[TradeGroupLegRow]:
+        """The legs' insert (`insert_legs_statement`) into a group of `environment`: the rejection
+        texts redacted and bound, then for each leg its row trigger `trg_tgl_env` (C-2.11: a leg
+        on a seeded account of another environment, SEC-2B1-03), its CHECKs by name, its key and
+        `ux_tgl_group_account`. An account never seeded passes the trigger, as one whose
+        environment Postgres reads as NULL does."""
         texts = [
             {
                 "rejection_code": xp.redact_exchange_text(
@@ -637,6 +647,8 @@ class InMemoryOrderStore:
         rows: list[TradeGroupLegRow] = []
         now = self._clock()
         for leg, text in zip(legs, texts, strict=True):
+            if self._environments.get(leg.exchange_account_id, environment) != environment:
+                raise port.OrderConstraintError(_TGL_ENV)  # a BEFORE ROW trigger: ahead of CHECKs
             for name in sorted(_LEG_CHECKS):
                 if _LEG_CHECKS[name](leg):
                     raise port.OrderConstraintError(name)
@@ -779,14 +791,22 @@ class InMemorySubmissionStore:
     contract, `tests/unit/oms/submission_contract.py`): `FirstPersist.check` before anything,
     then the group, the share-locked re-check, the leg, the order and its first event, the
     recorded stops and the anchor, each refused by the name Postgres gives it, then the write-ahead
-    hook, bounded, and the commit; all or nothing. It holds no accounts, users or profiles, so no
-    foreign key to one and no environment trigger: `refuse` stands in for the re-check."""
+    hook, bounded, and the commit; all or nothing. It holds no account, user, profile or definition
+    rows, so no foreign key to one, and no group fired from a definition (`trg_tg_env`): `refuse`
+    stands in for the re-check, and `seed_account` gives an account its environment, so a leg
+    outside its group's environment is refused by `trg_tgl_env` as on Postgres (C-2.11)."""
 
     def __init__(
         self, db: InMemoryOrderStore, *, audit_timeout_s: float = SUBMISSION_AUDIT_TIMEOUT_S
     ) -> None:
         self._db = db
         self._audit_timeout_s = audit_timeout_s
+
+    def seed_account(self, account: AccountRef) -> None:
+        """`account`'s environment as its `exchange_accounts` row holds it, read off the trading
+        port's `AccountRef`, for `trg_tgl_env` (SEC-2B1-03). A leg on an account never seeded
+        passes the trigger, as one whose environment Postgres reads as NULL does."""
+        self._db._environments[account.account_id] = account.environment
 
     def refuse(self, account_id: UUID, reason: SubmissionRefusal) -> None:
         """From now on the re-check refuses a first persist on `account_id`, as Postgres's does

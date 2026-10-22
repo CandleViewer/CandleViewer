@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -46,10 +46,10 @@ from candleviewer.exchange.base.errors import (
 from candleviewer.exchange.base.fakes import FakeReject, LandedThenAmbiguous
 from candleviewer.exchange.base.models import OrderAck, PlaceOrderRequest, TradingStopRequest
 from candleviewer.observability.context import bind_context
-from candleviewer.oms.classify import stop_errors
 from candleviewer.oms.commands import (
     ALREADY_SET,
     EXPIRED_UNSENT_REASON,
+    LIVE_HISTORY_SPAN_S,
     LIVE_RESEND_MAX_AGE_S,
     NEVER_SENT_ALERT,
     PARTIAL_STOP_UNSUPPORTED,
@@ -61,7 +61,6 @@ from candleviewer.oms.commands import (
     place_request,
 )
 from candleviewer.oms.errors import (
-    RULE_NATIVE_STOP_REQUIRED,
     AckWithoutOrderId,
     ClockDriftBlocked,
     HandoverUnavailable,
@@ -77,7 +76,7 @@ from candleviewer.oms.ports import (
     STOP_REQUEST_BOUND_S,
     KeyedRecord,
     NoHandoverStore,
-    OrderEffect,
+    PositionKey,
     RefuseWhileWaiting,
 )
 from candleviewer.statechart.bindings import b01_order as b01
@@ -361,6 +360,23 @@ async def test_a_hand_over_that_fails_answers_an_empty_lookup(handovers: Any) ->
     assert "oms_handover_failed" in [log["event"] for log in logs]
 
 
+async def test_a_found_order_whose_money_b1_cannot_read_is_handed_over_never_adopted() -> None:
+    """CR-2B1-02 (c): `full_match` raises on money that is not C6 text, which B1's guards deny
+    too, so the port reads it as a mismatch: handed over (S2-Q3), never adopted or audited as one,
+    even where the figure is the row's (`1e-2`)."""
+    handovers = Handovers()
+    rig = build_rig(handovers=handovers)
+    order = new_order()
+    held = exchange_order(order)
+    rig.demo.seed_order(held, uid=UIDS["demo"])
+    rig.port.expect(order)
+    with capture_logs() as logs:
+        answer = await rig.port.place(command("place", order, qty="1e-2"))
+    assert answer == {"ok": False, "error_code": _DUP, "lookup": found_view(held)}
+    assert handovers.handed == [(ACCOUNT, held.exchange_order_id)] and rig.audits.written == []
+    assert "oms_link_id_held_by_another_order" in [log["event"] for log in logs]
+
+
 @pytest.mark.parametrize("lookup_fails", [False, True], ids=["not_found", "lookup_failed"])
 async def test_a_duplicate_no_lookup_settles_answers_an_empty_lookup(lookup_fails: bool) -> None:
     rig = build_rig()
@@ -419,6 +435,90 @@ async def test_a_create_that_does_not_answer_in_time_is_raised(
     with pytest.raises(TimeoutError):
         await rig.port.place(command("place", order))
     assert await watch.answer() is None
+
+
+async def _hangs(*_args: object, **_kwargs: object) -> Any:
+    await asyncio.Event().wait()
+
+
+async def _within(call: Awaitable[Any], seconds: float) -> asyncio.Task[Any]:
+    """`call` as a task that its own deadline must have ended within `seconds`; else the test
+    fails, the task cancelled."""
+    task = asyncio.ensure_future(call)
+    await asyncio.wait([task], timeout=seconds)
+    if not task.done():
+        task.cancel()
+        await asyncio.wait([task])
+        pytest.fail(f"the call outlasted {seconds} s")
+    return task
+
+
+@pytest.mark.parametrize("hung", ["account", "adoption_record", "hand_over", "credential_report"])
+async def test_one_deadline_ends_all_of_a_registered_place(
+    hung: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-2B1-04: `SUBMIT_TIMEOUT_S` bounds all of `place`, its answer's calls too, so an entry's
+    stop request is answered within the persist, this and the persist ([LANE-25]). A call the
+    deadline ends is raised when the answer needs it (the account; the adoption's record, C-2.9:
+    B1's `unknown`) and logged when it is best-effort, its answer standing (a hand-over: an empty
+    lookup, S2-Q3; a credential report: the refusal), as on its own, longer, timeout."""
+    rig = build_rig(submit_timeout_s=0.05, port_timeout_s=60.0)
+    order = new_order()
+    if hung == "account":
+        monkeypatch.setattr(rig.accounts, "trading_account", _hangs)
+    elif hung == "adoption_record":
+        rig.demo.seed_order(exchange_order(order), uid=UIDS["demo"])
+        monkeypatch.setattr(rig.audits, "write", _hangs)
+    elif hung == "hand_over":
+        rig.demo.seed_order(exchange_order(order, qty=Decimal("0.020")), uid=UIDS["demo"])
+        monkeypatch.setattr(rig.handovers, "hand_over_order", _hangs)
+    else:
+        rig.demo.script("place_order", FakeReject(OmsErrorCode.AUTH_ERROR, 10003))
+        monkeypatch.setattr(rig.credentials, "refused", _hangs)
+    watch = rig.port.expect(order)
+    with capture_logs() as logs:
+        task = await _within(rig.port.place(command("place", order)), 5.0)
+    lost = [(log["event"], log["failure"]) for log in logs if "failure" in log]
+    if hung in ("account", "adoption_record"):
+        with pytest.raises(TimeoutError):
+            task.result()
+        assert await watch.answer() is None
+        return
+    if hung == "hand_over":
+        assert task.result() == {"ok": False, "error_code": _DUP, "lookup": {}}
+        assert lost == [("oms_handover_failed", "TimeoutError")]
+        return
+    refused = {"ok": False, "error_code": "AUTH_ERROR", "exchange_ret_code": 10003}
+    assert task.result() == refused and lost == [("oms_auth_rejection_lost", "TimeoutError")]
+
+
+@pytest.mark.parametrize("hung", ["stored_row", "never_sent_record", "alert"])
+async def test_one_deadline_ends_all_of_a_resumed_place(
+    hung: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-2B1-04, a create a restart resumes: its stored row's read and its end unsent's record
+    are raised at the deadline (C-2.9: nothing answered unrecorded, so B1's `unknown`, nobody
+    alerted); the alert, best-effort, is logged CRITICAL and the order still ends unsent."""
+    rig = build_rig(submit_timeout_s=0.05, port_timeout_s=60.0)
+    order = new_order(LIVE_ACCOUNT, "live")
+    await rig.stored(order)
+    rig.now.us = T0_US + 121 * SECOND_US
+    if hung == "stored_row":
+        monkeypatch.setattr(rig.orders, "get_by_link_id", _hangs)
+    elif hung == "never_sent_record":
+        monkeypatch.setattr(rig.audits, "write", _hangs)
+    else:
+        monkeypatch.setattr(rig.notices, "notify", _hangs)
+    with capture_logs() as logs:
+        task = await _within(rig.port.place(command("place", order)), 5.0)
+    if hung != "alert":
+        with pytest.raises(TimeoutError):
+            task.result()
+        assert rig.notices.got == []
+        return
+    assert task.result() == {"ok": False, "error_code": b01.EXPIRED_UNSENT}
+    lost = [(log["log_level"], log["failure"]) for log in logs if "failure" in log]
+    assert lost == [("critical", "TimeoutError")]
 
 
 # --- 24 Sec.8.6, before any answer ---------------------------------------------------------------
@@ -512,6 +612,39 @@ async def test_clock_drift_trips_the_halt_and_runs_one_resync_at_a_time(
     assert rig.halt.refusal() is None
 
 
+async def test_aclose_cancels_a_running_resync_and_none_starts_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-2B1-09 (every task owned, C-2.18): at shutdown the resync a `CLOCK_DRIFT` started is
+    cancelled and awaited, a second `aclose` does nothing more, and a `CLOCK_DRIFT` after it still
+    trips the halt, and counts, but starts no resync."""
+    rig = build_rig()
+    started = asyncio.Event()
+
+    async def resync(*, reason: str) -> int:
+        started.set()
+        await asyncio.Event().wait()
+        return 0
+
+    monkeypatch.setattr(rig.health, "resync_after_signature_failure", resync)
+    drift = FakeReject(OmsErrorCode.CLOCK_DRIFT, 10002)
+    rig.demo.script("place_order", drift, drift)
+    first, second = new_order(), new_order(seq=1)
+    rig.port.expect(first)
+    await rig.port.place(command("place", first))
+    task = rig.port.resync_task
+    assert task is not None
+    await started.wait()
+    await rig.port.aclose()
+    assert task.cancelled()
+    await rig.port.aclose()
+    rig.port.expect(second)
+    await rig.port.place(command("place", second))
+    assert rig.port.resync_task is task and isinstance(rig.halt.refusal(), ClockDriftBlocked)
+    trips = rig.metrics.registry.get_sample_value("oms_clock_halt_trips_total", {"env": "demo"})
+    assert trips == 2.0
+
+
 async def test_a_raised_clock_drift_trips_the_halt_too() -> None:
     rig = build_rig()
     order = new_order()
@@ -594,6 +727,23 @@ async def test_the_switches_refuse_a_resumed_create_after_its_lookup_and_before_
     assert rig.audits.written == [] and rig.notices.got == []
 
 
+@pytest.mark.parametrize("live", [False, True], ids=["demo_in_window", "live_past_the_bound"])
+async def test_a_tripped_clock_halt_refuses_a_resumed_create_after_the_switches(live: bool) -> None:
+    """SEC-2B1-01 (24 Sec.8.6 `10002`, C-2.21): while the halt stands, a resumed create no lookup
+    found is `ResendRefused` with the halt's own refusal, so B1 lands it in `unknown` to wait for
+    the resync: never re-sent under the drifted clock, whose `10002` would end it `rejected`, and
+    never ended unsent while the halt refuses. The switches are asked first."""
+    rig = build_rig()
+    order, venue = (new_order(LIVE_ACCOUNT, "live"), rig.live) if live else (new_order(), rig.demo)
+    rig.halt.trip()
+    with pytest.raises(ResendRefused) as refused:
+        await _resumed(rig, order, age_us=121 * SECOND_US if live else 60 * SECOND_US)
+    assert isinstance(refused.value.refusal, ClockDriftBlocked)
+    assert rig.switches.asked == [(order.exchange_account_id, "live" if live else "demo")]
+    assert rig.calls(venue) == _LOOKUP
+    assert rig.audits.written == [] and rig.notices.got == []
+
+
 @pytest.mark.parametrize(
     ("age_us", "resent"),
     [
@@ -601,15 +751,14 @@ async def test_the_switches_refuse_a_resumed_create_after_its_lookup_and_before_
         (120 * SECOND_US, True),
         (120 * SECOND_US + 1, False),
         (121 * SECOND_US, False),
-        (30 * DAY_US, False),
     ],
-    ids=["119s", "exactly_120s", "120s_and_1us", "121s", "a_month"],
+    ids=["119s", "exactly_120s", "120s_and_1us", "121s"],
 )
 async def test_live_resends_up_to_the_bound_and_never_past_it(age_us: int, resent: bool) -> None:
     """[LANE-26] steps 3 and 4: a live create no lookup found is re-sent while its age is at most
     `LIVE_RESEND_MAX_AGE_S`, so at exactly 120 s it still is (the port reads `age > bound` as too
     old), under the same id and stop, after `adopt_or_resend`'s own lookup; a microsecond past the
-    bound it never is, and ends unsent."""
+    bound it never is, and ends unsent (within the venue's history span: the next test)."""
     rig = build_rig()
     order = new_order(LIVE_ACCOUNT, "live")
     answer = await _resumed(rig, order, age_us=age_us)
@@ -657,9 +806,44 @@ async def test_a_live_create_past_the_bound_ends_unsent_with_its_record_and_aler
         "alert": NEVER_SENT_ALERT,
         "created_at": "2026-10-21T12:00:00+00:00",
         "message": (
-            "an order from 2026-10-21 12:00:00 UTC was never sent; re-enter it if still wanted"
+            "an order from 2026-10-21 12:00:00 UTC was not found within the venue's 24 h history "
+            "and was not placed; re-enter it if still wanted"
         ),
     }
+
+
+@pytest.mark.parametrize(
+    ("age_us", "ended"),
+    [
+        (121 * SECOND_US, True),
+        (DAY_US - 1, True),
+        (DAY_US, False),
+        (DAY_US + 1, False),
+        (30 * DAY_US, False),
+    ],
+    ids=["121s", "a_microsecond_inside_the_span", "exactly_the_span", "past_the_span", "a_month"],
+)
+async def test_a_live_miss_ends_unsent_only_within_the_venues_history_span(
+    age_us: int, ended: bool
+) -> None:
+    """SEC-2B1-02 (the orchestrator's ruling), both arms. Within the venue's 24 h history
+    (`LIVE_HISTORY_SPAN_S`) a miss in open orders and history means the create never landed, so
+    it ends unsent, recorded and alerted ([LANE-26]). At or past it a miss proves nothing (24
+    Sec.14.1): the answer is an empty lookup, B1's `unknown`, for reconciliation, with nothing
+    sent, recorded or alerted, so its entry's attach rows wait instead of being voided blind."""
+    assert LIVE_HISTORY_SPAN_S * SECOND_US == DAY_US
+    rig = build_rig()
+    with capture_logs() as logs:
+        answer = await _resumed(rig, new_order(LIVE_ACCOUNT, "live"), age_us=age_us)
+    assert rig.calls(rig.live) == _LOOKUP
+    past = [log["log_level"] for log in logs if log["event"] == "oms_resend_past_history"]
+    if ended:
+        assert answer == {"ok": False, "error_code": b01.EXPIRED_UNSENT} and past == []
+        assert rig.audits.actions() == [(RESEND_REFUSED, EXPIRED_UNSENT_REASON)]
+        assert [notice.kind for notice in rig.notices.got] == ["alert"]
+        return
+    assert answer == {"ok": False, "error_code": _DUP, "lookup": {}} and past == ["warning"]
+    assert rig.audits.written == [] and rig.notices.got == []
 
 
 async def test_an_end_unsent_whose_record_does_not_land_raises_and_alerts_nothing() -> None:
@@ -955,6 +1139,70 @@ async def test_an_attach_whose_send_raises_leaves_its_row_in_flight() -> None:
     assert rig.calls() == ["positions", "set_trading_stop"]
 
 
+@pytest.mark.parametrize("accepted", [True, False], ids=["answered", "refused"])
+async def test_an_attach_whose_settle_fails_answers_the_exchange_and_leaves_its_row_in_flight(
+    accepted: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-2B1-02 (b), 21 Sec.3.3.11: the exchange's answer stands, and the row, which only the
+    complete read now ends, stays in flight; the failure is logged, and a void it did not write
+    is not audited either."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    if not accepted:
+        rig.demo.script("set_trading_stop", FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003))
+
+    async def broken(*_args: object, **_kwargs: object) -> Any:
+        raise OSError("the store is down")
+
+    monkeypatch.setattr(rig.stops, "settle", broken)
+    with capture_logs() as logs:
+        answer = await rig.port.attach_stop(_attach(order))
+    assert answer["ok"] is accepted
+    (row,) = _rows(rig)
+    assert (row.status, row.answered_at) == ("pending", None)
+    failed = [log for log in logs if log["event"] == "oms_stop_settle_failed"]
+    assert [(log["log_level"], log["answered"], log["failure"]) for log in failed] == [
+        ("error", accepted, "OSError")
+    ]
+    assert rig.audits.actions() == [("sl.attached", "first_fill_attach")]
+
+
+async def test_a_stop_gate_that_does_not_answer_is_bounded_and_nothing_is_recorded() -> None:
+    """CR-2B1-03 (C-2.18): the gate's call is bounded as any other, whatever the gate bounds
+    itself, so a gate that never answers ends the attach with `TimeoutError` (B1's
+    `sl_missing`), with nothing recorded or sent."""
+
+    class _Stuck:
+        async def clear(self, key: PositionKey) -> None:
+            await asyncio.Event().wait()
+
+    rig = build_rig(gate=_Stuck(), port_timeout_s=0.05)
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    task = await _within(rig.port.attach_stop(_attach(order)), 5.0)
+    with pytest.raises(TimeoutError):
+        task.result()
+    assert rig.calls() == ["positions"] and _rows(rig) == [] and rig.audits.written == []
+
+
+async def test_an_attach_sends_while_the_switches_refuse_and_the_clock_halt_stands() -> None:
+    """CR-2B1-05 (24 Sec.8.10's carve-out, C-2.6, C-4.14): attaching a missing native stop is a
+    protective write that no synchronous refusal gates, the switches' (the kill switch, live
+    enablement, the order-entry gate) and the clock halt's alike, so it is recorded, sent and
+    read back as on any day, and the switches are never asked."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    rig.switches.refusals[ACCOUNT] = TradingDisabled()
+    rig.halt.trip()
+    assert isinstance(rig.halt.refusal(), ClockDriftBlocked)
+    answer = await rig.port.attach_stop(_attach(order))
+    assert answer["ok"] is True and answer["position"]["stop_loss"] == "58000"
+    assert rig.calls() == ["positions", "set_trading_stop", "positions"]
+    assert rig.switches.asked == [] and [row.status for row in _rows(rig)] == ["pending"]
+
+
 async def _earlier_request(rig: Any) -> None:
     """A trading-stop request of the key, in flight since `T0` (the store's clock)."""
     earlier = NewRecordedStop(
@@ -1085,9 +1333,8 @@ async def test_the_attach_answer_is_a_reading_b1s_guard_takes() -> None:
 # --- no stop or take-profit that is no price above zero is sent (#2877 ruling 2, C-2.6) ---------
 
 #: Prices a registered `NewOrder` can carry (2a's `check_fields` refuses a non-finite figure, and
-#: the store's CHECK refuses these at the insert), and the ones only a row read back can.
+#: the store's CHECK refuses these at the insert).
 _NOT_ABOVE_ZERO = ["0", "-0", "-1"]
-_NOT_FINITE = ["NaN", "sNaN", "Infinity", "-Infinity"]
 
 
 @pytest.mark.parametrize("value", _NOT_ABOVE_ZERO)
@@ -1134,19 +1381,40 @@ async def test_a_resumed_row_whose_stop_is_no_price_above_zero_is_never_resent(
     assert rig.calls() == (_LOOKUP if looked_up else [])
 
 
-@pytest.mark.parametrize("value", [*_NOT_ABOVE_ZERO, *_NOT_FINITE])
-@pytest.mark.parametrize("effect", [OrderEffect.ENTRY, OrderEffect.REDUCE])
-def test_the_validator_path_refuses_a_stop_that_is_no_price_above_zero(
-    effect: OrderEffect, value: str
+@pytest.mark.parametrize("resumed", [False, True], ids=["registered", "resumed"])
+async def test_an_order_that_is_not_reduce_only_and_has_no_stop_is_never_sent(
+    resumed: bool,
 ) -> None:
-    """The pipeline's native-stop rule (slice 1's `stop_errors`, which C5 runs before the
-    persist) refuses it on every path: an entry's stop and a reduce-only order's alike."""
-    refused = stop_errors(
-        effect=effect, side="buy", reference_price=Decimal("60000"), stop=Decimal(value)
+    """SEC-2B1-04 (C-2.6): `FirstPersist.check` and B1's gate refuse it upstream, and the port
+    refuses it too, before anything is sent (a resumed one after its lookup, as reading is never
+    an order), logged CRITICAL, so B1 lands the order in `unknown`."""
+    rig = build_rig()
+    order = new_order()
+    bare = dataclasses.replace(order, stop_loss=None)
+    if resumed:
+        await rig.stored(bare)
+        rig.now.us = T0_US + 60 * SECOND_US
+    else:
+        rig.port.expect(bare)
+    with capture_logs() as logs, pytest.raises(ValueError, match="native stop"):
+        await rig.port.place(command("place", order))
+    assert rig.calls() == (_LOOKUP if resumed else [])
+    missing = [log["log_level"] for log in logs if log["event"] == "oms_create_stop_missing"]
+    assert missing == ["critical"]
+
+
+async def test_a_reduce_only_order_with_no_stop_of_its_own_is_sent() -> None:
+    """C-2.6 binds an order that may open a position; a reduce-only order records no stop of its
+    own (`FirstPersist.check`), so the port sends it without one, in the `critical` lane."""
+    rig = build_rig()
+    order = new_order(
+        side="Sell", intent="flatten", reduce_only=True, stop_loss=None, take_profit=None
     )
-    assert [(error.field, error.rule) for error in refused] == [
-        ("stop_loss", RULE_NATIVE_STOP_REQUIRED)
-    ]
+    rig.port.expect(order)
+    assert (await rig.port.place(command("place", order)))["ok"] is True
+    (call,) = rig.demo.calls
+    assert isinstance(call.request, PlaceOrderRequest)
+    assert (call.request.stop_loss, call.lane) == (None, "critical")
 
 
 @pytest.mark.parametrize("shown", ["0", "-1"])
@@ -1166,20 +1434,15 @@ async def test_an_attach_leaves_out_a_take_profit_the_reading_shows_as_no_price(
 # --- the venue's outage (#4092, #2863): raised, never a refusal, never repeated ------------------
 
 
-def test_the_outage_the_tests_script_is_retryable_as_4092_raises_it() -> None:
-    """SEC-4092-02: the port must never loop on `retryable`, which the outage carries. The tests
-    script #4092's own class, now in the base."""
-    raised = outage()
-    assert type(raised) is ServiceUnavailableError and isinstance(raised, TransportError)
-    assert raised.retryable is True and raised.code is OmsErrorCode.SERVICE_UNAVAILABLE
-
-
 async def test_a_create_the_outage_answers_is_raised_after_one_send() -> None:
-    """Never mapped to a refusal: raised, so B1 lands the order in `unknown` (its contract test)."""
+    """Never mapped to a refusal: raised, so B1 lands the order in `unknown` (its contract test),
+    and never repeated, though the outage says `retryable`, as #4092 raises it (SEC-4092-02)."""
     rig = build_rig()
     order = new_order()
     rig.port.expect(order)
-    rig.demo.script("place_order", outage(10016))
+    raised = outage(10016)
+    assert raised.retryable is True and raised.code is OmsErrorCode.SERVICE_UNAVAILABLE
+    rig.demo.script("place_order", raised)
     with pytest.raises(ServiceUnavailableError):
         await rig.port.place(command("place", order))
     assert rig.calls() == ["place_order"]
@@ -1310,6 +1573,47 @@ async def test_a_second_registration_of_an_order_replaces_the_first() -> None:
     assert await second.answer() == answer
 
 
+async def test_a_cancelled_place_answers_its_watch_none_and_stays_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-2B1-02 (d): B1's attempt cancelled mid-send (its own bound, a step that cancels it)
+    answers the registration None, so the pipeline's waiter never hangs, and the cancellation
+    is re-raised, never swallowed."""
+    rig = build_rig()
+    order = new_order()
+    sending = asyncio.Event()
+
+    async def hangs(_request: PlaceOrderRequest) -> OrderAck:
+        sending.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(rig.demo, "place_order", hangs)
+    watch = rig.port.expect(order)
+    task = asyncio.ensure_future(rig.port.place(command("place", order)))
+    await sending.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled() and await watch.answer() is None
+
+
+async def test_a_cancelled_waiter_never_cancels_the_answer() -> None:
+    """CR-2B1-02 (d): `PlaceWatch.answer()` shields the answer, so a waiter's own cancellation
+    leaves it pending for `place`, and a later waiter gets it."""
+    rig = build_rig()
+    order = new_order()
+    watch = rig.port.expect(order)
+    waiter = asyncio.ensure_future(watch.answer())
+    await asyncio.sleep(0)  # one turn of the loop: the waiter is now awaiting the answer
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert not watch.answered
+    answer = await rig.port.place(command("place", order))
+    assert answer["ok"] is True and await watch.answer() == answer
+
+
 def test_the_port_holds_at_least_one_registration() -> None:
     with pytest.raises(ValueError, match="at least one"):
         build_rig(max_watches=0)
@@ -1335,9 +1639,11 @@ async def test_cancel_and_amend_go_to_their_services_or_raise_unwired() -> None:
 
 
 def test_the_stop_request_bound_exceeds_an_entrys_answer_path() -> None:
-    """[LANE-25]: an entry's stop request is answered within its `submitting` step's write, the
-    create, and the result step's write, each read from the constant that bounds it, so a change
-    to any of them that the bound no longer covers fails here."""
+    """[LANE-25]: an entry's stop request is answered within its `submitting` step's write, all
+    of `place` (one deadline for its reads, calls and answer, CR-2B1-04, which
+    `test_one_deadline_ends_all_of_a_registered_place` pins), and the result step's write, each
+    read from the constant that bounds it, so a change to any of them that the bound no longer
+    covers fails here."""
     defaults = inspect.signature(OmsCommandPort).parameters
     assert defaults["submit_timeout_s"].default == SUBMIT_TIMEOUT_S
     persist, place, result = CV_PERSIST_TIMEOUT, SUBMIT_TIMEOUT_S, CV_PERSIST_TIMEOUT

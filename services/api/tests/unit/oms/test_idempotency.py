@@ -184,6 +184,44 @@ async def test_an_anchor_the_store_held_but_does_not_return_is_store_unavailable
     assert [line["log_level"] for line in logs] == ["error"]
 
 
+class LostDecision:
+    """An anchor store whose compare-and-set says another repeat decided first, yet whose next
+    read shows no decision, or, `vanished`, no anchor at all."""
+
+    def __init__(self, inner: Any, *, vanished: bool) -> None:
+        self.inner, self.vanished, self.reads = inner, vanished, 0
+
+    async def find(self, *args: Any) -> AnchorRow | None:
+        self.reads += 1
+        if self.vanished and self.reads > 1:
+            return None
+        found: AnchorRow | None = await self.inner.find(*args)
+        return found
+
+    async def record_outcome(self, anchor_id: UUID, outcome: AnchorOutcome) -> bool:
+        return False
+
+
+@pytest.mark.parametrize("vanished", [False, True], ids=["undecided", "vanished"])
+async def test_a_lost_decision_no_read_returns_is_store_unavailable(
+    rig: Rig, vanished: bool
+) -> None:
+    """CR-2B1-02 (a): the compare-and-set says the stuck anchor is decided, yet the re-read shows
+    no decision: the store is not serving what it holds, so `503 store_unavailable`, nothing
+    sent, its line at ERROR naming neither the key nor the fingerprint."""
+    user = uuid4()
+    _, key = await rig.anchored(user)
+    store = LostDecision(rig.db.anchors, vanished=vanished)
+    repository = IdempotencyAnchorRepository(cast(Any, store))
+    service = AnchorService(repository, clock=rig.clock, timeout_s=1)
+    rig.clock.now = T0 + timedelta(seconds=STUCK_AFTER_S)
+    with capture_logs() as logs, pytest.raises(StoreUnavailable) as err:
+        await service.lookup(user, key, SHA)
+    assert problem_for(err.value) == Problem(503, "store_unavailable") and store.reads == 2
+    unread = [line["log_level"] for line in logs if line["event"] == "oms_anchor_decision_unread"]
+    assert unread == ["error"] and str(key) not in repr(logs) and SHA not in repr(logs)
+
+
 class Hanging:
     async def find(self, *args: Any) -> AnchorRow | None:
         await asyncio.Event().wait()

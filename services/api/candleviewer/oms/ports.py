@@ -304,7 +304,7 @@ class RateReading:
             raise ValueError("a refusal carries a retry_after_s of at least one whole second")
 
 
-# --- The command port's collaborators (slice 2b, C4) ---------------------------------------------
+# --- The command port's collaborators (`commands.OmsCommandPort`) --------------------------------
 
 #: An M19 record's outcome and severity, as `order_machine.OrderAuditRecord` names them (a test
 #: pins the two alike).
@@ -340,9 +340,9 @@ class KeyedRecord:
 
 class SubmitAudit(Protocol):
     """The audit writer's keyed records (`AuditWriter.emit_keyed`, which slice 3 wires; `oms` never
-    imports `audit`, C-3.3). `record_id` is the id `write` stores a record under,
-    `uuid5(KEYED_ACTIONS[action], name)`, fixed for good; `write` makes the record durable or
-    raises (C-2.9)."""
+    imports `audit`, C-3.3). `record_id` is the id `write` stores a record under, the writer's
+    `keyed_record_id(action, name)`, fixed for good; `write` makes the record durable or raises
+    (C-2.9)."""
 
     def record_id(self, action: str, name: str) -> UUID: ...
 
@@ -405,7 +405,8 @@ class StopRequestGate(Protocol):
     """Asked before every stop request for a position leaves (21 Sec.3.3.11): an entry's first
     persist, and `attach_stop` before its record. `clear` returns when the key may take a request,
     and raises `StopRequestPending` while a row of the key waits for the complete read, which only
-    that read (slice 3) resolves."""
+    that read (slice 3) resolves. The caller bounds the call as any other
+    (`commands.PORT_TIMEOUT_S`, C-2.18), whatever the gate bounds itself."""
 
     async def clear(self, key: PositionKey) -> None: ...
 
@@ -427,11 +428,12 @@ class WaitingRows(Protocol):
 
 #: How long an unanswered stop request holds its key before it waits for the complete read, in
 #: seconds (the orchestrator's Q2 ruling, [LANE-25]). It is at least an entry's answer path, the
-#: slowest a request is answered: the `submitting` step's write (`CV_PERSIST_TIMEOUT`, 1 s), the
-#: create (`commands.SUBMIT_TIMEOUT_S`, at most 5 s) and the result step's write (1 s), 7 s in all;
-#: a trading stop's one call is shorter. It is no safety knob: either side of it refuses a second
-#: request for the key, inside it at the insert (`ux_rs_in_flight`, the bounded retry) and past it
-#: here. Slice 3's setting replaces it.
+#: slowest a request is answered: the `submitting` step's write (`CV_PERSIST_TIMEOUT`, 1 s), all of
+#: `place`, its reads, calls and answer by one deadline (`commands.SUBMIT_TIMEOUT_S`, 5 s,
+#: CR-2B1-04), and the result step's write (1 s), 7 s in all; a trading stop's call has the same
+#: deadline. It is no safety knob: either side of it refuses a second request for the key, inside
+#: it at the insert (`ux_rs_in_flight`, the bounded retry) and past it here, so a settle that lands
+#: late only moves where the second request is refused. Slice 3's setting replaces it.
 STOP_REQUEST_BOUND_S: Final = 10.0
 #: The `Retry-After` of a request refused because a row of its key waits for the complete read, in
 #: seconds: only that read clears it (the orchestrator's Q-D ruling).
