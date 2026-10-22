@@ -21,3 +21,29 @@ export function correctSkew(rawMs, helloSentMs, welcomeReceivedMs) {
   const corrected = rawMs - rtt / 2;
   return { raw: rawMs, rtt, corrected, absRaw: Math.abs(rawMs), absCorrected: Math.abs(corrected) };
 }
+
+/** VU `vu`'s own trend of its hello's `part`: "raw" (the signed `clock_skew_ms`) or "rtt". k6 pools a
+ * metric's samples over every VU, which loses which round trip went with which skew, and the guard
+ * reads the minimum-RTT hello: so each VU keeps its one hello (one VU is one connection,
+ * `ws_load.js`) in two trends of its own, one sample each (`measure.js` `helloTrends`). */
+export const helloTrendName = (part, vu) => `cv_hello_${part}_ms_v${vu}`;
+const HELLO_TREND = /^cv_hello_(raw|rtt)_ms_v(\d+)$/;
+
+/** The summary's trends (name -> stats) split into the pooled ones and `hellos`, `[{ vu, raw, rtt }]`
+ * in VU order: one for each VU whose welcome was timed. */
+export function splitHellos(trends) {
+  const pooled = {};
+  const byVu = new Map();
+  for (const [name, t] of Object.entries(trends)) {
+    const m = HELLO_TREND.exec(name);
+    if (m === null) {
+      pooled[name] = t;
+      continue;
+    }
+    const h = byVu.get(Number(m[2])) || { vu: Number(m[2]) };
+    if (t.count > 0) h[m[1]] = t.max;
+    byVu.set(h.vu, h);
+  }
+  const hellos = [...byVu.values()].filter((h) => "raw" in h && "rtt" in h);
+  return { trends: pooled, hellos: hellos.sort((a, b) => a.vu - b.vu) };
+}

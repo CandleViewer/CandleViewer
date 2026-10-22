@@ -5,6 +5,7 @@
  * so warm-up (connect, snapshots, bar fill) never enters a number.
  */
 import { Counter, Trend } from "k6/metrics";
+import { helloTrendName, splitHellos } from "./skew.js";
 
 export const FAMILIES = ["book", "trades", "bars", "footprint", "heatmap"];
 /** `meta.reason` of a `snap` (23 7.4); anything else is counted as `other` (an unknown reason is accepted). */
@@ -62,6 +63,15 @@ export const M = {
   release: Object.fromEntries(FAMILIES.map((f) => [f, trend(`cv_release_decode_ms_${f}`)])),
 };
 
+/** Each VU's own pair of hello trends, `[{ raw, rtt }]` by `__VU - 1` (`skew.js` `helloTrendName`),
+ * made in the init context as k6 makes every metric: the guard reads the minimum-RTT hello. */
+export function helloTrends(vus) {
+  return Array.from({ length: vus }, (_, i) => ({
+    raw: trend(helloTrendName("raw", i + 1)),
+    rtt: trend(helloTrendName("rtt", i + 1)),
+  }));
+}
+
 /** The run's timeline, absolute epoch ms, set by the runner: warm-up ends and the run ends together
  * on every VU, so the server scrapes (t0, t1) bound the same window k6 measures. */
 export function clock(env) {
@@ -73,7 +83,8 @@ export function clock(env) {
 const TRENDS = ["p(50)", "p(95)", "p(99)", "max", "count"];
 export const summaryTrendStats = TRENDS;
 
-/** The JSON the verdict reads: every `cv_*` metric by kind, plus the bytes k6 read off the wire. */
+/** The JSON the verdict reads: every `cv_*` metric by kind, each VU's hello as a pair (`hellos`), plus
+ * the bytes k6 read off the wire. */
 export function summarize(data, extra) {
   const trends = {};
   const counters = {};
@@ -93,5 +104,6 @@ export function summarize(data, extra) {
     }
   }
   const recv = data.metrics.data_received;
-  return { schema: 1, trends, counters, wire_bytes: recv ? recv.values.count : 0, ...extra };
+  const wire = recv ? recv.values.count : 0;
+  return { schema: 1, ...splitHellos(trends), counters, wire_bytes: wire, ...extra };
 }

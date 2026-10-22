@@ -650,10 +650,13 @@ def render(res: Result, facts: Mapping[str, Any], g: gate.GateResult) -> str:
     lines.append(f"- CPU sets: backend {backend_cpus or 'any'}, k6 {k6_cpus or 'any'}")
     if not facts["staging"]:
         lines.append("- Not staged: no systemd scope, so no CPU quota and no memory cap")
-    if res.clock_skew is not None:  # why the validity guard let the run through, or stopped it
+    if (cs := res.clock_skew) is not None:  # why the validity guard let the run through, or not
         host = facts.get("same_host")
         same = "not recorded" if host is None else str(bool(host)).lower()
-        lines.append(f"- Clock skew at the hello (same_host {same}): {res.clock_skew.text}")
+        lines.append(
+            f"- Clock skew at the hello (same_host {same}, skew_estimator {cs.skew_estimator}): "
+            f"{cs.text}"
+        )
     lines += [
         "",
         "| check | budget | measured | limit | unit | result |",
