@@ -58,6 +58,13 @@ before commit.
   `CV_REGEN_GOLDEN=1 pytest tests/unit/orderflow/indicators/test_golden_vectors.py` and review
   the diff; a changed kernel output needs that kernel's `build_version` bumped and its output
   digest re-pinned in that test (`KERNEL_OUTPUT_PINS`), which regeneration does not touch.
+- `golden/rule-ir/hash_vectors.json` — E37-T01 rule IR hash vectors: per request body, the server's
+  canonical bytes, `ir_hash` and form reasons, or its refusal; the reference for the client mirror
+  in `packages/rule-graph`. Sources: `services/api/tests/fixtures/rule_corpus/` (the 30 rules), then
+  edge, quirk and refused variants of `services/api/tests/fixtures/rule_ir/form_simple_0.json`.
+  Date 2026-10-22; no recorded data (symbols and account ids appear only as rule values), no
+  credentials. Written and byte-checked by `tests/rules/roundtrip/test_client_hash_vectors.py`;
+  regenerate with `CV_REGEN_GOLDEN=1` on that test and review the diff.
 
 ## Scripts
 
