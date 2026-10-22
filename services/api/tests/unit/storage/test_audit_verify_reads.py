@@ -1,6 +1,7 @@
-"""`SqlAlchemyAuditRepository` reads for verify (head, anchor, keyset batch): statements,
-time budget and error mapping, on a fake unit of work. The statements against the real
-trigger are covered by `tests/integration/audit/` (CI, docker)."""
+"""`SqlAlchemyAuditRepository` reads for verify (head, anchor, keyset batch) and for the export
+(its keyset batch and its count): statements, time budget and error mapping, on a fake unit of
+work. The statements against the real trigger are covered by `tests/integration/audit/` (CI,
+docker)."""
 
 from __future__ import annotations
 
@@ -14,8 +15,11 @@ import pytest
 import sqlalchemy as sa
 from structlog.testing import capture_logs
 
+from candleviewer.audit.repository import EXPORT_COLUMNS
 from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
 from candleviewer.storage.repositories.audit_sqlalchemy import (
+    _EXPORT_BATCH_SQL,
+    _VERIFY_BATCH_SQL,
     VERIFY_BATCH_MAX_BYTES,
     VERIFY_MAX_ENTRY_BYTES,
     AuditReadFailed,
@@ -141,6 +145,58 @@ async def test_checkpoints_carry_the_stored_hash_of_the_id_they_name() -> None:
     read, params = rel.calls[1]
     assert "LEFT JOIN audit_log a ON a.id = c.head_id" in read and params == {"to_id": 9}
     assert "WHERE c.head_id <= :to_id ORDER BY c.head_id" in read
+
+
+def _select_list(statement: sa.TextClause, head: str) -> str:
+    """What follows `head` in the statement's text, up to its first `FROM`."""
+    return statement.text.split(head, 1)[1].split(" FROM ", 1)[0]
+
+
+def test_export_batch_projects_export_columns_in_order() -> None:
+    """#889 S8: the statement's outer projection is `EXPORT_COLUMNS`, the port's tuple order."""
+    outer = _select_list(_EXPORT_BATCH_SQL, "SELECT ").split(", ")
+    assert tuple(column.removeprefix("w.") for column in outer) == EXPORT_COLUMNS
+
+
+def test_export_batch_text_renders_as_verify_s_and_budgets_both_extra_members() -> None:
+    """The statement's text only, which the integration test runs on Postgres: its inner select
+    renders verify's columns, written alike, then the two extra members, which its byte count
+    `n` covers too; and it has no lateral join, which in verify's nulls a large row's renderings."""
+    head = "SELECT id, prev_hash, entry_hash, "
+    extra = ", record_id::text AS record_id, object_label"
+    assert _select_list(_EXPORT_BATCH_SQL, head) == _select_list(_VERIFY_BATCH_SQL, head) + extra
+    text = _EXPORT_BATCH_SQL.text
+    assert "env, event_ts, record_id, object_label)) AS n" in text and ") f ON" not in text
+    assert "WHERE w.before < :max_bytes AND (w.big = 0 OR w.k = 1) ORDER BY w.id" in text
+
+
+async def test_export_batch_binds_the_repository_s_own_budget_entry_cap_and_timeout() -> None:
+    """The batch is bound by this repository's byte budget and per-entry cap, not the module
+    defaults, under its statement budget as verify's batch is; its rows come back as read."""
+    row = (7, "p", "e", *("x",) * 15, "r", None)
+    rel = _Rel(rows=[row])
+    caps = {"verify_batch_max_bytes": 1_000, "verify_max_entry_bytes": 500}
+    repo = SqlAlchemyAuditRepository(rel, verify_read_timeout_ms=250, **caps)  # type: ignore[arg-type]  # structural fake
+    assert await repo.fetch_export_batch(after_id=6, to_id=9, limit=10) == [row]
+    (budget, budget_params), (_, params) = rel.calls
+    assert "statement_timeout" in budget and budget_params == {"v": "250ms"}
+    assert params == {"after_id": 6, "to_id": 9, "limit": 10, "max_bytes": 1_000, "max_entry": 500}
+
+
+async def test_export_count_statement_carries_limit_cap() -> None:
+    rel = _Rel(rows=[[3]])
+    assert await _repo(rel).count_export_span(first_id=1, last_id=9, cap=3) == 3
+    (budget, budget_params), (read, params) = rel.calls
+    assert "statement_timeout" in budget and budget_params == {"v": "10000ms"}
+    assert "WHERE id >= :first_id AND id <= :last_id LIMIT :cap) s" in read
+    assert params == {"first_id": 1, "last_id": 9, "cap": 3}
+
+
+async def test_a_failed_export_read_names_its_statement_in_the_shared_warning() -> None:
+    rel = _Rel(on_read=_db_error("42501"))
+    with capture_logs() as logs, pytest.raises(AuditReadFailed):
+        await _repo(rel).fetch_export_batch(after_id=0, to_id=9, limit=10)
+    assert [(e["event"], e["read"]) for e in logs] == [("audit.verify_read.failed", "export_batch")]
 
 
 def _assert_no_db_error_in_chain(err: BaseException) -> None:

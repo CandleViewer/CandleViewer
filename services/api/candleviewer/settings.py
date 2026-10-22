@@ -497,7 +497,8 @@ class Settings(BaseSettings):
     audit_verify_statement_timeout_ms: int = Field(default=10_000, ge=1, le=30_000)
     audit_verify_deadline_s: float = Field(default=60.0, gt=0.0, le=600.0)
     # The most rendered UTF-8 bytes one entry may have for verify to fetch it (4 MiB; at most
-    # the 8 MiB batch budget). A larger entry stops the run (503, `entry_too_large@<id>`).
+    # the 8 MiB batch budget). A larger entry stops the run (503, `entry_too_large@<id>`). An
+    # export reads such an entry alone (#889), so lowering this also isolates more entries there.
     audit_verify_max_entry_bytes: int = Field(default=4_194_304, ge=65_536, le=8_388_608)
     # Structure one Owner audit page serves, as the `{`, `[` and `,` of its states'
     # renderings; past it the remaining states are withheld (`detail.elided`). The page is

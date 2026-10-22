@@ -16,8 +16,57 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Protocol
 
+#: The hashed columns after `prev_hash`, in the order `audit_chain()` hashes them
+#: (`21-database-schema.md` §3.10.1): the renderings a verify or an export batch carries.
+HASHED_FIELDS = (
+    "actor_user_id",
+    "actor_label",
+    "actor_ip",
+    "session_id",
+    "action",
+    "object_kind",
+    "object_id",
+    "outcome",
+    "severity",
+    "reason",
+    "before_state",
+    "after_state",
+    "request_id",
+    "env",
+    "event_ts",
+)
+#: The members of an export batch's rows, in order (#889 S8).
+EXPORT_COLUMNS = ("id", "prev_hash", "entry_hash", *HASHED_FIELDS, "record_id", "object_label")
 
-class AuditRepository(Protocol):
+
+class AuditExportReader(Protocol):
+    """The audit export's read port (#889 S8): a span's entries in keyset batches, and their
+    count. It serves only the Owner's export job (`exportAuditLog`), an M21/M23 read path of
+    `audit` (C-3.3). As verify's reads are, each call is bounded in time by the statement budget:
+    an overrun raises the builtin `TimeoutError`, and a database failure a storage error that
+    carries only the SQLSTATE."""
+
+    async def count_export_span(self, *, first_id: int, last_id: int, cap: int) -> int:
+        """How many entries have `first_id <= id <= last_id`, counted up to `cap` and never past
+        it, so the count reads at most `cap` ids."""
+        ...
+
+    async def fetch_export_batch(
+        self, *, after_id: int, to_id: int, limit: int
+    ) -> list[tuple[Any, ...]]:
+        """Up to `limit` entries with `after_id < id <= to_id`, in id order (a keyset walk on the
+        primary key), as tuples in `EXPORT_COLUMNS` order: `id`, `prev_hash`, `entry_hash`, the
+        renderings in `HASHED_FIELDS` order, each the exact text `audit_chain()` hashes (as
+        `fetch_verify_batch` renders it) or `None` for SQL NULL, then `record_id` as text and
+        `object_label`. Past its first row a batch stops at the implementation's byte budget for
+        those texts, so a short batch does not mean the span is done. No entry is left out: one
+        over the per-entry cap ends the batch before it and comes first and alone in the next,
+        with every member. A batch holds at most the budget plus one entry under the cap, or one
+        entry over it."""
+        ...
+
+
+class AuditRepository(AuditExportReader, Protocol):
     """Everything the audit module needs from the relational tier, expressed
     without any SQL-driver type in its signatures (plain `dict`/`str`/`int`).
     """
@@ -94,7 +143,7 @@ class AuditRepository(Protocol):
     ) -> list[tuple[Any, ...]]:
         """Return up to `limit` rows with `after_id < id <= to_id`, ordered `id ASC` (a
         keyset walk on the primary key), as tuples `(id, prev_hash, entry_hash,
-        *renderings)`. The renderings follow `query.HASHED_FIELDS`, each rendered to text by
+        *renderings)`. The renderings follow `HASHED_FIELDS`, each rendered to text by
         Postgres with the exact casts `audit_chain()` uses (`::text`, jsonb `::text`, and
         the trigger's `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.USOF')` for `event_ts`),
         `None` for SQL NULL. Past its first row a batch also stops at the implementation's
