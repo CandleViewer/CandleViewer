@@ -1310,6 +1310,22 @@ def test_an_operation_whose_table_resolves_to_another_is_not_flagged(
     assert _audit_hits(tmp_path, _UNRESOLVED_OP.format(body)) == []
 
 
+def test_a_revision_whose_tree_cannot_be_dumped_is_read_by_the_cli(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A long hex literal compiles, but its decimal `repr` exceeds Python's digit limit: the
+    revision is still read, and a clean one passes, with no traceback."""
+    versions = tmp_path / "versions"
+    versions.mkdir()
+    _write(
+        versions,
+        "0050_big.py",
+        _raw_sql_revision("SELECT 1") + "N = 0x" + "f" * 3600 + "\n",
+    )
+    assert main(["--versions-dir", str(versions)]) == 0
+    assert "Traceback" not in capsys.readouterr().err
+
+
 def test_a_drop_after_a_form_feed_is_paired_with_its_own_line(tmp_path: Path) -> None:
     """Lines are numbered as the AST numbers them, so a form feed earlier in the file
     cannot move a drop away from the call the rule read."""

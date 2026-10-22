@@ -928,10 +928,13 @@ def _read_revision(path: Path) -> str:
 
 
 def _tree_of(source: str | bytes) -> str | None:
-    """The dump of the tree Python compiles from `source`, None where it compiles none."""
+    """The dump of the tree Python compiles from `source`, None where it compiles none or
+    cannot dump it: `ast.dump` writes an integer constant in decimal, which Python refuses
+    past `sys.get_int_max_str_digits()` digits (a long hex literal) with `ValueError`.
+    """
     try:
         return ast.dump(ast.parse(source))
-    except (SyntaxError, RecursionError):
+    except (SyntaxError, ValueError, RecursionError):
         return None
 
 
