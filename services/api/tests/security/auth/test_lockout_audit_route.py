@@ -20,6 +20,7 @@ from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, LoginService
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from tests.unit.api._fakes import WriterLane
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 
 _CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
@@ -41,11 +42,7 @@ class _Audit:
 
     def __init__(self) -> None:
         self.writer = _Writer()
-
-    @property
-    def lane(self) -> _Writer:
-        """The façade (ADR-0037) without a lane: its fallback, the writer, takes each row."""
-        return self.writer
+        self.lane = WriterLane(self)  # ADR-0037's façade as its fallback: each record to the writer
 
 
 class _Auth:

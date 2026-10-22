@@ -1196,12 +1196,15 @@ The login routes (`api/auth.py`, #2914) write their outcome and refusal rows aft
 and through the lane (ADR-0037 Amendment 2): `auth.login_failed` for a refused sign-in (`401`,
 `403`) or a disabled user's refused mint (reason `user_disabled`), `auth.account_locked` (`423`),
 `auth.login` for a password step that passed (`200`; no session exists yet), `auth.mfa_failed`
-for a refused second factor, recovery or confirm (`401`, `422`), `auth.recovery_codes_exhausted`,
-and a recovery's `unplanned` `auth.session_revoked`. Each lost one is counted under its action and
-logs one error, `auth.login_audit.outcome_lost`, with `action` and `error` only (no identifier,
-address or session id, C-12.6); the answer stands, and the counter the route moves before the row
-(`auth_login_failures_total`, `auth_enrolments_total`), where there is one, still shows the attempt.
-A mint's write-ahead records are not among them: they stay on the writer (U42).
+for a refused second factor, recovery or confirm (`401`, `422`) or for a second factor whose mint
+then failed in the store (`500`, reason `unminted`: it voids the `auth.session_created` written
+ahead, and the error log `auth.mfa_verify.unminted` names the `user_id` and the `new_session_id`),
+`auth.recovery_codes_exhausted`, and a recovery's `unplanned` `auth.session_revoked`. Each lost one
+is counted under its action and logs one error, `auth.login_audit.outcome_lost`, with `action` and
+`error` only (no identifier, address or session id, C-12.6); the answer stands, and the counter the
+route moves before the row (`auth_login_failures_total`, `auth_enrolments_total`), where there is
+one, still shows the attempt. A mint's write-ahead records are not among them: they stay on the
+writer (U42).
 
 Each lost row adds one to `auth_audit_outcome_lost_total{action}` and logs one error,
 `auth.session_audit.outcome_lost`, with `action`, `session_id` and `error` (the writer's refusal
@@ -1247,13 +1250,12 @@ meanwhile. A lock the chart must still record (first seen meanwhile, or again af
 fails closed (nothing is minted), since the write-ahead records of a mint never go to the lane: an
 access token lapses within 12 minutes and a longer refusal ends every session and sign-in. The
 password step of `POST /auth/login` still answers (its row is an outcome row), and
-`POST /auth/mfa/verify` then fails closed at its `auth.mfa_verified` record with
-`500 internal_error`, not `503`: that write has no `AuditError` handler, so the refusal reaches the
-boundary handler, which logs `unhandled_exception` with a traceback that names the error
-(`AuditUnavailable` or `AuditWriterStopped`); its `auth.session_created`, written ahead of the mint,
-answers its `401` (`audit sink not active`). During an outage that is the sink, not a defect:
-`cv_audit_writer_refused_total{domain="auth"}` counts each one. An enrolment-only sign-in and the
-enrolment steps answer `503`, and `POST /auth/mfa/recovery` its uniform `401`.
+`POST /auth/mfa/verify` then fails closed with its `401` (`audit sink not active`) at its first
+write-ahead record, `auth.mfa_verified`, as at the carried-session record and at the
+`auth.session_created` it writes ahead of the mint: the TOTP step is spent, so the user signs in
+again from the password step once the sink is back. During an outage that is the sink, not a
+defect: `cv_audit_writer_refused_total{domain="auth"}` counts each one. An enrolment-only sign-in
+and the enrolment steps answer `503`, and `POST /auth/mfa/recovery` its uniform `401`.
 Sign-out, revoke-my-session and reuse containment go to the lane first and answer `503` only while
 it refuses too, as a full or read-only audit volume makes it do (accepted residual risk RR-16,
 `04-security-program.md` section 16.1). The Owner's revocation of another user's session

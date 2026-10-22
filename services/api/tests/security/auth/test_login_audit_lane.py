@@ -36,7 +36,8 @@ from tests.unit.auth.session_fakes import FakeSessionRepository
 
 from ._stack import PW, Stack, open_stack
 
-_LOST = "auth.login_audit.outcome_lost"
+_LOST, _FAILED = "auth.login_audit.outcome_lost", "auth.login_failed"
+_PEER = "127.0.0.1"  # the stack's client, the address MeshOnly admits and every row records
 _WRONG_CODE = "0000-0000-0000-0000"  # no recovery code: they are generated, never this
 Pick = Callable[[str, dict[str, Any]], bool]
 
@@ -196,6 +197,14 @@ def _disabled_at_the_mint(stack: Stack, mp: pytest.MonkeyPatch) -> Any:
     return _verify(stack, token, stack.code(seed))
 
 
+def _unminted_at_the_mint(stack: Stack, mp: pytest.MonkeyPatch) -> Any:
+    """A store failure at the MFA step's mint, after its `auth.session_created`: the 500 stands."""
+    _, seed = _user(stack)
+    token = _login(stack).json()["mfa_token"]
+    mp.setattr(stack.auth.sessions, "mint", _failing(_UNMINTED))
+    return _verify(stack, token, stack.code(seed))
+
+
 def _enrolment_only_disabled(stack: Stack, mp: pytest.MonkeyPatch) -> Any:
     uid, _ = _user(stack, mfa_methods=())
     _sessions(stack).user_statuses[str(uid)] = UserStatus.DISABLED
@@ -298,6 +307,7 @@ _ROWS: dict[str, _Row] = {
     "login_password_step": _Row(_account, "auth.login", 200),
     "verify_wrong_code": _Row(_wrong_second_factor, "auth.mfa_failed", 401),
     "verify_disabled": _Row(_disabled_at_the_mint, "auth.login_failed", 401),
+    "verify_unminted": _Row(_unminted_at_the_mint, "auth.mfa_failed", 500),
     "sign_in_disabled": _Row(_enrolment_only_disabled, "auth.login_failed", 403),
     "recovery_exhausted": _Row(_exhausted, "auth.recovery_codes_exhausted", 401),
     "recovery_wrong_code": _Row(partial(_recovery, code=_WRONG_CODE), "auth.mfa_failed", 401),
@@ -336,7 +346,9 @@ def test_a_row_the_writer_refuses_is_journaled_and_the_answer_stands(
     reply = row.act(stack, monkeypatch)
 
     assert reply.status_code == row.status
-    assert [r["action"] for r in lane.rows if picks(r["action"], r)] == [row.action]
+    journaled = [r for r in lane.rows if picks(r["action"], r)]
+    assert [r["action"] for r in journaled] == [row.action]
+    assert journaled[0]["actor_ip"] == _PEER  # the row's forensic address (C-2.9)
     assert refused == [] and _lost(row.action) == lost
 
 
@@ -372,6 +384,27 @@ def test_a_recovery_that_mints_nothing_names_every_session_it_ended(
     (late,) = [r["session_id"] for r in lane.rows if r["action"] == "auth.session_revoked"]
     (event,) = [e for e in logs if e["event"] == "auth.recovery.completed_unminted"]
     assert event["revoked_session_ids"] == [str(planned), str(late)]
+
+
+def test_an_unknown_user_and_a_wrong_password_get_one_answer_while_both_refuse_the_row(
+    stack: Stack, lane: _Lane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U8 (SR-014) during an outage: with the lane held and the writer refusing, an unknown
+    identifier and a wrong password still get the same answer, its bytes and its headers apart
+    from the request id, and each row is counted lost."""
+    _user(stack)
+    lane.held = True
+    refused, lost = _refuse(stack, monkeypatch, _named(_FAILED)), _lost(_FAILED)
+    stack.client.cookies.clear()
+    unknown = stack.client.post("/auth/login", json={"identifier": "mallory", "password": PW})
+    wrong = _login(stack, "wrong-guess")
+
+    def answer(reply: Any) -> tuple[int, bytes, dict[str, str]]:
+        headers = {k: v for k, v in reply.headers.items() if k != "x-correlation-id"}
+        return reply.status_code, reply.content, headers
+
+    assert answer(unknown) == answer(wrong) and unknown.status_code == 401
+    assert refused == [_FAILED, _FAILED] and _lost(_FAILED) - lost == 2
 
 
 # -- U42: a mint's write-ahead records stay on the writer -----------------------------------------
@@ -416,7 +449,7 @@ _MINTS: dict[str, Mint] = {
     [
         ("sign_in", "auth.login", 503),
         ("sign_in", "auth.session_created", 503),
-        ("verify", "auth.mfa_verified", 500),  # unhandled, as before (runbook auth-rbac.md §10)
+        ("verify", "auth.mfa_verified", 401),
         ("verify", "auth.session_created", 401),  # written ahead of the mint since PR C
         ("recovery", "auth.recovery_code_used", 401),
         ("recovery", "auth.session_revoked", 401),

@@ -225,7 +225,8 @@ Option (b), built from the proven patterns of (a) and (c) without sharing their 
     rotated refresh token presented again once this process has contained its family, that token or another rotated
     member, writes `auth.refresh_reuse_replayed` (`shared`, `denied`, `warning`) ahead through the lane instead, so
     a flood of replays fills the `shared` share and falls back to the writer, and never spends a `reserved` byte or
-    waiter: Q3's one `reserved` source reachable without a session becomes one frame per family. No store query says
+    waiter: Q3's one `reserved` source reachable without a session, besides the recovery's unplanned revocation
+    (Amendment 2), becomes one frame per family. No store query says
     a family was contained, so the refresh route keeps an in-process memo (`ContainedFamilies`, `api/sessions.py`),
     filled, once the service has revoked a family (a refresh that lost a claim race revoked none), from
     `RefreshReuseDetected.revoked_session_ids` and the presented session, and bounded by a capacity and a TTL. A family
@@ -376,7 +377,8 @@ lane drains again without duplicates, and an older copy shows as a lower head in
   the `503` sites also need a per-action counter? Answered by #2914's PR C (Amendment 2): yes, per call site; F1
   stays as S3 shipped it; that series is the signal, and no per-action counter is added.
 - **Q3, main-orchestrator.** Are §15.6's limits enough for a dead flusher left for hours, or should S2b's chaos
-  run size them first? The one `reserved` source reachable without a session is a rotated-token replay,
+  run size them first? The one `reserved` source reachable without a session, besides the recovery's unplanned
+  revocation (Amendment 2), is a rotated-token replay,
   bounded by the refresh route's per-address and per-session throttles (`api/sessions.py:266-272`).
 - **Q4, E27 (KV-D04).** Separate action ids for the risk-reducing borrow purposes, or a purpose rule in the
   registry?
@@ -429,8 +431,9 @@ unlock (#4052) fail closed while the sink refuses, and sign-out and revoke-my-se
 too, as a full or read-only audit volume makes it (Q5); a double refusal still loses an outcome row, now counted
 and alerted (#4021's Low-2). RR-01 takes residual 4 of the threat model's §3.6.2, a lane record waiting in the
 CRC-only WAL after ingest (Q6), beside residuals 1 and 2. Q7 adds no §16.2 rows for the lane's callers; EX-10
-covers the login routes. The counter-coverage tests now check, for each action the counter covers, that it is a
-`LANE_ACTIONS` row and that both runbook entries name it (`tests/unit/auth/test_audit_outcome_lost_alerts.py`).
+covers the login routes (until Amendment 2). The counter-coverage tests now check, for each action the counter
+covers, that it is a `LANE_ACTIONS` row and that both runbook entries name it
+(`tests/unit/auth/test_audit_outcome_lost_alerts.py`).
 
 **Built, not carried.** SEC-REM-03, and with it the one helper for the lock that S2c's review left unfolded: #4005
 takes `lane.lock` through directory descriptors, for cv-api and the release command alike (decision 9). S2c's n3:
@@ -559,15 +562,19 @@ write-ahead records holds per call site, for `auth.login`, `auth.recovery_code_u
 too. `auth.recovery_code_used` keeps its registry row although no route hands it to the façade: its one record
 is the recovery mint's write-ahead record, so the counter's set leaves it out as well.
 `test_a_mints_write_ahead_record_never_reaches_the_lane_so_its_refusal_mints_nothing`
-(`tests/security/auth/test_login_audit_lane.py`) pins it: with the writer refusing any one of those records and
-a lane that takes every row it admits, each mint answers its refusal, mints and revokes nothing, and hands the
-lane nothing.
+(`tests/security/auth/test_login_audit_lane.py`) pins it for 11 of those records, all but the carried-session
+record and `auth.mfa_enroll` (neither is a lane action, and older tests cover both): with the writer refusing
+any one of the 11 and a lane that takes every row it admits, each mint answers its refusal, mints and revokes
+nothing, and hands the lane nothing.
 
 **`/auth/mfa/verify`'s `auth.session_created`** is written ahead of the mint now, on the writer, naming the id
 the mint then uses, as `_enrolment_only_sign_in` does; decision 3 stands unamended. A refusal answers the
 operation's `401` (`audit sink not active`, as for the carried-session record) and mints nothing, and a user
-disabled since the password step gets the refusal row that voids it. `auth.mfa_verified`, written before it,
-still answers a refusal with `500`.
+disabled since the password step gets the refusal row that voids it, as does a mint that fails in the store
+(an `auth.mfa_failed` row, reason `unminted`, and the error log `auth.mfa_verify.unminted`; the `500` stands).
+`auth.mfa_verified`, the first of the route's write-ahead records, answers a refusal with the same `401` (it
+was a `500`), so a sign-in answers `401` throughout an outage of the sink, with nothing minted and the TOTP
+step spent.
 
 **The recovery's `unplanned` rows** are `reserved`, as the class follows the action. They are reachable without
 a session, but only past a recovery code the same request spent (one use each, ten per user) and only for a
@@ -575,8 +582,8 @@ session minted while that recovery ran, so they add no flood source beside Q3's.
 
 **Q2's answers.** PR C calls the façade itself, per call site (`_outcome`). F1 stays as S3 shipped it
 (`api/sessions.py`). `cv_audit_writer_refused_total{domain}` is the write-ahead refusal signal asked for: a
-refused write-ahead record of the login routes counts on `domain="auth"`, and its route answers `503`, `401` or
-`500` as before, so no per-action counter is added.
+refused write-ahead record of the login routes counts on `domain="auth"`, and its route answers `503` or `401`,
+so no per-action counter is added.
 
 ## References
 

@@ -665,24 +665,27 @@ def make_auth_router(
             # (SCR-002's "locked after 5 tries" state), not via this text.
             return _problem(401, "MFA verification failed", "invalid or expired code")
 
+        # Fail closed (C-2.9 write-ahead): a record that cannot be written mints nothing. 401 is
+        # this operation's documented refusal (its 503 is #2152's `AuthUnavailable`).
+        unaudited = _problem(401, "MFA verification failed", "audit sink not active")
         if audit_service is not None and audit_service.is_active:
             # The mint's first write-ahead record (ADR-0037 decision 3): the writer's, never the
-            # lane's (U42), so while the sink refuses nothing is minted (a 500, as before).
-            await audit_service.writer.emit(
-                "auth.mfa_verified",
-                actor_label=str(result.user_id),
-                actor_ip=_client_ip(request),
-                outcome=AuditOutcome.SUCCESS,
-                request_id=current_request_uuid(),
-            )
+            # lane's (U42), so while the sink refuses nothing is minted (the step stays spent).
+            try:
+                await audit_service.writer.emit(
+                    "auth.mfa_verified",
+                    actor_label=str(result.user_id),
+                    actor_ip=_client_ip(request),
+                    outcome=AuditOutcome.SUCCESS,
+                    request_id=current_request_uuid(),
+                )
+            except AuditError:
+                return unaudited
         if identity is None or not auth_service.sessions_is_active:
             # No session backend wired (fake/CI default): E09-S02 behaviour.
             return JSONResponse(status_code=200, content={"status": "authenticated"})
         # QA #1658: second factor satisfied -> mint the session (ADR-0020),
         # set the `cv_refresh` cookie and return `AuthenticatedResponse`.
-        # Fail closed (C-2.9 write-ahead): a record that cannot be written mints nothing. 401 is
-        # this operation's documented refusal (no 503 in its contract).
-        unaudited = _problem(401, "MFA verification failed", "audit sink not active")
         if not await _audit_carried_sessions(request, result.user_id, stage="mfa_verify"):
             return unaudited
         session_id = uuid.uuid4()  # named by its write-ahead record, as at sign-in (#2914)
@@ -718,6 +721,28 @@ def make_auth_router(
             voided = {"voids_session_created": str(session_id)}
             await _audit_refusal(request, result.user_id, session_id=session_id, after_state=voided)
             return _problem(401, "MFA verification failed", "account is disabled")
+        except Exception as exc:  # a store failure: nothing was minted, and the 500 stands
+            # Its `auth.mfa_failed` row voids the session `auth.session_created` announced (C-2.9)
+            # and counts as this route's other `auth.mfa_failed` rows do (SR-125). The error log
+            # names both ids and the error class only (C-12.6), in case that row is lost too.
+            auth_login_failures_total.labels(method=body.method.value).inc()
+            _log().error(
+                "auth.mfa_verify.unminted",
+                user_id=str(result.user_id),
+                new_session_id=str(session_id),
+                error=type(exc).__name__,
+            )
+            await _outcome(
+                "auth.mfa_failed",
+                actor_label=str(result.user_id),
+                actor_user_id=result.user_id,
+                actor_ip=_client_ip(request),
+                outcome=_FAILED,
+                session_id=session_id,
+                reason="unminted",
+                after_state={"voids_session_created": str(session_id)},
+            )
+            raise
         response = JSONResponse(
             status_code=200,
             content={
