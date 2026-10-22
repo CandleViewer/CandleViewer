@@ -1,7 +1,7 @@
 """Contract (E29-T07 #915, E34-S03 #1111): only the owner can loosen a position's stop.
 
 `24-internal-schemas.md` section 8.8 rule 5 makes the loosening override the owner's alone, on
-`setPositionTpSl` under a live `risk_caps` step-up, audited before it is sent (`sl.loosened`).
+`setPositionTpSl` under a live `sl_loosen` step-up, audited before it is sent (`sl.loosened`).
 Any other role's loosening is refused and audited (`sl.loosen_refused`); `amendOrder` and
 `amendTradeGroup` refuse a looser stop outright; the check sits once, at the recorded-stop writer
 (C-2.21), and never refuses a tightening (C-2.6). No route here is mounted yet: E29-T07 and
@@ -46,20 +46,22 @@ def test_rule_5_gives_the_loosening_override_to_the_owner_alone() -> None:
     rule = _rule_5()
     for phrase in (
         "unless the **owner** explicitly overrides. The override is the owner's alone: one "
-        "confirmation dialog, then `setPositionTpSl` under a live `risk_caps` step-up, the "
-        "loosening audited write-ahead (`sl.loosened`)",
+        "confirmation dialog, then `setPositionTpSl` under a live `sl_loosen` step-up, a no-grace "
+        "class (one fresh code per loosening, bound to that exact request, §15.3), the loosening "
+        "audited write-ahead (`sl.loosened`)",
         "No other role has it and no other request carries it",
         "another role's loosening on `setPositionTpSl` is refused with `403 risk_limit_breached` "
         "before any send, its refusal audited write-ahead (`sl.loosen_refused`, with the actor, "
         "role, account, and the stop before and after)",
         "the owner's without the step-up answers `403 step_up_required` "
-        "(`action_class: risk_caps`)",
+        "(`action_class: sl_loosen`)",
         "`amendOrder` and `amendTradeGroup` refuse a looser stop outright",
         "so the override exists on `setPositionTpSl` alone",
         "a rule action never loosens a stop: a trail or breakeven (§10.7) only ever tightens",
         "and a rule action that would widen one (§11.6: `modify_stop_loss` with "
         "`only_tighten=false`, or `widen_stop`) is refused at the writer like any other "
-        "loosening, whatever permission the rule holds",
+        "loosening, whatever permission the rule holds, its refusal audited (`sl.loosen_refused`, "
+        "§15.5)",
     ):
         assert phrase in rule, phrase
 
@@ -73,15 +75,18 @@ def test_rule_5_puts_one_synchronous_check_at_the_recorded_stop_writer() -> None
         "its cover is smaller: a Full-mode stop covers the whole position and a Partial-mode one "
         "its size, and a request's cover is looser when it is less than the lesser of the "
         "record's cover and the position's size at the write",
-        "compared only with the record's native trail: it clears that trail, its distance is "
-        "greater, or it arms later (a higher activation price for a long, a lower one for a "
-        "short; a trail with no activation price arms at once)",
-        "Adding a trail where the record has none never loosens.",
+        "compared with the record's native trail: it clears that trail, its distance is greater, "
+        "or it arms later (a higher activation price for a long, a lower one for a short; a trail "
+        "with no activation price arms at once)",
+        "Otherwise adding a trail where the record has none never loosens.",
         "A request that omits the trail leaves the venue's trail in place, and its record carries "
         "the record's trail forward (rule 6), so only an explicit clear (`trailing_stop: null`) "
         "removes one",
         "the writer refuses a clear before any record or audit is written, the owner's included",
-        "a re-sent armed trail is compared by the trigger it re-arms at",
+        "a re-sent armed trail is compared by the trigger it re-arms at, against the trigger in "
+        "force",
+        "where a record is in force it attaches that recorded stop, audited as `sl.attached` with "
+        "the reason `record_in_force`",
         "The check is synchronous (C-2.21) and sits once, at the recorded-stop writer (rule 6)",
         "every stop request, from every writer, is compared with the record in force before its "
         "own record is written",
@@ -101,6 +106,81 @@ def test_rule_5_puts_one_synchronous_check_at_the_recorded_stop_writer() -> None
     ):
         assert phrase in rule, phrase
     assert "neither is attaching a stop where the exchange shows none" not in rule  # D-4137-02
+    assert "compared only with the record's native trail" not in rule  # F-4137-02
+
+
+def test_under_a_recorded_trail_the_trigger_in_force_is_the_trailed_stop() -> None:
+    """F-4137-01: the venue moves a trailed stop while the record keeps its arm-time trigger, so a
+    request that is tighter than the record but looser than the trailed stop is a loosening."""
+    rule = _rule_5()
+    for phrase in (
+        "its trigger is further from the market on the position's side (lower for a long, higher "
+        "for a short) than the trigger in force: the record's or, under a native trail the record "
+        "holds, the tighter of the record's and the stop the position reports in the writer's own "
+        "read, as the venue moves a trailed stop with the price (§10.7) while the record keeps the "
+        "trigger it was written with",
+        "a re-sent armed trail is compared by the trigger it re-arms at, against the trigger in "
+        "force",
+    ):
+        assert phrase in rule, phrase
+    text = _words(_OPS["setPositionTpSl"]["description"])
+    assert (
+        "than the trigger in force, which under a recorded trail is the tighter of the record's "
+        "and the stop the position reports"
+    ) in text
+
+
+def test_a_trail_that_arms_beyond_the_trigger_in_force_is_looser_until_o4_answers() -> None:
+    """F-4137-02: whether the venue keeps the fixed stop beside an active trail is open (`[O-4]`),
+    so until E29-K01 answers, a trail that arms further from the market than the trigger in force
+    is looser, added or changed."""
+    rule = _rule_5()
+    assert (
+        "`[O-4]`: whether the venue keeps the fixed stop in force beside an active trail is open "
+        "(E29-K01); until it is confirmed, a trail, added or changed, is looser too where the "
+        "level it arms at is further from the market than the trigger in force: its activation "
+        "price (for a trail with none, the `sl_trigger_by` price of the writer's own read) less "
+        "its distance for a long, plus it for a short."
+    ) in rule
+    text = _words(_OPS["setPositionTpSl"]["description"])
+    assert "until the venue's behaviour is confirmed, arming further from the market" in text
+
+
+def test_a_trail_with_no_activation_price_is_recorded_with_the_writers_one() -> None:
+    """F-4137-04: `rs_trail` holds both of a trail's numbers or neither, so the writer records a
+    trail sent with none at the `sl_trigger_by` price of its own read."""
+    section = _INTERNAL_DOC.split("\n### 8.8 ", 1)[1].split("\n### 8.9 ", 1)[0]
+    rule_6 = _words(section.split("\n6. ", 1)[1])
+    assert (
+        "a trail sent with no activation price arms at once, and its record takes as its "
+        "activation price the `sl_trigger_by` price of the writer's own read at the write, so a "
+        "recorded trail always holds both numbers, `21-database-schema.md` §3.3.11 `rs_trail`"
+    ) in rule_6
+    schema = _SPEC["components"]["schemas"]["SetTpSlRequest"]["properties"]["activation_price"]
+    assert "Omitted, it arms at once, and its record takes the `sl_trigger_by` price" in (
+        _words(schema["description"])
+    )
+
+
+def test_the_owners_step_up_is_the_no_grace_sl_loosen_class() -> None:
+    """F-4137-03: the owner's default (#2701) is a no-grace class, one loosening per step-up; the
+    contract declares `sl_loosen` ahead of the service (C-6.1)."""
+    assert "sl_loosen" in _step_up_classes() and "risk_caps" in _step_up_classes()
+    step_up = _OPS["authStepUp"]
+    assert "`live_enablement`, `killswitch`, `backups` and `sl_loosen` are no-grace" in _words(
+        step_up["description"]
+    )
+    body = step_up["requestBody"]["content"]["application/json"]["schema"]
+    klass = _words(body["properties"]["action_class"]["description"])
+    assert (
+        "`sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`" in klass
+    )
+    assert "`live_enablement`/`killswitch`/`backups`/`sl_loosen`: none, fresh code each time" in (
+        _INTERNAL_DOC
+    )
+    assert "the owner's loosening of a position's stop (`sl_loosen`, §8.8 rule 5)" in _INTERNAL_DOC
+    for text in (_rule_5(), _words(_OPS["setPositionTpSl"]["description"])):
+        assert "risk_caps" not in text
 
 
 def test_the_watchdog_attaches_the_record_in_force_where_it_can() -> None:
@@ -133,6 +213,25 @@ def test_a_group_amend_never_clears_a_trail() -> None:
     assert "`null` clears `take_profit` or `trailing_stop`" not in request
 
 
+def test_the_gate_and_the_arm_token_refuse_a_looser_amend_outright() -> None:
+    """F-4137-06: §8.10 and `ArmToken` no longer offer a loosened stop on the two amends, which
+    rule 5 refuses outright; the E35 follow-up names 22's `widen_stop` and `loosens_risk` texts."""
+    gate = _words(_INTERNAL_DOC)
+    assert (
+        "Risk-increasing amends (quantity up, trigger re-armed, and the owner's loosened stop on "
+        "`setPositionTpSl`, the one loosening §8.8 rule 5 allows; `amendOrder` and "
+        "`amendTradeGroup` refuse a looser stop outright) are refused the same way."
+    ) in gate
+    arm = _words(_SPEC["components"]["parameters"]["ArmToken"]["description"])
+    assert "(quantity up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or" in arm
+    assert "stop loosened" not in arm
+    follow_up = _words(_INTERNAL_DOC.split("\n### 19.26 ", 1)[1])
+    assert '`22-api-openapi.yaml`\'s `widen_stop` text ("an owner with an elevated session")' in (
+        follow_up
+    )
+    assert '`loosens_risk` ("gate them behind the owner-only permission")' in follow_up
+
+
 def test_the_other_texts_follow_rule_5() -> None:
     """D3-4137-04/-06: section 10.7, rule 6, the restore's cap, the rule table and step 5's code."""
     doc = _words(_INTERNAL_DOC)
@@ -147,6 +246,10 @@ def test_the_other_texts_follow_rule_5() -> None:
         assert phrase in doc, phrase
     step_5 = _INTERNAL_DOC.split("\n### 8.5 ", 1)[1].split("\n### 8.6 ", 1)[0]
     assert "await oms.attach_missing_sl(p)" in step_5
+    assert "tighter(cur, rec, p) and not rec.trail_moved(p)" in step_5  # looser()'s twin
+    assert "tighter(cur, rec, p.side)" not in step_5
+    assert "which only the owner's override does (§8.8 rule 5)" in _words(step_5)
+    assert "rule 5's audited confirmation" not in step_5
     assert "looser(cur, rec, p)" in step_5
     assert 'attach_protective_sl(p, rec, reason="reconcile_missing_sl")' not in step_5
 
@@ -164,9 +267,10 @@ def test_step_5_and_the_rule_table_defer_to_rule_3() -> None:
     ) in step_5
     section = _INTERNAL_DOC.split("\n### 15.5 ", 1)[1].split("\n### 15.6 ", 1)[0]
     assert (
-        "The watchdog's fallback attach (§8.8 rules 3 and 5) is `sl.attached` with the reason"
-        in (_words(section))
-    )
+        "The missing-stop attach (§8.8 rules 3 to 5) is `sl.attached` with its reason: "
+        "`record_in_force` for the recorded stop, `no_record_in_force` or `trigger_passed` for "
+        "the profile fallback."
+    ) in _words(section)
 
 
 def test_a_rule_action_that_widens_a_stop_is_refused_at_the_writer() -> None:
@@ -182,9 +286,14 @@ def test_both_loosening_actions_are_in_the_closed_audit_vocabulary() -> None:
     vocabulary = section.split("\n\n", 2)[1]
     assert "`sl.loosened`, `sl.loosen_refused`, `tp.modified`" in vocabulary
     text = _words(section)
-    assert "Both are written ahead, the loosening before its request leaves and the refusal " in (
-        text
-    )
+    assert (
+        "Both are written ahead, the loosening before its request leaves and a refusal before its "
+        "`403` or, for an automated writer, before the write is dropped"
+    ) in text
+    assert (
+        "a rule action's, `actor_type: rule`, its fire also recorded as `rule.blocked`; a §10.7 "
+        "trail's or breakeven's, `actor_type: system`"
+    ) in text
     assert (
         "with the actor, role and account, the position as the object, and the stop before and "
         "after (trigger price, the size in Partial mode, and a native trail's distance and "
@@ -198,20 +307,23 @@ def test_set_position_tp_sl_lets_only_the_owner_loosen_under_a_step_up() -> None
     text = _words(op["description"])
     for phrase in (
         "**Only the owner can loosen a stop** (24-internal-schemas.md section 8.8 rule 5)",
-        "needs the owner's role and a live `risk_caps` step-up",
-        "the owner without one gets `403 step_up_required` (`action_class: risk_caps`)",
+        "needs the owner's role and a live `sl_loosen` step-up, a no-grace class (one fresh code "
+        "per loosening, bound to the request)",
+        "the owner without one gets `403 step_up_required` (`action_class: sl_loosen`)",
         "and any other role `403 risk_limit_breached`, its refusal audited "
         "(`sl.loosen_refused`), with nothing sent",
         "The owner's loosening is audited before it is sent (`sl.loosened`)",
-        "an `sl_size` below the lesser of the recorded cover and the position's size, or a trail "
-        "that is wider or armed later",
+        "in Partial mode an `sl_size` below the lesser of the recorded cover and the position's "
+        "size; or a trail that is wider, armed later or",
+        "pass `null` explicitly to clear the take-profit (the stop-loss of an open position is "
+        "never cleared, below)",
         "**A trail is never cleared here.** `trailing_stop: null` over a trail is refused for "
         "every role, the owner included, with `400 validation_failed` (rule "
         "`trail_clear_unsupported`) before any record or audit is written",
         "a tightening is never refused by it (C-2.6)",
     ):
         assert phrase in text, phrase
-    assert "risk_caps" in _step_up_classes()
+    assert "sl_loosen" in _step_up_classes()
     assert op["responses"]["403"] == {"$ref": "#/components/responses/Forbidden"}
     for code in ("step_up_required", "risk_limit_breached"):
         assert _CODES[code]["status"] == 403, code
