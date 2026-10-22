@@ -517,8 +517,10 @@ def evaluate(
         facts.rss_bytes and facts.mem_max_bytes and facts.rss_bytes >= facts.mem_max_bytes
     ):
         res.invalid.append(f"backend_memory: rss {facts.rss_bytes}, oom events {facts.oom_events}")
-    if facts.mem_max_bytes and not facts.rss_bytes:  # a cap, and every periodic scrape timed out
-        res.not_judged.append("backend_memory rss: not judged (no periodic scrape was answered)")
+    if facts.mem_max_bytes and not facts.rss_bytes:  # a cap, but no periodic reading
+        tried = bool(sc and len(sc.timed_out_ms) - len(sc.retried) - len(sc.missing) > 0)
+        was = "answered" if tried else "due"  # all periodic scrapes timed out, or none was due
+        res.not_judged.append(f"backend_memory rss: not judged (no periodic scrape was {was})")
     if facts.steady_s <= 0:
         res.invalid.append("no_steady_window")
     if facts.cpu_s is not None and facts.steady_s > 0 and not lost:  # a lost boundary: no delta
@@ -529,8 +531,9 @@ def evaluate(
 
 
 def expect_failure(res: Result, name: str) -> tuple[bool, str]:
-    """The self-check: the run must FAIL and name `name` (the deliberately inflated metric)."""
-    ok = res.status == "FAIL" and name in res.failed()
+    """The self-check: the run must FAIL, with no guard tripped, and name `name` (the
+    deliberately inflated metric)."""
+    ok = res.status == "FAIL" and name in res.failed() and not res.invalid
     failed, invalid = ", ".join(res.failed()) or "none", "; ".join(res.invalid) or "none"
     return ok, f"{res.status}; failed: {failed}; invalid: {invalid}"
 

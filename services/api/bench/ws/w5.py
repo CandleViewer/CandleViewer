@@ -162,7 +162,8 @@ def obs_from_summary(
 @dataclass(frozen=True, slots=True)
 class Phase:
     """One run of the W5 plan: what it subscribed, how the cohort's `pong` was delayed, what k6
-    and the scrapes measured over its steady window, and its run's verdict status."""
+    and the scrapes measured over its steady window, and its run's status: `INVALID` when it
+    tripped any validity guard, else its verdict."""
 
     name: str
     families: tuple[str, ...]

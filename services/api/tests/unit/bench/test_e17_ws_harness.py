@@ -613,6 +613,16 @@ def test_a_scrape_timeout_reads_fail_and_lists_the_guard_that_also_tripped(
     assert (result["status"], result["invalid"]) == ("FAIL", ["k6_exit: 107"])
 
 
+def test_the_report_heads_the_guards_a_scrape_line_outranks_as_also_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
+    run = make_run(tmp_path / "run", k6_exit=107, scrapes=STALL)
+    runner.finish(run, 0.10)
+    head = "Also invalid (a validity guard tripped; scrape.metrics_timeout decides FAIL):"
+    assert f"{head}\n- k6_exit: 107" in (run / "report.md").read_text(encoding="utf-8")
+
+
 def hello_skew_run(out: Path, **over: Any) -> Path:
     """A healthy run whose summary carries the hello-skew trends the k6 client writes now: on one
     host the server's skew (13 ms at most) is the hello's transit (20 ms p50, 33 ms at most)."""
@@ -1044,7 +1054,7 @@ def execute_virtually(
 
 
 @pytest.mark.parametrize("boundary", ["t0", "t1"])
-def test_a_lost_boundary_leaves_a_run_json_with_its_tally_and_no_co_tenant_figure(
+def test_a_lost_boundary_leaves_a_run_json_with_its_tally_and_no_co_tenant_figure_or_span(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
 ) -> None:
     never, ok = TimeoutError("timed out"), "process_cpu_seconds_total 600\n"
@@ -1054,6 +1064,7 @@ def test_a_lost_boundary_leaves_a_run_json_with_its_tally_and_no_co_tenant_figur
     tally = {"timeout_s": 15.0, "attempted": 2, "timed_out_ms": [30000], "retried": []}
     assert facts["scrapes"] == tally | {"missing": [boundary]}
     assert facts["variance"]["other_cores"] is None  # left out, not 0.0
+    assert facts["steady_actual_s"] is None  # no delta to span
 
 
 @pytest.mark.parametrize("boundary", ["t0", "t1"])
@@ -1107,6 +1118,17 @@ def test_a_retried_t0_is_read_at_the_instant_it_answered(
     facts = json.loads((out / "run.json").read_text(encoding="utf-8"))
     assert facts["k6_cpu_frac"] == pytest.approx(0.82)
     assert (facts["steady_actual_s"], facts["scrapes"]["retried"]) == (pytest.approx(11.0), ["t0"])
+
+
+def test_a_retried_t1_is_read_at_the_instant_it_answered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry answers 20 s after the request, so t0 to t1 spans 51 s, not the 31 s up to it."""
+    ok = "process_cpu_seconds_total 100\n"
+    answers = [ok, TimeoutError("timed out"), ok]
+    out = execute_virtually(tmp_path, monkeypatch, answers, duration_s=30.0)
+    facts = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    assert (facts["steady_actual_s"], facts["scrapes"]["retried"]) == (pytest.approx(51.0), ["t1"])
 
 
 def test_a_phase_keeps_its_own_length_unless_the_cli_gives_one(tmp_path: Path) -> None:
@@ -1168,6 +1190,7 @@ def test_w5_gives_every_phase_the_cli_window_and_refuses_a_pong_delay(
 
 LOST_T1, LATE_T0 = {"missing": ["t1"]}, {"timed_out_ms": [15000, 15000], "retried": ["t0"]}
 OUT, KEPT = "a boundary scrape timed out, left out", "scrapes timed out"
+STALLED = {"timed_out_ms": [15000]}
 
 
 @pytest.mark.parametrize(
@@ -1176,7 +1199,8 @@ OUT, KEPT = "a boundary scrape timed out, left out", "scrapes timed out"
         ("mixed-lagging", LOST_T1, ["mixed-lagging"], f"phase mixed-lagging: {OUT}", 1),
         ("idle", LOST_T1, [], f"phase idle: {OUT}", 1),
         ("book-healthy", LATE_T0, [], f"phase book-healthy: 2 of 7 {KEPT} (t0 retried), kept", 0),
-        ("idle", {"timed_out_ms": [15000]}, [], f"phase idle: 1 of 7 {KEPT}, kept", 0),
+        ("idle", STALLED, [], f"phase idle: 1 of 7 {KEPT}, kept", 0),
+        ("mixed-lagging", STALLED, [], f"phase mixed-lagging: 1 of 7 {KEPT}, kept", 0),
     ],
 )
 def test_a_w5_phase_that_had_a_scrape_time_out_is_left_out_if_a_boundary_was_lost_else_kept(
@@ -1204,6 +1228,43 @@ def test_a_w5_phase_that_had_a_scrape_time_out_is_left_out_if_a_boundary_was_los
     assert answer["skipped"] == skipped and note in answer["notes"]
     assert f"  {note}" in capsys.readouterr().out
     assert not any("not in the plan" in n for n in answer["notes"])  # noted once
+
+
+def feeder_skips(out: Path) -> None:  # the stall made the feeder skip 5 of its 100 slots
+    text = (out / "scrape1.txt").read_text(encoding="utf-8")
+    skipped = text.replace('published_total{kind="book"} 100', 'published_total{kind="book"} 95')
+    (out / "scrape1.txt").write_text(skipped, encoding="utf-8")
+
+
+def server_closes(out: Path) -> None:  # and the server closed two of k6's sockets
+    summ = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    summ["counters"]["cv_unplanned_closes"] = 2
+    (out / "summary.json").write_text(json.dumps(summ), encoding="utf-8")
+
+
+@pytest.mark.parametrize("guard", [feeder_skips, server_closes])
+def test_a_w5_mixed_phase_that_stalled_and_tripped_a_guard_is_left_out_and_noted_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    guard: Callable[[Path], None],
+) -> None:
+    def execute(p: runner.Plan, k6: str) -> Path:
+        out = w5_phase(p)
+        if p.out.name == "mixed-saturated":
+            facts = json.loads((out / "run.json").read_text(encoding="utf-8"))
+            (out / "run.json").write_text(json.dumps(facts | {"scrapes": STALL}), encoding="utf-8")
+            guard(out)
+        return out
+
+    monkeypatch.setattr(runner, "execute", execute)
+    monkeypatch.setattr(runner, "k6_binary", lambda: "k6")
+    assert runner.cmd_w5(args(out_dir=tmp_path, duration_s=30.0, warmup_s=10.0)) == 1
+    answer = json.loads((tmp_path / "w5.json").read_text(encoding="utf-8"))
+    assert (answer["skipped"], answer["recommendation"]) == (["mixed-saturated"], "no_data")
+    said = [n for n in answer["notes"] if "mixed-saturated" in n]
+    assert said == ["phase mixed-saturated is INVALID and is left out"]  # not "kept" as well
+    assert capsys.readouterr().out.count("mixed-saturated") == 1
 
 
 def test_w5_divides_a_phases_cpu_by_the_seconds_its_deltas_span_when_it_recorded_them() -> None:
@@ -1347,6 +1408,15 @@ def test_repro_names_the_headlines_it_could_not_compare_when_a_run_lost_a_bounda
     out = capsys.readouterr().out
     assert "not compared (no reading in one run): fanout_ms, backend_cpu_s_per_s" in out
     assert "reproducibility OK: every compared headline within 15%" in out
+
+
+def test_repro_does_not_list_a_headline_both_runs_lack_by_design_as_not_compared(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    c = profiles.resolve(TABLE, "C") | {"name": "C"}  # no probe: no re-snapshot in either run
+    a, b = (make_run(tmp_path / x, resolved=c, profile="C") for x in "ab")
+    assert runner.cmd_repro(argparse.Namespace(dir_a=str(a), dir_b=str(b), variance_source=[])) == 0
+    assert capsys.readouterr().out == "reproducibility OK: every headline within 15%\n"
 
 
 def test_repro_refuses_an_invalid_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

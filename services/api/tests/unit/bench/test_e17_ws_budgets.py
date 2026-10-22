@@ -296,6 +296,15 @@ def test_the_selfcheck_profile_fails_budget_6_on_a_rig_whose_hello_transit_is_13
     assert (res.status, res.invalid, ok) == ("FAIL", [], True), text
 
 
+def test_the_selfcheck_is_not_ok_when_a_guard_tripped_under_a_scrape_stall() -> None:
+    prof = profiles.resolve(profiles.load(), "selfcheck") | {"name": "selfcheck"}
+    slow = scrape({0.01: 100, 0.02: 400, 0.03: 900, 0.05: 3200})  # budget 6 fails, as inflated
+    res = evaluate(summary(cv_unplanned_closes=2), slow, prof, scraped(15003.0))
+    assert res.status == "FAIL" and prof["expect_fail"] in res.failed()  # the stall wins
+    ok, text = budgets.expect_failure(res, prof["expect_fail"])
+    assert not ok and "cv_unplanned_closes" in text
+
+
 def test_a_send_delay_run_reports_its_skew_and_is_never_invalid_for_it() -> None:
     skew = hello_skew(raw=6.0, corrected=8.5, rtt_p50=27.0, rtt_max=29.0)
     res = evaluate(summary(**skew), prof=PROFILE | {"send_delay_ms": 25})
@@ -386,6 +395,13 @@ def test_the_backend_cpu_rate_is_over_the_seconds_the_two_scrapes_span_when_reco
     facts = replace(FACTS, cpu_s=100.0, steady_s=100.0)  # 100 CPU seconds in a 100 s window
     got = [evaluate(summary(), facts=replace(facts, steady_actual_s=x)) for x in (50.0, None)]
     assert [r.verdict.metrics["backend_cpu_s_per_s"]["p95"] for r in got] == [2.0, 1.0]
+
+
+@pytest.mark.parametrize("facts", [scraped(attempted=2), FACTS], ids=["none made", "older run"])
+def test_an_rss_cap_in_a_run_with_no_periodic_scrape_due_says_none_was_due(facts: Facts) -> None:
+    res = evaluate(summary(), facts=replace(facts, rss_bytes=None))
+    said = "backend_memory rss: not judged (no periodic scrape was due)"
+    assert (res.status, res.not_judged) == ("PASS", [said])
 
 
 def test_an_rss_cap_with_no_periodic_reading_is_not_judged_rather_than_skipped_silently() -> None:

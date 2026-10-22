@@ -431,7 +431,9 @@ def execute(p: Plan, k6: str) -> Path:
     )
     cpus = _cpus(p.k6_cpus) if p.k6_cpus else os.cpu_count() or 1
     other: float | None = None  # null when not read (a lost boundary): never 0.0
-    actual = stat["1"][1] - stat["0"][1] if len(stat) == 2 else None  # t0 to t1, as answered
+    actual: float | None = None  # t0 to t1 as answered; none when a boundary was lost
+    if len(stat) == 2 and not scrapes.missing:
+        actual = stat["1"][1] - stat["0"][1]
     if len(stat) == len(k6cpu) == 2 and not scrapes.missing:  # busy CPU less backend and k6
         (busy0, w0), (busy1, w1) = stat["0"], stat["1"]
         (c0, u0), (c1, u1) = k6cpu["0"], k6cpu["1"]
@@ -755,7 +757,7 @@ def cmd_w5(a: argparse.Namespace) -> int:
         )
     table, k6, phases = profiles.load(), k6_binary(), []
     left_out: list[str] = []  # phases that lost a boundary scrape: no steady window to read
-    kept: list[str] = []  # phases read as they are after a scrape timed out
+    kept: dict[str, str] = {}  # phases read as they are after a scrape timed out
     for ph in table["w5"]["phases"]:
         out = a.out_dir / ph["name"]
         p = plan(table, a, table["w5"]["base"], out, **{k: v for k, v in ph.items() if k != "name"})
@@ -769,7 +771,7 @@ def cmd_w5(a: argparse.Namespace) -> int:
             n, again = len(tally["timed_out_ms"]), " and ".join(tally.get("retried", []))
             note = f"{n} of {tally['attempted']} scrapes timed out"
             note += f" ({again} retried)" if again else ""
-            kept.append(f"phase {ph['name']}: {note}, kept")
+            kept[ph["name"]] = f"phase {ph['name']}: {note}, kept"
         _, summ, t0, t1 = load_run(out)
         rtt = int(p.prof["rtt_delay_ms"])
         phases.append(
@@ -780,12 +782,12 @@ def cmd_w5(a: argparse.Namespace) -> int:
                 summ,
                 budgets.delta(t0, t1),
                 facts["steady_s"],
-                res.status,
+                "INVALID" if res.invalid else res.status,  # W5 leaves out on validity alone
                 facts.get("steady_actual_s"),
             )
         )
     answer = w5.analyze(phases, left_out)
-    answer["notes"] += kept
+    answer["notes"] += [n for name, n in kept.items() if name not in answer["skipped"]]
     answer["notes"] += [f"phase {n}: a boundary scrape timed out, left out" for n in left_out]
     (a.out_dir / "w5.json").write_text(
         json.dumps(answer, indent=2, default=str) + "\n", encoding="utf-8"
@@ -843,8 +845,8 @@ def cmd_repro(a: argparse.Namespace) -> int:
         print(f"reproducibility refused: {'; '.join(why)}")
         return 2
     off = budgets.repro_diff(ra.verdict.metrics, rb.verdict.metrics)
-    both = ra.verdict.metrics.keys() & rb.verdict.metrics.keys()
-    skipped = [name for name in budgets.HEADLINES if name not in both]  # no reading in a run
+    only_one = ra.verdict.metrics.keys() ^ rb.verdict.metrics.keys()  # a lost boundary, say
+    skipped = [name for name in budgets.HEADLINES if name in only_one]
     named = variance_sources(fa, fb) + list(a.variance_source or [])
     for name, rel in off.items():
         print(f"  {name}: {rel:+.1%} between the two runs")
