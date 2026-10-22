@@ -558,6 +558,50 @@ class SubmissionContract:
             await h.submissions.create_first(first, order, EVENT)
         assert err.value.constraint == "trg_tgl_env" and h.held(first, order) == NOTHING
 
+    @pytest.mark.parametrize(
+        ("held", "constraint"),
+        [
+            ("group", "trade_groups_pkey"),
+            ("leg", "trade_group_legs_pkey"),
+            ("order", "orders_pkey"),
+            ("anchor", "idempotency_anchors_pkey"),
+        ],
+    )
+    async def test_an_id_its_table_holds_refuses_the_persist_by_name_with_nothing_written(
+        self, h: Harness, held: str, constraint: str
+    ) -> None:
+        """Each row's primary key, met by the name Postgres gives it: a later persist, on another
+        account under a key of its own, that names a group, leg, order or anchor id a stored row
+        holds writes nothing (the later order and its anchor read as missing)."""
+        user, (account, profile) = h.new_user(), h.new_account()
+        other, other_profile = h.new_account()
+        if held in ("group", "leg"):
+            first, order = entry(user, account, profile)
+            later, later_order = entry(user, other, other_profile)
+            assert first.group is not None and later.group is not None
+            if held == "group":
+                group = replace(later.group, id=first.group.id)
+                anchor = replace(later.anchor, trade_group_id=first.group.id)
+                later = replace(later, group=group, anchor=anchor)
+            else:
+                leg_id = first.legs[0].id
+                later = replace(later, legs=(replace(later.legs[0], id=leg_id),))
+                later_order = replace(later_order, trade_group_leg_id=leg_id)
+        else:
+            first, order = reduce_only(user, account)
+            later, later_order = reduce_only(user, other)
+            if held == "order":
+                later_order = replace(later_order, id=order.id)
+                later = replace(later, anchor=replace(later.anchor, order_id=order.id))
+            else:
+                later = replace(later, anchor=replace(later.anchor, id=first.anchor.id))
+        await h.submissions.create_first(first, order, EVENT)
+        with pytest.raises(OrderConstraintError) as err:
+            await h.submissions.create_first(later, later_order, EVENT)
+        assert err.value.constraint == constraint
+        assert await h.orders.get(other, later_order.id) is None
+        assert await h.anchors.find(user, "placeOrder", later.anchor.client_ref, SHA) is None
+
     async def test_text_holding_nul_is_refused_whole_with_nothing_written(self, h: Harness) -> None:
         """OM-T04: Postgres refuses a statement whose bound text holds NUL (22021)."""
         user, (account, profile) = h.new_user(), h.new_account()
@@ -656,6 +700,30 @@ class SubmissionContract:
         with pytest.raises(ValueError, match="audited write-ahead"):
             await h.stops.settle(account, [recorded.id], outcome, at=T0)
         assert await waiting(h, account) == (recorded,)
+
+    @pytest.mark.parametrize("named", ["none", "twice"])
+    async def test_a_settle_names_each_row_of_its_request_once(
+        self, h: Harness, named: str
+    ) -> None:
+        """`ValueError` before any statement for a settle that names no row, or a row twice; the
+        row stays in flight."""
+        account, _ = h.new_account()
+        [recorded] = await h.stops.insert([trading_stop(account)])
+        ids = [] if named == "none" else [recorded.id, recorded.id]
+        with pytest.raises(ValueError, match="names each row of the request once"):
+            await h.stops.settle(account, ids, "answered", at=T0)
+        assert await waiting(h, account) == (recorded,)
+
+    async def test_a_row_id_the_table_holds_refuses_the_insert_by_name(self, h: Harness) -> None:
+        """`recorded_stops_pkey`: a request that names a stored row's id writes nothing, its
+        position left free (the first request answered, so no request is in flight for it)."""
+        account, _ = h.new_account()
+        [recorded] = await h.stops.insert([trading_stop(account)])
+        await h.stops.settle(account, [recorded.id], "answered", at=T0)
+        with pytest.raises(OrderConstraintError) as err:
+            await h.stops.insert([trading_stop(account, id=recorded.id)])
+        assert err.value.constraint == "recorded_stops_pkey"
+        assert await waiting(h, account) == ()
 
     async def test_a_settle_is_audited_before_its_commit_or_settles_nothing(
         self, h: Harness
@@ -800,3 +868,21 @@ class SubmissionContract:
         assert [stop.id for stop in swept] == ids and list(swept) == audited
         rows = await h.stops.for_order(account, order.id)
         assert [row.status for row in rows] == ["void" if unplaced else "pending"]
+
+    async def test_one_accounts_sweep_leaves_other_accounts_and_other_requests_alone(
+        self, h: Harness
+    ) -> None:
+        """R10's scope: a sweep of one account voids its unplaced entry's rows only, never another
+        account's, and never a request that is not an entry's attach (a trading stop)."""
+        user, (account, profile) = h.new_user(), h.new_account()
+        other, other_profile = h.new_account()
+        mine, mine_order = entry(user, account, profile)
+        theirs, their_order = entry(user, other, other_profile)
+        for first, order in ((mine, mine_order), (theirs, their_order)):
+            await h.submissions.create_first(first, order, EVENT)
+        [stop] = await h.stops.insert([trading_stop(account, symbol="ETHUSDT")])
+        swept = await h.stops.void_orphans(account, at=T0, write_ahead=audited)
+        assert [row.id for row in swept] == [row.id for row in mine.recorded_stops]
+        rows = await h.stops.for_order(other, their_order.id)
+        assert [row.status for row in rows] == ["pending"]
+        assert await waiting(h, account, "ETHUSDT") == (stop,)

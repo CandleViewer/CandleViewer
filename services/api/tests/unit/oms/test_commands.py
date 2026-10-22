@@ -223,6 +223,35 @@ async def test_a_command_naming_another_order_than_the_registered_one_sends_noth
     assert rig.demo.calls == []
 
 
+@pytest.mark.parametrize(
+    ("unnamed", "refused"),
+    [("order_id", "does not name its order"), ("order_link_id", "names no order_link_id")],
+)
+async def test_a_command_that_does_not_name_its_order_sends_nothing(
+    unnamed: str, refused: str
+) -> None:
+    """A command with no order id, or a resumed one with no `order_link_id`, is refused before
+    any read or send (`ValueError`: B1's `unknown`)."""
+    rig = build_rig()
+    order = new_order()
+    await rig.stored(order)
+    with pytest.raises(ValueError, match=refused):
+        await rig.port.place(command("place", order, **{unnamed: None}))
+    assert rig.demo.calls == [] and rig.accounts.asked == []
+
+
+async def test_a_trading_account_resolved_to_another_account_sends_nothing() -> None:
+    """SR-E27-21, C-2.11: a resolver that answers another account's ref is refused before any
+    send, so no request is signed with another account's key."""
+    rig = build_rig()
+    order = new_order()
+    rig.accounts.seed(ref(LIVE_ACCOUNT, "live"), as_id=ACCOUNT)
+    rig.port.expect(order)
+    with pytest.raises(ValueError, match="another account's"):
+        await rig.port.place(command("place", order))
+    assert rig.demo.calls == [] and rig.live.calls == []
+
+
 # --- the answer of an accepted or refused create (#4020 Lows 1-3) -------------------------------
 
 
