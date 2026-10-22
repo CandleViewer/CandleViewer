@@ -21,7 +21,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — shared density table: rows 24 / 32 px
 - [x] **Essential-exceptions log** — none (shared table)
 - [ ] **Tokens used** — the entry cites `space.row.*`, which resolves (`space.row.height.compact` / `.comfortable` in `semantic-dark.tokens.json`, density aliases per `packages/ui/tokens/themes.json`), and `font.size.body/label`, which do not exist; patch A-2 binds `size.row.height` (the density-resolved alias `themes.json` names), `type.ui.body`, `type.num.base`, `type.ui.caption`, `color.text.primary` / `.secondary` / `.tertiary` and the `color.data-confidence.stale.*` set
-- [ ] **Data contract confirmed** — PENDING spec CR-11 (the 24 h high and low are never sent) and H-7 (no `ticker` producer on main): `InstrumentDetail` fields (spec §4.1) and `TickerUpdate` fields (§4.2, an absent field per its Absent column), as decimal strings (spec F1)
+- [x] **Data contract confirmed** — `InstrumentDetail` fields (spec §4.1), and `TickerUpdate` fields (`ticker.{symbol}`) with the `getTicker` bootstrap (§4.2, §11.2), as decimal strings (spec F1); confirmed against `22` / `23` as shipped; fields the server leaves empty are drawn as their §4.1 / §4.2 fallbacks: 24 h high and low (CR-11), risk-limit tiers (CR-4), no WS producer yet (H-7)
 - [ ] **Contrast and CVD** — computed (spec §13: values, labels, units on `surface.overlay` and `surface.sunken`); the `surface.sunken` pairs join `tools/contrast/pairs.mjs` with the audit script in the boards step
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING: the owner's `approved` on #174 or the merge of the spec PR
@@ -176,7 +176,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — rows 24 / 32 px
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — the entry inherits CMP-023 for the admin row; patch A-6 binds the CMP-036 row tokens and `color.text.secondary` for the state word; no new token
-- [ ] **Data contract confirmed** — PENDING spec CR-8 (the first recorded time), CR-12 (archive windows), CR-13 (symbols not trading) and #2216 (the 90-day window): the E16-S02 store (`recorder` topic, `23` §15.8; `GET /recording/symbols`) and `GET /market/data-coverage` (spec §4.3); `role_restricted` read as "restricted"
+- [x] **Data contract confirmed** — the E16-S02 store (`recorder` topic, `RecorderUpdate`, `23` §15.8; `GET /recording/symbols`, `RecordedSymbol`) and `GET /market/data-coverage` (`DataCoverage`, spec §4.3); `role_restricted` read as "restricted"; confirmed against `22` / `23` as shipped; what the server leaves empty or limits is drawn as its §4.3 fallback or label: first recorded time (CR-8), archive label (CR-12), not-trading coverage (CR-13), the 90-day window (#2216)
 - [x] **Contrast and CVD** — words carry every state; glyphs are decorative (spec §13)
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING
