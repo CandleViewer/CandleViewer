@@ -34,6 +34,7 @@ from candleviewer.storage.repositories import audit_sqlalchemy as audit
 from candleviewer.storage.repositories import backups_sqlalchemy as backups
 from candleviewer.storage.repositories import drawings_sqlalchemy as drawings
 from candleviewer.storage.repositories import orders_sqlalchemy as orders
+from candleviewer.storage.repositories import relational_sqlalchemy as relational
 from candleviewer.storage.repositories import statechart_sqlalchemy as statechart
 from candleviewer.storage.repositories import trade_groups_sqlalchemy as trade_groups
 from candleviewer.storage.repositories import workspaces_codec
@@ -400,3 +401,105 @@ def test_a_sentinel_in_a_bound_parameter_or_a_trigger_raise_never_leaves() -> No
     text = _rendered(error)
     assert _P1 not in text and "INSERT INTO" not in text and "DETAIL" not in text
     assert sqlstate_of(error) == "P0001"
+
+
+# -- the 1a review's follow-ups (#2748 slice 2d) ---------------------------------------------------
+
+
+def _asyncpg_unique() -> Exception:
+    """A unique violation as asyncpg's protocol builds it, the failing statement included."""
+    fields = {
+        "C": "23505",
+        "M": f"duplicate key {_P1}",
+        "D": f"Key (email)=({_P1}) already exists.",
+        "H": f"see {_P1}",
+        "n": "users_email_key",
+    }
+    query = f"INSERT INTO users (email) VALUES ('{_P1}')"  # noqa: S608 -- error text, never run
+    return cast(Exception, asyncpg.exceptions.PostgresError.new(fields, query=query))
+
+
+@pytest.mark.parametrize("shape", ["asyncpg", "emulated"])
+def test_an_unwrapped_driver_error_loses_its_text_and_keeps_its_codes(shape: str) -> None:
+    raw = _asyncpg_unique()
+    adapted: type[Exception] = _Dbapi.IntegrityError
+    error = raw if shape == "asyncpg" else adapted(f"adapted: {_P1}", raw)
+    assert _P1 in _rendered(error)
+    strip_driver_text(error)
+    assert _P1 not in _rendered(error) and getattr(error, "query", None) is None
+    assert getattr(error, "sqlstate", None) == "23505"
+    if shape == "emulated":
+        assert constraint_of(cast(Any, type("Wrapped", (), {"orig": error})())) == "users_email_key"
+
+
+def test_a_pending_rollback_error_no_longer_quotes_the_error_before_it() -> None:
+    error = sa_exc.PendingRollbackError(
+        f"This Session's transaction has been rolled back. Original exception was: {_P1}"
+    )
+    strip_driver_text(error)
+    assert type(error) is sa_exc.PendingRollbackError and _P1 not in _rendered(error)
+
+
+def test_a_client_side_failure_keeps_its_class_name_never_its_text() -> None:
+    error = sa_exc.StatementError(
+        "bind failed", "INSERT INTO users (email) VALUES ($1)", (_P1,), ValueError(f"bad {_P1}")
+    )
+    strip_driver_text(error)
+    strip_driver_text(error)  # a second strip keeps the client's class name
+    copy = pickle.loads(pickle.dumps(error))  # noqa: S301 -- our own object, built above
+    for stripped in (error, copy):
+        assert "ValueError raised before the database" in str(stripped)
+        assert _P1 not in _rendered(stripped) and sqlstate_of(stripped) is None
+
+
+def test_a_domain_error_caused_by_the_adapted_driver_error_loses_that_link() -> None:
+    dialect_error: type[Exception] = _Dbapi.Error
+    adapted = dialect_error(f"canceling statement: {_P1}", _asyncpg_unique())
+    domain = LookupError("name taken")
+    domain.__cause__ = adapted
+    strip_driver_text(domain)
+    assert domain.__cause__ is None and _P1 not in _rendered(domain)
+
+
+class _Connection:
+    def __init__(self, fail: BaseException | None) -> None:
+        self.fail = fail
+
+    async def exec_driver_sql(self, statement: str) -> None:
+        if self.fail is not None:
+            raise self.fail
+
+
+class _StartingSession(_Session):
+    def __init__(self, at: str, failure: BaseException, close: BaseException | None) -> None:
+        super().__init__(**({} if close is None else {"close": close}))
+        self.at, self.failure = at, failure
+
+    async def connection(self) -> _Connection:
+        self.calls.append("connection")
+        if self.at == "connection":
+            raise self.failure
+        return _Connection(self.failure)
+
+
+@pytest.mark.parametrize("at", ["connection", "set-local"])
+@pytest.mark.parametrize("close_fails", [False, True], ids=["closed", "close-failed"])
+async def test_a_unit_of_work_that_cannot_start_closes_its_session_and_leaves_stripped(
+    at: str, close_fails: bool
+) -> None:
+    failure = _unique()
+    close = _wrapped(
+        _driver(asyncpg.exceptions.ConnectionFailureError, f"lost: {_P1}"),
+        _Dbapi.Error,
+        sa_exc.DBAPIError,
+    )
+    session = _StartingSession(at, failure, close if close_fails else None)
+    pending = relational._PendingUnitOfWork(cast(Any, lambda: session), "test")
+    with pytest.raises(sa_exc.DBAPIError) as raised:
+        async with pending:
+            pytest.fail("the unit of work must not start")
+    assert session.calls == ["connection", "close"]
+    assert raised.value is (close if close_fails else failure)
+    if close_fails:  # the close's error keeps the start's failure as its context
+        assert raised.value.__context__ is failure and not raised.value.__suppress_context__
+    assert _P1 not in _rendered(raised.value)

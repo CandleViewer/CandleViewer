@@ -5137,3 +5137,4 @@ tracker).
 - **backend-platform**: a database error no longer carries the server's text (row values, the statement or its parameters) into the API's logs; it keeps its class, SQLSTATE and constraint name (#2748) (#4074)
 - **infra-devops**: the Postgres server log no longer records a failed statement's row values or bound parameters (#2748) (#4080)
 - **accounts-admin**: every audit insert now draws its row id under the chain lock, and `audit_chain()` resolves what it calls through a search path of its own rather than the inserting session's (#889) (#4094)
+- **backend-platform**: a unit of work that cannot start gives its database connection back, and no database error leaves one with the server's text, the driver's own error and a rolled-back session's report included (#2748) (#4090)
