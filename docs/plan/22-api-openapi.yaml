@@ -282,7 +282,7 @@ info:
       answers `403 view_as_read_only` and changes nothing. State-changing means the method
       (`POST`, `PUT`, `PATCH`, `DELETE`), not the effect, so view-as refuses all writes and fails
       closed: the write-method operations that need only a `*:read` permission
-      (`previewTradeGroup`, `validateRule`, `compileRule`, `testApiKey`, `verifyAuditChain` and
+      (`validateRule`, `compileRule`, `testApiKey`, `verifyAuditChain` and
       `createSupportBundle`) are refused too. Except on the operations the protective writes
       below pass to their handlers, the refusal is decided after authentication, the CSRF check
       (SR-041) and the session state (enrolment-only, the idle lock, `session_read_only`), and
@@ -5535,6 +5535,139 @@ paths:
                     requested: 2
                     succeeded: 1
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /trade-group-definitions:
+    get:
+      tags: [trading]
+      operationId: listTradeGroupDefinitions
+      summary: List trade-group definitions (named sets of accounts)
+      description: >
+        A definition is listed only when every member account is in the caller's grants; any
+        other is left out as if it did not exist (SR-E28-21). Soft-deleted ones are never listed.
+      x-rbac: { permissions: [accounts:read], scope: granted_accounts }
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Definitions page.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/TradeGroupDefinition" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    post:
+      tags: [trading]
+      operationId: createTradeGroupDefinition
+      summary: Define a trade group, a named set of accounts (Owner, step-up)
+      description: |
+        A definition is a named set of accounts that a ticket fans out to (SR-E28-31;
+        `21-database-schema.md` section 3.3.3a). It places nothing: `POST /trade-groups` is the
+        execution. It grants nothing either: a ticket names each member it targets as a leg, and
+        each leg's account is checked against the caller's grants at that use.
+
+        Owner-only (`accounts:write`) with a fresh step-up of class `risk_caps`, until the Owner
+        decides otherwise (decision D8 of the E28 threat model, queued on #2701; SR-E28-02,
+        PF-E02): without the step-up, `403 step_up_required`. Every member is in the
+        definition's `environment` (C-2.11, SR-E28-16): a member from another environment is
+        refused with `400 validation_failed`, one `errors[]` entry with
+        `rule: environment_mismatch` per such member, and nothing is written (`trg_tgdm_env`
+        checks it again in the database). A member account that does not exist is refused as
+        the order routes refuse one, `403 account_scope_denied` (SR-E29-13). A name that a live
+        definition holds, compared case-insensitively, is `409 conflict`. The write is audited
+        with the membership before and after (E28 threat model section 8.1, SR-E28-20).
+      x-rbac: { permissions: [accounts:write], scope: granted_accounts }
+      x-idempotency: recommended
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TradeGroupDefinitionInput" }
+      responses:
+        "201":
+          description: Definition created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TradeGroupDefinition" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /trade-group-definitions/{definitionId}:
+    parameters: [{ $ref: "#/components/parameters/TradeGroupDefinitionId" }]
+    get:
+      tags: [trading]
+      operationId: getTradeGroupDefinition
+      summary: Get a trade-group definition
+      x-rbac: { permissions: [accounts:read], scope: granted_accounts }
+      responses:
+        "200":
+          description: Definition.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TradeGroupDefinition" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    put:
+      tags: [trading]
+      operationId: updateTradeGroupDefinition
+      summary: Replace a trade-group definition's name and members (Owner, step-up)
+      description: >
+        Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8),
+        audited. `environment` is write-once (`trg_tgd_write_once`): another value is
+        `400 validation_failed` with `rule: write_once`.
+      x-rbac: { permissions: [accounts:write], scope: granted_accounts }
+      x-idempotency: optional
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TradeGroupDefinitionInput" }
+      responses:
+        "200":
+          description: Replaced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TradeGroupDefinition" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    delete:
+      tags: [trading]
+      operationId: deleteTradeGroupDefinition
+      summary: Delete a trade-group definition (Owner, step-up)
+      description: >
+        Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8),
+        audited. A soft delete: it is no longer listed or read, and stays as its groups' history.
+      x-rbac: { permissions: [accounts:write], scope: granted_accounts }
+      x-idempotency: optional
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "204": { description: "Deleted." }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /trade-groups:
@@ -11878,8 +12011,11 @@ paths:
         send. Legs that would be rejected (cap breach, symbol not allowed, insufficient
         margin, rate budget exhausted) are returned with their reason so the ticket can show
         them before the user commits. Never mutates state and is therefore safe to call on
-        every keystroke; it is rate-limited rather than idempotency-keyed.
-      x-rbac: { permissions: [orders:read], scope: granted_accounts }
+        every keystroke; it is rate-limited rather than idempotency-keyed. It takes
+        `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat
+        model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller
+        who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
+      x-rbac: { permissions: [orders:write], scope: granted_accounts }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
@@ -13730,6 +13866,18 @@ components:
         shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these
         routes refuses the caller's capability (permission, session state, the order-entry
         gate, the arm token) or fails CSRF; it is never a scope answer.
+      schema: { type: string, format: uuid }
+    TradeGroupDefinitionId:
+      name: definitionId
+      in: path
+      required: true
+      description: >
+        A definition with any member outside the caller's grants is answered as one that does
+        not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same
+        title and `detail` shape, so the answer never tells whether the id exists. `403` on
+        these routes is never a scope answer for the definition: it refuses the caller's
+        capability (permission, session state, step-up) or fails CSRF, or, on a write, a
+        member account the body names (`createTradeGroupDefinition`).
       schema: { type: string, format: uuid }
     PositionId:
       name: positionId
@@ -17203,6 +17351,52 @@ components:
           properties:
             events: { type: array, items: { $ref: "#/components/schemas/OrderEvent" } }
             executions: { type: array, items: { $ref: "#/components/schemas/Execution" } }
+    TradeGroupDefinitionMember:
+      type: object
+      additionalProperties: false
+      required: [exchange_account_id]
+      properties:
+        exchange_account_id: { type: string, format: uuid }
+        enabled:
+          type: boolean
+          default: true
+          description: A disabled member stays in the definition, and a ticket does not target it.
+    TradeGroupDefinitionInput:
+      type: object
+      additionalProperties: false
+      required: [name, environment, members]
+      description: >
+        The body `createTradeGroupDefinition` and `updateTradeGroupDefinition` take, and that
+        `TradeGroupDefinition.definition` returns unchanged: the writable columns of
+        `trade_group_definitions` and `trade_group_definition_members`
+        (`21-database-schema.md` section 3.3.3a), and nothing else.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Unique among live definitions, compared case-insensitively (`ux_tgd_name`).
+        environment: { $ref: "#/components/schemas/Environment" }
+        members:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: >
+            At most 20, one per account, as a group's legs (SR-E28-17): a repeated
+            `exchange_account_id` is `422 validation_failed` with `rule: duplicate_account`.
+          items: { $ref: "#/components/schemas/TradeGroupDefinitionMember" }
+    TradeGroupDefinition:
+      type: object
+      additionalProperties: false
+      required: [id, created_at, updated_at, definition]
+      description: >
+        A stored definition. `definition` is the body `updateTradeGroupDefinition` takes back
+        unchanged. Closed, so it never carries `created_by` (SR-E28-21).
+      properties:
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        definition: { $ref: "#/components/schemas/TradeGroupDefinitionInput" }
     TradeGroupLegInput:
       type: object
       additionalProperties: false
@@ -17268,12 +17462,16 @@ components:
             tpsl_mode: { $ref: "#/components/schemas/TpSlMode" }
         algo: { $ref: "#/components/schemas/AlgoSpec" }
         legs:
-          {
-            type: array,
-            minItems: 1,
-            maxItems: 25,
-            items: { $ref: "#/components/schemas/TradeGroupLegInput" },
-          }
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: >
+            At most 20 legs, one per account (SR-E28-17; the Business-KYC sub-account ceiling of
+            ADR-0008). Two legs on one `exchange_account_id` refuse the whole request, on
+            `previewTradeGroup` too, with `422 validation_failed` and `rule: duplicate_account`:
+            a check of the body alone, answered as the body's other refusals are, before any
+            account is resolved, so it says nothing about any account.
+          items: { $ref: "#/components/schemas/TradeGroupLegInput" }
         note: { type: string, maxLength: 280 }
         rule_id:
           {

@@ -35,12 +35,12 @@ _ROUTES: list[tuple[str, str, Any]] = [
 ]
 _OPS: dict[str, Any] = {op["operationId"]: op for _, _, op in _ROUTES}
 #: Every order mutation: the order, trade-group and position writes (`/settings/arm` issues the
-#: token, so it is not one).
+#: token, so it is not one; `previewTradeGroup` is a dry run, which mutates nothing).
 _MUTATIONS = sorted(
     name
     for name, op in _OPS.items()
     if {"orders:write", "positions:write"} & set(op.get("x-rbac", {}).get("permissions", []))
-    and name != "armOneClickTrading"
+    and name not in ("armOneClickTrading", "previewTradeGroup")
 )
 #: The mutations that can open or increase exposure, as the order-entry gate classifies them.
 _ARMED = (

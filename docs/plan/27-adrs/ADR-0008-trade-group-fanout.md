@@ -90,3 +90,21 @@ view of the stored profile that rule 3 snapshots, and two things hold of it:
 
 This breaks the `/v1` contract (C-6.3) before any route serves it: all five operations are `not_mounted` and no client
 reads these types, so no `/v2` is cut. The commit's `!` and `BREAKING CHANGE` footer record it (C-6.4).
+
+## Amendment 2 (2026-10-22, E28-T02 #906; P-1a of the E28 threat model §10.2, ruled by main-orchestrator on #906, issuecomment-6286989170)
+
+Refines the model and the drivers' bound on N; reverses no binding rule. Three things now hold of the contract
+(`22-api-openapi.yaml`):
+
+1. **A definition is not a trade group.** A named set of accounts that tickets fan out to has its own paths,
+   `/trade-group-definitions`, over its own tables (`21-database-schema.md` §3.3.3a); `POST /trade-groups` stays the
+   execution. Only the Owner writes one, with a `risk_caps` step-up, until the Owner decides otherwise (E28 threat
+   model D8). A definition grants nothing: each leg's account is checked against the caller's grants at each use.
+2. **At most 20 legs, one per account.** The Business-KYC ceiling of 20 in the drivers above bounds a group and a
+   definition alike. A second leg on one account is refused whole, because it would open a second position, with its
+   own native stop, on that account (SR-E28-17).
+3. **The preview takes the submit's permission**, `orders:write`: it is the same code path in dry-run mode
+   (`24-internal-schemas.md` §9.4 rule 1), so a caller who cannot submit has nothing to preview (SR-E28-22).
+
+This breaks the `/v1` contract (C-6.3) before any route serves it: every trade-group route is `not_mounted` and no
+client reads these types, so no `/v2` is cut. The commit's `!` and `BREAKING CHANGE` footer record it (C-6.4).

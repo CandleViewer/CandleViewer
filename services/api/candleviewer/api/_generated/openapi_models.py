@@ -2734,6 +2734,57 @@ class OrderEvent(BaseModel):
     event_ts: AwareDatetime | None = None
 
 
+class TradeGroupDefinitionMember(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    exchange_account_id: UUID
+    enabled: Annotated[
+        bool | None,
+        Field(
+            description="A disabled member stays in the definition, and a ticket does not target it."
+        ),
+    ] = True
+
+
+class TradeGroupDefinitionInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[
+        str,
+        Field(
+            description="Unique among live definitions, compared case-insensitively (`ux_tgd_name`).",
+            max_length=80,
+            min_length=1,
+        ),
+    ]
+    environment: Annotated[
+        Literal["live", "demo", "testnet"],
+        Field(
+            description="Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`."
+        ),
+    ]
+    members: Annotated[
+        list[TradeGroupDefinitionMember],
+        Field(
+            description="At most 20, one per account, as a group's legs (SR-E28-17): a repeated `exchange_account_id` is `422 validation_failed` with `rule: duplicate_account`.\n",
+            max_length=20,
+            min_length=1,
+        ),
+    ]
+
+
+class TradeGroupDefinition(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: UUID
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    definition: TradeGroupDefinitionInput
+
+
 class Overrides(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -2843,7 +2894,14 @@ class CreateTradeGroupRequest(BaseModel):
     max_concurrent_legs: Annotated[int | None, Field(ge=1, le=20)] = 5
     defaults: Defaults | None = None
     algo: AlgoSpec | None = None
-    legs: Annotated[list[TradeGroupLegInput], Field(max_length=25, min_length=1)]
+    legs: Annotated[
+        list[TradeGroupLegInput],
+        Field(
+            description="At most 20 legs, one per account (SR-E28-17; the Business-KYC sub-account ceiling of ADR-0008). Two legs on one `exchange_account_id` refuse the whole request, on `previewTradeGroup` too, with `422 validation_failed` and `rule: duplicate_account`: a check of the body alone, answered as the body's other refusals are, before any account is resolved, so it says nothing about any account.\n",
+            max_length=20,
+            min_length=1,
+        ),
+    ]
     note: Annotated[str | None, Field(max_length=280)] = None
     rule_id: Annotated[
         UUID | None, Field(description="Set when the group originates from the rule engine.")
