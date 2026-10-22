@@ -52,7 +52,9 @@ profile has confirmed it (06 §7.4); a baseline moves only by such a PR.
 **Where the recorded runs happen.** `perf-ws-load.yml` runs on `cv-bench-01` (labels `self-hosted, Linux, X64,
 bench`; 8 vCores, 32 GiB), on cpus 0-3 for the backend and 4-7 for k6, in the systemd scope when the runner has a
 user manager. It is dispatch-only and never starts while the 24 h ingestion soak (`perf-ingestion-nightly.yml`,
-job `perf-pack-full`, the same runner) is queued or running: its first step refuses, rather than sharing a
+job `perf-pack-full`) or a bars-soak memory leg (`perf-bars-memdiag.yml`, job `leg`, up to 23 h), both on the same
+runner, is queued or running: its first step refuses (a 404 for the legs' workflow, not on `main` yet, reads as none
+running, and any other API error fails the step), rather than sharing a
 concurrency group, because GitHub keeps one pending run per group and would cancel a pending soak dispatch, and a
 job queued behind a 24 h soak on a one-job-at-a-time runner would only fail GitHub's 24 h queue limit. The
 `runs` input defaults to 3 so the gate and the reproducibility check have their runs, and a red run does not end
