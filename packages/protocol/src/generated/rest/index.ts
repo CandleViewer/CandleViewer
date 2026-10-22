@@ -2256,10 +2256,10 @@ export interface paths {
      *     it replaces, then `profile.bound` for the new one: when either record cannot be written
      *     nothing changes (`503 audit_unavailable`). The server judges the move cap by cap over
      *     `ProfileRiskCaps`: `null` is no bound, and every cap of a profile that cannot trade
-     *     (`enabled` or `trading_enabled` unset) counts as zero, since it sizes nothing;
+     *     (`enabled` or `trading_enabled` false) counts as zero, since it sizes nothing;
      *     `allowed_symbols` is not compared. When any cap is higher on the new default than on the
      *     one it replaces, `profile.bound` is labelled `relaxing` and the Owner is notified
-     *     (SR-E28-01). So a move onto the bootstrap `Default`, which cannot trade, is not relaxing,
+     *     (SR-E28-01). So a move onto the bootstrap `Default` while it cannot trade is not relaxing,
      *     even with `null` caps, and a move that turns trading on, from a default that cannot
      *     trade, is always relaxing. Binding the profile that already is the default changes
      *     nothing, writes no record and answers the binding with its current `ETag`.
@@ -2603,7 +2603,7 @@ export interface paths {
     post?: never;
     /**
      * Delete a per-account profile
-     * @description Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. A soft delete: the profile leaves every read, its revisions stay, and a position sized from it keeps its version. Refused with `409 conflict`, nothing changed and `detail` naming each blocker, while the profile is the account's default (make another profile the default first) or while any rule scoped to the account is armed, named by its id and name (a rule cannot name a profile yet). `If-Match` is required: a delete needs the current `ETag`, and last-write-wins is refused on risk caps by contract. Without it the answer is `428 precondition_required`; a stale one is `412 version_conflict`. Audited write-ahead as `profile.deleted`: when that record cannot be written nothing changes (`503 audit_unavailable`). The default moves only through `setAccountDefaultProfile`.
+     * @description Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. A soft delete: the profile leaves every read, its revisions stay, and a position sized from it keeps its version. Refused with `409 conflict`, nothing changed and `detail` naming each blocker, while the profile is the account's default (make another profile the default first, with `setAccountDefaultProfile`) or while any rule scoped to the account is armed, named by its id and name (a rule cannot name a profile yet). `If-Match` is required: a delete needs the current `ETag`, and last-write-wins is refused on risk caps by contract. Without it the answer is `428 precondition_required`; a stale one is `412 version_conflict`. Audited write-ahead as `profile.deleted`: when that record cannot be written nothing changes (`503 audit_unavailable`).
      */
     delete: operations["deleteAccountProfile"];
     options?: never;
@@ -10981,7 +10981,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description A profile write that could not be checked or recorded, so nothing changed: `instrument_cache_unavailable` when the instrument cache was more than 15 minutes old and its refresh, shared by concurrent saves, did not finish in time (create and replace only); `audit_unavailable` when the write-ahead audit record could not be written (C-2.9); `store_unavailable` as on every route. Each is retryable after `Retry-After`, and the same request with the same `Idempotency-Key` is then a first submission. */
+    /** @description A profile write that could not be checked or recorded, so nothing changed: `instrument_cache_unavailable` when the instrument cache was more than 15 minutes old and its refresh, shared by concurrent saves, did not finish in time (`createAccountProfile` and `updateAccountProfile` only); `audit_unavailable` when the write-ahead audit record could not be written (C-2.9); `store_unavailable` as on every route. Each is retryable after `Retry-After`, and the same request with the same `Idempotency-Key` is then a first submission. */
     ProfileSaveUnavailable: {
       headers: {
         "Retry-After": components["headers"]["RetryAfter"];
@@ -11101,7 +11101,7 @@ export interface components {
     IdempotencyKeyRequired: string;
     /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
     IfMatch: string;
-    /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, or a profile's sent to the default binding) is `412 version_conflict`, never a match. */
+    /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
     IfMatchRequired: string;
     JournalTradeId: string;
     KeyId: string;
@@ -11253,13 +11253,13 @@ export interface components {
      *     as must any proxy or access log that records response headers.
      */
     CsrfTokenIssued: string;
-    /** @description `W/"<accountId>:default:<version>"` of the default binding answered: its version, never the profile it names, so a tag read before a move never matches after it, even once the default is back on the same profile. Send it as `If-Match` on `setAccountDefaultProfile`. */
+    /** @description `W/"<accountId>:default:<version>"` of the default binding answered: its version, never the profile it names, so a tag read before a move never matches after it, even once the default is back on the same profile. Send it as `If-Match` on `setAccountDefaultProfile`: the server compares the account id and the version it names, so the weak tag matches. */
     DefaultBindingETag: string;
     /** @description Opaque version of the returned representation, for `If-Match`. */
     ETag: string;
     /** @description True when the response was replayed from the idempotency store. */
     IdempotencyReplayed: boolean;
-    /** @description `W/"<id>:<version>"` of the profile answered. Send it as `If-Match` on `updateAccountProfile` and `deleteAccountProfile`: the server compares the version it names and its profile id, so the weak tag matches. */
+    /** @description `W/"<id>:<version>"` of the profile answered. Send it as `If-Match` on `updateAccountProfile` and `deleteAccountProfile`: the server compares the id and the version it names, so the weak tag matches. */
     ProfileETag: string;
     /** @description Requests permitted in the current window. */
     RateLimitLimit: number;
@@ -14564,7 +14564,7 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, or a profile's sent to the default binding) is `412 version_conflict`, never a match. */
+        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
         "If-Match": components["parameters"]["IfMatchRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -15080,7 +15080,7 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, or a profile's sent to the default binding) is `412 version_conflict`, never a match. */
+        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
         "If-Match": components["parameters"]["IfMatchRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -15130,7 +15130,7 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, or a profile's sent to the default binding) is `412 version_conflict`, never a match. */
+        /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
         "If-Match": components["parameters"]["IfMatchRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
