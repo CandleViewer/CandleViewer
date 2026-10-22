@@ -407,13 +407,18 @@ def test_a_sentinel_in_a_bound_parameter_or_a_trigger_raise_never_leaves() -> No
 
 
 def _asyncpg_unique() -> Exception:
-    return _driver(
-        asyncpg.exceptions.UniqueViolationError,
-        f"duplicate key {_P1}",
-        detail=f"Key (email)=({_P1}) already exists.",
-        hint=f"see {_P1}",
-        constraint_name="users_email_key",
+    """A unique violation as asyncpg's protocol builds it, the failing statement included."""
+    fields = {
+        "C": "23505",
+        "M": f"duplicate key {_P1}",
+        "D": f"Key (email)=({_P1}) already exists.",
+        "H": f"see {_P1}",
+        "n": "users_email_key",
+    }
+    query = (
+        f"INSERT INTO users (email) VALUES ('{_P1}')"  # noqa: S608 -- an error's text, never run
     )
+    return cast(Exception, asyncpg.exceptions.PostgresError.new(fields, query=query))
 
 
 @pytest.mark.parametrize("shape", ["asyncpg", "emulated"])
@@ -423,7 +428,7 @@ def test_an_unwrapped_driver_error_loses_its_text_and_keeps_its_codes(shape: str
     error = raw if shape == "asyncpg" else adapted(f"adapted: {_P1}", raw)
     assert _P1 in _rendered(error)
     strip_driver_text(error)
-    assert _P1 not in _rendered(error)
+    assert _P1 not in _rendered(error) and getattr(error, "query", None) is None
     assert getattr(error, "sqlstate", None) == "23505"
     if shape == "emulated":
         assert constraint_of(cast(Any, type("Wrapped", (), {"orig": error})())) == "users_email_key"
@@ -497,4 +502,6 @@ async def test_a_unit_of_work_that_cannot_start_closes_its_session_and_leaves_st
             pytest.fail("the unit of work must not start")
     assert session.calls == ["connection", "close"]
     assert raised.value is (close if close_fails else failure)
+    if close_fails:  # the close's error keeps the start's failure as its context
+        assert raised.value.__context__ is failure and not raised.value.__suppress_context__
     assert _P1 not in _rendered(raised.value)

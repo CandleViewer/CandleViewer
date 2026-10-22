@@ -38,8 +38,9 @@ _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]{0,62}")
 #: Driver exceptions carry the server's message and `DETAIL` (`Failing row contains (...)`,
 #: `Key (col)=(val)`): a stripped chain drops every link of theirs (#2748).
 _DRIVER_PACKAGES = frozenset({"asyncpg", "psycopg", "psycopg2"})
-#: A driver error's own text fields (asyncpg's, and the adapted error's `detail`).
-_DRIVER_TEXT = ("message", "detail", "hint", "context", "internal_query")
+#: A driver error's own text fields (asyncpg's, its statement `query` included, and the adapted
+#: error's `detail`).
+_DRIVER_TEXT = ("message", "detail", "hint", "context", "internal_query", "query")
 #: A `PendingRollbackError`'s message quotes the error that rolled the session back.
 _ROLLED_BACK = "this session's transaction was rolled back after an earlier error"
 
@@ -301,6 +302,8 @@ class _PendingUnitOfWork:
                 await session.close()
             except BaseException as cleanup:  # the close failed as well
                 strip_driver_text(cleanup)
+                if cleanup.__context__ is None:  # the strip cuts it; keep the start's failure
+                    cleanup.__context__, cleanup.__suppress_context__ = failed, False
                 raise
             raise
         self._uow = SqlAlchemyUnitOfWork(session, connection)
