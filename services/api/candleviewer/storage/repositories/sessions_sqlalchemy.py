@@ -15,7 +15,8 @@ not `disabled`, read under the user-row lock in the insert's transaction, and th
 reads by id and by refresh hash carry the user's status (#2911). Every record read
 carries the row's view-as context (#3085, `0042_sessions_view_as`). The insert writes
 the context a record carries (a refresh carries it to the successor row), and the
-`ViewAsSessionStore` writes (`auth/view_as.py`) are one conditional statement each. The
+`ViewAsSessionStore` writes (`auth/view_as.py`) are one conditional statement each, but for
+the start's unit of work, which locks the row first (`start_view_as_unit`). The
 insert also writes the step-up strikes and read-only window a refresh carries from the
 claim's row (#4051): a new row, from a revoked source row whose step-up columns no writer
 can change (`_STEP_UP_SQL` needs `revoked_at IS NULL`).
@@ -471,7 +472,8 @@ class SqlAlchemySessionRepository:
             await uow.commit()
         return tuple(str(r._mapping["id"]) for r in rows)
 
-    # -- #3085 `ViewAsSessionStore`: one statement each; the Protocol's docstrings are the contract.
+    # -- #3085 `ViewAsSessionStore`: one statement each (the start's unit: several, in one
+    # transaction); the Protocol's docstrings are the contract.
 
     async def start_view_as(self, session_id: str, state: Any, *, now: datetime) -> Any:
         if state.ended_at is not None:

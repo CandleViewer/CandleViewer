@@ -1,10 +1,11 @@
-"""`ViewAsService`: a view-as context's evaluation, its one end, the viewer's leave and its clear
-(#3085).
+"""`ViewAsService`: a view-as context's start, its evaluation, its one end, the viewer's leave and
+its clear (#3085).
 
-`22-api-openapi.yaml` "View-as session" and `endViewAs`; the state, its phase and the store
-contract are `auth/view_as.py`'s. The sweeper (`admin/view_as_sweeper.py`) runs it from the
-lifespan; nothing starts a context until the HTTP routes land (Q13). Its socket closer closes the
-sockets bound to the ended context (`view_as_wiring.HubSocketCloser`).
+`22-api-openapi.yaml` "View-as session", `startViewAs` and `endViewAs`; the state, its phase and
+the store contract are `auth/view_as.py`'s. The sweeper (`admin/view_as_sweeper.py`) runs it from
+the lifespan; nothing starts a context until the HTTP routes land (Q13). Its socket closer closes
+the sockets bound to the ended context, and after a start the session's sockets bound to none
+(`view_as_wiring.HubSocketCloser`).
 
 A context ends exactly once: of concurrent ends only the call whose conditional write
 (`end_view_as`, or `leave_view_as`, which also clears it) ended it closes the session's sockets
@@ -28,6 +29,7 @@ from uuid import UUID, uuid4
 import structlog
 
 from candleviewer.admin.audited import audit_exempt, audited
+from candleviewer.admin.errors import ViewAsStartUnavailable
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import (
@@ -54,7 +56,7 @@ Ineligible = Literal[ViewAsEndReason.VIEWER_INELIGIBLE, ViewAsEndReason.TARGET_I
 CloseReason = Literal["view_as_changed", "view_as_expired"]
 
 
-class ViewAsAudit(Protocol):  # `AuditWriter.emit_keyed` (Q3), with `emit()`'s keywords
+class ViewAsAudit(Protocol):  # `AuditWriter.emit_keyed` (Q3) and `emit` (the start's record)
     async def emit_keyed(
         self,
         action: str,
@@ -116,15 +118,6 @@ class ViewAsSocketCloser(Protocol):  # the session's rotation family's sockets o
 
 class ViewAsLabels(Protocol):  # a user whose row is gone is absent
     async def usernames(self, user_ids: Collection[UUID]) -> Mapping[UUID, str]: ...
-
-
-class ViewAsStartUnavailable(Exception):
-    """A start whose records could not be written: nothing started (22 `startViewAs`), answered
-    503 with `code`, `audit_unavailable` or `store_unavailable`."""
-
-    def __init__(self, code: Literal["audit_unavailable", "store_unavailable"]) -> None:
-        super().__init__(code)
-        self.code = code
 
 
 class _AuditDown(Exception):
@@ -295,7 +288,8 @@ class ViewAsService:
                 "expires_at": state.expires_at.isoformat(),
             },
             after_state=(after | {"recorded_late": True}) if late else after,
-            request_id=current_request_uuid(),  # the ending request; none from the sweeper
+            request_id=current_request_uuid(),  # the ending request, or the start's (a late
+            # record); none from the sweeper
         )
 
     @audited("admin.view_as_started", "admin.view_as_ended")  # the ended: a pending one, late
@@ -373,8 +367,9 @@ class ViewAsService:
     async def _close_unbound(self, row: SessionRecord) -> None:
         """After a start, every socket of the session closes `view_as_changed` and re-`auth`s into
         the target's scope: before a start the session holds no context, so they are its sockets
-        bound to none. Bounded; a failed close is logged, never raised: the start stands, and an
-        open socket closes at its next `auth`, which reads the context (S10)."""
+        bound to none (a socket an earlier close failed to reach may still be bound to an old
+        context; its next `auth` closes it, S10). Bounded; a failed close is logged, never raised:
+        the start stands, and an open socket closes at its next `auth`, which reads the context."""
         try:
             async with asyncio.timeout(self._close_timeout_s):
                 await self._sockets.close_family(

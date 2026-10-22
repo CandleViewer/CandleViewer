@@ -236,7 +236,8 @@ class ViewAsStartResult:
     held: SessionRecord | None = None
 
 
-#: A start's write-ahead hook: given the locked row, it writes an audit record or raises.
+#: A start's hook, given the locked row: it writes the started record ahead, or a pending end's
+#: record late, or raises.
 ViewAsStartHook = Callable[["SessionRecord"], Awaitable[None]]
 
 
@@ -253,7 +254,8 @@ class ViewAsSessionStore(Protocol):
         and holds no context, or a cleared one whose end is recorded (of two concurrent starts,
         exactly one). An ended `state`, or a self-targeting one on a row that would take it, is a
         caller error: `ValueError`, nothing written (a row that refuses the start answers `None`
-        first). The start request uses `start_view_as_unit`, which wraps this write."""
+        first). The start request uses `start_view_as_unit`, which issues the same write in its unit
+        of work: this bare write has no production caller."""
         ...
 
     async def start_view_as_unit(

@@ -35,7 +35,8 @@ class FakeSessionRepository:
         self.rotation_prev: dict[str, str] = {}
         #: #2911: `users.status` by user id (`None`: the user row is gone). Unset is `active`.
         self.user_statuses: dict[str, UserStatus | None] = {}
-        #: #3085: the starts' notices as committed, and a failure the next notice insert raises.
+        #: #3085: the starts' notices as committed, and a failure every notice insert raises
+        #: until it is reset.
         self.notices: list[ViewAsNotice] = []
         self.notice_fails: Exception | None = None
         self._start_lock = asyncio.Lock()  # the row lock a start takes, for every row at once

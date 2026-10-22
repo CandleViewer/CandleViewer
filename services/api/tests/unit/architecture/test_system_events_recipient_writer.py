@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import candleviewer
@@ -66,13 +67,21 @@ def _writes(source: str) -> list[int]:
     return sorted(lines)
 
 
+def _sources() -> Iterator[tuple[str, str]]:
+    """Each production module naming the table or the column: no other can write the column, so
+    no other is parsed."""
+    for path in sorted(_ROOT.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        named = text.lower()
+        if "migrations" in path.parts or not (
+            "system_events" in named or "recipient_user_id" in named
+        ):
+            continue
+        yield path.relative_to(_ROOT).as_posix(), text
+
+
 def test_only_the_view_as_start_writes_a_recipient() -> None:
-    writers = {
-        path.relative_to(_ROOT).as_posix(): lines
-        for path in sorted(_ROOT.rglob("*.py"))
-        if "migrations" not in path.parts
-        if (lines := _writes(path.read_text(encoding="utf-8")))
-    }
+    writers = {path: lines for path, text in _sources() if (lines := _writes(text))}
     assert list(writers) == list(_ONE_WRITER)
     assert len(writers[_ONE_WRITER[0]]) == 1  # `_VIEW_AS_NOTICE_SQL`
 

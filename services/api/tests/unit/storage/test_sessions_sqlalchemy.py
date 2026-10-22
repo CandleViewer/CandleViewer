@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
@@ -620,6 +620,11 @@ _CLAUSES = {
         "s.expires_at <= :now",
         "OR o.revoked_at IS NULL OR o.revoked_at > :cutoff",  # a rotated row with no time carries
     ),
+    "_VIEW_AS_START_LOCK_SQL": (
+        "revoked_at IS NULL AND expires_at > :now",  # a revoked or expired row starts nothing
+        "FOR NO KEY UPDATE",
+    ),
+    "_VIEW_AS_NOTICE_SQL": ("VALUES ('auth', 'view_as_started', 'info',",),  # info: no incident
 }
 
 
@@ -656,9 +661,9 @@ class _Scripted(_Session):
 
 def _unit(
     held: ViewAsState | None, **row: Any
-) -> tuple[SqlAlchemySessionRepository, _Relational, list[str], Call]:
+) -> tuple[SqlAlchemySessionRepository, _Relational, list[str], Callable[[], Awaitable[Any]]]:
     """A store whose locked row holds `held`, the order of its statements and hooks (`log`), and
-    the start call with hooks that log themselves."""
+    its start call with hooks that log themselves."""
     log: list[str] = []
     rel = _Relational([])
     started = _row(**_view_as_columns(_FRESH))
@@ -675,8 +680,8 @@ def _unit(
     async def hook(name: str, _record: Any) -> None:
         log.append(name)
 
-    def call(r: SqlAlchemySessionRepository) -> Awaitable[Any]:
-        return r.start_view_as_unit(
+    def call() -> Awaitable[Any]:
+        return repo.start_view_as_unit(
             "sid",
             _FRESH,
             now=_T0,
@@ -690,8 +695,8 @@ def _unit(
 
 
 async def test_the_start_unit_locks_then_writes_the_notice_the_record_ahead_and_the_start() -> None:
-    repo, rel, log, call = _unit(None)
-    started, held = await call(repo)
+    _repo, rel, log, call = _unit(None)
+    started, held = await call()
     assert log == ["_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL", "ahead", "_VIEW_AS_START_SQL"]
     assert held is None and started.view_as == _FRESH and (rel.units, rel.commits) == (1, 1)
     lock, notice, start = rel.session.calls
@@ -722,8 +727,8 @@ def test_the_notice_names_no_account_or_symbol() -> None:
 
 
 async def test_the_start_unit_writes_a_pending_ends_record_late_and_marks_it_first() -> None:
-    repo, rel, log, call = _unit(_STATES["pending-end"])
-    started, _held = await call(repo)
+    _repo, rel, log, call = _unit(_STATES["pending-end"])
+    started, _held = await call()
     assert log == [
         "_VIEW_AS_START_LOCK_SQL", "flush", "_VIEW_AS_RECORDED_SQL", "_VIEW_AS_NOTICE_SQL",
         "ahead", "_VIEW_AS_START_SQL",
@@ -731,24 +736,31 @@ async def test_the_start_unit_writes_a_pending_ends_record_late_and_marks_it_fir
     assert started is not None and rel.commits == 1
 
 
+async def test_the_start_unit_replaces_a_cleared_and_recorded_context_with_no_flush() -> None:
+    _repo, rel, log, call = _unit(_STATES["cleared"])
+    started, held = await call()
+    assert log == ["_VIEW_AS_START_LOCK_SQL", "_VIEW_AS_NOTICE_SQL", "ahead", "_VIEW_AS_START_SQL"]
+    assert started is not None and held is None and rel.commits == 1
+
+
 @pytest.mark.parametrize("state", ["live", "held"])
 async def test_the_start_unit_answers_a_context_it_cannot_replace_as_held(state: str) -> None:
-    repo, rel, log, call = _unit(_STATES[state])
-    started, held = await call(repo)
+    _repo, rel, log, call = _unit(_STATES[state])
+    started, held = await call()
     assert started is None and held.view_as == _STATES[state]
     assert log == ["_VIEW_AS_START_LOCK_SQL"] and rel.commits == 0
 
 
 async def test_the_start_unit_of_a_gone_or_revoked_row_writes_nothing() -> None:
-    repo, rel, log, call = _unit(None)
-    rel.session.script["_VIEW_AS_START_LOCK_SQL"] = []  # the lock reads no row
-    assert await call(repo) == (None, None) and log == ["_VIEW_AS_START_LOCK_SQL"]
+    _repo, rel, log, call = _unit(None)
+    cast(_Scripted, rel.session).script["_VIEW_AS_START_LOCK_SQL"] = []  # the lock reads no row
+    assert await call() == (None, None) and log == ["_VIEW_AS_START_LOCK_SQL"]
 
 
 async def test_the_start_unit_refuses_a_self_targeting_state_before_any_write() -> None:
-    repo, rel, log, call = _unit(None, user_id=str(_FRESH.target_user_id))
+    _repo, rel, log, call = _unit(None, user_id=str(_FRESH.target_user_id))
     with pytest.raises(ValueError, match="its own user"):
-        await call(repo)
+        await call()
     assert log == ["_VIEW_AS_START_LOCK_SQL"] and rel.commits == 0
 
 

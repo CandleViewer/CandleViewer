@@ -17,7 +17,8 @@ import pytest
 from structlog.testing import capture_logs
 
 import candleviewer
-from candleviewer.admin.view_as import ViewAsStartUnavailable, notice_message
+from candleviewer.admin.errors import ViewAsStartUnavailable
+from candleviewer.admin.view_as import notice_message
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.models import SessionRecord
@@ -93,24 +94,32 @@ async def test_one_notice_names_viewer_and_window_never_reason() -> None:
     assert rig.ports.calls[0]["request_id"] == request
 
 
-async def test_no_notice_on_refused_or_failed_start() -> None:
-    """A held context answers it (409 `view_as_active`); a write-ahead that fails or hangs starts
-    nothing (`audit_unavailable`); neither writes a notice."""
-    rig = _Rig(record_timeout_s=0.01)
+async def test_a_held_context_answers_held_and_writes_and_closes_nothing() -> None:
+    """409 `view_as_active` at the route: no notice, no record, and no socket closed."""
+    rig = _Rig()
     held = await _session_of(rig, view_as=ViewAsState.start(uuid4(), _TARGET, now=_T0))
     result = await rig.service.start(held, _TARGET, reason=_REASON, now=_at(1))
-    assert result.started is None and result.held is not None and rig.ports.calls == []
+    assert result.started is None and result.held is not None
+    assert rig.repo.notices == [] and rig.ports.calls == [] and rig.ports.closed == []
+
+
+def _fails(ports: Any) -> None:
+    ports.fails["emit"] = AuditUnavailable("down")
+
+
+def _hangs(ports: Any) -> None:
+    ports.holds.add("emit")
+
+
+@pytest.mark.parametrize("write_ahead", [_fails, _hangs], ids=["fails", "hangs"])
+async def test_a_write_ahead_that_fails_or_hangs_starts_nothing(write_ahead: Any) -> None:
+    """`audit_unavailable`: no notice, no context."""
+    rig = _Rig(record_timeout_s=0.01)
     fresh = await _session_of(rig)
-    for port, failure in (("fails", AuditUnavailable("down")), ("holds", None)):
-        if failure is None:
-            rig.ports.holds.add("emit")
-        else:
-            rig.ports.fails["emit"] = failure
-        with pytest.raises(ViewAsStartUnavailable) as refused:
-            await rig.service.start(fresh, _TARGET, reason=_REASON, now=_T0)
-        assert refused.value.code == "audit_unavailable", port
-        rig.ports.fails.clear()
-        rig.ports.holds.clear()
+    write_ahead(rig.ports)
+    with pytest.raises(ViewAsStartUnavailable) as refused:
+        await rig.service.start(fresh, _TARGET, reason=_REASON, now=_T0)
+    assert refused.value.code == "audit_unavailable"
     assert rig.repo.notices == [] and rig.repo.sessions[str(fresh.id)].view_as is None
 
 
@@ -185,6 +194,22 @@ async def test_a_start_closes_the_sessions_sockets_bound_to_no_context() -> None
     assert rig.ports.closed_contexts == [None]
 
 
+async def test_the_close_follows_the_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A socket that re-`auth`s on the close reads the started context, never the row before it."""
+    rig = _Rig()
+    record = await _session_of(rig)
+    seen: list[ViewAsState | None] = []
+    close = rig.ports.close_family
+
+    async def reading(session_id: str, *, context_id: Any, reason: str) -> None:
+        seen.append(rig.repo.sessions[session_id].view_as)
+        await close(session_id, context_id=context_id, reason=reason)
+
+    monkeypatch.setattr(rig.ports, "close_family", reading)
+    result = await rig.service.start(record, _TARGET, reason=_REASON, now=_T0)
+    assert result.started is not None and seen == [result.started.view_as]
+
+
 async def test_a_failed_close_is_logged_and_the_start_stands() -> None:
     rig = _Rig()
     record = await _session_of(rig)
@@ -251,7 +276,8 @@ def test_only_the_start_calls_the_stores_start() -> None:
     callers = {
         (path.relative_to(root).as_posix(), *use)
         for path in sorted(root.rglob("*.py"))
-        for use in _uses_of_the_stores_start(path.read_text(encoding="utf-8"))
+        if "start_view_as" in (text := path.read_text(encoding="utf-8"))  # parse only these
+        for use in _uses_of_the_stores_start(text)
     }
     assert callers == {("admin/view_as.py", "start", "start_view_as_unit")}
 

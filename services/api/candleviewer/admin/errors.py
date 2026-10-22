@@ -10,6 +10,8 @@ JournalRefusal = Literal["host_fs_unavailable", "api_running"]
 #: `rewrapKek`'s error codes (`22-api-openapi.yaml`, #2266): its audited refusals, then its 503s.
 KekRefusal = Literal["kek_unavailable", "kek_rotation_not_staged", "kek_rotation_in_progress"]
 KekRewrapCode = KekRefusal | Literal["audit_unavailable", "store_unavailable"]
+#: A view-as start that could not write its records (#3085 S13a): nothing started.
+ViewAsStartCode = Literal["audit_unavailable", "store_unavailable"]
 
 
 class AdminError(Exception):
@@ -103,3 +105,12 @@ class KekRewrapError(AdminError):
     def __init__(self, code: KekRewrapCode) -> None:
         super().__init__(code)
         self.code: KekRewrapCode = code
+
+
+class ViewAsStartUnavailable(AdminError):
+    """A view-as start whose records could not be written: nothing started (22 `startViewAs`),
+    answered 503 with `code`, `audit_unavailable` or `store_unavailable`."""
+
+    def __init__(self, code: ViewAsStartCode) -> None:
+        super().__init__(code)
+        self.code: ViewAsStartCode = code
