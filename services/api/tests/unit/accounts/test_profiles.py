@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -18,17 +19,22 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from candleviewer.accounts.profiles import (
     AccountProfile,
+    SymbolEntries,
+    SymbolScope,
     TakeProfitRung,
     profile_from_row,
     profile_values,
 )
+from candleviewer.domain.events import Instrument
+from candleviewer.exchange.bybit.instruments import parse_instrument
 from candleviewer.storage.repositories.account_profiles import AccountProfileRow, LadderRung
+from tests._corpus import rest
 
 _FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "profiles"
 _MODES = ("risk_based", "fixed_qty", "pct_equity", "fixed_notional")
@@ -460,3 +466,65 @@ def test_a_ladder_summed_exactly_past_the_whole_leg_is_refused() -> None:
     rungs = [{"qty_pct": "0.5", "r": "1"}, {"qty_pct": "0.5000000000000000000000000001", "r": "2"}]
     with pytest.raises(ValidationError, match="more than the whole leg"):
         _profile(tp_ladder=rungs)
+
+
+# -- one symbol matcher for saves and orders (E28-T02 #906 B2a; SR-E28-06, PF-T07) ---------------
+
+
+# `oms.validator._listed` as it stood before `SymbolEntries` replaced it (0f0afa09b), verbatim.
+def _listed(symbol: str, patterns: Iterable[str], *, wildcard: bool) -> bool:
+    for pattern in patterns:
+        if pattern == symbol:
+            return True
+        suffix = pattern.removeprefix("*")
+        if wildcard and suffix != pattern and len(symbol) > len(suffix) and symbol.endswith(suffix):
+            return True
+    return False
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    symbol=st.from_regex(r"[AU1T]{1,8}", fullmatch=True),
+    entries=st.lists(st.from_regex(r"\*?[AU1T]{0,8}", fullmatch=True)),
+)
+@example(symbol="AU1T", entries=["*"])  # a bare `*`: the empty suffix
+@example(symbol="AU1T", entries=[""])  # an empty entry
+@example(symbol="AU1T", entries=["*AU1T"])  # a pattern as long as the symbol
+@example(symbol="AU1T", entries=["AU1T", "*T"])  # the symbol itself, and a one-character suffix
+def test_symbol_entries_match_as_the_order_path_did(symbol: str, entries: list[str]) -> None:
+    """Both values of `wildcard`, over four characters so that suffixes collide often. A symbol
+    never holds `*`; the entries reach past what a profile stores (a bare `*`, `""`)."""
+    compiled = SymbolEntries.of(entries)
+    for wildcard in (False, True):
+        expected = _listed(symbol, entries, wildcard=wildcard)
+        assert compiled.matches(symbol, wildcard=wildcard) is expected
+
+
+def _recorded_btcusdt(**edits: str) -> Instrument:
+    """The recorded BTCUSDT row (C-13.5) as the adapter parses it, then `edits`."""
+    rows = rest("rest/instruments_before.json")["result"]["list"]
+    recorded = parse_instrument(next(r for r in rows if r["symbol"] == "BTCUSDT"), fetched_at_us=0)
+    return Instrument.model_validate({**recorded.model_dump(), **edits})
+
+
+@pytest.mark.parametrize(
+    ("edits", "matched"),
+    [
+        ({}, True),
+        ({"status": "pre_launch"}, False),
+        ({"status": "delivering"}, False),
+        ({"status": "closed"}, False),
+        ({"quote_coin": "USDC"}, False),
+        ({"settle_coin": "USDC"}, False),
+        ({"symbol": "USDT"}, False),  # the suffix alone: a pattern never matches a whole symbol
+        ({"symbol": "USDTBTC"}, False),  # anchored: never a substring
+    ],
+    ids=["recorded", "pre_launch", "delivering", "closed", "quote", "settle", "whole", "inside"],
+)
+def test_wildcard_matches_only_listed_linear_usdt_perps(
+    edits: dict[str, str], matched: bool
+) -> None:
+    """SR-E28-06 (PF-T07, AC-08): `*USDT` matches a listed, trading perpetual quoted and settled
+    in USDT, by an anchored suffix, and nothing else."""
+    scope = SymbolScope.of(_profile("fixed_notional"))  # allowed_symbols: ["*USDT"]
+    assert scope.allows(_recorded_btcusdt(**edits)) is matched
