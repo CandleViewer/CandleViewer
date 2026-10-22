@@ -24,11 +24,13 @@ from typing import Any
 
 import psycopg
 import pytest
+import structlog
 import structlog.testing
 from psycopg import sql
 from sqlalchemy import event
 from sqlalchemy.engine import ExceptionContext
 from structlog.processors import format_exc_info
+from structlog.typing import EventDict
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
@@ -143,6 +145,23 @@ class _Records(logging.Handler):
 
 
 @contextmanager
+def _structlog_events() -> Iterator[list[EventDict]]:
+    """The block's structlog events, each `exc_info` rendered to its traceback's text, as a
+    renderer makes it. `capture_logs(processors=...)` needs structlog 25.5 and the floor is 24.1,
+    so this does what it does: it keeps the processors list instance and restores it after."""
+    cap = structlog.testing.LogCapture()
+    processors = structlog.get_config()["processors"]
+    kept = list(processors)
+    processors[:] = [format_exc_info, cap]
+    structlog.configure(processors=processors)
+    try:
+        yield cap.entries
+    finally:
+        processors[:] = kept
+        structlog.configure(processors=processors)
+
+
+@contextmanager
 def server_text(rel: SqlAlchemyRelationalRepository) -> Iterator[Seen]:
     """Yields what the block's one refused statement leaves behind: the driver's own text of the
     error and SQLAlchemy's, both taken in the `handle_error` hook (before the unit of work strips
@@ -162,8 +181,7 @@ def server_text(rel: SqlAlchemyRelationalRepository) -> Iterator[Seen]:
     root.addHandler(handler)
     root.setLevel(logging.DEBUG)
     try:
-        # `format_exc_info`: an event's `exc_info` is its traceback's text, as a renderer makes it.
-        with structlog.testing.capture_logs(processors=[format_exc_info]) as events:
+        with _structlog_events() as events:
             try:
                 yield seen
             finally:
