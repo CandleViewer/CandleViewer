@@ -137,12 +137,15 @@ def make_streams(
 ) -> PrivateStreams:
     """The registry over `venue`, signed by the M2 double, on `venue.clock`."""
     clock = venue.clock
+    rng = random.Random(
+        seed
+    )  # noqa: S311 -- seeded jitter for a test fake, not a security primitive
     return PrivateStreams(
         environment=environment,
         credentials=credentials if credentials is not None else fake_capability(SIGNER_ID, calls),
         connect=venue.connect,
         budget=ConnectionBudget(clock),
-        policy=ReconnectPolicy(rng=random.Random(seed)),  # noqa: S311  (jitter, not crypto)
+        policy=ReconnectPolicy(rng=rng),
         sleep=clock.sleep,
         monotonic=clock,
         wall_ms=lambda: round(clock.wall_s() * 1000),
