@@ -147,9 +147,14 @@ def test_ir_hash_number_param_json_form_is_its_hashed_decimal_so_it_reloads_alik
 
 @settings(max_examples=300, deadline=None, database=None)
 @given(st.decimals(allow_nan=False, allow_infinity=False))
-def test_plain_decimal_mirrors_dec_str(d: Decimal) -> None:
-    """``models._plain_decimal`` mirrors ``canonical.dec_str`` (it cannot import it): pinned."""
-    assert models._plain_decimal(d) == canonical.dec_str(d)
+def test_plain_decimal_is_dec_str_or_the_numbers_own_text_when_it_refuses(d: Decimal) -> None:
+    """``models._plain_decimal`` writes the digits ``canonical.dec_str`` hashes; a number the hash
+    refuses (a form wider than its bound) keeps its own text."""
+    try:
+        want = canonical.dec_str(d)
+    except canonical.IrValueError:
+        want = str(d)
+    assert models._plain_decimal(d) == want
 
 
 def test_canonicalize_fractional_action_param_hashes_as_its_decimal() -> None:
@@ -177,13 +182,18 @@ def test_normalise_float_subclass_hashes_by_floats_own_repr() -> None:
 
 
 _DECIMALS = st.decimals(Decimal("-1e15"), Decimal("1e15"), allow_nan=False, places=12)
-_NUMBERS = st.one_of(st.integers(), st.floats(allow_nan=False, allow_infinity=False), _DECIMALS)
+#: Floats and integers whose plain form is far inside the width bound (a wider one is a refusal).
+_FLOATS = st.one_of(st.floats(1e-30, 1e30), st.floats(-1e30, -1e-30), st.just(0.0))
+_NUMBERS = st.one_of(st.integers(-(10**30), 10**30), _FLOATS, _DECIMALS)
 
 
 @settings(max_examples=300, deadline=None, database=None)
 @given(_NUMBERS)
-def test_canonicalize_finite_number_in_any_params_never_raises(x: int | float | Decimal) -> None:
-    """Metric and action params: any finite JSON number hashes, as its exact decimal."""
+def test_canonicalize_finite_number_in_any_params_within_the_bound_never_raises(
+    x: int | float | Decimal,
+) -> None:
+    """Metric and action params: any finite JSON number inside the width bound hashes, as its exact
+    decimal."""
     exact = Decimal(repr(x)) if isinstance(x, float) else x
     doc = _doc(x, weight=x)
     assert canonicalize(doc) == canonicalize(_doc(exact, weight=exact))

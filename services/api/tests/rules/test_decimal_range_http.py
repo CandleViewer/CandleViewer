@@ -1,5 +1,6 @@
-"""A number outside the decimal range over HTTP (#4185): compile (and its counterpart model), save
-and update answer ``422 rule_ir_invalid`` naming the field, never a 500, and nothing is stored.
+"""A number the rule hash refuses over HTTP (#4185), outside the decimal range or with a canonical
+form wider than 64 characters: compile (and its counterpart model), save and update answer
+``422 rule_ir_invalid`` naming the field, never a 500, and nothing is stored.
 
 ``tolerance`` and the notional limits are ``Decimal`` fields that read a numeric string, so a body
 can carry such a number there (a JSON number past the float range reads as ``inf``: refused
@@ -36,10 +37,12 @@ _JSON = {"content-type": "application/json"}
 _PROBLEM = "https://candleviewer.local/errors/rule_ir_invalid"
 _REASON = "Number is outside the range a rule can hold"
 _CTX = decimal.getcontext()
-#: The spelling sent: a number past the top of the range (either sign), and one below its bottom.
+_WIDTH = 64  # the most characters a canonical number may take
+#: The spelling sent: a number past the top of the range (either sign), one below its bottom, and
+#: one whose plain form is a character wider than the bound.
 _SPELLED = {
     "above": f'"1E+{_CTX.Emax + 1}"', "negative above": f'"-1E+{_CTX.Emax + 1}"',
-    "below": f'"1E{_CTX.Etiny() - 1}"',
+    "below": f'"1E{_CTX.Etiny() - 1}"', "too wide": f'"1E+{_WIDTH}"',
 }  # fmt: skip
 _ABOVE = _SPELLED["above"]
 #: Where the slot is -> (compile's errors[].field, save's path).

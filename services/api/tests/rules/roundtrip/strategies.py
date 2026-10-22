@@ -54,10 +54,10 @@ _keys = st.sampled_from(("n", "anchor", "source", "window_ms", "z", "mode", "k")
 _STORABLE = st.characters(codec="utf-8", exclude_characters=chr(0))
 _note = st.text(_STORABLE, max_size=8)
 #: Params also take JSON floats (#4132): a metric param's becomes a Decimal, an action param's
-#: hashes through the canonicaliser's float arm.
-_params = st.dictionaries(
-    _keys, st.one_of(_scalars, st.floats(allow_nan=False, allow_infinity=False)), max_size=3
-)
+#: hashes through the canonicaliser's float arm. Their magnitude stays inside the canonical form's
+#: width bound (a float outside it is a refusal, pinned in tests/unit/rules_ir).
+_floats = st.one_of(st.floats(1e-30, 1e30), st.floats(-1e30, -1e-30), st.just(0.0))
+_params = st.dictionaries(_keys, st.one_of(_scalars, _floats), max_size=3)
 _layout = st.one_of(
     st.none(),
     st.fixed_dictionaries(

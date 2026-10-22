@@ -203,23 +203,31 @@ def _tolerance_alert(spelling: str) -> bytes:
     return json.dumps(doc).replace('"__slot__"', spelling).encode()
 
 
-#: A numeric string one past the largest exponent the decimal context holds (#4185).
-_ABOVE_RANGE = f'"1E+{decimal.getcontext().Emax + 1}"'
+#: Numeric strings the hash refuses (#4185): one past the largest exponent the decimal context
+#: holds, and one whose plain form is 65 characters, one past the bound.
+_REFUSED = {"above the range": f'"1E+{decimal.getcontext().Emax + 1}"', "too wide": '"1E+64"'}
 _REASON = "Number is outside the range a rule can hold"
 
 
-def test_create_number_outside_the_decimal_range_is_one_422_nothing_persisted(env: Env) -> None:
-    r = env.c.post("/alerts", content=_tolerance_alert(_ABOVE_RANGE), headers=_JSON)
+@pytest.mark.parametrize("spelling", _REFUSED)
+def test_create_number_outside_the_decimal_range_is_one_422_nothing_persisted(
+    env: Env, spelling: str
+) -> None:
+    r = env.c.post("/alerts", content=_tolerance_alert(_REFUSED[spelling]), headers=_JSON)
     assert (r.status_code, r.json()["code"]) == (422, "rule_ir_invalid"), r.text
     errors = [(e["field"], e["rule"], e["message"]) for e in r.json()["errors"]]
     assert errors == [("conditions.tolerance", "schema_error", _REASON)]
     assert env.repo.rows == {} and env.audit.calls == []
 
 
-def test_update_number_outside_the_decimal_range_is_one_422_row_kept(env: Env) -> None:
+@pytest.mark.parametrize("spelling", _REFUSED)
+def test_update_number_outside_the_decimal_range_is_one_422_row_kept(
+    env: Env, spelling: str
+) -> None:
     a = env.create()
     before = env.repo.rows[a["id"]]
-    r = env.c.put(f"/alerts/{a['id']}", content=_tolerance_alert(_ABOVE_RANGE), headers=_JSON)
+    sent = _tolerance_alert(_REFUSED[spelling])
+    r = env.c.put(f"/alerts/{a['id']}", content=sent, headers=_JSON)
     assert (r.status_code, r.json()["code"]) == (422, "rule_ir_invalid"), r.text
     assert env.repo.rows[a["id"]] == before and env.audit.actions() == ["alert.created"]
 

@@ -3,8 +3,8 @@ is ``valid: false`` naming the field, not ``valid: true`` with a 422 waiting at 
 
 Validate used to stop at the models and the semantic checks, which accept these values: a lone
 surrogate in free text (an action param key or value, a metric param, a timeframe), a NaN in an
-action param, and a decimal past the context's range. Each case goes to both routes, and each must
-name the same field. Bodies go as raw JSON text, so the spelling is kept.
+action param, and a decimal past the context's range or wider than 64 characters. Each case goes to
+both routes, and each must name the same field. Bodies go as raw JSON text, so the spelling is kept.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ _UNPAIRED = "Text holds an unpaired surrogate code point"
 _FINITE = "Input should be a finite number"
 _RANGE = "Number is outside the range a rule can hold"
 _ABOVE = f'"1E+{decimal.getcontext().Emax + 1}"'  # a numeric string one past the largest exponent
+_WIDE = '"1E+64"'  # a numeric string whose plain form is 65 characters, one past the bound
 #: Where the slot is -> (the spelling sent there, the field both routes name, the refusal).
 _CASES = {
     "action param key": ('"\\ud800"', "actions[0].params", _UNPAIRED),
@@ -42,6 +43,7 @@ _CASES = {
     "trigger timeframe": ('"\\ud800"', "trigger.timeframe", _UNPAIRED),
     "action param nan": ("NaN", "actions[0].params.w", _FINITE),
     "decimal out of range": (_ABOVE, "conditions.tolerance", _RANGE),
+    "decimal too wide": (_WIDE, "conditions.tolerance", _RANGE),
 }
 
 
