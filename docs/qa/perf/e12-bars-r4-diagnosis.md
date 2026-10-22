@@ -27,9 +27,12 @@ on any leg but the tracemalloc leg or off on that one, or tracemalloc already on
 | 4     | `mmap128k`    | 24 h                                | `MALLOC_MMAP_THRESHOLD_=131072` | the W24 slope with the mmap threshold fixed |
 
 All four legs, and any re-run (a replicate default included), run at one commit. Once the workflow is on
-`main`, make one ref that points at a single `main` commit and that nobody moves (a tag), and dispatch every
-leg with `gh workflow run perf-bars-memdiag.yml --ref <that tag> -f leg=<leg>`. A leg measured at another
-head is not comparable with the default (M3), so `judge` leaves it out and the verdict is INCONCLUSIVE.
+`main`, tag one `main` commit `bench/r4-legs-1` (the workflow refuses any ref but a `bench/` tag), leave the
+tag in place, and dispatch every leg with `gh workflow run perf-bars-memdiag.yml --ref bench/r4-legs-1 -f
+leg=<leg>`; leave the runner's Python, glibc and THP alone until the last leg. A leg measured at another head
+or on another host setup is not comparable with the default (M3), so `judge` leaves it out: LEAK waits for
+both allocator legs, while MIXED and FRAGMENTATION are called from the legs in hand, and a later leg can
+only add a mover to their list.
 
 A report says `"reading": true` only for a leg with no override, no tracemalloc and no allocator variable.
 Its R1-R4 verdict is the runner's verdict on a process that also probed hourly, after the soak's own RSS
@@ -89,7 +92,7 @@ How `judge` applies it (the constants and `rule` in `memdiag.py`):
   `domain/sql_names.py`'s lines; a live one 832 B at `bars/time_builder.py`'s and 272-480 B at
   `exchange/bybit/trades.py`'s: -208 to 0 B a bar replaced, -208 the end that masks most. Over h2-7 the
   three symbols replace 10 044 bars: `time_builder.py:159` grows +1.99 MiB and `trades.py:64` +2.0-4.0 MiB,
-  every hour, while the filtered total falls (2.96 MiB by h12, 14 928 replaced). The total test keeps such
+  every hour, while the filtered total falls by up to 2.96 MiB by h12 (14 928 replaced, at the -208 B end). The total test keeps such
   lines out; it masks a Python leak slower than that fall, about 0.1 MiB/h a symbol (a run over hours 2-12
   needs about 0.13), under R4's 0.18. M4's floor is net of the same fall: it flags growth no line explains
   only from 2.7 + 2.96 = 5.66 MiB over 10 h, about 0.19 MiB/h a symbol, just above R4's 0.18. A bursty or
@@ -106,8 +109,8 @@ How `judge` applies it (the constants and `rule` in `memdiag.py`):
   by the hourly probes either side to glibc (arena + hblkhd), THP (AnonHugePages) or other, by which rose
   by half of it, with uordblks' and fordblks' changes beside it. Two steps in one hour share their probes.
   A table that left mmap for the heap nets arena + hblkhd to 0, so its glibc step reads "other" and,
-  through `FITS`, a real mmap128k FRAGMENTATION reads INCONCLUSIVE; the uordblks and fordblks columns show
-  such a case, for the orchestrator's ruling. On cv-bench-01 THP explains no step: it is `madvise`, and
+  through `FITS`, a real mmap128k FRAGMENTATION reads INCONCLUSIVE; the uordblks and fordblks deltas in the
+  default leg's `steps[]` show such a case, for the orchestrator's ruling. On cv-bench-01 THP explains no step: it is `madvise`, and
   glibc does not advise its heap.
 - **The repeat assumption (M2).** One default leg, no replicate: `MOVE_MIN` assumes the step pattern
   repeats from run to run. The rises at h2.12, h2.93, h7.00, h16.80 and h17.57 sit within 1.4 min of the
