@@ -5,10 +5,13 @@ import type { RuleGraphErrorCode, RuleIr } from "../src/index.js";
 // The public entry is the package's contract: pin what it exports at runtime. The RuleIr and
 // RuleGraphErrorCode types are erased, so only the values show.
 describe("the public entry", () => {
-  it("exports exactly the error contract", async () => {
+  it("exports exactly the error contract and the canonical mirror", async () => {
     expect(Object.keys(await import("../src/index.js")).sort()).toEqual([
       "RULE_GRAPH_ERROR_CODES",
       "RuleGraphError",
+      "canonicalise",
+      "compareWithServer",
+      "hash",
       "isRuleGraphError",
     ]);
   });

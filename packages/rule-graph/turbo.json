@@ -9,7 +9,8 @@
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
-        "$TURBO_ROOT$/packages/config/vitest.preset.mjs"
+        "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
+        "$TURBO_ROOT$/packages/fixtures/golden/rule-ir/hash_vectors.json"
       ]
     },
     "test:cov": {
@@ -19,7 +20,8 @@
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
-        "$TURBO_ROOT$/packages/config/vitest.preset.mjs"
+        "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
+        "$TURBO_ROOT$/packages/fixtures/golden/rule-ir/hash_vectors.json"
       ]
     }
   }

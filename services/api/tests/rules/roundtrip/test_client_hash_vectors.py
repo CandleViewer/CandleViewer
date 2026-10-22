@@ -76,8 +76,8 @@ def dump(obj: object, spelling: str = "", *, sort: bool = False) -> str:
 
 
 def js_safe(o: object) -> bool:
-    """JS round-trips it unchanged: no integral or non-finite float, and no int beyond 2**53 unless
-    it is an exact double below 1e21, which JS prints back digit for digit."""
+    """JS round-trips it unchanged: no integral or non-finite float, and no int beyond 2**53
+    unless, below 1e21, its shortest double form is that same integer."""
     if isinstance(o, dict | list):
         return all(map(js_safe, o.values() if isinstance(o, dict) else o))
     if isinstance(o, float):

@@ -7,7 +7,7 @@ const ASCII = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i));
 // 1-, 2-, 3- and 4-byte UTF-8: a, e-acute, the euro sign, U+2028, U+FFFF, an emoji.
 const UNICODE = [0x61, 0xe9, 0x20ac, 0x2028, 0xffff, 0x1f600].map((c) => String.fromCodePoint(c));
 // The first and last code point of each UTF-8 width, and the two beside the surrogate gap.
-const EDGES = [0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff];
+const EDGES = [0x00, 0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff];
 
 /** `length` characters of `chars`, picked by a seeded multiplicative hash (Knuth's 0x9e3779b1). */
 function seeded(length: number, chars: readonly string[], seed: number): string {
