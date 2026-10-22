@@ -494,7 +494,8 @@ def main(argv: list[str]) -> int:
     for name, section in data.items():
         print(f"## {name}\n")
         rows = section if isinstance(section, list) else None
-        for key, value in ({} if rows else section).items():
+        fields = section if isinstance(section, dict) else {}
+        for key, value in fields.items():
             if isinstance(value, list) and value and isinstance(value[0], dict):
                 print(f"- {key}:")
                 table(value)
