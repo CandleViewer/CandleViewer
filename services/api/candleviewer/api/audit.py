@@ -523,13 +523,14 @@ def make_audit_router(
             )
         try:
             if view is not AuditView.RAW:
-                if req.actor_user_id not in (None, actor.key):
+                own = str(principal.user_id)  # the subject's: the target's events while viewing
+                if req.actor_user_id not in (None, own):
                     refused = await _record_cross_actor(emitter, principal, req.actor_user_id)
                     if refused is not None:
                         return refused
                 # SR-067: a non-owner reads only its own events. The repository applies
                 # the scope in the SQL of every page, whatever `actor_user_id` was sent.
-                filters["actor_user_id"] = actor.key
+                filters["actor_user_id"] = own
             recorded = _recorded_filters(req, filters["actor_user_id"])
             plan = record_budget.plan_read(actor, filters_digest(recorded))
             try:
@@ -586,8 +587,9 @@ def make_audit_router(
             return _over_cap(key)
         if plan.action == "unwritable":
             return _unavailable()
-        # Fail closed: any view but the Owner's raw one is scoped to the caller's own entries.
-        restrict = None if view is AuditView.RAW else key
+        # Fail closed: any view but the Owner's raw one is scoped to the subject's own entries,
+        # the target's while viewing (#3085: a `scope: self` read answers as the target's).
+        restrict = None if view is AuditView.RAW else str(principal.user_id)
         started = time.perf_counter()
         try:
             page = await service.query.query(

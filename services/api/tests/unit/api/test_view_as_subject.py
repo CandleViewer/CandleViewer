@@ -195,6 +195,50 @@ def test_a_viewers_refused_audit_read_is_the_targets_refusal_recorded_as_the_vie
     assert (fields["actor_user_id"], fields["actor_label"]) == (_VIEWER, "owner-anna")
 
 
+class _ReaderIdentity(_Identity):
+    """The target holds `audit:read` (`OWN_REDACTED`): its audit read is its own events."""
+
+    async def session_info(self, user_id: str) -> dict[str, Any]:
+        return {"permissions": ["*"] if user_id == str(_VIEWER) else ["audit:read"]}
+
+
+@pytest.mark.parametrize("params", [{}, {"actor_user_id": str(_TARGET)}], ids=["own", "target"])
+def test_a_viewers_audit_read_is_scoped_to_the_targets_own_events(params: dict[str, str]) -> None:
+    """A `scope: self` read answers as the target's (22 "View-as session"; the #4177 security
+    look's H-1): the filter and the repository's restriction are the target's, and asking for the
+    target's events is no cross-actor narrowing. The viewer still spends its own budget."""
+    svc = _FakeAuditService()
+    app = FastAPI()
+    resolver = SessionAuditPrincipalResolver(
+        lambda: _Sessions(_record(_state())), _ReaderIdentity()
+    )
+    app.include_router(make_audit_router(svc, resolver))
+    app.middleware("http")(_stamping(_stamp()))
+    bearer = {"Authorization": "Bearer tok"}
+    response = TestClient(app).get("/admin/audit", params=params, headers=bearer)
+    assert response.status_code == 200
+    (call,) = svc.query_service.query_calls
+    assert (call["actor_user_id"], call["restrict_to_actor"]) == (str(_TARGET), str(_TARGET))
+    assert "admin.audit_denied" not in [action for action, *_ in svc.writer_service.emitted]
+
+
+class _StatusIdentity(_Identity):
+    def __init__(self, status: str) -> None:
+        self.status = status
+
+    async def user(self, user_id: str) -> dict[str, Any]:
+        found = await super().user(user_id)
+        return found if user_id == str(_VIEWER) else {**found, "status": self.status}
+
+
+@pytest.mark.parametrize("status", ["locked", "disabled"])
+async def test_a_view_of_a_target_who_is_not_active_resolves_no_principal(status: str) -> None:
+    """Q11, fail closed: a locked or disabled target's view has no scope, so no principal."""
+    sessions = _Sessions(_record(_state()))
+    resolver = SessionAuditPrincipalResolver(lambda: sessions, _StatusIdentity(status))
+    assert await resolver.resolve(_bearer(_stamp())) is None
+
+
 def test_an_unstamped_view_is_answered_503_by_the_app() -> None:
     from candleviewer.api.view_as_guard import view_as_unstamped_handler
 

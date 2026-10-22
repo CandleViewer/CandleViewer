@@ -31,7 +31,15 @@ from candleviewer.admin.backups.links import DownloadLinks
 from candleviewer.admin.user_disable import UserDisableService
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
 from candleviewer.api.view_as_subject import view_as_subject
-from candleviewer.audit.models import AuditPage, ExportResult, VerifyResult
+from candleviewer.audit.models import (
+    AuditEntry,
+    AuditOutcome,
+    AuditPage,
+    AuditPageMeta,
+    ExportResult,
+    Severity,
+    VerifyResult,
+)
 from candleviewer.audit.query import VerifyPlan
 from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.auth.csrf import CsrfCodec
@@ -443,13 +451,33 @@ class _NotificationRepo:
 
 
 class _AuditQuery:
-    """`AuditQueryService` stand-in returning empty, valid results (no DB)."""
+    """`AuditQueryService` stand-in (no DB): one event per matrix user, scoped as the repository
+    scopes every page, so a read answered in the wrong user's scope shows in its body (the #4177
+    security look's H-1: the view-as matrix compares these bodies)."""
 
     def __init__(self) -> None:
         self.verify_slot = VerifySlot()
 
-    async def query(self, **_kw: Any) -> AuditPage:
-        return AuditPage(items=[], chain_verified=True)
+    async def query(self, **kw: Any) -> AuditPage:
+        """A non-Owner's `restrict_to_actor`, and an `actor_user_id` filter, keep one user's."""
+        wanted = {str(v) for v in (kw.get("restrict_to_actor"), kw.get("actor_user_id")) if v}
+        items = [
+            AuditEntry(
+                id=n,
+                ts=datetime(2026, 1, 1, tzinfo=UTC),
+                actor_user_id=user,
+                action="auth.login",
+                outcome=AuditOutcome.SUCCESS,
+                severity=Severity.INFO,
+                ip=None,
+                request_id=None,
+                entry_hash=None,
+                prev_hash=None,
+            )
+            for n, user in enumerate(_USER_IDS.values(), start=1)
+            if wanted <= {str(user)}
+        ]
+        return AuditPage(items=items, chain_verified=True, meta=AuditPageMeta(count=len(items)))
 
     async def plan_verify(self, **_kw: Any) -> VerifyPlan:
         return VerifyPlan(None, None, 0)  # an empty log
