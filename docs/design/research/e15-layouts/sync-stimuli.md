@@ -1,8 +1,8 @@
 # E15-D01 — Sync-comprehension stimuli: six configurations, C1–C6
 
 - **Use:** Part 2 of a session, about 10 minutes, before the card sort ([`discussion-guide.md`](discussion-guide.md)).
-  This is the facilitator's copy: it holds the answer key, so participants see only the boards (the report's boards 03
-  and 04), one configuration at a time. Results go on the scoring sheet below and into [`findings.md`](findings.md) §3.2.
+  This is the facilitator's copy: it holds the answer key, so participants see one configuration frame at a time,
+  exported alone, never a whole board. Results go on the scoring sheet below and into [`findings.md`](findings.md) §3.2.
 - **Material (ticket Accessibility notes):** text at 16 px or more, greyscale; the letter is the only group cue, never
   colour; a panel in no group carries no badge; time limits are relaxed on request. Confound, in every configuration: a
   shared axis shows equal values (one symbol per symbol-sharing group, C4's one interval, C5's pairs), a real product
