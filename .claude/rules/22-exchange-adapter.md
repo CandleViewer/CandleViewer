@@ -54,7 +54,7 @@ Source: `CONSTITUTION.md` C-2.2, C-2.6, C-2.8, C-2.10, C-2.11, C-12.7, C-13.5; `
 
 ## Tests
 
-- **Only recorded, redacted fixtures** from `tests/fixtures/bybit/` (C-13.5). No network egress to
+- **Only recorded, redacted fixtures** from `packages/fixtures/bybit/` (C-13.5). No network egress to
   `*.bybit.com` / `*.bytick.com` in any test; the settings deny list and CI egress block enforce it.
 - Signing tests use fixed test vectors, never real keys.
 - Every handled error code has a fixture-driven test; chaos scenarios 2, 4-9 and 12 (C-13.6) exercise this module.

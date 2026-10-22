@@ -8,6 +8,8 @@ closed: any live-looking configuration raises before a socket is opened
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Mapping
 
 #: Only these hosts may be dialled: the demo REST host and the public stream
@@ -19,8 +21,30 @@ DEMO_HOSTS = ("api-demo.bybit.com", "stream.bybit.com")
 _OPT_IN = "CV_EXCHANGE_SMOKE"
 #: Env vars that name the target environment; every one must be `demo` if set.
 _ENV_VARS = ("CV_ENVIRONMENT", "CV_SMOKE_ENV", "CV_BYBIT_ENV")
+#: The live and testnet REST hosts (the adapter's `ALLOWED_REST_HOSTS`, less demo's) and the
+#: testnet stream: a `CV_*` value that names one aborts, whatever its shape (a list, a path, JSON).
 # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
-_LIVE_HINTS = ("api.bybit.com", "api.bytick.com", "live", "mainnet", "prod")
+_LIVE_HOSTS = ("api.bybit.", "api.bytick.", "api-testnet.bybit.", "stream-testnet.bybit.")
+#: Words that say live: read in a `CV_BYBIT*` value, and in any other `CV_*` value that is a URL.
+_LIVE_WORDS = ("live", "mainnet", "prod")
+_URL = re.compile(r"[a-z][a-z0-9+.-]*://\S+", re.I)
+#: What a name lookup drops or reads as a dot: the code points IDNA maps to nothing (RFC 3454
+#: table B.1: the soft hyphen, zero-width spaces and joiners, the word joiner, the BOM, the
+#: combining grapheme joiner, Mongolian selectors and the variation selectors), and the label
+#: separators IDNA reads as `.` that compatibility normalization leaves (U+3002, U+FF61).
+_IGNORED: dict[int, str | None] = {
+    **dict.fromkeys([0x00AD, 0x034F, 0x1806, 0x180B, 0x180C, 0x180D, 0x200B, 0x200C, 0x200D]),
+    **dict.fromkeys([0x2060, 0xFEFF, *range(0xFE00, 0xFE10)]),
+    0x3002: ".",
+    0xFF61: ".",
+}
+
+
+def _folded(value: str) -> str:
+    """The value as a resolver reads a host in it: NFKD (a fullwidth letter is its ASCII one;
+    unlike NFKC, a combining mark never merges into the letter before it, so a live word stays
+    one), without what a lookup drops, its label separators as dots, lower-cased."""
+    return unicodedata.normalize("NFKD", value).translate(_IGNORED).lower()
 
 
 class SmokeGuardError(RuntimeError):
@@ -37,12 +61,12 @@ def assert_demo_only(env: Mapping[str, str]) -> None:
         value = env.get(var)
         if value is not None and value.strip().lower() != "demo":
             raise SmokeGuardError(
-                f"exchange_smoke is demo-only: {var}={value!r} is not 'demo' - refusing to run"
+                f"exchange_smoke is demo-only: {var} is not 'demo' - refusing to run"
             )
     base = env.get("CV_BYBIT_REST_BASE_URL")
     if base is not None and base.rstrip("/") != DEMO_REST_URL:
         raise SmokeGuardError(
-            f"exchange_smoke is demo-only: CV_BYBIT_REST_BASE_URL={base!r} is not {DEMO_REST_URL}"
+            f"exchange_smoke is demo-only: CV_BYBIT_REST_BASE_URL is not {DEMO_REST_URL}"
         )
     for key, value in env.items():
         upper = key.upper()
@@ -50,5 +74,12 @@ def assert_demo_only(env: Mapping[str, str]) -> None:
             raise SmokeGuardError(
                 f"exchange_smoke uses no credentials: unset {key} before running the suite"
             )
-        if upper.startswith("CV_BYBIT") and any(h in value.lower() for h in _LIVE_HINTS):
+        if not upper.startswith("CV_"):
+            continue
+        # The error names the variable, never its value: a URL may carry a password (#1849).
+        lower = _folded(value)
+        if any(host in lower for host in _LIVE_HOSTS):
+            raise SmokeGuardError(f"exchange_smoke is demo-only: {key} names a live host")
+        said = any(word in lower for word in _LIVE_WORDS)
+        if said and (upper.startswith("CV_BYBIT") or _URL.fullmatch(value.strip())):
             raise SmokeGuardError(f"exchange_smoke is demo-only: {key} points at live")

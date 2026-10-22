@@ -42,7 +42,10 @@ The current corpus is **built from documented shapes** and the existing recorded
 deterministic (seeded) and make no network calls. The owner recorded this in exception #1778
 group A. Field names come only from the existing fixtures and the `exchange/bybit` parsers.
 Refresh with `tools/fixtures/capture_fixture.py` (public stream only, redacts every frame,
-aborts on a leftover secret pattern, enforces a size cap).
+aborts on a leftover secret pattern, enforces a size cap). Its redactor (`tools/fixtures/redact.py`)
+finds a secret by key name and value shape only. That holds for public frames, which carry no
+account data; it is not enough for a private-stream capture (the module docstring says what one
+would need).
 
 The two `recorded_*` files are such captures, copied unchanged. They are 20 frames each of
 `publicTrade.BTCUSDT` and `tickers.BTCUSDT`, from Bybit's mainnet public stream

@@ -17,7 +17,16 @@ CV_EXCHANGE_SMOKE=1 uv run pytest tests/exchange_smoke -m exchange_smoke --no-co
   `SmokeGuardError`, raised when `conftest.py` is imported, in any of these cases:
   - `CV_ENVIRONMENT`, `CV_SMOKE_ENV` or `CV_BYBIT_ENV` is set to anything other than `demo`.
   - `CV_BYBIT_REST_BASE_URL` is not `https://api-demo.bybit.com`.
-  - Any `CV_BYBIT*` value names a live host.
+  - Any `CV_*` value names a live or testnet REST host (`api.bybit.*`, `api.bytick.*`,
+    `api-testnet.bybit.*`, the adapter's hosts less demo's) or the testnet stream
+    (`stream-testnet.bybit.*`), whatever its shape: a URL, a list, JSON. The value is read as a
+    resolver reads a host (compatibility-normalized, without the code points IDNA maps to
+    nothing, RFC 3454 table B.1, and with its ideographic dots as `.`), so a fullwidth,
+    zero-width or variation-selector spelling is the host it folds to. The demo hosts pass; an
+    IP literal is outside this check (the adapter accepts only its named hosts).
+  - A `CV_BYBIT*` value, or any other `CV_*` value that is a URL, contains `live`, `mainnet` or
+    `prod`. A word in a value that is not a URL, such as a file name, is not read.
+  - The error names the variable, never its value: a URL may carry a password.
 - **No credentials.** The run is refused if any `CV_*API_KEY` / `CV_*API_SECRET` is set. The
   suite only calls unauthenticated endpoints.
 - **Network guard.** The test network guard refuses a name lookup outside its allow-list
@@ -32,5 +41,6 @@ CV_EXCHANGE_SMOKE=1 uv run pytest tests/exchange_smoke -m exchange_smoke --no-co
   setup with an explicit message, before any test dials. It stays that way until the clients
   can connect to the pre-resolved IPs.
 
-`tests/unit/fixtures_corpus/test_smoke_guard.py` holds the negative tests, including the check
-that nothing is resolved without `CV_EXCHANGE_SMOKE=1`. It runs in the default lane.
+`tests/unit/fixtures_corpus/test_smoke_guard.py` holds the negative tests, including the checks
+that nothing is resolved without `CV_EXCHANGE_SMOKE=1`, and that a live configuration aborts
+before any name lookup or socket. It runs in the default lane.

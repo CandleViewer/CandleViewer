@@ -21,7 +21,7 @@ structural types and the `ExchangeCapabilities` record), **M4 Bybit adapter**
 `SubscriptionPlanner`, `Heartbeat/Watchdog`, `ReconnectPolicy`, `Normalizer`, `SequenceTracker`,
 `RestClient`, `ClockGuard`), together with the downstream write paths into QuestDB (klines, ticks) and
 Postgres (`instruments`, `instrument_versions`), and the fixture capture/replay ingress used by
-`packages/fixtures` and `tests/fixtures/bybit/`.
+`packages/fixtures` (the Bybit corpus in `packages/fixtures/bybit/`).
 
 Out of scope (per ticket "Out of scope" section, restated so this document is self-contained):
 auth/RBAC and session threats (`E09-X01`), key-vault storage and permission verification (E27),
@@ -79,7 +79,7 @@ flowchart TB
 
   subgraph FIXPATH["TB-9 · Fixture capture/replay (test & bench only)"]
     RECORDER["Recorder tool<br/>captures raw + normalized frames"]
-    FIXREPO["packages/fixtures, tests/fixtures/bybit/<br/>(committed, redacted)"]
+    FIXREPO["packages/fixtures/bybit/<br/>(committed, redacted)"]
     REPLAY["Replay harness (CI, bench, dev)"]
   end
 
@@ -217,7 +217,7 @@ trading-capable key or a `TradingPort` call becoming reachable from the ingestio
 | Market data (book, trades, klines, ticker, liquidations)                                               | Low                       | **Critical** | High         | Public information; the risk is _wrong_ data driving charts, detectors and eventually orders, not disclosure. §3.2 (Tampering) is the dominant category for this asset.                                                                               |
 | Exchange credentials used for signed public/market REST + private WS calls                             | **Secret**                | High         | High         | Inherited classification from A-01/A-02 (`04-security-program.md` §2); this document does not re-derive key-lifecycle threats (owned by §5.1 K-series / E27) but does model the _leakage surface_ specific to the ingestion/adapter code path (§3.4). |
 | Instrument metadata (`instruments`, `instrument_versions`: tick size, lot size, min notional, filters) | Low                       | **Critical** | Medium       | Feeds order-path validation (E29); a tampered or stale filter value is a money-safety issue even though the data itself is public.                                                                                                                    |
-| Recorded fixtures (`packages/fixtures`, `tests/fixtures/bybit/`)                                       | Medium (must be redacted) | **Critical** | Low          | Integrity-critical because they define "expected" behaviour for every downstream test; must never carry live secrets (redaction is mandatory, not best-effort).                                                                                       |
+| Recorded fixtures (`packages/fixtures`, its `bybit/` corpus)                                           | Medium (must be redacted) | **Critical** | Low          | Integrity-critical because they define "expected" behaviour for every downstream test; must never carry live secrets (redaction is mandatory, not best-effort).                                                                                       |
 | Ingestion internal state (`SequenceTracker` counters, `ClockGuard` offset, connection-rate budget)     | Low                       | **Critical** | High         | Not persisted beyond process lifetime, but its correctness is what makes every other integrity control (§3.2) actually hold at runtime.                                                                                                               |
 
 ## 5. Control mapping and gaps

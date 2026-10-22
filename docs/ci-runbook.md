@@ -444,9 +444,8 @@ index alone, removing nothing.
 
 ### CI-INT-* — integration lane fixtures
 
-- **CI-INT-001** (fixture unavailable): a fixture referenced by
-  `services/api/tests/fixtures/bybit/**` (or its manifest) is missing on
-  disk. Confirm it was committed (fixtures are never fetched over the
+- **CI-INT-001** (fixture unavailable): a fixture listed in
+  `tests/fixtures/MANIFEST.sha256` is missing on disk. Confirm it was committed (fixtures are never fetched over the
   network in CI) and that `tools/ci/verify_fixture_manifest.py`'s manifest
   entry path matches.
 - **CI-INT-002** (checksum mismatch): the fixture bytes on disk do not match

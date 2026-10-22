@@ -116,6 +116,7 @@ CandleViewer/
 │  │  └─ src/tokens/          # generated design tokens (do not hand-edit)
 │  ├─ protocol/               # REST/WS types + codecs, GENERATED from the contract
 │  ├─ rule-graph/             # pure rule IR ⇄ node-graph adapter, typed ports, analysis (no React/DOM)
+│  ├─ fixtures/bybit/         # recorded Bybit captures, redacted (one dated directory per capture)
 │  └─ config/                 # shared eslint/tsconfig/tailwind/vitest presets
 ├─ services/
 │  └─ api/                    # Python modular monolith (module list = Constitution §3)
@@ -129,13 +130,13 @@ CandleViewer/
 │     ├─ cvdev/               # dev-only fixture code (#2893): in no wheel, sdist or image; only
 │     │                       # candleviewer/account_fixture_wiring.py imports it, lazily
 │     ├─ pyproject.toml       # ruff, black, mypy strict, pytest config
-│     └─ tests/               # unit + integration (fixtures under tests/fixtures/bybit/)
+│     └─ tests/               # unit + integration (Bybit fixtures from packages/fixtures/bybit/)
 ├─ infra/                     # docker compose, Dockerfiles, Prometheus/Grafana, Tailscale notes
 ├─ tests/
 │  ├─ e2e/                    # Playwright (web + Electron) — owned by QA
 │  ├─ load/                   # k6 + Locust scenarios
 │  ├─ chaos/                  # chaos scenarios (Constitution §13.6)
-│  └─ fixtures/bybit/         # recorded Bybit captures, redacted
+│  └─ fixtures/               # MANIFEST.sha256 (the integration lane's fixture checksums), QA data
 └─ docs/
    ├─ plan/                   # planning source of truth (00..33 + backlog/)
    ├─ adr/                    # MADR architecture decision records
@@ -526,7 +527,7 @@ N,UP,B,A,C4,SIM,ASYNC,S,PT,RET,ARG,PTH,ERA,TRY,RUF`), **Black** (line length 100
 4. **Determinism**: freeze the clock (`freezegun` / `vi.useFakeTimers`), seed RNG, sort before comparing,
    no `sleep` — await a condition or advance a fake clock. Any test that is timing-sensitive must use the
    provided test clock, not real time.
-5. **Fixtures**: use recorded Bybit captures from `tests/fixtures/bybit/`. Do not invent payload shapes —
+5. **Fixtures**: use recorded Bybit captures from `packages/fixtures/bybit/`. Do not invent payload shapes —
    if a fixture is missing, add one via the regeneration script and get it reviewed. Fixtures must be
    redacted of keys and real UIDs.
 6. **No network, no real filesystem outside `tmp_path`, no shared global state, no test order dependence.**
