@@ -36,6 +36,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     sqlstate_of,
 )
+from tests.integration._refused import assert_no_row_values, rendered_graph, server_text
 
 pytestmark = pytest.mark.integration
 
@@ -44,6 +45,7 @@ NOW = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
 _FAKE_HASH = "$argon2id$fixed-test-vector"
 _SNAP = '{"uid": "1", "permissions": {"ContractTrade": ["Order"]}}'
 _IDS = itertools.count(1)
+_SLEEP = sa.text("SELECT pg_sleep(5)")  # a name, not a literal: a traceback prints the calling line
 
 
 def _id() -> UUID:
@@ -216,9 +218,13 @@ async def test_a_read_is_cut_near_read_timeout_and_leaves_the_pooled_default(
     before, pid_sql = await _pooled(relational), sa.text("SELECT pg_backend_pid() AS pid")
     read = await SqlAlchemyAdminCounts(relational, env="demo")._row(pid_sql)  # same backend
     started = time.monotonic()
-    with pytest.raises(DBAPIError) as raised:
-        await SqlAlchemyAdminCounts(relational, env="demo")._row(sa.text("SELECT pg_sleep(5)"))
+    with server_text(relational) as seen, pytest.raises(DBAPIError) as raised:
+        await SqlAlchemyAdminCounts(relational, env="demo")._row(_SLEEP)
     assert sqlstate_of(raised.value) == "57014"  # statement timeout; its text is stripped (#2748)
+    assert (raised.value.__cause__, raised.value.__suppress_context__) == (None, True)
+    assert "pg_sleep" in "\n".join(seen.statements)  # control: the engine had the statement
+    assert "pg_sleep" not in rendered_graph(raised.value)  # which did not leave
+    assert_no_row_values(raised.value, seen, "canceling statement")  # the server's message
     assert time.monotonic() - started < 2.5
     assert repo.READ_TIMEOUT == "1s" and await _pooled(relational) == before
     assert read["pid"] == before[0]  # one pooled backend throughout: the check is not vacuous

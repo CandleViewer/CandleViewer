@@ -33,8 +33,11 @@ from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
 from candleviewer.storage.repositories import sessions_sqlalchemy as mod
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
+from tests.integration._refused import assert_no_row_values, server_text
 from tests.unit.auth import view_as_store_scenarios as sc
 
 pytestmark = pytest.mark.integration
@@ -296,3 +299,51 @@ async def test_the_due_read_can_run_on_its_indexes_past_a_pile_of_rotated_copies
         node.get("Index Name") for node in nodes
     }
     assert {"Seq Scan", "Sort", "Bitmap Heap Scan"}.isdisjoint(n["Node Type"] for n in nodes)
+
+
+# -- a refused write leaves without the row's values (#2748, C-12.6) ---------------------------
+
+_UA, _IP, _DEVICE = "SECRET-UA/1.0", "203.0.113.77", "SECRET-DEVICE"  # P2, planted by name
+
+
+@pytest.fixture
+async def rel(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepository]:
+    rel = SqlAlchemyRelationalRepository(_fresh(pg_dsn), "sessions-refused-it")
+    try:
+        yield rel
+    finally:
+        await rel.dispose()
+
+
+@pytest.fixture
+def store(rel: SqlAlchemyRelationalRepository) -> SqlAlchemySessionRepository:
+    return SqlAlchemySessionRepository(rel, lambda **f: SessionRecord.model_validate(f))
+
+
+def _planted(**over: Any) -> SessionRecord:
+    """The viewer's row `a`, its P2 columns planted (its S refresh hash is `sc.record`'s)."""
+    planted = {"ip": _IP, "user_agent": _UA, "device_label": _DEVICE} | over
+    return sc.record("a", sc.Row()).model_copy(update=planted)
+
+
+async def test_an_idle_timeout_out_of_range_leaves_without_the_session_row(
+    rel: SqlAlchemyRelationalRepository, store: SqlAlchemySessionRepository
+) -> None:
+    row = _planted(idle_timeout_s=10)
+    with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
+        await store.create_session(row)
+    facts = (sqlstate_of(err.value), constraint_of(err.value))
+    assert facts == ("23514", "sessions_idle_timeout_range")
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert_no_row_values(err.value, seen, _IP, _UA, _DEVICE, row.refresh_token_hash)
+
+
+async def test_a_view_as_of_the_sessions_own_user_leaves_without_the_session_row(
+    rel: SqlAlchemyRelationalRepository, store: SqlAlchemySessionRepository
+) -> None:
+    row = _planted()
+    assert await store.create_session(row) is not None
+    with server_text(rel) as seen, pytest.raises(ValueError, match="its own user") as err:
+        await store.start_view_as(str(row.id), sc.SELF, now=sc.T0)
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert_no_row_values(err.value, seen, _IP, _UA, _DEVICE, row.refresh_token_hash)

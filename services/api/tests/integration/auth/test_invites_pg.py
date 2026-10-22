@@ -1,7 +1,8 @@
 """Integration: single-use invite redemption on real Postgres 16 (E09-S05).
 
-Concurrent `consume` calls must have exactly one winner. Not run locally (no
-docker); exercised by CI `integration`.
+Concurrent `consume` calls must have exactly one winner, and (#2748) a refused activation
+leaves without the user row's values (C-12.6). Not run locally (no docker); exercised by CI
+`integration`.
 """
 
 from __future__ import annotations
@@ -25,14 +26,22 @@ from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.invites_sqlalchemy import SqlAlchemyInviteRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
 from scripts.seed_fixture_user import seed
+from tests.integration._refused import assert_no_row_values, seed_user, server_text
 
 pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
 PW = "pending-hash"
+# Planted by name (a traceback prints the calling line): the P1 columns of the invited user's row
+# and the S hash `users_pwd_argon` refuses.
+_USER = {"email": "secret-mail@x.io", "display_name": "SECRET-NOTE name"}
+_PLAIN = "plain-SECRET-HASH"
+_TYPED = (None, True)  # `(__cause__, __suppress_context__)` of a stripped driver error
 _COUNT = sa.text(
     "SELECT (SELECT count(*) FROM users WHERE username = :u) + "
     "(SELECT count(*) FROM user_invites WHERE token_hash = :h)"
@@ -212,5 +221,23 @@ async def test_refused_or_hung_write_ahead_audit_rolls_each_invite_action_back(
         old = await repo.find_by_token_hash(th)
         assert old is not None and old.revoked_at is None  # the old link stays valid
         assert await repo.find_by_token_hash(th2) is None
+    finally:
+        await rel.dispose()
+
+
+async def test_an_activation_with_a_non_argon_hash_leaves_without_the_users_row(
+    pg_dsn: str,
+) -> None:
+    uid = uuid.UUID(seed_user(pg_dsn, **_USER))  # `invited`, the default status
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "invites-refused-it")
+    repo = SqlAlchemyInviteRepository(rel, lambda **f: InviteRecord.model_validate(f))
+    try:
+        with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
+            await repo.activate_user(
+                uid, password_hash=_PLAIN, algo_params={"m": 1}, now=datetime.now(UTC)
+            )
+        assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "users_pwd_argon")
+        assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
+        assert_no_row_values(err.value, seen, _PLAIN, *_USER.values())
     finally:
         await rel.dispose()

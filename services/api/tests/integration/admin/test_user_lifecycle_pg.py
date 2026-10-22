@@ -37,6 +37,7 @@ from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import (
     SqlAlchemyUserLifecycleStore,
 )
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
+from tests.integration._refused import assert_no_row_values, server_text
 
 pytestmark = pytest.mark.integration
 
@@ -277,9 +278,11 @@ async def test_disable_rolls_back_when_a_cascade_statement_fails(db: Any, table:
             await conn.exec_driver_sql(ddl)
         await conn.execute(_FAIL_ON, {"tbl": table, "id": str(user)})
     before, hook = await _snapshot(engine, user), _Hook()
-    with pytest.raises(sa.exc.DBAPIError) as raised:
+    with server_text(rel) as seen, pytest.raises(sa.exc.DBAPIError) as raised:
         await _store(rel).disable(user, actor=actor, now=_NOW, audit=hook)
     assert sqlstate_of(raised.value) == "P0001"  # the injected RAISE; its text is stripped (#2748)
+    assert (raised.value.__cause__, raised.value.__suppress_context__) == (None, True)
+    assert_no_row_values(raised.value, seen, f"injected failure on {table}")  # C-12.6
     assert hook.calls == [] and await _snapshot(engine, user) == before
 
 
