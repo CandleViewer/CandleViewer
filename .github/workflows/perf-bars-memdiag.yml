@@ -6,6 +6,8 @@ name: perf-bars-memdiag
 # sync (C-13.5). The legs, in order: default (24 h, the reading) -> tracemalloc (12 h, attribution
 # only) -> malloc -> mmap128k (24 h each). The rule that reads them is in
 # docs/qa/perf/e12-bars-r4-diagnosis.md; `memdiag judge` applies it to the downloaded artifacts.
+# All four legs, and any re-run, run at one commit: `judge` compares a leg with the default only at
+# the same head, so dispatch each with `--ref` set to one tag at a single `main` commit, never `main`.
 #
 # One leg a dispatch, never two at once, and never beside the 24 h full pack: concurrent legs
 # contend for memory and CPU and distort the very RSS and lag figures they read. This job and
@@ -13,8 +15,8 @@ name: perf-bars-memdiag
 # serialise across workflows (the orchestrator's ruling (a), 2026-10-22). GitHub keeps one PENDING
 # run per group: a second dispatch while a leg or the pack runs replaces a queued one (never the
 # running one; cancel-in-progress is false). So dispatch one at a time, after checking
-# `gh run list --workflow perf-bars-memdiag.yml` and `--workflow perf-ingestion-nightly.yml` for a
-# queued or running soak. The allocator variables are set here, before the interpreter starts
+# `gh run list --workflow perf-bars-memdiag.yml`, `--workflow perf-ingestion-nightly.yml` and
+# `--workflow perf-ws-load.yml` (whose guard doesn't know this job) for a queued or running soak. The allocator variables are set here, before the interpreter starts
 # (it reads PYTHONMALLOC and glibc's MALLOC_* only then); any already set are dropped first, and the
 # leg records what it saw and checks pymalloc against it. Every input reaches the script through
 # env and is checked first; the checkout drops its token.
@@ -45,7 +47,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - id: sync
-        run: uv sync --project services/api
+        run: uv sync --frozen --project services/api
       - name: memdiag leg (${{ inputs.leg }})
         id: leg
         working-directory: services/api
@@ -64,11 +66,11 @@ jobs:
             mmap128k) export MALLOC_MMAP_THRESHOLD_=131072 ;;
             *) echo "leg must be default, tracemalloc, malloc or mmap128k" >&2; exit 2 ;;
           esac
-          uv run python -m bench.ingestion.memdiag "${args[@]}"
+          uv run --frozen python -m bench.ingestion.memdiag "${args[@]}"
       - name: This leg under the rule (the verdict over all legs is judged on the downloaded artifacts)
         if: always() && steps.sync.outcome == 'success'
         working-directory: services/api
-        run: uv run python -m bench.ingestion.memdiag judge "$RUNNER_TEMP/memdiag"
+        run: uv run --frozen python -m bench.ingestion.memdiag judge "$RUNNER_TEMP/memdiag"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

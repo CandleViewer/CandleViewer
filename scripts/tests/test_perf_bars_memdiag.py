@@ -87,6 +87,10 @@ def test_dispatch_only_read_only_pinned_and_one_soak_at_a_time_on_the_bench_runn
     assert _leg_step()["env"] == {"LEG": "${{ inputs.leg }}"}
     # no input is interpolated into a script
     assert all("${{" not in s.get("run", "") for s in job["steps"])
+    # every uv call installs from the hash-locked uv.lock, never a fresh resolve (C-12.3)
+    uv = [s["run"] for s in job["steps"] if s.get("run", "").lstrip().startswith("uv ")]
+    leg_run = _leg_step()["run"]
+    assert len(uv) == 2 and all(" --frozen " in r for r in [*uv, leg_run])
 
 
 def _leg(tmp_path: Path, leg: str) -> tuple[int, list[Any]]:
@@ -135,8 +139,8 @@ def test_each_leg_starts_with_its_own_allocator_environment_and_nothing_else(
 ) -> None:
     code, calls = _leg(tmp_path, leg)
     out = f"{tmp_path}/t/memdiag/{leg}"
-    head = ["run", "python", "-m", "bench.ingestion.memdiag", "leg", "--label", leg]
-    argv = [*head, "--out-dir", out, "--deadline-h", "22", *extra]
+    head = ["run", "--frozen", "python", "-m", "bench.ingestion.memdiag", "leg"]
+    argv = [*head, "--label", leg, "--out-dir", out, "--deadline-h", "22", *extra]
     assert code == 0 and calls == [[argv, env]]
 
 
