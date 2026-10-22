@@ -113,9 +113,9 @@ class SqlAlchemyUserRoleStore:
     ) -> bool:
         """Replace the role set atomically (new grants record `actor`); False if the user
         does not exist. Raises what the owner-floor check or `audit` raises, a `StorageQueryFailed`
-        typed by its facts (`StorageConstraintViolated` for a constraint) for any refusal other
-        than this change's floor (#2748), or `WriteAheadTimeout` when `audit` outlives its bound;
-        each rolls the transaction back, so nothing changes without its audit record."""
+        typed by its facts (`StorageConstraintViolated` for a constraint) for any `IntegrityError`
+        other than this change's floor (#2748), or `WriteAheadTimeout` when `audit` outlives its
+        bound; each rolls the transaction back, so nothing changes without its audit record."""
         uid, wanted = str(user_id), sorted(roles)
         current: frozenset[str] = frozenset()
         counted = current  # what the floor counts of `current` (`counted_roles`)
