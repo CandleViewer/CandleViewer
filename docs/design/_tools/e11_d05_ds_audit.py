@@ -16,13 +16,21 @@ What it prints, with a source label on every row:
    hc-text 7:1 in the high-contrast theme); the compare is UNROUNDED (`ratio >= threshold`, as
    `tools/contrast/generate.mjs`), and a value that would round onto a bar is printed to four
    decimals. `decorative` rows (`16` §6 rule 7), `rejected-*` rows and pairs already exempted in
-   `tools/contrast/exemptions.json` are reported, never gated;
+   `tools/contrast/exemptions.json` are reported, never gated; then (A2) the engine-chrome
+   aliases of spec §4.1b — boundary, rule, hatch texture, the GL pills, the go-to-date marker, the
+   cursor column — measured on the same primitives and surfaces with the §10.1 rows they repeat,
+   so the matrix stands unchanged;
 2. the OkLab module with its self-checks (white, black, a grey, the sRGB round trip of every colour
    token) and the ramp tables of spec §5: `ramp.delta`, `ramp.intensity.bid`, `ramp.intensity.ask`
    in the default and the CVD-safe palette, sampled at 16 stops in OkLab and, beside it, in the
    sRGB piecewise-linear lerp `tools/contrast/data-ink-lib.mjs` uses today — hex, L / a / b,
-   chroma, the contrast on `color.surface.canvas`, the adjacent-sample ΔE76 and its evenness, and
-   the adjacent-stop ΔE76 under protanopia / deuteranopia / tritanopia against the 5.0 JND floor;
+   chroma, the contrast on `color.surface.canvas`, the adjacent-sample ΔE76 and its evenness, the
+   adjacent-stop ΔE76 under protanopia / deuteranopia / tritanopia against the 5.0 JND floor, the
+   equal-|t| pairs across zero, the one zero-band rule `ColorLut.ts` implements (spec §5.5) and
+   (D2) each half's dynamic range (first visible stop → endpoint, in ΔE76 and 2.3-ΔE76 JNDs) with
+   the pos / neg symmetry against a PROPOSED ≥0.8 gate (`16` §6 rule 3; reported, never gated) —
+   for the ramp as defined and for the measured alternative through `ask.1 → ask.5` /
+   `bid.1 → bid.5`;
 3. the density record of spec §6 (E11-D02 D6, cited) echoed from one data literal;
 4. the pattern / encoding registry of spec §7 echoed from one data literal;
 5. every token name the nine `15` entries and the spec bind, resolved in all three themes or
@@ -153,6 +161,19 @@ CR: dict[str, dict[str, str]] = {
         "light": "palette.light.red.700",
         "high-contrast": "palette.red.300",
     },
+    # Engine-chrome aliases (spec section 4.1b): chrome the engine draws was bound to tokens under
+    # no engine prefix, which `theme-uniforms.json` never carries; each alias points at the
+    # primitive the entries already used, so every section-10.1 number stands.
+    "CR:color.chart.boundary": dict.fromkeys(THEMES, "color.text.tertiary"),
+    "CR:color.chart.rule": dict.fromkeys(THEMES, "color.border.default"),
+    "CR:color.chart.hatch.texture": dict.fromkeys(THEMES, "color.border.strong"),
+    "CR:color.chart.pill.bg": dict.fromkeys(THEMES, "color.surface.raised"),
+    "CR:color.chart.pill.border": dict.fromkeys(THEMES, "color.border.strong"),
+    "CR:color.chart.pill.text.default": dict.fromkeys(THEMES, "color.text.primary"),
+    "CR:color.chart.pill.text.inverse": dict.fromkeys(THEMES, "color.text.inverse"),
+    "CR:color.chart.pill.text.on-marker": dict.fromkeys(THEMES, "color.text.on-action"),
+    "CR:color.chart.marker.goto": dict.fromkeys(THEMES, "color.action.primary.default"),
+    "CR:color.chart.focus.ring": dict.fromkeys(THEMES, "color.focus.ring"),
 }
 
 
@@ -313,14 +334,31 @@ RAMPS: dict[str, dict[str, list[Stop]]] = {
         + [(f"color.cvd.heatmap.ask.{i}", i / 5) for i in range(1, 6)],
     },
 }
-# The zero band: samples whose |position| lies inside the first visible stop carry no ink by design
-# (`16` section 6 rule 3; data-ink-lib: the zero-delta midpoint always carries a text / sign
-# channel).
+# The zero band: samples with 0 < |t| < first visible stop. ONE rule for E11-T04's ColorLut.ts
+# (spec section 5.5) — the LUT interpolates them from the canvas, so they are tints below 3:1 that
+# the sign / notch / text channel carries (E06-D01 section 3; `16` section 6 rule 3); only t = 0
+# is the canvas. They are reported, never gated: the 3:1 gate starts at the first visible stop, as
+# data-ink-lib's does.
+ZERO_BAND_RULE = (
+    "zero-band rule (one rule, spec section 5.5): the LUT is continuous through zero — for "
+    "0 < |t| < ε each half interpolates canvas → first visible stop, a tint below 3:1 that the "
+    "sign / notch / text channel carries; only t = 0 is the canvas; no entry is clamped to the "
+    "canvas and no |Δ| threshold hides a value; the 3:1 gate applies from the first visible stop"
+)
 FIRST_VISIBLE: dict[str, float] = {
     "ramp.delta": EPS,
     "ramp.intensity.bid": 1 / 5,
     "ramp.intensity.ask": 1 / 5,
 }
+
+
+def band_label(ramp: str, t: float, gated: bool) -> str:
+    """The band column of a sample row: visible, the canvas at exactly zero, or the zero band."""
+    if gated:
+        return "visible"
+    if abs(t) < 1e-9:
+        return "zero: the canvas (no ink)"
+    return "zero band (tint; sign carries)" if ramp == "ramp.delta" else "zero band (tint)"
 
 
 class Sample(TypedDict):
@@ -449,6 +487,99 @@ def unanchored(theme: str, palette: str, n: int) -> dict[str, object]:
         "srgb_evenness": evenness(adjacent_steps(s_hexes)),
         "endpoint_chroma": [chroma(la), chroma(lb)],
     }
+
+
+# ---------------------------------------------------- dynamic range and symmetry (spec section 5.4)
+# `16` section 6 rule 3: buy-side and sell-side intensity must be visually comparable at equal
+# magnitude. Per half: the CIE Lab ΔE76 from the first visible stop to the endpoint and the JND
+# count at 2.3 ΔE76; symmetry = min / max of the two halves. The gate is PROPOSED and reported,
+# never gated (Q5): the shipped definition fails it in dark and light.
+JND_DE76 = 2.3
+SYMMETRY_GATE = 0.8  # PROPOSED
+HALVES: dict[str, dict[str, tuple[tuple[str, str], tuple[str, str]]]] = {
+    "ramp.delta as defined (first visible stop → sign endpoint)": {
+        "default": (
+            ("color.heatmap.ask.1", "color.sell.default"),
+            ("color.heatmap.bid.1", "color.buy.default"),
+        ),
+        "cvd-safe": (
+            ("color.cvd.heatmap.ask.1", "color.cvd.sell"),
+            ("color.cvd.heatmap.bid.1", "color.cvd.buy"),
+        ),
+    },
+    "alternative: the halves through ask.1 → ask.5 / bid.1 → bid.5 (ramp.intensity's span)": {
+        "default": (
+            ("color.heatmap.ask.1", "color.heatmap.ask.5"),
+            ("color.heatmap.bid.1", "color.heatmap.bid.5"),
+        ),
+        "cvd-safe": (
+            ("color.cvd.heatmap.ask.1", "color.cvd.heatmap.ask.5"),
+            ("color.cvd.heatmap.bid.1", "color.cvd.heatmap.bid.5"),
+        ),
+    },
+}
+
+
+class RangeRow(TypedDict):
+    definition: str
+    palette: str
+    theme: str
+    neg: tuple[str, str]
+    pos: tuple[str, str]
+    neg_de76: float
+    pos_de76: float
+    neg_jnd: float
+    pos_jnd: float
+    symmetry: float
+    verdict: str
+
+
+def ramp_range() -> list[RangeRow]:
+    rows: list[RangeRow] = []
+    for definition, palettes in HALVES.items():
+        for palette, (neg, pos) in palettes.items():
+            for t in THEMES:
+                n = de76(COLOURS[t][neg[0]], COLOURS[t][neg[1]])
+                p = de76(COLOURS[t][pos[0]], COLOURS[t][pos[1]])
+                sym = min(n, p) / max(n, p)
+                rows.append(
+                    {
+                        "definition": definition,
+                        "palette": palette,
+                        "theme": t,
+                        "neg": neg,
+                        "pos": pos,
+                        "neg_de76": n,
+                        "pos_de76": p,
+                        "neg_jnd": n / JND_DE76,
+                        "pos_jnd": p / JND_DE76,
+                        "symmetry": sym,
+                        "verdict": (
+                            "clears the PROPOSED gate"
+                            if sym >= SYMMETRY_GATE
+                            else f"below the PROPOSED {SYMMETRY_GATE} gate (reported, Q5)"
+                        ),
+                    }
+                )
+    return rows
+
+
+def across_zero(samples: list[Sample]) -> list[dict[str, float | str]]:
+    """Equal-|t| visible sample pairs across zero (-t vs +t) under each deficiency, JND 5.0."""
+    rows: list[dict[str, float | str]] = []
+    n = len(samples)
+    for i in range(n // 2):
+        a, b = samples[i], samples[n - 1 - i]
+        if not (a["gated"] and b["gated"]):
+            continue
+        ha, hb = a["oklab_hex"], b["oklab_hex"]
+        row: dict[str, float | str] = {"t": abs(a["t"]), "normal": de76(ha, hb)}
+        for d in DEFICIENCIES:
+            row[d] = de76(sim(ha, d), sim(hb, d))
+        row["worst"] = min(float(row[d]) for d in DEFICIENCIES)
+        row["verdict"] = "distinct" if float(row["worst"]) >= JND else "COLLAPSES (sign carries it)"
+        rows.append(row)
+    return rows
 
 
 # ------------------------------------------------------------- the measured pairs (spec section 10)
@@ -646,6 +777,13 @@ CVD_PAIRS: list[tuple[str, str, str]] = [
     ("pane focus accent vs focus ring", "color.action.primary.default", "color.focus.ring"),
     ("countdown warn glyph vs normal text", "color.status.warning.strong", "color.text.secondary"),
     ("text.buy vs text.sell (CR-5)", "CR:color.text.buy", "CR:color.text.sell"),
+    # across zero: the pair that matters for a diverging ramp (-ε vs +ε, the first visible stops)
+    ("ramp.delta -ε vs +ε (ask.1 vs bid.1)", "color.heatmap.ask.1", "color.heatmap.bid.1"),
+    (
+        "ramp.delta CVD-safe -ε vs +ε (cvd ask.1 vs bid.1)",
+        "color.cvd.heatmap.ask.1",
+        "color.cvd.heatmap.bid.1",
+    ),
 ]
 
 
@@ -906,6 +1044,16 @@ BOUND: list[tuple[str, str]] = [  # (name, where it is bound)
     ("color.chart.pane.bg.default", "slot; CMP-180 / 198"),
     ("color.chart.pane.bg.focused", "slot; CMP-180 / 198"),
     ("color.chart.replay.border", "CR-4; CMP-180 / 189"),
+    ("color.chart.boundary", "4.1b alias; CMP-188 mark line, CMP-189 boundary, band edges"),
+    ("color.chart.rule", "4.1b alias; CMP-188 axis rule, CMP-189 strip rule"),
+    ("color.chart.hatch.texture", "4.1b alias; CMP-189 pattern.hatch.gap texture"),
+    ("color.chart.pill.bg", "4.1b alias; CMP-188 / 190 neutral GL pills"),
+    ("color.chart.pill.border", "4.1b alias; CMP-188 / 190 neutral GL pills"),
+    ("color.chart.pill.text.default", "4.1b alias; CMP-188 / 190 neutral GL pills"),
+    ("color.chart.pill.text.inverse", "4.1b alias; CMP-188 / 190 filled GL pills"),
+    ("color.chart.pill.text.on-marker", "4.1b alias; CMP-189 go-to-date pill"),
+    ("color.chart.marker.goto", "4.1b alias; CMP-189 go-to-date marker"),
+    ("color.chart.focus.ring", "4.1b alias; CMP-190 / 039 cursor column on the canvas"),
     ("color.chart.background", "15 CMP-180 before this PR (drift)"),
     ("color.chart.grid", "15 CMP-180 before (drift)"),
     ("font.mono", "15 x33 before (drift; the token is font.family.mono)"),
@@ -1074,6 +1222,102 @@ def measure(reg: set[tuple[str, str]], exempt: set[str]) -> list[PairRow]:
     return rows
 
 
+# ------------------------------------------------- engine-chrome aliases (spec section 4.1b)
+# alias | surface | role | what it draws | source -- the same primitives the entries bound, each on
+# the surface it sits on; the section-10.1 row(s) with the same pair and role are looked up, so
+# section 10.1 stands unchanged. A row with no section-10.1 twin is measured here only.
+CHROME_TABLE = """
+CR:color.chart.boundary | color.surface.canvas | non-text | session / day boundary lines, band
+  edges (pattern.hatch.gap), the mark-price line (dash.2-6), the splitter grip | E11-D02 D1, D7,
+  D8, D14
+CR:color.chart.rule | color.surface.canvas | decorative | the axis rule (CMP-188) and the strip
+  rule (CMP-189): the hairline between a gutter / the strip and the pane; the splitter hairline |
+  E11-D02 D7, D8, D14
+CR:color.chart.hatch.texture | color.surface.canvas | decorative | pattern.hatch.gap's 45° lines
+  (the edges are color.chart.boundary) | E11-D02 D8, CR-6; E25-D05 C14
+CR:color.chart.pill.bg | color.surface.canvas | surface | the neutral GL pills: mark M, index I,
+  the remote crosshair's time pill | E11-D02 D7, D9
+CR:color.chart.pill.border | CR:color.chart.pill.bg | decorative | the neutral pills' 1 px border
+  (the text carries) | E11-D02 D7
+CR:color.chart.pill.text.default | CR:color.chart.pill.bg | text | the neutral pills' text |
+  E11-D02 D7
+CR:color.chart.pill.text.inverse | CR:color.chart.crosshair | text | text on a filled GL pill:
+  the crosshair pills | E11-D02 D9, A-9
+CR:color.chart.pill.text.inverse | color.candle.up | text | the last-price pill on the up fill |
+  E11-D02 D7
+CR:color.chart.pill.text.inverse | color.candle.down | text | the last-price pill on the down
+  fill | E11-D02 D7
+CR:color.chart.pill.text.on-marker | CR:color.chart.marker.goto | text | the go-to-date pill's
+  text on the marker fill (GL, A-9) | E11-D02 D8
+CR:color.chart.marker.goto | color.surface.canvas | non-text | the go-to-date marker: a dashed GL
+  line and its pill fill | E11-D02 D8
+CR:color.chart.focus.ring | color.surface.canvas | non-text | the E06-D03 D10 keyboard cursor
+  column drawn on the canvas; halo color.chart.pane.bg.default | E06-D03 D10; E11-D02 section 7
+"""
+Chrome = tuple[str, str, str, str, str]
+CHROME: list[Chrome] = [(r[0], r[1], r[2], r[3], r[4]) for r in rows(CHROME_TABLE)]
+CHROME_ALIASES: list[str] = list(dict.fromkeys(c[0][3:] for c in CHROME))
+
+
+class ChromeRow(TypedDict):
+    alias: str
+    primitive: str
+    bg: str
+    role: str
+    draws: str
+    source: str
+    ratios: dict[str, float]
+    hexes: dict[str, list[str]]
+    verdict: str
+    matrix_rows: list[int]
+    failing: list[str]
+
+
+def matrix_rows(fg: str, bg: str, role: str) -> list[int]:
+    """1-based section-10.1 rows measuring the same pair (either way round) in the same role."""
+    want = (base_name(fg), base_name(bg))
+    out: list[int] = []
+    for i, (_, pfg, pbg, prole, _) in enumerate(PAIRS, start=1):
+        pair = (base_name(pfg), base_name(pbg))
+        same_role = prole == role or (role == "surface" and prole == "surface")
+        if same_role and pair in (want, (want[1], want[0])):
+            out.append(i)
+    return out
+
+
+def measure_chrome() -> list[ChromeRow]:
+    out: list[ChromeRow] = []
+    for alias, bg, role, draws, source in CHROME:
+        ratios = {t: ratio(col(t, alias), col(t, bg)) for t in THEMES}
+        bar = BAR[role]
+        if bar is None:
+            verdict = (
+                "decorative (reported, not gated)" if role == "decorative" else "surface (reported)"
+            )
+            bad: list[str] = []
+        else:
+            bad = [t for t in THEMES if ratios[t] < bar]
+            verdict = ("FAIL: " + ", ".join(bad)) if bad else "PASS"
+            if not bad and role == "text" and ratios["high-contrast"] >= 7.0:
+                verdict = "PASS (hc ≥7:1 too)"
+        out.append(
+            {
+                "alias": alias[3:],
+                "primitive": CR[alias]["dark"],
+                "bg": bg,
+                "role": role,
+                "draws": draws,
+                "source": source,
+                "ratios": ratios,
+                "hexes": {t: [col(t, alias), col(t, bg)] for t in THEMES},
+                "verdict": verdict,
+                "matrix_rows": matrix_rows(alias, bg, role),
+                "failing": bad,
+            }
+        )
+    return out
+
+
 class TokenRow(TypedDict):
     name: str
     where: str
@@ -1212,16 +1456,22 @@ def ramp_report(n: int) -> dict[str, object]:
                     "visible_below_3_srgb": sum(1 for s in visible if s["contrast_srgb"] < 3.0),
                     "stop_cvd": stop_cvd(t, ramp, palette),
                     "unanchored": unanchored(t, palette, n) if ramp == "ramp.delta" else None,
+                    "across_zero": across_zero(samples) if ramp == "ramp.delta" else None,
                 }
     return out
 
 
-def counts(pairs: list[PairRow], tokens: list[TokenRow], n: int) -> dict[str, int]:
+def counts(
+    pairs: list[PairRow], tokens: list[TokenRow], chrome: list[ChromeRow], n: int
+) -> dict[str, int]:
     gated = [p for p in pairs if p["gated"]]
     distinct = {(p["fg"], p["bg"]) for p in gated}
     missing = [t for t in tokens if t["status"] == "MISSING"]
     return {
         "slots": 7,
+        "chromeAliases": len(CHROME_ALIASES),
+        "chromeRows": len(chrome),
+        "chromeFailing": sum(1 for c in chrome if c["failing"]),
         "slotRows": sum(1 for p in pairs if p["element"].startswith("slot ")),
         "seriesSlots": 3,
         "rampEndpoints": 5,
@@ -1293,7 +1543,65 @@ def print_pairs(pairs: list[PairRow]) -> None:
                 print(f"| `{tok}` | {hexes[0]} | {hexes[1]} | {hexes[2]} |")
 
 
+def print_chrome(chrome: list[ChromeRow]) -> None:
+    print(
+        "\n## A2. Engine-chrome aliases (spec section 4.1b): the same primitives on the same "
+        "surfaces, so section 10.1 stands\n"
+    )
+    print(
+        "| alias | = primitive | on | role | dark | light | hc | verdict | 10.1 rows | draws "
+        "| source |"
+    )
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    for c in chrome:
+        r = c["ratios"]
+        cells = [
+            f"`{c['alias']}`",
+            f"`{{{c['primitive']}}}`",
+            f"`{c['bg']}`",
+            c["role"],
+            fmt(r["dark"]),
+            fmt(r["light"]),
+            fmt(r["high-contrast"]),
+            c["verdict"],
+            ", ".join(str(i) for i in c["matrix_rows"]) or "— (this section only)",
+            c["draws"],
+            c["source"],
+        ]
+        print("| " + " | ".join(cells) + " |")
+    print(
+        f"\n- {len(CHROME_ALIASES)} aliases, {len(chrome)} measured rows: "
+        + ", ".join(CHROME_ALIASES)
+    )
+
+
+def print_range(ranges: list[RangeRow]) -> None:
+    print(
+        f"\n## D2. ramp.delta dynamic range and symmetry (16 section 6 rule 3; the "
+        f"≥{SYMMETRY_GATE} gate is PROPOSED — reported, never gated; JND = {JND_DE76} ΔE76)\n"
+    )
+    print(
+        "| definition | palette | theme | negative half | ΔE76 (JND) | positive half | ΔE76 (JND) "
+        "| symmetry min / max | verdict |"
+    )
+    print("|---|---|---|---|---|---|---|---|---|")
+    for r in ranges:
+        cells = [
+            r["definition"],
+            r["palette"],
+            r["theme"],
+            f"{r['neg'][0]} → {r['neg'][1]}",
+            f"{r['neg_de76']:.1f} ({r['neg_jnd']:.0f})",
+            f"{r['pos'][0]} → {r['pos'][1]}",
+            f"{r['pos_de76']:.1f} ({r['pos_jnd']:.0f})",
+            f"{r['symmetry']:.2f}",
+            r["verdict"],
+        ]
+        print("| " + " | ".join(cells) + " |")
+
+
 def print_ramps(ramps: dict[str, object], n: int) -> None:
+    print(f"\n## D. Ramp samples — {ZERO_BAND_RULE}")
     for key, rep in ramps.items():
         if not isinstance(rep, dict):
             continue
@@ -1309,7 +1617,7 @@ def print_ramps(ramps: dict[str, object], n: int) -> None:
         print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for i, s in enumerate(rep["samples"]):
             lab, slab = s["oklab"], s["srgb_lab"]
-            band = "visible" if s["gated"] else "zero band (no ink)"
+            band = band_label(ramp, s["t"], s["gated"])
             cells = [
                 str(i),
                 f"{s['t']:+.3f}",
@@ -1355,6 +1663,17 @@ def print_ramps(ramps: dict[str, object], n: int) -> None:
                 f"{un['endpoint_chroma'][0]:.4f} / {un['endpoint_chroma'][1]:.4f}; evenness sRGB "
                 f"{un['srgb_evenness']:.2f} vs OkLab {un['oklab_evenness']:.2f}"
             )
+        az = rep["across_zero"]
+        if isinstance(az, list):
+            print(
+                "\n| across zero, equal |t| (-t vs +t) | normal | protan | deutan | tritan | worst "
+                "| verdict |"
+            )
+            print("|---|---|---|---|---|---|---|")
+            for row in az:
+                vals = [f"{float(row[k]):.1f}" for k in ("normal", *DEFICIENCIES, "worst")]
+                head = f"| |t| = {float(row['t']):.3f} | "
+                print(head + " | ".join(vals) + f" | {row['verdict']} |")
 
 
 def print_rest(
@@ -1441,22 +1760,27 @@ def main(argv: list[str]) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     n = int(argv[argv.index("--stops") + 1]) if "--stops" in argv else 16
     pairs = measure(registered_pairs(), exempted_pairs())
+    chrome = measure_chrome()
     tokens = bindings()
     checks = oklab_self_checks()
     ramps = ramp_report(n)
+    ranges = ramp_range()
     enc = encodings_rows()
-    nums = counts(pairs, tokens, n)
+    nums = counts(pairs, tokens, chrome, n)
     ok = checks_ok(checks)
     uncovered = uncovered_entry_tokens(tokens)
     if "--json" in argv:
         out = {
             "counts": nums,
             "pairs": pairs,
+            "chrome_aliases": chrome,
             "tokens": tokens,
             "entry_tokens_uncovered": uncovered,
             "oklab_checks": checks,
             "oklab_checks_ok": ok,
             "ramps": ramps,
+            "ramp_range": ranges,
+            "zero_band_rule": ZERO_BAND_RULE,
             "cvd": cvd_rows(),
             "density": DENSITY,
             "registry": REGISTRY,
@@ -1469,25 +1793,28 @@ def main(argv: list[str]) -> int:
         print(json.dumps(out, indent=2, ensure_ascii=False))
     else:
         print_pairs(pairs)
+        print_chrome(chrome)
         print("\n## C. OkLab self-checks (Ottosson 2020 matrices; tolerances 1e-4 and 1e-6)\n")
         for name, value in checks.items():
             print(f"- {name}: {value:.3e}")
         print(f"- all self-checks within tolerance: {ok}")
         print_ramps(ramps, n)
+        print_range(ranges)
         print_rest(tokens, enc, nums, uncovered)
-        failing = nums["pairsFailing"]
+        failing = failing_count(nums)
         good = not failing and ok and not uncovered
         print(
             f"\n{'OK' if good else 'FAIL'}: {nums['pairsGated']} gated rows over 3 "
-            f"themes, {failing} failing; OkLab self-checks {'pass' if ok else 'FAIL'}; "
-            f"{nums['tokensMissing']} names MISSING (expected drift and slots); "
-            f"{len(uncovered)} entry token names outside BOUND"
+            f"themes, {nums['pairsFailing']} failing; {nums['chromeAliases']} engine-chrome "
+            f"aliases, {nums['chromeFailing']} failing; OkLab self-checks "
+            f"{'pass' if ok else 'FAIL'}; {nums['tokensMissing']} names MISSING (expected drift, "
+            f"slots and aliases); {len(uncovered)} entry token names outside BOUND"
         )
     return 0 if failing_count(nums) == 0 and ok and not uncovered else 1
 
 
 def failing_count(nums: dict[str, int]) -> int:
-    return nums["pairsFailing"]
+    return nums["pairsFailing"] + nums["chromeFailing"]
 
 
 if __name__ == "__main__":
