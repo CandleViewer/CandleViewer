@@ -53,8 +53,19 @@ _BOUNDED: dict[str, tuple[Any, int]] = {
 }
 #: A listed symbol and an anchored suffix are entries; the others are not: `*` and `**`, another
 #: quote, a suffix not in front, lowercase, a 17-letter stem, a stray letter before and after.
-_LISTED = "BTCUSDT 1000PEPEUSDT *USDT *PEPEUSDT".split()
+_LONGEST = "A" * 16 + "USDT"  # the longest stem the contract takes, on its own and behind a `*`
+_LISTED = ["BTCUSDT", "1000PEPEUSDT", "*USDT", "*PEPEUSDT", _LONGEST, f"*{_LONGEST}"]
 _UNLISTED = "* **USDT BTCUSDC *BTC btcusdt ABCDEFGHIJKLMNOPQUSDT xBTCUSDT BTCUSDTx".split()
+#: What each schema requires, in the order `22-api-openapi.yaml` lists it: a body (an answer, for
+#: `AccountProfile`) without one is invalid, so a list that shrinks or grows is a contract change.
+_REQUIRED = {
+    "ProfileSizing": "mode",
+    "ProfileStopLoss": "unit",
+    "ProfileTakeProfit": "unit value",
+    "ProfileTakeProfitRung": "qty_pct r",
+    "AccountProfileInput": "name leverage sizing",
+    "AccountProfile": "id exchange_account_id version created_at updated_at warnings profile",
+}
 #: (the edits to the create example, whether the body is still valid); an edit key is a dotted path.
 _CASES: dict[str, tuple[dict[str, object], bool]] = {
     "the_create_example_an_atr_stop_and_an_r_multiple_target": ({}, True),
@@ -74,7 +85,18 @@ _CASES: dict[str, tuple[dict[str, object], bool]] = {
     "stop_in_r_multiple": ({"stop_loss": {"unit": "r_multiple", "value": "2"}}, False),
     "take_profit_in_price": ({"take_profit": {"unit": "price", "value": "70000"}}, False),
     "fixed_qty_without_qty": ({"sizing": {"mode": "fixed_qty"}}, False),
+    "fixed_notional_without_its_amount": ({"sizing": {"mode": "fixed_notional"}}, False),
+    "fixed_notional_with_its_amount": (
+        {"sizing": {"mode": "fixed_notional", "notional_usd": "100"}},
+        True,
+    ),
+    "pct_equity_without_its_share": ({"sizing": {"mode": "pct_equity"}}, False),
+    "pct_equity_with_its_share": ({"sizing": {"mode": "pct_equity", "pct": "5"}}, True),
     "risk_based_without_an_amount": ({"sizing.risk_per_trade_pct": _GONE}, False),
+    "risk_based_with_only_the_usd_amount": (
+        {"sizing": {"mode": "risk_based", "risk_per_trade_usd": "50"}},
+        True,
+    ),
     "request_time_sizing_mode": ({"sizing": {"mode": "pct_position", "pct": "5"}}, False),
     "portfolio_margin": ({"margin_mode": "portfolio"}, False),
     "native_stop_off": ({"require_native_stop": False}, False),
@@ -302,6 +324,10 @@ def test_profile_enums_are_the_table_and_the_model() -> None:
     assert _SCHEMAS["ProfileSizingMode"]["x-db-enum"] == "sizing_mode"
     assert _SCHEMAS["ProfileTargetUnit"]["x-db-enum"] == "offset_unit"
     assert "x-db-enum" not in _SCHEMAS["ProfileStopUnit"]  # a subset of `offset_unit`, not a mirror
+    gates = {g["id"]: g for g in _SPEC["x-contract-validation"]["gates"]}
+    covers = {c["schema"]: c["pg_type"] for c in gates["enum_parity_db"]["covers"]}
+    mirrors = ("ProfileSizingMode", "ProfileTargetUnit")  # the parity gate has a row for each
+    assert {s: covers[s] for s in mirrors} == {s: _SCHEMAS[s]["x-db-enum"] for s in mirrors}
 
 
 def test_bounds_and_defaults_are_the_columns() -> None:
@@ -321,6 +347,14 @@ def test_bounds_and_defaults_are_the_columns() -> None:
     ).split()
     for path in integers:
         assert (leaves[path]["minimum"], leaves[path]["maximum"]) == bounds[column[path]], path
+
+
+def test_the_name_length_and_the_version_floor_are_the_columns() -> None:
+    # `name` is bounded by `char_length(name)`, which the `BETWEEN` pattern above cannot read
+    name = _SCHEMAS["AccountProfileInput"]["properties"]["name"]
+    length = re.search(r"char_length\(name\) BETWEEN (\d+) AND (\d+)", _DDL)
+    assert length and (name["minLength"], name["maxLength"]) == tuple(map(int, length.groups()))
+    assert _SCHEMAS["AccountProfile"]["properties"]["version"]["minimum"] == 1  # `ap_version`
 
 
 def test_symbol_entries_are_listed_symbols_or_anchored_usdt_suffixes() -> None:
@@ -357,3 +391,15 @@ def test_warnings_are_advice_in_a_set_open_to_readers() -> None:
     assert "warnings" in profile["required"]
     assert profile["properties"]["warnings"]["items"] == {"$ref": f"{_REF}ProfileWarning"}
     assert set(api.ProfileWarning.model_fields) == set(warning["properties"])
+
+
+@pytest.mark.parametrize("name", _REQUIRED)
+def test_a_profile_schema_requires_exactly_its_documented_members(name: str) -> None:
+    assert _SCHEMAS[name]["required"] == _REQUIRED[name].split()
+
+
+def test_the_documented_list_bounds_are_the_contract_bounds() -> None:
+    heading = "**Two bounds no column states (E28-T02, #906).**"
+    paragraph = _DOC_24.split(heading, 1)[1].split("\n\n", 1)[0]
+    for name, (_, bound) in _BOUNDED.items():
+        assert f"`{name}`" in paragraph and f"at most {bound} " in paragraph, name
