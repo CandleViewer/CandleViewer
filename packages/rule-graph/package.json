@@ -1,0 +1,40 @@
+{
+  "name": "@candleviewer/rule-graph",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pure rule IR <-> node-graph adapter, typed ports and graph analysis for the rule editor (E37-T01). No React, no DOM, no network.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --project unit",
+    "test:cov": "vitest run --project unit --coverage",
+    "build": "tsup",
+    "size": "echo \"@candleviewer/rule-graph: no bundle budget (library; the editor route carries it)\""
+  },
+  "dependencies": {
+    "@candleviewer/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@candleviewer/config": "workspace:*",
+    "@types/node": "^22.20.5",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.71.2",
+    "globals": "^15.14.0",
+    "vitest": "^4.1.12",
+    "@vitest/coverage-v8": "^4.1.12",
+    "eslint": "^9.17.0"
+  }
+}
