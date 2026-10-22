@@ -564,7 +564,8 @@ def _foreign_language(statement: str) -> bool:
 # A statement mutates when its first word does, or when a `GRANT` hands out a
 # mutating privilege; fail-closed for the forms that hide the verb further in: a
 # data-modifying `WITH`, an `EXPLAIN ANALYZE`, which runs its statement, a prepared
-# statement, a `COPY` of a `RETURNING` query, and an upsert's `DO UPDATE`. A trigger
+# statement, a `COPY` of a `RETURNING` query, a table created `AS` a writing query,
+# and an upsert's `DO UPDATE`. A trigger
 # or a rule mutates the table it is on: it can drop or rewrite each row written
 # after it, and `TRIGGER` is the privilege to add one.
 _MUTATING = frozenset({"DELETE", "UPDATE", "TRUNCATE", "DROP", "ALTER", "MERGE"})
@@ -973,8 +974,8 @@ def _reach(chunk: _Chunk, at: int) -> str | None:
 
 def _named(chunk: _Chunk, at: int) -> bool:
     """Whether a name starts at token `at`, after `ONLY`, `TABLE` or `IF EXISTS`:
-    one to three parts joined by `.`, each a word that is not a number or a quoted
-    name. A part glued to a placeholder (`audit_%s`) is built at run time."""
+    one to three parts joined by `.`, each a quoted name or a word that is not a
+    number. A part glued to a placeholder (`audit_%s`) is built at run time."""
     tokens = chunk.tokens
     while at < len(tokens) and tokens[at].upper() in _SLOT_WORDS:
         at += 1
@@ -1731,8 +1732,9 @@ def check_audit_table_integrity(
     after `ONLY`, second in a list) is a finding, and so is SQL nested in one: a
     `DO` body, `EXECUTE '...'`, or `format(...)` with the table as an argument
     (`_audit_mutations`). A mutating grant on `ALL TABLES IN SCHEMA` is always
-    one. `op.rename_table`/`op.alter_column` calls and SQLAlchemy Core
-    `delete`/`update` on an audit `table(...)` are read from the AST.
+    one, and so is a view over an audit table that does not run as its invoker, or
+    any view switched to run as its owner. Alembic operations and SQLAlchemy Core
+    statements are read from the AST (`_alembic_findings`, `_core_mutations`).
 
     There is no escape hatch: a genuine `CREATE TABLE`/`CREATE INDEX` on an
     audit table never mutates existing rows, so it is no mutation, but any
@@ -1754,12 +1756,13 @@ def check_audit_table_integrity(
     and the revision is read as any other. A revision is read as the import system
     reads it, and one the rule cannot read is refused (`_unreadable`): one that is not
     UTF-8 source read as Python compiles it (`_reads_as_utf8`), does not parse or nests
-    too deeply. So is a statement it cannot read: a mutation whose target is named only at run
-    time, a body's opaque `EXECUTE`, a Unicode-escaped name and a body in another
-    language that names an audit table (`_audit_mutations`). Strings built in Python
-    are read whole (`_built_string`); Alembic operations through any spelling of `op`
-    (`_alembic_findings`) and Core objects that stand for an audit table
-    (`_core_mutations`) are read from the AST."""
+    too deeply. So is a statement it cannot read: a mutation whose target is named
+    only at run time, a body's opaque `EXECUTE`, a block comment nested in another, a
+    Unicode-escaped name and a body in another language that names an audit table
+    (`_audit_mutations`). Strings built in Python are read whole (`_built_string`),
+    and a verb Python computes counts what its statement names. `op` is followed
+    through an alias, `alembic.op`, a rebinding and `getattr`; any other use of it is
+    refused (`_untracked_op`)."""
     findings: list[LintFinding] = []
     for path in paths:
         try:
@@ -1791,8 +1794,9 @@ _REACHES = {
     "hash chain's calls through",
     "reach:view": "a view over an append-only table that runs with its owner's "
     "privileges, so a grant on it reaches the table: declare security_invoker",
-    "dynamic": "a table it names only at run time (a placeholder, a concatenation or "
-    "nothing where the name goes): name the table in the statement",
+    "dynamic": "a table it names only at run time (a placeholder, a concatenation, a "
+    "computed verb or nothing where the name goes): write the statement whole, its "
+    "verb and its table in one literal",
     "unicode": "a name or a string spelled with Unicode escapes (U&), which the rule "
     "cannot read: spell it plainly",
     "comment": "a block comment nested in another, which the rule cannot read: "

@@ -804,29 +804,39 @@ index alone, removing nothing.
   A string literal is read as SQL when it opens with an SQL command word or
   when `EXECUTE`, `DO` or `format(` runs it, and an `E'...'` literal with
   its escapes decoded; a string built with `+`, `%`, `.format` or `.join`
-  is read whole. A table created `AS` a query carries that query's writes.
-  What the rule cannot read is refused too, with its rewrite:
+  is read whole, and so is a docstring the revision reads (`__doc__`,
+  `getdoc`). A verb on its own (`TG_OP = 'UPDATE'`, an enum value) is a
+  value. A table created `AS` a query carries that query's writes. What the
+  rule cannot read is refused too, with its rewrite:
   - a mutation whose table is named only at run time (a placeholder, a
-    concatenation, nothing): name the table in the statement;
+    name glued to one, a concatenation, nothing) or whose verb Python
+    computes: write the statement whole, its verb and its table in one
+    literal;
   - a body's `EXECUTE` of anything but one literal or one `format(...)`:
     write the statement as one of those;
   - a block comment nested in another: close each comment first;
   - a body in a language other than SQL or PL/pgSQL that names an audit
     table: write it in one of those;
   - an Alembic operation whose table is not a literal or a name bound to
-    one (through any alias of `op`, `alembic.op` or `getattr`), any
-    `batch_alter_table` on an audit table, and SQLAlchemy Core's
-    `drop_all`: call `op` with the table's literal name;
+    one (through an alias of `op`, `alembic.op`, a rebinding or `getattr`),
+    `op` imported by name, held in a name or a collection or handed on,
+    `add_column` or `batch_alter_table` on an audit table, and SQLAlchemy
+    Core's `drop_all`: call `op.<operation>` with the table's literal name;
+  - a view switched to read its tables with its owner's privileges
+    (`security_invoker` set false or reset): leave it as its invoker;
   - a name or a string spelled with Unicode escapes (`U&`): spell it
     plainly.
 
   A revision is read as the import system reads it, and one the rule cannot
-  read is refused: make it UTF-8 source, Python that parses, and nested no
-  deeper than Python reads. The versions directory holds the revisions'
-  Python source and nothing else: any other file there (a compiled module,
-  a path file, an `__init__.py`, a module in a subdirectory) is refused as
-  "not a revision's Python source": move or delete it. Only `__pycache__`
-  and `.gitkeep` are let be.
+  read is refused: one that declares another source encoding, holds an
+  undecodable byte, or parses to a different tree than its decoded text
+  ("the revision does not read as UTF-8 source"), one that does not parse,
+  and one nested deeper than Python reads. Make it UTF-8 source, Python
+  that parses, and nested no deeper. The versions directory holds the
+  revisions' Python source and nothing else: any other file there (a
+  compiled module, a path file, an `__init__.py`, a module in a
+  subdirectory) is refused as "not a revision's Python source": move or
+  delete it. Only `__pycache__` and `.gitkeep` are let be.
 
   Two files are exempt, and only as far as follows:
   - `0003_audit_log`, which creates the tables, their triggers and the
