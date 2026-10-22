@@ -11,7 +11,9 @@ import codecs
 import hashlib
 import importlib.util
 import itertools
+import random
 import sys
+import time
 import tracemalloc
 from pathlib import Path
 
@@ -19,6 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import tools.ci.migration_lint as migration_lint
 from tools.ci.migration_lint import (
     _CHAIN_HARDENING_SHA256,
     _read_revision,
@@ -1057,6 +1060,100 @@ def test_a_chunk_of_many_block_openers_is_read_in_linear_memory(tmp_path: Path) 
     assert peak < 16 * 2**20
 
 
+def _reached_continuation(text: str, pos: int) -> bool:
+    """`_continued`'s answer by brute force, from the replaced pattern's three rules: from
+    a reached position, whitespace reaches the next; `--` every position up to its line's
+    end; `/*` the position past every `*/` after it. A reached `||` continues."""
+    reached: set[int] = set()
+    todo = [pos]
+    while todo:
+        at = todo.pop()
+        if at in reached:
+            continue
+        reached.add(at)
+        if text.startswith("||", at):
+            return True
+        if at < len(text) and text[at].isspace():
+            todo.append(at + 1)
+        if text.startswith("--", at):
+            line = at + 2
+            while line < len(text) and text[line] not in "\n\r":
+                line += 1
+            todo += range(at + 2, line + 1)
+        if text.startswith("/*", at):
+            todo += [
+                j + 2 for j in range(at + 2, len(text) - 1) if text.startswith("*/", j)
+            ]
+    return False
+
+
+#: The characters the scan treats apart, Unicode spaces, and lookalike non-spaces.
+_CONTINUATION_CHARS = "-/*|x' \n\r\t\x0b\x0c\x1c\x85\xa0\u2028\u3000\u200b\ufeff"
+
+
+def test_the_continuation_scan_answers_as_the_patterns_rules_read_it() -> None:
+    """A seeded sample of strings, each at three positions: the scan reaches what the
+    rules reach. The commit that brought the scan in compared it with the replaced
+    pattern itself; the pattern is not kept, as CodeQL would flag it here too."""
+    rng = random.Random(4061)
+    for _ in range(20_000):
+        text = "".join(
+            rng.choice(_CONTINUATION_CHARS) for _ in range(rng.randint(0, 16))
+        )
+        for pos in {0, len(text), rng.randint(0, len(text))}:
+            expected = _reached_continuation(text, pos)
+            assert migration_lint._continued(text, pos) is expected, (text, pos)
+
+
+@pytest.mark.parametrize(
+    ("text", "pos", "continued"),
+    [
+        ("/**/||", 0, True),
+        ("/**//*/||", 0, True),  # a later `*/` closes an earlier `/*` too
+        ("\x1c||", 0, True),  # Unicode whitespace
+        ("\u2028||", 0, True),
+        ("--\n||", 0, True),
+        ("-- x ||", 0, True),  # a `--` reaches its whole line
+        ("/*/||", 0, False),  # `/*/` closes nothing
+        ("--\r-||", 0, False),  # `\r` ends a line
+        ("\u200b||", 0, False),  # not whitespace
+        ("/* ||", 0, False),  # an unclosed `/*`
+        (" x ||", 0, False),
+        ("x||", 3, False),  # at the end
+    ],
+)
+def test_the_continuation_scan_keeps_the_replaced_patterns_answers(
+    text: str, pos: int, continued: bool
+) -> None:
+    """Each case is the replaced pattern's answer, checked against it before it went."""
+    assert migration_lint._continued(text, pos) is continued
+
+
+@pytest.mark.parametrize(
+    ("run", "then"),
+    [("--" * 50_000, "||"), ("/*" + "*//*" * 25_000, "*/||")],
+    ids=["dashes", "block-comments"],
+)
+def test_a_run_of_comment_openers_is_read_in_linear_time(run: str, then: str) -> None:
+    """The two shapes the replaced pattern took exponential time on, at 100,000
+    characters: one pass, well inside the bound (a quadratic read would not be). The
+    `||` after the run is reached: through the `*/` that closes the block comments, or
+    in the line the dashes run on."""
+    started = time.perf_counter()
+    assert migration_lint._continued(run + "x", 0) is False
+    assert migration_lint._continued(run + then, 0) is True
+    assert time.perf_counter() - started < 2.0
+
+
+def test_a_statement_of_many_literals_is_read_in_linear_time() -> None:
+    """Each literal's scan stops where nothing more can be reached, so 20,000 literals
+    in one statement are read in one pass, not one pass each."""
+    statement = "SELECT " + ", ".join(["'SELECT 1'"] * 20_000)
+    started = time.perf_counter()
+    assert len(migration_lint._nested_sql(statement)) == 20_000
+    assert time.perf_counter() - started < 2.0
+
+
 def test_a_mutating_grant_on_every_table_of_a_schema_is_flagged(tmp_path: Path) -> None:
     """It names no table, and reaches the audit ones all the same."""
     sql = "GRANT DELETE ON ALL TABLES IN SCHEMA public TO cv_app"
@@ -1341,6 +1438,10 @@ _UNRESOLVED_OP = (
         _UNRESOLVED_OP.format(
             "kw = {'name': 'audit_log'}\n    op.execute(sa.table(**kw).delete())"
         ),
+        _UNRESOLVED_OP.format(
+            "kw = {'table_name': 'audit_log'}\n"
+            "    op.drop_index('ix', **kw)  # cv:contract-phase: R2"
+        ),
     ],
     ids=[
         "a-drop",
@@ -1370,6 +1471,7 @@ _UNRESOLVED_OP = (
         "a-starred-index-list",
         "a-drop-from-kwargs",
         "a-core-table-from-kwargs",
+        "an-index-drop-from-kwargs",
     ],
 )
 def test_an_operation_whose_table_the_rule_cannot_resolve_is_refused(
@@ -2244,57 +2346,144 @@ _SETTING = "a setting set through set_config() or under a computed name"
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "target"),
     [
-        "op.execute(f'SET {name} = replica')",
-        "op.execute('SET ' + name + ' = replica')",
-        "op.execute('SET session_' + 'replication_role = replica')",
-        "v = 'SET'\n    op.execute(f'{v} {name} = replica')",
-        "op.execute('SET {} = replica'.format(name))",
-        "op.execute(f'ALTER USER cv_app SET {name} = replica')",
-        "op.execute(f'ALTER DATABASE cv SET {name} = replica')",
-        "op.execute(f'ALTER FUNCTION f() SET {name} = replica')",
-        "op.execute(f'ALTER PROCEDURE p() SET {name} TO replica')",
-        "op.execute(f'ALTER SYSTEM SET {name} = replica')",
-        "op.execute(f'ALTER ROUTINE f() SET {name} = replica')",
-        "op.execute(f'CREATE FUNCTION f() RETURNS void LANGUAGE sql"
-        " SET {name} = replica AS $$ SELECT 1 $$')",
-        "op.execute('CREATE OR REPLACE PROCEDURE p() LANGUAGE sql"
-        " SET {} TO replica AS $$ SELECT 1 $$'.format(name))",
-        "op.execute('SET session_{} = replica'.format(name))",
-        "op.execute('SET session_%s = replica' % name)",
-        "op.execute('ALTER ROLE cv_app SET session_{} TO replica'.format(name))",
-        "op.execute('CREATE FUNCTION f() RETURNS void LANGUAGE sql"
-        " SET session_{} = replica AS $$ SELECT 1 $$'.format(name))",
-    ],
-    ids=[
-        "an-f-string",
-        "a-concatenation",
-        "a-split-name",
-        "a-resolved-verb",
-        "a-format-field",
-        "an-alter-user",
-        "an-alter-database",
-        "an-alter-function",
-        "an-alter-procedure",
-        "an-alter-system",
-        "an-alter-routine",
-        "a-routine-header",
-        "a-procedure-header-format-field",
-        "a-format-field-after-a-prefix",
-        "a-percent-field-after-a-prefix",
-        "an-alter-role-field-after-a-prefix",
-        "a-routine-header-field-after-a-prefix",
+        pytest.param("op.execute(f'SET {name} = replica')", _SETTING, id="an-f-string"),
+        pytest.param(
+            "op.execute('SET ' + name + ' = replica')", _SETTING, id="a-concatenation"
+        ),
+        pytest.param(  # read whole, the string names the setting
+            "op.execute('SET session_' + 'replication_role = replica')",
+            _TRIGGERS_OFF,
+            id="a-split-name",
+        ),
+        pytest.param(
+            "v = 'SET'\n    op.execute(f'{v} {name} = replica')",
+            _SETTING,
+            id="a-resolved-verb",
+        ),
+        pytest.param(
+            "op.execute('SET {} = replica'.format(name))", _SETTING, id="a-format-field"
+        ),
+        pytest.param(
+            "op.execute(f'ALTER USER cv_app SET {name} = replica')",
+            _SETTING,
+            id="an-alter-user",
+        ),
+        pytest.param(
+            "op.execute(f'ALTER DATABASE cv SET {name} = replica')",
+            _SETTING,
+            id="an-alter-database",
+        ),
+        pytest.param(
+            "op.execute(f'ALTER FUNCTION f() SET {name} = replica')",
+            _SETTING,
+            id="an-alter-function",
+        ),
+        pytest.param(
+            "op.execute(f'ALTER PROCEDURE p() SET {name} TO replica')",
+            _SETTING,
+            id="an-alter-procedure",
+        ),
+        pytest.param(
+            "op.execute(f'CREATE FUNCTION f() RETURNS void LANGUAGE sql"
+            " SET {name} = replica AS $$ SELECT 1 $$')",
+            _SETTING,
+            id="a-routine-header",
+        ),
+        pytest.param(
+            "op.execute('CREATE OR REPLACE PROCEDURE p() LANGUAGE sql"
+            " SET {} TO replica AS $$ SELECT 1 $$'.format(name))",
+            _SETTING,
+            id="a-procedure-header-format-field",
+        ),
+        pytest.param(
+            "op.execute(f'ALTER USER cv_app SET {name} = replica')",
+            _SETTING,
+            id="an-alter-user",
+        ),
+        pytest.param(
+            "op.execute(f'ALTER DATABASE cv SET {name} = replica')",
+            _SETTING,
+            id="an-alter-database",
+        ),
+        pytest.param(
+            "op.execute(f'ALTER FUNCTION f() SET {name} = replica')",
+            _SETTING,
+            id="an-alter-function",
+        ),
+        pytest.param(
+            "op.execute(f'ALTER PROCEDURE p() SET {name} TO replica')",
+            _SETTING,
+            id="an-alter-procedure",
+        ),
+        pytest.param(
+            "op.execute(f'ALTER SYSTEM SET {name} = replica')",
+            _SETTING,
+            id="an-alter-system",
+        ),
+        pytest.param(
+            "op.execute(f'ALTER ROUTINE f() SET {name} = replica')",
+            _SETTING,
+            id="an-alter-routine",
+        ),
+        pytest.param(
+            "op.execute('SET session_{} = replica'.format(name))",
+            _SETTING,
+            id="a-format-field-after-a-prefix",
+        ),
+        pytest.param(
+            "op.execute('SET session_%s = replica' % name)",
+            _SETTING,
+            id="a-percent-field-after-a-prefix",
+        ),
+        pytest.param(
+            "op.execute('ALTER ROLE cv_app SET session_{} TO replica'.format(name))",
+            _SETTING,
+            id="an-alter-role-field-after-a-prefix",
+        ),
+        pytest.param(
+            "op.execute(f'CREATE FUNCTION f() RETURNS void LANGUAGE sql"
+            " SET {name} = replica AS $$ SELECT 1 $$')",
+            _SETTING,
+            id="a-routine-header",
+        ),
+        pytest.param(
+            "op.execute('CREATE OR REPLACE PROCEDURE p() LANGUAGE sql"
+            " SET {} TO replica AS $$ SELECT 1 $$'.format(name))",
+            _SETTING,
+            id="a-procedure-header-format-field",
+        ),
+        pytest.param(
+            "op.execute('CREATE FUNCTION f() RETURNS void LANGUAGE sql"
+            " SET session_{} = replica AS $$ SELECT 1 $$'.format(name))",
+            _SETTING,
+            id="a-routine-header-field-after-a-prefix",
+        ),
     ],
 )
 def test_a_setting_python_computes_the_name_of_is_flagged(
-    tmp_path: Path, body: str
+    tmp_path: Path, body: str, target: str
 ) -> None:
     source = (
         f"from alembic import op\n\n\ndef upgrade(name: str) -> None:\n    {body}\n"
     )
     hits = _audit_hits(tmp_path, source)
-    assert hits and all(_SETTING in hit for hit in hits)
+    assert hits and all(target in hit for hit in hits)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DO $$ BEGIN EXECUTE 'SET session_' || 'replication_role = replica'; END $$",
+        "DO $$ BEGIN EXECUTE 'ALTER ROLE cv_app SET ' || n || ' = replica'; END $$",
+    ],
+)
+def test_a_body_that_builds_a_settings_name_is_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    """Its `EXECUTE` of a concatenation is refused as well."""
+    assert any(_SETTING in hit for hit in _audit_hits(tmp_path, _raw_sql_revision(sql)))
 
 
 @pytest.mark.parametrize(
@@ -2306,12 +2495,12 @@ def test_a_setting_python_computes_the_name_of_is_flagged(
             _SETTING,
         ),
         (
-            "f = sa.func.set_config\n    op.execute(sa.select("
-            "f('session_replication_role', 'replica', False)))",
-            _TRIGGERS_OFF,
+            "op.execute(sa.select(sa.func.SET_CONFIG(t, 'replica', False)))",
+            _SETTING,
         ),
+        ("x = ' session_replication_role '", _TRIGGERS_OFF),
     ],
-    ids=["through-core", "through-a-name"],
+    ids=["through-core", "in-capitals", "padded"],
 )
 def test_a_setting_python_sets_past_the_sql_reader_is_flagged(
     tmp_path: Path, body: str, target: str
@@ -2320,6 +2509,13 @@ def test_a_setting_python_sets_past_the_sql_reader_is_flagged(
     tables' triggers off wherever Python passes it, as SQL would be read (#4032)."""
     hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
     assert hits and all(target in hit for hit in hits)
+
+
+def test_set_config_held_in_a_name_is_flagged_where_it_is_taken(tmp_path: Path) -> None:
+    """Called through the name later, its setting may be computed (#4032 L-1)."""
+    body = "f = sa.func.set_config\n    op.execute(sa.select(f(t, 'replica', False)))"
+    (message,) = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert message.startswith("line 6: ") and _SETTING in message
 
 
 @pytest.mark.parametrize(
@@ -2410,14 +2606,6 @@ def test_a_routine_created_by_dynamic_sql_with_a_computed_setting_is_flagged(
         (
             "DO $$ BEGIN EXECUTE format('SET LOCAL %I = %L', 'session_replication_role',"
             " 'replica'); END $$",
-            _SETTING,
-        ),
-        (
-            "DO $$ BEGIN EXECUTE 'SET session_' || 'replication_role = replica'; END $$",
-            _SETTING,
-        ),
-        (
-            "DO $$ BEGIN EXECUTE 'ALTER ROLE cv_app SET ' || n || ' = replica'; END $$",
             _SETTING,
         ),
         (
@@ -2530,3 +2718,1094 @@ def test_a_name_or_string_spelled_with_unicode_escapes_is_refused(
     """The rule cannot read them, and they can name an audit table (#4032)."""
     hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
     assert any("spelled with Unicode escapes" in hit for hit in hits)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DO '<<b>> BEGIN DELETE FROM audit_log; END'",
+        "DO $$ BEGIN EXECUTE '; DELETE FROM audit_log'; END $$",
+        "DO $$ BEGIN EXECUTE '/* x */ DELETE FROM audit_log'; END $$",
+        "DO $$ BEGIN EXECUTE '; ALTER TABLE audit_log DISABLE TRIGGER ALL'; END $$",
+        "DO $$ DECLARE c refcursor; BEGIN OPEN c FOR DELETE FROM audit_log RETURNING *;"
+        " END $$",
+        "DO $$ DECLARE c CURSOR FOR DELETE FROM audit_log RETURNING *; BEGIN NULL; END $$",
+        "DO $$ BEGIN EXECUTE E'\\x44ELETE FROM audit_log'; END $$",
+        "DO $$ BEGIN EXECUTE E'DELETE FROM audit\\137log'; END $$",
+        "DO $$ BEGIN EXECUTE E'DELETE\\tFROM audit_log'; END $$",
+        "DO $$ BEGIN EXECUTE E'\\u0044ELETE FROM audit_log'; END $$",
+        "DO $$ BEGIN EXECUTE E'\\U00000044ELETE FROM audit_log'; END $$",
+        "DO $$ BEGIN EXECUTE E'DELETE FROM audit_log WHERE note = ''x'''; END $$",
+        "DO $$ BEGIN EXECUTE E'DELETE FROM audit_log WHERE note = \\'x\\''; END $$",
+        "DO $$ BEGIN PERFORM dblink_exec('DELETE FROM audit_log'); END $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql"
+        " AS '/* c */ BEGIN DELETE FROM audit_log; END'",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql"
+        " AS '<<b>> BEGIN DELETE FROM audit_log; END'",
+        "CREATE PROCEDURE p() LANGUAGE plpgsql AS '/* c */ BEGIN DROP TABLE audit_log; END'",
+    ],
+)
+def test_sql_a_literal_reader_would_miss_is_read(tmp_path: Path, sql: str) -> None:
+    """A literal `EXECUTE`, `DO` or a routine's `AS` runs is read whatever it opens
+    with; a cursor's query starts a statement; an `E'...'` literal is read with its
+    escapes decoded (#4032)."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "append-only table 'audit_log'" in message
+
+
+@pytest.mark.parametrize(
+    ("sql", "target"),
+    [
+        (
+            "DO $$ DECLARE t text := 'audit_log';"
+            " BEGIN EXECUTE format('DELETE FROM %I', t); END $$",
+            "append-only table 'audit_log'",
+        ),
+        (
+            "DO $$ BEGIN EXECUTE 'DELETE FROM ' || 'audit_log'; END $$",
+            "append-only table 'audit_log'",
+        ),
+        (
+            "DO $$ BEGIN EXECUTE format('%s FROM %I', 'DELETE', 'audit_log'); END $$",
+            "append-only table 'audit_log'",
+        ),
+        (
+            "DO $$ BEGIN EXECUTE format('DELETE FROM public.%I', 'audit_log'); END $$",
+            "append-only table 'audit_log'",
+        ),
+        (
+            "DO $$ DECLARE q text := 'DELE' || 'TE FROM audit_log';"
+            " BEGIN EXECUTE q; END $$",
+            "a table it names only at run time",
+        ),
+        (
+            "DO $$ BEGIN EXECUTE 'DELETE' || ' FROM audit_log'; END $$",
+            "a table it names only at run time",
+        ),
+        (
+            "DO $$ BEGIN EXECUTE format('DROP FUNCTION %I()', 'audit_chain'); END $$",
+            "the append-only guard function 'audit_chain'",
+        ),
+        (
+            "DO $$ BEGIN EXECUTE 'DROP FUNCTION ' || 'audit_chain()'; END $$",
+            "a table it names only at run time",
+        ),
+        (
+            "DO $$ BEGIN PERFORM dblink_exec('UPDATE' || ' audit_log SET x = 1'); END $$",
+            "a table it names only at run time",
+        ),
+        (
+            "DO $$ BEGIN PERFORM dblink_exec('DELETE FROM'); END $$",
+            "a table it names only at run time",
+        ),
+    ],
+)
+def test_dynamic_sql_whose_target_is_built_is_flagged(
+    tmp_path: Path, sql: str, target: str
+) -> None:
+    """A target passed in, concatenated or held in a variable is the audit table the
+    statement names, or refused when it names none (#4032)."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert f"targets {target}" in message
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "format('UPDATE %I SET x = 1', t)",
+        "format('TRUNCATE %I', t)",
+        "format('TRUNCATE ONLY %I', t)",
+        "format('DELETE FROM %I', t)",
+        "format('DROP TABLE IF EXISTS %I', t)",
+        "format('ALTER TABLE ONLY %I ADD COLUMN x int', t)",
+        "format('MERGE INTO %I USING s ON true WHEN MATCHED THEN DELETE', t)",
+        "format('DROP FUNCTION %I()', t)",
+        "format('CREATE RULE r AS ON INSERT TO %I DO INSTEAD NOTHING', t)",
+        "format('GRANT DELETE ON %I TO cv_app', t)",
+        "format('CREATE TRIGGER g BEFORE DELETE ON %I FOR EACH ROW"
+        " EXECUTE FUNCTION f()', t)",
+        "format('DROP TRIGGER g ON %I', t)",
+        "format('UPDATE public.%I SET x = 1', t)",
+        "format('DELETE FROM db.public.%I', t)",
+        "format('UPDATE' || ' %I SET x = 1', t)",
+        "format('UPDATE ' || '%I SET x = 1', t)",
+        "format(v_template, t)",
+    ],
+)
+def test_each_target_slot_left_to_run_time_is_refused(tmp_path: Path, sql: str) -> None:
+    """Whatever the verb, its target, a grant's or a trigger's `ON` and a rule's `TO`
+    hold a name the statement gives, or the statement is refused; so is one whose
+    template is not one literal (#4032)."""
+    source = _raw_sql_revision(f"DO $$ BEGIN EXECUTE {sql}; END $$")
+    (message,) = _audit_hits(tmp_path, source)
+    assert "a table it names only at run time" in message
+
+
+_VALUE = "from alembic import op\nimport sqlalchemy as sa\n\n\ndef upgrade() -> None:\n    {}\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            _raw_sql_revision(
+                "CREATE FUNCTION trg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                " IF TG_OP = 'UPDATE' THEN RETURN NEW; END IF; RETURN OLD; END $$"
+            ),
+            id="a-trigger-op",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "CREATE FUNCTION trg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                " IF TG_OP IN ('UPDATE', 'DELETE') THEN RETURN NULL; END IF;"
+                " RETURN NEW; END $$"
+            ),
+            id="a-list-of-trigger-ops",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "CREATE TABLE ev (action text CHECK (action IN ('insert', 'update')))"
+            ),
+            id="a-check",
+        ),
+        pytest.param(
+            _raw_sql_revision("CREATE TYPE act AS ENUM ('create', 'update', 'delete')"),
+            id="an-enum",
+        ),
+        pytest.param(
+            _raw_sql_revision("INSERT INTO verbs (v) VALUES ('update')"), id="a-value"
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "ALTER TABLE ev ALTER COLUMN action SET DEFAULT 'update'"
+            ),
+            id="a-default",
+        ),
+        pytest.param(
+            _raw_sql_revision("SELECT 1 FROM ev WHERE kind = 'truncate'"), id="a-where"
+        ),
+        pytest.param(
+            _VALUE.format(
+                "op.create_table('ev', sa.Column('kind',"
+                " sa.Enum('create', 'update', name='k')))"
+            ),
+            id="a-python-enum",
+        ),
+        pytest.param(
+            _VALUE.format(
+                "op.add_column('ev', sa.Column('k', sa.Text(), server_default='update'))"
+            ),
+            id="a-server-default",
+        ),
+        pytest.param(
+            _VALUE.format("op.add_column('ev', sa.Column('update', sa.Text()))"),
+            id="a-column",
+        ),
+        pytest.param(_VALUE.format("kinds = {'update': 1}"), id="a-dict-key"),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cv_app')"
+                " THEN GRANT EXECUTE ON FUNCTION f() TO cv_app; END IF; END $$"
+            ),
+            id="a-guarded-grant",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN EXECUTE 'REVOKE EXECUTE ON FUNCTION f() FROM PUBLIC'; END $$"
+            ),
+            id="a-revoke-run-by-execute",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN GRANT USAGE, EXECUTE ON FUNCTION f() TO cv_app; END $$"
+            ),
+            id="a-privilege-list",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION f()"
+                " FROM cv_app; END $$"
+            ),
+            id="a-privilege-before-on",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN GRANT EXECUTE, USAGE ON FUNCTION f() TO cv_app; END $$"
+            ),
+            id="a-privilege-after-grant",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN GRANT USAGE, EXECUTE, SELECT ON FUNCTION f() TO cv_app;"
+                " END $$"
+            ),
+            id="a-privilege-in-a-list",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN REVOKE EXECUTE, USAGE ON FUNCTION f() FROM PUBLIC; END $$"
+            ),
+            id="a-privilege-after-revoke",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "CREATE FUNCTION f(a text) RETURNS text LANGUAGE sql"
+                " AS $$ SELECT CASE WHEN true THEN $1 ELSE $1 END $$"
+            ),
+            id="a-parameter-after-then",
+        ),
+        pytest.param(
+            _raw_sql_revision("SELECT u.language FROM audit_log u"),
+            id="a-column-named-language",
+        ),
+    ],
+)
+def test_a_value_or_a_privilege_that_reads_as_a_verb_is_not_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    """A verb on its own is a value, `EXECUTE` after `GRANT` or before `ON` is a
+    privilege, `$1` is a parameter, and a body's language is read only where a
+    body is declared (#4032)."""
+    assert _audit_hits(tmp_path, source) == []
+
+
+_BUILT = "from alembic import op\n\n\ndef upgrade() -> None:\n    op.execute({})\n"
+
+
+@pytest.mark.parametrize(
+    ("built", "target"),
+    [
+        ('"DELETE FROM %s" % "audit_log"', "append-only table 'audit_log'"),
+        ('"DELETE FROM {}".format("audit_log")', "append-only table 'audit_log'"),
+        ('"DELETE FROM {t}".format(t="audit_log")', "append-only table 'audit_log'"),
+        ('"DELETE FROM " + "audit_log"', "append-only table 'audit_log'"),
+        ('"".join(["DELETE FROM ", "audit_log"])', "append-only table 'audit_log'"),
+        ('"DELETE FROM %s" % get()', "dynamic table name"),
+        ('"DELETE FROM {t}".format(t=get())', "dynamic table name"),
+        ('"DELETE FROM " + get()', "dynamic table name"),
+    ],
+)
+def test_a_string_built_in_python_is_read_whole(
+    tmp_path: Path, built: str, target: str
+) -> None:
+    """`%`, `.format`, `+` and `.join` build their SQL as an f-string does (#4032)."""
+    (message,) = _audit_hits(tmp_path, _BUILT.format(built))
+    assert target in message
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _BUILT.format('"DELETE FROM orders WHERE id = %s" % get()'),
+        _BUILT.format('"UPDATE orders SET note = {}".format(get())'),
+        _BUILT.format('"".join(part for part in get())'),
+        'from alembic import op\n\n_T = "x"\n\n\ndef upgrade() -> None:\n'
+        '    """Then update."""\n    op.execute("SELECT 1")\n',
+        'def upgrade() -> None:\n    raise RuntimeError("update failed: " + get())\n',
+        _raw_sql_revision(
+            "DO $$ DECLARE n int; BEGIN"
+            " EXECUTE 'SELECT count(*) FROM orders' INTO n; END $$"
+        ),
+        _raw_sql_revision(
+            "DO $$ DECLARE r record; BEGIN FOR r IN EXECUTE"
+            " format('SELECT * FROM %I', 'orders') LOOP NULL; END LOOP; END $$"
+        ),
+        _raw_sql_revision("PREPARE q AS SELECT 1; EXECUTE q"),
+        _raw_sql_revision(
+            "CREATE FUNCTION f() RETURNS text LANGUAGE sql AS $$ SELECT 'x' $$"
+        ),
+        _raw_sql_revision(
+            "DO $$ BEGIN EXECUTE format('UPDATE public.orders SET x = %L', v); END $$"
+        ),
+        _raw_sql_revision(
+            "DO $$ BEGIN EXECUTE format('DELETE FROM db.public.orders WHERE x = %L', v);"
+            " END $$"
+        ),
+        _raw_sql_revision("DO $$ BEGIN EXECUTE format('TRUNCATE ONLY orders'); END $$"),
+        _raw_sql_revision(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'g')"
+            " THEN CREATE TRIGGER g BEFORE INSERT ON orders FOR EACH ROW"
+            " EXECUTE FUNCTION f(); END IF; END $$"
+        ),
+        _raw_sql_revision(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'g')"
+            " THEN CREATE TRIGGER g BEFORE INSERT ON orders FOR EACH ROW"
+            " EXECUTE PROCEDURE f(); END IF; END $$"
+        ),
+        _raw_sql_revision(
+            "DO $$ BEGIN EXECUTE 'UPDATE orders SET note = $1' USING 'x'; END $$"
+        ),
+        _raw_sql_revision("DO $$ BEGIN EXECUTE 'SELECT 1'; END $$"),
+        _raw_sql_revision(
+            "DO $$ DECLARE y text; BEGIN EXECUTE format('SELECT %L', (x)) INTO y;"
+            " END $$"
+        ),
+        _raw_sql_revision(
+            "CREATE FUNCTION f() RETURNS bigint LANGUAGE 'plpgsql'"
+            " AS $$ BEGIN RETURN (SELECT count(*) FROM audit_log); END $$"
+        ),
+        _raw_sql_revision(
+            "CREATE MATERIALIZED VIEW mv AS"
+            " WITH x AS (SELECT * FROM audit_log FOR UPDATE) SELECT * FROM x"
+        ),
+    ],
+)
+def test_sql_that_names_its_targets_or_mutates_nothing_is_not_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    """A value built in, prose, a read run by `EXECUTE`, a prepared statement and an
+    SQL body (#4032)."""
+    assert _audit_hits(tmp_path, source) == []
+
+
+_OPS = "from alembic import op\n\n\ndef upgrade() -> None:\n    {}\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        (
+            _OPS.format(
+                'with op.batch_alter_table("audit_log") as b:\n'
+                '        b.drop_column("note")'
+            ),
+            "append-only table 'audit_log'",
+        ),
+        (
+            "from alembic import op as o\n\n\ndef upgrade() -> None:\n"
+            '    o.drop_table("audit_log")\n',
+            "append-only table 'audit_log'",
+        ),
+        (
+            "from alembic import op as o\n\n\ndef upgrade() -> None:\n"
+            '    o.drop_table(\n        "audit_log"\n    )  # cv:contract-phase: R2\n',
+            "append-only table 'audit_log'",
+        ),
+        (
+            _OPS.format('getattr(op, "drop_table")("audit_log")'),
+            "append-only table 'audit_log'",
+        ),
+        (
+            _OPS.format('getattr(op, name)("orders")'),
+            "an Alembic operation picked at run time",
+        ),
+        (
+            "from alembic import op\nfrom x import T\n\n\ndef upgrade() -> None:\n"
+            "    op.drop_table(T)  # cv:contract-phase: R2\n",
+            "a table it names only at run time",
+        ),
+        (
+            _OPS.format('op.drop_table(f"audit_{n}")  # cv:contract-phase: R2'),
+            "a table it names only at run time",
+        ),
+        (
+            "import sqlalchemy as sa\nfrom alembic import op\n\n\n"
+            "def upgrade() -> None:\n"
+            '    t = sa.table("audit_log")\n    a = t.alias()\n'
+            "    op.execute(sa.delete(a))\n",
+            "append-only table 'audit_log'",
+        ),
+        (
+            _OPS.format('op.execute(metadata.tables["audit_log"].delete())'),
+            "append-only table 'audit_log'",
+        ),
+        (
+            "import sqlalchemy as sa\nfrom alembic import op\n\n\n"
+            "def upgrade() -> None:\n"
+            '    op.execute(sa.schema.DropTable(sa.table("audit_log")))\n',
+            "append-only table 'audit_log'",
+        ),
+        (
+            "from alembic import op\nfrom sqlalchemy import delete as d, table\n\n\n"
+            'def upgrade() -> None:\n    op.execute(d(table("audit_log")))\n',
+            "append-only table 'audit_log'",
+        ),
+        (
+            "import sqlalchemy as sa\nfrom alembic import op\n\n\n"
+            "def upgrade() -> None:\n    sa.MetaData().drop_all(op.get_bind())\n",
+            "every table a MetaData holds",
+        ),
+        (
+            _OPS.format('op.add_column("audit_log", sa.Column("x", sa.Text()))'),
+            "append-only table 'audit_log'",
+        ),
+    ],
+)
+def test_an_alembic_or_core_operation_on_an_audit_table_is_flagged(
+    tmp_path: Path, source: str, target: str
+) -> None:
+    """However `op` is reached or the table is given, and whichever Core object stands
+    for it (#4032)."""
+    (message,) = _audit_hits(tmp_path, source)
+    assert f"targets {target}" in message
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _OPS.format('op.drop_column("orders", "legacy")  # cv:contract-phase: R2'),
+        _OPS.format('op.drop_index("ix_orders_note")  # cv:contract-phase: R2'),
+        _OPS.format('op.add_column("orders", sa.Column("x", sa.Text()))'),
+    ],
+)
+def test_an_alembic_operation_on_another_table_is_not_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    assert _audit_hits(tmp_path, source) == []
+
+
+_AUDIT_LOG = "append-only table 'audit_log'"
+_GUARD = "the append-only guard function 'audit_chain'"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DO $$ BEGIN EXECUTE format('DELETE FROM audit_%s', 'log'); END $$",
+        "DO $$ BEGIN EXECUTE format('DELETE FROM audit_%I', 'log'); END $$",
+        "DO $$ BEGIN EXECUTE format('UPDATE public.audit_%1$s SET x = 1', 'log'); END $$",
+        """DO $$ BEGIN EXECUTE format('DELETE FROM "audit_%s"', 'log'); END $$""",
+        """DO $$ BEGIN EXECUTE format('DELETE FROM public."audit_%s"', 'log'); END $$""",
+        """DO $$ BEGIN EXECUTE format('UPDATE "audit_%I" SET x = 1', 'log'); END $$""",
+    ],
+)
+def test_a_name_glued_to_a_placeholder_is_built_at_run_time(
+    tmp_path: Path, sql: str
+) -> None:
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "a table it names only at run time" in message
+
+
+_PY = "from alembic import op\n\n\ndef upgrade(x: str = '') -> None:\n    {}\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from alembic import op\nfrom sqlalchemy import table as tbl\n\n\n"
+        "def upgrade() -> None:\n    op.execute(tbl('audit_log').delete())\n",
+        "import sqlalchemy as sa\nfrom alembic import op\n\n\n"
+        "def upgrade() -> None:\n    mk = sa.table\n    op.execute(mk('audit_log').delete())\n",
+    ],
+    ids=["an-import-alias", "a-name-bound-to-it"],
+)
+def test_a_core_table_under_another_name_is_read(tmp_path: Path, source: str) -> None:
+    """`table` under an import alias, or bound to a name, is read as itself (#4032)."""
+    assert any(_AUDIT_LOG in hit for hit in _audit_hits(tmp_path, source))
+
+
+@pytest.mark.parametrize(
+    ("body", "target"),
+    [
+        ("op.execute(f'DELETE FROM audit_{x}')", "dynamic table name"),
+        ("v = get()\n    op.execute(f'{v} FROM audit_log')", _AUDIT_LOG),
+        ("op.execute('%s FROM audit_log' % get())", _AUDIT_LOG),
+        ("op.execute(get() + ' FROM audit_log')", _AUDIT_LOG),
+        ("v = 'DEL' + 'ETE'\n    op.execute(v + ' FROM audit_log')", _AUDIT_LOG),
+        ("op.execute(b'DELETE'.decode() + ' FROM audit_log')", _AUDIT_LOG),
+        ("op.execute(f'{x} FUNCTION audit_chain()')", _GUARD),
+    ],
+)
+def test_a_statement_python_computes_part_of_counts_what_it_names(
+    tmp_path: Path, body: str, target: str
+) -> None:
+    """A verb the rule cannot resolve may be any verb, and a name glued to a value it
+    cannot resolve is built at run time (#4032)."""
+    (message,) = _audit_hits(tmp_path, _PY.format(body))
+    assert target in message
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "op.execute('SET' + ' session_replication_role = replica')",
+        "op.execute('ALTER ROLE cv_app SET' + ' session_replication_role = replica')",
+        "op.execute(' '.join(['SET', name, '= replica']))",
+        "op.execute(\"DO $$ BEGIN EXECUTE 'SET' || ' session_replication_role"
+        " = replica'; END $$\")",
+    ],
+    ids=["a-sum", "an-alter-sum", "a-join", "a-body-concatenation"],
+)
+def test_a_setting_built_from_pieces_is_read_whole(tmp_path: Path, body: str) -> None:
+    """Python sums and joins are read whole, and a body's concatenated `EXECUTE` is
+    refused, so a setting split across pieces is read (#4032)."""
+    assert _audit_hits(tmp_path, _PY.format(body))
+
+
+def test_a_message_python_computes_is_not_flagged(tmp_path: Path) -> None:
+    """Only what a computed statement names counts: prose names no table."""
+    source = _PY.format("n = count()\n    print(f'{n} rows migrated')")
+    assert _audit_hits(tmp_path, source) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '"""DELETE FROM %s"""\n\nfrom alembic import op\n\n\ndef upgrade() -> None:\n'
+        '    op.execute(__doc__ % "audit_log")\n',
+        'from alembic import op\n\n\ndef upgrade() -> None:\n    """DELETE FROM audit_log"""\n'
+        "    op.execute(upgrade.__doc__)\n",
+        "import inspect\n\nfrom alembic import op\n\n\ndef upgrade() -> None:\n"
+        '    """DELETE FROM %s"""\n'
+        '    op.execute(inspect.getdoc(upgrade) % "audit_log")\n',
+    ],
+)
+def test_a_docstring_the_revision_reads_is_read_as_sql(
+    tmp_path: Path, source: str
+) -> None:
+    assert _audit_hits(tmp_path, source)
+
+
+@pytest.mark.parametrize(
+    ("sql", "flagged"),
+    [
+        ("ALTER VIEW v SET (security_invoker = false)", True),
+        (
+            "ALTER VIEW IF EXISTS v SET (check_option = local, security_invoker = 0)",
+            True,
+        ),
+        ("ALTER VIEW v RESET (security_invoker)", True),
+        ("ALTER TABLE v SET (security_invoker = off)", True),
+        ("ALTER VIEW v SET (security_invoker = true)", False),
+        ("ALTER VIEW v SET (security_invoker)", False),
+        ("ALTER VIEW v RENAME TO w", False),
+    ],
+)
+def test_a_view_switched_to_its_owners_privileges_is_refused(
+    tmp_path: Path, sql: str, flagged: bool
+) -> None:
+    """Any view: a grant on it later would reach an audit table it reads (#4032)."""
+    hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert bool(hits) is flagged
+    assert all(
+        "a view switched to read its tables with its owner" in hit for hit in hits
+    )
+
+
+_UNFOLLOWED = "an Alembic operation the rule cannot follow"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from alembic.op import drop_table\n\n\ndef upgrade() -> None:\n"
+        "    drop_table('audit_log')\n",
+        _OPS.format("drop = op.drop_table\n    drop('audit_log')"),
+        _OPS.format("for o in (op,):\n        o.drop_table('audit_log')"),
+        _OPS.format("fns = {'d': op.drop_table}\n    fns['d']('audit_log')"),
+        _OPS.format("helper(op)"),
+        _OPS.format("drop = getattr(op, 'drop_table')\n    drop('audit_log')"),
+        "import alembic\n\n\ndef upgrade() -> None:\n    run(alembic.op)\n",
+    ],
+)
+def test_an_alembic_operation_the_rule_cannot_follow_is_refused(
+    tmp_path: Path, source: str
+) -> None:
+    """`op` imported by name, held in a name or a collection, or handed on (#4032)."""
+    assert any(_UNFOLLOWED in hit for hit in _audit_hits(tmp_path, source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import alembic\n\n\ndef upgrade() -> None:\n    o = alembic.op\n"
+        "    o.drop_table('audit_log')\n",
+        _OPS.format("o = op\n    o.drop_table('audit_log')"),
+    ],
+)
+def test_op_rebound_to_another_name_is_followed(tmp_path: Path, source: str) -> None:
+    hits = _audit_hits(tmp_path, source)
+    assert any("append-only table 'audit_log'" in hit for hit in hits)
+    assert not any(_UNFOLLOWED in hit for hit in hits)
+
+
+def test_ops_calls_and_helpers_the_corpus_uses_are_followed(tmp_path: Path) -> None:
+    source = _OPS.format(
+        "with op.batch_alter_table('orders') as b:\n"
+        "        b.add_column(sa.Column('x', sa.Text()))\n"
+        "    op.execute(sa.text('SELECT 1').bindparams(x=op.inline_literal('y')))\n"
+        "    op.get_bind().execute(sa.text('SELECT 1'))\n"
+        "    getattr(op, 'create_index')('ix_orders_x', 'orders', ['x'])"
+    )
+    assert _audit_hits(tmp_path, source) == []
+
+
+@pytest.mark.parametrize("lead", ["", "\x0c\n"], ids=["plain", "after-a-form-feed"])
+def test_alembic_op_drop_on_an_audit_table_is_flagged_once(
+    tmp_path: Path, lead: str
+) -> None:
+    """The line reader and the call reader each see it, on the same line numbers; only
+    one reports it."""
+    source = (
+        f"import alembic\n{lead}\n\ndef upgrade() -> None:\n"
+        '    alembic.op.drop_table("audit_log")\n'
+    )
+    (message,) = _audit_hits(tmp_path, source)
+    assert "append-only table 'audit_log'" in message
+
+
+@pytest.mark.parametrize(
+    ("sql", "flagged"),
+    [
+        ("CREATE VIEW audit_v AS SELECT * FROM audit_log", True),
+        (
+            "CREATE OR REPLACE TEMP VIEW audit_v AS SELECT id FROM audit_checkpoints",
+            True,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = false)"
+            " AS SELECT * FROM audit_log",
+            True,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = true)"
+            " AS SELECT * FROM audit_log",
+            False,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker) AS SELECT * FROM audit_log",
+            False,
+        ),
+        ("CREATE TEMPORARY VIEW audit_v AS SELECT * FROM audit_log", True),
+        ("CREATE RECURSIVE VIEW audit_v (id) AS SELECT id FROM audit_log", True),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = off)"
+            " AS SELECT * FROM audit_log",
+            True,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = 0) AS SELECT * FROM audit_log",
+            True,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = on) AS SELECT * FROM audit_log",
+            False,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = 1) AS SELECT * FROM audit_log",
+            False,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = yes)"
+            " AS SELECT * FROM audit_log",
+            False,
+        ),
+        ("CREATE VIEW open_orders AS SELECT * FROM orders", False),
+        (
+            "CREATE MATERIALIZED VIEW audit_daily AS SELECT count(*) FROM audit_log",
+            False,
+        ),
+    ],
+)
+def test_a_view_over_an_audit_table_must_run_as_its_invoker(
+    tmp_path: Path, sql: str, flagged: bool
+) -> None:
+    """A view checks its tables with its owner's privileges unless `security_invoker`
+    is set, so a grant on it would reach the audit table past its revoked grants
+    (#4032)."""
+    hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert any("a view over an append-only table" in hit for hit in hits) is flagged
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DO $$ " + "BEGIN DELETE " * 4000 + "FROM audit_log; END $$",
+        "DO $$ " + "BEGIN DROP FUNCTION " * 4000 + "audit_chain(); END $$",
+        "DO $$ " + "THEN GRANT DELETE " * 4000 + "ON audit_log TO cv_app; END $$",
+    ],
+    ids=["every-clause-mutates", "every-clause-is-guard-ddl", "every-clause-grants"],
+)
+def test_a_chunk_whose_every_clause_counts_is_read_in_linear_memory(
+    tmp_path: Path, sql: str
+) -> None:
+    """Each clause start is a position in one index of the chunk, never a copy of the
+    rest of it (#4032)."""
+    tracemalloc.start()
+    try:
+        hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert hits
+    assert peak < 16 * 2**20
+
+
+def test_a_chunks_names_are_read_once_however_many_clauses_it_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its names are read once, not once per clause (#4032)."""
+    calls: list[int] = []
+    real = migration_lint._head_identifiers
+
+    def counted(statement: str) -> set[str]:
+        calls.append(len(statement))
+        return real(statement)
+
+    monkeypatch.setattr(migration_lint, "_head_identifiers", counted)
+    sql = "DO $$ " + "BEGIN DROP FUNCTION " * 2000 + "audit_chain(); END $$"
+    assert _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert len(calls) <= 4
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "-- note\rDELETE FROM audit_log",
+        "-- note\rDROP TABLE audit_log",
+        "DO $$ BEGIN -- note\rDELETE FROM audit_log; END $$",
+    ],
+)
+def test_a_mutation_after_a_comment_ended_by_a_return_is_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    """A line comment ends at a return as at a line feed (#4032)."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "append-only table 'audit_log'" in message
+
+
+_GONE = " AS WITH gone AS (DELETE FROM audit_log RETURNING *) SELECT * FROM gone"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE TEMP TABLE kept" + _GONE,
+        "CREATE TEMPORARY TABLE kept" + _GONE,
+        "CREATE UNLOGGED TABLE kept" + _GONE,
+        "CREATE GLOBAL TEMPORARY TABLE kept" + _GONE,
+        "CREATE LOCAL TEMP TABLE kept" + _GONE,
+        "DO $$ BEGIN CREATE TABLE kept" + _GONE + "; END $$",
+    ],
+)
+def test_a_table_created_as_a_writing_query_is_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    """A table created `AS` a query carries that query's writes (#4032)."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "append-only table 'audit_log'" in message
+
+
+def test_a_nested_block_comment_is_refused(tmp_path: Path) -> None:
+    """Postgres nests block comments; the reader would end the outer one early."""
+    sql = "/* a /* b */ c */ DELETE FROM audit_log"
+    hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert any("a block comment nested in another" in hit for hit in hits)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE TABLE kept AS SELECT * FROM orders",
+        "CREATE TABLE notes (id int REFERENCES audit_log (id) ON DELETE CASCADE)",
+        "/* one comment */ SELECT 1",
+    ],
+)
+def test_a_created_table_or_a_comment_that_writes_nothing_is_not_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    assert _audit_hits(tmp_path, _raw_sql_revision(sql)) == []
+
+
+_LANGUAGE = "a body in a language the rule does not read as SQL"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        'DO LANGUAGE plperl $$ spi_exec_query("DELETE FROM audit_log"); $$',
+        "DO LANGUAGE plperl $$ spi_exec_query(q{DELETE FROM audit_log}); $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plpython3u"
+        " AS $$ plpy.execute('TRUNCATE ' + 'audit_log') $$",
+        "DO LANGUAGE plperl 'spi_exec_query(\"DELETE FROM audit_log\")'",
+        'CREATE FUNCTION f() RETURNS void LANGUAGE "plperl" AS $$ return audit_log; $$',
+        "CREATE FUNCTION f() RETURNS void LANGUAGE 'plperl' AS $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE E'plperl' AS $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE /* c */ plperl"
+        " AS $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void AS $$ return audit_log; $$ LANGUAGE",
+        "DO LANGUAGE plperl $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plperl"
+        " AS 'spi_exec_query(\"DELETE FROM audit_log\")'",
+    ],
+)
+def test_a_body_in_another_language_is_refused_and_counts_its_names(
+    tmp_path: Path, sql: str
+) -> None:
+    """The rule does not read it as SQL (#4032 F-27): refused, and the audit table it
+    names counts too."""
+    hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert len(hits) == 2 and _LANGUAGE in hits[1]
+    assert "append-only table 'audit_log'" in hits[0]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DO LANGUAGE plperl $$ spi_exec_query(join('', 'DROP', ' TABLE ',"
+        " reverse('gol_tidua'))) $$",
+        "CREATE FUNCTION f() RETURNS trigger LANGUAGE plperl AS $$ return; $$",
+        "CREATE FUNCTION f() RETURNS int LANGUAGE c AS 'obj_file', 'link_symbol'",
+    ],
+)
+def test_a_body_in_another_language_that_names_no_audit_table_is_refused(
+    tmp_path: Path, sql: str
+) -> None:
+    """It can build the name the rule would look for (#4032 F-27)."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert _LANGUAGE in message
+
+
+def test_a_routine_body_in_sql_after_as_is_read_and_clean_when_it_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    sql = "CREATE FUNCTION f() RETURNS int LANGUAGE sql AS 'SELECT 1'"
+    assert _audit_hits(tmp_path, _raw_sql_revision(sql)) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'op.execute(f"DO $$ BEGIN SET {t} = replica; END $$")',
+        'op.execute("DO $$ BEGIN SET {} = replica; END $$".format(t))',
+        'op.execute("DO $$ BEGIN IF true THEN SET %s = replica; END IF; END $$" % t)',
+        'op.execute(f"DO $$ BEGIN LOOP SET LOCAL {t} = replica; EXIT; END LOOP; END $$")',
+        'op.execute(f"DO $$ BEGIN SET session_{t} = replica; END $$")',
+        "op.execute(f'DO $$ BEGIN SET \"session_{t}\" = replica; END $$')",
+        'op.execute(f"DO $$ BEGIN ALTER ROLE cv_app SET {t} = replica; END $$")',
+        'op.execute(f"DO $$ BEGIN ALTER DATABASE cv SET {t} TO replica; END $$")',
+        'op.execute("DO $$ BEGIN SET session_$1 = replica; END $$")',
+        "op.execute(\"DO $$ BEGIN EXECUTE 'BEGIN SET session_' || n; END $$\")",
+    ],
+    ids=[
+        "an-f-string",
+        "format",
+        "percent-after-then",
+        "set-local-after-loop",
+        "a-prefix",
+        "quoted",
+        "a-role",
+        "a-database",
+        "a-parameter",
+        "a-name-the-text-ends-on",
+    ],
+)
+def test_a_setting_under_a_computed_name_after_a_block_opener_is_flagged(
+    tmp_path: Path, body: str
+) -> None:
+    """A clause after `BEGIN`, `THEN` or `LOOP` is read as a chunk's first is (#4032
+    N-1): its setting's name may be the one that turns the triggers off."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any(_SETTING in hit for hit in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'op.execute(f"DO $$ BEGIN SET lock_timeout = {t}; END $$")',
+        'op.execute("DO $$ BEGIN SET search_path TO public; END $$")',
+        'op.execute(f"DO $$ BEGIN UPDATE orders SET note = {t}; END $$")',
+    ],
+    ids=["a-value-placeholder", "a-literal-setting", "an-update-set"],
+)
+def test_a_setting_named_in_full_after_a_block_opener_is_not_flagged(
+    tmp_path: Path, body: str
+) -> None:
+    assert _audit_hits(tmp_path, _UNRESOLVED_OP.format(body)) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "op.execute('SET \"session_{}\" = replica'.format(t))",
+        'op.execute("SET cv.{} = 1".format(t))',
+        'op.execute("SET session_$1 = replica")',
+    ],
+    ids=["quoted", "dotted", "a-parameter"],
+)
+def test_a_setting_whose_name_runs_into_a_placeholder_is_flagged(
+    tmp_path: Path, body: str
+) -> None:
+    """A quoted or dotted name, and one that runs straight into a parameter (#4032)."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any(_SETTING in hit for hit in hits)
+
+
+_LOOP = (
+    "DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables LOOP"
+    " EXECUTE format('{}', r.tablename); END LOOP; END $$"
+)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "op.execute({!r})".format(_LOOP.format("DROP TABLE staging, %I")),
+        "op.execute({!r})".format(_LOOP.format("TRUNCATE staging *, %I")),
+        "op.execute({!r})".format(
+            _LOOP.format("GRANT DELETE ON staging, %I TO cv_app")
+        ),
+        "op.execute({!r})".format(_LOOP.format("DROP FUNCTION helper(), %I()")),
+        'op.execute(f"DROP TABLE staging, {t}")',
+        'op.execute("TRUNCATE staging, " + t)',
+    ],
+    ids=["drop", "truncate", "grant", "a-routine", "an-f-string", "a-concatenation"],
+)
+def test_a_later_member_of_a_target_list_left_to_run_time_is_refused(
+    tmp_path: Path, body: str
+) -> None:
+    """Every member of a target list is a slot (#4032 N-2)."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any("a table it names only at run time" in hit for hit in hits)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DROP TABLE staging, staging_old CASCADE",
+        "TRUNCATE ONLY staging *, staging_old",
+        "DROP FUNCTION IF EXISTS helper(int), other(text)",
+        "GRANT SELECT ON staging, staging_old TO cv_app",
+    ],
+)
+def test_a_target_list_named_in_full_is_not_flagged(tmp_path: Path, sql: str) -> None:
+    assert _audit_hits(tmp_path, _raw_sql_revision(sql)) == []
+
+
+@pytest.mark.parametrize(
+    ("body", "target"),
+    [
+        ('op.__getattribute__("drop_table")("audit_log")', "picked at run time"),
+        (
+            'op.get_context().impl.drop_table(sa.table("audit_log"))',
+            "implementation object",
+        ),
+        (
+            'ctx = op.get_context()\n    ctx.impl.drop_column("audit_log", "note")',
+            "implementation object",
+        ),
+    ],
+    ids=["a-private-method", "impl", "impl-through-a-name"],
+)
+def test_an_alembic_operation_past_ops_methods_is_refused(
+    tmp_path: Path, body: str, target: str
+) -> None:
+    """`op`'s private methods pick an operation, and Alembic's implementation object
+    runs one, past what the rule reads (#4032 F-25)."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any(target in hit for hit in hits)
+
+
+def test_ops_context_read_as_the_revisions_do_is_not_flagged(tmp_path: Path) -> None:
+    """0002 and 0034 read `as_sql` and run an autocommit block."""
+    body = (
+        "if op.get_context().as_sql:\n        return\n"
+        "    with op.get_context().autocommit_block():\n        pass"
+    )
+    assert _audit_hits(tmp_path, _UNRESOLVED_OP.format(body)) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'a, b = 1, sa.table("audit_log")\n    op.execute(b.delete())',
+        '(b,) = [*[sa.table("audit_log")]]\n    op.execute(b.delete())',
+        'b: sa.TableClause = sa.table("audit_log")\n    op.execute(sa.schema.DropTable(b))',
+        'for b in [sa.table("audit_log")]:\n        op.execute(b.delete())',
+        'op.execute([b.delete() for b in (sa.table("audit_log"),)][0])',
+        'if (b := sa.table("audit_log")) is not None:\n        op.execute(b.delete())',
+        'b = t and sa.table("audit_log")\n    op.execute(b.update())',
+        'b = sa.table("audit_log") if t else None\n    op.execute(b.update())',
+        'b = sa.table("audit_log")\n    op.execute(getattr(b, "delete")())',
+    ],
+    ids=[
+        "unpacked",
+        "unpacked-starred",
+        "annotated",
+        "a-loop",
+        "a-comprehension",
+        "a-walrus",
+        "a-bool-op",
+        "a-condition",
+        "getattr",
+    ],
+)
+def test_a_core_table_bound_however_python_binds_a_name_is_read(
+    tmp_path: Path, body: str
+) -> None:
+    """Not only a plain assignment binds the table a statement runs on (#4032 F-26)."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any("append-only table 'audit_log'" in hit for hit in hits)
+
+
+def test_a_core_table_bound_as_a_parameters_default_is_read(tmp_path: Path) -> None:
+    source = (
+        "from alembic import op\nimport sqlalchemy as sa\n\n\n"
+        'def upgrade(t: sa.TableClause = sa.table("audit_log")) -> None:\n'
+        "    op.execute(t.delete())\n"
+    )
+    (message,) = _audit_hits(tmp_path, source)
+    assert "append-only table 'audit_log'" in message
+
+
+_UPSERT = (
+    "from alembic import op\nimport sqlalchemy as sa\n{}\n\n\n"
+    "def upgrade() -> None:\n    op.execute({}.on_conflict_do_update("
+    'index_elements=["id"], set_={{"id": 2}}))\n'
+)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _UPSERT.format(
+            "from sqlalchemy.dialects.postgresql import insert",
+            'insert(sa.table("audit_log", sa.column("id"))).values(id=1)',
+        ),
+        _UPSERT.format(
+            "from sqlalchemy.dialects.postgresql import insert as pg_insert",
+            'pg_insert(sa.table("audit_log", sa.column("id")))',
+        ),
+        _UPSERT.format("", 'sa.table("audit_log", sa.column("id")).insert()'),
+    ],
+    ids=["an-insert", "an-aliased-insert", "the-tables-insert"],
+)
+def test_a_core_upsert_into_an_audit_table_is_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    """Its `DO UPDATE` rewrites a row, as the SQL spelling's does (#4032 F-28)."""
+    (message,) = _audit_hits(tmp_path, source)
+    assert "append-only table 'audit_log'" in message
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _UPSERT.format(
+            "from sqlalchemy.dialects.postgresql import insert",
+            'insert(sa.table("orders", sa.column("id")))',
+        ),
+        "from alembic import op\nimport sqlalchemy as sa\n"
+        "from sqlalchemy.dialects.postgresql import insert\n\n\n"
+        "def upgrade() -> None:\n"
+        '    op.execute(insert(sa.table("audit_log", sa.column("id"))).values(id=1))\n',
+    ],
+    ids=["another-table", "a-plain-insert"],
+)
+def test_an_upsert_of_another_table_or_a_plain_insert_is_not_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    assert _audit_hits(tmp_path, source) == []
+
+
+@pytest.mark.parametrize(
+    "field", ["1" * 5000, "\u00b2"], ids=["too-long", "a-superscript"]
+)
+def test_a_format_field_python_cannot_read_as_a_number_is_unresolved(
+    tmp_path: Path, field: str
+) -> None:
+    """Read as a missing argument, never a crash that loses the other findings (#4032
+    F-29)."""
+    body = 'op.execute("DELETE FROM {FIELD}".format(t))'.replace("FIELD", field)
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any("dynamic table name" in hit for hit in hits)

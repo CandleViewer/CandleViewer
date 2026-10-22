@@ -756,8 +756,10 @@ index alone, removing nothing.
   (C-5.7):
   - a `DELETE`, `UPDATE`, `TRUNCATE`, `DROP`, `ALTER`, `MERGE` or mutating
     `GRANT` that names one, however it is spelled or nested (a plpgsql or
-    SQL-standard body, a rule, a prepared statement, `EXECUTE`), and a
-    trigger, a rule or a `TRIGGER` grant on one;
+    SQL-standard body, a cursor, a rule, a prepared statement, `EXECUTE`),
+    a trigger, a rule or a `TRIGGER` grant on one, an upsert into one (its
+    `ON CONFLICT DO UPDATE`, or Core's `on_conflict_do_update`), and a view
+    over one that does not declare `security_invoker`;
   - a mutating grant on every table of a schema, and a mutating default
     privilege on tables, which every table created later gets;
   - any statement that defines, replaces, alters or drops one of the
@@ -771,8 +773,9 @@ index alone, removing nothing.
     altered, a role's or a database's `search_path`, and an event trigger;
   - a statement that disables triggers for a session, and a setting the
     rule cannot read: one set through `set_config()`, in SQL or through
-    SQLAlchemy Core, or under a computed name, wholly or after a literal
-    prefix. Set a setting with `SET LOCAL <name> = <value>`.
+    SQLAlchemy Core (held in a Python name too), or under a computed
+    name, wholly or after a literal prefix, in any statement of a body.
+    Set a setting with `SET LOCAL <name> = <value>`.
 
   It is fail-closed: a mutating statement that names an audit table
   anywhere counts, so these are refused as well, each with its rewrite:
@@ -795,13 +798,48 @@ index alone, removing nothing.
     assigned twice or imported, any name in a file with a star import, a
     loop target, a parameter, a starred list or `**kw`, an expression
     (`+`, an f-string, an attribute, a subscript, a call), or a name
-    completed by a placeholder after a literal prefix. Give each table its
-    own literal or constant;
+    completed by a placeholder after a literal prefix, in any member of a
+    target list (`DROP TABLE a, b`). Give each table its own literal or
+    constant;
+  - a Core table bound to an audit table however Python binds a name (an
+    assignment, a loop, a comprehension, a walrus, a parameter's default),
+    then deleted, updated or dropped, or read through `getattr`: name the
+    operation itself;
   - a message or a value that opens with `Set` and one word, read as a
     setting under a name the rule cannot read: reword it.
 
-  A string literal that opens with an SQL command word is read as SQL. A
-  revision is read as the import system reads it, and one the rule cannot
+  A string literal is read as SQL when it opens with an SQL command word or
+  when `EXECUTE`, `DO`, `format(` or a routine's `AS` runs it, and an
+  `E'...'` literal with its escapes decoded; a string built with `+`, `%`,
+  `.format` or `.join` is read whole, and so is a docstring the revision
+  reads (`__doc__`, `getdoc`). A verb on its own (`TG_OP = 'UPDATE'`, an
+  enum value) is a value. A table created `AS` a query carries that query's
+  writes. What the rule cannot read is refused too, with its rewrite:
+  - a mutation whose table is named only at run time (a placeholder, a
+    name glued to one, a concatenation, nothing) or whose verb Python
+    computes: write the statement whole, its verb and its table in one
+    literal;
+  - a body's `EXECUTE` of anything but one literal or one `format(...)`:
+    write the statement as one of those;
+  - a block comment nested in another: close each comment first;
+  - a body in a language other than SQL or PL/pgSQL, whatever it names (a
+    C function's too): write it in one of those;
+  - an Alembic operation whose table is not a literal or a name bound to
+    one (through an alias of `op`, `alembic.op`, a rebinding or `getattr`),
+    `op` imported by name, held in a name or a collection or handed on, a
+    private method of `op` (`op.__getattribute__`), Alembic's
+    implementation object (`.impl`),
+    `add_column` or `batch_alter_table` on an audit table, and SQLAlchemy
+    Core's `drop_all`: call `op.<operation>` with the table's literal name.
+    A change an audit table genuinely needs, a new column included, lands
+    as `0045_audit_chain_hardening` did: one revision, exempt by name and
+    by its pinned statements;
+  - a view switched to read its tables with its owner's privileges
+    (`security_invoker` set false or reset): leave it as its invoker;
+  - a name or a string spelled with Unicode escapes (`U&`): spell it
+    plainly.
+
+  A revision is read as the import system reads it, and one the rule cannot
   read is refused: one that declares another source encoding, holds an
   undecodable byte, or parses to a different tree than its decoded text
   ("the revision does not read as UTF-8 source"), one that does not parse,
@@ -810,8 +848,7 @@ index alone, removing nothing.
   revisions' Python source and nothing else: any other file there (a
   compiled module, a path file, an `__init__.py`, a module in a
   subdirectory) is refused as "not a revision's Python source": move or
-  delete it. Only `__pycache__` and `.gitkeep` are let be. A name or a string spelled
-  with Unicode escapes (`U&`) is refused too: spell it plainly.
+  delete it. Only `__pycache__` and `.gitkeep` are let be.
 
   Two files are exempt, and only as far as follows:
   - `0003_audit_log`, which creates the tables, their triggers and the
