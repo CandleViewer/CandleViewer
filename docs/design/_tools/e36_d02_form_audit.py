@@ -9,7 +9,9 @@ UNROUNDED ratio as `tools/contrast/generate.mjs` does (a value that would round 
 to four decimals); `rejected-*` and `decorative` rows are reported, never gated; (2) every token
 the spec and the handoff bind, resolved or MISSING; (3) which pairs `pairs.mjs` registers (a text
 scan of its `fg` / `bg` literals) and which are PROPOSED; (4) the vocabulary and IR counts the
-boards quote; (5) the string gates; (6) the counts. Exit 1 on a gated FAIL or a failed gate.
+boards quote; (5) the string gates — the #4118 string, the RULED lines, the two loosening sentences
+#4137 supersedes (they must be absent), private paths; (6) the counts. Exit 1 on a gated FAIL or a
+failed gate.
 
 Usage: python3 -I docs/design/_tools/e36_d02_form_audit.py [--json] [--extra FILE ...]
 """
@@ -43,7 +45,13 @@ THEMES: dict[str, tuple[str, ...]] = {
 BAR: dict[str, float | None] = {"text": 4.5, "non-text": 3.0, "hc-text": 7.0}
 NEW_STRING = "Turns itself off after 5 errors in a row — you re-arm it."
 OLD_STRING = "Pauses itself after 5 errors."
-RULED = ("The stop only ever tightens.", "Only the owner can loosen a stop.")
+RULED = ("The stop only ever tightens.", "Rules never loosen a stop.")  # memo Q2; #4137
+# #4137 (a rule action never loosens a stop, for any role) supersedes these two sentences: the gate
+# fails if either appears. Split so this file never contains the literals it forbids.
+SUPERSEDED = (
+    r"This rule may wid[e]n the stop — owner-only, audited\.",
+    r"Only the owner can loos[e]n a stop\.",
+)
 # Private paths and hosts that never belong in a public file; the patterns are split so this
 # file never contains the literals it forbids.
 FORBIDDEN = (
@@ -348,11 +356,7 @@ def vocabulary() -> Vocab:
         f"{sorted(inputs_of.get(m, set()) & RECORDED_INPUTS) or 'none'}"
         for t, m in TEMPLATE_METRICS
     ]
-    destructive = {
-        a["id"]
-        for a in actions
-        if a["places_orders"] or a["id"].startswith("flatten_") or a["id"] == "widen_stop"
-    }
+    destructive = {a["id"] for a in actions if a["places_orders"] or a["id"].startswith("flatten_")}
     return Vocab(
         descriptor_rows=len(descr),
         kernel_bound=len(bound),
@@ -384,6 +388,11 @@ def gates(files: list[Path]) -> list[str]:
         if OLD_STRING in t:
             bad.append(f"{f.name}: the old kill-switch string is present")
         bad += [f"{f.name}: RULED string missing: {s}" for s in RULED if s not in t]
+        bad += [
+            f"{f.name}: superseded loosening sentence (#4137) {p}"
+            for p in SUPERSEDED
+            if re.search(p, t)
+        ]
         bad += [f"{f.name}: forbidden text {p}" for p in FORBIDDEN if re.search(p, t)]
         cited = sorted(set(re.findall(r"\bC-\d+\.\d+\b", t)))
         bad += [f"{f.name}: dangling rule id {r}" for r in cited if r not in constitution]
@@ -460,7 +469,7 @@ def main(argv: list[str]) -> int:
         + ", ".join(f"{a['id']} '{a['title']}'{flags[a['places_orders']]}" for a in voc["actions"])
     )
     out.append(
-        f"destructive class (PROPOSED rule: places_orders | flatten_* | widen_stop) "
+        f"destructive class (PROPOSED rule: places_orders | flatten_*; widen_stop left it, #4137) "
         f"{len(voc['destructive'])}: {', '.join(voc['destructive'])}"
     )
     out.append(
@@ -474,7 +483,10 @@ def main(argv: list[str]) -> int:
     bad = gates([SPEC, HANDOFF, *extra])
     if memo.count(NEW_STRING) != 3 or OLD_STRING in memo:
         bad.append(f"memo strings: {memo.count(NEW_STRING)} new / {memo.count(OLD_STRING)} old")
-    ok = "OK — #4118 string present, old string absent, RULED strings present, no private path"
+    ok = (
+        "OK — #4118 string present, old string absent, RULED strings present, "
+        "no superseded loosening sentence, no private path"
+    )
     out.append(ok if not bad else "\n".join("FAIL " + b for b in bad))
     spec, hand = SPEC.read_text(encoding="utf-8"), HANDOFF.read_text(encoding="utf-8")
     sec0 = spec[spec.index("## 0.") : spec.index("## 1.")]
