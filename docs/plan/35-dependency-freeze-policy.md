@@ -193,3 +193,9 @@ the react-router, vitest and uuid fixes; #3639 tracks tauri, esbuild and sprintf
 Update 2026-10-22 (#1819): apps/web now runs react-router 7.18, the first release with both
 fixes, so the two react-router entries are out of `security/accepted-risks.yaml` and EX-09. #1819
 now tracks the vitest fix only; uuid left earlier with Storybook 10 (#269).
+
+Update 2026-10-22 (#1819, vitest): every package that runs tests now runs vitest 4.1.12, so the
+vitest entry is out of `security/accepted-risks.yaml` and EX-09, and `pnpm audit` no longer
+lists vitest or @vitest/mocker. The `tinypool` override in `pnpm-workspace.yaml` is removed
+too, because vitest 4 does not depend on tinypool. The rows above record the state before
+this change. #1819 stays open for the other majors it sequences.
