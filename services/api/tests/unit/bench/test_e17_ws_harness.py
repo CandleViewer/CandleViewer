@@ -263,6 +263,42 @@ def test_the_js_profile_helper_resolves_and_lists_topics_as_the_python_twin_does
         ]
 
 
+#: (welcome clock_skew_ms, hello rtt ms, corrected, |raw|, |corrected|): NTP's one-way estimate
+SKEW_VECTORS = [
+    (13, 20, 3, 13, 3),  # one host: the raw skew is the hello's transit, so it passes the guard
+    (33, 30, 18, 33, 18),  # a real offset on top of the transit: still beyond the guard
+    (-8, 4, -10, 8, 10),  # corrected before the absolute value: 10, not |-8| - 2 = 6
+    (2, 20, -8, 2, 8),  # the correction crosses zero: the corrected reading is the larger one
+    (7, 0, 7, 7, 7),  # a round trip inside one millisecond: nothing to take off
+]
+
+
+def test_the_js_skew_correction_takes_half_the_round_trip_off_the_raw_skew() -> None:
+    script = f"""
+    import {{ correctSkew }} from '{LOAD}/lib/skew.js';
+    const vectors = {json.dumps([[raw, rtt] for raw, rtt, *_ in SKEW_VECTORS])};
+    const sent = {NOW_MS};
+    console.log(JSON.stringify(vectors.map(([raw, rtt]) => correctSkew(raw, sent, sent + rtt))));
+    """
+    done = node("--input-type=module", "-e", script)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == [
+        {"raw": raw, "rtt": rtt, "corrected": c, "absRaw": a_raw, "absCorrected": a_c}
+        for raw, rtt, c, a_raw, a_c in SKEW_VECTORS
+    ]
+
+
+def test_the_js_skew_correction_returns_nothing_for_a_welcome_without_a_skew_or_a_time() -> None:
+    script = f"""
+    import {{ correctSkew }} from '{LOAD}/lib/skew.js';
+    const none = [correctSkew(undefined, 1, 2), correctSkew(5, null, 2), correctSkew(5, 1, NaN)];
+    console.log(JSON.stringify(none));
+    """
+    done = node("--input-type=module", "-e", script)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == [None, None, None]
+
+
 # -- the egress guard and the send delay ----------------------------------------------
 
 
@@ -561,6 +597,80 @@ def test_finish_writes_the_report_and_exits_by_status(
     assert "k6_exit: 107" in (tmp_path / "k6" / "report.md").read_text(encoding="utf-8")
 
 
+def hello_skew_run(out: Path, **over: Any) -> Path:
+    """A healthy run whose summary carries the hello-skew trends the k6 client writes now: on one
+    host the server's skew (13 ms at most) is the hello's transit (20 ms p50, 33 ms at most)."""
+    make_run(out, **over)
+    path = out / "summary.json"
+    summ = json.loads(path.read_text(encoding="utf-8"))
+    summ["trends"] |= {
+        "cv_clock_skew_ms": {"count": 6, "p50": 9.0, "p95": 12.0, "p99": 13.0, "max": 13.0},
+        "cv_clock_skew_corrected_ms": {"count": 6, "p50": 1.0, "p95": 2.0, "p99": 3.0, "max": 3.0},
+        "cv_hello_rtt_ms": {"count": 6, "p50": 20.0, "p95": 30.0, "p99": 33.0, "max": 33.0},
+    }
+    path.write_text(json.dumps(summ), encoding="utf-8")
+    return out
+
+
+def test_the_report_shows_the_raw_and_corrected_skew_the_hello_rtt_and_same_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
+    run = hello_skew_run(tmp_path / "run", same_host=True)
+    assert runner.finish(run, 0.10) == 0  # 13 ms raw is over the 5 ms guard, 3 ms corrected is not
+    assert (
+        "- Clock skew at the hello (same_host true): corrected max 3.0 ms against 5 ms "
+        "(max over 6 hellos of |raw - RTT/2|; raw max 13.0 ms; hello RTT p50 20.0 ms / max 33.0 ms)"
+    ) in (run / "report.md").read_text(encoding="utf-8")
+
+
+def test_result_json_keeps_the_skew_the_rtt_and_same_host_in_the_run_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
+    run = hello_skew_run(tmp_path / "run", same_host=True)
+    runner.finish(run, 0.10)
+    body = json.loads((run / "result.json").read_text(encoding="utf-8"))
+    assert body["facts"]["same_host"] is True
+    assert body["result"]["clock_skew"] == {
+        "judged": 3.0,
+        "raw": 13.0,
+        "rtt_p50": 20.0,
+        "rtt_max": 33.0,
+        "hellos": 6,
+        "rtt_corrected": True,
+        "send_delay_ms": 0.0,
+    }
+
+
+def test_a_run_saved_before_the_correction_is_reported_as_raw_with_no_host_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
+    run = make_run(tmp_path / "old")  # only the raw skew in its summary, no same_host in run.json
+    assert runner.finish(run, 0.10) == 0
+    assert (
+        "- Clock skew at the hello (same_host not recorded): raw max 1.0 ms against 5 ms "
+        "(max over 100 hellos of |raw|; not RTT-corrected: the summary has no "
+        "cv_clock_skew_corrected_ms)"
+    ) in (run / "report.md").read_text(encoding="utf-8")
+
+
+def test_a_run_whose_welcomes_were_never_timed_reports_no_skew(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
+    run = make_run(tmp_path / "run")
+    path = run / "summary.json"
+    summ = json.loads(path.read_text(encoding="utf-8"))
+    del summ["trends"]["cv_clock_skew_ms"]  # no welcome was timed
+    path.write_text(json.dumps(summ), encoding="utf-8")
+    assert runner.finish(run, 0.10) == 0
+    assert "Clock skew" not in (run / "report.md").read_text(encoding="utf-8")
+    body = json.loads((run / "result.json").read_text(encoding="utf-8"))
+    assert body["result"]["clock_skew"] is None
+
+
 def baseline_15_percent_better(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     """Three runs, and a recorded baseline each of them is 15 % worse than."""
     monkeypatch.setattr(runner, "BASELINES", tmp_path / "base")
@@ -775,7 +885,7 @@ def test_a_plan_keeps_the_profiles_own_length_apart_from_the_overridden_one(tmp_
         assert (p.nominal_duration_s, p.nominal_warmup_s) == nominal
 
 
-def test_execute_writes_the_profiles_own_length_and_the_loop_to_run_json(
+def test_execute_writes_the_profiles_own_length_the_loop_and_the_host_to_run_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The other half: a run cut to 120 s says so in run.json. A stand-in backend that serves
@@ -793,6 +903,7 @@ def test_execute_writes_the_profiles_own_length_and_the_loop_to_run_json(
     assert (facts["profile_duration_s"], facts["profile_warmup_s"]) == (3600.0, 300.0)
     assert runner.run_profile(facts) == "smoke"
     assert facts["loop"] == "asyncio"
+    assert facts["same_host"] is True  # the runner starts both; k6 refuses a remote target
     assert backend.poll() is not None  # stopped, not left running
 
 

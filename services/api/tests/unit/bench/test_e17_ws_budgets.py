@@ -224,6 +224,86 @@ def test_a_run_with_fewer_connections_than_planned_is_invalid_never_a_pass(
     assert evaluate(summary()).status == "PASS"  # 5 users x 1 connection and the probe, all up
 
 
+# -- the clock-skew guard judges the skew corrected for the hello's own transit ------------------
+
+
+def hello_skew(raw: float, corrected: float, rtt_p50: float, rtt_max: float) -> dict[str, Any]:
+    """The three trends the k6 client records at each welcome (`tests/load/ws/lib/skew.js`)."""
+    rtt = {"count": 6, "p50": rtt_p50, "p95": rtt_max, "p99": rtt_max, "max": rtt_max}
+    return {
+        "cv_clock_skew_ms": trend(raw, n=6),
+        "cv_clock_skew_corrected_ms": trend(corrected, n=6),
+        "cv_hello_rtt_ms": rtt,
+    }
+
+
+def test_a_same_host_skew_that_is_only_the_hellos_transit_passes_the_guard() -> None:
+    """One host clock, so no drift: 10 of the 13 ms reported are half the 20 ms round trip."""
+    res = evaluate(summary(**hello_skew(raw=13.0, corrected=3.0, rtt_p50=20.0, rtt_max=26.0)))
+    assert (res.status, res.invalid) == ("PASS", [])
+
+
+def test_a_real_drift_is_still_invalid_and_the_message_names_corrected_raw_and_rtt() -> None:
+    """8 ms of drift on top of a 10 ms transit reads 18 ms raw and 8 ms corrected."""
+    res = evaluate(summary(**hello_skew(raw=18.0, corrected=8.0, rtt_p50=20.0, rtt_max=22.0)))
+    assert (res.status, res.exit_code) == ("INVALID", 2)
+    assert res.invalid == [
+        "clock_skew: corrected max 8.0 ms against 5 ms (max over 6 hellos of |raw - RTT/2|; "
+        "raw max 18.0 ms; hello RTT p50 20.0 ms / max 22.0 ms)"
+    ]
+
+
+def test_a_corrected_skew_above_the_raw_one_is_what_the_guard_judges() -> None:
+    """The server's clock 8 ms behind on a 20 ms round trip reads 2 ms raw and 8 ms corrected."""
+    res = evaluate(summary(**hello_skew(raw=2.0, corrected=8.0, rtt_p50=20.0, rtt_max=22.0)))
+    assert res.status == "INVALID" and res.invalid[0].startswith("clock_skew: corrected max 8.0 ms")
+
+
+@pytest.mark.parametrize(("corrected", "status"), [(5.0, "PASS"), (5.1, "INVALID")])
+def test_the_corrected_skew_is_held_to_the_same_5_ms_as_the_raw_one_was(
+    corrected: float, status: str
+) -> None:
+    assert budgets.MAX_CLOCK_SKEW_MS == 5.0
+    skew = hello_skew(raw=corrected + 10.0, corrected=corrected, rtt_p50=20.0, rtt_max=22.0)
+    assert evaluate(summary(**skew)).status == status
+
+
+@pytest.mark.parametrize(("raw", "status"), [(5.0, "PASS"), (6.0, "INVALID")])
+def test_a_summary_without_the_corrected_trend_is_judged_on_its_raw_skew_as_before(
+    raw: float, status: str
+) -> None:
+    assert evaluate(summary(cv_clock_skew_ms=trend(raw))).status == status
+
+
+def test_a_raw_only_skew_says_in_its_message_that_it_was_not_corrected() -> None:
+    res = evaluate(summary(cv_clock_skew_ms=trend(6.0, n=6)))
+    assert res.invalid == [
+        "clock_skew: raw max 6.0 ms against 5 ms (max over 6 hellos of |raw|; "
+        "not RTT-corrected: the summary has no cv_clock_skew_corrected_ms)"
+    ]
+
+
+def test_the_selfcheck_profile_judges_the_raw_skew_so_it_still_fails_budget_6() -> None:
+    """25 ms of send delay holds the welcome after the server's stamp: 1 ms raw, 13 ms corrected."""
+    from bench.ws import profiles
+
+    prof = profiles.resolve(profiles.load(), "selfcheck") | {"name": "selfcheck"}
+    slow = scrape({0.01: 100, 0.02: 400, 0.03: 900, 0.05: 3200})
+    skew = hello_skew(raw=1.0, corrected=13.0, rtt_p50=27.0, rtt_max=29.0)
+    res = evaluate(summary(**skew), slow, prof)
+    ok, text = budgets.expect_failure(res, prof["expect_fail"])
+    assert (res.status, ok) == ("FAIL", True), text
+
+
+def test_a_send_delay_run_with_a_real_raw_skew_is_invalid_and_says_raw_was_judged() -> None:
+    skew = hello_skew(raw=6.0, corrected=8.5, rtt_p50=27.0, rtt_max=29.0)
+    res = evaluate(summary(**skew), prof=PROFILE | {"send_delay_ms": 25})
+    assert res.invalid == [
+        "clock_skew: raw max 6.0 ms against 5 ms (max over 6 hellos of |raw|; "
+        "send delay 25 ms injected: raw judged; hello RTT p50 27.0 ms / max 29.0 ms)"
+    ]
+
+
 RELEASE, TICK = "cv_release_decode_ms_trades", "cv_tick_decode_ms_trades"
 B3 = "budget3.tick_to_decode.trades"
 

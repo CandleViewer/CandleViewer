@@ -409,6 +409,8 @@ def execute(p: Plan, k6: str) -> Path:
         "cpus": [p.backend_cpus, p.k6_cpus],
         "cgroup": STAGING["label"] if p.staging else "none",
         "loop": LOOP,
+        # true by construction: the runner starts both, and ws_load.js refuses non-loopback
+        "same_host": True,
         "k6_cpu_frac": _cpu_frac(k6cpu, cpus),
         "rss_bytes": int(max((x["rss"] for x in series), default=0)) or None,
         "mem_max_bytes": MEM_MAX if p.staging else None,
@@ -569,6 +571,10 @@ def render(res: Result, facts: Mapping[str, Any], g: gate.GateResult) -> str:
     lines.append(f"- CPU sets: backend {backend_cpus or 'any'}, k6 {k6_cpus or 'any'}")
     if not facts["staging"]:
         lines.append("- Not staged: no systemd scope, so no CPU quota and no memory cap")
+    if res.clock_skew is not None:  # why the validity guard let the run through, or stopped it
+        host = facts.get("same_host")
+        same = "not recorded" if host is None else str(bool(host)).lower()
+        lines.append(f"- Clock skew at the hello (same_host {same}): {res.clock_skew.text}")
     lines += [
         "",
         "| check | budget | measured | limit | unit | result |",

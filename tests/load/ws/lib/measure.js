@@ -38,7 +38,13 @@ export const M = {
   connectionsUp: counter("cv_connections_up"),
   spFrames: counter("cv_sp_frames"),
   imprecise: counter("cv_imprecise_values"),
+  /** The hello's clock skew, absolute ms, recorded at the welcome. `clockSkew` is the server's
+   * `clock_skew_ms` as it came (on one host the hello's transit, not drift); `clockSkewCorrected` is
+   * it less half the hello's round trip `helloRtt` (`skew.js`): what the validity guard judges, or
+   * `clockSkew` for a run that injects a send delay. */
   clockSkew: trend("cv_clock_skew_ms"),
+  clockSkewCorrected: trend("cv_clock_skew_corrected_ms"),
+  helloRtt: trend("cv_hello_rtt_ms"),
   clientLag: trend("cv_client_lag_ms"),
   rwKibS: trend("cv_rw_kib_s"),
   resnapKib: trend("cv_resnap_kib"),

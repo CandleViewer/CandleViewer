@@ -17,6 +17,7 @@ import http from "k6/http";
 import encoding from "k6/encoding";
 import { decode, stats as cvwbStats } from "./cvwb.js";
 import { M, SNAP_REASONS } from "./measure.js";
+import { correctSkew } from "./skew.js";
 
 const CAPABILITIES = [
   "binary_book",
@@ -62,6 +63,7 @@ export class Connection {
     this.round = null;
     this.expiresAt = 0;
     this.phase = "hello";
+    this.helloSentMs = null; // the hello's `clock_ms`: where the round trip begins (`skew.js`)
   }
 
   start() {
@@ -116,6 +118,7 @@ export class Connection {
         `vu ${this.cfg.id}: negotiated "${this.ws.protocol}", offered ${this.cfg.subprotocol}`,
       );
     }
+    this.helloSentMs = Date.now();
     this.send("hello", {
       client: "candleviewer-k6",
       client_version: "e17-q03/1",
@@ -124,7 +127,7 @@ export class Connection {
       encodings: ["binary", "structured"],
       capabilities: CAPABILITIES,
       locale: "en-GB",
-      clock_ms: Date.now(),
+      clock_ms: this.helloSentMs,
     });
   }
 
@@ -173,7 +176,12 @@ export class Connection {
 
   // -- control frames -------------------------------------------------------------------------
   welcome(m) {
-    M.clockSkew.add(Math.abs(m.p.clock_skew_ms));
+    const skew = correctSkew(m.p.clock_skew_ms, this.helloSentMs, Date.now());
+    if (skew !== null) {
+      M.clockSkew.add(skew.absRaw);
+      M.clockSkewCorrected.add(skew.absCorrected);
+      M.helloRtt.add(skew.rtt);
+    }
     if (m.p.encoding !== "json") {
       M.errors.add(1);
       console.error(`vu ${this.cfg.id}: welcome.encoding ${m.p.encoding}`);
