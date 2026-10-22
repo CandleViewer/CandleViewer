@@ -255,7 +255,7 @@ def test_adr_0008_records_p1a() -> None:
 def test_no_contract_text_resolves_later_wins() -> None:
     """F-01: "later wins" let a ticket widen every leg past its account's profile."""
     texts = [node for node in _walk(_SPEC) if isinstance(node, str)]
-    assert [text for text in texts if "later wins" in _words(text)] == []
+    assert [text for text in texts if "later wins" in _words(text).lower()] == []
 
 
 def test_a_leg_only_narrows_its_bound_profile_and_a_widening_request_is_refused_whole() -> None:
@@ -264,23 +264,31 @@ def test_a_leg_only_narrows_its_bound_profile_and_a_widening_request_is_refused_
     create = _words(_OPS["createTradeGroup"]["description"])
     for phrase in (
         "**Resolution per leg: later narrows** (SR-E28-03, SR-E28-04; E28 threat model F-01)",
-        "The leg's account's bound profile is the ceiling (E28 threat model D7)",
-        "judged on the resulting leg after the sizer and its clamps run again",
+        "The leg's account's bound profile, its active profile (`active_profile_id`), is the "
+        "ceiling (E28 threat model D7)",
+        "only narrow it, field by field, judged on the resulting leg after the sizer and its "
+        "clamps run again: quantity, notional, leverage, margin and risk at the stop may not rise",
         "and the stop may not move further from entry",
         "never clamped and never a partial group (C-12.5, D6)",
-        "before any leg is sent, whatever `atomicity` says; it is never a per-leg failure",
+        "one `errors[]` entry per offending leg, audited, before any leg is sent",
+        "whatever `atomicity` says; it is never a per-leg failure",
+        "only submitted values that widen the bound profile refuse the whole request",
         "The sizer's own policy clamp is no refusal; `sizing_explanation` names it",
-        "decided after the account-scope check and before any leg is sized",
+        "decided at validation, after the account-scope check and before any leg is sized, with "
+        "one title and `detail` shape",
     ):
         assert phrase in create, phrase
     preview = _words(_OPS["previewTradeGroup"]["description"])
     assert "never a leg returned with `would_submit: false`" in preview
+    assert "cap the request does not move still marks that leg alone" in preview
     for text in (create, preview):
         assert "refused whole" in text and "`403 risk_limit_breached`" in text
         assert "one `errors[]` entry per offending leg" in text
     assert _CODES["risk_limit_breached"]["status"] == 403
     for operation in ("createTradeGroup", "previewTradeGroup"):
         assert _OPS[operation]["responses"]["403"] == _ref("responses", "Forbidden")
+    # "Answers as that submit would": the submit's whole-request 400s are declared on the dry run.
+    assert _OPS["previewTradeGroup"]["responses"]["400"] == _ref("responses", "BadRequest")
 
 
 @pytest.mark.parametrize("operation", ["createTradeGroup", "previewTradeGroup", "placeOrder"])
@@ -293,7 +301,12 @@ def test_a_profile_id_of_another_account_is_answered_as_a_missing_one(operation:
         fields = _SCHEMAS["TradeGroupLegInput"]["properties"]["overrides"]["properties"]
     text = _words(fields["profile_id"]["description"])
     assert "only narrows" in text and "the same answer for each" in text
-    assert "`404 not_found` after the account-scope check" in text
+    assert "`404 not_found`, decided at validation, after the account-scope check" in text
+    order = _words(_SPEC["info"]["description"])  # the owner of the order of the checks
+    assert (
+        "then validation (where a `profile_id` that is not one of the account's own profiles is "
+        "`404 not_found`), sizing, risk" in order
+    )
 
 
 def test_the_preview_refuses_an_out_of_scope_leg_account_whole_as_the_submit_does() -> None:
@@ -337,26 +350,40 @@ def test_every_object_in_a_group_request_refuses_unknown_members(operation: str)
     ]
     unclosed = [node for node in objects if node.get("additionalProperties") is not False]
     assert objects and unclosed == []
+
+
+def test_the_bracket_take_profit_level_model_refuses_unknown_members() -> None:
+    """The one open object the walk found on main: its generated model now refuses extras."""
     assert rest.TakeProfitLevel.model_config.get("extra") == "forbid"
 
 
-def test_a_group_amend_never_clears_or_widens_a_stop() -> None:
+def test_a_group_amend_never_clears_or_loosens_a_stop() -> None:
     """SR-E28-33, PF-T20, F-29, AC-32: an amend goes through admission again, and a refusal is
     the whole request's (Q4); `amendOrder`'s refusal of a cleared stop is the parity anchor."""
-    amend = _OPS["amendTradeGroup"]
-    text = _words(amend["description"])
+    text = _words(_OPS["amendTradeGroup"]["description"])
     for phrase in (
         "**An amend keeps the admission rules** (SR-E28-33; E28 threat model PF-T20, F-29)",
         "A refusal is the whole request's, as on `createTradeGroup`: nothing is amended, "
         "`errors[]` names every offending leg",
+        "on a leg whose order is an entry (classified by its effect, never by its `intent`: "
+        "SR-E29-01)",
         "is refused as `amendOrder` refuses a cleared stop: `400 validation_failed` / "
         "`native_stop_required` (C-2.6)",
-        "can move but is never removed",
-        "A group's stops move only toward entry or past it",
+        "An entry leg's stop-loss, attached or under `tpsl_mode: Partial` a separate order, can "
+        "move but is never removed",
+        "A stop moved to loosen is refused with `403 risk_limit_breached`: compared with the stop "
+        "it replaces, a long leg's stop may only rise and a short leg's only fall",
         "above what its bound profile allows is refused with `403 risk_limit_breached`, never "
         "clamped (C-12.5, D6)",
+        "A reduction or a tightening is never refused by these checks",
+        "When one request holds both a `400` and a `403` offender, the `400` answers",
     ):
         assert phrase in text, phrase
+
+
+def test_a_group_amend_declares_its_refusals_and_keeps_its_bounds() -> None:
+    """The statuses the text names, and the body's shape: a reducing leg may clear its stop."""
+    amend = _OPS["amendTradeGroup"]
     assert amend["responses"]["400"] == _ref("responses", "BadRequest")
     assert amend["responses"]["403"] == _ref("responses", "Forbidden")
     anchor = _words(_OPS["amendOrder"]["description"])
@@ -375,12 +402,20 @@ def test_a_group_cancel_keeps_each_open_legs_stop() -> None:
     for phrase in (
         "its stop-loss, attached or under `tpsl_mode: Partial` a separate order, is never "
         "cancelled (C-2.6; SR-E28-33, E28 threat model PF-T20)",
-        "as `cancelAllOrders` keeps reduce-only exits by default",
+        "and its take-profits stay as well, as `cancelAllOrders` keeps reduce-only exits by "
+        "default",
         "in the order of 24-internal-schemas.md section 9.5.1",
         "its stop-loss goes only once the leg is verified flat",
         "E34-S03's unwind never cancels the stop before the leg is flat (section 9.5.1)",
+        "names each stop kept, or gone with its flat position",
     ):
         assert phrase in text, phrase
+
+
+def test_a_group_cancel_bounds_its_legs_and_unwinds_in_section_9_5_1s_order() -> None:
+    """The body's shape and the 24 unwind order the text cites: no step cancels the stop."""
+    cancel = _OPS["cancelTradeGroup"]
+    assert cancel["responses"]["422"] == _ref("responses", "UnprocessableEntity")
     body = cancel["requestBody"]["content"]["application/json"]["schema"]["properties"]
     assert (body["legs"]["maxItems"], body["flatten_filled"]["default"]) == (20, False)
     assert _SCHEMAS["CancelAllRequest"]["properties"]["exclude_reduce_only"]["default"] is True
@@ -413,7 +448,12 @@ def test_adr_0008_records_p1b() -> None:
         "is refused whole with `risk_limit_breached`, never clamped and never a partial group",
         "2. **A rule origin is internal.**",
         "3. **Rule 2 holds after admission.**",
-        "unless it flattens the leg first, and that unwind removes the stop only once the leg is",
+        "unless it flattens the leg first; that unwind removes the stop only once the leg is flat",
+        "and keeps its take-profits too, as `cancelAllOrders` keeps reduce-only exits by default",
+        "Amend and cancel name at most 20 legs, as a group holds",
+        "a reduction or a tightening is never refused",
+        "still rejects only its leg",
+        "issuecomment-6335477829",
         "This breaks the `/v1` contract (C-6.3) before any route serves it",
     ):
         assert decision in amendment, decision

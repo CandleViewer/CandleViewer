@@ -5028,17 +5028,22 @@ export interface paths {
      *     overrides.
      *
      *     **Resolution per leg: later narrows** (SR-E28-03, SR-E28-04; E28 threat model F-01).
-     *     The leg's account's bound profile is the ceiling (E28 threat model D7): request-level
+     *     The leg's account's bound profile, its active profile (`active_profile_id`), is the
+     *     ceiling (E28 threat model D7): request-level
      *     `defaults` and the leg's `overrides`, an alternate `overrides.profile_id` included, only
      *     narrow it, field by field, judged on the resulting leg after the sizer and its clamps
      *     run again: quantity, notional, leverage, margin and risk at the stop may not rise, and
      *     the stop may not move further from entry. A request whose submitted values would widen
      *     any leg is refused whole, never clamped and never a partial group (C-12.5, D6):
      *     `403 risk_limit_breached` with one `errors[]` entry per offending leg, audited, before
-     *     any leg is sent, whatever `atomicity` says; it is never a per-leg failure. The sizer's
-     *     own policy clamp is no refusal; `sizing_explanation` names it. An
-     *     `overrides.profile_id` that is not one of the leg's account's own profiles refuses the
-     *     whole request with `404 not_found`, decided after the account-scope check and before
+     *     any leg is sent, whatever `atomicity` says; it is never a per-leg failure. An
+     *     account-state cap the request does not move (the daily loss, open positions, available
+     *     margin) still rejects that leg alone when it is sent, a per-leg `risk_limit_breached`
+     *     under `atomicity`, as the `202` example shows: only submitted values that widen the
+     *     bound profile refuse the whole request. The sizer's own policy clamp is no refusal;
+     *     `sizing_explanation` names it. An `overrides.profile_id` may name any of the leg's
+     *     account's own profiles, the bound one included; any other refuses the whole request
+     *     with `404 not_found`, decided at validation, after the account-scope check and before
      *     any leg is sized, with one title and `detail` shape whether that profile is missing,
      *     deleted or another account's, so the answer never tells whether it exists. The server
      *     returns the fully resolved parameters per leg in the response so the UI can show
@@ -5141,14 +5146,17 @@ export interface paths {
      *     * `stop_loss: null`, at the top level or in `legs`, on a leg whose order is an entry
      *       (classified by its effect, never by its `intent`: SR-E29-01) is refused as
      *       `amendOrder` refuses a cleared stop: `400 validation_failed` / `native_stop_required`
-     *       (C-2.6). A leg's stop-loss, attached or under `tpsl_mode: Partial` a separate order,
-     *       can move but is never removed.
-     *     * A stop moved further from entry than the stop it replaces is refused with
-     *       `403 risk_limit_breached`; entry is the leg's average entry price, or for an unfilled
-     *       entry its order price. A group's stops move only toward entry or past it.
+     *       (C-2.6). An entry leg's stop-loss, attached or under `tpsl_mode: Partial` a separate
+     *       order, can move but is never removed.
+     *     * A stop moved to loosen is refused with `403 risk_limit_breached`: compared with the
+     *       stop it replaces, a long leg's stop may only rise and a short leg's only fall, before
+     *       entry and past it (a ratchet).
      *     * A `qty` or other value that would raise a leg's quantity, notional, margin or risk at
      *       the stop above what its bound profile allows is refused with
      *       `403 risk_limit_breached`, never clamped (C-12.5, D6).
+     *     * A reduction or a tightening is never refused by these checks: a smaller `qty`, or a
+     *       stop moved toward the market, passes (C-2.6; 24-internal-schemas.md section 8.10).
+     *       When one request holds both a `400` and a `403` offender, the `400` answers.
      */
     post: operations["amendTradeGroup"];
     delete?: never;
@@ -5180,7 +5188,7 @@ export interface paths {
      *     working orders are cancelled, the position is closed reduce-only at market, and its
      *     stop-loss goes only once the leg is verified flat. E34-S03's unwind never cancels the
      *     stop before the leg is flat (section 9.5.1). Audited as one action with a result per
-     *     leg that names each stop kept, or removed once its leg was flat.
+     *     leg that names each stop kept, or gone with its flat position.
      */
     post: operations["cancelTradeGroup"];
     delete?: never;
@@ -5200,7 +5208,7 @@ export interface paths {
     put?: never;
     /**
      * Dry-run a fan-out - resolved per-account sizing, risk and rejections
-     * @description Runs the full fan-out pipeline (24-internal-schemas.md section 9.3 sizing, 9.4 fan-out) **without submitting anything**, returning exactly what each leg would send. Legs that would be rejected (cap breach, symbol not allowed, insufficient margin, rate budget exhausted) are returned with their reason so the ticket can show them before the user commits. Never mutates state and is therefore safe to call on every keystroke; it is rate-limited rather than idempotency-keyed. It takes `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token. It takes `createTradeGroup`'s body under the same rules and answers as that submit would. A `legs[].exchange_account_id` outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied` (SR-E28-21, SR-E29-13), so the answer never tells whether the account exists. A request whose submitted values would widen a leg past its bound profile is refused whole with `403 risk_limit_breached` and one `errors[]` entry per offending leg (C-12.5, E28 threat model D6), never a leg returned with `would_submit: false`. An `overrides.profile_id` that is not one of its leg's account's profiles is `404 not_found`, after the account-scope check, as on the submit.
+     * @description Runs the full fan-out pipeline (24-internal-schemas.md section 9.3 sizing, 9.4 fan-out) **without submitting anything**, returning exactly what each leg would send. Legs that would be rejected (cap breach, symbol not allowed, insufficient margin, rate budget exhausted) are returned with their reason so the ticket can show them before the user commits. Never mutates state and is therefore safe to call on every keystroke; it is rate-limited rather than idempotency-keyed. It takes `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token. It takes `createTradeGroup`'s body under the same rules and answers as that submit would. A `legs[].exchange_account_id` outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied` (SR-E28-21, SR-E29-13), so the answer never tells whether the account exists. A request whose submitted values would widen a leg past its bound profile is refused whole with `403 risk_limit_breached` and one `errors[]` entry per offending leg (C-12.5, E28 threat model D6), never a leg returned with `would_submit: false`; an account-state cap the request does not move still marks that leg alone (`would_submit: false`, `rejection.code: cap_breached`). An `overrides.profile_id` that is not one of its leg's account's own profiles is `404 not_found`, decided at validation, after the account-scope check and before any leg is sized, as on the submit; a body the submit refuses whole with `400` (`intent_mismatch`, `native_stop_required`) answers `400` here too.
      */
     post: operations["previewTradeGroup"];
     delete?: never;
@@ -8606,7 +8614,7 @@ export interface components {
       price?: components["schemas"]["Decimal"];
       /**
        * Format: uuid
-       * @description An alternate profile of this order's account; it only narrows the account's bound profile (later narrows, as on `createTradeGroup`; SR-E28-03). Any other id, another account's, a deleted one or one that does not exist, is `404 not_found` after the account-scope check, the same answer for each.
+       * @description An alternate profile of this order's account; it only narrows the account's bound profile, its active profile (later narrows, as on `createTradeGroup`; SR-E28-03). Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each.
        */
       profile_id?: string | null;
       /** @default false */
@@ -10264,7 +10272,7 @@ export interface components {
         price?: components["schemas"]["Decimal"];
         /**
          * Format: uuid
-         * @description An alternate profile of this leg's account; it only narrows the bound profile. Any other id, a profile of another account (granted or not), a deleted one or one that does not exist, refuses the whole request with `404 not_found` after the account-scope check, the same answer for each (SR-E28-03).
+         * @description An alternate profile of this leg's account; it only narrows the bound profile. Any other id, a profile of another account (granted or not), a deleted one or one that does not exist, refuses the whole request with `404 not_found`, decided at validation, after the account-scope check and before any leg is sized, the same answer for each (SR-E28-03).
          */
         profile_id?: string;
         sizing?: components["schemas"]["Sizing"];
@@ -19504,6 +19512,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -19538,6 +19547,7 @@ export interface operations {
           "application/json": components["schemas"]["TradeGroupPreview"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
