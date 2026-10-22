@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 import time
 from collections.abc import Sequence
@@ -38,7 +37,7 @@ def _replace(path: Path, text: str) -> None:
     """Write a sibling, then rename it over `path`: a stopped run never leaves half a report."""
     tmp = path.with_name(f"{path.name}.tmp")
     tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    tmp.replace(path)
 
 
 def _lane_cfg(sc: Scenario, **over: Any) -> LaneConfig:
@@ -225,12 +224,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     md = a.out_dir / f"e08-{a.profile}-{stamp}.md"
     runs: list[tuple[Scenario, budgets.Verdict, gate.GateResult]] = []
 
-    def write(pending: Sequence[str]) -> None:
+    def rewrite_reports(pending: Sequence[str]) -> None:
         a.out_dir.mkdir(parents=True, exist_ok=True)
         partial = ""  # until the last scenario, both markdown reports open with this banner
         if pending:
-            done = f"{len(runs)} of {len(runs) + len(pending)} scenarios have finished"
-            partial = f"> **Partial:** {done}; not run yet: {', '.join(pending)}.\n\n"
+            count = f"{len(runs)} of {len(runs) + len(pending)} scenarios have finished"
+            partial = f"> **Partial:** {count}; not run yet: {', '.join(pending)}.\n\n"
         rendered = report.render(runs, profile, started, datetime.now(UTC), a.grafana_url)
         _replace(md, partial + rendered)
         verdicts = [
@@ -269,7 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"::error::{name}: {f}")
         if a.record_baseline:
             print(f"  baseline -> {gate.record(v, profile, sc.scaling, a.profile)}")
-        write(names[i + 1 :])
+        rewrite_reports(names[i + 1 :])
     print(f"report: {md}")
     failed = any(not v.passed for _, v, _ in runs) or any(g.failures for _, _, g in runs)
     return 1 if failed else 0

@@ -11,8 +11,10 @@ name: perf-ingestion-nightly
 # steps below: 28 s each on the laptop that recorded its baseline, where soak_steady's takes 7 s
 # (the whole job took 75 s on 19 Oct, before soak_bars). Its full run is 24 h of scenario time
 # on the virtual clock.
-# #399 R4: a full dispatch can name one `scenario` (default all), so the 24 h soak_bars runs alone
-# in about 8-10 h instead of the whole ~35 h pack. Python output is unbuffered and the runner
+# #399 R4: a full dispatch can name one `scenario` (default all), so the 24 h soak_bars runs alone,
+# in about 8-10 h on the bench runner (inferred from its 2.7 h on the laptop), instead of the whole
+# ~35 h pack; a name that is malformed or has no scenario file fails the check step, never the
+# pack, so it files no pack issue. Python output is unbuffered and the runner
 # rewrites its reports after every scenario, so a cancelled or timed-out pack keeps its log and the
 # reports of the scenarios that finished (the upload below runs on a cancel too).
 # A red signal comments on its open issue, or opens one (_nightly-issue.yml, #1849). No
@@ -117,6 +119,7 @@ jobs:
         run: |
           export LC_ALL=C # [a-z] is ASCII only in the C locale
           [[ "$SCENARIO" =~ ^[a-z][a-z0-9_]{0,63}$ ]] || { echo "scenario must be all or a scenario name" >&2; exit 2; }
+          [[ "$SCENARIO" == all || -f "services/api/bench/ingestion/scenarios/$SCENARIO.json" ]] || { echo "no scenario named $SCENARIO" >&2; exit 2; }
           echo "scenario: $SCENARIO"
       - name: E08-Q04 perf pack, full profile, the scenario checked above
         id: pack
