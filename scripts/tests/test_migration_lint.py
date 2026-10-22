@@ -2627,6 +2627,21 @@ def test_a_name_or_string_spelled_with_unicode_escapes_is_refused(
         "CREATE FUNCTION f() RETURNS void LANGUAGE plpython3u"
         " AS $$ plpy.execute('TRUNCATE ' + 'audit_log') $$",
         "DO $$ BEGIN EXECUTE E'\\x44ELETE FROM audit_log'; END $$",
+        "DO $$ BEGIN EXECUTE E'DELETE FROM audit\\137log'; END $$",
+        "DO $$ BEGIN EXECUTE E'DELETE\\tFROM audit_log'; END $$",
+        "DO $$ BEGIN EXECUTE E'\\u0044ELETE FROM audit_log'; END $$",
+        "DO $$ BEGIN EXECUTE E'\\U00000044ELETE FROM audit_log'; END $$",
+        "DO $$ BEGIN EXECUTE E'DELETE FROM audit_log WHERE note = ''x'''; END $$",
+        "DO $$ BEGIN EXECUTE E'DELETE FROM audit_log WHERE note = \\'x\\''; END $$",
+        "DO LANGUAGE plperl 'spi_exec_query(\"DELETE FROM audit_log\")'",
+        "DO $$ BEGIN PERFORM dblink_exec('DELETE FROM audit_log'); END $$",
+        'CREATE FUNCTION f() RETURNS void LANGUAGE "plperl" AS $$ return audit_log; $$',
+        "CREATE FUNCTION f() RETURNS void LANGUAGE 'plperl' AS $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE E'plperl' AS $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE /* c */ plperl"
+        " AS $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void AS $$ return audit_log; $$ LANGUAGE",
+        "DO LANGUAGE plperl $$ return audit_log; $$",
     ],
 )
 def test_sql_a_literal_reader_would_miss_is_read(tmp_path: Path, sql: str) -> None:
@@ -2674,6 +2689,14 @@ def test_sql_a_literal_reader_would_miss_is_read(tmp_path: Path, sql: str) -> No
             "DO $$ BEGIN EXECUTE 'DROP FUNCTION ' || 'audit_chain()'; END $$",
             "a table it names only at run time",
         ),
+        (
+            "DO $$ BEGIN PERFORM dblink_exec('UPDATE' || ' audit_log SET x = 1'); END $$",
+            "a table it names only at run time",
+        ),
+        (
+            "DO $$ BEGIN PERFORM dblink_exec('DELETE FROM'); END $$",
+            "a table it names only at run time",
+        ),
     ],
 )
 def test_dynamic_sql_whose_target_is_built_is_flagged(
@@ -2683,6 +2706,166 @@ def test_dynamic_sql_whose_target_is_built_is_flagged(
     statement names, or refused when it names none (#4032)."""
     (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
     assert f"targets {target}" in message
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "format('UPDATE %I SET x = 1', t)",
+        "format('TRUNCATE %I', t)",
+        "format('TRUNCATE ONLY %I', t)",
+        "format('DELETE FROM %I', t)",
+        "format('DROP TABLE IF EXISTS %I', t)",
+        "format('ALTER TABLE ONLY %I ADD COLUMN x int', t)",
+        "format('MERGE INTO %I USING s ON true WHEN MATCHED THEN DELETE', t)",
+        "format('DROP FUNCTION %I()', t)",
+        "format('CREATE RULE r AS ON INSERT TO %I DO INSTEAD NOTHING', t)",
+        "format('GRANT DELETE ON %I TO cv_app', t)",
+        "format('CREATE TRIGGER g BEFORE DELETE ON %I FOR EACH ROW"
+        " EXECUTE FUNCTION f()', t)",
+        "format('DROP TRIGGER g ON %I', t)",
+        "format('UPDATE public.%I SET x = 1', t)",
+        "format('DELETE FROM db.public.%I', t)",
+        "format('UPDATE' || ' %I SET x = 1', t)",
+        "format('UPDATE ' || '%I SET x = 1', t)",
+        "format(v_template, t)",
+    ],
+)
+def test_each_target_slot_left_to_run_time_is_refused(tmp_path: Path, sql: str) -> None:
+    """Whatever the verb, its target, a grant's or a trigger's `ON` and a rule's `TO`
+    hold a name the statement gives, or the statement is refused; so is one whose
+    template is not one literal (#4032)."""
+    source = _raw_sql_revision(f"DO $$ BEGIN EXECUTE {sql}; END $$")
+    (message,) = _audit_hits(tmp_path, source)
+    assert "a table it names only at run time" in message
+
+
+_VALUE = "from alembic import op\nimport sqlalchemy as sa\n\n\ndef upgrade() -> None:\n    {}\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            _raw_sql_revision(
+                "CREATE FUNCTION trg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                " IF TG_OP = 'UPDATE' THEN RETURN NEW; END IF; RETURN OLD; END $$"
+            ),
+            id="a-trigger-op",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "CREATE FUNCTION trg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                " IF TG_OP IN ('UPDATE', 'DELETE') THEN RETURN NULL; END IF;"
+                " RETURN NEW; END $$"
+            ),
+            id="a-list-of-trigger-ops",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "CREATE TABLE ev (action text CHECK (action IN ('insert', 'update')))"
+            ),
+            id="a-check",
+        ),
+        pytest.param(
+            _raw_sql_revision("CREATE TYPE act AS ENUM ('create', 'update', 'delete')"),
+            id="an-enum",
+        ),
+        pytest.param(
+            _raw_sql_revision("INSERT INTO verbs (v) VALUES ('update')"), id="a-value"
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "ALTER TABLE ev ALTER COLUMN action SET DEFAULT 'update'"
+            ),
+            id="a-default",
+        ),
+        pytest.param(
+            _raw_sql_revision("SELECT 1 FROM ev WHERE kind = 'truncate'"), id="a-where"
+        ),
+        pytest.param(
+            _VALUE.format(
+                "op.create_table('ev', sa.Column('kind',"
+                " sa.Enum('create', 'update', name='k')))"
+            ),
+            id="a-python-enum",
+        ),
+        pytest.param(
+            _VALUE.format(
+                "op.add_column('ev', sa.Column('k', sa.Text(), server_default='update'))"
+            ),
+            id="a-server-default",
+        ),
+        pytest.param(
+            _VALUE.format("op.add_column('ev', sa.Column('update', sa.Text()))"),
+            id="a-column",
+        ),
+        pytest.param(_VALUE.format("kinds = {'update': 1}"), id="a-dict-key"),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cv_app')"
+                " THEN GRANT EXECUTE ON FUNCTION f() TO cv_app; END IF; END $$"
+            ),
+            id="a-guarded-grant",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN EXECUTE 'REVOKE EXECUTE ON FUNCTION f() FROM PUBLIC'; END $$"
+            ),
+            id="a-revoke-run-by-execute",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN GRANT USAGE, EXECUTE ON FUNCTION f() TO cv_app; END $$"
+            ),
+            id="a-privilege-list",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION f()"
+                " FROM cv_app; END $$"
+            ),
+            id="a-privilege-before-on",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN GRANT EXECUTE, USAGE ON FUNCTION f() TO cv_app; END $$"
+            ),
+            id="a-privilege-after-grant",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN GRANT USAGE, EXECUTE, SELECT ON FUNCTION f() TO cv_app;"
+                " END $$"
+            ),
+            id="a-privilege-in-a-list",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "DO $$ BEGIN REVOKE EXECUTE, USAGE ON FUNCTION f() FROM PUBLIC; END $$"
+            ),
+            id="a-privilege-after-revoke",
+        ),
+        pytest.param(
+            _raw_sql_revision(
+                "CREATE FUNCTION f(a text) RETURNS text LANGUAGE sql"
+                " AS $$ SELECT CASE WHEN true THEN $1 ELSE $1 END $$"
+            ),
+            id="a-parameter-after-then",
+        ),
+        pytest.param(
+            _raw_sql_revision("SELECT u.language FROM audit_log u"),
+            id="a-column-named-language",
+        ),
+    ],
+)
+def test_a_value_or_a_privilege_that_reads_as_a_verb_is_not_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    """A verb on its own is a value, `EXECUTE` after `GRANT` or before `ON` is a
+    privilege, `$1` is a parameter, and a body's language is read only where a
+    body is declared (#4032)."""
+    assert _audit_hits(tmp_path, source) == []
 
 
 _BUILT = "from alembic import op\n\n\ndef upgrade() -> None:\n    op.execute({})\n"
@@ -2729,6 +2912,40 @@ def test_a_string_built_in_python_is_read_whole(
         _raw_sql_revision("PREPARE q AS SELECT 1; EXECUTE q"),
         _raw_sql_revision(
             "CREATE FUNCTION f() RETURNS text LANGUAGE sql AS $$ SELECT 'x' $$"
+        ),
+        _raw_sql_revision(
+            "DO $$ BEGIN EXECUTE format('UPDATE public.orders SET x = %L', v); END $$"
+        ),
+        _raw_sql_revision(
+            "DO $$ BEGIN EXECUTE format('DELETE FROM db.public.orders WHERE x = %L', v);"
+            " END $$"
+        ),
+        _raw_sql_revision("DO $$ BEGIN EXECUTE format('TRUNCATE ONLY orders'); END $$"),
+        _raw_sql_revision(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'g')"
+            " THEN CREATE TRIGGER g BEFORE INSERT ON orders FOR EACH ROW"
+            " EXECUTE FUNCTION f(); END IF; END $$"
+        ),
+        _raw_sql_revision(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'g')"
+            " THEN CREATE TRIGGER g BEFORE INSERT ON orders FOR EACH ROW"
+            " EXECUTE PROCEDURE f(); END IF; END $$"
+        ),
+        _raw_sql_revision(
+            "DO $$ BEGIN EXECUTE 'UPDATE orders SET note = $1' USING 'x'; END $$"
+        ),
+        _raw_sql_revision("DO $$ BEGIN EXECUTE 'SELECT 1'; END $$"),
+        _raw_sql_revision(
+            "DO $$ DECLARE y text; BEGIN EXECUTE format('SELECT %L', (x)) INTO y;"
+            " END $$"
+        ),
+        _raw_sql_revision(
+            "CREATE FUNCTION f() RETURNS bigint LANGUAGE 'plpgsql'"
+            " AS $$ BEGIN RETURN (SELECT count(*) FROM audit_log); END $$"
+        ),
+        _raw_sql_revision(
+            "CREATE MATERIALIZED VIEW mv AS"
+            " WITH x AS (SELECT * FROM audit_log FOR UPDATE) SELECT * FROM x"
         ),
     ],
 )
@@ -2807,6 +3024,10 @@ _OPS = "from alembic import op\n\n\ndef upgrade() -> None:\n    {}\n"
             "def upgrade() -> None:\n    sa.MetaData().drop_all(op.get_bind())\n",
             "every table a MetaData holds",
         ),
+        (
+            _OPS.format('op.add_column("audit_log", sa.Column("x", sa.Text()))'),
+            "append-only table 'audit_log'",
+        ),
     ],
 )
 def test_an_alembic_or_core_operation_on_an_audit_table_is_flagged(
@@ -2823,7 +3044,7 @@ def test_an_alembic_or_core_operation_on_an_audit_table_is_flagged(
     [
         _OPS.format('op.drop_column("orders", "legacy")  # cv:contract-phase: R2'),
         _OPS.format('op.drop_index("ix_orders_note")  # cv:contract-phase: R2'),
-        _OPS.format('op.add_column("audit_log", sa.Column("x", sa.Text()))'),
+        _OPS.format('op.add_column("orders", sa.Column("x", sa.Text()))'),
     ],
 )
 def test_an_alembic_operation_on_another_table_is_not_flagged(
@@ -2859,6 +3080,30 @@ def test_alembic_op_drop_on_an_audit_table_is_flagged_once(tmp_path: Path) -> No
         ),
         (
             "CREATE VIEW audit_v WITH (security_invoker) AS SELECT * FROM audit_log",
+            False,
+        ),
+        ("CREATE TEMPORARY VIEW audit_v AS SELECT * FROM audit_log", True),
+        ("CREATE RECURSIVE VIEW audit_v (id) AS SELECT id FROM audit_log", True),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = off)"
+            " AS SELECT * FROM audit_log",
+            True,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = 0) AS SELECT * FROM audit_log",
+            True,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = on) AS SELECT * FROM audit_log",
+            False,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = 1) AS SELECT * FROM audit_log",
+            False,
+        ),
+        (
+            "CREATE VIEW audit_v WITH (security_invoker = yes)"
+            " AS SELECT * FROM audit_log",
             False,
         ),
         ("CREATE VIEW open_orders AS SELECT * FROM orders", False),
@@ -2902,7 +3147,7 @@ def test_a_chunk_whose_every_clause_counts_is_read_in_linear_memory(
     assert peak < 16 * 2**20
 
 
-def test_a_chunk_is_tokenised_once_however_many_clauses_it_holds(
+def test_a_chunks_names_are_read_once_however_many_clauses_it_holds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Its names are read once, not once per clause (#4032)."""
@@ -2925,17 +3170,34 @@ def test_a_chunk_is_tokenised_once_however_many_clauses_it_holds(
         "-- note\rDELETE FROM audit_log",
         "-- note\rDROP TABLE audit_log",
         "DO $$ BEGIN -- note\rDELETE FROM audit_log; END $$",
-        "CREATE TEMP TABLE kept AS"
-        " WITH gone AS (DELETE FROM audit_log RETURNING *) SELECT * FROM gone",
-        "DO $$ BEGIN CREATE TABLE kept AS"
-        " WITH gone AS (DELETE FROM audit_log RETURNING *) SELECT * FROM gone; END $$",
     ],
 )
-def test_a_mutation_after_a_returned_comment_or_in_a_created_table_is_flagged(
+def test_a_mutation_after_a_comment_ended_by_a_return_is_flagged(
     tmp_path: Path, sql: str
 ) -> None:
-    """A line comment ends at a return as at a line feed, and a table created `AS` a
-    query carries that query's writes (#4032)."""
+    """A line comment ends at a return as at a line feed (#4032)."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "append-only table 'audit_log'" in message
+
+
+_GONE = " AS WITH gone AS (DELETE FROM audit_log RETURNING *) SELECT * FROM gone"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE TEMP TABLE kept" + _GONE,
+        "CREATE TEMPORARY TABLE kept" + _GONE,
+        "CREATE UNLOGGED TABLE kept" + _GONE,
+        "CREATE GLOBAL TEMPORARY TABLE kept" + _GONE,
+        "CREATE LOCAL TEMP TABLE kept" + _GONE,
+        "DO $$ BEGIN CREATE TABLE kept" + _GONE + "; END $$",
+    ],
+)
+def test_a_table_created_as_a_writing_query_is_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    """A table created `AS` a query carries that query's writes (#4032)."""
     (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
     assert "append-only table 'audit_log'" in message
 

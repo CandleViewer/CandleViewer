@@ -476,13 +476,17 @@ def _sql_split(sql: str) -> list[str]:
 # right after these words: `EXECUTE '...'`, `DO '...'` and `format('...', ...)` run
 # it whatever it opens with (a `;`, a comment, a label).
 _RUNS_ITS_LITERAL = frozenset({"EXECUTE", "DO", "FORMAT"})
+# A literal that `||` continues is a piece of a bigger string (`'UPDATE' || ' t'`).
+_CONTINUED_RE = re.compile(r"(?:\s|--[^\n\r]*|/\*.*?\*/)*\|\|", re.DOTALL)
 
 
 def _nested_sql(statement: str) -> list[str]:
     """The SQL inside `statement`: each `$$` body; each `'...'` literal right after
     `EXECUTE`, `DO` (`DO LANGUAGE <name>` too) or `format(`, and each other that opens
     with one of `SQL_COMMANDS`; and each `"..."` token whose text opens with one, as a
-    body in another language writes its SQL (`spi_exec_query("DELETE ...")`)."""
+    body in another language writes its SQL (`spi_exec_query("DELETE ...")`). A
+    literal `||` continues ends in a space: what follows its last word may be that
+    word's target."""
     nested: list[str] = []
     recent: list[str] = []  # the last three words, upper-cased
     for token in _SQL_TOKEN_RE.finditer(statement):
@@ -499,7 +503,8 @@ def _nested_sql(statement: str) -> list[str]:
                 or recent[-3:-1] == ["DO", "LANGUAGE"]
                 or _SQL_COMMAND_RE.match(text)
             ):
-                nested.append(text)
+                continued = _CONTINUED_RE.match(statement, token.end()) is not None
+                nested.append(text + " " if continued else text)
         elif token["quoted"] is not None:
             text = token["quoted"].replace('""', '"')
             if _SQL_COMMAND_RE.match(text):
@@ -536,9 +541,12 @@ def _foreign_language(statement: str) -> bool:
     tokens = [
         t for t in _SQL_TOKEN_RE.finditer(statement) if t[0][:2] not in {"--", "/*"}
     ]
-    for this, after in itertools.pairwise(tokens):
+    for i, this in enumerate(tokens):
         if (this["word"] or "").upper() != "LANGUAGE":
             continue
+        if i + 1 == len(tokens):
+            return True  # no language named: the code builds it at run time
+        after = tokens[i + 1]
         literal = after["string"] or after["estring"]
         if after["word"] is not None:
             name = after["word"]
@@ -772,6 +780,9 @@ class _Chunk:
         self.words = words = [token.upper() for token in self.tokens]
         size = len(words)
         self.names = _head_identifiers(statement)
+        # A statement that ends in whitespace may be a piece of a bigger one, whose
+        # last verb's target follows it (`'UPDATE ' || t`).
+        self.open_end = statement[-1:].isspace()
         self.next_on, self.next_to = _next(words, "ON"), _next(words, "TO")
         self.next_grant = _next(words, "GRANT")
         self.set_after = _suffix(size, lambda i: words[i] in _SETS)
@@ -976,6 +987,8 @@ def _open_target(chunk: _Chunk, at: int) -> bool:
     words, tokens, size = chunk.words, chunk.tokens, len(chunk.words)
     for verb in _TARGET_VERBS:
         if words[at : at + len(verb)] == verb:
+            if at + len(verb) == size and len(verb) == 1 and not chunk.open_end:
+                return False  # a verb on its own is a value: `TG_OP = 'UPDATE'`
             return not _named(tokens, at + len(verb))
     if (kind := _routine_kind(words, at)) is not None:
         return not _named(tokens, kind + 1)
@@ -1007,14 +1020,22 @@ def _closing(tokens: list[str]) -> dict[int, int]:
 def _opaque_execute(chunk: _Chunk) -> bool:
     """Whether a body's `EXECUTE` runs SQL the rule cannot read (#4032): anything but
     one `'...'` literal or one `format('...', ...)`, then the statement's end,
-    `USING`, `INTO` or `LOOP`. `EXECUTE FUNCTION` (a trigger's) runs no SQL text."""
+    `USING`, `INTO` or `LOOP`. `EXECUTE FUNCTION` (a trigger's) runs no SQL text, and
+    neither does the privilege a grant or a revoke names (`GRANT EXECUTE ON`,
+    `GRANT USAGE, EXECUTE ON`)."""
     words, size = chunk.words, len(chunk.words)
     closing = _closing(chunk.tokens)
     for i, word in enumerate(words):
-        if word != "EXECUTE" or words[i + 1 : i + 2] in (["FUNCTION"], ["PROCEDURE"]):
+        if (
+            word != "EXECUTE"
+            or words[i + 1 : i + 2] in (["FUNCTION"], ["PROCEDURE"], ["ON"])
+            or words[i - 1 : i] in (["GRANT"], ["REVOKE"], [","])
+        ):
             continue
         after = i + 1  # past a literal: `_code_text` blanks it
         if words[after : after + 2] == ["FORMAT", "("]:
+            if words[after + 2 : after + 3] not in ([","], [")"]):
+                return True  # its template is not one literal
             after = closing.get(after + 1, size) + 1
         if after < size and words[after] not in {"USING", "INTO", "LOOP"}:
             return True
@@ -1070,7 +1091,7 @@ def _audit_mutations(
         if _nested_comment(statement):
             hits.add("comment")
         if nested and executable:
-            verb_passed_in = any(chunk.tokens[at] in {"%", "$"} for at in chunk.starts)
+            verb_passed_in = any(chunk.tokens[at] == "%" for at in chunk.starts)
             open_target |= verb_passed_in or _opaque_execute(chunk)
         for at in chunk.starts:
             if not owner:
@@ -1102,7 +1123,14 @@ def _audit_mutations(
                 )
                 and words[at : at + 2] != ["CREATE", "TRIGGER"]
             ]
-        foreign = executable and _foreign_language(statement)
+        foreign = (
+            executable
+            and (
+                words[:1] == ["DO"]
+                or any(_creates(words, at) in _ROUTINE_KINDS for at in chunk.starts)
+            )
+            and _foreign_language(statement)
+        )
         if mutating or passed_in or open_target or foreign:
             named = _sql_identifiers(statement)
             hits |= named & tables
@@ -1276,6 +1304,7 @@ _TABLE_ARGUMENT = {
     "drop_index": (1, "table_name"),
     "rename_table": (0, "old_table_name"),
     "alter_column": (0, "table_name"),
+    "add_column": (0, "table_name"),
     "batch_alter_table": (0, "table_name"),
 }
 
@@ -1349,7 +1378,8 @@ def _alembic_findings(
     tree: ast.AST, tables: frozenset[str], lines: list[str]
 ) -> dict[int, str]:
     """`{line: target}` of the Alembic operations that reach an audit table: a reshape
-    (`rename_table`, `alter_column`, `batch_alter_table`) naming one, a drop naming one
+    (`rename_table`, `alter_column`, `add_column`, `batch_alter_table`) naming one, as
+    its raw `ALTER TABLE` is, a drop naming one
     that `check_destructive_annotations`' line reader does not report (an alias,
     `getattr`, a wrapped call), an operation whose table argument is not a literal or
     a name bound to one, and one a `getattr` picks at run time (#4032)."""
