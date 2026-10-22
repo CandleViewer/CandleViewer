@@ -25,7 +25,7 @@ from candleviewer.exchange.base.errors import (
     ServiceUnavailableError,
     UnknownStateError,
 )
-from candleviewer.exchange.bybit.mapping import _RET_CODE_MAP, map_ret_code
+from candleviewer.exchange.bybit.mapping import _RET_CODE_MAP, OPEN_CREATE_CODES, map_ret_code
 from tests._corpus import rest
 
 RISK_LIMIT = "risk_limit_tier"
@@ -256,13 +256,21 @@ def test_every_code_maps_to_the_class_and_retry_its_section_8_6_row_names(ret_co
     assert error.exchange_ret_code == ret_code
 
 
+@pytest.mark.parametrize("create", [False, True])
 @pytest.mark.parametrize("ret_code", [10016, 10019])
-def test_the_venues_outage_is_no_rate_limit_on_any_call(ret_code: int) -> None:
-    """#2863: outside a create, 10016 and 10019 are `SERVICE_UNAVAILABLE`, retryable, and never a
-    `RateLimitError` (which drains a token and counts as rate-limited)."""
-    envelope = {**rest("rest/error_10018.json"), "retCode": ret_code, "retMsg": f"code {ret_code}"}
-    for create in (False, True):
-        error = map_ret_code(envelope["retCode"], envelope["retMsg"], create=create)
-        assert type(error) is ServiceUnavailableError and not isinstance(error, RateLimitError)
-        assert (error.code.value, error.retryable) == ("SERVICE_UNAVAILABLE", True)
-        assert (error.exchange_ret_code, error.exchange_ret_msg) == (ret_code, f"code {ret_code}")
+def test_the_venues_outage_is_no_rate_limit_on_any_call(ret_code: int, create: bool) -> None:
+    """#2863: 10016 and 10019 map to `SERVICE_UNAVAILABLE`, retryable, and never a
+    `RateLimitError` (which drains a token and counts as rate-limited). A create that has left
+    never reaches the mapping with them (`OPEN_CREATE_CODES`)."""
+    error = map_ret_code(ret_code, f"code {ret_code}", create=create)
+    assert type(error) is ServiceUnavailableError and not isinstance(error, RateLimitError)
+    assert (error.code.value, error.retryable) == ("SERVICE_UNAVAILABLE", True)
+    assert (error.exchange_ret_code, error.exchange_ret_msg) == (ret_code, f"code {ret_code}")
+
+
+def test_every_outage_code_is_an_open_outcome_for_a_create() -> None:
+    """SR-E29-15 for the new class: the REST client and the batch path read a create's open
+    outcome from `OPEN_CREATE_CODES` before the mapping, so every code the mapping gives the
+    retried `ServiceUnavailableError` must be in it, or a create meeting it would be re-sent."""
+    outage = {code for code, (cls, _) in _RET_CODE_MAP.items() if cls is ServiceUnavailableError}
+    assert outage == set(OPEN_CREATE_CODES) == {10016, 10019}

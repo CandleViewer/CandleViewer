@@ -206,7 +206,7 @@ class DrainRecordingGovernor(RecordingGovernor):
 
 #: The exits the venue's outage can answer, each in its lane's wait (an amend's lane is its
 #: request's; the protective one, `critical`, is the one that matters here, AC-31).
-EXITS = ["cancel_order", "cancel_all", "amend_order", "set_trading_stop"]
+OUTAGE_EXITS = ["cancel_order", "cancel_all", "amend_order", "set_trading_stop"]
 
 
 async def _exit(port: BybitTradingPort, name: str) -> object:
@@ -227,15 +227,15 @@ async def _exit(port: BybitTradingPort, name: str) -> object:
     return await port.set_trading_stop(stop)
 
 
-@pytest.mark.parametrize("name", EXITS)
+@pytest.mark.parametrize("name", OUTAGE_EXITS)
 @pytest.mark.parametrize("code", OPEN_CODES)
 async def test_the_same_code_on_an_exit_is_retried_then_raised_never_an_ack(
     code: int, name: str
 ) -> None:
     """#2863: outside a create the code is the venue's outage, `SERVICE_UNAVAILABLE` (24 §8.6):
-    sent 3 times with back-off, never drained from the rate budget nor counted as rate-limited,
-    then raised bare. Whether the venue applied the exit is open, so B1 takes the order to
-    `unknown` (its `CommandPort` raises `SERVICE_UNAVAILABLE`), never records a rejection."""
+    sent up to 3 times with back-off (all 3 here, as the sleeps are no-ops), never drained from
+    the rate budget nor counted as rate-limited, then raised bare. Whether the venue applied the
+    exit is open, so it is never answered as a rejection (24 §14.4)."""
     path = trading.ENDPOINTS[name].path
     counters = [
         bybit_rate_limited_total.labels(code=str(code)),

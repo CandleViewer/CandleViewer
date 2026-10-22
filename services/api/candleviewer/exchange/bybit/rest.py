@@ -65,8 +65,8 @@ _REDACTED = "**redacted**"
 #: `10018` is the IP-level limit: hold every caller >=10 min (24-internal-schemas §8.6).
 _IP_RATE_LIMIT_CODE = 10018
 _IP_HOLD_S = 600.0
-#: 24 §8.6 rows 10016 and 10019 (#2863): outside a create, retried with back-off, and after 3
-#: attempts the venue's outage is the call's answer (B1 takes the order to `unknown`).
+#: 24 §8.6 row 10016, and 10019 by ruling 1 on #2877 (#2863): outside a create, retried with
+#: back-off within the lane's wait, and after 3 attempts the venue's outage is the call's answer.
 _SERVICE_UNAVAILABLE_ATTEMPTS = 3
 #: Cap on any venue-advertised wait (header is untrusted input).
 _MAX_RESET_WAIT_S = 900.0

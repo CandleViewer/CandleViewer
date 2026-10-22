@@ -247,9 +247,8 @@ def _leaving(failure: Exception) -> ExchangeError:
 def _venue_answer(error: ExchangeError, *, create: bool) -> ExchangeError | None:
     """`error` when it is a venue answer with a return code that settles the call, an
     `OrderAck(ok=False)`; `None` for what raises instead: a create's duplicate, a create's open
-    outcome, the venue's outage (10016 or 10019: whether it applied the call is open, so B1
-    takes the order to `unknown`, 24 §8.6, #2863), and every failure without a venue code (24
-    §14.4, ruling 11)."""
+    outcome, the venue's outage (10016 or 10019: whether it applied the call is open, 24 §8.6
+    and §14.4, #2863), and every failure without a venue code (ruling 11)."""
     if error.exchange_ret_code is None:
         return None
     if isinstance(error, AmbiguousResultError | DuplicateClientIdError | ServiceUnavailableError):
