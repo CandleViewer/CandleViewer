@@ -10,6 +10,8 @@ asyncpg dialect builds them; the session is a fake. No DB, no network.
 
 from __future__ import annotations
 
+import asyncio
+import pickle
 import traceback
 from collections.abc import Callable
 from typing import Any, cast
@@ -21,6 +23,8 @@ from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi as _
 
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.storage.errors import (
+    BackupCheckViolation,
+    BackupWriteOnceViolation,
     StorageQueryFailed,
     StorageTierUnavailable,
     WriteAheadTimeout,
@@ -31,6 +35,8 @@ from candleviewer.storage.repositories import backups_sqlalchemy as backups
 from candleviewer.storage.repositories import drawings_sqlalchemy as drawings
 from candleviewer.storage.repositories import orders_sqlalchemy as orders
 from candleviewer.storage.repositories import statechart_sqlalchemy as statechart
+from candleviewer.storage.repositories import trade_groups_sqlalchemy as trade_groups
+from candleviewer.storage.repositories import workspaces_codec
 from candleviewer.storage.repositories.account_access import AccessBusyError
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyUnitOfWork,
@@ -174,6 +180,61 @@ async def test_a_rollback_that_fails_escapes_stripped_and_the_session_still_clos
     assert _P1 not in _rendered(raised.value)
 
 
+@pytest.mark.parametrize("ended", ["commit", "rollback"])
+async def test_an_error_after_the_transaction_ended_rolls_back_nothing_more(ended: str) -> None:
+    error = _unique()
+    session = _Session()
+    with pytest.raises(sa_exc.IntegrityError):
+        async with _uow(session) as uow:
+            await getattr(uow, ended)()
+            raise error
+    assert session.calls == [ended, "close"] and _P1 not in _rendered(error)
+
+
+async def test_a_close_that_fails_after_a_clean_block_escapes_stripped() -> None:
+    lost = _wrapped(
+        _driver(asyncpg.exceptions.ConnectionFailureError, f"lost: {_P1}"),
+        _Dbapi.Error,
+        sa_exc.DBAPIError,
+    )
+    session = _Session(close=lost)
+    with pytest.raises(sa_exc.DBAPIError) as raised:
+        async with _uow(session):
+            pass
+    assert raised.value is lost and session.calls == ["close"]
+    assert raised.value.__context__ is None and _P1 not in _rendered(raised.value)
+
+
+async def test_every_error_of_an_exception_group_leaves_stripped() -> None:
+    session = _Session()
+    with pytest.raises(ExceptionGroup) as raised:
+        async with _uow(session):
+            raise ExceptionGroup("two writes failed", [_unique(), _unique()])
+    assert session.calls == ["rollback", "close"] and _P1 not in _rendered(raised.value)
+    assert [sqlstate_of(e) for e in raised.value.exceptions] == ["23505", "23505"]
+
+
+async def test_a_cancellation_leaves_with_its_driver_context_stripped() -> None:
+    error = _unique()
+    session = _Session()
+    with pytest.raises(asyncio.CancelledError) as raised:
+        async with _uow(session):
+            try:
+                raise error
+            except sa_exc.IntegrityError:
+                raise asyncio.CancelledError  # noqa: B904 -- the implicit context is the case
+    assert raised.value.__context__ is error and session.calls == ["rollback", "close"]
+    assert _P1 not in _rendered(raised.value)
+
+
+def test_a_stripped_error_survives_a_pickle_round_trip() -> None:
+    error = _unique()
+    strip_driver_text(error)
+    copy = pickle.loads(pickle.dumps(error))  # noqa: S301 -- our own object, built above
+    assert type(copy) is type(error) and _P1 not in _rendered(copy)
+    assert (sqlstate_of(copy), constraint_of(copy)) == ("23505", "users_email_key")
+
+
 async def test_a_write_ahead_timeout_passes_through_as_it_is() -> None:
     cause = TimeoutError("hook outlived its bound")
     timeout = WriteAheadTimeout("write-ahead audit hook timed out")
@@ -189,13 +250,14 @@ async def test_a_write_ahead_timeout_passes_through_as_it_is() -> None:
 
 
 def _twins(
-    driver_cls: type[Exception], message: str, **facts: str
+    driver_cls: type[Exception], message: str, *, invalidated: bool = False, **facts: str
 ) -> tuple[sa_exc.DBAPIError, sa_exc.DBAPIError]:
     """The same failure twice: as the driver raised it, and as it leaves a unit of work."""
     build = (_driver(driver_cls, message, **facts) for _ in range(2))
     raw, stripped = (
         cast(sa_exc.DBAPIError, _wrapped(d, _Dbapi.Error, sa_exc.DBAPIError)) for d in build
     )
+    raw.connection_invalidated = stripped.connection_invalidated = invalidated
     strip_driver_text(stripped)
     assert _P1 not in _rendered(stripped)
     return raw, stripped
@@ -256,10 +318,69 @@ def test_account_access_still_answers_busy_to_a_stripped_lock_failure(
 
 
 def test_the_users_purge_counts_and_ends_on_a_stripped_error_as_before() -> None:
-    raw, stripped = _twins(asyncpg.exceptions.ConnectionFailureError, f"lost: {_P1}")
-    raw.connection_invalidated = stripped.connection_invalidated = True
-    assert type(stripped).__name__ == type(raw).__name__  # the batch's error-counter key
+    raw, stripped = _twins(
+        asyncpg.exceptions.ConnectionFailureError, f"lost: {_P1}", invalidated=True
+    )
+    assert type(stripped).__name__ == "DBAPIError"  # the batch's error-counter key
     assert purge._shared(stripped) and purge._shared(raw)
+
+
+# -- the constraint name each reader finds on a stripped error (#4074 round 1) ----------------
+
+_CHECK = (asyncpg.exceptions.CheckViolationError, f"check: {_P1}")
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [orders._violated_constraint, trade_groups._violated_constraint, drawings._constraint_name],
+    ids=["orders", "trade-groups", "drawings"],
+)
+def test_the_constraint_readers_name_a_stripped_violation_as_before(
+    reader: Callable[[Any], str | None],
+) -> None:
+    raw, stripped = _twins(*_CHECK, constraint_name="rps_range")
+    assert reader(stripped) == reader(raw) == "rps_range"
+
+
+@pytest.mark.parametrize(
+    ("name", "refusal"),
+    [("bk_verify", BackupCheckViolation), (None, BackupWriteOnceViolation)],
+    ids=["a-named-check", "the-write-once-guard"],
+)
+def test_backups_maps_a_stripped_check_violation_as_before(
+    name: str | None, refusal: type[Exception]
+) -> None:
+    raw, stripped = _twins(*_CHECK) if name is None else _twins(*_CHECK, constraint_name=name)
+    assert type(backups._failure("op", stripped)) is type(backups._failure("op", raw)) is refusal
+
+
+def test_workspaces_maps_a_stripped_unique_violation_as_before() -> None:
+    raw, stripped = _twins(
+        asyncpg.exceptions.UniqueViolationError, f"dup: {_P1}", constraint_name="ux_ws_name"
+    )
+    before, after = (
+        workspaces_codec.map_integrity(cast(sa_exc.IntegrityError, e)) for e in (raw, stripped)
+    )
+    assert before is not None and after is not None and after.args == before.args
+
+
+class _PsycopgCheckViolation(Exception):
+    """psycopg's shape: the SQLSTATE on the error itself, the constraint name in `diag`."""
+
+    def __init__(self, message: str, constraint: str) -> None:
+        super().__init__(message)
+        self.sqlstate = self.pgcode = "23514"
+        self.diag = type("Diag", (), {"constraint_name": constraint})()
+
+
+def test_a_psycopg_shaped_violation_keeps_its_state_and_constraint() -> None:
+    driver = _PsycopgCheckViolation(f"check: {_P1}", "bk_verify")
+    error = sa_exc.IntegrityError("INSERT INTO backups ...", (_P1,), driver, hide_parameters=True)
+    before = type(backups._failure("op", error))
+    strip_driver_text(error)
+    assert (sqlstate_of(error), constraint_of(error)) == ("23514", "bk_verify")
+    assert type(backups._failure("op", error)) is before is BackupCheckViolation
+    assert _P1 not in _rendered(error)
 
 
 def test_a_sentinel_in_a_bound_parameter_or_a_trigger_raise_never_leaves() -> None:

@@ -38,6 +38,11 @@ _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]{0,62}")
 #: Driver exceptions carry the server's message and `DETAIL` (`Failing row contains (...)`,
 #: `Key (col)=(val)`): a stripped chain drops every link of theirs (#2748).
 _DRIVER_PACKAGES = frozenset({"asyncpg", "psycopg", "psycopg2"})
+#: SQLAlchemy 2.1's wrapper for a driver error raised without a DBAPI call; 2.0, which
+#: `pyproject.toml` still allows, has none.
+_EMULATED: tuple[type[BaseException], ...] = (
+    (sa_exc.EmulatedDBAPIException,) if hasattr(sa_exc, "EmulatedDBAPIException") else ()
+)
 
 
 def _build_engine(dsn: str) -> AsyncEngine:
@@ -125,7 +130,7 @@ def strip_driver_text(exc: BaseException) -> None:
             linked = getattr(node, link)
             if linked is None:
                 continue
-            if isinstance(linked, sa_exc.EmulatedDBAPIException) or (
+            if isinstance(linked, _EMULATED) or (
                 type(linked).__module__.split(".")[0] in _DRIVER_PACKAGES
             ):
                 setattr(node, link, None)
