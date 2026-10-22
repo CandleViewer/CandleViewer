@@ -10,7 +10,9 @@ from collections.abc import Callable
 import pytest
 
 from bench.ingestion import budgets as b
+from bench.ingestion import rest_load
 from bench.ingestion.budgets import Sample
+from bench.ingestion.config import Scenario
 
 MiB = 2**20
 HOUR = 3600.0
@@ -119,6 +121,27 @@ def test_rest_budget_and_cache_speedup() -> None:
     assert all(c.passed for c in ok)
     bad = {c.name: c for c in b.check_rest({"klines_cold": 200.0}, 200.0, 150.0, 2.0)}
     assert not bad["rest_p95[klines_cold]"].passed and not bad["klines_cache_speedup"].passed
+    assert bad["rest_p95[klines_cold]"].hard and bad["klines_cache_speedup"].hard
+
+
+def test_rest_budget_reported_soft_keeps_the_cache_speedup_hard() -> None:
+    soft = {
+        c.name: c
+        for c in b.check_rest({"klines_cold": 200.0}, 200.0, 150.0, 2.0, budget_hard=False)
+    }
+    cold = soft["rest_p95[klines_cold]"]
+    assert not cold.passed and not cold.hard and soft["klines_cache_speedup"].hard
+
+
+@pytest.mark.parametrize(("profile", "passed"), [("smoke", True), ("full", False)])
+def test_rest_verdict_gates_budget_13_only_in_the_full_profile(profile: str, passed: bool) -> None:
+    """#399: the smoke profile reports Budget #13 (`06` measures it with k6 on the bench runner,
+    the full profile) and fails only on its hard checks; the cache speed-up holds here."""
+    lat = {"klines_cold": [400.0] * 20, "klines_warm": [10.0] * 20, "instruments": [20.0] * 20}
+    sc = Scenario("rest_k6", "", "rest", profile, "", {"min_cache_speedup": 2.0}, {})
+    v = rest_load.verdict(sc, lat)
+    assert v.passed is passed
+    assert [c.hard for c in v.checks if c.name.startswith("rest_p95[")] == [not passed] * 3
 
 
 def test_headroom_zero_or_ip_limit_fails() -> None:

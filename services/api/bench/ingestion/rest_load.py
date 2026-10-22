@@ -136,6 +136,7 @@ def verdict(sc: Scenario, lat: dict[str, list[float]]) -> budgets.Verdict:
             p95.get("klines_cold", 0.0),
             p95.get("klines_warm", 0.0),
             float(sc.p("min_cache_speedup")),
+            budget_hard=sc.profile == "full",
         )
     )
     v.metrics = {f"rest_{r}_ms": budgets.summary(x) for r, x in lat.items()}
