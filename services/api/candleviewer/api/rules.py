@@ -18,9 +18,10 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from candleviewer.rules.compiler import compile_form, compile_graph
-from candleviewer.rules.compiler.common import build_rule, check_bounds
+from candleviewer.rules.compiler.common import build_rule, check_bounds, value_issues
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.ir import canonicalize, ir_hash
+from candleviewer.rules.ir.canonical import IrValueError
 from candleviewer.rules.ir.schema import to_json_schema
 from candleviewer.rules.issues import RuleCompileError
 from candleviewer.rules.scope import ScopeResolver
@@ -53,6 +54,11 @@ def _diff(a: Any, b: Any, path: str = "") -> list[dict[str, Any]]:
             d for i, (x, y) in enumerate(zip(a, b, strict=True)) for d in _diff(x, y, f"{path}/{i}")
         ]
     return [] if a == b else [{"path": path or "/", "model": a, "counterpart": b}]
+
+
+def _compile_error(exc: RuleCompileError | IrValueError) -> RuleCompileError:
+    """A value the hash cannot hold (NaN in ``params``) is refused as a compile error is: 422."""
+    return exc if isinstance(exc, RuleCompileError) else RuleCompileError(value_issues(exc))
 
 
 class _Principal(Protocol):
@@ -240,9 +246,10 @@ def make_rules_router(
         compile_fn = compile_form if editor == "form" else compile_graph
         try:
             rule = compile_fn(model, ruleId)
-        except RuleCompileError as exc:
+            rule_hash = ir_hash(rule)
+        except (RuleCompileError, IrValueError) as exc:
             on_compile(editor, "invalid")
-            return _invalid(exc)
+            return _invalid(_compile_error(exc))
         forbidden = await _authorize_scope(principal, rule)
         if forbidden is not None:
             return forbidden
@@ -251,7 +258,7 @@ def make_rules_router(
         issues = [*result.errors, *result.warnings]
         payload: dict[str, Any] = {
             "ir": json.loads(rule.model_dump_json()),
-            "ir_hash": ir_hash(rule),
+            "ir_hash": rule_hash,
             "issues": [i.to_dict() for i in issues],
             "blocks_arming": result.blocks_arming,
         }
@@ -261,11 +268,12 @@ def make_rules_router(
                 return _problem(400, "Bad request", "'counterpart_model' must be an object")
             other_fn = compile_graph if editor == "form" else compile_form
             try:
-                other_rule = other_fn(other, ruleId)
-            except RuleCompileError as exc:
-                await _notify_divergence(editor, len(exc.issues))
-                return _invalid(exc)
-            diff = _diff(json.loads(canonicalize(rule)), json.loads(canonicalize(other_rule)))
+                other_view = json.loads(canonicalize(other_fn(other, ruleId)))
+            except (RuleCompileError, IrValueError) as exc:
+                err = _compile_error(exc)
+                await _notify_divergence(editor, len(err.issues))
+                return _invalid(err)
+            diff = _diff(json.loads(canonicalize(rule)), other_view)
             if diff:  # never auto-reconcile: report only, the caller aborts the switch
                 await _notify_divergence(editor, len(diff))
             payload["round_trip"] = {"match": not diff, "diff": diff}

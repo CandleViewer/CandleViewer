@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from candleviewer.rules.ir.canonical import IrValueError
 from candleviewer.rules.ir.models import Rule
 from candleviewer.rules.issues import Issue, RuleCompileError
 
@@ -60,6 +61,11 @@ def schema_issues(exc: ValidationError) -> list[Issue]:
         Issue(_loc(e["loc"]), "schema_error", str(e["msg"]), klass="syntax")
         for e in exc.errors(include_url=False, include_input=False, include_context=False)
     ]
+
+
+def value_issues(exc: IrValueError) -> list[Issue]:
+    """``schema_issues`` for a value the hash cannot hold (a non-finite number in ``params``)."""
+    return [Issue(_loc(exc.loc), "schema_error", exc.reason, klass="syntax")]
 
 
 def build_rule(doc: dict[str, Any]) -> Rule:

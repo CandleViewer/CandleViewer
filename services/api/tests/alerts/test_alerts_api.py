@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
 import pytest
@@ -67,6 +68,67 @@ def test_create_name_with_nul_is_the_field_422_nothing_persisted(env: Env) -> No
     assert r.status_code == 422 and r.json()["code"] == "validation_failed"
     message = f"Value error, {UNSTORABLE_TEXT}"
     assert r.json()["errors"] == [{"field": "name", "rule": "value_error", "message": message}]
+    assert env.repo.rows == {} and env.audit.calls == []
+
+
+#: The stored `symbol_code` domain caps a symbol at 20 characters (vw1 C1 on #1204).
+SYMBOL_20, SYMBOL_21 = "X" * 16 + "USDT", "X" * 17 + "USDT"
+TOO_LONG = {"field": "symbol", "rule": "string_too_long",
+            "message": "String should have at most 20 characters"}  # fmt: skip
+
+
+def test_create_symbol_over_the_symbol_code_cap_is_the_field_422_nothing_persisted(
+    env: Env,
+) -> None:
+    r = env.c.post("/alerts", json=PRICE_CROSS | {"symbol": SYMBOL_21})
+    assert r.status_code == 422, r.text
+    assert r.json()["code"] == "validation_failed" and r.json()["errors"] == [TOO_LONG]
+    assert env.repo.rows == {} and env.audit.calls == []
+
+
+def test_update_symbol_over_the_symbol_code_cap_is_the_field_422_row_kept(env: Env) -> None:
+    a = env.create()
+    r = env.c.put(f"/alerts/{a['id']}", json=PRICE_CROSS | {"symbol": SYMBOL_21})
+    assert r.status_code == 422, r.text
+    assert r.json()["code"] == "validation_failed" and r.json()["errors"] == [TOO_LONG]
+    assert env.c.get(f"/alerts/{a['id']}").json()["symbol"] == "BTCUSDT"
+    assert env.audit.actions() == ["alert.created"]
+
+
+@pytest.mark.parametrize("write", ["create", "update"])
+def test_symbol_at_the_symbol_code_cap_is_accepted(env: Env, write: str) -> None:
+    if write == "create":
+        r = env.c.post("/alerts", json=PRICE_CROSS | {"symbol": SYMBOL_20})
+    else:
+        r = env.c.put(f"/alerts/{env.create()['id']}", json=PRICE_CROSS | {"symbol": SYMBOL_20})
+    assert r.status_code == (201 if write == "create" else 200), r.text
+    assert r.json()["symbol"] == SYMBOL_20
+
+
+_JSON = {"content-type": "application/json"}
+
+
+def _metric_param_alert(name: str, spelling: str) -> bytes:
+    """`PRICE_CROSS` whose metric operand holds a param spelled exactly `spelling` (#4132)."""
+    doc = copy.deepcopy(PRICE_CROSS) | {"name": name}
+    doc["condition_ir"]["conditions"]["left"] = {"metric": "price", "params": {"pct": "__slot__"}}
+    return json.dumps(doc).replace('"__slot__"', spelling).encode()
+
+
+def test_create_fractional_metric_param_201_and_equal_spellings_share_a_condition_hash(
+    env: Env,
+) -> None:
+    half = env.c.post("/alerts", content=_metric_param_alert("half", "0.5"), headers=_JSON)
+    padded = env.c.post("/alerts", content=_metric_param_alert("padded", "0.50"), headers=_JSON)
+    assert half.status_code == padded.status_code == 201, half.text
+    assert half.json()["condition_hash"] == padded.json()["condition_hash"]
+
+
+def test_create_non_finite_metric_param_is_one_422_nothing_persisted(env: Env) -> None:
+    r = env.c.post("/alerts", content=_metric_param_alert("nan", "NaN"), headers=_JSON)
+    assert r.status_code == 422, r.text
+    assert r.json()["code"] == "rule_ir_invalid"
+    assert [e["message"] for e in r.json()["errors"]] == ["Input should be a finite number"]
     assert env.repo.rows == {} and env.audit.calls == []
 
 

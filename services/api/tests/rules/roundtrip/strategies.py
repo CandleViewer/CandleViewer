@@ -50,7 +50,11 @@ _scalars = st.one_of(
     st.booleans(), st.integers(-(10**9), 10**9), _decimals, st.text("abcxyz_ ", max_size=6)
 )
 _keys = st.sampled_from(("n", "anchor", "source", "window_ms", "z", "mode", "k"))
-_params = st.dictionaries(_keys, _scalars, max_size=3)
+#: Params also take JSON floats (#4132): a metric param's becomes a Decimal, an action param's
+#: hashes through the canonicaliser's float arm.
+_params = st.dictionaries(
+    _keys, st.one_of(_scalars, st.floats(allow_nan=False, allow_infinity=False)), max_size=3
+)
 _layout = st.one_of(
     st.none(),
     st.fixed_dictionaries(
@@ -139,9 +143,11 @@ def condition(draw: st.DrawFn, ids: _Ids, pool: list[Doc], depth: int = 0) -> Do
         wide = draw(st.integers(0, 9)) == 0  # sometimes sit exactly on the 32-child bound
         n = MAX_BOOLEAN_CHILDREN if wide else draw(st.integers(1, 3))
         children = [
-            draw(comparison(ids, arithmetic=False))
-            if wide
-            else draw(condition(ids, pool, depth + 1))
+            (
+                draw(comparison(ids, arithmetic=False))
+                if wide
+                else draw(condition(ids, pool, depth + 1))
+            )
             for _ in range(n)
         ]
         node = {"node_id": ids("g"), "op": op, "children": children}

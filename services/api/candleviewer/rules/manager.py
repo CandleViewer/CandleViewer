@@ -25,6 +25,7 @@ from candleviewer.rules.arming import ArmingFacts, check_arming
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.ir.accounts import collect_account_ids, redact_account_ids
+from candleviewer.rules.ir.canonical import IrValueError
 from candleviewer.rules.lifecycle import MODES, LifecycleError, RuleLifecycle, mode_of
 from candleviewer.rules.limits import (
     LIMIT_CAPS,
@@ -522,7 +523,15 @@ class RulesManager:
                 res.errors[0].message,
                 issues=[i.to_dict() for i in res.errors],
             )
-        return rule, ir_hash(rule)
+        try:
+            return rule, ir_hash(rule)
+        except IrValueError as exc:  # NaN / Infinity in an untyped params: 422, never a 500
+            raise RuleError(
+                422,
+                "rule_ir_invalid",
+                f"The rule document is not valid: {exc.reason}",
+                path="/" + "/".join(str(p) for p in exc.loc),
+            ) from exc
 
     def _new_version(
         self, row: RuleRow, rule: Rule, h: str, notes: str, actor: Actor
