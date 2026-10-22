@@ -141,7 +141,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — one row, 24 / 32 px; fixed-width `hh:mm:ss`, tabular figures
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — the entry cites `font.mono` and `color.text.buy/sell`, which do not exist; patch A-5 binds `type.num.base`, `color.text.primary` and, under 5 min, the `color.status.warning.strong` glyph
-- [ ] **Data contract confirmed** — A-5: `next_funding_time_ms` and `funding_rate` from `ticker.{symbol}` (the app topic, `23` §14.8), not Bybit's `tickers.{symbol}`; `rate` as a decimal string; the clock-skew state from SCR-152 and `welcome.clock_skew_ms`
+- [ ] **Data contract confirmed** — A-5: `next_funding_time_ms` and `funding_rate` from `ticker.{symbol}` (the app topic, `23` §14.8), not Bybit's `tickers.{symbol}`; `rate` as a decimal string; the clock-skew state from SCR-152 and `welcome.clock_skew_ms`; until H-7, the `getTicker` bootstrap's ISO `next_funding_time` as epoch ms (spec §11.2)
 - [x] **Contrast and CVD** — the warning glyph on `surface.overlay` is 10.17 / 3.78 / 10.17 and carries words; `text.primary` pairs in spec §13
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING
@@ -176,7 +176,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — rows 24 / 32 px
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — the entry inherits CMP-023 for the admin row; patch A-6 binds the CMP-036 row tokens and `color.text.secondary` for the state word; no new token
-- [x] **Data contract confirmed** — the E16-S02 store (`recorder` topic, `RecorderUpdate`, `23` §15.8; `GET /recording/symbols`, `RecordedSymbol`) and `GET /market/data-coverage` (`DataCoverage`, spec §4.3); `role_restricted` read as "restricted"; confirmed against `22` / `23` as shipped; what the server leaves empty or limits is drawn as its §4.3 fallback or label: first recorded time (CR-8), archive label (CR-12), not-trading coverage (CR-13), the 90-day window (#2216)
+- [x] **Data contract confirmed** — the E16-S02 store (`recorder` topic, `RecorderUpdate`, `23` §15.8; `GET /recording/symbols`, `RecordedSymbol`) and `GET /market/data-coverage` (`DataCoverage`, spec §4.3); `role_restricted` read as "restricted"; confirmed against `22` / `23` as shipped; what the server leaves empty or limits is drawn as its §4.3 fallback or label: first recorded time (CR-8), archive label (CR-12), not-trading coverage (CR-13), the 90-day window (#2216), no session rows yet (#2188) and the `recorder` topic's server (E16-T08, #492)
 - [x] **Contrast and CVD** — words carry every state; glyphs are decorative (spec §13)
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING
@@ -186,7 +186,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 | Variant           | State                                                                                                       | Penpot variant   | Story name                 | Notes                                   |
 | ----------------- | ----------------------------------------------------------------------------------------------------------- | ---------------- | -------------------------- | --------------------------------------- |
 | summary, Owner    | recording (5 reasons), lingering, starting, stopping, degraded, error                                       | B17 / owner      | `SummaryStates` (new)      | words per spec §4.3; final copy E16-D05 |
-| summary, Owner    | not recorded, symbol cap, disk pressure, gated                                                              | B17 / owner-not  | `SummaryNotRecorded` (new) | "Record this symbol…" (Q6) and the link |
+| summary, Owner    | not recorded, symbol cap, disk pressure, gated (its cause in words, spec §4.3)                              | B17 / owner-not  | `SummaryNotRecorded` (new) | "Record this symbol…" (Q6) and the link |
 | summary, others   | the same states, gated as "may be gated" in a `role_restricted` set (spec §4.3); no internals; one sentence | B12, B13, B17    | `SummaryNonOwner` (new)    | "Recording is set up by the owner."     |
 | summary, any role | restricted (absent from a `role_restricted` set)                                                            | B17 / restricted | `SummaryRestricted` (new)  | never "Not recorded"                    |
 
