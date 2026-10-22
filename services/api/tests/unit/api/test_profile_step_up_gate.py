@@ -2,7 +2,7 @@
 records the refusal (E28-T02, #906; SR-E28-02, ruling B4).
 
 This is the guard half of the threat model's owed `test_profile_write_without_step_up_is_403_and_
-audited`: the three rows of `DANGEROUS_ROUTES` are what refuse, so a stand-in handler proves it
+audited`: the four rows of `DANGEROUS_ROUTES` are what refuse, so a stand-in handler proves it
 is never reached. The route's own half (the real handler, no row written) is the router slice's.
 """
 
@@ -22,15 +22,17 @@ _WRITES = [
     ("POST", "/exchange-accounts/a1/profiles"),
     ("PUT", "/exchange-accounts/a1/profiles/p1"),
     ("DELETE", "/exchange-accounts/a1/profiles/p1"),
+    ("PUT", "/exchange-accounts/a1/default-profile"),  # setAccountDefaultProfile (#906 0d)
 ]
 _READS = [
     ("GET", "/exchange-accounts/a1/profiles"),
     ("GET", "/exchange-accounts/a1/profiles/p1"),
+    ("GET", "/exchange-accounts/a1/default-profile"),
 ]
 
 
 def _stand_ins(c: TestClient) -> list[str]:
-    """The five contract operations as handlers with no gate; the list names those that ran."""
+    """The seven contract operations as handlers with no gate; the list names those that ran."""
     app, reached = cast(FastAPI, c.app), []
 
     async def collection(aid: str) -> dict[str, bool]:
@@ -41,10 +43,15 @@ def _stand_ins(c: TestClient) -> list[str]:
         reached.append("item")
         return {"ok": True}
 
+    async def binding(aid: str) -> dict[str, bool]:
+        reached.append("binding")
+        return {"ok": True}
+
     app.add_api_route("/exchange-accounts/{aid}/profiles", collection, methods=["GET", "POST"])
     app.add_api_route(
         "/exchange-accounts/{aid}/profiles/{pid}", item, methods=["GET", "PUT", "DELETE"]
     )
+    app.add_api_route("/exchange-accounts/{aid}/default-profile", binding, methods=["GET", "PUT"])
     return reached
 
 
@@ -63,7 +70,7 @@ async def test_a_profile_write_without_step_up_is_403_and_audited_before_the_han
 
 
 async def test_one_risk_caps_step_up_admits_every_profile_write_inside_its_window() -> None:
-    """`risk_caps` is a grace class: one code opens five minutes for the three writes, no more."""
+    """`risk_caps` is a grace class: one code opens five minutes for the four writes, no more."""
     c, em, seed, clock, _ = await _build()
     reached = _stand_ins(c)
     for method, path in _WRITES:
@@ -73,7 +80,7 @@ async def test_one_risk_caps_step_up_admits_every_profile_write_inside_its_windo
     clock.now += timedelta(minutes=3)
     for method, path in _WRITES:
         assert c.request(method, path, headers=_H).status_code == 200, path
-    assert len(reached) == 3
+    assert len(reached) == len(_WRITES)
     clock.now += timedelta(minutes=3)
     assert c.post(_WRITES[0][1], headers=_H).status_code == 403
     assert "auth.step_up_granted" in em.actions()
@@ -84,7 +91,7 @@ async def test_profile_reads_pass_the_guard_without_a_step_up() -> None:
     reached = _stand_ins(c)
     for method, path in _READS:
         assert c.request(method, path, headers=_H).status_code == 200, path
-    assert len(reached) == 2 and "auth.step_up_required" not in em.actions()
+    assert len(reached) == len(_READS) and "auth.step_up_required" not in em.actions()
 
 
 async def test_the_guard_challenges_an_unmounted_profile_write_before_the_404() -> None:

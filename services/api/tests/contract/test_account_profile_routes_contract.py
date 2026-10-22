@@ -5,16 +5,20 @@ from __future__ import annotations
 import re
 
 import pytest
+import yaml
+from jsonschema import ValidationError
 
 from candleviewer.accounts.errors import AccountVersionConflictError
 from candleviewer.api._generated import openapi_models as api
-from candleviewer.audit.actions import PROFILE_SAVE_REFUSED_REASONS
+from candleviewer.audit.actions import AUDIT_ACTIONS, PROFILE_SAVE_REFUSED_REASONS
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
+from tests.contract import _admin_support as support
 from tests.contract._admin_support import ROOT, SPEC, validate_example
 from tests.contract._admin_support import text as _text  # not `text`: Semgrep's raw-SQL rule
 
 _LIST = "/exchange-accounts/{accountId}/profiles"
 _ITEM = _LIST + "/{profileId}"
+_BINDING = "/exchange-accounts/{accountId}/default-profile"  # #906 0d
 _PATHS, _COMPONENTS = SPEC["paths"], SPEC["components"]
 _CODES = {entry["code"]: entry for entry in SPEC["x-error-codes"]}
 _REJECTED = _COMPONENTS["responses"]["ProfileRejected"]
@@ -25,8 +29,11 @@ _OPS = {
     "getAccountProfile": _PATHS[_ITEM]["get"],
     "updateAccountProfile": _PATHS[_ITEM]["put"],
     "deleteAccountProfile": _PATHS[_ITEM]["delete"],
+    "getAccountDefaultProfile": _PATHS[_BINDING]["get"],
+    "setAccountDefaultProfile": _PATHS[_BINDING]["put"],
 }
-_WRITES = ("createAccountProfile", "updateAccountProfile", "deleteAccountProfile")
+_WRITES: tuple[str, ...] = ("createAccountProfile", "updateAccountProfile", "deleteAccountProfile")
+_WRITES += ("setAccountDefaultProfile",)
 _READ = "401:Unauthorized 403:Forbidden 404:NotFound"
 _WRITE = f"{_READ} 409:Conflict 503:ProfileSaveUnavailable"
 _STALE, _REFUSED = "412:PreconditionFailed 428:PreconditionRequired", "422:ProfileRejected"
@@ -39,7 +46,13 @@ _DECLARED = {
     "getAccountProfile": (f"200 {_READ} 503:ServiceUnavailable", "", None),
     "updateAccountProfile": (f"200 {_STALE} {_REFUSED} {_WRITE}", _TAGGED, "optional"),
     "deleteAccountProfile": (f"204 {_STALE} {_WRITE}", _TAGGED, "optional"),
+    "getAccountDefaultProfile": (f"200 {_READ} 503:ServiceUnavailable", "", None),
+    "setAccountDefaultProfile": (f"200 {_STALE} 422 {_WRITE}", _TAGGED, "optional"),
 }
+_EXAMPLES = (  # the zero rule's two examples (11:57Z), in the contract and 24 Sec.15.5 alike
+    "onto the bootstrap `Default`, which cannot trade, is not relaxing, even with `null` caps",
+    "a move that turns trading on, from a default that cannot trade, is always relaxing",
+)
 
 
 def _ref(node: dict[str, object]) -> str:
@@ -62,6 +75,7 @@ def test_each_operation_takes_exactly_its_parameters() -> None:
     assert taken == {name: params.split() for name, (_, params, _) in _DECLARED.items()}
     assert [_ref(p) for p in _PATHS[_LIST]["parameters"]] == ["AccountId"]
     assert [_ref(p) for p in _PATHS[_ITEM]["parameters"]] == ["AccountId", "ProfileId"]
+    assert [_ref(p) for p in _PATHS[_BINDING]["parameters"]] == ["AccountId"]
 
 
 def _headers(name: str, status: str) -> dict[str, str]:
@@ -81,6 +95,8 @@ def test_answers_that_carry_a_profile_carry_its_etag_and_replay_marker() -> None
     assert re.fullmatch(pattern, weak.format(3))
     assert not re.fullmatch(pattern, weak.format(3).removeprefix("W/"))  # the strong form
     assert not re.fullmatch(pattern, weak.format(0))  # a version starts at 1
+    said = _text(_COMPONENTS["headers"]["ProfileETag"]["description"])
+    assert "the server compares the version it names and its profile id" in said  # R3-04 (iii)
     op = _OPS["listAccountProfiles"]  # one page, no `meta`, no cursor
     schema = op["responses"]["200"]["content"]["application/json"]["schema"]
     assert (schema["required"], set(schema["properties"])) == (["items"], {"items"})
@@ -192,8 +208,8 @@ def test_the_refusal_rules_are_one_list_in_two_passes() -> None:
     # R2S-03: these are Slice A's `PROFILE_SAVE_REFUSED_REASONS` (#4087), no more and no fewer.
     assert set(re.findall(r"`(\w+)`", audited)) | set(two.split()) == PROFILE_SAVE_REFUSED_REASONS
     r4_03 = (  # the 08:08Z ruling: a refusal of shape alone is a 422 and no audit row
-        "A body refused only by rules of shape, including semantic shape such as `stop_defines_r`,"
-        " is not audited, nor is one refused only by `default_has_own_operation`."
+        "A body refused only by rules of shape or by `default_has_own_operation` is not audited,"
+        " semantic shape such as `stop_defines_r` included."
     )
     assert r4_03 in _text(_REJECTED["description"])
 
@@ -209,7 +225,7 @@ def test_a_put_replaces_the_whole_profile_and_says_what_omitting_risk_caps_does(
 def test_a_stale_if_match_is_version_conflict() -> None:
     stale = _COMPONENTS["responses"]["PreconditionFailed"]["content"]["application/problem+json"]
     assert stale["examples"]["stale"]["value"]["code"] == "version_conflict"
-    for name in ("updateAccountProfile", "deleteAccountProfile"):
+    for name in ("updateAccountProfile", "deleteAccountProfile", "setAccountDefaultProfile"):
         assert "`412 version_conflict`" in _text(_OPS[name]["description"])
     doc = AccountVersionConflictError.__doc__ or ""
     assert "version_conflict" in doc and "precondition_failed" not in doc
@@ -232,13 +248,14 @@ def test_a_replace_or_delete_of_risk_caps_needs_the_current_etag() -> None:
         ("If-Match", "header", True),
         ("If-Match", "header", False),  # every other user of `If-Match` keeps this one
     ]
-    assert _users("IfMatchRequired") == {"updateAccountProfile", "deleteAccountProfile"}
+    assert _users("IfMatchRequired") == set(_WRITES) - {"createAccountProfile"}
     assert not _users("IfMatch") & set(_OPS)
     said = _text(needed["description"])
     assert "needs the current `ETag`: last-write-wins is refused by contract" in said
     assert "`428 precondition_required`" in said
     # R2S-01: no form of the header matches every version, as RFC 9110 lets `*` do
-    forms = "`*`, a list of tags, an unparseable value or another profile's tag"
+    forms = "`*`, a list of tags, an unparseable value or another resource's tag (another"
+    forms += " profile's, or a profile's sent to the default binding)"
     assert f"one `ETag` of this resource: {forms} is `412 version_conflict`, never a match" in said
     put = _text(_OPS["updateAccountProfile"]["description"])
     delete = _text(_OPS["deleteAccountProfile"]["description"])
@@ -268,22 +285,121 @@ def test_a_profile_write_never_moves_the_default() -> None:
     put, post = (_text(_OPS[f"{v}AccountProfile"]["description"]) for v in ("update", "create"))
     schemas = _COMPONENTS["schemas"]
     member = _text(schemas["AccountProfileInput"]["properties"]["is_default"]["description"])
-    own = "the default binding moves only through its own operation (#906 slice 0d)"
+    own = "the default binding moves only through its own operation (`setAccountDefaultProfile`)"
     assert [words for words in (put, post, member) if own not in words] == []
     assert "`422 validation_failed` / `default_has_own_operation`; one that repeats it" in put
     assert "so `is_default: true` is refused (`default_has_own_operation`)" in post
     assert "is refused (`default_has_own_operation`)" in member
     assert 'is "The default binding has its own operation."' in _text(_REJECTED["description"])
-    said = " ".join(op["description"] for op in _OPS.values())
+    said = " ".join(op["description"] for name, op in _OPS.items() if "Default" not in name)
     assert not re.search(r"profile\.(un)?bound", said)  # the records of slice 0d's operation
     note = (
-        "Not honoured: an account's default profile moves only through the default binding's own"
-        " operation (#906 slice 0d); this member is dropped at E27's next contract touch (#895)."
+        "Not honoured: a value sent is ignored, since an account's default profile moves only"
+        " through the default binding's own operation (`setAccountDefaultProfile`); this member is"
+        " dropped at E27's next contract touch (#895)."
     )
     account = schemas["UpdateExchangeAccountRequest"]["properties"]["active_profile_id"]
     assert _text(account["description"]) == note
+    assert "profile" not in _PATHS["/exchange-accounts/{accountId}"]["patch"]["summary"]  # R3-04
     model = ROOT / "docs/security/threat-models/E28-profiles-trade-groups.md"
     rows = [r for r in model.read_text(encoding="utf-8").splitlines() if r.startswith("| F-")]
     owed = [row for row in rows if "#906 0d" in row.split("|")[-2]]  # in its Tracked cell
-    owes = "own operation, with its `ETag`, `IfMatchRequired` and the `relaxing` label plus Owner"
-    assert len(owed) == 1 and f"the default binding's {owes} notice (SR-E28-01)" in owed[0]
+    owes = "`setAccountDefaultProfile`, with its own `ETag` and `IfMatchRequired` (#906 0d)"
+    route = "Owed: the route that writes `profile.bound` with the `relaxing` label and notifies the"
+    assert len(owed) == 1 and owes in owed[0] and f"{route} Owner (SR-E28-01)" in owed[0]
+
+
+# -- #906 0d: the default binding -----------------------------------------------------------------
+
+
+def test_the_binding_answers_carry_its_etag_and_the_move_its_replay_marker() -> None:
+    tag, replayed = {"ETag": "DefaultBindingETag"}, {"Idempotency-Replayed": "IdempotencyReplayed"}
+    assert _headers("getAccountDefaultProfile", "200") == tag
+    assert _headers("setAccountDefaultProfile", "200") == tag | replayed
+    for name in ("getAccountDefaultProfile", "setAccountDefaultProfile"):
+        answer = _OPS[name]["responses"]["200"]["content"]["application/json"]["schema"]
+        assert _ref(answer) == "AccountDefaultBinding", name
+    bound = 'W/"a1000000-0000-4000-8000-000000000001:default:3"'
+    others = [bound[2:], bound.replace(":3", ":0"), 'W/"0b5f6d0e-28a1-4c1e-9e01-000000000001:3"']
+    pattern = _COMPONENTS["headers"]["DefaultBindingETag"]["schema"]["pattern"]
+    assert [t for t in [bound, *others] if re.fullmatch(pattern, t)] == [bound]  # nor a profile's
+    assert not re.fullmatch(_COMPONENTS["headers"]["ProfileETag"]["schema"]["pattern"], bound)
+
+
+def test_the_move_body_names_the_profile_and_nothing_else() -> None:
+    """The 11:04Z point: the caller names the profile, the server judges; test 6 folded in."""
+    schema = _COMPONENTS["schemas"]["AccountDefaultBindingInput"]
+    shape = (schema["additionalProperties"], schema["required"], list(schema["properties"]))
+    assert shape == (False, ["profile_id"], ["profile_id"])
+    model = api.AccountDefaultBindingInput
+    assert (model.model_config.get("extra"), set(model.model_fields)) == ("forbid", {"profile_id"})
+    put = _OPS["setAccountDefaultProfile"]
+    body = put["requestBody"]["content"]["application/json"]
+    assert _ref(body["schema"]) == "AccountDefaultBindingInput"
+    pointer, example = "/components/schemas/AccountDefaultBindingInput", body["examples"]
+    validate_example(pointer, example["bindAlternate"]["value"])
+    with pytest.raises(ValidationError):
+        validate_example(pointer, {**example["bindAlternate"]["value"], "relaxing": False})
+    assert "the server's judgement" in _text(schema["description"])
+    refused = put["responses"]["422"]
+    problem = refused["content"]["application/problem+json"]["examples"]["notAProfileId"]["value"]
+    validate_example("/components/schemas/Problem", problem)
+    shown = (problem["status"], problem["code"], problem["title"])
+    assert shown == (422, "validation_failed", _CODES["validation_failed"]["title"])
+    refusals = [(e["field"], e["rule"]) for e in problem["errors"]]
+    assert refusals == [("body.profile_id", "uuid_parsing")]
+    assert "nothing is audited" in _text(refused["description"])
+
+
+def test_the_binding_is_a_profile_id_and_a_version_that_never_repeats() -> None:
+    schema = _COMPONENTS["schemas"]["AccountDefaultBinding"]
+    assert schema["required"] == ["exchange_account_id", "profile_id", "version"]
+    assert schema["properties"]["version"] == {"type": "integer", "minimum": 1}
+    assert "grows by one with each move, so it never repeats" in _text(schema["description"])
+    answer = _OPS["getAccountDefaultProfile"]["responses"]["200"]["content"]["application/json"]
+    bound = answer["examples"]["bound"]["value"]
+    validate_example("/components/schemas/AccountDefaultBinding", bound)
+    assert set(api.AccountDefaultBinding.model_fields) == set(schema["properties"])
+
+
+def test_a_stale_tag_never_moves_the_default_and_a_lost_answer_replays() -> None:
+    put = _text(_OPS["setAccountDefaultProfile"]["description"])
+    said = (
+        "takes this binding's `ETag`, never a profile's, and it is checked before the profile",
+        "`412 version_conflict`, even when the default has since come back to the profile it was",
+        "answered from the stored `200` before `If-Match` is read",
+        "deleted or another account's is `404`, as an account outside the caller's grants is",
+    )
+    assert [words for words in said if words not in put] == []
+    got = _text(_OPS["getAccountDefaultProfile"]["description"])
+    assert "outside the caller's grants is `404`, all alike" in got
+
+
+def test_a_move_is_audited_unbound_then_bound_and_a_looser_cap_is_relaxing() -> None:
+    """SR-E28-01; 11:57Z: the zero rule's examples in 22 and 24 alike, so UI and audit agree."""
+    put = _text(_OPS["setAccountDefaultProfile"]["description"])
+    said = (
+        "as `profile.unbound` for the default it replaces, then `profile.bound` for the new one",
+        "(`503 audit_unavailable`)",
+        "every cap of a profile that cannot trade (`enabled` or `trading_enabled` unset) counts as"
+        " zero, since it sizes nothing; `allowed_symbols` is not compared",
+        "`profile.bound` is labelled `relaxing` and the Owner is notified (SR-E28-01)",
+    )
+    assert [words for words in (*said, *_EXAMPLES) if words not in put] == []
+    assert {"profile.bound", "profile.unbound"} <= AUDIT_ACTIONS
+    doc = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8").splitlines()
+    lead = "The `profile.*` records (E28-T02, #906)"
+    (records,) = [line for line in doc if line.startswith(lead)]
+    kept = ("`setAccountDefaultProfile`", "`relaxing`", "`looser_caps`", "counts as zero")
+    assert [words for words in (*kept, *_EXAMPLES) if words not in records] == []
+    assert "A `PUT` with `is_default: true`" not in records
+
+
+def test_the_move_is_the_owners_alone_in_both_matrices() -> None:
+    matrix = ROOT / "services/api/tests/contract/rbac/matrix.yaml"
+    rows = yaml.safe_load(matrix.read_text(encoding="utf-8"))["operations"]
+    assert rows[f"PUT {_BINDING}"]["outcomes"] == support.OWNER_ONLY
+    assert rows[f"GET {_BINDING}"]["outcomes"] == rows[f"GET {_LIST}"]["outcomes"]
+    _, cell, *granted = support.capability_rows()["21c"]
+    assert support.grants(cell) == ({"accounts:write"}, {"setAccountDefaultProfile"})
+    assert granted == ["✔(step-up)", "✖", "✖"]

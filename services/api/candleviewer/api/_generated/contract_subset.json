@@ -3359,6 +3359,24 @@
         }
       }
     },
+    "/exchange-accounts/{accountId}/default-profile": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
     "/exchange-accounts/{accountId}/fee-rate": {
       "get": {
         "x-rbac": {

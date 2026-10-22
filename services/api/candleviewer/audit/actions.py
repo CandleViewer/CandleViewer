@@ -149,9 +149,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # record is one of the `profile.*` actions below (SR-E28-20: one vocabulary).
         "profiles.update",
         # E28-T02 (#906): a profile write, written ahead of its commit (C-2.9) with `object_kind`
-        # `account_profile` and the profile's id; 24 Sec.15.5 holds the fields. A PUT with
-        # `is_default: true` moves the account's default as `.unbound` (the profile it replaces)
-        # then `.bound` (decision D7, ruling B5). `.save_refused` is a save refused before anything
+        # `account_profile` and the profile's id; 24 Sec.15.5 holds the fields. The default moves
+        # only by `setAccountDefaultProfile` (#906 0d), as `.unbound` (the profile it replaces) then
+        # `.bound`, `relaxing` when looser (D7). `.save_refused` is a save refused before anything
         # is stored, its `reason` one of `PROFILE_SAVE_REFUSED_REASONS`.
         "profile.created",
         "profile.updated",

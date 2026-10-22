@@ -131,11 +131,13 @@ def test_a_dangerous_write_with_a_path_convertor_is_reported() -> None:
     router.add_api_route("/{accountId:path}/profiles", _stand_in, methods=["POST"])
     item = "/{accountId}/profiles/{profileId:path}"
     router.add_api_route(item, _stand_in, methods=["PUT", "PATCH", "DELETE"])
+    router.add_api_route("/{accountId:path}/default-profile", _stand_in, methods=["PUT"])
     app.include_router(router)
     assert _convertor_writes(app) == [
         ("DELETE", "/exchange-accounts" + item),
         ("PATCH", "/exchange-accounts" + item),
         ("POST", "/exchange-accounts/{accountId:path}/profiles"),
+        ("PUT", "/exchange-accounts/{accountId:path}/default-profile"),
         ("PUT", "/exchange-accounts" + item),
     ]
 
@@ -459,6 +461,8 @@ def test_sub_application_tripwire_catches_a_mounted_dangerous_route() -> None:
         # #906 (SR-E28-02): the profile prefix is swept whole, not only the three writes it has.
         ("PATCH", "/exchange-accounts/{accountId}/profiles/{profileId}"),
         ("POST", "/exchange-accounts/{accountId}/profiles/{profileId}/clone"),
+        ("POST", "/exchange-accounts/{accountId}/default-profile"),  # #906 0d: swept whole too
+        ("DELETE", "/exchange-accounts/{accountId}/default-profile"),
     ],
 )
 def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) -> None:
@@ -490,6 +494,7 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
         ("POST", "/exchange-accounts/a/profiles", "risk_caps"),  # createAccountProfile (#906)
         ("PUT", "/exchange-accounts/a/profiles/p", "risk_caps"),  # updateAccountProfile (#906)
         ("DELETE", "/exchange-accounts/a/profiles/p", "risk_caps"),  # deleteAccountProfile (#906)
+        ("PUT", "/exchange-accounts/a/default-profile", "risk_caps"),  # setAccountDefaultProfile
     ],
 )
 def test_contract_dangerous_routes_map_to_action_class(
@@ -847,9 +852,12 @@ _PROFILE = _PROFILES + "/{profileId}"
 #: The three writes of the contract. Their rows are registered before the router that serves them
 #: is mounted (the sweeps above look at mounted routes only), so the gate is there the moment it is.
 _PROFILE_WRITES = [("POST", _PROFILES), ("PUT", _PROFILE), ("DELETE", _PROFILE)]
+_BINDING = "/exchange-accounts/{accountId}/default-profile"
+#: The writes the two profile prefixes hold: the three above and the default binding's move.
+_RISK_CAPS_WRITES = [*_PROFILE_WRITES, ("PUT", _BINDING)]
 
 
-@pytest.mark.parametrize(("method", "path"), _PROFILE_WRITES)
+@pytest.mark.parametrize(("method", "path"), _RISK_CAPS_WRITES)
 def test_a_profile_write_is_path_gated_with_the_risk_caps_class(method: str, path: str) -> None:
     assert DANGEROUS_PATH_PATTERN.match(path)
     assert dangerous_action_class(method, _concrete(path)) == "risk_caps"
@@ -868,6 +876,8 @@ def test_a_profile_write_is_path_gated_with_the_risk_caps_class(method: str, pat
         ("POST", _PROFILE + "/clone"),
         ("PUT", _PROFILE + "/clone"),  # the PUT and DELETE rows end at the profile id (`$`)
         ("DELETE", _PROFILE + "/clone"),
+        *[(method, _BINDING) for method in ("GET", "POST", "PATCH", "DELETE")],
+        ("PUT", _BINDING + "/x"),  # the move's row ends at the binding (`$`)
     ],
 )
 def test_no_other_method_or_path_of_the_profile_prefix_is_path_gated(
@@ -889,9 +899,14 @@ def test_no_other_method_or_path_of_the_profile_prefix_is_path_gated(
         ("/exchange-accounts/profiles", False),  # no account segment
         ("/accounts/{accountId}/profiles", False),
         ("/profiles", False),
+        (_BINDING, True),
+        (_BINDING + "/x", True),
+        ("/exchange-accounts/{accountId}/default-profiles", False),
+        ("/exchange-accounts/{accountId}/default", False),
+        ("/exchange-accounts/default-profile", False),
     ],
 )
-def test_the_sweep_gains_the_profile_prefix_and_no_other_exchange_accounts_path(
+def test_the_sweep_gains_the_profile_and_binding_prefixes_and_no_other_exchange_accounts_path(
     path: str, swept: bool
 ) -> None:
     """The account's own routes (`/exchange-accounts`, `/{accountId}`) are E27's: no pin here."""
@@ -899,8 +914,8 @@ def test_the_sweep_gains_the_profile_prefix_and_no_other_exchange_accounts_path(
 
 
 def test_every_contract_profile_write_is_path_gated_with_risk_caps() -> None:
-    """Derived from the contract, so a fourth profile write fails here until it is registered."""
-    profile = re.compile(r"^/exchange-accounts/\{[^}]+\}/profiles(/|$)")
+    """From the contract, so another write under either prefix fails here until it is registered."""
+    profile = re.compile(r"^/exchange-accounts/\{[^}]+\}/(profiles|default-profile)(/|$)")
     found = {
         key: op["operationId"]
         for key, op in _contract_operations().items()
@@ -910,16 +925,16 @@ def test_every_contract_profile_write_is_path_gated_with_risk_caps() -> None:
     gated = ("path", "risk_caps")
     assert writes == dict.fromkeys(
         ["createAccountProfile", "updateAccountProfile", "deleteAccountProfile"], gated
-    )
+    ) | {"setAccountDefaultProfile": gated}
     reads = [key for key in found if key[0] == "GET"]
     assert reads and all(dangerous_action_class(m, _concrete(p)) is None for m, p in reads)
 
 
-@pytest.mark.parametrize(("method", "path"), _PROFILE_WRITES)
+@pytest.mark.parametrize(("method", "path"), _RISK_CAPS_WRITES)
 def test_the_sweep_catches_a_mounted_profile_write_whose_row_is_dropped(
     monkeypatch: pytest.MonkeyPatch, method: str, path: str
 ) -> None:
-    """Mounted (here by a stand-in router), the three writes pass the sweep through their rows
+    """Mounted (here by a stand-in router), the four writes pass the sweep through their rows
     alone, and the sweep names exactly the one whose row is dropped."""
     app = create_app()
     router = APIRouter(prefix="/exchange-accounts")
@@ -927,6 +942,7 @@ def test_the_sweep_catches_a_mounted_profile_write_whose_row_is_dropped(
     router.add_api_route(
         "/{accountId}/profiles/{profileId}", _stand_in, methods=["GET", "PUT", "DELETE"]
     )
+    router.add_api_route("/{accountId}/default-profile", _stand_in, methods=["GET", "PUT"])
     app.include_router(router)
     assert _ungated_dangerous_writes(app) == []
     dropped = [r for r in DANGEROUS_ROUTES if r[0] == method and r[1].match(_concrete(path))]

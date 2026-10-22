@@ -542,6 +542,9 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/profiles$"), "risk_caps"),
     ("PUT", re.compile(r"^/exchange-accounts/[^/]+/profiles/[^/]+$"), "risk_caps"),
     ("DELETE", re.compile(r"^/exchange-accounts/[^/]+/profiles/[^/]+$"), "risk_caps"),
+    # #906 0d (SR-E28-02, 04 §7.2.2 row 21c): setAccountDefaultProfile moves the account's default
+    # profile, its ceiling (D7). Not mounted yet; the read, getAccountDefaultProfile, passes.
+    ("PUT", re.compile(r"^/exchange-accounts/[^/]+/default-profile$"), "risk_caps"),
 )
 
 #: These routes cannot be gated by path alone: kill-switch *engage* must
@@ -613,10 +616,12 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
 #: a flag write is owner-equivalent configuration (live gate, kill switches). `view-as`
 #: (#3085): an impersonation start, handler-gated. `exchange-accounts/{id}/profiles` (#906,
 #: SR-E28-02): the profile writes, path-gated with `risk_caps`.
+#: `exchange-accounts/{id}/default-profile` (#906 0d): the default binding's move, likewise.
 DANGEROUS_PATH_PATTERN = re.compile(
     r"^/(admin/)?(users|exchange-accounts/[^/]+/keys|keys|live|kill|trading/kill-switch"
     r"|session/environment|risk/lockouts|recording[^/]*|recorder[^/]*|audit|backups"
-    r"|feature-flags|view-as|exchange-accounts/[^/]+/profiles)(/|$)"
+    r"|feature-flags|view-as|exchange-accounts/[^/]+/profiles"
+    r"|exchange-accounts/[^/]+/default-profile)(/|$)"
 )
 
 
