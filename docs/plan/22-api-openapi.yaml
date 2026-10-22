@@ -5382,8 +5382,10 @@ paths:
           Postgres is unavailable the request is refused with `503 store_unavailable` before any
           exchange call. A request whose send step's outcome is not known, its order still
           `validated`, answers that `503` too: this request sends nothing and leaves its anchor
-          undecided, and a `submitting` row whose commit was lost is sent by a restart's
-          hydration, under its persisted `orderLinkId`. A store failure after the send
+          undecided, and a `submitting` row whose commit was lost is resumed by a restart's
+          hydration, under its persisted `orderLinkId`: looked up first, and sent again only
+          within its re-send bound (24-internal-schemas.md section 8.3 rule 6). A store failure
+          after the send
           is never a `503`: the request answers its outcome, `202` with the order's last known
           state or the `502`.
         * An entry's stop request is recorded with its order, one stop request in flight per

@@ -53,8 +53,8 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
    order has left `validated`; an order still `validated`, or with no machine, is answered 503 as
    one refused: this request sends nothing and leaves its anchor undecided (C-2.10: a repeat
    within `CV_OMS_INFLIGHT_STUCK_S` is 409 in flight, a later one the reconciled state), and a
-   `submitting` row whose commit was lost is sent by a restart's hydration (#4006), under its
-   persisted id;
+   `submitting` row whose commit was lost is resumed by a restart's hydration (#4006), under its
+   persisted id: looked up first, sent again only within 24 Sec.8.3 rule 6's re-send bound;
 11. the answer, once B1 has the create's outcome: `submitted`, `held` and `unknown` (the venue's
    outage among them, #2863) are 202; `rejected` with `RATE_BUDGET_EXCEEDED` is 429 (rate point
    2); any other `rejected` is 502 `exchange_error` with the exchange's return code only
@@ -237,8 +237,8 @@ EXCHANGE_ERROR: Final = "exchange_error"
 #: 2026-10-22, C-2.10): the answer says so rather than assume a success.
 RECONCILING: Final = "reconciling"
 #: The states whose create has no known outcome yet: `validated` was never sent (slice 3's
-#: startup kills it), `submitting` is in flight or lost (a restart's hydration sends it under its
-#: id), `unknown` and `quarantined` wait for reconciliation (24 Sec.8.5).
+#: startup kills it), `submitting` is in flight or lost (a restart's hydration resumes it under its
+#: id, within 24 Sec.8.3 rule 6), `unknown` and `quarantined` wait for reconciliation (24 Sec.8.5).
 _UNRESOLVED: Final = frozenset({"validated", "submitting", "unknown", "quarantined"})
 #: An entry's order is its one-leg group's only order, its id named from the group's under this
 #: namespace (fixed for good), so a repeat holding the group's anchor finds the order with no

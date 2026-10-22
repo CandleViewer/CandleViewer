@@ -800,7 +800,9 @@ def test_the_pipelines_own_rules_are_in_22_and_24() -> None:
     assert not _missing(
         _words(_PLACE["description"]),
         "this request sends nothing and leaves its anchor undecided, and a `submitting` row whose "
-        "commit was lost is sent by a restart's hydration, under its persisted `orderLinkId`",
+        "commit was lost is resumed by a restart's hydration, under its persisted `orderLinkId`: "
+        "looked up first, and sent again only within its re-send bound (24-internal-schemas.md "
+        "section 8.3 rule 6)",
         "one in `atr` or `r_multiple` is `stop_unit_unsupported` on `take_profit`",
         "A reduce-only order carries no take-profit and no stop-loss: the exchange sets neither on "
         "one (`ExchangeCapabilities.supports_reduce_only_tpsl`",
