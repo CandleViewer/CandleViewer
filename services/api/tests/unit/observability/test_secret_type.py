@@ -108,8 +108,9 @@ def test_equals_constant_time_refuses_any_other_value_type(mine: object, theirs:
 
 
 def test_the_base_secret_offers_no_comparison_oracle() -> None:
-    """Only `ComparableSecret` compares values. The base `Secret` — and so M2's credential
-    `Secret`, which extends the base, not this subclass — exposes no `equals_constant_time`."""
+    """Only `ComparableSecret` offers `equals_constant_time`. The base `Secret` — and so M2's
+    credential `Secret`, which extends the base, not this subclass — exposes no such method; the
+    base compares values only between two secrets of exactly its own class (pinned below)."""
     assert not hasattr(Secret("CANARY-SECRET"), "equals_constant_time")
     assert "equals_constant_time" not in vars(Secret)
     assert issubclass(ComparableSecret, Secret)
@@ -141,8 +142,30 @@ def test_equality_never_crosses_secret_classes(monkeypatch: pytest.MonkeyPatch) 
     assert ComparableSecret("CANARY-SECRET") != Secret("CANARY-SECRET")
 
 
+class _Plain(Secret[str]):
+    """A subclass that keeps the base `__eq__`, so the base's own class check is what runs."""
+
+    __slots__ = ()
+
+
+def test_the_base_equality_never_crosses_classes_even_without_an_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The base `__eq__` itself refuses another class: with no subclass override in the way,
+    Python reaches the base check, and it answers False for a different `Secret` class."""
+    monkeypatch.setattr(Secret, "reveal", lambda self: pytest.fail("reveal() was called"))
+    plain, base = _Plain("CANARY-SECRET"), Secret("CANARY-SECRET")
+    assert plain != base and base != plain
+    assert not (plain == base) and not (base == plain)
+    assert _Plain("CANARY-SECRET") == _Plain("CANARY-SECRET")
+    assert Secret.__eq__(base, _Guarded("CANARY-SECRET")) is False
+    assert Secret.__eq__(base, ComparableSecret("CANARY-SECRET")) is False
+    assert Secret.__eq__(base, "CANARY-SECRET") is NotImplemented
+
+
 def test_equals_constant_time_refuses_any_other_kind_of_secret() -> None:
     guarded = _Guarded("CANARY-SECRET")
+    # The static type already refuses these operands; the test pins the runtime refusal too.
     with pytest.raises(TypeError, match="two ComparableSecret values"):
         ComparableSecret("CANARY-SECRET").equals_constant_time(guarded)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="two ComparableSecret values"):

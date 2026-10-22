@@ -72,6 +72,7 @@ def test_no_other_secret_class_can_probe_a_credential() -> None:
     for probe in (ObsSecret(CANARY), ComparableSecret(CANARY)):
         assert probe != cred and cred != probe
         assert not (probe == cred) and not (cred == probe)
+    # The static type already refuses the operand; the test pins the runtime refusal too.
     with pytest.raises(TypeError):
         ComparableSecret(CANARY).equals_constant_time(cred)  # type: ignore[arg-type]
 
