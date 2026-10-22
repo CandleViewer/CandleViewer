@@ -31,19 +31,6 @@ class Secret[T]:
         """Return the wrapped plaintext value. The only intentional escape hatch."""
         return self._value
 
-    def equals_constant_time(self, other: Secret[T]) -> bool:
-        """Whether two secrets hold the same `str` or `bytes` value, compared in constant time
-        (`hmac.compare_digest` over the encoded bytes), so the time the comparison takes tells
-        nothing of how much of a presented value matches (SR-043). Neither value is revealed, so
-        a caller outside `secrets/` can compare without the plaintext (M2 R10). Any other value
-        type raises `TypeError`: there is no fall-back to the values' own `==`."""
-        mine, theirs = self._value, other._value
-        if isinstance(mine, str) and isinstance(theirs, str):
-            return hmac.compare_digest(mine.encode(), theirs.encode())
-        if isinstance(mine, bytes) and isinstance(theirs, bytes):
-            return hmac.compare_digest(mine, theirs)
-        raise TypeError("equals_constant_time compares two str secrets or two bytes secrets")
-
     def __str__(self) -> str:  # pragma: no cover - trivial
         return _REDACTED
 
@@ -60,3 +47,25 @@ class Secret[T]:
 
     def __hash__(self) -> int:
         return hash(("Secret", id(self)))
+
+
+class ComparableSecret[T](Secret[T]):
+    """A `Secret` whose value may be compared with another's, in constant time and without
+    revealing either side. Only the wrappers that must be compared (a presented arm token against
+    the issued one, SR-043) extend it; the credential `Secret` in `secrets/` stays identity-only
+    (no plaintext comparison oracle, M2), so this class never appears in `secrets/`."""
+
+    __slots__ = ()
+
+    def equals_constant_time(self, other: ComparableSecret[T]) -> bool:
+        """Whether two secrets hold the same `str` or `bytes` value, compared in constant time
+        (`hmac.compare_digest` over the encoded bytes), so the time the comparison takes tells
+        nothing of how much of a presented value matches (SR-043). Neither value is revealed, so
+        a caller outside `secrets/` can compare without the plaintext (M2 R10). Any other value
+        type raises `TypeError`: there is no fall-back to the values' own `==`."""
+        mine, theirs = self._value, other._value
+        if isinstance(mine, str) and isinstance(theirs, str):
+            return hmac.compare_digest(mine.encode(), theirs.encode())
+        if isinstance(mine, bytes) and isinstance(theirs, bytes):
+            return hmac.compare_digest(mine, theirs)
+        raise TypeError("equals_constant_time compares two str secrets or two bytes secrets")

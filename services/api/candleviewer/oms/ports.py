@@ -54,7 +54,7 @@ from candleviewer.domain.primitives import AccountId, Environment, Px, Qty, Side
 from candleviewer.exchange.policy import InstrumentPolicy
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
-from candleviewer.observability.secret_type import Secret
+from candleviewer.observability.secret_type import ComparableSecret, Secret
 from candleviewer.risk.models import RiskDecision, RiskRefusal
 
 from .errors import RULE_SIZING_MODE_UNSUPPORTED, FieldError, OrderInvalid, StopUnitUnsupported
@@ -153,18 +153,19 @@ class SizedOrder:
             raise ValueError("an order that only reduces is reduce_only (SR-E29-01)")
 
 
-class ArmToken(Secret[str]):
+class ArmToken(ComparableSecret[str]):
     """The session's arm token (SR-043, the `X-Arm-Token` header), held masked: its `str`, `repr`
     and format are `[redacted]`, and the redaction filter writes it as `***` under any key, so no
-    log line, exception or repr carries it (C-12.6). Nothing outside `secrets/` calls `reveal()`
-    (M2 R10): an arm-record check compares a presented token with the issued one through `==`;
-    the token is never bound to a logger.
+    log line, exception or repr carries it (C-12.6). No token code calls `reveal()` (refused
+    outside `secrets/`, M2 R10): an arm-record check compares a presented token with the issued
+    one through `==`; the token is never bound to a logger.
 
-    Two tokens compare in constant time over their encoded values (`Secret.equals_constant_time`,
-    `hmac.compare_digest` underneath), so the time a comparison takes tells nothing of how much of
-    a presented token matches (SR-043). A token never equals another kind of `Secret`, whose `==`
-    is not constant time, nor a plain string. Every token hashes alike: equal tokens hash alike,
-    and the hash carries nothing of the token."""
+    Two tokens compare in constant time over their encoded values
+    (`ComparableSecret.equals_constant_time`, `hmac.compare_digest` underneath), so the time a
+    comparison takes tells nothing of how much of a presented token matches (SR-043). A token
+    never equals another kind of `Secret`, whose `==` is not constant time, nor a plain string.
+    Every token hashes alike: equal tokens hash alike, and the hash carries nothing of the
+    token."""
 
     __slots__ = ()
 
@@ -212,9 +213,9 @@ class ArmRecords(Protocol):
     """E30-S04 (#1088): whether the session's arm token admits an order mutation that needs one
     (SR-043); `FAILED` for a token missing, expired, revoked or bound to another session. The
     token arrives masked, an `ArmToken`, and is never logged (C-12.6). The real port compares a
-    presented token through `ArmToken`'s own equality (`Secret.equals_constant_time`), never
-    through `reveal()` (refused outside `secrets/`, M2 R10) and never with a plain `==` on the
-    strings (SR-043)."""
+    presented token through `ArmToken`'s own equality (`ComparableSecret.equals_constant_time`),
+    never through `reveal()` (refused outside `secrets/`, M2 R10) and never with a plain `==` on
+    the strings (SR-043)."""
 
     def check(
         self, *, session_id: UUID, environment: Environment, token: ArmToken | None

@@ -54,6 +54,14 @@ def test_equality_is_identity_not_plaintext() -> None:
     assert a == a and a != b and hash(a) != hash(b)
 
 
+def test_no_constant_time_comparison_oracle_either() -> None:
+    """The observability base grew `ComparableSecret.equals_constant_time` for arm tokens
+    (SR-043); the credential `Secret` extends the base, not that subclass, so it offers no
+    value comparison at all — not even a constant-time one."""
+    assert not hasattr(Secret(CANARY), "equals_constant_time")
+    assert not any("equals_constant_time" in vars(klass) for klass in Secret.__mro__)
+
+
 def test_invalidate_blocks_reveal() -> None:
     s = Secret(CANARY)
     assert s.reveal() == CANARY
