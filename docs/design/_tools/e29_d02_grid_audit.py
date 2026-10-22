@@ -111,6 +111,7 @@ PAIRS = [
     ),
     ("REJECTED tertiary text, selected row", "text.tertiary", "surface.selected", "rejected-text"),
     ("REJECTED disabled label (E09-D09 §2.2)", "text.disabled", "surface.raised", "rejected-text"),
+    ("REJECTED selection fill alone", "surface.selected", "surface.raised", "rejected-non-text"),
     ("row separators", "border.subtle", "surface.raised", "decorative"),
 ]
 
