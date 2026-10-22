@@ -1,11 +1,20 @@
 """E08-Q04 assertion logic on fake samples: each budget passes and fails where it should.
-Pure (no I/O, no clock)."""
+Pure (no I/O, no clock), apart from the k6 driver's tests, which fake k6, the fixture app and its
+server, and write to `tmp_path`."""
 
 from __future__ import annotations
 
+import copy
+import functools
+import json
 import math
 import statistics
+import subprocess
+import tempfile
 from collections.abc import Callable
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -175,41 +184,152 @@ def test_a_route_with_no_reading_fails_the_verdict_in_every_profile(
     assert all(c.hard and not c.passed for c in named.values())
     speed = next(c for c in v.checks if c.name == "klines_cache_speedup")
     assert speed.hard and not speed.passed
+    assert not {f"rest_p95[{r}]" for r in absent} & {c.name for c in v.checks}  # never a 0.0 row
 
 
-#: A canned `--summary-export` (#2825): one route sampled, one with no samples, one from an export
-#: with no `count` and a 0.0 p95, one with no `count` and a real p95, one whose `count` of 0
-#: contradicts its p95; the rest absent.
-_K6 = {
+def test_a_warm_read_of_zero_fails_the_cache_speed_up() -> None:
+    """#2825: a 0 ms warm p95 is no reading, never an `inf` speed-up that passes."""
+    speed = b.check_rest({}, 100.0, 0.0, 2.0)[-1]
+    assert speed.name == "klines_cache_speedup" and speed.hard and not speed.passed
+
+
+#: A canned `--summary-export` (#2825), with the stats the script asks k6 for (`summaryTrendStats`)
+#: and no failed check: a route sampled, one sampled under a millisecond, one with no samples, one
+#: from an export with no `count` and a 0.0 p95, one with no `count` and a real p95, and one whose
+#: `count` of 0 contradicts its p95; the rest absent.
+_K6: dict[str, Any] = {
     "metrics": {
+        "checks": {"passes": 2400, "fails": 0, "value": 1.0},
         "route_instruments_ms": {"p(50)": 3.0, "p(95)": 8.5, "max": 20.0, "count": 300},
+        "route_data_coverage_ms": {"p(50)": 0.2, "p(95)": 0.4, "max": 0.9, "count": 900},
         "route_klines_cold_ms": {"p(50)": 0.0, "p(95)": 0.0, "max": 0.0, "count": 0},
         "route_klines_warm_ms": {"p(95)": 0.0},
         "route_trades_ms": {"p(95)": 12.0},
         "route_orderbook_ms": {"p(95)": 5.0, "count": 0},
     }
 }
+_K6_READ = {"instruments": [8.5], "data_coverage": [0.4], "trades": [12.0]}
 
 
-@pytest.mark.parametrize("code", [0, 99], ids=["passed", "threshold-crossed"])
-def test_k6_reading_keeps_only_the_routes_k6_sampled(code: int) -> None:
+def _k6(checks: dict[str, float] | None = None, **p95: float) -> str:
+    """`_K6` as k6 writes it: `checks` replaces its checks counts (an empty mapping drops them), and
+    each keyword sets that route's p95."""
+    doc = copy.deepcopy(_K6)
+    metrics = doc["metrics"]
+    if checks is not None:
+        metrics["checks"] = checks
+    for route, value in p95.items():
+        metrics[f"route_{route}_ms"]["p(95)"] = value
+    return json.dumps(doc)
+
+
+def test_k6_reading_keeps_only_the_routes_k6_sampled() -> None:
     """#2825: a route k6 took no samples for (`count` 0, or a 0.0 p95) has no reading, like a
-    route it wrote nothing for; a crossed threshold (99) is a reading the verdict judges."""
-    assert rest_load.k6_reading(code, _K6) == {"instruments": [8.5], "trades": [12.0]}
+    route it wrote nothing for; a summary with neither checks nor routes reads nothing."""
+    assert rest_load.k6_reading(0, _k6()) == _K6_READ
+    assert rest_load.k6_reading(0, json.dumps({"metrics": {}})) == {}
+
+
+def test_k6_reading_keeps_a_99_that_a_route_over_150_ms_explains() -> None:
+    """#2825: a route's p95 over Budget #13 crosses its threshold (99), and `verdict` fails it."""
+    assert rest_load.k6_reading(99, _k6(trades=160.0)) == _K6_READ | {"trades": [160.0]}
 
 
 @pytest.mark.parametrize("code", [1, 98, 107, 255])
 def test_k6_reading_refuses_a_run_k6_ended_with_an_error(code: int) -> None:
     """#2825: only 0 and 99 leave a reading; a script, configuration or run error refuses it."""
     with pytest.raises(RuntimeError, match=f"k6 exited {code}"):
-        rest_load.k6_reading(code, _K6)
+        rest_load.k6_reading(code, _k6())
+
+
+@pytest.mark.parametrize(
+    ("code", "text", "match"),
+    [
+        (0, _k6({"passes": 2397, "fails": 3, "value": 0.99875}), "counted 3 failed checks"),
+        (99, _k6(), "no route's p95 over 150 ms"),
+        (99, _k6({}), "no route's p95 over 150 ms"),
+        (0, "", "wrote no summary"),
+        (0, '{"metrics": {', "unreadable summary"),
+    ],
+    ids=["failed-checks", "unexplained-99", "unexplained-99-no-count", "no-summary", "cut-short"],
+)
+def test_k6_reading_refuses_a_summary_of_no_valid_run(code: int, text: str, match: str) -> None:
+    """#2825: a response that was not a 200 fails a check, and a failed check refuses the run, as
+    the in-process driver refuses a non-200: counted, or as a 99 no route's p95 explains; so do a
+    missing or an unreadable summary."""
+    with pytest.raises(RuntimeError, match=match):
+        rest_load.k6_reading(code, text)
 
 
 def test_a_k6_run_whose_routes_took_no_samples_fails_the_full_verdict() -> None:
     """#2825: the canned summary through `verdict`: each route without samples fails, named."""
-    v = rest_load.verdict(_rest("full"), rest_load.k6_reading(0, _K6))
-    failed = {c.name for c in v.checks if not c.passed}
-    assert not v.passed and {"rest_measured[klines_cold]", "rest_measured[klines_warm]"} <= failed
+    v = rest_load.verdict(_rest("full"), rest_load.k6_reading(0, _k6()))
+    failed = {c.name for c in v.checks if c.name.startswith("rest_measured[") and not c.passed}
+    assert not v.passed and failed == {
+        f"rest_measured[{r}]" for r in set(requests_plan()) - set(_K6_READ)
+    }
+
+
+@pytest.fixture
+def faked_k6(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> SimpleNamespace:
+    """`drive_k6` with k6, the fixture app and its server faked: no network, no sleep, its files
+    under `tmp_path`. Set `.code`, `.text` (None: k6 writes no summary) and `.starts` first."""
+    import uvicorn
+
+    state = SimpleNamespace(code=0, text=_k6(), starts=True, servers=[])
+
+    class Server:
+        def __init__(self, config: object) -> None:
+            self.started, self.should_exit = state.starts, False
+            state.servers.append(self)
+
+        def run(self) -> None:
+            return None
+
+    def run(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        if state.text is not None:
+            Path(argv[argv.index("--summary-export") + 1]).write_text(state.text, "utf-8")
+        return subprocess.CompletedProcess(argv, state.code)
+
+    async def build_app(_: Path) -> object:
+        return object()
+
+    temp = functools.partial(tempfile.TemporaryDirectory, dir=tmp_path)
+    monkeypatch.setattr("bench.ingestion.rest_load.shutil.which", lambda _: "/fake/k6")
+    monkeypatch.setattr(rest_load, "write_cold_lake", lambda _: None)
+    monkeypatch.setattr(rest_load, "build_app", build_app)
+    monkeypatch.setattr(rest_load, "_free_port", lambda: 8123)
+    monkeypatch.setattr("bench.ingestion.rest_load.subprocess.run", run)
+    monkeypatch.setattr("bench.ingestion.rest_load.time.sleep", lambda _: None)
+    monkeypatch.setattr("bench.ingestion.rest_load.tempfile.TemporaryDirectory", temp)
+    monkeypatch.setattr(uvicorn, "Server", Server)
+    monkeypatch.setattr(uvicorn, "Config", lambda *_, **__: None)
+    return state
+
+
+def test_drive_k6_reads_k6s_summary_and_stops_the_app(faked_k6: SimpleNamespace) -> None:
+    """#2825: the driver hands k6's exit code and summary to `k6_reading`, then stops the app."""
+    assert rest_load.drive_k6("1s", 1) == _K6_READ
+    assert [s.should_exit for s in faked_k6.servers] == [True]
+
+
+@pytest.mark.parametrize(
+    ("code", "text", "starts", "match"),
+    [
+        (107, None, True, "k6 exited 107"),
+        (0, None, True, "wrote no summary"),
+        (0, _k6(), False, "fixture app did not start"),
+    ],
+    ids=["k6-error", "no-summary", "app-not-started"],
+)
+def test_drive_k6_refuses_an_invalid_run_and_still_stops_the_app(
+    faked_k6: SimpleNamespace, code: int, text: str | None, starts: bool, match: str
+) -> None:
+    """#2825: a k6 error, a missing summary or an app that never started is no reading."""
+    faked_k6.code, faked_k6.text, faked_k6.starts = code, text, starts
+    with pytest.raises(RuntimeError, match=match):
+        rest_load.drive_k6("1s", 1)
+    assert [s.should_exit for s in faked_k6.servers] == [True]
 
 
 def test_headroom_zero_or_ip_limit_fails() -> None:
