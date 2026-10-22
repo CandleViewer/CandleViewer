@@ -389,9 +389,15 @@
         ["forbid-height", 1, 0, "Cv:height", "S+ C+"],
         // Second run (r3, the orchestrator's text round 1): the card is a cut at frame 0 and only the
         // scrim fades (lock-in, step-up open); CMP-098 is the modal over the scrim, in (a cut) and out.
-        ["lock-in-cut", 1, 0, "", "L+ S+ Ci Fpw"],
-        ["stepup-open-cut", 1, 0, "", "S+ Ci Fpw"],
-        ["cmp098-in-modal", 1, 0, "", "S+ Wm Fwstay"],
+        // Third run (r4, the orchestrator's text round 2): the cut token (Ci / Wm) precedes S+ in the
+        // three entrance strings. instant() wraps the whole body in .notrans for its forced style
+        // recalc, so with S+ first the scrim's own recalc ran under transition: none and it jumped to
+        // opacity.scrim — the run-2 rows of these three scenarios measured a full cut of both layers,
+        // not "the card a cut, the scrim fading". Card first, then S+: the scrim's transition starts in
+        // the same task, after .notrans is gone (CSS Transitions Level 1 §3: the after-change style).
+        ["lock-in-cut", 1, 0, "", "L+ Ci S+ Fpw"],
+        ["stepup-open-cut", 1, 0, "", "Ci S+ Fpw"],
+        ["cmp098-in-modal", 1, 0, "", "Wm S+ Fwstay"],
         ["cmp098-out-modal", 1, 0, "Km", "S- Wm-"],
       ];
       const pct = (a, p) =>
