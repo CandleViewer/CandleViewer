@@ -1,14 +1,14 @@
 # E11-D05 — Per-component handoff checklist (`16` §11.4)
 
-Nine blocks (one per chart primitive; every line of the `16` §11.4 block kept), then Tables 1–5, the Density table and the Essential-exceptions table **once each with a leading `Component` column** so every component's rows are present without nine copies (deviation recorded in `E11-D05.md` §16 item 6; the fallback is per-component tables, then `large-pr-approved`). The Density table carries three chart densities (comfortable / compact / dense — E11-D02 D6, `E11-D05.md` §6), a deviation from the template's two, stated. The Penpot line follows the page-ref rule (page **name + id**; never a hostname, team or file id, or a workspace URL — `E11-D05.md` C19; E25-D05 CR-6) and reads BLOCKED-PENPOT until hpe-worker-1 draws the boards. CMP-039 gets no block: it is E05's atom and this ticket appends one usage paragraph to its `15` entry (`E11-D05.md` §9.1). Spec: `docs/design/E11/E11-D05.md`; tokens: `packages/ui/tokens` at `ced9a352b2785715ebe8ec74b3fd66443ed7ee05`; matrix: `docs/design/_tools/e11_d05_ds_audit.py`.
+Nine blocks (one per chart primitive; every line of the `16` §11.4 block kept), then Tables 1–5, the Density table and the Essential-exceptions table **once each with a leading `Component` column** so every component's rows are present without nine copies (deviation recorded in `E11-D05.md` §16 item 6; the fallback is per-component tables, then `large-pr-approved`). The Density table carries three chart densities (comfortable / compact / dense — E11-D02 D6, `E11-D05.md` §6), a deviation from the template's two, stated. The Penpot line follows the page-ref rule (page **name + id**; never a hostname, team or file id, or a workspace URL — `E11-D05.md` C19; E25-D05 CR-6) and names the drawn page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da` (eight boards drawn and exported, spec §0; the ref-frame variants are still owed with the DS library entry). CMP-039 gets no block: it is E05's atom and this ticket appends one usage paragraph to its `15` entry (`E11-D05.md` §9.1). Spec: `docs/design/E11/E11-D05.md`; tokens: `packages/ui/tokens` at `ced9a352b2785715ebe8ec74b3fd66443ed7ee05`; matrix: `docs/design/_tools/e11_d05_ds_audit.py`.
 
 ## Handoff checklist — CMP-180 ChartRoot (E11-D05, #310)
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E11-D05` (page id pinned after the first build), ref frames `CMP-180 · ChartRoot — ref frame (<state>)` on this ticket's own page (never the DS library file); PNG planned at `docs/design/E11/img/E11-D05-01-slot-map.png` and `docs/design/E11/img/E11-D05-06-primitives-matrix.png`
-- [ ] **Variants × States matrix** — PENDING (a Penpot ref frame exists only once the boards are drawn, BLOCKED-PENPOT): 2 variants (single / multi pane) × 10 states (E11-D02 D16; spec §8.1); Table 1
+- [x] **Final Penpot link** — page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da`; PNG at `docs/design/E11/img/E11-D05-01-slot-map.png` and `docs/design/E11/img/E11-D05-06-primitives-matrix.png`; the ref frames `CMP-180 · ChartRoot — ref frame (<state>)` on this ticket's own page (never the DS library file) are still owed with the DS library entry
+- [ ] **Variants × States matrix** — PENDING (the boards are drawn — spec §0; the ref-frame variants are still owed with the DS library entry): 2 variants (single / multi pane) × 10 states (E11-D02 D16; spec §8.1); Table 1
 - [x] **Keyboard table** — the chart region's Tab order (toolbar → status chips → per pane: legend → left gutter → plot → handles → right gutter → lock badge → splitter; `Ctrl+\` leaves) and the plot cursor keys (E11-D02 §12; E06-D03 D5 / D6); no view-local override of a global binding, `Esc` / `Ctrl+K` untouched; Table 2
 - [x] **Accessible name / role table** — canvas `role="img"` with the rolling label; the wrapper's role open (E11-D07, spec Q8); the mirror root; the two live regions (E11-D02 §10); Table 3
 - [x] **Live data** — the canvas label and the ambient region polite ≤1 per 2 s per field; `role="alert"` for context lost / restored, stale, LOD step-down (E11-D02 §10); the `a11y` / `viewport` messages ≤1 per frame; Table 5
@@ -26,8 +26,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E11-D05` (page id pinned after the first build), ref frames `CMP-188 · PriceAxis — ref frame (<state>)`; PNG planned at `docs/design/E11/img/E11-D05-02-token-slots-three-themes.png` and `docs/design/E11/img/E11-D05-06-primitives-matrix.png`
-- [ ] **Variants × States matrix** — PENDING (BLOCKED-PENPOT): 2 gutters × 3 densities × 8 states (E11-D02 D7; spec §8.2); Table 1
+- [x] **Final Penpot link** — page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da`; PNG at `docs/design/E11/img/E11-D05-02-token-slots-three-themes.png` and `docs/design/E11/img/E11-D05-06-primitives-matrix.png`; the ref frames `CMP-188 · PriceAxis — ref frame (<state>)` are still owed with the DS library entry
+- [ ] **Variants × States matrix** — PENDING (the boards are drawn — spec §0; the ref-frame variants are still owed with the DS library entry): 2 gutters × 3 densities × 8 states (E11-D02 D7; spec §8.2); Table 1
 - [x] **Keyboard table** — `↑/↓` 10 %, `Shift+↑/↓` 25 %, `PageUp/PageDown` pan 50 %, `Home` auto-fit, `Shift+F10` menu, `Esc`, `Tab` to the lock badge (E11-D02 §7.1); no global conflict (axis-scoped); Table 2
 - [x] **Accessible name / role table** — surrogate `role="group"` "Price axis, 63,900 to 64,300, linear, auto"; the lock badge a button named by its text; Table 3
 - [x] **Live data** — the last-price pill per tick with no flash, its colour held ≤2/s; tick labels in the mirror ≤1 per frame; announcements polite ≤2/s; Table 5
@@ -45,8 +45,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E11-D05` (page id pinned after the first build), ref frames `CMP-189 · TimeAxis — ref frame (<state>)`; PNG planned at `docs/design/E11/img/E11-D05-05-pattern-registry.png` and `docs/design/E11/img/E11-D05-06-primitives-matrix.png`
-- [ ] **Variants × States matrix** — PENDING (BLOCKED-PENPOT): 3 densities × 9 states (E11-D02 D8; spec §8.3); Table 1
+- [x] **Final Penpot link** — page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da`; PNG at `docs/design/E11/img/E11-D05-05-pattern-registry.png` and `docs/design/E11/img/E11-D05-06-primitives-matrix.png`; the ref frames `CMP-189 · TimeAxis — ref frame (<state>)` are still owed with the DS library entry
+- [ ] **Variants × States matrix** — PENDING (the boards are drawn — spec §0; the ref-frame variants are still owed with the DS library entry): 3 densities × 9 states (E11-D02 D8; spec §8.3); Table 1
 - [x] **Keyboard table** — `←/→` pan 10 % (`Shift` one width), `+/−` × 1.1 (`Shift` × 1.25), `Home` fit, `End` latest, `Ctrl+Home` default spacing, `Shift+F10`, `Esc`; the cluster's `←/→` + `Enter` / `Space` (E11-D02 §7.2); no modifier + wheel is bound (E11-D01); Table 2
 - [x] **Accessible name / role table** — surrogate `role="group"` "UTC time axis, 14 Oct 07:30 to 13:47, 1 minute bars"; the `auto` button named by its visible text; the zone tag `aria-live="off"`; Table 3
 - [x] **Live data** — the zone tag's clock at 1 Hz off; "Paused at hh:mm" once on pausing; the retained labels in the mirror ≤1 per frame; Table 5
@@ -64,8 +64,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E11-D05` (page id pinned after the first build), ref frames `CMP-190 · Crosshair — ref frame (<state>)`; PNG planned at `docs/design/E11/img/E11-D05-02-token-slots-three-themes.png` and `docs/design/E11/img/E11-D05-06-primitives-matrix.png`
-- [ ] **Variants × States matrix** — PENDING (BLOCKED-PENPOT): 1 variant × 6 states (E11-D02 D3 / D9; spec §8.4); Table 1
+- [x] **Final Penpot link** — page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da`; PNG at `docs/design/E11/img/E11-D05-02-token-slots-three-themes.png` and `docs/design/E11/img/E11-D05-06-primitives-matrix.png`; the ref frames `CMP-190 · Crosshair — ref frame (<state>)` are still owed with the DS library entry
+- [ ] **Variants × States matrix** — PENDING (the boards are drawn — spec §0; the ref-frame variants are still owed with the DS library entry): 1 variant × 6 states (E11-D02 D3 / D9; spec §8.4); Table 1
 - [x] **Keyboard table** — `←/→` bar, `Shift` ×10 (= `PageUp/PageDown`), `↑/↓` level, `Home/End`, `Enter` expand (E06-D03 D5 / D6; E11-D02 §7.3); Table 2
 - [x] **Accessible name / role table** — the focused bar's mirror row carries `aria-current`; the pills are GL text, the mirror and the live region carry the values; Table 3
 - [x] **Live data** — the cursor announcement per E06-D03 D5 (lead 0 ms, repeat window 500 ms, trailing flush ≤250 ms); pointer moves are never announced; Table 5
@@ -102,8 +102,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E11-D05` (page id pinned after the first build), ref frames `CMP-197 · ChartTooltip — ref frame (<state>)`; PNG planned at `docs/design/E11/img/E11-D05-06-primitives-matrix.png`
-- [ ] **Variants × States matrix** — PENDING (BLOCKED-PENPOT): 3 modes (follow / docked / off) × 6 states (E11-D02 D10; spec §8.6); Table 1
+- [x] **Final Penpot link** — page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da`; PNG at `docs/design/E11/img/E11-D05-06-primitives-matrix.png`; the ref frames `CMP-197 · ChartTooltip — ref frame (<state>)` are still owed with the DS library entry
+- [ ] **Variants × States matrix** — PENDING (the boards are drawn — spec §0; the ref-frame variants are still owed with the DS library entry): 3 modes (follow / docked / off) × 6 states (E11-D02 D10; spec §8.6); Table 1
 - [ ] N/A — **Keyboard table**: not focusable (`aria-hidden`; a pointer convenience); the keyboard path is the crosshair's (CMP-190) and the mirror's
 - [x] **Accessible name / role table** — `aria-hidden="true"`; the mirror row and the live region carry the same values (E06-D03 D9); Table 3
 - [x] **Live data** — repositioned and re-filled at most once per frame from the crosshair; never announced; Table 5
@@ -121,8 +121,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E11-D05` (page id pinned after the first build), ref frames `CMP-198 · ChartWatermark — ref frame (<state>)`; PNG planned at `docs/design/E11/img/E11-D05-02-token-slots-three-themes.png`
-- [ ] **Variants × States matrix** — PENDING (BLOCKED-PENPOT): 1 variant × 4 states (E11-D02 D13; spec §8.7); Table 1
+- [x] **Final Penpot link** — page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da`; PNG at `docs/design/E11/img/E11-D05-02-token-slots-three-themes.png`; the ref frames `CMP-198 · ChartWatermark — ref frame (<state>)` are still owed with the DS library entry
+- [ ] **Variants × States matrix** — PENDING (the boards are drawn — spec §0; the ref-frame variants are still owed with the DS library entry): 1 variant × 4 states (E11-D02 D13; spec §8.7); Table 1
 - [ ] N/A — **Keyboard table**: not interactive
 - [x] **Accessible name / role table** — `aria-hidden` (decorative); the symbol and interval live in the toolbar and the canvas label; Table 3
 - [ ] N/A — **Live data**: static chrome (the replay suffix changes with the session, not with data)
@@ -140,8 +140,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E11-D05` (page id pinned after the first build), ref frames `CMP-199 · ChartLegend — ref frame (<state>)`; PNG planned at `docs/design/E11/img/E11-D05-06-primitives-matrix.png`
-- [ ] **Variants × States matrix** — PENDING (BLOCKED-PENPOT): 3 densities × 8 states (E11-D02 D12; spec §8.8); Table 1
+- [x] **Final Penpot link** — page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da`; PNG at `docs/design/E11/img/E11-D05-06-primitives-matrix.png`; the ref frames `CMP-199 · ChartLegend — ref frame (<state>)` are still owed with the DS library entry
+- [ ] **Variants × States matrix** — PENDING (the boards are drawn — spec §0; the ref-frame variants are still owed with the DS library entry): 3 densities × 8 states (E11-D02 D12; spec §8.8); Table 1
 - [x] **Keyboard table** — one roving stop: `↑/↓` rows, `←/→` controls, `Space` / `Enter` toggle, `Enter` on "+N more" opens the popover (`Esc` closes, focus returns), `Esc` to the plot (E11-D02 §7.5); `Delete` reserved for E13; Table 2
 - [x] **Accessible name / role table** — the eye toggle `aria-pressed` with the stable name "EMA 20 visible"; the row name carries "hidden"; the pane-label row's buttons named; Table 3
 - [x] **Live data** — cursor values ≤1 per frame from the `a11y` / `viewport` message; toggles announce "EMA 20 hidden" / "shown" politely; Table 5
@@ -159,8 +159,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E11-D05` (page id pinned after the first build), ref frames `CMP-226 · BarCountdown — ref frame (<state>)`; PNG planned at `docs/design/E11/img/E11-D05-06-primitives-matrix.png`
-- [ ] **Variants × States matrix** — PENDING (BLOCKED-PENPOT): 2 densities × 4 states (E11-D02 D11; spec §8.9); Table 1
+- [x] **Final Penpot link** — page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da`; PNG at `docs/design/E11/img/E11-D05-06-primitives-matrix.png`; the ref frames `CMP-226 · BarCountdown — ref frame (<state>)` are still owed with the DS library entry
+- [ ] **Variants × States matrix** — PENDING (the boards are drawn — spec §0; the ref-frame variants are still owed with the DS library entry): 2 densities × 4 states (E11-D02 D11; spec §8.9); Table 1
 - [ ] N/A — **Keyboard table**: not interactive (text in the status row; the opt-in announcement is a Settings toggle)
 - [x] **Accessible name / role table** — text with `aria-live="off"`; the opt-in 10 s announcement through the polite region; Table 3
 - [x] **Live data** — 1 Hz, `aria-live="off"`; the opt-in announcement once at 10 s; Table 5
@@ -271,10 +271,10 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 ## A. Design QA checklist (`16` §12) — the nine primitives
 
 - [x] Only published Tier-2 tokens or the PROPOSED `color.chart.*` slots of spec §4 — zero hard-coded hex / px in the spec (the tool resolves every value).
-- [ ] Verified in all three themes at both density modes — PENDING: the ref frames (BLOCKED-PENPOT) and the built surfaces (E11-D08's 9-cell matrix); the matrix of spec §10.1 covers the tokens in all three themes.
+- [ ] Verified in all three themes at both density modes — PENDING: the ref frames (still owed with the DS library entry; the boards are drawn on page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da`) and the built surfaces (E11-D08's 9-cell matrix); the matrix of spec §10.1 covers the tokens in all three themes.
 - [x] Passes the contrast matrix for every pair it introduces or touches — 68 gated rows, 0 FAIL (the token PR registers the PROPOSED pairs).
-- [ ] CVD simulation reviewed for any new colour-carrying state — the ΔE76 rows of spec §10.3 computed; `cvd_sim.py` on the exports planned (BLOCKED-PENPOT).
-- [ ] Every documented State has a Penpot variant and a Storybook story — PENDING (ref frames BLOCKED-PENPOT; 79 stories specified, none built — E11-S06 / E11-T08).
+- [ ] CVD simulation reviewed for any new colour-carrying state — the ΔE76 rows of spec §10.3 computed; `cvd_sim.py` on the exports of page `E11-D05` · id `0bde4016-6d2e-8002-8008-d42e063e55da` is still owed with the a11y audit (not run).
+- [ ] Every documented State has a Penpot variant and a Storybook story — PENDING (the ref-frame variants are still owed with the DS library entry; 79 stories specified, none built — E11-S06 / E11-T08).
 - [x] Disabled states use disabled-with-reason — N/A (no RBAC / env-gated action in the nine primitives).
 - [x] Loading / empty / error states explicitly designed — E11-D02 D16 (cited); SCR-047 / SCR-048 are E11-D04's.
 - [x] Keyboard-interaction table completed — Table 2 (E11-D02 §7 / §12 tables).
