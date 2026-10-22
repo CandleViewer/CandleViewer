@@ -1,7 +1,8 @@
 # E17-Q02 — client WS chaos catalogue (#410)
 
 Suite: `services/api/tests/chaos/ws/` (marker `chaos` only, no `integration`: like the ingestion
-suite it needs no docker, so the PR `py` lane runs it; no nightly job yet, see #410 DoD).
+suite it needs no docker, so the PR `py` lane runs it, and `chaos-ws-nightly.yml` runs it again
+every night, with any `harness`-marked heavy run that lane deselects; see #410 DoD).
 Run: `cd services/api && uv run pytest tests/chaos/ws -m chaos --no-cov`
 
 **Harness.** `_server.Stack` serves the real `/ws` gateway (`make_ws_router`, `ConnectionRegistry`,

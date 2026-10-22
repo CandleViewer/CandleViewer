@@ -169,11 +169,33 @@ manual run (`gh workflow run storybook-nightly.yml`) runs the same job and files
 the red job by its code (§4, CI-A11Y-002..004). Cost: one job a night, within its 600 s budget and
 capped by its 15-minute timeout.
 
+**Nightly WS chaos (#410).** `chaos-ws-nightly.yml` runs the client WS chaos suite
+(`services/api/tests/chaos/ws`, E17-Q02; its catalogue is the `SCENARIOS.md` there) on `main` daily
+at 03:29 UTC and on demand: one `chaos-ws` job, one pytest call with `-m "chaos and not flaky"`,
+`--no-cov` (the coverage floor in addopts belongs to the lanes, as for `perf-storage-nightly.yml`,
+#3429) and no retries. It is additive: the PR `py` lane (`db-chaos-5`) keeps running the suite when
+`pr.yml`'s `py` filter matches, and the nightly repeats it and picks up any `chaos` test that also
+carries `harness`, which that lane deselects (E17-Q02's full-length runs). It is not a required
+check (C-9.1 is unchanged), but a red night blocks the next release (C-9.2, C-13.6). A red night
+files through `_nightly-issue.yml` under the `chaos-ws` signal (labels `qa`,
+`area/backend-platform`, `priority/p1`, below); it pages no one, as CI has no path into
+Alertmanager. To triage, open the `chaos-ws` job's log: `-rA` prints the output of every test, so
+the records the tests print (the D8 accounting of scenario 2, the recovery times) are under PASSES,
+and `--durations=20` precedes the summary; the `chaos-ws-junit` artifact holds the JUnit XML. To
+reproduce, run the suite as its `SCENARIOS.md` says. A test that fails and then passes on the same
+`main` commit (the next night, nothing merged in between) is flaky: quarantine it within 24 hours
+(C-9.3, §9) and never re-run the night until it is green; the nightly never retries. The pytest step
+has a 15-minute limit, so a hung suite fails the step and files the report; a job that is cancelled
+(its own 35-minute limit, a manual cancel) files nothing, so look at the run; every step has its own
+limit (the locked install 5 minutes; checkout, setup and the upload 3 each), so a hang fails a step
+and files. No concurrency group (#3449). Cost: one job a night, capped by its 35-minute timeout.
+
 **Nightly issues, one per signal (#1849).** `fixture-drift.yml` (signal `fixture-drift`),
 `perf-storage-nightly.yml` (`perf-storage`), `perf-ingestion-nightly.yml` (`perf-ingestion-soak`,
-`perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full`) and
+`perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full`),
 `dast-admin-nightly.yml` (`dast-admin`, labels `security`, `area/accounts-admin`; nightly at
-03:27 UTC and on dispatch) report a red signal through `_nightly-issue.yml`, from
+03:27 UTC and on dispatch) and `chaos-ws-nightly.yml` (`chaos-ws`, labels `qa`,
+`area/backend-platform`, `priority/p1`) report a red signal through `_nightly-issue.yml`, from
 scheduled and manual runs alike. Its `report` job comments on the
 newest open issue that `github-actions[bot]` opened with the signal's title prefix and all its
 labels, or opens one titled `<prefix> (YYYY-MM-DD)`, so a lasting drift or regression keeps one
