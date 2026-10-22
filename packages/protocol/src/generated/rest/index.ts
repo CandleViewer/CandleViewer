@@ -3795,6 +3795,13 @@ export interface paths {
      *     `intent`: SR-E29-01) can never be cleared while the leg is open (C-2.6, arch P4),
      *     which returns `validation_failed` / `native_stop_required`.
      *
+     *     A `stop_loss` moved to loosen it on an entry is refused with `403 risk_limit_breached`,
+     *     whatever the caller's role, before any send: compared with the stop it replaces, a long
+     *     entry's stop may only rise and a short entry's only fall, before the fill and after it
+     *     (the ratchet `amendTradeGroup` applies). The one way to loosen a stop is the owner's
+     *     override on `setPositionTpSl` (24-internal-schemas.md section 8.8 rule 5). A tightening
+     *     is never refused by this check (C-2.6; section 8.10).
+     *
      *     Amending only one side of a TP/SL pair breaks Bybit's OCO pairing (digest 06 §19); the
      *     server therefore re-sends both sides whenever either changes, and records the paired
      *     amend in `order_events`.
@@ -4020,6 +4027,14 @@ export interface paths {
      *     * The stop-loss of an open position can never be cleared (C-2.6): the rule keys on the
      *       open exposure, never on a profile setting or an order's `intent` (SR-E29-01) —
      *       `validation_failed` / `native_stop_required`.
+     *     * **Only the owner can loosen a stop** (24-internal-schemas.md section 8.8 rule 5). A
+     *       stop-loss moved to loosen it (a long position's lower, a short's higher, or in Partial
+     *       mode a smaller `sl_size`) needs the owner's role and a live `risk_caps` step-up: the
+     *       owner without one gets `403 step_up_required` (`action_class: risk_caps`), and any
+     *       other role `403 risk_limit_breached`, its refusal audited (`sl.loosen_refused`), with
+     *       nothing sent. The owner's loosening is audited before it is sent (`sl.loosened`).
+     *       The check sits once, at the recorded-stop writer, for every writer of the stop; a
+     *       tightening is never refused by it (C-2.6).
      */
     put: operations["setPositionTpSl"];
     post?: never;
