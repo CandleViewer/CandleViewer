@@ -1204,6 +1204,16 @@ def test_the_scan_copies_zaps_log_out_then_removes_its_container_for_both_roles(
     )
 
 
+def test_zap_makes_no_unsolicited_request_and_no_scan_container_outlives_the_job() -> None:
+    """`-silent`: no update check or call-home leaves the runner. A scan container that
+    `docker rm` could not remove, with ZAP's session store in it, goes at tear-down."""
+    runs = re.findall(r"zap\.sh -cmd[^\n]*", WORKFLOW.read_text(encoding="utf-8"))
+    assert len(runs) == 2 and all(" -silent " in run for run in runs)
+    teardown = _steps()["Tear down"]
+    assert teardown["if"] == "always()"
+    assert "docker rm -f zap-manager-scan zap-viewer-scan" in teardown["run"]
+
+
 def test_the_scrub_reads_every_path_the_upload_sends() -> None:
     """Both phases write into $WORK and ZAP's reports into zap-reports: the scrub reads exactly the
     paths the upload sends, so nothing reaches the artefact unread."""

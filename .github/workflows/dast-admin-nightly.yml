@@ -147,7 +147,7 @@ jobs:
                 --password-env "ZAP_${role^^}_PASSWORD" --totp-secret-file "$RUNNER_TEMP/cv/$role.totp" \
                 --out "$envfile" &&
               docker run --rm --network host --env-file "$envfile" -e ZAP_TARGET \
-                -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -autorun "/zap/wrk/$WORK/$role-denials.yaml" \
+                -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -silent -autorun "/zap/wrk/$WORK/$role-denials.yaml" \
                 2>&1 | tee "$WORK/$role-denials.log"; } || rc=1
           done
           exit "$rc"
@@ -177,7 +177,7 @@ jobs:
                 --password-env "ZAP_${role^^}_PASSWORD" --totp-secret-file "$RUNNER_TEMP/cv/$role.totp" \
                 --out "$envfile" &&
               docker run --name "zap-$role-scan" --network host --env-file "$envfile" -e ZAP_TARGET \
-                -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -autorun "/zap/wrk/$WORK/$role-scan.yaml" \
+                -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -silent -autorun "/zap/wrk/$WORK/$role-scan.yaml" \
                 2>&1 | tee "$WORK/$role-scan.log"; } || rc=1
             # ZAP's own log (its errors and insights), not its session: the scrub checks it too.
             docker cp "zap-$role-scan:/home/zap/.ZAP/zap.log" "$WORK/$role-scan-zap.log" || rc=1
@@ -230,7 +230,10 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
+        # A scan container `docker rm` could not remove holds ZAP's session store: it goes too.
+        run: |
+          docker rm -f zap-manager-scan zap-viewer-scan > /dev/null 2>&1 || true
+          docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
 
   report:
     needs: zap-admin
