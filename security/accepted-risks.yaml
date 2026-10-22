@@ -142,6 +142,16 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/3639"
+  # electron 41.10.7 (the desktop shell's runtime): the advisory was published 2026-10-21, so
+  # C-12.3's 30-day window for a Medium ends on this expiry and 04 section 16.2 needs no row. The
+  # fix is Electron 42.11.3 or later, a major: #3639's named follow-up, which this entry expires into.
+  - id: "GHSA-fw47-9c62-h3vw"
+    tool: npm-audit
+    severity: MEDIUM
+    reason: "electron 41.10.7, the desktop shell's runtime; fixed only in 42.11.3, a major. The flaw attributes WebHID and WebUSB permission checks to the wrong origin: CandleViewer uses neither API, its main process denies every permission request and every device permission (setPermissionRequestHandler, setDevicePermissionHandler), and its sandboxed, context-isolated renderer loads only its own origin"
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
+    expires: "2026-11-20"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/3639"
   - id: "GHSA-g7r4-m6w7-qqqr"
     tool: npm-audit
     severity: LOW

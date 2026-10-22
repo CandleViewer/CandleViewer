@@ -277,12 +277,16 @@ function installAppProtocol(csp: string): void {
  * notifications from the renderer's own request path (notifications are
  * surfaced via `ShellPort.notifications`, main-process initiated) — every
  * request is therefore explicitly denied rather than left to Electron's
- * default (which varies by permission).
+ * default (which varies by permission). Device access (WebHID, WebUSB, Web
+ * Serial) goes through a separate check, which is denied the same way: the app
+ * uses no device, and Electron 41's check can attribute a device permission to
+ * the wrong origin (GHSA-fw47-9c62-h3vw, accepted until Electron 42.11.3, #3639).
  */
 function installPermissionHandler(): void {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });
+  session.defaultSession.setDevicePermissionHandler(() => false);
 }
 
 /** What the IPC sender check could read of the frame that sent a call. */

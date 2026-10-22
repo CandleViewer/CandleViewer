@@ -39,6 +39,7 @@ vi.mock("electron", () => ({
     defaultSession: {
       webRequest: { onHeadersReceived: vi.fn() },
       setPermissionRequestHandler: vi.fn(),
+      setDevicePermissionHandler: vi.fn(),
     },
   },
   ipcMain: { handle: vi.fn() },
@@ -195,6 +196,32 @@ describe("app:// wiring (#3410)", () => {
     expect(devCallback).toHaveBeenCalledWith({
       responseHeaders: { "x-a": ["b"], "Content-Security-Policy": [buildCsp()] },
     });
+  });
+});
+
+describe("the session's permission handlers", () => {
+  it("deny every permission request and every device permission (GHSA-fw47-9c62-h3vw)", async () => {
+    const requests = vi.mocked(session.defaultSession.setPermissionRequestHandler);
+    const devices = vi.mocked(session.defaultSession.setDevicePermissionHandler);
+    await vi.waitFor(() => expect(devices).toHaveBeenCalledTimes(1));
+    const onRequest = requests.mock.calls[0]?.[0];
+    const onDevice = devices.mock.calls[0]?.[0];
+    if (typeof onRequest !== "function" || typeof onDevice !== "function") {
+      throw new Error("the permission handlers were not installed");
+    }
+    const callback = vi.fn();
+    onRequest(...([{}, "hid", callback, {}] as unknown as Parameters<typeof onRequest>));
+    expect(callback).toHaveBeenCalledWith(false);
+    for (const [deviceType, origin] of [
+      ["hid", "app://candleviewer"],
+      ["usb", "app://candleviewer"],
+      ["serial", "https://evil.test"],
+    ]) {
+      const details = { deviceType, origin, device: {} } as unknown as Parameters<
+        typeof onDevice
+      >[0];
+      expect(onDevice(details)).toBe(false);
+    }
   });
 });
 

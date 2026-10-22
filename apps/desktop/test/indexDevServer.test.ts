@@ -25,6 +25,7 @@ vi.mock("electron", () => ({
     defaultSession: {
       webRequest: { onHeadersReceived: vi.fn() },
       setPermissionRequestHandler: vi.fn(),
+      setDevicePermissionHandler: vi.fn(),
     },
   },
   ipcMain: { handle: vi.fn() },
