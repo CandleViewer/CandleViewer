@@ -6,7 +6,8 @@ engine (native SL, sizing shape, one default, the ladder limit, a soft delete fr
 `version` is the database's, every write leaves a revision, the revisions are append-only even
 under the replica role and for the app role; every account gets its bootstrap profile, new ones
 by trigger and existing ones by the revision; an empty and a seeded database round-trip, and one
-holding a written profile refuses. `testcontainers` in CI.
+holding a written profile refuses. `0048_account_default_binding` (#906 0d) is here too: the
+account's default binding version counts moves, in replica mode as well. `testcontainers` in CI.
 """
 
 from __future__ import annotations
@@ -153,6 +154,12 @@ def _default_of(c: Conn, account: str) -> str:
     )
 
 
+def _binding(c: Conn, account: str) -> int:
+    """The account's default binding version (0048, #906 0d)."""
+    query = "SELECT default_binding_version FROM exchange_accounts WHERE id = %s"
+    return int(_one(c, query, account))
+
+
 # --- The catalog equals the plan doc, and the round trip leaves nothing behind ----------------
 
 _CATALOG = (
@@ -179,10 +186,11 @@ def _doc_blocks(heading: str) -> list[str]:
 
 
 def _doc_ddl() -> str:
-    """The table, its triggers and the revisions table; not the bootstrap block, whose trigger
-    sits on `exchange_accounts` (checked by name below)."""
-    table, triggers, _bootstrap = _doc_blocks("3.2.4 `account_profiles`")
-    return "\n".join([table, *_doc_blocks("3.2.5 `account_profile_revisions`"), triggers])
+    """The table, its triggers, the default binding's trigger (0048) and the revisions table; not
+    the bootstrap block, whose trigger sits on `exchange_accounts` (checked by name below)."""
+    table, triggers, _bootstrap, binding = _doc_blocks("3.2.4 `account_profiles`")
+    revisions = _doc_blocks("3.2.5 `account_profile_revisions`")
+    return "\n".join([table, *revisions, triggers, binding])
 
 
 def _catalog(c: Conn, schema: str) -> list[list[tuple[str, ...]]]:
@@ -229,6 +237,7 @@ def test_schema_matches_the_plan_doc(pg_dsn: str) -> None:
             "ORDER BY proname",
             (
                 [
+                    "ap_default_binding_bump",
                     "ap_ladder_sum_check",
                     "ap_record_revision",
                     "ap_version_bump",
@@ -236,7 +245,7 @@ def test_schema_matches_the_plan_doc(pg_dsn: str) -> None:
                 ],
             ),
         ).fetchall()
-        assert [p[1] for p in pinned] == [["search_path=pg_catalog, pg_temp"]] * 4
+        assert [p[1] for p in pinned] == [["search_path=pg_catalog, pg_temp"]] * 5
         # SEC-905-01: only the revision writer runs as its owner
         assert [p[0] for p in pinned if p[2]] == ["ap_record_revision"]
 
@@ -781,6 +790,55 @@ def test_deleting_an_account_removes_its_profiles_and_keeps_their_history(pg_dsn
         assert payload["exchange_account_id"] == account
 
 
+# --- 0048: the default binding's version (#906 0d) ---------------------------------------------
+
+
+def test_the_binding_version_counts_moves_and_never_repeats(pg_dsn: str) -> None:
+    """21 Sec.3.2.4: one more each time a profile becomes the account's default; an insert, an
+    edit, a re-set default, a `false` written to a non-default, a soft-deleted spare and an unset
+    alone leave it, and moving back never returns it to a value it had. Another account's version
+    is its own."""
+    with _conn(_fresh(pg_dsn)) as c:
+        account, other = _account(c), _account(c)
+        home = _default_of(c, account)
+        assert _binding(c, account) == 1  # the bootstrap `Default` is the first binding
+        spare = _profile(c, account, risk_pct_equity=Decimal("1"))
+        ghost = _profile(c, account, risk_pct_equity=Decimal("1"))
+        assert _binding(c, account) == 1
+        for quiet in (
+            "UPDATE account_profiles SET leverage = 2 WHERE id = %(home)s",
+            "UPDATE account_profiles SET is_default = true WHERE id = %(home)s",
+            "UPDATE account_profiles SET is_default = false WHERE id = %(spare)s",
+            "UPDATE account_profiles SET deleted_at = now() WHERE id = %(ghost)s",
+        ):
+            c.execute(quiet, {"home": home, "spare": spare, "ghost": ghost})
+            assert _binding(c, account) == 1, quiet
+        with c.transaction():
+            c.execute("UPDATE account_profiles SET is_default = false WHERE id = %s", (home,))
+            assert _binding(c, account) == 1  # an unset alone leaves it
+            c.execute("UPDATE account_profiles SET is_default = true WHERE id = %s", (spare,))
+        assert _binding(c, account) == 2
+        with c.transaction():
+            c.execute("UPDATE account_profiles SET is_default = false WHERE id = %s", (spare,))
+            c.execute("UPDATE account_profiles SET is_default = true WHERE id = %s", (home,))
+        assert _binding(c, account) == 3
+        assert _binding(c, other) == 1
+
+
+def test_a_move_counts_in_replica_mode_too(pg_dsn: str) -> None:
+    """`trg_ap_default_binding` is `ENABLE ALWAYS`: `session_replication_role = replica` does not
+    skip the count."""
+    with _conn(_fresh(pg_dsn)) as c, c.transaction():
+        c.execute("SET LOCAL session_replication_role = replica")
+        account = _account(c)
+        home = _default_of(c, account)
+        spare = _profile(c, account, risk_pct_equity=Decimal("1"))
+        c.execute("UPDATE account_profiles SET is_default = false WHERE id = %s", (home,))
+        c.execute("UPDATE account_profiles SET is_default = true WHERE id = %s", (spare,))
+        assert _binding(c, account) == 2
+        raise psycopg.Rollback
+
+
 # --- C-5.7: no role may rewrite profile history (the 0003 grant pattern) ------------------------
 
 
@@ -878,3 +936,19 @@ def test_the_app_role_creates_an_account_with_its_profile_and_revision(
             c.execute("DELETE FROM account_profile_revisions WHERE profile_id = %s", (profile,))
         with pytest.raises(pgerr.InsufficientPrivilege):
             c.execute("SELECT ap_record_revision()")
+
+
+def test_the_app_role_moves_the_default_and_the_binding_counts_it(bootstrapped_dsn: str) -> None:
+    """0048 (#906 0d): `ap_default_binding_bump` is no SECURITY DEFINER, so its UPDATE of
+    `exchange_accounts` runs as the role that moves the default. `cv_app` holds that UPDATE
+    (`pg_bootstrap.sql`); a revision that narrowed it would fail every move inside the trigger."""
+    app = re.sub(r"://[^@]+@", "://cv_app:cv_app_test_pw@", bootstrapped_dsn)
+    with _conn(app) as c:
+        account = _account(c)
+        home = _default_of(c, account)
+        spare = _profile(c, account, risk_pct_equity=Decimal("1"))
+        assert _binding(c, account) == 1
+        with c.transaction():
+            c.execute("UPDATE account_profiles SET is_default = false WHERE id = %s", (home,))
+            c.execute("UPDATE account_profiles SET is_default = true WHERE id = %s", (spare,))
+        assert _binding(c, account) == 2
