@@ -364,6 +364,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Analytics/audit:** `help.hotkeys_opened` (analytics only; no audit record - read-only surface).
 - **Components:** CMP-022 Kbd, CMP-049 Table, CMP-054 SearchBox, CMP-094 HotkeyOverlay.
 - **Stories:** US-SET-002.
+- **Design (hi-fi + handoff):** [E39-D03.md](../design/E39/E39-D03.md) · [E39-D03-handoff.md](../design/E39/E39-D03-handoff.md) (E39-D03 §7; the kill-switch chord `Ctrl+Shift+K` is PROPOSED in E39-D03 §7 and registered by E39-S05 (OD-16): a Global row "Open the freeze confirmation (never freezes)").
 - **Design sign-off acceptance checklist:** [ ] grouped by context (global / chart / ladder / ticket / rules) [ ] shows user-remapped bindings, not just defaults [ ] printable/plain-text variant [ ] dismiss via Esc and click-outside [ ] scrollable at 125% zoom without clipping
 
 ### SCR-014 — Notification centre (right-rail drawer)
@@ -1586,6 +1587,7 @@ Drag preview                Drop zones
 - **Stories:** US-RULE-014, US-SET-003, US-ORD-010.
 - **Design sign-off acceptance checklist:** [ ] scope selector (this account / all accounts; per-symbol scope is not in the API — OD-7 in [E39-D01](../design/E39/E39-D01.md) §11 — and a mixed-environment account set is refused, D-3) drawn [ ] the exact effect (and non-effect on open positions) restated [ ] single blast-radius confirm with the effect in the button label; flatten opt-in changes the label and locks "also cancel working orders" on [ ] hotkey opens the dialog, never engages [ ] partial-completion state drawn [ ] unfreeze path with its own confirmation and step-up [ ] LIVE vs DEMO variants (`scope: global` covers every environment and the per-account blast-radius rows carry their environment, D-3) [ ] manager variant per D-1 (within grants, flatten disabled with reason, owner paged, release owner-only)
 - **UX research:** [E39-D01](../design/E39/E39-D01.md) §7.1 (kill-switch state inventory), §8.1 (copy deck), §12 (E39-D03 acceptance criteria); per-symbol scope is not in the API (OD-7).
+- **Design (hi-fi + handoff):** [E39-D03.md](../design/E39/E39-D03.md) · [E39-D03-handoff.md](../design/E39/E39-D03-handoff.md) (E39-D03; §4 anatomy and the 13 frames, §8 the release step-up, §11 keyboard and live regions, §12 the measured matrix; CMP-211 contract in §5).
 
 ### SCR-073 — Lockout notice (manager view)
 
@@ -2561,6 +2563,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Stories:** US-ADMIN-003, US-RULE-012.
 - **Design sign-off acceptance checklist:** [ ] every global limit drawn (max daily loss, max drawdown, max total notional, max positions, max leverage, max orders/min, per-symbol concentration) with units [ ] breach behaviour per limit (warn / block new orders / flatten) drawn [ ] per-user and per-account override visibility [ ] the current measured value beside each limit [ ] 'this cannot be disabled entirely' guard [ ] step-up gate on save [ ] change summary before save
 - **UX research:** [E39-D01](../design/E39/E39-D01.md) §7.4 (policy states), D6 (fieldset anatomy, bounds from the `risk_policy` CHECK constraints), §11 (OD-8, OD-9).
+- **Design (hi-fi + handoff):** [E39-D03.md](../design/E39/E39-D03.md) · [E39-D03-handoff.md](../design/E39/E39-D03-handoff.md) (E39-D03; §6 the fieldset anatomy and the 7 frames, every save-path frame stamped "target (G-11)", §8 the save step-up, §12 the measured matrix).
 
 ### SCR-135 — Admin: audit log
 
