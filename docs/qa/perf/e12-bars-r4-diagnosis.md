@@ -33,7 +33,7 @@ tag in place, and dispatch every leg with
 and THP alone until the last leg. A leg measured at another head or on another host setup is not comparable
 with the default (M3), so `judge` leaves it out. LEAK waits for both allocator legs; MIXED and FRAGMENTATION
 are called from the legs in hand (the tracemalloc leg and at least one mover): the other allocator leg can
-only add a mover to their list, while a re-run of a valid leg replaces it and can change any outcome.
+only add a mover to their list, while a valid re-run of a leg replaces it and can change any outcome.
 
 A report says `"reading": true` only for a leg with no override, no tracemalloc and no allocator variable.
 Its R1-R4 verdict is the runner's verdict on a process that also probed hourly, after the soak's own RSS
@@ -55,7 +55,8 @@ fragmentation". Made precise here and committed before any dispatch; the thresho
 > - INCONCLUSIVE: top-N is flat and no allocator leg moves the slope, or legs are still missing. Name the missing legs. Add a `uordblks` growth ratio as an annotation, not as an outcome.
 
 Refinements made with this PR from the methodology review. They narrow ruling (b)'s call; the
-orchestrator accepted B1-M4 (2026-10-22, 06:46Z) and N5 (12:26Z):
+orchestrator accepted B1-M4 (2026-10-22, 06:46Z) and N5 (12:26Z), and the store's netting, M-1, is its
+ruling of 13:59Z:
 
 - **B1**, to "grows monotonically ⇒ leak": a LEAK run counts only if the snapshots' filtered traced total
   also grew by `LEAK_MIN_GROWTH_MIB` or more over the same hours. The bars store's turnover is no leak.
@@ -71,10 +72,24 @@ orchestrator accepted B1-M4 (2026-10-22, 06:46Z) and N5 (12:26Z):
   10 h (2.7 MiB) or more over hours 2-12, the outcome is INCONCLUSIVE ("Python heap grows, not attributed
   to a line"), never FRAGMENTATION. The top-N is 100 lines (`--top`), not 25, the leaner of the two fixes
   (the other keeps every line's hourly size), so the turnover's lines (8 of 25 at hour 3) crowd out none.
+- **M-1**, to B1 and M4: B1's total keeps the store's turnover out only while nothing else grows it, so
+  the store's lines are netted first. The lines of the files a live bar is built at
+  (`bars/time_builder.py`, `exchange/bybit/trades.py`) and a stored bar is held at (`bars/reader.py`,
+  `domain/sql_names.py`) are one line under `candleviewer/bars/`, `STORE_LINE`, which takes B1 and the
+  LEAK test like any line; those lines are not tested alone. A replaced bar moves it by -208 to 0 B, so a
+  total rising for any other reason no longer makes the builder's and the parser's lines LEAK lines: M4
+  can fire, and a leak elsewhere reads ELSEWHERE. Bars the store keeps past its cap grow it: LEAK IN
+  BARS. So does a leak at the parser's lines, which the netting cannot tell from live bars.
+  Reading raw snapshots by hand, a LEAK whose LEAK lines are only the turnover's (`bars/time_builder.py`,
+  `exchange/bybit/trades.py`, with `bars/reader.py` among `shrank_h2`) reads as "Python heap grows, not
+  attributed to a line".
 - **N5**, to "grows monotonically": strictly increasing, each hourly snapshot larger than the one before.
-  Monotone growth is the leak signature: a leaked object is never freed, so its line only grows, hour after
-  hour. A cache or table that reaches its working size plateaus, and a line that grows in bursts with flat
-  hours between is resizing, not leaking. Neither is a LEAK line; any growth they add shows in the total (M4).
+  Monotone growth is the leak signature: a leaked object is never freed, so its line only grows, hour
+  after hour. A cache or table that reaches its working size plateaus. A line that grows in bursts with
+  flat hours between looks like a table resizing, and a leaking table grows that way too, in bursts at
+  its table line. Neither is a LEAK line. Their growth reaches the verdict only through the filtered
+  total, which M4 reads once no line qualifies, the store's lines netted (M-1). M4 flags it from 2.7 MiB
+  over hours 2-12, net of the turnover's fall: from about 0.19 MiB/h a symbol at the -208 B end (below).
 
 How `judge` applies it (the constants and `rule` in `memdiag.py`):
 
@@ -96,12 +111,16 @@ How `judge` applies it (the constants and `rule` in `memdiag.py`):
   `exchange/bybit/trades.py`'s: -208 to 0 B a bar replaced, -208 the end that masks most. Over h2-7 the
   three symbols replace 10 044 bars: `time_builder.py:159` grows +1.99 MiB and `trades.py:64` +2.0-4.0 MiB,
   every hour, while the filtered total falls by up to 2.96 MiB by h12 (14 928 replaced, at the -208 B end).
-  The total test keeps such lines out; it masks a Python leak slower than that fall, about 0.1 MiB/h a
-  symbol (a run over hours 2-12 needs about 0.13), under R4's 0.18. M4's floor is net of the same fall: it
-  flags growth no line explains
-  only from 2.7 + 2.96 = 5.66 MiB over 10 h, about 0.19 MiB/h a symbol, just above R4's 0.18. A bursty or
-  diffuse leak between about 0.13 and 0.19 escapes both tests; at R4's measured 0.2475, M4 alone catches it.
-  Each snapshot records its filtered total and the lines that shrank most since hour 2.
+  The netting (M-1) sums those four files' lines into `STORE_LINE`: at each snapshot from hour 3, their
+  growth since hour 2, each line once from `vs_h2` and `shrank_h2` (the lines that shrank most), a line
+  in neither counting as unchanged. It falls with the turnover, by up to 2.96 MiB over hours 2-12,
+  whatever else grows. B1's total test still masks a Python leak slower than that fall, about 0.1 MiB/h
+  a symbol (a run over hours 2-12 needs about 0.13), under R4's 0.18. M4's floor is net of the same
+  fall: it flags growth no line explains only from 2.7 + 2.96 = 5.66 MiB over 10 h, about 0.19 MiB/h a
+  symbol, just above R4's 0.18. A bursty or diffuse leak between about 0.13 and 0.19 escapes both tests.
+  At R4's measured 0.2475 it raises the total by 4.5 MiB or more over hours 2-12, and with the
+  turnover's lines netted, M4 alone catches it. Each snapshot records its filtered total and the lines
+  that shrank most since hour 2.
 - **Validity.** A leg counts only if: its length reached; R3 passed; its own allocator setting seen and
   consistent with pymalloc; tracemalloc on for its leg only, and there with 6 frames or more, a top-N of
   100 or more and snapshots diffed against hour 2 at hours 3-12; its probe lines the soak's own samples,

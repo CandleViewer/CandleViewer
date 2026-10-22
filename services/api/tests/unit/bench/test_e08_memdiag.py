@@ -364,6 +364,35 @@ D_OTHER = _leg("default", steps=_steps((14, 3.9, "other")))
 D_MIX = _leg("default", steps=_steps((14, 3, "glibc"), (15, 1, "other"), (6, 10, "other")))
 UNREAD, FRAG = {"reading": False, "overrides": {"duration_s": 3600.0}}, "FRAGMENTATION (mmap128k; s"
 UNFOLDED = [asdict(R3), asdict(R3) | {"name": "bars_closes_folded", "passed": False}]
+TB = "services/api/candleviewer/bars/time_builder.py:159"  # the store's turnover (M-1), as round 1
+TR = "services/api/candleviewer/exchange/bybit/trades.py:64"  # measured it: a live bar's lines up
+RD = "services/api/candleviewer/bars/reader.py:573"  # 0.8 and 0.3 MiB/h, the stored bar's down 1.3
+
+
+def _store(rise: float, leak: Mapping[str, float] | None = None) -> Doc:
+    """A tracemalloc leg over the store's turnover, hours 2-12: `TB` and `TR` up, `RD` down and in
+    `shrank_h2` only (as in a soak's top-100), -0.2 MiB/h net; `leak` adds MiB/h to a line, new or
+    not; the filtered total rises `rise` MiB/h a symbol."""
+    rates = {TB: 0.8, TR: 0.3, RD: -1.3}
+    for w, r in (leak or {}).items():
+        rates[w] = rates.get(w, 0.0) + r
+    sizes = {w: [20 + r * h for h in range(11)] for w, r in rates.items()}
+    snaps = _snaps(sizes, [100 + 3 * rise * h for h in range(11)])
+    for s in snaps[1:]:
+        s["shrank_h2"] = [g for g in s["vs_h2"] if g["size_diff"] < 0]
+        s["vs_h2"] = [g for g in s["vs_h2"] if g["size_diff"] >= 0]
+    return _leg("tracemalloc", snapshots=snaps)
+
+
+def test_leak_lines_nets_the_stores_lines_into_one_line_under_bars_each_line_once() -> None:
+    """M-1: a live bar's growth is paid by the stored bar it replaced, so a leak at the builder's
+    line is what is left: +0.5 - 0.2 MiB/h. Under 100 lines the reader's line is in both diffs."""
+    snaps = _store(0.3, {TB: 0.5})["snapshots"]
+    leaks = memdiag.leak_lines(snaps)
+    assert leaks == {memdiag.STORE_LINE: pytest.approx(3.0)}
+    assert memdiag.bars_share(leaks, snaps) == 1.0
+    both = [s | {"vs_h2": [*s["vs_h2"], *s["shrank_h2"]]} for s in snaps[1:]]
+    assert memdiag.leak_lines([snaps[0], *both]) == leaks
 
 
 @pytest.mark.parametrize(
@@ -417,6 +446,11 @@ def test_why_not_names_each_reason_a_leg_is_no_reading(
         ([D, _heap(0.26), M, MM_DOWN], FRAG, "filtered traced total +2.60 MiB over hours 2-12"),
         ([D, _heap(0, TURNOVER), M, MM_DOWN], FRAG, "filtered traced total -3.00 MiB"),  # B1
         ([D, _heap(0, TURNOVER), M, MM], "INCONCLUSIVE", "annotation: candleviewer/bars/reader."),
+        ([D, _store(0.3), M, MM], "INCONCLUSIVE", "Python heap grows, not attributed to a"),  # M-1
+        ([D, _store(0.3, {ELSE: 0.3}), M, MM], "LEAK ELSEWHERE", f"LEAK line {ELSE}: +3.00 MiB"),
+        ([D, _store(0.3, {BARS: 0.3}), M, MM], "LEAK IN BARS", "100% of"),  # not the builder's
+        ([D, _store(0.3, {TB: 0.5}), M, MM], "LEAK IN BARS", "100% of"),  # the store's line grows
+        ([D, _store(0.05), M, MM_DOWN], FRAG, "filtered traced total +1.50 MiB"),  # not MIXED
         ([D_MIX, TM, M, MM_DOWN], FRAG, ""),  # the most of W24's steps, not of the whole run's
         ([D, M, MM_DOWN], "INCONCLUSIVE", "missing or invalid: tracemalloc"),  # no FRAGMENTATION
         ([D, TM | {"rss_w24": 9.9}, M, MM], "INCONCLUSIVE", "invalid: none"),  # never sloped

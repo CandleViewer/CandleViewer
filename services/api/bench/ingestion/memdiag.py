@@ -80,6 +80,14 @@ _ROOTS: Final = (f"{_ROOT}/", f"{_ROOT.resolve()}/")
 _STD: Final = Path(sysconfig.get_paths()["stdlib"])  # under a home directory with uv's Python
 _STDLIB: Final = (f"{_STD}/", f"{_STD.resolve()}/")  # as imported and resolved, like the checkout
 _NOT_REPO: Final = ("/", "<", "site-packages/", "stdlib/")  # how `where` writes a non-repo line
+#: The bars store's turnover (M-1): a live bar is built at the first two files' lines and the stored
+#: bar it replaces was held at the other two's. `leak_lines` nets them into one line, `STORE_LINE`,
+#: named under `candleviewer/bars/`, so `bars_share` counts its growth there.
+STORE_FILES: Final = frozenset(
+    f"services/api/candleviewer/{f}.py"
+    for f in ("bars/time_builder", "exchange/bybit/trades", "bars/reader", "domain/sql_names")
+)
+STORE_LINE: Final = "services/api/candleviewer/bars/ (the store's turnover, net)"
 #: Traces whose newest frame is tracemalloc's, the import system's or this module's.
 DROP: Final = [
     tracemalloc.Filter(False, pattern)
@@ -354,13 +362,20 @@ def leak_lines(snaps: Sequence[Doc]) -> dict[str, float]:
     hour 2) whose size grows strictly over `LEAK_MIN_RUN` or more consecutive hourly snapshots from
     hour 2 on, by `LEAK_MIN_GROWTH_MIB` or more over that run, as the filtered total does over the
     same hours (its largest such run). The total keeps the bars store's turnover out: a live bar
-    replacing a stored one grows the builders' lines, shrinks the reader's and lowers the total."""
+    replacing a stored one grows the builders' lines, shrinks the reader's and lowers the total.
+    Once anything else grows the total it no longer can, so the store's lines are netted first
+    (M-1): the lines of `STORE_FILES` are one line, `STORE_LINE`, at each snapshot the sum of their
+    growth since hour 2, each line once from `vs_h2` and `shrank_h2` (a line in neither: unchanged).
+    A replaced bar moves it by -208 to 0 B, so only growth the stored bars' shrink does not pay for
+    makes it a LEAK line; the store's own lines are never tested alone."""
     totals: dict[int, float] = {s["hour"]: s["total"] for s in snaps}
-    sizes: dict[str, dict[int, int]] = {}
-    for s in snaps:
-        for g in s.get("vs_h2", []):
-            by_hour = sizes.setdefault(g["where"], {WARMUP_H: g["size"] - g["size_diff"]})
-            by_hour[s["hour"]] = g["size"]
+    sizes: dict[str, dict[int, int]] = {STORE_LINE: {WARMUP_H: 0}}  # each line's growth since h2
+    for s in (s for s in snaps if "vs_h2" in s):
+        diff = {g["where"]: g["size_diff"] for g in (*s["vs_h2"], *s.get("shrank_h2", []))}
+        store = {w for w in diff if w.rpartition(":")[0] in STORE_FILES}
+        sizes[STORE_LINE][s["hour"]] = sum(diff[w] for w in store)
+        for w in (g["where"] for g in s["vs_h2"] if g["where"] not in store):
+            sizes.setdefault(w, {WARMUP_H: 0})[s["hour"]] = diff[w]
     out: dict[str, float] = {}
     for line, by_hour in sizes.items():
         start = prev = -1
