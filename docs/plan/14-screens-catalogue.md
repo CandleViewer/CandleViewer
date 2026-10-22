@@ -1580,6 +1580,7 @@ Drag preview                Drop zones
 - **Stories:** US-ADMIN-004, US-PROF-004, US-RULE-012, US-POS-009.
 - **Design sign-off acceptance checklist:** [ ] portfolio header (equity, uPnL, day P&L, drawdown) and per-account table drawn [ ] exposure by symbol with % of equity [ ] limit-usage bars paired with numeric text [ ] breach and near-breach states drawn with non-colour encoding [ ] manager-scoped variant showing only permitted accounts [ ] kill-switch entry point [ ] stale/unknown state when an account feed is down
 - **UX research:** [E39-D01](../design/E39/E39-D01.md) §7.3 (state inventory), §8 (copy deck), §11 (open decision OD-2).
+- **Design (hi-fi + handoff):** [E39-D02.md](../design/E39/E39-D02.md) · [E39-D02-handoff.md](../design/E39/E39-D02-handoff.md) (E39-D02; §4 the anatomy and the 9 frames with the two LIVE / DEMO KPI groups, §5 the CMP-117 contract, §6 the CMP-138 contract, §10 keyboard and live regions, §11 the measured matrix).
 
 ### SCR-072 — Kill-switch / freeze confirmation modal
 
@@ -1604,6 +1605,7 @@ Drag preview                Drop zones
 - **Stories:** US-RULE-012.
 - **Design sign-off acceptance checklist:** [ ] the reason, the breached limit, the actual value and the reset time are all shown [ ] what remains possible (closing/reducing) vs blocked (opening) is explicit [ ] request-override path drawn for managers with the owner-approval flow [ ] the notice cannot be dismissed while the lockout holds [ ] it appears in the ticket, the grid and the risk dashboard consistently
 - **UX research:** [E39-D01](../design/E39/E39-D01.md) §7.2 (lockout state inventory per `reason`), §8.2–§8.3 (banner and override copy), §11 (OD-4 request-override endpoint).
+- **Design (hi-fi + handoff):** [E39-D02.md](../design/E39/E39-D02.md) · [E39-D02-handoff.md](../design/E39/E39-D02-handoff.md) (E39-D02; §7 the manager-terminal composition and the 10 frames — a banner, no scrim; reduce-only Close enabled in every lockout frame — with the owner override and its step-up drawn, §10 live regions).
 
 ### SCR-074 — Environment switcher (Demo ↔ Live)
 
