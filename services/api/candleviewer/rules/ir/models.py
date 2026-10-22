@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -27,6 +28,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from candleviewer.domain.primitives import AccountId, Environment, Notional, RuleId, Symbol, UserId
+from candleviewer.domain.text import UNPAIRED_SURROGATE, unpaired_surrogate
 
 METRIC_PATTERN = r"^[a-z][a-z0-9_]{1,48}$"
 MAX_BOOLEAN_CHILDREN = 32
@@ -95,6 +97,25 @@ ParamValue = Annotated[
 ]
 
 
+def _paired(v: Any) -> Any:
+    """``v``, refused if any text in it (keys too) holds a lone surrogate. The hash renumbers node
+    ids and skips the layout; on save, the validator names a trigger metric before hashing."""
+    todo = [v]
+    while todo:
+        cur = todo.pop()
+        if isinstance(cur, str) and unpaired_surrogate(cur):
+            raise PydanticCustomError("unpaired_surrogate", UNPAIRED_SURROGATE)
+        if isinstance(cur, dict):
+            todo += [*cur, *cur.values()]
+        elif isinstance(cur, (list, tuple)):
+            todo += cur
+    return v
+
+
+#: Text the model refuses itself when it holds a lone surrogate (see ``_paired``).
+PairedStr = Annotated[str, AfterValidator(_paired)]
+
+
 class MetricRef(BaseModel):
     model_config = _CFG
     metric: Annotated[str, Field(pattern=METRIC_PATTERN)]
@@ -113,7 +134,7 @@ class Literal_(BaseModel):
 
 class ArithmeticNode(BaseModel):
     model_config = _CFG
-    node_id: str
+    node_id: PairedStr
     op: ArithmeticOp
     operands: Annotated[
         tuple[Operand, ...], Field(min_length=1, max_length=MAX_ARITHMETIC_OPERANDS)
@@ -148,7 +169,7 @@ Operand = Annotated[
 
 class Comparison(BaseModel):
     model_config = _CFG
-    node_id: str
+    node_id: PairedStr
     op: ComparisonOp
     left: Operand
     right: Operand | None = None
@@ -159,7 +180,7 @@ class Comparison(BaseModel):
 
 class BooleanNode(BaseModel):
     model_config = _CFG
-    node_id: str
+    node_id: PairedStr
     op: BooleanOp
     children: Annotated[
         tuple[ConditionNode, ...], Field(min_length=1, max_length=MAX_BOOLEAN_CHILDREN)
@@ -169,7 +190,7 @@ class BooleanNode(BaseModel):
 
 class TemporalNode(BaseModel):
     model_config = _CFG
-    node_id: str
+    node_id: PairedStr
     op: TemporalOp
     child: ConditionNode
     window_ms: Annotated[int, Field(ge=MIN_WINDOW_MS, le=MAX_WINDOW_MS)]
@@ -205,7 +226,7 @@ ConditionNode = Annotated[
 
 class Action(BaseModel):
     model_config = _CFG
-    node_id: str
+    node_id: PairedStr
     type: ActionType
     params: dict[str, Any]
     on_error: Literal["abort_remaining", "continue", "retry_once"] = "abort_remaining"
@@ -247,7 +268,7 @@ class Trigger(BaseModel):
     timeframe: str | None = None
     interval_ms: Annotated[int, Field(ge=100)] | None = None
     cron: str | None = None
-    metric: str | None = None
+    metric: PairedStr | None = None
     debounce_ms: Annotated[int, Field(ge=0)] = 0
 
     @model_validator(mode="after")
@@ -287,7 +308,7 @@ class Rule(BaseModel):
     actions: Annotated[tuple[Action, ...], Field(min_length=1, max_length=MAX_ACTIONS)]
     limits: RuleLimits = Field(default_factory=RuleLimits)
     editor: Literal["form", "graph"] = "form"
-    graph_layout: dict[str, Any] | None = None
+    graph_layout: Annotated[dict[str, Any] | None, AfterValidator(_paired)] = None
     # Persistence metadata (E35-T02 owns the columns); optional here and not part of ir_hash.
     created_by: UserId | None = None
     created_at: int | None = None

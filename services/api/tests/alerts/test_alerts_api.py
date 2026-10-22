@@ -132,6 +132,55 @@ def test_create_non_finite_metric_param_is_one_422_nothing_persisted(env: Env) -
     assert env.repo.rows == {} and env.audit.calls == []
 
 
+def _lone_surrogate_alert(where: str) -> bytes:
+    """`PRICE_CROSS` holding a lone surrogate, sent as its JSON escape, at `where` (#4172)."""
+    doc = copy.deepcopy(PRICE_CROSS)
+    params: dict[str, Any] = {"__slot__": 1} if where.endswith("key") else {"pct": "__slot__"}
+    if where == "node id":
+        doc["condition_ir"]["conditions"]["node_id"] = "__slot__"
+    elif where.startswith("action"):
+        doc["condition_ir"]["actions"] = [ACTION | {"params": params}]
+    else:  # a list is not a plain value: the walk refuses that param, naming its key
+        params = {"__slot__": [1]} if where == "walker key" else params
+        doc["condition_ir"]["conditions"]["left"] = {"metric": "price", "params": params}
+    return json.dumps(doc).replace('"__slot__"', '"\\ud800"').encode()
+
+
+_UNPAIRED = "Text holds an unpaired surrogate code point"
+_NOTIFY_ONLY = "Alerts only notify: an action is not allowed in a root node."
+_PLAIN_PARAMS = "Metric parameters are plain values."
+#: Where -> its one error: the condition hash refuses a metric param (a key named escaped), the
+#: model a node id; the allow-list walk refuses an action, and names a refused key escaped.
+LONE_SURROGATE = {
+    "metric param key": ("conditions.left.params.\\ud800", "schema_error", _UNPAIRED),
+    "metric param value": ("conditions.left.params.pct", "schema_error", _UNPAIRED),
+    "action param key": ("condition_ir.actions", "not_permitted", _NOTIFY_ONLY),
+    "action param value": ("condition_ir.actions", "not_permitted", _NOTIFY_ONLY),
+    "node id": ("conditions.comparison.node_id", "schema_error", _UNPAIRED),
+    "walker key": ("conditions.left.params.\\ud800", "not_permitted", _PLAIN_PARAMS),
+}
+
+
+@pytest.mark.parametrize("where", sorted(LONE_SURROGATE))
+def test_create_lone_surrogate_in_condition_text_is_one_422_nothing_persisted(
+    env: Env, where: str
+) -> None:
+    r = env.c.post("/alerts", content=_lone_surrogate_alert(where), headers=_JSON)
+    assert (r.status_code, r.json()["code"]) == (422, "rule_ir_invalid"), r.text
+    errors = [(e["field"], e["rule"], e["message"]) for e in r.json()["errors"]]
+    assert errors == [LONE_SURROGATE[where]]
+    assert env.repo.rows == {} and env.audit.calls == []
+
+
+def test_update_lone_surrogate_in_metric_param_is_one_422_row_kept(env: Env) -> None:
+    a = env.create()
+    before = env.repo.rows[a["id"]]
+    sent = _lone_surrogate_alert("metric param value")
+    r = env.c.put(f"/alerts/{a['id']}", content=sent, headers=_JSON)
+    assert (r.status_code, r.json()["code"]) == (422, "rule_ir_invalid"), r.text
+    assert env.repo.rows[a["id"]] == before and env.audit.actions() == ["alert.created"]
+
+
 def test_router_module_never_imports_the_oms() -> None:
     import candleviewer.alerts.compiler as comp
     import candleviewer.api.alerts as mod

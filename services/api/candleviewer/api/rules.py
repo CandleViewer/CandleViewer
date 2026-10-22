@@ -17,6 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
+from candleviewer.domain.text import escape_unpaired
 from candleviewer.rules.compiler import compile_form, compile_graph
 from candleviewer.rules.compiler.common import build_rule, check_bounds, value_issues
 from candleviewer.rules.errors import ScopeForbiddenError
@@ -195,8 +196,9 @@ def make_rules_router(
                 "detail": f"{n} error{'s' if n != 1 else ''} in the rule IR.",
                 "code": "rule_ir_invalid",
                 "errors": [
-                    {"field": i.path, "rule": i.code, "message": i.message,
-                     "node_ids": list(i.node_ids)}
+                    {"field": escape_unpaired(i.path), "rule": i.code,
+                     "message": escape_unpaired(i.message),
+                     "node_ids": [escape_unpaired(nid) for nid in i.node_ids]}
                     for i in exc.issues
                 ],
             },

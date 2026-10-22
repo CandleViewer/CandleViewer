@@ -11,7 +11,8 @@
 3. Trigger validation (``RuleTrigger`` per-type requirements, 5-field UTC cron, timeframe).
 4. Metric resolution against E35's ``MetricRegistry``: unknown -> offending ``node_id`` plus
    the nearest valid names; E35's semantic validator for operator/unit checks.
-5. ``condition_hash`` via E35's canonicalisation (``rules.ir.canonical.condition_hash``).
+5. ``condition_hash`` via E35's canonicalisation (``rules.ir.canonical.condition_hash``); text it
+   cannot hold (a lone surrogate) is a ``schema`` refusal, never a 500.
 6. Estimated detector metrics flagged for the UI's "(estimated)" qualifier.
 
 ``validate_template`` checks a Mustache ``message_template`` against the placeholder allow-list.
@@ -31,8 +32,9 @@ from pydantic import ValidationError
 from candleviewer.alerts.errors import AlertIrInvalid, AlertIssue, RejectReason
 from candleviewer.alerts.models import AlertCondition, CompiledAlert
 from candleviewer.domain.primitives import RuleId
+from candleviewer.domain.text import escape_unpaired
 from candleviewer.rules.ir import Action, Rule, RuleLimits, RuleScope
-from candleviewer.rules.ir.canonical import condition_hash
+from candleviewer.rules.ir.canonical import IrValueError, condition_hash
 from candleviewer.rules.ir.models import (
     ActionType,
     ArithmeticOp,
@@ -98,7 +100,10 @@ _VARIABLE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,48}$")
 
 
 def _reject(reason: RejectReason, field: str, rule: str, msg: str, node_id: str | None) -> None:
-    raise AlertIrInvalid(reason, [AlertIssue(field, rule, msg, node_id)])
+    """Text it names (a key, an op, a node id) goes with a lone surrogate escaped: it encodes."""
+    nid = None if node_id is None else escape_unpaired(node_id)
+    issue = AlertIssue(escape_unpaired(field), rule, escape_unpaired(msg), nid)
+    raise AlertIrInvalid(reason, [issue])
 
 
 def _not_permitted(path: str, msg: str, node_id: str | None) -> None:
@@ -322,13 +327,19 @@ class AlertCompiler:
         metrics = _check_metrics(raw, self._registry)  # 4. registry resolution
         self._semantic(cond)
         dumped = cond.model_dump(mode="python", exclude_none=False)
+        try:
+            hashed = condition_hash(dumped)  # 5. shared with E35 rules
+        except IrValueError as exc:  # the same 422 a schema error gets, naming the field
+            field = ".".join(map(str, exc.loc)) or "condition_ir"
+            issue = AlertIssue(field, "schema_error", exc.reason)
+            raise AlertIrInvalid("schema", [issue]) from None
         estimated = tuple(
             m for m in metrics if (d := self._registry.get(m)) and d.confidence == "estimated"
         )
         return CompiledAlert(
             condition=cond,
             condition_ir=cond.model_dump(mode="json", exclude_defaults=True),
-            condition_hash=condition_hash(dumped),  # 5. shared with E35 rules
+            condition_hash=hashed,
             metrics=metrics,
             estimated_metrics=estimated,  # 6.
         )

@@ -4,7 +4,8 @@ Strategy 2 of the E35-K01 spike: JCS-style JSON where every number is a canonica
 sha256 over UTF-8 bytes. Computed server-side only, before persistence (never from a jsonb
 round-trip). Any change to this algorithm changes every hash: bump ``IR_HASH_VERSION`` and ship an
 upcaster. A float (only an untyped ``params`` holds one) hashes as ``Decimal(float.__repr__(x))``;
-a value with no canonical form is refused with ``IrValueError`` (``422 rule_ir_invalid``, not 500).
+a value with no canonical form is refused with ``IrValueError`` (``422 rule_ir_invalid``, not 500):
+a non-finite number, or text holding a lone surrogate (it has no UTF-8 form, so no hash holds it).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from candleviewer.domain.text import UNPAIRED_SURROGATE, escape_unpaired, unpaired_surrogate
 from candleviewer.rules.errors import RulesError
 from candleviewer.rules.ir.models import Rule
 
@@ -29,10 +31,11 @@ _EXCLUDED = PRESENTATION_KEYS | METADATA_KEYS
 
 
 class IrValueError(RulesError, ValueError):
-    """A value the canonical form cannot hold: a non-finite number, or (``IrTypeError``) a type
-    with no JSON form. ``loc`` is its field path, e.g. ``("actions", 0, "params", "weight")``,
-    built step by step while the error unwinds (never on the success path). ``args`` is
-    ``(loc, reason)``, so the error pickles and copies."""
+    """A value the canonical form cannot hold: a non-finite number, text holding a lone surrogate,
+    or (``IrTypeError``) a type with no JSON form. ``loc`` is its field path, e.g.
+    ``("actions", 0, "params", "weight")``, built step by step while the error unwinds (never on
+    the success path); a refused key ends it with the code point escaped (``\\ud800``), so it
+    prints as UTF-8. ``args`` is ``(loc, reason)``, so the error pickles and copies."""
 
     def __init__(self, loc: tuple[str | int, ...], reason: str) -> None:
         super().__init__(loc, reason)
@@ -114,7 +117,11 @@ def _renumber(doc: Any) -> Any:
 
 
 def _normalise(o: Any) -> Any:
-    if isinstance(o, bool) or o is None or isinstance(o, str):
+    if isinstance(o, str):
+        if not o.isascii() and unpaired_surrogate(o):  # ASCII, most IR text, skips the call
+            raise IrValueError((), UNPAIRED_SURROGATE)
+        return o
+    if isinstance(o, bool) or o is None:
         return o
     if isinstance(o, float):  # an untyped place (Action.params): its shortest exact decimal
         o = Decimal(float.__repr__(o))  # float's own repr, whatever a subclass prints
@@ -129,6 +136,9 @@ def _normalise(o: Any) -> Any:
     if isinstance(o, dict):
         out: dict[Any, Any] = {}
         for k, v in o.items():
+            if isinstance(k, str) and not k.isascii() and unpaired_surrogate(k):
+                # a refused key is named escaped, so the path prints as UTF-8
+                raise IrValueError((escape_unpaired(k),), UNPAIRED_SURROGATE)
             try:
                 out[k] = _normalise(v)
             except IrValueError as exc:  # the path is built on failure only
@@ -151,11 +161,19 @@ def _as_rule(ir: Rule | dict[str, Any]) -> Rule:
     return ir if isinstance(ir, Rule) else Rule.model_validate(ir)
 
 
+def _utf8(text: str) -> bytes:
+    """``text`` as UTF-8: ``_normalise`` refuses a lone surrogate first, this is the backstop."""
+    try:
+        return text.encode()
+    except UnicodeEncodeError as exc:
+        raise IrValueError((), UNPAIRED_SURROGATE) from exc
+
+
 def canonicalize(ir: Rule | dict[str, Any]) -> bytes:
     """Canonical UTF-8 bytes of the hashed view of ``ir`` (idempotent, order-insensitive)."""
     dumped = _as_rule(ir).model_dump(mode="python")
     view = _normalise(_renumber(_strip(dumped)))
-    return json.dumps(view, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return _utf8(json.dumps(view, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
 
 
 def ir_hash(ir: Rule | dict[str, Any]) -> str:
@@ -178,4 +196,4 @@ def condition_hash(dumped: dict[str, Any]) -> str:
     body = json.dumps(
         _normalise(_renumber(view)), sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
-    return hashlib.sha256(body.encode()).hexdigest()
+    return hashlib.sha256(_utf8(body)).hexdigest()
