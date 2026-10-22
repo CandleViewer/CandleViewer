@@ -1,10 +1,10 @@
 """Integration: `0050_ea_identity_write_once` (#3968, SR-E27-13) on real Postgres 16.
 
-An account's `exchange_uid` and `kind` never change once the row exists, whatever the replication
-role or the column an UPDATE names; an insert takes any UID and kind the CHECKs admit; setting a
-column to its own value passes; the two write-once guards are the last BEFORE UPDATE row triggers
-on `exchange_accounts`; the downgrade lifts the rule and keeps 0041's `env` guard, and the upgrade
-restores it, with no row changed either way. `testcontainers` in CI; the offline render is
+An account's `id`, `exchange_uid` and `kind` never change once the row exists, whatever the
+replication role or the column an UPDATE names; an insert takes any UID and kind the CHECKs admit;
+setting a column to its own value passes; the two write-once guards are the last BEFORE UPDATE row
+triggers on `exchange_accounts`; the downgrade lifts the rule and keeps 0041's `env` guard, and the
+upgrade restores it, with no row changed either way. `testcontainers` in CI; the offline render is
 `tests/unit/migrations/test_0050_ea_identity_write_once.py`.
 """
 
@@ -132,6 +132,22 @@ def test_an_account_never_changes_its_uid(pg_dsn: str, role: str) -> None:
             "exchange_uid",
         )
         assert _identity(c, account) == before
+        raise psycopg.Rollback
+
+
+@pytest.mark.parametrize("role", ["origin", "replica", "local"])
+def test_an_account_never_changes_its_id(pg_dsn: str, role: str) -> None:
+    """SEC-2758-02 (ruled into #3968): the primary key is the other way to free an account id. The
+    guard refuses a rewrite itself, under the replica role too, where the children's foreign keys
+    (`ON UPDATE NO ACTION`) do not fire; the account keeps its id and no row takes the new one."""
+    with _conn(_fresh(pg_dsn)) as c, c.transaction():
+        account, other = _account(c), str(uuid.uuid4())
+        c.execute(sql.SQL("SET LOCAL session_replication_role = {}").format(sql.Literal(role)))
+        _refused(c, "UPDATE exchange_accounts SET id = %s WHERE id = %s", (other, account), "id")
+        rows = c.execute(
+            "SELECT id::text FROM exchange_accounts WHERE id IN (%s, %s)", (account, other)
+        ).fetchall()
+        assert rows == [(account,)]
         raise psycopg.Rollback
 
 

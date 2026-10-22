@@ -558,10 +558,11 @@ def test_an_account_patch_carries_no_environment() -> None:
     assert "env" not in {f.name for f in dataclasses.fields(ExchangeAccountPatch)}
 
 
-def test_an_account_patch_carries_no_uid_or_kind() -> None:
-    """#3968 (SR-E27-13): `exchange_uid` and `kind` are write-once too, so the patch carries
-    neither."""
-    assert not {"exchange_uid", "kind"} & {f.name for f in dataclasses.fields(ExchangeAccountPatch)}
+def test_an_account_patch_carries_no_identity_column() -> None:
+    """#3968 (SR-E27-13): `id`, `exchange_uid` and `kind` are write-once too, so the patch carries
+    none of them."""
+    fields = {f.name for f in dataclasses.fields(ExchangeAccountPatch)}
+    assert not {"id", "exchange_uid", "kind"} & fields
 
 
 @pytest.mark.parametrize(

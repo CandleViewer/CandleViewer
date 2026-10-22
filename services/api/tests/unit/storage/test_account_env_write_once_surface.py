@@ -62,9 +62,9 @@ _READS = frozenset({"import", "columns", "select_from"})
 _PRIVILEGE_TABLE = Path("storage/guarded_privileges.py")
 _ENVIRONMENT = ("env", "environment")
 #: The columns an account's identity is made of, each write-once in the database (0041, 0050).
-_IDENTITY = ("env", "exchange_uid", "kind")
-#: The names a client could send for `exchange_uid` or `kind` (#3968).
-_UID_AND_KIND = ("exchange_uid", "uid", "kind")
+_IDENTITY = ("env", "id", "exchange_uid", "kind")
+#: The names a client could send for `id`, `exchange_uid` or `kind` (#3968).
+_IDENTITY_FIELDS = ("id", "exchange_uid", "uid", "kind")
 
 
 def _modules(root: Path) -> Iterator[tuple[Path, ast.Module]]:
@@ -111,8 +111,8 @@ def _writes(sql: str) -> list[SqlWrite]:
 
 
 def _risks(sql: str) -> list[str]:
-    """Why `sql` could change an account's identity (`env`, `exchange_uid`, `kind`); empty when it
-    cannot. A SET list that yields no column (`?`), a MERGE (its SET lists are not read) and
+    """Why `sql` could change an account's identity (`env`, `id`, `exchange_uid`, `kind`); empty
+    when it cannot. A SET list that yields no column (`?`), a MERGE (its SET lists are not read) and
     unreadable SQL are risks too."""
     try:
         writes = writes_to(sql, _TABLE)
@@ -156,8 +156,10 @@ def test_the_scan_flags_env_added_to_the_stores_patch(assignment: str) -> None:
     assert _risks(mutated) == ["env"]
 
 
-#: Ways the store's `_UPDATE` could assign `exchange_uid` or `kind` (#3968), and the risk flagged.
+#: Ways the store's `_UPDATE` could assign `id`, `exchange_uid` or `kind` (#3968), and the risk
+#: flagged.
 _UID_AND_KIND_ASSIGNMENTS = {
+    "id": ("id = :new_id, ", ["id"]),
     "uid": ("exchange_uid = :exchange_uid, ", ["exchange_uid"]),
     "quoted uid": ('"exchange_uid" = :u, ', ["exchange_uid"]),
     "kind": ("kind = CAST('sub' AS account_kind), ", ["kind"]),
@@ -170,7 +172,7 @@ _UID_AND_KIND_ASSIGNMENTS = {
     list(_UID_AND_KIND_ASSIGNMENTS.values()),
     ids=list(_UID_AND_KIND_ASSIGNMENTS),
 )
-def test_the_scan_flags_uid_or_kind_added_to_the_stores_patch(
+def test_the_scan_flags_an_identity_column_added_to_the_stores_patch(
     assignment: str, risk: list[str]
 ) -> None:
     mutated = store._UPDATE.text.replace(" SET ", " SET " + assignment, 1)
@@ -452,10 +454,10 @@ def test_the_patch_body_has_no_environment_and_refuses_one() -> None:
             UpdateExchangeAccountRequest.model_validate({"label": "renamed", name: "live"})
 
 
-def test_the_patch_body_has_no_uid_or_kind_and_refuses_one() -> None:
-    """#3968 (SR-E27-13, AC-23): the same body carries neither `exchange_uid` nor `kind`, and one
+def test_the_patch_body_has_no_identity_column_and_refuses_one() -> None:
+    """#3968 (SR-E27-13, AC-23): the same body carries no `id`, `exchange_uid` or `kind`, and one
     sent anyway is refused before the store."""
-    assert not set(_UID_AND_KIND) & set(UpdateExchangeAccountRequest.model_fields)
-    for name in _UID_AND_KIND:
+    assert not set(_IDENTITY_FIELDS) & set(UpdateExchangeAccountRequest.model_fields)
+    for name in _IDENTITY_FIELDS:
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             UpdateExchangeAccountRequest.model_validate({"label": "renamed", name: "sub"})

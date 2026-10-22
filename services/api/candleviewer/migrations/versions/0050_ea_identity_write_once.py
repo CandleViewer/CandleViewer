@@ -1,4 +1,4 @@
-"""exchange_accounts.exchange_uid and kind are write-once (#3968, SR-E27-13)
+"""exchange_accounts.id, exchange_uid and kind are write-once (#3968, SR-E27-13)
 
 Revision ID: 0050_ea_identity_write_once
 Revises: 0049_ea_env_parent_always
@@ -8,10 +8,12 @@ Create Date: 2026-10-22
 threat model (KV-T04, F-15) asks that an account's identity not change after creation: `env`,
 `exchange_uid` and `kind`. `trg_ea_env_write_once` (0041, #2333) built `env`; this revision builds
 the other two, so a row can never come to name another exchange UID, or turn a main account into a
-sub-account or back, once it exists.
+sub-account or back, once it exists. The orchestrator's ruling on SEC-2758-02 adds `id`, the row's
+own key: rewriting it is the other way to free an account id (0044), and this guard refuses it
+directly instead of through the children's foreign keys.
 
 * `trg_ea_identity_write_once` (BEFORE UPDATE, per row, like 0041's guard) refuses any change of
-  `exchange_uid` or `kind` once the row exists. It compares with IS DISTINCT FROM, so it refuses
+  `id`, `exchange_uid` or `kind` once the row exists. It compares with IS DISTINCT FROM, so it refuses
   changes, not writes (`SET kind = kind` passes), and it fires on every UPDATE, not only one that
   names either column, so a trigger that rewrote NEW behind another column would still meet it.
   `ENABLE ALWAYS` keeps it firing under `session_replication_role = replica`; its function pins
@@ -27,8 +29,9 @@ sub-account or back, once it exists.
   `candleviewer/` assigns one, the store's patch and the API's PATCH body carry neither, and the
   accounts store maps a refusal to its typed rule error (unit tests pin all three).
 * Residuals, as for `env`: the guard covers UPDATE only, and `cv_app` can neither delete an
-  account (0044) nor free its id by rewriting it (its profile's and keys' foreign keys refuse
-  that), so no UPDATE-free path re-creates an account with another identity.
+  account (0044) nor free its id by rewriting it: this guard refuses that first (23514), under the
+  replica role too, where the children's `ON UPDATE NO ACTION` foreign keys do not fire, and the
+  keys still would elsewhere (23503). So no path re-creates an account with another identity.
   `parent_account_id` is not write-once: a sub-account can be re-pointed at any other account of
   its environment, as only the store's INSERT requires a main parent. The owner (`cv_owner`:
   migrations, and the alert purge when `CV_PG_OWNER_DSN` is set) and superusers can still disable
@@ -70,6 +73,10 @@ _GUARD_SQL = """
 CREATE FUNCTION ea_identity_write_once() RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp AS $BODY$
 BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION 'trg_ea_identity_write_once: exchange_accounts.id is write-once'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ea_identity_write_once';
+  END IF;
   IF NEW.exchange_uid IS DISTINCT FROM OLD.exchange_uid THEN
     RAISE EXCEPTION 'trg_ea_identity_write_once: exchange_accounts.exchange_uid is write-once'
       USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ea_identity_write_once';

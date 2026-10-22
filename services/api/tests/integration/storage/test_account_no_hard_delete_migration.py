@@ -188,20 +188,29 @@ def test_cv_app_cannot_delete_an_account_so_its_id_stays_taken(pg_dsn: str) -> N
 
 @pytest.mark.parametrize("keyed", [True, False], ids=["profile-and-key", "profile-only"])
 def test_cv_app_cannot_free_an_account_id_by_updating_it(pg_dsn: str, keyed: bool) -> None:
-    """The other way to free an id: rewrite it, then insert the old one again. No trigger guards
-    `exchange_accounts.id`, so the refusal rests on the children: every foreign key into the table
-    is ON UPDATE NO ACTION, the account's Default profile (and its keys) still reference the old
-    id, and `cv_app` can neither re-point them (the write-once guards) nor delete them (no DELETE).
-    The UPDATE fails with SQLSTATE 23503, the row is as it was and the new id was never written.
-    The profile alone pins the id, so an account with no key is refused too. A write-once guard on
-    `id` would answer 23514 instead, and this case would change with it."""
+    """The other way to free an id: rewrite it, then insert the old one again. Since #3968
+    `trg_ea_identity_write_once` guards `exchange_accounts.id` itself, so the UPDATE fails first
+    with SQLSTATE 23514 naming the guard. The children still hold the id under it: every foreign
+    key into the table is ON UPDATE NO ACTION, the account's Default profile (and its keys) still
+    reference the old id, and `cv_app` can neither re-point them (the write-once guards) nor delete
+    them (no DELETE). With the guard disabled in this test's own database, the same UPDATE fails
+    with SQLSTATE 23503, so the transitive pin stays meaningful. Either way the row is as it was
+    and the new id was never written. The profile alone pins the id, so an account with no key is
+    refused too."""
     dsn = _fresh(pg_dsn)
     account, freed = _account(dsn, keyed=keyed), str(uuid.uuid4())
+    statement = "UPDATE exchange_accounts SET id = %s WHERE id = %s"
+    with _conn(_as(dsn, "cv_app")) as c, pytest.raises(pgerr.CheckViolation) as guarded:
+        c.execute(statement, (freed, account))
+    assert guarded.value.sqlstate == "23514"
+    assert guarded.value.diag.constraint_name == "trg_ea_identity_write_once"
+    with _conn(dsn) as c:
+        c.execute("ALTER TABLE exchange_accounts DISABLE TRIGGER trg_ea_identity_write_once")
     pins = {"account_profiles_exchange_account_id_fkey"}  # the key's FK may fire first, if any
     if keyed:
         pins.add("api_keys_exchange_account_id_fkey")
     with _conn(_as(dsn, "cv_app")) as c, pytest.raises(pgerr.ForeignKeyViolation) as refused:
-        c.execute("UPDATE exchange_accounts SET id = %s WHERE id = %s", (freed, account))
+        c.execute(statement, (freed, account))
     assert refused.value.sqlstate == "23503"
     assert refused.value.diag.constraint_name in pins
     assert _held(dsn, account) == (1, int(keyed), 1)

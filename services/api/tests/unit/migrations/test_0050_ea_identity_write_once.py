@@ -81,16 +81,18 @@ def test_upgrade_is_exactly_the_plan_doc_ddl_under_a_bounded_lock_wait() -> None
     assert _statements(after) == [_STAMP_UP, "COMMIT"]
 
 
-def test_a_change_of_uid_or_kind_meets_a_whole_row_trigger_replica_mode_cannot_skip() -> None:
-    """SR-E27-13: an account never comes to name another Bybit UID, or turns from a main account
-    into a sub-account or back, once it exists (#3968). The trigger fires on every UPDATE of a row,
-    not only one that names either column, like 0041's guard for `env`."""
+def test_a_change_of_identity_meets_a_whole_row_trigger_replica_mode_cannot_skip() -> None:
+    """SR-E27-13: an account never takes another id or comes to name another exchange UID, and
+    never turns from a main account into a sub-account or back, once it exists (#3968; `id` by the
+    ruling on SEC-2758-02). The trigger fires on every UPDATE of a row, not only one that names a
+    guarded column, like 0041's guard for `env`."""
     sql = _up()
     assert (
         "CREATE TRIGGER trg_ea_identity_write_once BEFORE UPDATE ON exchange_accounts "
         "FOR EACH ROW EXECUTE FUNCTION ea_identity_write_once();"
     ) in sql
     assert "ALTER TABLE exchange_accounts ENABLE ALWAYS TRIGGER trg_ea_identity_write_once;" in sql
+    assert "IF NEW.id IS DISTINCT FROM OLD.id THEN" in sql
     assert "IF NEW.exchange_uid IS DISTINCT FROM OLD.exchange_uid THEN" in sql
     assert "IF NEW.kind IS DISTINCT FROM OLD.kind THEN" in sql and "RETURN NEW;" in sql
     assert "NEW.env" not in sql  # `env` keeps 0041's own guard
@@ -103,6 +105,7 @@ def test_each_refusal_names_its_trigger_and_column_and_never_a_value() -> None:
     assert "SET search_path = pg_catalog, pg_temp" in sql and "SECURITY DEFINER" not in sql
     using = " USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ea_identity_write_once'"
     assert re.findall(r"RAISE EXCEPTION '([^']*)'(.*?);", sql) == [
+        ("trg_ea_identity_write_once: exchange_accounts.id is write-once", using),
         ("trg_ea_identity_write_once: exchange_accounts.exchange_uid is write-once", using),
         ("trg_ea_identity_write_once: exchange_accounts.kind is write-once", using),
     ]
