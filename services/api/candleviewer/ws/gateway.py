@@ -1507,6 +1507,8 @@ def make_ws_router(
             subject = user_id if bound is None else bound.target_user_id
             async with _auth_call("resolve", auth_call_timeout_s):
                 snap = await registry.resolve(subject)  # versioned: never undoes a newer one
+            if bound is not None and snap.principal.is_owner:  # §9.6: a target is never an Owner
+                raise AuthRefused("view_as_expired", ids={"session_id": session_id})
             now, now_ms = conn.clock(), conn.wall_ms()
             if expires_ms <= now_ms:
                 failure = "token_expired"  # never `auth_ok` an identity that is already dead
@@ -1528,6 +1530,8 @@ def make_ws_router(
                 conn.registered = conn.authz
                 async with _auth_call("recheck", auth_call_timeout_s):
                     await registry.recheck(conn.authz)
+                if conn.closing:  # §9.6: the re-read found the target an Owner and ended the view
+                    return
                 revoked: list[dict[str, Any]] = []
             else:
                 # Subscriptions + sequences are kept; only ones the refreshed

@@ -1412,7 +1412,11 @@ class ConnectionRegistry:
     ) -> list[dict[str, Any]]:
         """`authz.apply_snapshot`. An older snapshot is refused, counted and audited (best
         effort, like every WS audit write) and yields no frames (SR-189). A snapshot of another
-        user raises `SnapshotUserMismatch` first, with no count and no row (#415)."""
+        user raises `SnapshotUserMismatch` first, with no count and no row (#415). A viewing
+        socket never takes an Owner's snapshot: its view ends instead (§9.6, `_end_views`)."""
+        if authz.viewing and snap.principal.is_owner:  # §9.6: never an Owner's snapshot
+            await self._end_views([(authz, None, None)])
+            return []
         frames, refused = self._swap(authz, snap, now_ms, event)
         await self._write_rows(refused)
         return frames
@@ -1447,7 +1451,7 @@ class ConnectionRegistry:
         if authz.version >= self._changed_at:
             return
         snap = await self.resolve(authz.principal.user_id)
-        await self.apply(authz, snap, self._clock_ms(), event="handshake")
+        await self.apply(authz, snap, self._clock_ms(), event="handshake")  # ends an Owner's view
 
     async def roles_changed(self, user_id: uuid.UUID) -> None:
         """Role / permission / account-grant change: push `permission_change` and the `revoked`

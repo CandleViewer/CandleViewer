@@ -19,7 +19,12 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
 from candleviewer.bars.models import BarSpec
-from candleviewer.ws.permissions import ConnectionAuthz, SubscriptionServices, _audit_denials
+from candleviewer.ws.permissions import (
+    ConnectionAuthz,
+    ConnectionRegistry,
+    SubscriptionServices,
+    _audit_denials,
+)
 from tests.unit.ws._auth_rig import DEADLINE_S, LATER, Rig, Sock, bye_of, hang_up, user_of
 
 _VIEWER, _TARGET = user_of("good-1"), user_of("good-9")
@@ -78,6 +83,51 @@ async def test_a_target_who_becomes_an_owner_ends_the_view() -> None:
         assert _TARGET not in rig.registry._conns
         hang_up(sock)
         await handler
+
+
+async def _owner(uid: uuid.UUID) -> PrincipalSnapshot:
+    return PrincipalSnapshot(uid, frozenset({"owner"}), frozenset(Permission))
+
+
+async def test_a_target_already_an_owner_at_the_auth_is_refused_view_as_expired() -> None:
+    """The `auth` resolves the target before it registers anything: an Owner ends the view."""
+    rig, sock = _viewing(), Sock()
+    rig.registry._resolve = _owner
+    async with asyncio.timeout(DEADLINE_S):
+        handler = await rig.open(sock)
+        assert bye_of(await rig.auth(sock, "good-1")) == ("bye", "view_as_expired", 4403)
+        assert not rig.registry._conns
+        hang_up(sock)
+        await handler
+
+
+def _registered_view(registry: ConnectionRegistry) -> tuple[ConnectionAuthz, list[Any]]:
+    principal = PrincipalSnapshot(_TARGET, frozenset({"viewer"}), frozenset())
+    authz = ConnectionAuthz(principal, registry.services, viewer_user_id=_VIEWER)
+    closes: list[Any] = []
+
+    async def closer(frame: dict[str, Any], code: int) -> None:
+        closes.append(bye_of(frame))
+
+    registry.register(authz, None, None, closer)
+    return authz, closes
+
+
+async def test_a_recheck_that_reads_an_owner_target_ends_the_view_instead_of_applying() -> None:
+    """SR-189's re-read: the change it catches may be the target's promotion."""
+    registry = ConnectionRegistry(_owner, lambda: 0, services=SubscriptionServices())
+    authz, closes = _registered_view(registry)
+    await registry.roles_changed(uuid.uuid4())  # a change after the socket's own read
+    await registry.recheck(authz)
+    assert closes == [("bye", "view_as_expired", 4403)] and not registry._conns
+
+
+async def test_an_applied_owner_snapshot_ends_the_view_and_yields_no_frames() -> None:
+    registry = ConnectionRegistry(_owner, lambda: 0, services=SubscriptionServices())
+    authz, closes = _registered_view(registry)
+    snap = await registry.resolve(_TARGET)
+    assert await registry.apply(authz, snap, 0, event="reauth") == []
+    assert closes == [("bye", "view_as_expired", 4403)] and not registry._conns
 
 
 async def test_an_owner_promotion_of_the_users_own_socket_still_applies() -> None:
