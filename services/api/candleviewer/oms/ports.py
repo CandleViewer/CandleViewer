@@ -645,7 +645,7 @@ class InterimStopResolver(Interim):
             level = _profile_level(profile, side, reference_price, tick)
         else:
             return None
-        return _away_from_entry(level, side, tick)
+        return _on_tick(level, side, tick)  # away from the entry (24 Sec.9.3.1)
 
     def resolve_take_profit(
         self,
@@ -663,7 +663,7 @@ class InterimStopResolver(Interim):
             return None
         tick = instrument.tick_size
         level = _take_profit_level(take_profit, side, reference_price, tick)
-        return _toward_entry(level, side, tick)
+        return _on_tick(level, side, tick)  # toward the entry (Q-L)
 
 
 def _requested_level(stop: StopOffset, side: Side, reference: Px, tick: Px) -> Px:
@@ -709,20 +709,15 @@ def _profitable(reference: Px, distance: Decimal, side: Side) -> Px:
     return reference + distance if side == "buy" else reference - distance
 
 
-def _away_from_entry(level: Px, side: Side, tick: Px) -> Px:
-    """`level` on a tick, rounded away from the entry, never closer (24 Sec.9.3.1); a figure
-    that is not finite is left for the guard to refuse."""
+def _on_tick(level: Px, side: Side, tick: Px) -> Px:
+    """`level` on a tick, down for a buy and up for a sell. A stop sits on the far side of the
+    entry from its take-profit, so this rounds a stop away from the entry, never closer (24
+    Sec.9.3.1), and a take-profit toward it (Q-L). A figure that is not finite is left for the
+    guard to refuse."""
     if not level.is_finite():
         return level
     rounding = ROUND_FLOOR if side == "buy" else ROUND_CEILING
     return (level / tick).to_integral_value(rounding=rounding) * tick
-
-
-def _toward_entry(level: Px, side: Side, tick: Px) -> Px:
-    """A take-profit `level` on a tick, rounded toward the entry (Q-L): it sits on the other side
-    of the entry from a stop, so the stop's own rounding, down for a buy and up for a sell, brings
-    it toward the entry."""
-    return _away_from_entry(level, side, tick)
 
 
 class InterimRiskGate(Interim):

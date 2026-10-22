@@ -45,7 +45,9 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
    reconciled state, `reconciling` while B1 has not resolved it (never an assumed success); the
    share-locked re-check's refusals are 403; an audit that does not land is 503
    `audit_unavailable`; any other refusal 503 `store_unavailable`; a write whose outcome is
-   unknown goes on only when the rebuilt order is `validated`;
+   unknown goes on only when the rebuilt order is `validated`, else it is 503 too, paged when no
+   machine holds the order (a `validated` row it may have left has no owner until the startup
+   sweep);
 10. `SEND`, once the command port holds the order (`OmsCommandPort.expect`, with the request's
    correlation id). A `SEND` that did not commit sent nothing: the order is abandoned (S2-Q5, a
    KILL from `validated`, tried twice, paged when it fails) and the request is refused, 503 (or
@@ -66,11 +68,12 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
 Every refusal is audited (`orders.submit`, outcome `denied`, its problem code) before it is
 raised; one whose record does not land is answered 503 `audit_unavailable` instead (C-2.9). Each
 record names the requesting principal and carries the request's correlation id ([AUDIT-REQUEST-ID],
-#3990). Once the anchor exists, the bounds (`SEND`'s write, `PLACE_WAIT_S`, `RESULT_WAIT_S`, then
-the compare-and-sets and the outcome's record, each `store_timeout_s`) total about 17 s, under
-`CV_OMS_INFLIGHT_STUCK_S` (30 s), so a repeat meets the outcome this request records. Logs carry
-ids, codes and state names, never a price, a size, the key or the fingerprint (21 Sec.12,
-C-12.6).
+#3990). Once the anchor exists, the bounds (`SEND`'s write, `place_wait_s`, `result_wait_s`, then
+the anchor's, the leg's and the group's compare-and-sets and the outcome's record, each
+`store_timeout_s`) total 17 s by default; the pipeline refuses to be built with bounds that total
+`CV_OMS_INFLIGHT_STUCK_S` (30 s) or more, so a repeat meets the outcome this request records.
+Logs carry ids, codes and state names, never a price, a size, the key or the fingerprint (21
+Sec.12, C-12.6).
 """
 
 from __future__ import annotations
@@ -169,7 +172,7 @@ from .errors import (
     TradingDisabled,
     problem_for,
 )
-from .idempotency import AnchorService, InFlight, KeyReuse, Replay
+from .idempotency import STUCK_AFTER_S, AnchorService, InFlight, KeyReuse, Replay
 from .order_link import OrderLinkIdParts, OrderPurpose
 from .order_link_allocator import MAX_SEQ_INCREMENTS, OrderLinkIdAllocator
 from .order_machine import OrderMachines
@@ -222,13 +225,14 @@ STOP_RETRY_AFTER_S: Final = 1
 #: reference price is read again at the next request. The orchestrator's ruling of 2026-10-22
 #: keeps it 1 s, under this one name, which every such refusal answers.
 READ_RETRY_AFTER_S: Final = 1
-#: How long the pipeline waits for B1's answer to the create once `SEND` committed, in seconds:
-#: the command port's one deadline on all of `place`, its reads, calls and answer
-#: (`commands.SUBMIT_TIMEOUT_S`, CR-2B1-04), and one second for B1's own turn. Past it the
-#: outcome is not known yet: 202, as `unknown` is.
+#: How long the pipeline waits for B1's answer to the create once `SEND` committed, in seconds, by
+#: default (`place_wait_s`): the command port's one deadline on all of `place`, its reads, calls
+#: and answer (`commands.SUBMIT_TIMEOUT_S`, CR-2B1-04), and one second for B1's own turn. Past it
+#: the outcome is not known yet: 202, as `unknown` is.
 PLACE_WAIT_S: Final = SUBMIT_TIMEOUT_S + 1.0
-#: How long it then waits for the order to leave `submitting`, in seconds: the result step's
-#: write (`CV_PERSIST_TIMEOUT`) and one second for the facade's turn.
+#: How long it then waits for the order to leave `submitting`, in seconds, by default
+#: (`result_wait_s`): the result step's write (`CV_PERSIST_TIMEOUT`) and one second for the
+#: facade's turn.
 RESULT_WAIT_S: Final = CV_PERSIST_TIMEOUT + 1.0
 #: The problem code of each answer the anchor records (21 Sec.3.3.10, `AnchorOutcome.code`).
 RATE_LIMITED: Final = "exchange_rate_limited"
@@ -314,6 +318,13 @@ def _delay(value: float) -> float:
 
 def _us(at: datetime) -> int:
     return (at - _EPOCH) // timedelta(microseconds=1)
+
+
+def _after_anchor_s(*, store_timeout_s: float, place_wait_s: float, result_wait_s: float) -> float:
+    """The request's bounds once its anchor exists, in seconds (module docstring): `SEND`'s write
+    (`CV_PERSIST_TIMEOUT`), the create's answer, its result step, then the anchor's, the leg's and
+    the group's compare-and-sets and the outcome's record, each `store_timeout_s`."""
+    return CV_PERSIST_TIMEOUT + place_wait_s + result_wait_s + 4 * store_timeout_s
 
 
 # --- The request, its context and its answer ---------------------------------------------------
@@ -525,7 +536,8 @@ def _reject_code(answer: Mapping[str, Any] | None) -> str:
 
 class OrderSubmission:
     """The `placeOrder` pipeline (module docstring): one per process, with the OMS facade and the
-    command port it drives."""
+    command port it drives. Its bounds after the anchor must total under `STUCK_AFTER_S`
+    (`CV_OMS_INFLIGHT_STUCK_S`): any that reach it are refused with `ValueError`."""
 
     def __init__(
         self,
@@ -546,6 +558,8 @@ class OrderSubmission:
         pager: Pager | None = None,
         store_timeout_s: float = STORE_TIMEOUT_S,
         position_timeout_s: float = POSITION_TIMEOUT_S,
+        place_wait_s: float = PLACE_WAIT_S,
+        result_wait_s: float = RESULT_WAIT_S,
         stop_retries: Sequence[float] = STOP_RETRIES_S,
     ) -> None:
         self._ports = ports
@@ -563,6 +577,18 @@ class OrderSubmission:
         self._pager: Pager = pager if pager is not None else LogPager()
         self._store_timeout_s = _seconds("store_timeout_s", store_timeout_s)
         self._position_timeout_s = _seconds("position_timeout_s", position_timeout_s)
+        self._place_wait_s = _seconds("place_wait_s", place_wait_s)
+        self._result_wait_s = _seconds("result_wait_s", result_wait_s)
+        after_anchor = _after_anchor_s(
+            store_timeout_s=self._store_timeout_s,
+            place_wait_s=self._place_wait_s,
+            result_wait_s=self._result_wait_s,
+        )
+        if after_anchor >= STUCK_AFTER_S:  # else a repeat may decide the anchor while this runs
+            raise ValueError(
+                f"the bounds after the anchor total {after_anchor} s, not under "
+                f"CV_OMS_INFLIGHT_STUCK_S ({STUCK_AFTER_S} s)"
+            )
         self._stop_retries = tuple(_delay(wait) for wait in stop_retries)
         self._guard = NativeStopGuard(ports.stop_resolver)
         self._positions = RoutedPositions(router, deps.accounts)
@@ -634,7 +660,7 @@ class OrderSubmission:
         trace.step = "allocate"
         rows = await self._rows(trace, account, sized, profile)
         trace.step = "persist"
-        persisted = await self._persist(trace, rows, account.environment, sized.effect)
+        persisted = await self._persist(trace, rows, account.environment)
         if isinstance(persisted, SubmitOutcome):
             return persisted  # the key's earlier request answers this one
         trace.persisted = True
@@ -992,7 +1018,7 @@ class OrderSubmission:
         return allocated.order_link_id
 
     async def _persist(
-        self, trace: _Trace, rows: _Rows, environment: Environment, effect: OrderEffect
+        self, trace: _Trace, rows: _Rows, environment: Environment
     ) -> _Rows | SubmitOutcome:
         """B1's `VALIDATE` with the first persist, under the Q4 loop (module docstring, step 9).
         Answers the rows as written, or the outcome of the key's earlier request."""
@@ -1037,6 +1063,8 @@ class OrderSubmission:
                     _log().error(
                         "oms_submit_persist_unknown", order_link_id=rows.order.order_link_id
                     )
+                    if live is None:  # a `validated` row it may have left has no owner: paged
+                        self._page("oms_submit_persist_unknown")
                     raise StoreUnavailable from None
                 state = live[0]
             if state != "validated":  # a verdict refused it, nothing written: none can here
@@ -1190,7 +1218,9 @@ class OrderSubmission:
     async def _send(self, trace: _Trace, rows: _Rows, account: AccountRef) -> PlaceWatch:
         """`SEND` once the command port holds the order. One that did not commit sent nothing: the
         order is abandoned and the request refused; one whose outcome is unknown is followed once
-        the rebuilt order has left `validated` (module docstring, step 10)."""
+        the rebuilt order has left `validated` (module docstring, step 10). The step's actor
+        (`user`) and the group draft's origin (`manual`, `_first_persist`) are manual-only until
+        M15 (`rules`) submits through the pipeline, as `SubmitActor` already allows."""
         order = rows.order
         watch = self._commands.expect(order, request_id=trace.context.request_id)
         try:
@@ -1246,7 +1276,7 @@ class OrderSubmission:
         answer: Mapping[str, Any] | None = None
         lifecycle = "submitting"
         try:
-            async with asyncio.timeout(PLACE_WAIT_S):
+            async with asyncio.timeout(self._place_wait_s):
                 answer = await watch.answer()
         except TimeoutError:  # the create has not answered yet: its outcome is not known
             _log().warning("oms_submit_answer_late", order_link_id=order.order_link_id)
@@ -1274,7 +1304,10 @@ class OrderSubmission:
         in time: answered as `unknown` is."""
         try:
             return await self._machines.settled(
-                order.exchange_account_id, order.id, leaving="submitting", timeout_s=RESULT_WAIT_S
+                order.exchange_account_id,
+                order.id,
+                leaving="submitting",
+                timeout_s=self._result_wait_s,
             )
         except Exception as exc:  # not known in time, or no machine to follow
             link = order.order_link_id
@@ -1285,12 +1318,13 @@ class OrderSubmission:
 
     async def _decide(self, rows: _Rows, outcome: SubmitOutcome) -> None:
         """The anchor's outcome, by compare-and-set from none (21 Sec.3.3.10), so every repeat
-        replays it; best effort: a repeat past `CV_OMS_INFLIGHT_STUCK_S` decides it otherwise."""
+        replays it; best effort, within `store_timeout_s` as each write after the send is, whatever
+        the anchor service bounds itself to: a repeat past `CV_OMS_INFLIGHT_STUCK_S` decides it
+        otherwise."""
         anchor_id = str(rows.anchor_id)
         try:
-            recorded = await self._anchors.record(
-                rows.anchor_id, outcome.anchor_outcome(self._now())
-            )
+            decided = outcome.anchor_outcome(self._now())
+            recorded = await self._bounded(self._anchors.record(rows.anchor_id, decided))
         except Exception as exc:  # never the answer: logged, and a repeat decides it
             _log().error(
                 "oms_anchor_outcome_unrecorded", anchor_id=anchor_id, failure=type(exc).__name__

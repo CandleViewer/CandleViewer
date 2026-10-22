@@ -4,17 +4,22 @@
 Each step refuses before the next runs, with nothing recorded and nothing sent, its refusal
 audited first (C-2.9) and counted; the persist is one transaction under the Q4 loop; `SEND` that
 does not commit is abandoned (S2-Q5); and the answer is the state B1 recorded, 202, 429 or 502,
-whatever the best-effort records after it do. C-2.6 holds on every path, the request's
-correlation id rides every record ([AUDIT-REQUEST-ID]), and no stop or take-profit that is no
-finite price above zero is recorded (#2877 ruling 2).
+whatever the best-effort records after it do. C-2.6 holds on every path: each kind of entry
+reaches the venue with its native stop, and once each test of this module ends, every create that
+is not reduce-only, read off the venue doubles of every rig the test built, carries one
+(`stops_on_every_create`). The request's correlation id rides every record ([AUDIT-REQUEST-ID]),
+no stop or take-profit that is no finite price above zero is recorded (#2877 ruling 2), and no
+log line carries the key, the fingerprint, the stop or the quantity (C-12.6).
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 from collections import OrderedDict
-from collections.abc import AsyncIterator
-from dataclasses import replace
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
@@ -62,18 +67,22 @@ from candleviewer.oms.errors import (
     TradingDisabled,
     problem_for,
 )
-from candleviewer.oms.idempotency import STUCK_AFTER_S, Fresh, Replay
+from candleviewer.oms.idempotency import STUCK_AFTER_S, AnchorService, Fresh, Replay
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_link_allocator import MAX_SEQ_INCREMENTS
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import KeyedRecord, RequestRecord, SizingRequest, StopOffset
+from candleviewer.oms.repository import IdempotencyAnchorRepository
 from candleviewer.oms.submit import (
     PLACE_WAIT_S,
     READ_RETRY_AFTER_S,
     RECONCILING,
     RESULT_WAIT_S,
     STORE_TIMEOUT_S,
+    OrderRequest,
+    OrderTrigger,
     SubmitOutcome,
+    _after_anchor_s,
     _entry_order_id,
 )
 from candleviewer.statechart.bindings import b01_order as b01
@@ -137,6 +146,32 @@ def _create(call: FakeCall) -> PlaceOrderRequest:
     """The create a `place_order` call carried."""
     assert isinstance(call.request, PlaceOrderRequest)
     return call.request
+
+
+def _creates(port: cr.Rig) -> list[PlaceOrderRequest]:
+    """Every create the rig's two venue doubles took (`place_order`), demo's first."""
+    return [_create(c) for c in (*port.demo.calls, *port.live.calls) if c.method == "place_order"]
+
+
+@pytest.fixture(autouse=True)
+def stops_on_every_create(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[cr.Rig]]:
+    """C-2.6 on every path of this module: once a test ends, every create that is not reduce-only
+    and that a venue double of any rig the test built took (the `rig` fixture's, `rigged()`'s, a
+    restart's pipeline over either) carries its native stop. It is read off the doubles' own call
+    records, never off the pipeline or a mock of it; a create without one errors its test."""
+    built: list[cr.Rig] = []
+    build = cr.build_rig
+
+    def recording(**kwargs: Any) -> cr.Rig:
+        port = build(**kwargs)
+        built.append(port)
+        return port
+
+    monkeypatch.setattr(cr, "build_rig", recording)
+    yield built
+    creates = [create for port in built for create in _creates(port)]
+    bare = [c.order_link_id for c in creates if not c.reduce_only and c.stop_loss is None]
+    assert bare == [], "an entry reached the venue without its native stop (C-2.6)"
 
 
 def _row(rig: SubmitRig, outcome: SubmitOutcome) -> OrderRow:
@@ -220,7 +255,7 @@ async def test_every_record_carries_the_requests_correlation_id(
     rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """[AUDIT-REQUEST-ID]: the order's, its group's, its stops', its outcome's and B1's adoption
-    record (through `commands.expect`) carry `X-Correlation-Id`; a job's carry None."""
+    record (through `commands.expect`) carry `X-Correlation-Id`."""
     demo = rig.port.demo
     land = demo.place_order
 
@@ -234,8 +269,11 @@ async def test_every_record_carries_the_requests_correlation_id(
     actions = [r.action for r in rig.records()]
     assert actions.count("orders.submit") == 3  # the intent, the adoption, the outcome
     assert {r.request_id for r in rig.records()} == {REQUEST_ID}
-    rig.port.audits.written.clear()
-    await rig.submit(entry(), context(client_ref=uuid4(), request_id=None))
+
+
+async def test_a_jobs_records_carry_no_correlation_id(rig: SubmitRig) -> None:
+    """[AUDIT-REQUEST-ID]: a request no HTTP request carries (a job) records None in each."""
+    await rig.submit(entry(), context(request_id=None))
     assert rig.records() and {r.request_id for r in rig.records()} == {None}
 
 
@@ -805,6 +843,7 @@ async def test_a_persist_whose_outcome_is_unknown_goes_on_once_the_row_says_vali
     rig.store.fail_next(TimeoutError(), committed=True)
     outcome = await rig.submit()
     assert outcome.status == 202 and rig.calls() == ["place_order"]
+    assert "oms_submit_persist_unknown" not in rig.pager.calls  # a machine owns the order
 
 
 async def test_a_held_key_is_answered_as_a_repeat_of_its_decided_request(rig: SubmitRig) -> None:
@@ -976,8 +1015,9 @@ async def test_a_clock_drift_rejection_is_502_and_halts_the_next_request_until_r
     rig.port.demo.script("place_order", FakeReject(OmsErrorCode.CLOCK_DRIFT, 10002))
     outcome = await rig.submit()
     assert (outcome.status, outcome.ret_code) == (502, 10002)
-    if rig.port.port.resync_task is not None:
-        await rig.port.port.resync_task
+    resync = rig.port.port.resync_task
+    assert resync is not None  # the trip started the clock's resync
+    await resync
     blocked = await _refused(rig, entry(), context(client_ref=uuid4()))
     assert isinstance(blocked, ClockDriftBlocked)
     assert rig.count("oms_clock_drift_blocked_total") == 1
@@ -1093,7 +1133,7 @@ async def test_a_take_profit_offset_is_sent_on_a_tick_rounded_toward_the_entry(
     assert _row(rig, outcome).take_profit == Decimal(sent)
 
 
-# --- the reduce-only path, and C-2.6 on every path ------------------------------------------------
+# --- the reduce-only path -------------------------------------------------------------------------
 
 
 async def test_a_reduce_only_order_that_reduces_has_no_group_and_takes_the_critical_lane(
@@ -1113,40 +1153,42 @@ async def test_a_reduce_only_order_that_reduces_has_no_group_and_takes_the_criti
     assert rig.prices.asked == [SYMBOL]  # a market order's reference price
 
 
+_SL = StopOffset(unit="price", value=Decimal(61000))
+_TP = StopOffset(unit="price", value=Decimal(59000))
+
+
 @pytest.mark.parametrize(
     "position",
     [None, "same_side", "smaller"],
     ids=["flat", "same_side", "over_sized"],
 )
-async def test_a_reduce_only_order_not_shown_to_reduce_needs_a_stop_it_cannot_carry(
-    rig: SubmitRig, position: str | None
+@pytest.mark.parametrize(
+    ("request_", "refused_by"),
+    [
+        (flatten(), ("intent", "intent_mismatch")),
+        (flatten(intent="entry"), ("stop_loss", "reduce_only_tpsl")),
+        (flatten(intent="entry", stop_loss=_SL), ("stop_loss", "reduce_only_tpsl")),
+    ],
+    ids=["intent_mismatch", "profile_stop", "named_stop"],
+)
+async def test_a_reduce_only_order_not_shown_to_reduce_is_refused_with_nothing_sent(
+    rig: SubmitRig, position: str | None, request_: OrderRequest, refused_by: tuple[str, str]
 ) -> None:
     """SR-E29-01, C-2.6: anything not shown to reduce is an entry, so it takes a stop (the
-    profile's offset when it names none) and an opening intent. A reduce-only order carries no
-    stop on this venue (`supports_reduce_only_tpsl`, the ruling of 2026-10-22), so it is refused
-    whatever it names: nothing recorded or sent, never a late rejection at the exchange."""
+    profile's offset when it names none) and an opening intent. One labelled reducing is
+    `intent_mismatch`; one labelled an entry would carry a stop, the profile's or its own, which a
+    reduce-only order carries none of on this venue (`supports_reduce_only_tpsl`, the ruling of
+    2026-10-22), so it is `reduce_only_tpsl`: nothing recorded or sent, never a late rejection at
+    the exchange."""
     if position == "same_side":
         rig.port.demo.seed_position(_position(side="sell"))
     elif position == "smaller":
         rig.port.demo.seed_position(_position(qty="0.005"))
-    refused = await _refused(rig, flatten())  # the profile's offset gives it a stop
+    refused = await _refused(rig, request_)
     assert isinstance(refused, OrderInvalid)
-    assert [(e.field, e.rule) for e in refused.errors] == [("intent", "intent_mismatch")]
-    opening = await _refused(rig, flatten(intent="entry"))  # the profile's stop it cannot carry
-    assert [(e.field, e.rule) for e in getattr(opening, "errors", ())] == [
-        ("stop_loss", "reduce_only_tpsl")
-    ]
-    stop = StopOffset(unit="price", value=Decimal(61000))
-    named = await _refused(rig, flatten(intent="entry", stop_loss=stop))
-    assert [(e.field, e.rule) for e in getattr(named, "errors", ())] == [
-        ("stop_loss", "reduce_only_tpsl")
-    ]
+    assert [(e.field, e.rule) for e in refused.errors] == [refused_by]
     assert [c for c in rig.calls() if c != "positions"] == []
     assert rig.written() == (0, 0, 0, 0)
-
-
-_SL = StopOffset(unit="price", value=Decimal(61000))
-_TP = StopOffset(unit="price", value=Decimal(59000))
 
 
 @pytest.mark.parametrize(
@@ -1192,6 +1234,154 @@ async def test_a_venue_that_sets_them_on_a_reduce_only_order_lets_the_order_carr
     assert _create(create).take_profit == Decimal(59000)
 
 
+# --- C-2.6 on every path: each kind of entry, and every create of the module ----------------------
+
+
+#: A limit buy entry's create, row and group (`entry()`), which each kind below changes in part;
+#: the group's in its columns' vocabulary (`tg_entrytype`, `tg_trigby`, 21 Sec.3.3.2).
+_SENT: dict[str, object] = {
+    "side": "buy", "order_type": "limit", "price": REFERENCE, "trigger_price": None,
+    "trigger_by": None, "trigger_direction": None, "tpsl_mode": "full", "position_idx": 0,
+}  # fmt: skip
+_ROW: dict[str, object] = {
+    "side": "Buy", "order_type": "Limit", "price": REFERENCE, "trigger_price": None,
+    "trigger_by": None, "trigger_direction": None, "tpsl_mode": "Full", "position_idx": 0,
+}  # fmt: skip
+_GROUP: dict[str, object] = {
+    "entry_type": "Limit", "entry_price": REFERENCE, "trigger_price": None, "trigger_by": None,
+}  # fmt: skip
+#: The market's price, from which a market entry is measured (24 Sec.9.3 step 2).
+_MARKET = Decimal("61000")
+_RISE, _FALL = Decimal("60500"), Decimal("59500")
+
+
+@dataclass(frozen=True)
+class _Kind:
+    """One kind of entry and what its create, its row and its group carry beyond a limit buy's
+    (`_SENT`, `_ROW`, `_GROUP`), written out here, never read off the pipeline's own tables: its
+    native stop, the reference prices it reads, its stop requests' size (a Partial side holds the
+    order's quantity, 21 Sec.3.3.11 `rs_size`) and its profile's position mode."""
+
+    request: OrderRequest
+    stop: Decimal = STOP
+    sent: dict[str, object] = field(default_factory=dict)
+    row: dict[str, object] = field(default_factory=dict)
+    group: dict[str, object] = field(default_factory=dict)
+    asked: tuple[str, ...] = ()
+    size: Decimal | None = None
+    position_mode: str = "one_way"
+
+
+def _conditional(direction: Any, by: Any, short: str, code: int) -> Any:
+    """A conditional limit buy that fires when the price `by` names moves `direction` to its
+    trigger: `short` is the create's name for that price, `code` the row's for the direction (22
+    `TriggerSpec`, 21 Sec.3.3.4); the row and the group's column name the price as `by` does."""
+    price = _RISE if direction == "rise" else _FALL
+    return pytest.param(
+        _Kind(
+            entry(trigger=OrderTrigger(price=price, direction=direction, trigger_by=by)),
+            sent={"trigger_price": price, "trigger_by": short, "trigger_direction": direction},
+            row={"trigger_price": price, "trigger_by": by, "trigger_direction": code},
+            group={"entry_type": "Conditional", "trigger_price": price, "trigger_by": by},
+        ),
+        id=f"conditional_{direction}_{short}",
+    )
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param(_Kind(entry()), id="limit"),
+        pytest.param(
+            _Kind(
+                entry(order_type="market", price=None, stop_loss=None),
+                stop=Decimal("60390.0"),  # the profile's 1 % below the market's 61000
+                sent={"order_type": "market", "price": None},
+                row={"order_type": "Market", "price": None},
+                group={"entry_type": "Market", "entry_price": None},
+                asked=(SYMBOL,),
+            ),
+            id="market",
+        ),
+        _conditional("rise", "LastPrice", "last", 1),
+        _conditional("rise", "MarkPrice", "mark", 1),
+        _conditional("rise", "IndexPrice", "index", 1),
+        _conditional("fall", "LastPrice", "last", 2),
+        _conditional("fall", "MarkPrice", "mark", 2),
+        _conditional("fall", "IndexPrice", "index", 2),
+        pytest.param(
+            _Kind(
+                entry(tpsl_mode="Partial"),
+                sent={"tpsl_mode": "partial"},
+                row={"tpsl_mode": "Partial"},
+                size=QTY,
+            ),
+            id="partial",
+        ),
+        pytest.param(
+            _Kind(
+                entry(position_idx=1),
+                sent={"position_idx": 1},
+                row={"position_idx": 1},
+                position_mode="hedge",
+            ),
+            id="hedge_buy",
+        ),
+        pytest.param(
+            _Kind(
+                entry(side="sell", position_idx=2, stop_loss=_SL, take_profit=_TP),
+                stop=Decimal(61000),
+                sent={"side": "sell", "position_idx": 2},
+                row={"side": "Sell", "position_idx": 2},
+                position_mode="hedge",
+            ),
+            id="hedge_sell",
+        ),
+    ],
+)
+async def test_an_entry_of_each_kind_reaches_the_venue_once_with_its_native_stop(
+    rig: SubmitRig, kind: _Kind
+) -> None:
+    """C-2.6 for every order path: a limit entry, a market one measured from the market's price,
+    a conditional one firing either way off each price it may watch, a Partial one and a hedge
+    one on either side each reach the venue once, with their native stop, and their row, group,
+    leg and stop requests record them as sent."""
+    rig.profiles.held[(cr.ACCOUNT, None)] = profile(position_mode=kind.position_mode)
+    rig.prices.price = _MARKET
+    outcome = await rig.submit(kind.request)
+    assert (outcome.status, outcome.lifecycle) == (202, "submitted")
+    [create] = _creates(rig.port)
+    assert (create.stop_loss, create.reduce_only) == (kind.stop, False)
+    assert {name: getattr(create, name) for name in _SENT} == _SENT | kind.sent
+    row = _row(rig, outcome)
+    assert row.stop_loss == kind.stop
+    assert {name: getattr(row, name) for name in _ROW} == _ROW | kind.row
+    record = _group(rig, outcome)
+    assert {name: getattr(record.group, name) for name in _GROUP} == _GROUP | kind.group
+    assert record.group.sl_price_hint == kind.stop
+    [leg] = record.legs
+    assert (leg.status, leg.resolved_sl_price) == ("submitted", kind.stop)
+    stops = {stop.kind: stop for stop in rig.store._stops.values()}
+    assert stops["stop_loss"].trigger_price == kind.stop
+    assert {(s.position_idx, s.position_side, s.tpsl_mode, s.size) for s in stops.values()} == {
+        (row.position_idx, row.side, row.tpsl_mode, kind.size)
+    }
+    assert rig.prices.asked == list(kind.asked)
+
+
+async def test_the_stop_check_reads_the_creates_of_every_rig_a_test_builds(
+    rig: SubmitRig, stops_on_every_create: list[cr.Rig]
+) -> None:
+    """`stops_on_every_create` is not vacuous: it holds the `rig` fixture's venue doubles and a
+    `rigged()` rig's, and reads each create they took."""
+    await rig.submit()
+    await rig.machines.stop()  # one facade per process: the next rig's takes the binding over
+    async with rigged() as other:
+        await other.submit()
+    assert [id(port) for port in stops_on_every_create] == [id(rig.port), id(other.port)]
+    assert [c.stop_loss for port in stops_on_every_create for c in _creates(port)] == [STOP, STOP]
+
+
 # --- metrics and bounds ---------------------------------------------------------------------------
 
 
@@ -1204,11 +1394,61 @@ async def test_the_answer_is_timed_by_transport(rig: SubmitRig) -> None:
 def test_the_bounds_after_the_anchor_exists_total_under_the_in_flight_threshold() -> None:
     """#4006 follow-up 3: `SEND`'s write, the create's answer, the result step, then the anchor's,
     the leg's and the group's compare-and-sets and the outcome's record, all under
-    `CV_OMS_INFLIGHT_STUCK_S`, so a repeat meets the outcome this request records."""
-    after_anchor = CV_PERSIST_TIMEOUT + PLACE_WAIT_S + RESULT_WAIT_S + 4 * STORE_TIMEOUT_S
+    `CV_OMS_INFLIGHT_STUCK_S` by default, so a repeat meets the outcome this request records. The
+    sum is the pipeline's own, which its constructor checks."""
+    after_anchor = _after_anchor_s(
+        store_timeout_s=STORE_TIMEOUT_S, place_wait_s=PLACE_WAIT_S, result_wait_s=RESULT_WAIT_S
+    )
     assert PLACE_WAIT_S > SUBMIT_TIMEOUT_S and RESULT_WAIT_S > CV_PERSIST_TIMEOUT
-    assert after_anchor < STUCK_AFTER_S
-    assert after_anchor == 17.0
+    assert after_anchor == CV_PERSIST_TIMEOUT + PLACE_WAIT_S + RESULT_WAIT_S + 4 * STORE_TIMEOUT_S
+    assert after_anchor == 17.0 < STUCK_AFTER_S
+
+
+@pytest.mark.parametrize(
+    "bounds",
+    [{"place_wait_s": 19.0}, {"result_wait_s": 15.0}, {"store_timeout_s": 5.25}],
+    ids=["place_wait", "result_wait", "store_timeout"],
+)
+async def test_bounds_after_the_anchor_that_reach_the_in_flight_threshold_are_refused(
+    rig: SubmitRig, bounds: dict[str, float]
+) -> None:
+    """#4006 follow-up 3, enforced: bounds that total `CV_OMS_INFLIGHT_STUCK_S` (30 s) or more
+    would let a repeat decide the anchor while its request still runs, so no pipeline is built
+    with them; each case here totals 30 s exactly."""
+    with pytest.raises(ValueError, match="CV_OMS_INFLIGHT_STUCK_S"):
+        rig.make(**bounds)
+
+
+async def test_bounds_after_the_anchor_under_the_in_flight_threshold_are_taken(
+    rig: SubmitRig,
+) -> None:
+    assert rig.make(place_wait_s=18.5)._place_wait_s == 18.5  # 29.5 s in all
+
+
+async def test_an_anchor_write_that_does_not_answer_is_bounded_as_the_other_writes_are(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The anchor's outcome is written within `store_timeout_s`, whatever the anchor service's
+    own bound, so the bounds after the anchor hold: a write that never answers is logged, and the
+    answer is still the order's outcome."""
+    anchors = AnchorService(
+        IdempotencyAnchorRepository(rig.store.anchors),
+        clock=lambda: cr.EPOCH + timedelta(microseconds=rig.port.now.us),
+        timeout_s=3600.0,  # far past the pipeline's own bound
+    )
+    pipeline = rig.make(anchors=anchors, store_timeout_s=0.25)
+
+    async def hangs(*_args: Any) -> bool:
+        await asyncio.Event().wait()
+        return True
+
+    monkeypatch.setattr(rig.store.anchors, "record_outcome", hangs)
+    with capture_logs() as logs:
+        async with asyncio.timeout(5.0):  # an unbounded write fails here, never hangs the run
+            outcome = await pipeline.submit(entry(), context())
+    assert (outcome.status, outcome.lifecycle) == (202, "submitted")
+    [line] = [line for line in logs if line["event"] == "oms_anchor_outcome_unrecorded"]
+    assert line["failure"] == "TimeoutError"
 
 
 def test_the_rejected_counter_holds_one_series_per_problem_code() -> None:
@@ -1254,6 +1494,27 @@ def test_a_context_never_shows_its_key_or_fingerprint() -> None:
     assert str(KEY) not in shown and SHA not in shown
 
 
+#: A number written on its own in a log value: never one inside an id, a key or a fingerprint.
+_FIGURE = re.compile(r"(?<![\w.])\d+(?:\.\d+)?(?!\w|\.\d)")
+
+
+async def test_no_log_line_of_a_submit_or_its_repeat_shows_the_key_the_fingerprint_or_a_figure(
+    rig: SubmitRig,
+) -> None:
+    """C-12.6 (21 Sec.12): no value of any line a submit and its repeat log, the pipeline's, the
+    facade's or the command port's, holds the key, the fingerprint, the stop or the quantity,
+    whatever its trailing zeros."""
+    with capture_logs() as logs:
+        first = await rig.submit()
+        repeat = await rig.submit()
+    assert (first.replayed, repeat.replayed) == (False, True)
+    assert {"oms_submit_answered", "oms_anchor_replayed"} <= {line["event"] for line in logs}
+    texts = [str(value) for line in logs for value in line.values()]
+    assert [t for t in texts if str(KEY) in t or KEY.hex in t or SHA in t] == []
+    figures = {Decimal(token) for text in texts for token in _FIGURE.findall(text)}
+    assert figures & {STOP, QTY} == set()
+
+
 # --- the defensive branches: each fails closed, nothing sent ------------------------------------
 
 
@@ -1263,6 +1524,8 @@ def test_a_context_never_shows_its_key_or_fingerprint() -> None:
         ({"store_timeout_s": 0}, ValueError),
         ({"position_timeout_s": float("nan")}, ValueError),
         ({"store_timeout_s": True}, TypeError),
+        ({"place_wait_s": 0}, ValueError),
+        ({"result_wait_s": float("inf")}, ValueError),
         ({"stop_retries": (0.1, -1.0)}, ValueError),
         ({"stop_retries": ("0.1",)}, TypeError),
     ],
@@ -1342,6 +1605,15 @@ async def test_a_persist_whose_row_did_not_land_is_503_with_nothing_sent(rig: Su
     rig.store.fail_next(TimeoutError())
     assert isinstance(await _refused(rig), StoreUnavailable)
     _nothing_done(rig)
+
+
+async def test_a_persist_whose_outcome_is_unknown_with_no_machine_pages(rig: SubmitRig) -> None:
+    """No machine holds the order, so a `validated` row the write may have left has no owner
+    until the startup sweep: the request is 503, and the pipeline pages, as it does for an unsent
+    order it cannot abandon."""
+    rig.store.fail_next(TimeoutError())
+    assert isinstance(await _refused(rig), StoreUnavailable)
+    assert rig.pager.calls.count("oms_submit_persist_unknown") == 1
 
 
 async def test_a_store_that_refuses_the_orders_own_rows_is_a_fault(rig: SubmitRig) -> None:
@@ -1592,8 +1864,8 @@ async def test_a_create_that_has_not_answered_in_time_is_202_with_its_state(
         return await land(request)
 
     monkeypatch.setattr(rig.port.demo, "place_order", held)
-    monkeypatch.setattr("candleviewer.oms.submit.PLACE_WAIT_S", 0.01)
-    outcome = await rig.submit()
+    pipeline = rig.make(place_wait_s=0.01)
+    outcome = await pipeline.submit(entry(), context())
     assert (outcome.status, outcome.lifecycle) == (202, "submitting")
     gate.set()
     await rig.quiet()

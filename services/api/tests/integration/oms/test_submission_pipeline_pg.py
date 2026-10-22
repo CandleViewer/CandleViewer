@@ -963,7 +963,7 @@ async def test_a_persist_time_id_collision_is_re_allocated(
         assert [r.detail["order_link_id"] for r in intents] == [link]  # written with its persist
 
 
-async def test_a_collision_past_rule_5s_bound_is_exhausted_with_nothing_sent(
+async def test_a_collision_past_the_bound_of_rule_5_is_exhausted_with_nothing_sent(
     pg: Rig, rel: SqlAlchemyRelationalRepository, pg_dsn: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Gherkin 9's bound: a lookup that disagrees with the index keeps answering the taken id

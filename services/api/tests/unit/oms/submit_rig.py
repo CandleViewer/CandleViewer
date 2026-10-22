@@ -73,7 +73,6 @@ from tests.unit.oms.order_rig import Pager, Publish
 REGISTRY = Registry()
 SYMBOL = cr.SYMBOL
 USER = UUID("3a7c1e2d-5b40-4c6f-8e9a-1b2c3d4e5f60")
-OTHER_USER = UUID("4b8d2f3e-6c51-4d70-9fab-2c3d4e5f6071")
 KEY = UUID("9b2f7c1e-4d3a-4f6b-8a0c-5e1d2c3b4a59")
 SHA = "c0ffee" + "ab" * 29
 REQUEST_ID = UUID("6f1d2c3b-4a59-4e68-8f7a-9b0c1d2e3f40")
