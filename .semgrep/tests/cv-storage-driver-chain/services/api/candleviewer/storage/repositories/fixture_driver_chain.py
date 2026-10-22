@@ -2,7 +2,11 @@
 import traceback
 
 import asyncpg
+import asyncpg as pg  # ruleid: cv-storage-driver-chain
+import psycopg
 import sqlalchemy as sa
+from asyncpg.exceptions import UniqueViolationError  # ruleid: cv-storage-driver-chain
+from psycopg import errors as pg_errors  # ruleid: cv-storage-driver-chain
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.exc import DataError, DBAPIError
 from sqlalchemy.exc import IntegrityError as Taken  # ruleid: cv-storage-driver-chain
@@ -13,6 +17,10 @@ class NameTaken(Exception):
 
 
 class StorageIntegrityError(Exception):
+    pass
+
+
+class IntegrityErrorLike(Exception):
     pass
 
 
@@ -146,6 +154,128 @@ def a_postgres_error(session):
         raise NameTaken() from exc
 
 
+def every_other_sqlalchemy_class(session):
+    try:  # ruleid: cv-storage-driver-chain
+        session.execute("SELECT")
+    except sa_exc.ProgrammingError:
+        raise
+    try:  # ruleid: cv-storage-driver-chain
+        session.execute("SELECT")
+    except sa_exc.InterfaceError:
+        raise
+    try:  # ruleid: cv-storage-driver-chain
+        session.execute("SELECT")
+    except sa_exc.InternalError:
+        raise
+    try:  # ruleid: cv-storage-driver-chain
+        session.execute("SELECT")
+    except sa_exc.DatabaseError:
+        raise
+    try:  # ruleid: cv-storage-driver-chain
+        session.execute("SELECT")
+    except sa_exc.NotSupportedError:
+        raise
+
+
+def a_psycopg_class(session):
+    try:  # ruleid: cv-storage-driver-chain
+        session.execute("INSERT")
+    except psycopg.errors.UniqueViolation as exc:
+        raise NameTaken() from exc
+
+
+def the_error_in_a_new_one(session):
+    try:
+        session.execute("INSERT")
+    except DBAPIError as exc:
+        raise NameTaken(exc) from None  # ruleid: cv-storage-driver-chain
+
+
+def every_other_text_shape(session, log):
+    try:
+        session.execute("INSERT")
+    except DBAPIError as exc:
+        text = repr(exc)  # ruleid: cv-storage-driver-chain
+        text = f"{exc!r}"  # ruleid: cv-storage-driver-chain
+        text = "failed: %s" % exc  # ruleid: cv-storage-driver-chain
+        text = "%s: %s" % ("insert", exc)  # ruleid: cv-storage-driver-chain
+        text = "failed: {}".format(exc)  # ruleid: cv-storage-driver-chain
+        text = exc.args  # ruleid: cv-storage-driver-chain
+        text = exc.statement  # ruleid: cv-storage-driver-chain
+        text = exc.params  # ruleid: cv-storage-driver-chain
+        text = exc.with_traceback(None)  # ruleid: cv-storage-driver-chain
+        text = str(exc.orig)  # ruleid: cv-storage-driver-chain
+        text = repr(exc.orig)  # ruleid: cv-storage-driver-chain
+        text = f"{exc.orig}"  # ruleid: cv-storage-driver-chain
+        text = exc.orig.args  # ruleid: cv-storage-driver-chain
+        text = exc.orig.detail  # ruleid: cv-storage-driver-chain
+        text = exc.orig.message  # ruleid: cv-storage-driver-chain
+        text = exc.orig.pgerror  # ruleid: cv-storage-driver-chain
+        text = exc.orig.hint  # ruleid: cv-storage-driver-chain
+        log.error("insert failed", error=exc)  # ruleid: cv-storage-driver-chain
+        log.error(exc)  # ruleid: cv-storage-driver-chain
+        log.exception("insert failed")  # ruleid: cv-storage-driver-chain
+        traceback.print_exc()  # ruleid: cv-storage-driver-chain
+        raise NameTaken(text) from None
+
+
+def its_text_in_every_clause_context(session):
+    try:
+        session.execute("INSERT")
+    except DBAPIError as exc:
+        raise NameTaken(str(exc)) from None  # ruleid: cv-storage-driver-chain
+    else:
+        session.commit()
+    try:
+        session.execute("INSERT")
+    except DBAPIError as exc:
+        raise NameTaken(str(exc)) from None  # ruleid: cv-storage-driver-chain
+    finally:
+        session.close()
+    try:
+        session.execute("INSERT")
+    except DBAPIError as exc:
+        raise NameTaken(str(exc)) from None  # ruleid: cv-storage-driver-chain
+    else:
+        session.commit()
+    finally:
+        session.close()
+
+
+def exc_info_without_a_name(session, log):
+    try:
+        session.execute("INSERT")
+    except (OSError, DBAPIError):
+        log.error("insert failed", exc_info=True)  # ruleid: cv-storage-driver-chain
+        raise NameTaken() from None
+
+
+def its_traceback_without_a_name_in_every_clause_context(session, log):
+    try:
+        session.execute("INSERT")
+    except (OSError, DBAPIError):
+        log.exception("insert failed")  # ruleid: cv-storage-driver-chain
+        raise NameTaken() from None
+    else:
+        session.commit()
+    try:
+        session.execute("INSERT")
+    except (OSError, DBAPIError):
+        log.exception("insert failed")  # ruleid: cv-storage-driver-chain
+        raise NameTaken() from None
+    finally:
+        session.close()
+    try:
+        session.execute("INSERT")
+    except (OSError, DBAPIError):
+        log.exception("insert failed")  # ruleid: cv-storage-driver-chain
+        raise NameTaken() from None
+    else:
+        session.commit()
+    finally:
+        session.close()
+
+
 def its_text_in_the_message(session):
     try:
         session.execute("INSERT")
@@ -231,6 +361,13 @@ def a_domain_class_with_a_driver_like_name(session):
     try:  # ok: cv-storage-driver-chain
         session.execute("INSERT")
     except StorageIntegrityError as exc:
+        raise NameTaken() from exc
+
+
+def a_class_that_only_starts_like_a_driver_one(session):
+    try:  # ok: cv-storage-driver-chain
+        session.execute("INSERT")
+    except IntegrityErrorLike as exc:
         raise NameTaken() from exc
 
 
