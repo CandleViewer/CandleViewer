@@ -61,9 +61,9 @@ def _down() -> str:
 
 
 def _doc_block() -> str:
-    """Sec.3.2.1's fifth ```sql block (the first four are 0017's, 0031's, 0041's and 0049's)."""
+    """Sec.3.2.1's sixth ```sql block (0017's, 0031's, 0041's, 0048's and 0049's come first)."""
     section = _DOC.read_text(encoding="utf-8").split("#### 3.2.1 ", 1)[1].split("#### 3.2.2 ")[0]
-    return section.split("```sql")[5].split("```", 1)[0]
+    return section.split("```sql")[6].split("```", 1)[0]
 
 
 def test_revision_chains_onto_0049() -> None:

@@ -4,7 +4,7 @@ Revision ID: 0050_ea_identity_write_once
 Revises: 0049_ea_env_parent_always
 Create Date: 2026-10-22
 
-`docs/plan/21-database-schema.md` Sec.3.2.1, fifth block, verbatim. SR-E27-13 of the E27 accounts
+`docs/plan/21-database-schema.md` Sec.3.2.1, sixth block, verbatim. SR-E27-13 of the E27 accounts
 threat model (KV-T04, F-15) asks that an account's identity not change after creation: `env`,
 `exchange_uid` and `kind`. `trg_ea_env_write_once` (0041, #2333) built `env`; this revision builds
 the other two, so a row can never come to name another exchange UID, or turn a main account into a
@@ -68,7 +68,7 @@ def downgrade() -> None:
     op.execute("SET LOCAL lock_timeout = DEFAULT;")
 
 
-# 21-database-schema.md Sec.3.2.1, fifth block, verbatim.
+# 21-database-schema.md Sec.3.2.1, sixth block, verbatim.
 _GUARD_SQL = """
 CREATE FUNCTION ea_identity_write_once() RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp AS $BODY$
