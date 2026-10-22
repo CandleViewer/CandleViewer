@@ -41,7 +41,9 @@ def test_refuse_unstorable_text_returns_a_value_that_is_not_a_str_unchanged(valu
 @pytest.mark.parametrize(("value", "unpaired", "escaped"), [
     ("ok", False, "ok"), ("caf\xe9 \U0001f600", False, "caf\xe9 \U0001f600"),
     (chr(0xD800), True, "\\ud800"), ("a" + chr(0xDC00) + "b", True, "a\\udc00b"),
-    (chr(0xDC00) + chr(0xD800), True, "\\udc00\\ud800")])  # fmt: skip
+    (chr(0xDC00) + chr(0xD800), True, "\\udc00\\ud800"),
+    (chr(0xD7FF), False, chr(0xD7FF)), (chr(0xE000), False, chr(0xE000)),
+    (chr(0xDBFF), True, "\\udbff"), (chr(0xDFFF), True, "\\udfff")])  # fmt: skip
 def test_unpaired_surrogate_is_found_and_escaped_and_other_text_is_untouched(
     value: str, unpaired: bool, escaped: str
 ) -> None:

@@ -138,6 +138,10 @@ def _lone_surrogate_alert(where: str) -> bytes:
     params: dict[str, Any] = {"__slot__": 1} if where.endswith("key") else {"pct": "__slot__"}
     if where == "node id":
         doc["condition_ir"]["conditions"]["node_id"] = "__slot__"
+    elif where == "op":
+        doc["condition_ir"]["conditions"]["op"] = "__slot__"
+    elif where == "refused node":  # a node the walk refuses, so the error names its id
+        doc["condition_ir"]["conditions"] |= {"node_id": "__slot__", "bogus": 1}
     elif where.startswith("action"):
         doc["condition_ir"]["actions"] = [ACTION | {"params": params}]
     else:  # a list is not a plain value: the walk refuses that param, naming its key
@@ -149,8 +153,13 @@ def _lone_surrogate_alert(where: str) -> bytes:
 _UNPAIRED = "Text holds an unpaired surrogate code point"
 _NOTIFY_ONLY = "Alerts only notify: an action is not allowed in a root node."
 _PLAIN_PARAMS = "Metric parameters are plain values."
+_NOT_A_CONDITION = "'\\ud800' is not a condition an alert can use."
+_BOGUS = "Alerts only notify: 'bogus' is not allowed in a comparison node."
+#: The reject label (`cv_alert_compile_rejected_total{reason}`) each rule counts under.
+_REJECTED = {"schema_error": "schema", "not_permitted": "action_node"}
 #: Where -> its one error: the condition hash refuses a metric param (a key named escaped), the
-#: model a node id; the allow-list walk refuses an action, and names a refused key escaped.
+#: model a node id; the allow-list walk refuses an action, and names a refused key, an op and a
+#: node id escaped.
 LONE_SURROGATE = {
     "metric param key": ("conditions.left.params.\\ud800", "schema_error", _UNPAIRED),
     "metric param value": ("conditions.left.params.pct", "schema_error", _UNPAIRED),
@@ -158,6 +167,8 @@ LONE_SURROGATE = {
     "action param value": ("condition_ir.actions", "not_permitted", _NOTIFY_ONLY),
     "node id": ("conditions.comparison.node_id", "schema_error", _UNPAIRED),
     "walker key": ("conditions.left.params.\\ud800", "not_permitted", _PLAIN_PARAMS),
+    "op": ("conditions", "not_permitted", _NOT_A_CONDITION),
+    "refused node": ("conditions.bogus", "not_permitted", _BOGUS),
 }
 
 
@@ -169,6 +180,9 @@ def test_create_lone_surrogate_in_condition_text_is_one_422_nothing_persisted(
     assert (r.status_code, r.json()["code"]) == (422, "rule_ir_invalid"), r.text
     errors = [(e["field"], e["rule"], e["message"]) for e in r.json()["errors"]]
     assert errors == [LONE_SURROGATE[where]]
+    assert env.compiles == [_REJECTED[errors[0][1]]]
+    if where == "refused node":  # the refused node is named by its id, escaped
+        assert r.json()["errors"][0]["node_id"] == "\\ud800"
     assert env.repo.rows == {} and env.audit.calls == []
 
 
