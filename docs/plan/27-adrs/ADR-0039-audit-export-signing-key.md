@@ -151,6 +151,8 @@ Option (a), with Ed25519.
    as usable, and the list marks a key `verified` only after that check (a retired key without its seed stays
    unverified; the Owner's pin covers it). S2 owns the shape of the list's fields and of the Owner's fingerprint duty,
    and confirms `audit:read`, which is derived from `auth/rbac_seed.json:237`.
+   2026-10-22 (#889 S2): the list is Owner-only, as `verifyAuditChain` is: a Manager has no verification duty, and the
+   list shows incident state.
 5. **Rotation.** `POST /admin/keys/audit-signing/rotate`, beside `rewrapKek` (yaml:12553): Owner only
    (`keys:manage`), step-up class `keys` (ruling 2; D1's `security_sensitive` is not a step-up class), CSRF
    (C-12.10), idempotent (a retried request rotates once), single-flight (`409 conflict` while a rotation or an
@@ -160,6 +162,9 @@ Option (a), with Ed25519.
    error code S2 names), since its header line names the old key. No new screen (D1 item 5).
    `keys` is a grace class (`auth/step_up.py:83-98`), so a `keys` step-up in the last 5 minutes lets a session rotate
    the key with no fresh code (AD-E12). S2 confirms `keys:manage`, derived from `rewrapKek`; the old seed's fate is Q3.
+   2026-10-22 (#889 S2): the idempotency record is durable. S4's new key row carries the request's idempotency key and
+   fingerprint, and a retry rebuilds the `200` from the key rows, so it commits with the rotation; the in-memory cache
+   alone would lose it at a restart.
 6. **Backups and KEK re-wrap.** The sealed seed lives in Postgres, so the database backup set carries it, as
    ciphertext only (ADR-0009 Design §7; SR-091); the KEK is kept outside that set as ADR-0009 says (Design §1, §7;
    Amendment 1). A KEK re-wrap covers the signing-key rows as it covers `auth_keys` (Amendment 4; yaml:12567-12570;
@@ -176,6 +181,10 @@ Option (a), with Ed25519.
    completion is a direct join. The key's generation and its rotation are recorded ahead too (C-2.9), under names S2
    and S6 set, the rotation's record naming both fingerprints. Each slice registers the actions it first emits, with
    their test (SR-E42-11).
+   2026-10-22 (#889 S2): the rotation's record is inserted in the rotation's own transaction (C-2.9's same boundary),
+   so it exists only for a rotation that committed (wherever this record says a rotation is recorded or audited ahead,
+   it is that record), and the key's records name `object_kind` `audit_signing_key`, which
+   S6 adds to M2's audit port with a boolean member and a refused record's `outcome: denied`.
 8. **No feature flag (C-4.13).** The export spans S2 to S10, but the contracted `501` is its gate until S10 replaces
    it in one PR (ruling 7): nothing before S10 can produce a signed file, and the download stays dark until then
    (S9). The signing-keys list and the rotation (S7) are complete, audited operations on their own. No flag gates a
@@ -196,6 +205,8 @@ Option (a), with Ed25519.
   the manifest's `sha256`, which S2's §15.7 names as a verification step: a signature with no record is a forgery. A
   verifier also rejects an export whose range lies outside the key's validity window. #1238's off-box anchors keep the
   chain itself honest; until #1238 the residual is Medium.
+  2026-10-22 (#889 S2): the check is one-sided, every entry before a retired key's `valid_until`, since the current
+  key signs older ranges. It does not bound backdating with a stolen seed; the Owner's chain cross-check does.
 - Risk: the injection holds only while `audit` never imports `secrets`. The import-linter contracts and rule R9 fail
   a slice that tries.
 
@@ -210,7 +221,7 @@ path is S0 → S2 → S8 → S9 → S10; S3 starts at once, S5 merges after S0, 
 | # | Slice and its tests | After |
 | --- | --- | --- |
 | S0 | This record, ADR-0009 Amendment 8, the two index rows and the E42 model's signing-key rows (docs) | — |
-| S2 | Contract (C-6.1): `GET /admin/audit/signing-keys`, `POST /admin/keys/audit-signing/rotate` (single-flight: `409 conflict` while a rotation or an export runs; capped per hour, the setting named here), the manifest's `public_key`, the export settings (range, rows, TTL) and the file format in `24-internal-schemas.md` §15.7, which it adds: the header names the environment, so a verifier holding both environments' pins cannot be shown a demo-signed file as live, and the verification steps name the chain cross-check (`queryAuditLog` for `security.audit_export_signed` with the manifest's `sha256`) and the key's validity window; regenerated | S0 |
+| S2 | Contract (C-6.1): `GET /admin/audit/signing-keys`, `POST /admin/keys/audit-signing/rotate` (single-flight: `409 conflict` while a rotation or an export runs; capped per hour, the setting named here), the manifest's `public_key`, the export settings (range, rows, bytes, TTL) and the file format in `24-internal-schemas.md` §15.7, which it adds: the header names the environment, so a verifier holding both environments' pins cannot be shown a demo-signed file as live, and the verification steps name the chain cross-check (`queryAuditLog` for `security.audit_export_signed` with the manifest's `sha256`) and the key's validity window; regenerated | S0 |
 | S3 | SR-E42-10: `audit_chain()` draws the id under the chain lock. A migration, and a two-connection test with a raw INSERT | — |
 | S4 | The signing-key table and its store: a DEK-wrapped seed, one active key per environment, write-once except that a retired row's seed may be cleared (per Q3); a rotation is revocation-class state for #3084's restore replay (`e42-admin.md` §6 step 8); it adds the sealed seed to `21-database-schema.md` §8.1 | S3 (one migration head) |
 | S5 | The M2 Ed25519 core: generate, wrap, sign the prefix and the digest, zero; the key object is never held beyond the call and `private_bytes` is never called, the Python copy of the seed being the stated SR-009 residual. Unit: the RFC 8032 §7.1 vectors; the seed in no repr, pickle, traceback or log | S0 |
@@ -260,6 +271,8 @@ Q1 and Q2 are tracked here and on #889; any still open when S10 opens is filed t
   review asked, the rotation's audit record (named in S2) carries `seed_destroyed: true` with the retired key's
   fingerprint, which is the proof of destruction, the trigger and the re-wrap are as above, and a restore from before
   a rotation never re-arms the retired key (`e42-admin.md` §6 step 8, #3084).
+  2026-10-21 (#889 S2): the contract names that member `retired_material_destroyed`, since the audit redactor erases
+  any member whose name contains `seed`.
 
 ## Validation
 

@@ -508,6 +508,7 @@ def test_administrative_mutations_require_step_up_even_for_the_owner(
 #: (#490) mounted `POST /admin/recorder/purge` and moved it into `_ADMIN_MUTATIONS`.
 _ADMIN_MUTATIONS_UNMOUNTED: list[tuple[str, str]] = [
     ("POST", "/risk/lockouts/{accountId}/override"),  # 04 §7.2.2 row 34; mounted by E39-S02 (#955)
+    ("POST", "/admin/keys/audit-signing/rotate"),  # rotateAuditSigningKey (ADR-0039); #889 S7
 ]
 #: The matrix row of an Owner-only operation (the `POST /admin/audit/verify` shape).
 _OWNER_ONLY_OUTCOMES = {

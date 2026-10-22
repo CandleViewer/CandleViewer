@@ -2213,6 +2213,16 @@
         }
       }
     },
+    "/admin/audit/signing-keys": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "audit:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/admin/audit/verify": {
       "post": {
         "x-rbac": {
@@ -2380,6 +2390,16 @@
         "x-rbac": {
           "permissions": [
             "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/keys/audit-signing/rotate": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "keys:manage"
           ],
           "scope": "none"
         }

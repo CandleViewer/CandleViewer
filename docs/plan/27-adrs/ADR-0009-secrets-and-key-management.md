@@ -261,7 +261,8 @@ Adds one key class to M2 (Design §8): the audit export signing key, which ADR-0
   export unavailable and nothing else: `start()` latches no order entry for it, while a KEK failure
   still does (Amendment 1). A key that exists but cannot be opened is never generated over.
 - **Rotation.** `POST /admin/keys/audit-signing/rotate`, beside `rewrapKek`: Owner only
-  (`keys:manage`), step-up class `keys`, CSRF, idempotent and audited ahead. The old key stays
+  (`keys:manage`), step-up class `keys`, CSRF, idempotent and audited in its own transaction
+  (ADR-0039 decision 7). The old key stays
   listed for verification (`GET /admin/audit/signing-keys`) and never signs again.
 - **KEK rotation and backups.** M2 re-wraps the signing-key rows at the rotation boot, as it does
   `auth_keys` (Amendment 4), and the call counts them; the KCV trial unwrap covers them, and

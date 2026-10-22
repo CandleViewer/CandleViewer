@@ -2,7 +2,8 @@
 entry point of the KEK re-wrap (`docs/plan/spikes/e27-kek.md` section 5). Owner only
 (`keys:manage`), step-up class `keys`; the body confirms the staged rotation boot; the answer is
 counts only. Two problem codes are registered here; the `403 kek_unavailable` it cites came with
-#3335. The #2266 entry-point slice (D2) serves it."""
+#3335. The #2266 entry-point slice (D2) serves it. Beside it, #889 S2 (ADR-0039 decision 5) adds
+`rotateAuditSigningKey`, the audit export signing key's rotation, which #889 S7 serves."""
 
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from tests.contract import _admin_support as support
 from tests.contract._admin_support import ROOT, SPEC, text
 
 _PATH = "/admin/keys/kek-rewrap"
+_ROT_PATH = "/admin/keys/audit-signing/rotate"  # #889 S2, the section at the end of this module
 _OP: dict[str, Any] = SPEC["paths"][_PATH]["post"]
 _DESC = text(_OP["description"])
 _SCHEMAS: dict[str, Any] = SPEC["components"]["schemas"]
@@ -46,7 +48,7 @@ _RESULT = (
 )
 _REQUEST = SPEC["components"]["schemas"]["KekRewrapRequest"]
 _BODY = _OP["requestBody"]["content"]["application/json"]
-_EXAMPLES = support.example_cases([(_PATH, "post")]) + [
+_EXAMPLES = support.example_cases([(_PATH, "post"), (_ROT_PATH, "post")]) + [
     (f"post request {name}", "/components/schemas/KekRewrapRequest", example["value"])
     for name, example in _BODY["examples"].items()
 ]
@@ -307,3 +309,124 @@ def test_conflict_examples_carry_their_registered_code_title_and_status(name: st
 @pytest.mark.parametrize(("case", "pointer", "value"), _EXAMPLES, ids=[c[0] for c in _EXAMPLES])
 def test_every_example_validates_against_its_schema(case: str, pointer: str, value: Any) -> None:
     support.validate_example(pointer, value)
+
+
+# -- #889 S2 (ADR-0039 decision 5): `rotateAuditSigningKey`, contract-first --------------------
+
+_ROT: dict[str, Any] = SPEC["paths"][_ROT_PATH]["post"]
+_ROT_DESC = text(_ROT["description"])
+_REF = "#/components/"
+
+
+def test_rotation_declares_its_rbac_csrf_and_required_idempotency() -> None:
+    assert (_ROT["operationId"], _ROT["tags"]) == ("rotateAuditSigningKey", ["admin"])
+    assert _ROT["x-rbac"] == {"permissions": ["keys:manage"], "scope": "none"}
+    assert _ROT["x-idempotency"] == "required"  # a retried rotation rotates once
+    params = ["IdempotencyKeyRequired", "CsrfToken"]
+    assert _ROT["parameters"] == [{"$ref": f"{_REF}parameters/{name}"} for name in params]
+
+
+def test_rotation_answers_the_shared_statuses_and_a_409_that_names_its_way_out() -> None:
+    shared = {**_SHARED, "429": "RateLimited"}
+    assert set(_ROT["responses"]) == {"200", "409", *shared}
+    for status, name in shared.items():
+        assert _ROT["responses"][status] == {"$ref": f"{_REF}responses/{name}"}, status
+    conflict = text(_ROT["responses"]["409"]["description"])
+    assert "no key to retire, which a restart recovers from, because boot generates" in conflict
+    assert "`idempotency_in_flight`: a call with the same key is still running." in conflict
+
+
+def test_rotation_names_step_up_class_keys_only_and_its_path_is_swept() -> None:
+    step_up = SPEC["paths"]["/auth/step-up"]["post"]["requestBody"]["content"]
+    enum = step_up["application/json"]["schema"]["properties"]["action_class"]["enum"]
+    named = {c for c in enum if f"`{c}`" in f"{_ROT['summary']}\n{_ROT['description']}"}
+    assert named == {"keys"} and "keys" not in NO_GRACE_ACTION_CLASSES
+    assert _ROT_DESC.startswith("Owner only (`keys:manage`), with step-up class `keys`")
+    assert DANGEROUS_PATH_PATTERN.match(_ROT_PATH)  # S7 registers it before it mounts
+
+
+def test_rotation_cites_each_refusal_with_its_registered_status() -> None:
+    registered = {e["code"]: e["status"] for e in SPEC["x-error-codes"]}
+    cited = [(403, "kek_unavailable"), (429, "rate_limited"), (409, "conflict")]
+    for status, code in [*cited, (503, "audit_unavailable"), (503, "store_unavailable")]:
+        assert f"`{status} {code}`" in _ROT_DESC and registered[code] == status, code
+
+
+def test_rotation_refuses_kek_then_cap_then_single_flight_before_its_record() -> None:
+    cues = ["`403 kek_unavailable`", "`429 rate_limited`", "`409 conflict`"]
+    at = [_ROT_DESC.index(c) for c in [*cues, "`security.audit_signing_key_rotated` is inserted"]]
+    assert at == sorted(at)
+
+
+def test_rotation_cap_is_a_setting_named_with_its_default() -> None:
+    stated = re.search(r"`audit_signing_rotate_rate_per_hour`[^(]*\(default (\d+);", _ROT_DESC)
+    assert stated and int(stated[1]) == 3
+
+
+def test_rotation_and_export_store_only_their_2xx_as_the_global_rule_excepts() -> None:
+    afresh = "every refusal and every `503` is evaluated afresh on a retry."
+    committed = "committed in the rotation's own transaction, so a crash cannot let a retry rotate"
+    assert f"Only the `200` is stored under the key, {committed} twice; {afresh}" in _ROT_DESC
+    exception = "Exception (ADR-0039): `rotateAuditSigningKey` stores only its `200` under the key;"
+    export = "`exportAuditLog` stores only its `202`: a `503`, `429` or `409` is evaluated afresh."
+    assert f"{exception} {afresh} {export}" in text(SPEC["info"]["description"])
+    assert SPEC["paths"]["/admin/audit/export"]["post"]["x-idempotency"] == "optional"
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "makes it active and retires the key that was active, which never signs again and stays "
+        "listed",
+        "The rotation destroys the retired key's sealed seed",  # ADR-0039 Q3
+        "`409 conflict` (single-flight) while a rotation or an export job, queued or running, is "
+        "under way for the environment",
+        "past `audit_signing_rotate_rate_per_hour` rotations of the environment in a rolling hour",
+        "The `429` is counted, not recorded, as `queryAuditLog`'s is; each other refusal is "
+        "audited as `security.audit_signing_key_rotation_refused` with its reason",
+        "rotate nothing again, so a retried rotation rotates once",
+        "`security.audit_signing_key_rotated` is inserted inside the rotation's own transaction, "
+        "through M2's in-transaction audit path (`secrets_audit_row`",
+        "also destroys the retired seed, so the record exists only for a rotation that committed.",
+        "a `rotated` record the Owner did not perform is an incident, not a pin, until its "
+        "performer confirms it out of band.",
+        "A rotation that does not commit leaves no `rotated` record and appends "
+        "`security.audit_signing_key_rotation_failed`, naming `reason` and `retired_key_id`, which "
+        "voids nothing",
+        "The rotated, refused and failed records, like the signing record, name `object_kind` "
+        "`audit_signing_key` (ADR-0039 decision 7).",
+    ],
+)
+def test_rotation_states_the_adr_0039_rule(rule: str) -> None:
+    assert rule in _ROT_DESC
+
+
+def test_rotation_takes_a_reason_and_answers_the_active_and_the_retired_key() -> None:
+    body = _ROT["requestBody"]
+    request = body["content"]["application/json"]["schema"]
+    assert body["required"] and request == {"$ref": f"{_REF}schemas/RotateAuditSigningKeyRequest"}
+    ok = _ROT["responses"]["200"]["content"]["application/json"]["schema"]
+    assert ok == {"$ref": f"{_REF}schemas/AuditSigningKeyRotation"}
+    assert _SCHEMAS["AuditSigningKeyRotation"]["required"] == ["active", "retired"]
+    api.RotateAuditSigningKeyRequest.model_validate({"reason": "compromise"})
+    for bad in ({}, {"reason": "expired"}, {"reason": "scheduled", "environment": "live"}):
+        with pytest.raises(ValidationError):
+            api.RotateAuditSigningKeyRequest.model_validate(bad)
+
+
+def test_rotation_example_answers_the_listed_keys_with_no_gap_between_them() -> None:
+    ok = _ROT["responses"]["200"]["content"]["application/json"]["examples"]["ok"]["value"]
+    assert ok["active"]["valid_from"] == ok["retired"]["valid_until"]
+    body = SPEC["paths"]["/admin/audit/signing-keys"]["get"]["responses"]["200"]["content"]
+    listed = body["application/json"]["examples"]["rotatedOnce"]["value"]["items"]
+    assert [ok["active"], ok["retired"]] == listed
+
+
+def test_the_security_program_grants_the_rotation_with_step_up_and_the_list_to_the_owner() -> None:
+    """04 §7.2.2 rows 41b and 49b (#889 S2), as row 41a was added for `rewrapKek`; row 49b is
+    Owner-only in row 49a's form (`verifyAuditChain`: `audit:read`, a Manager refused)."""
+    rows = support.capability_rows()
+    assert support.grants(rows["41b"][1]) == ({"keys:manage"}, {"rotateAuditSigningKey"})
+    assert support.grants(rows["49b"][1]) == ({"audit:read"}, {"listAuditSigningKeys"})
+    assert (rows["41b"][2:], rows["49b"][2:]) == (["✔(step-up)", "✖", "✖"], ["✔", "✖", "✖"])
+    assert rows["49b"][2:] == rows["49a"][2:]

@@ -38,6 +38,13 @@ operations:
     state: not_mounted
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+  GET /admin/audit/signing-keys:
+    permissions: ['audit:read']
+    scope: none
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml by E42-T02 S2 (ADR-0039 decision 4); S7 mounts it
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /admin/audit/verify:
     permissions: ['audit:read']
     scope: none
@@ -142,6 +149,13 @@ operations:
     scope: none
     public: false
     state: executed
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+  POST /admin/keys/audit-signing/rotate:
+    permissions: ['keys:manage']
+    scope: none
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml by E42-T02 S2 (ADR-0039 decision 5); S7 mounts it
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /admin/keys/kek-rewrap:
     permissions: ['keys:manage']

@@ -71,6 +71,7 @@ class ErrorCode(StrEnum):
     BACKUP_ENGINE_INVALID = "backup_engine_invalid"
     DEGRADED_DATA = "degraded_data"
     AUTH_UNAVAILABLE = "auth_unavailable"
+    SIGNING_UNAVAILABLE = "signing_unavailable"
     TIMEOUT = "timeout"
     PROTOCOL_VIOLATION = "protocol_violation"
     FRAME_MALFORMED = "frame_malformed"
@@ -166,6 +167,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.BACKUP_ENGINE_INVALID: ErrorMeta(("rest",), None, False, None, None, "The backup engine plans a run that is not encrypted under a key alias; refused, fail closed, until its configuration is fixed"),
     ErrorCode.DEGRADED_DATA: ErrorMeta(("rest", "ws",), "any", True, None, None, "Local store is behind the exchange beyond the freshness SLO"),
     ErrorCode.AUTH_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Second factor temporarily unavailable"),
+    ErrorCode.SIGNING_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "The audit export signing key is missing or cannot be opened; export alone is unavailable"),
     ErrorCode.TIMEOUT: ErrorMeta(("rest",), None, True, None, None, "Upstream exchange call exceeded the deadline"),
     ErrorCode.PROTOCOL_VIOLATION: ErrorMeta(("ws",), "connection", False, None, 1002, "Frame out of order or malformed envelope"),
     ErrorCode.FRAME_MALFORMED: ErrorMeta(("ws",), "connection", False, None, 1002, "Binary body inconsistent with its header"),

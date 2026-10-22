@@ -120,8 +120,8 @@ export interface paths {
      *     covers the window `[from, to)`, for offline retention. Poll `GET /admin/jobs/{jobId}`; once
      *     the job succeeds its `result` is an `AuditExportResult`.
      *
-     *     **Not implemented yet.** Until the owner decides export signing-key custody (E42-T02
-     *     design decision D1, #889), every request that passes authentication, the `audit` step-up
+     *     **Not implemented yet.** Until #889 S10 serves the signed export (ADR-0039), every request
+     *     that passes authentication, the `audit` step-up
      *     and RBAC is answered `501 not_implemented`. No job is created and nothing is exported.
      *     The `202` below is the target behaviour. While stubbed the checks run in this order. For
      *     an authenticated session the step-up guard runs first, before the operation and before
@@ -140,11 +140,21 @@ export interface paths {
      *     holds one the route answers `403 step_up_required` with `action_class` set to `audit`.
      *
      *     **Limits.** These are configured server-side, so that export cannot be used for
-     *     exfiltration or denial of service. A window longer than the configured maximum is
-     *     `422 validation_failed`: the problem `detail` and `errors[].rule` (`max_export_range`)
-     *     name the limit, and no job is created. The configured row cap bounds the whole span; a
-     *     larger span fails the job with `error: export_too_large` before anything is written. Only
-     *     one export may be queued or running (`409 conflict`). Exports are rate-limited per user
+     *     exfiltration or denial of service. A window longer than `audit_export_max_range_days`
+     *     days (default 31) is `422 validation_failed`: the problem `detail` and `errors[].rule`
+     *     (`max_export_range`) name the limit, and no job is created. The whole span may hold at
+     *     most `audit_export_max_rows` entries (default 1000000); a larger span fails the job with
+     *     `error: export_too_large` before anything is written. The file as written (the gzip bytes
+     *     when `compressed`) may hold at most `audit_export_max_bytes` (default 1073741824): 1 GiB
+     *     fits about a million typical entries, each well under 1 KiB, while the 4 MiB entry cap
+     *     (`audit_verify_max_entry_bytes`) times the row cap would not. A job that would pass it
+     *     fails with `error: export_too_large` too and leaves nothing on disk. Retained volume is at
+     *     most the hourly rate times the TTL times this cap, about 120 GiB per Owner at the
+     *     defaults, accepted for an Owner-only operation behind a step-up (AD-D03). The file is deleted
+     *     `audit_export_ttl_s` seconds (default 86400) after the job succeeds, at `expires_at`. Only
+     *     one export may be queued or running, and none while a signing-key rotation runs for the
+     *     environment (`409 conflict`); `rotateAuditSigningKey` likewise refuses a rotation while
+     *     an export is queued or running. Exports are rate-limited per user
      *     (`audit_export_rate_per_hour`, default 5; `429 rate_limited` with `Retry-After`).
      *
      *     **Content.** The file holds the contiguous chain span from the first to the last entry
@@ -154,7 +164,19 @@ export interface paths {
      *     anchor (the first entry's `prev_hash`) and `key_id`. The detached Ed25519 signature covers
      *     the SHA-256 digest of the whole file, header included. Entries are exported exactly as
      *     stored: redaction applied when an entry was written is preserved and nothing is
-     *     re-hydrated.
+     *     re-hydrated. The header also names the environment and the public key; the bytes, the signed
+     *     message and how to verify a file are `24-internal-schemas.md` §15.7. M2 signs with the
+     *     process environment's active key (ADR-0039). While that key is missing or cannot be opened,
+     *     export alone is unavailable: a request is answered `503 signing_unavailable` and no job is
+     *     created. That check reads M2's degraded state and opens no seed; it runs after validation
+     *     (`422`) and before `429`, `409` and the write-ahead request record, and a KEK that is down
+     *     answers it too. It is recorded as `admin.audit_denied` with reason `signing_unavailable`
+     *     under the audit budget described on `queryAuditLog`, as the other refusals on the
+     *     `/admin/audit*` operations are: it spends a slot of that budget, never
+     *     `audit_export_rate_per_hour` quota, and carries no `Retry-After` unless that budget's cap
+     *     adds one. A job whose header names a key that is no longer the active one when it signs (a
+     *     rotation ran anyway) fails unsigned with `error: signing_key_rotated`; `Job.error` lists the
+     *     codes a job fails with.
      *
      *     **Download.** The file at `download_url` is fetched with an authenticated `GET` whose URL
      *     carries no credential. Its checks run in this order: authentication (`401`),
@@ -163,16 +185,17 @@ export interface paths {
      *     within its grace window (`403 step_up_required`, checked by the operation itself, after
      *     the requester check), the per-user rate limit (`audit_download_rate_per_hour`, default 20;
      *     `429`), expiry (`410 gone` after `expires_at`, when the file is deleted), then a
-     *     write-ahead audit record (`503 store_unavailable` if it cannot be written) before any byte
-     *     is streamed. Its refusals fall under the audit budget described on `queryAuditLog`. The
-     *     response sets `Cache-Control: no-store`, `Content-Disposition: attachment`,
-     *     `X-Content-Type-Options: nosniff` and `Repr-Digest: sha-256=:…:`. Polling the job follows
-     *     the same requester rule.
+     *     write-ahead `admin.audit_export` record with reason `downloaded` (`503 store_unavailable`
+     *     if it cannot be written) before any byte is streamed. Its refusals fall under the audit
+     *     budget described on `queryAuditLog`. The response sets `Cache-Control: no-store`,
+     *     `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and
+     *     `Repr-Digest: sha-256=:…:`. Polling the job follows the same requester rule.
      *
      *     **Audit.** The request is audited before the job exists (`admin.audit_export`); if that
      *     record cannot be written the call fails with `503 store_unavailable` and no job is
-     *     created. Completion is audited with the window, the span, the row count, the file digest
-     *     and the actor.
+     *     created. M2 writes `security.audit_export_signed` before it signs (ADR-0039 decision 7).
+     *     Completion is audited with the job id, the window, the span, the row count, the file
+     *     digest and the actor.
      */
     post: operations["exportAuditLog"];
     delete?: never;
@@ -210,11 +233,53 @@ export interface paths {
      *     (`code: forbidden`) or has no live `audit` step-up (`code: step_up_required`).
      *     `404 not_found`: not the requester, or an unknown or evicted job. `410 gone`: the file was
      *     deleted after `expires_at`. `429 rate_limited`: over `audit_download_rate_per_hour`
-     *     (default 20), with `Retry-After`. `503 store_unavailable`: the write-ahead audit record
-     *     could not be written, so nothing is streamed, with `Retry-After`. Refusals fall under the
-     *     audit budget described on `queryAuditLog`.
+     *     (default 20), with `Retry-After`. `503 store_unavailable`: the write-ahead
+     *     `admin.audit_export` record (reason `downloaded`) could not be written, so nothing is
+     *     streamed, with `Retry-After`. Refusals fall under the audit budget described on
+     *     `queryAuditLog`.
      */
     get: operations["downloadAuditExport"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/audit/signing-keys": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List the audit export signing keys, active and retired
+     * @description The process environment's audit export signing keys (ADR-0039 decision 4), newest first:
+     *     the active key, when there is one, then the retired keys, which stay listed so that the
+     *     exports they signed keep verifying. Every field listed is public; no route serves a seed.
+     *     Owner only (`04-security-program.md` §7.2.2 row 49b), as `verifyAuditChain` is: a Manager
+     *     holding `audit:read` is refused with `403`, as a Viewer is, since a Manager has no export,
+     *     download, verify or pin duty and the list shows incident state
+     *     (`retired_reason: compromise`, or an active key that is not `verified`).
+     *
+     *     **Not a trust anchor.** A verifier pins each key's full `fingerprint_sha256` from the
+     *     record of a rotation the Owner performed (matched to the Owner's own request), or the
+     *     first key's generation record, never from this list or a rotation's `200`, which the
+     *     server under check serves, nor from the 16-hex `key_id`, which only finds a key
+     *     (`24-internal-schemas.md` §15.7). A `rotated` record the Owner did not perform is an
+     *     incident, not a pin, until its performer confirms it out of band.
+     *
+     *     **Audit budget.** A call is a read of the audit area, recorded and limited as
+     *     `queryAuditLog` describes. The listing counts as one filter set of its own,
+     *     `{"view": "signing_keys"}`, which no `queryAuditLog` call has, so its first read is
+     *     recorded even after an unfiltered query; its `admin.audit_read` names `object_kind`
+     *     `audit_signing_key`. Over the caller's record budget it is `429 rate_limited` with
+     *     `Retry-After` and no data. A due record that cannot be written, or a key store that
+     *     cannot be read, is `503 store_unavailable`, and nothing is returned.
+     */
+    get: operations["listAuditSigningKeys"];
     put?: never;
     post?: never;
     delete?: never;
@@ -808,6 +873,66 @@ export interface paths {
     get: operations["getJob"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/keys/audit-signing/rotate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Rotate the audit export signing key (owner, step-up `keys`)
+     * @description Owner only (`keys:manage`), with step-up class `keys` (`POST /auth/step-up` defines the
+     *     step-up rules). ADR-0039 decision 5: M2 generates a new Ed25519 key for the process
+     *     environment, makes it active and retires the key that was active, which never signs again
+     *     and stays listed (`listAuditSigningKeys`) so that the exports it signed keep verifying.
+     *     The rotation destroys the retired key's sealed seed; its row keeps the public key, the
+     *     fingerprint and the validity window (ADR-0039 Q3). No other key changes.
+     *
+     *     **Refusals.** Once the request is admitted (authentication, CSRF, session state,
+     *     validation, RBAC and the step-up) and the idempotency lookup finds no earlier answer,
+     *     these refuse it, in this order, and rotate nothing: `403 kek_unavailable` while the
+     *     process holds no usable KEK (ADR-0009 Amendment 1); `429 rate_limited` with
+     *     `Retry-After` past `audit_signing_rotate_rate_per_hour` rotations of the environment in
+     *     a rolling hour (default 3; only rotations that start count); and `409 conflict`
+     *     (single-flight) while a rotation or an export job, queued or running, is under way for
+     *     the environment, or when the environment has no key to retire (its first key is generated at
+     *     boot). The `429` is counted, not recorded, as `queryAuditLog`'s is; each other refusal is
+     *     audited as `security.audit_signing_key_rotation_refused` with its reason, as `rewrapKek`
+     *     audits `security.kek_rotation_refused`, and a refusal whose record cannot be written is
+     *     answered `503 audit_unavailable` instead.
+     *
+     *     **Idempotent.** The same `Idempotency-Key` and body are answered with the stored `200`
+     *     and rotate nothing again, so a retried rotation rotates once. Only the `200` is stored
+     *     under the key, committed in the rotation's own transaction, so a crash cannot let a retry
+     *     rotate twice; every refusal and every `503` is evaluated afresh on a retry.
+     *
+     *     **Audit (C-2.9).** `security.audit_signing_key_rotated` is inserted inside the rotation's
+     *     own transaction, through M2's in-transaction audit path (`secrets_audit_row`, as for
+     *     `security.credential_rewrapped`): the transaction that makes the new key active also
+     *     destroys the retired seed, so the record exists only for a rotation that committed. It
+     *     names the acting Owner, the environment, `reason`, `active_key_id`, `retired_key_id`,
+     *     `active_fingerprint_sha256`, `retired_fingerprint_sha256` and
+     *     `retired_material_destroyed: true` (names the audit redactor keeps). The Owner pins the new
+     *     key's fingerprint from the record of a rotation the Owner performed (matched to the
+     *     Owner's own request), as `24-internal-schemas.md` §15.7 says; a `rotated` record the Owner
+     *     did not perform is an incident, not a pin, until its performer confirms it out of band. A
+     *     rotation that does not commit leaves no
+     *     `rotated` record and appends `security.audit_signing_key_rotation_failed`, naming `reason`
+     *     and `retired_key_id`, which voids nothing: the answer is `503 audit_unavailable` when a
+     *     record cannot be written, else `503 store_unavailable`. The rotated, refused and failed
+     *     records, like the signing record, name `object_kind` `audit_signing_key` (ADR-0039 decision
+     *     7).
+     */
+    post: operations["rotateAuditSigningKey"];
     delete?: never;
     options?: never;
     head?: never;
@@ -5911,7 +6036,7 @@ export interface components {
       /** @description Informational. */
       user_agent?: string | null;
     };
-    /** @description `Job.result` of a succeeded `audit_export` job. The artefact is NDJSON (gzip when `compressed`): a signed header line, then the chain span in id order. `signature` is a detached Ed25519 signature over the ASCII bytes `cv.audit.export.v1:` followed by the lowercase hex `sha256`. Verify it with the public key the Owner pinned for `key_id`, which is published out of band; never trust a key served next to the artefact. */
+    /** @description `Job.result` of a succeeded `audit_export` job. The artefact is NDJSON (gzip when `compressed`): a signed header line, then the chain span in id order. `signature` is a detached Ed25519 signature over the ASCII bytes `cv.audit.export.v1:` followed by the lowercase hex `sha256`. Verify it only with a key whose full fingerprint the Owner pinned from the record of a rotation the Owner performed (matched to the Owner's own request), or the first key's generation record (`24-internal-schemas.md` §15.7); never trust a key served next to the artefact, `public_key` included. */
     AuditExportResult: {
       compressed: boolean;
       /** @description Relative API URL of the artefact. It carries no credential: fetching it is an authenticated `GET`, allowed only to the requesting user within the `audit` step-up grace window, and audited before any byte is sent (see `exportAuditLog`). */
@@ -5932,6 +6057,8 @@ export interface components {
       key_id: string;
       /** Format: int64 */
       last_id?: number | null;
+      /** @description Base64 of the signing key's 32-byte Ed25519 public key, as the file's header line carries it. A verifier compares its SHA-256 with the fingerprint it pinned, and never trusts it on its own. */
+      public_key: string;
       /**
        * Format: int64
        * @description Entry lines in the file: the whole span, including entries flagged as outside the window. The header line is not counted.
@@ -5953,6 +6080,44 @@ export interface components {
     };
     /** @enum {string} */
     AuditOutcome: "success" | "failure" | "denied";
+    /** @description An audit export signing key of the process environment (ADR-0039 decision 4), public material only. A verifier pins `fingerprint_sha256` from the record of a rotation the Owner performed (matched to the Owner's own request), or the first key's generation record, never from here or a rotation's `200` (`24-internal-schemas.md` §15.7). */
+    AuditSigningKey: {
+      /** @enum {string} */
+      alg: "ed25519";
+      /** @description Lowercase hex SHA-256 of the 32-byte raw public key: what a verifier pins. */
+      fingerprint_sha256: string;
+      /** @description `cv-audit-export-v<N>:` and the first 16 hex of `fingerprint_sha256`, N the key's version. It finds the key and is never pinned. */
+      key_id: string;
+      /** @description Base64 of the 32-byte raw Ed25519 public key (RFC 8032). */
+      public_key: string;
+      /**
+       * @description That rotation's `reason`; null while the key is active.
+       * @enum {string|null}
+       */
+      retired_reason: "scheduled" | "compromise" | "unrecoverable" | null;
+      /**
+       * @description At most one key of the environment is `active`; a retired key never signs.
+       * @enum {string}
+       */
+      status: "active" | "retired";
+      /**
+       * Format: date-time
+       * @description When the key became active.
+       */
+      valid_from: string;
+      /**
+       * Format: date-time
+       * @description The `event_ts` of the `security.audit_signing_key_rotated` record of the rotation that retired the key; null while it is active.
+       */
+      valid_until: string | null;
+      /** @description True only once M2 has opened the key's sealed seed and found that it derives `public_key` (the seal binds it, ADR-0039 decision 4); a key failing that check is refused, paged and never signs. Retiring a key destroys its seed (ADR-0039 Q3), so a retired key is never `verified`. No verifier relies on this mark. */
+      verified: boolean;
+    };
+    /** @description `rotateAuditSigningKey`'s result: the key now active and the key it retired; `active.valid_from` equals `retired.valid_until`. */
+    AuditSigningKeyRotation: {
+      active: components["schemas"]["AuditSigningKey"];
+      retired: components["schemas"]["AuditSigningKey"];
+    };
     AuthenticatedResponse: {
       /**
        * @description discriminator enum property added by openapi-typescript
@@ -7188,6 +7353,7 @@ export interface components {
       stale_since: string | null;
     };
     Job: {
+      /** @description Why a `failed` job failed, as a stable code, never a message. Open-ended for readers. A failed `audit_export` job has produced no downloadable file; it fails with `export_too_large` (its span is over `audit_export_max_rows`, or its file over `audit_export_max_bytes`; nothing is left on disk), `signing_key_rotated` (its header names a key that was no longer the active one when it came to sign), `signing_unavailable` (a key that cannot be opened, or a signer failure), `audit_unavailable` (the signer refused because its write-ahead record could not be written: an audit outage is answered as one) or `internal_error` (ADR-0039). */
       error?: string | null;
       /** Format: date-time */
       finished_at?: string | null;
@@ -8692,6 +8858,13 @@ export interface components {
       /** Format: password */
       api_secret: string;
       label?: string;
+    };
+    RotateAuditSigningKeyRequest: {
+      /**
+       * @description Recorded in the rotation's record and as the retired key's `retired_reason`; `compromise` marks a seed that may have been stolen, and `unrecoverable` a key that can no longer be opened, the recovery after a KEK loss (ADR-0039 decision 6, AD-D13).
+       * @enum {string}
+       */
+      reason: "scheduled" | "compromise" | "unrecoverable";
     };
     Rule: {
       /** Format: uuid */
@@ -10698,7 +10871,7 @@ export interface operations {
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
-      /** @description Not implemented yet: export is stubbed until decision D1 (see the operation description). */
+      /** @description Not implemented yet: export is stubbed until #889 S10 serves the signed export (ADR-0039; see the operation description). */
       501: {
         headers: {
           [name: string]: unknown;
@@ -10760,6 +10933,33 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
+      429: components["responses"]["RateLimited"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  listAuditSigningKeys: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The keys, newest first. */
+      200: {
+        headers: {
+          "Cache-Control"?: "no-store";
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            items: components["schemas"]["AuditSigningKey"][];
+          };
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -11471,6 +11671,55 @@ export interface operations {
         };
       };
       501: components["responses"]["NotImplemented"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  rotateAuditSigningKey: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
+        "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RotateAuditSigningKeyRequest"];
+      };
+    };
+    responses: {
+      /** @description The key now active and the key it retired. Not a trust anchor: the Owner pins the new fingerprint from the record of a rotation the Owner performed (matched to the Owner's own request), never from this answer. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuditSigningKeyRotation"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      /** @description `conflict`: a rotation or an export job is under way for the environment, or it has no key to retire, which a restart recovers from, because boot generates the environment's first key. `idempotency_key_reuse`: the key was first used with another body. `idempotency_in_flight`: a call with the same key is still running. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
