@@ -54,6 +54,7 @@ _TERMINATE = "SELECT pg_terminate_backend(%s)"
 # S ciphertexts and a wrapped-DEK ref, planted by name (#2748); under 31 bytes, so `\x<hex>` fits
 # DETAIL's cut.
 _KEY_ID_ENC, _SECRET_ENC, _DEK_REF = b"SECRET-KEY-ID-ENC", b"SECRET-SECRET-ENC", "v1:SECRET-DEK-REF"
+_SHORT_NONCE = b"SECRET-NONC"  # 11 bytes: `ak_nonce_len` refuses it, and the DETAIL quotes it
 _TYPED = (None, True)  # `(__cause__, __suppress_context__)` of a stripped driver error
 #: A backend waiting for the chain lock while it holds the api_keys lock of an UPDATE it ran.
 _WAITER = (
@@ -214,17 +215,18 @@ async def test_store_borrow_touch_revoke(pg_dsn: str) -> None:
 
 async def test_an_insert_with_a_short_nonce_leaves_without_the_ciphertexts(pg_dsn: str) -> None:
     rel, store = _store(pg_dsn)
-    row = CredentialRow(
-        id=uuid4(), exchange_account_id=_account(pg_dsn), env="demo", label="k0",
-        key_id_enc=_KEY_ID_ENC, key_id_last4="ABCD", secret_enc=_SECRET_ENC,
-        enc_nonce=bytes(11), dek_ref=_DEK_REF, kek_version=1, permission_snapshot=dict(_SNAP),
-    )  # fmt: skip
     try:
+        row = CredentialRow(
+            id=uuid4(), exchange_account_id=_account(pg_dsn), env="demo", label="k0",
+            key_id_enc=_KEY_ID_ENC, key_id_last4="ABCD", secret_enc=_SECRET_ENC,
+            enc_nonce=_SHORT_NONCE, dek_ref=_DEK_REF, kek_version=1,
+            permission_snapshot=dict(_SNAP),
+        )  # fmt: skip
         with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
             await store.insert(row.to_record())
         assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "ak_nonce_len")
         assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
-        assert_no_row_values(err.value, seen, _KEY_ID_ENC, _SECRET_ENC, _DEK_REF)
+        assert_no_row_values(err.value, seen, _KEY_ID_ENC, _SECRET_ENC, _DEK_REF, _SHORT_NONCE)
     finally:
         await rel.dispose()
 

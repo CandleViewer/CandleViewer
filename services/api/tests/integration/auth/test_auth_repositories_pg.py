@@ -7,19 +7,14 @@ single-use recovery codes, and (#2748) that a refused write leaves without the r
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import pytest
 import pytest_asyncio
 import sqlalchemy as sa
-from testcontainers.postgres import PostgresContainer
 
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaChallengeRecord, MfaMethodRecord, UserRecord
@@ -31,36 +26,20 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 )
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
 from scripts.seed_fixture_user import seed
+from tests.integration import _refused
 from tests.integration._refused import assert_no_row_values, seed_user, server_text
 
 pytestmark = pytest.mark.integration
-
-_ROOT = Path(__file__).resolve().parents[3]
+pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16 at head, on loopback
 # Track real time: rows carry DB-stamped `created_at` (now()) and CHECKs such as
 # `expires_at > created_at` make a frozen date a time bomb once the wall clock passes it.
 _NOW = datetime.now(UTC).replace(microsecond=0)
 # Planted by name (a traceback prints the calling line): the P1 columns of a users row, the S hash
 # `users_pwd_argon` refuses, and a challenge's S nonce (under 31 bytes: its hex fits DETAIL's cut).
-_USER = {"email": "secret-mail@x.io", "display_name": "SECRET-NOTE name"}
+_USER = {"email": "secret-mail@x.invalid", "display_name": "SECRET-NOTE name"}
 _PLAIN = "plain-SECRET-HASH"
 _TOKEN, _PURPOSE = "SECRET-MFA-TOKEN", "SECRET-purpose"
 _TYPED = (None, True)  # `(__cause__, __suppress_context__)` of a stripped driver error
-
-
-@pytest.fixture(scope="module")
-def pg_dsn() -> Iterator[str]:
-    with PostgresContainer("postgres:16-alpine") as container:
-        dsn = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+asyncpg")
-        subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "head"],
-            cwd=_ROOT,
-            env={
-                **os.environ,
-                "CV_PG_DSN": dsn.replace("postgresql+asyncpg", "postgresql+psycopg"),
-            },
-            check=True,
-        )
-        yield dsn
 
 
 def _rec(model: Any) -> Callable[..., Any]:

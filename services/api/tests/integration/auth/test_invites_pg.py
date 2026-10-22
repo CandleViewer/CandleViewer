@@ -8,18 +8,12 @@ leaves without the user row's values (C-12.6). Not run locally (no docker); exer
 from __future__ import annotations
 
 import asyncio
-import os
-import subprocess
-import sys
 import uuid
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
-from testcontainers.postgres import PostgresContainer
 
 from candleviewer.auth.models import InviteRecord, UserRecord
 from candleviewer.storage.errors import WriteAheadTimeout
@@ -31,15 +25,15 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 )
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
 from scripts.seed_fixture_user import seed
+from tests.integration import _refused
 from tests.integration._refused import assert_no_row_values, seed_user, server_text
 
 pytestmark = pytest.mark.integration
-
-_ROOT = Path(__file__).resolve().parents[3]
+pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16 at head, on loopback
 PW = "pending-hash"
 # Planted by name (a traceback prints the calling line): the P1 columns of the invited user's row
 # and the S hash `users_pwd_argon` refuses.
-_USER = {"email": "secret-mail@x.io", "display_name": "SECRET-NOTE name"}
+_USER = {"email": "secret-mail@x.invalid", "display_name": "SECRET-NOTE name"}
 _PLAIN = "plain-SECRET-HASH"
 _TYPED = (None, True)  # `(__cause__, __suppress_context__)` of a stripped driver error
 _COUNT = sa.text(
@@ -50,22 +44,6 @@ _COUNT = sa.text(
 
 async def _ok(user_id: uuid.UUID, role: str) -> None:
     return None
-
-
-@pytest.fixture(scope="module")
-def pg_dsn() -> Iterator[str]:
-    with PostgresContainer("postgres:16-alpine") as container:
-        dsn = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+asyncpg")
-        subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "head"],
-            cwd=_ROOT,
-            env={
-                **os.environ,
-                "CV_PG_DSN": dsn.replace("postgresql+asyncpg", "postgresql+psycopg"),
-            },
-            check=True,
-        )
-        yield dsn
 
 
 async def test_concurrent_consume_has_exactly_one_winner(pg_dsn: str) -> None:
