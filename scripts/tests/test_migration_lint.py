@@ -3096,6 +3096,23 @@ def test_a_statement_python_computes_part_of_counts_what_it_names(
     assert f"targets {target}" in message
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "op.execute('SET' + ' session_replication_role = replica')",
+        "op.execute('ALTER ROLE cv_app SET' + ' session_replication_role = replica')",
+        "op.execute(' '.join(['SET', name, '= replica']))",
+        "op.execute(\"DO $$ BEGIN EXECUTE 'SET' || ' session_replication_role"
+        " = replica'; END $$\")",
+    ],
+    ids=["a-sum", "an-alter-sum", "a-join", "a-body-concatenation"],
+)
+def test_a_setting_built_from_pieces_is_read_whole(tmp_path: Path, body: str) -> None:
+    """Python sums and joins are read whole, and a body's concatenated `EXECUTE` is
+    refused, so a setting split across pieces is read (#4032)."""
+    assert _audit_hits(tmp_path, _PY.format(body))
+
+
 def test_a_message_python_computes_is_not_flagged(tmp_path: Path) -> None:
     """Only what a computed statement names counts: prose names no table."""
     source = _PY.format("n = count()\n    print(f'{n} rows migrated')")
