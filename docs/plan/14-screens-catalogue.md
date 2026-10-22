@@ -388,6 +388,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Performance:** Virtualised list; renders 500 notifications with <=8 ms scripting per scroll frame; unread count updates are debounced to 250 ms.
 - **Analytics/audit:** `notifications.opened`, `notifications.filtered`, `notifications.item_actioned`, `notifications.mark_all_read` (analytics); notifications that mirror an audited backend event link to the audit record rather than duplicating it.
 - **Design sign-off acceptance checklist:** [ ] severity encoded by icon + text, never colour alone [ ] empty state [ ] grouped/collapsed repeats ('12 similar alerts') [ ] deep-link from a notification restores the right panel and symbol [ ] does not steal focus when it opens on a new event
+- **UX research / a11y contract (E40-D01):** [e40-alert-attention.md](../design/research/e40-alert-attention.md) §4 (interruption taxonomy, PROPOSED) and [e40-alerts-a11y-review.md](../design/a11y/e40-alerts-a11y-review.md) §1 LR-6, §3, §4 (`role="log"` list, announcer in CMP-212, announcement digest; correction AM-1 proposed to this entry's A11y line).
 
 ### SCR-015 — Global toast host
 
@@ -1873,6 +1874,7 @@ Drag preview                Drop zones
 - **Performance:** Alert evaluation is server-side; the list is cursor-paginated and live-updated over `alerts` at <=1 Hz.
 - **Analytics/audit:** `alert.created`, `alert.updated`, `alert.enabled_changed`, `alert.deleted` - **audited** (an alert can trigger a rule chain); `alert.triggered` is recorded server-side; analytics: `alerts.list_viewed`, `alerts.filtered`.
 - **Design sign-off acceptance checklist:** [ ] active / triggered / expired / disabled states drawn [ ] filters by symbol and status [ ] bulk enable/disable/delete with confirmation [ ] delivery-channel summary per alert [ ] empty state [ ] alerts depending on estimated detectors flagged
+- **UX research / a11y contract (E40-D01):** [e40-alert-attention.md](../design/research/e40-alert-attention.md) §6 (storm rule and the `suppressed` row state, PROPOSED) and [e40-alerts-a11y-review.md](../design/a11y/e40-alerts-a11y-review.md) §3 KM-7, §5 NC-3..NC-8, §6 (measured contrast).
 
 ### SCR-091 — Alert editor
 
@@ -1884,6 +1886,7 @@ Drag preview                Drop zones
 - **Performance:** Condition validation is a <=300 ms round-trip against the same vocabulary service the rule editor uses; no evaluation runs until saved.
 - **Analytics/audit:** `alert.created` / `alert.updated` with `{symbol, condition, threshold, delivery, expiry}` - **audited**; analytics: `alert.editor_opened`, `alert.condition_changed`.
 - **Design sign-off acceptance checklist:** [ ] symbol, metric, operator, threshold, trigger mode (once / every time / once per bar), expiry and delivery channels drawn [ ] plain-language restatement of the alert ('Notify me when BTCUSDT tape speed rises above 3 sigma') [ ] validation messages [ ] estimated-metric warning [ ] test-fire control
+- **UX research / a11y contract (E40-D01):** [e40-alert-attention.md](../design/research/e40-alert-attention.md) §3 (vendor trigger modes), §7 (desktop default, the Owner's call) and [e40-alerts-a11y-review.md](../design/a11y/e40-alerts-a11y-review.md) §1 LR-9, §3 KM-8 (sound preview reachable; correction AM-3 proposed to the channel list).
 
 ### SCR-092 — Alert triggered toast / detail
 
@@ -1894,6 +1897,7 @@ Drag preview                Drop zones
 - **Performance:** Toast render is immediate on the `alerts` message; the detail fetch is lazy. Alert delivery end to end targets <=2 s from condition met to visible toast.
 - **Analytics/audit:** `alert.triggered` is recorded server-side with the metric snapshot; the UI emits `alert.toast_shown`, `alert.toast_actioned`, `alert.detail_opened`, `alert.snoozed` (analytics).
 - **Design sign-off acceptance checklist:** [ ] toast content drawn with the actual metric value, not just the alert name [ ] actions drawn (open chart at that moment, snooze, disable, open detail) [ ] detail view with the full metric snapshot and a link to the bar [ ] sound/desktop-notification behaviour respects SCR-115 [ ] multiple simultaneous alerts collapse into a counted stack
+- **UX research / a11y contract (E40-D01):** [e40-alert-attention.md](../design/research/e40-alert-attention.md) §6 (storm summary wording SR-5), §8 (the 2 s budget as a protocol item) and [e40-alerts-a11y-review.md](../design/a11y/e40-alerts-a11y-review.md) §1 LR-1..LR-5, §2 (timing audit), §4 (announcement rule; correction AM-2 proposed for error / critical severity).
 
 ### SCR-093 — Journal (trade list)
 
@@ -2177,6 +2181,7 @@ Drag preview                Drop zones
 - **Performance:** Preferences are local-first and synced; sound assets are preloaded once (<=200 KB total) so a triggered alert plays without fetch latency.
 - **Analytics/audit:** `notifications.preference_changed` `{event, channel, enabled}` (analytics); muting risk or lockout notifications is **audited** as `notifications.risk_channel_muted` at high severity.
 - **Design sign-off acceptance checklist:** [ ] full event x channel matrix drawn [ ] risk, lockout, kill-switch and rejection notifications cannot be fully muted - state drawn [ ] quiet hours with an explicit 'critical events still notify' statement [ ] per-sound preview [ ] desktop-notification permission state (granted/denied/unsupported) drawn [ ] test-notification control
+- **UX research / a11y contract (E40-D01):** [e40-alert-attention.md](../design/research/e40-alert-attention.md) §5 (the critical-override list, PROPOSED for the Owner; rendered here as locked rows) and [e40-alerts-a11y-review.md](../design/a11y/e40-alerts-a11y-review.md) §3 KM-9..KM-10 (matrix by row and column, sound preview), §5 NC-9, §6 DS-CR-3 (checkbox boundary; correction AM-4 proposed).
 
 ### SCR-116 — Appearance & density settings
 
