@@ -221,7 +221,8 @@ def open_stack(
     monkeypatch.setattr(appmod, "make_ws_router", wall)
     resolver = Resolver()
     create_app_kwargs.setdefault("principal_resolver", resolver)
-    app = appmod.create_app(auth_clock=clock, **create_app_kwargs)
+    create_app_kwargs.setdefault("auth_clock", clock)  # `None` builds the app as `main.py` does
+    app = appmod.create_app(**create_app_kwargs)
     app.state.feature_flags.backend_connection.value = backend_connection
     client = TestClient(
         app, base_url=ORIGIN, client=("127.0.0.1", 50000), raise_server_exceptions=False

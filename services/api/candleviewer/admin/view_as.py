@@ -149,6 +149,14 @@ class ViewAsService:
         await self.end(record, reason=reason, now=now)  # lost to another end: held all the same
         return binding.model_copy(update={"phase": ViewAsPhase.HELD})
 
+    @audit_exempt("read")
+    async def viewer_label(self, record: SessionRecord) -> str:
+        """The viewer's username, the actor label of a request of `record`'s session while it holds
+        a context (22 "Audit"): the user's id when the users row is gone, as the end's record
+        names it. A failed read raises."""
+        names = await self._labels.usernames((record.user_id,))
+        return names.get(record.user_id) or str(record.user_id)
+
     @audited("admin.view_as_ended")
     async def end(self, record: SessionRecord, *, reason: ViewAsEndReason, now: datetime) -> bool:
         """End `record`'s context at `now`, or at `expires_at` as `expired` once that has passed,
