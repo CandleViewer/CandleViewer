@@ -75,8 +75,8 @@ def _log() -> Any:
 
 @contextmanager
 def _outage() -> Iterator[None]:
-    """A database that cannot serve the call becomes `StorageTierUnavailable`, a bug the typed
-    `query_failure` (#2748), each raised `from None`."""
+    """A database that cannot serve the call becomes `StorageTierUnavailable`, any other database
+    error a `StorageQueryFailed` typed by its facts (#2748), each raised `from None`."""
     try:
         yield
     except WriteAheadTimeout:

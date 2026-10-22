@@ -548,7 +548,7 @@ CREATE TABLE user_roles (
 CREATE INDEX ix_user_roles_role ON user_roles (role_id);
 ```
 
-**Invariant:** at least one active user must hold role `owner`. Enforced by deferred constraint trigger `trg_owner_floor` on `user_roles` and `users`, raising `SQLSTATE 23514` if a change would leave zero active owners. Its `RAISE` names no constraint, and the stores' `floor_refusal` reads only that unnamed 23514 as the floor's refusal (#2748): a change that names one must change both.
+**Invariant:** at least one active user must hold role `owner`. Enforced by deferred constraint trigger `trg_owner_floor` on `user_roles` and `users`, raising `SQLSTATE 23514` if a change would leave zero active owners. Its `RAISE` names no constraint, and the stores' `floor_refusal` reads only that unnamed 23514 as the floor's refusal (#2748): a migration that gives this `RAISE` a constraint name must change `floor_refusal` with it.
 
 #### 3.1.3 `user_account_access` — per-manager account scoping
 

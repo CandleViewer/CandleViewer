@@ -111,9 +111,10 @@ class SqlAlchemyUserLifecycleStore:
         written, a repeat included.
 
         Raises `UserSelfTargetError`, what `check` raises, what the owner-floor check raises for
-        the last active owner, what `audit` raises, `StorageConstraintViolated` for any constraint
-        other than the floor's (#2748), or `WriteAheadTimeout` when `audit` outlives
-        `audit_timeout_s`; on any of them the transaction rolls back and nothing changes. A
+        the last active owner, what `audit` raises, a `StorageQueryFailed` typed by its facts
+        (`StorageConstraintViolated` for a constraint) for any refusal other than this change's
+        floor (#2748), or `WriteAheadTimeout` when `audit` outlives `audit_timeout_s`; on any of
+        them the transaction rolls back and nothing changes. A
         driver or commit `TimeoutError` is raised as is: the outcome is unknown. If the commit
         landed, the revoked ids are lost with the exception; `read_back_disable` finds them
         again (#3445). A retry is AC5's no-op and returns no ids."""
