@@ -80,6 +80,22 @@ class Error(BaseModel):
     field: str | None = None
     rule: str | None = None
     message: str | None = None
+    symbol: Annotated[
+        str | None,
+        Field(
+            description="The instrument whose exchange limit the value breaks, for a rule that checks one.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ] = None
+    limit: Annotated[
+        str | None,
+        Field(
+            description="The limit the value breaks, in the member's own unit.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
 
 
 class Exchange(BaseModel):

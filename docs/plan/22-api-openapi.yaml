@@ -711,6 +711,10 @@ x-error-codes:
     title: Local store is behind the exchange beyond the freshness SLO
     retryable: true
     surface: [rest, ws] # same slug, same meaning on the WS (23-ws-protocol.md §10.2)
+  - code: instrument_cache_unavailable
+    status: 503
+    title: Instrument cache is stale and could not be refreshed in time to check the exchange's limits
+    retryable: true
   - code: auth_unavailable
     status: 503
     title: Second factor temporarily unavailable
@@ -3054,6 +3058,11 @@ paths:
       tags: [exchange-accounts]
       operationId: listAccountProfiles
       summary: List per-account trading profiles
+      description: >
+        The account's live profiles, its default first, then by name. Not paginated, an exemption
+        from C3: an account holds its default and a few alternates. A read's `warnings` hold only
+        the codes that need no exchange data. An account outside the caller's grants is `404`, as
+        one that does not exist is.
       x-rbac: { permissions: [accounts:read], scope: granted_accounts }
       responses:
         "200":
@@ -3062,14 +3071,28 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [items]
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/AccountProfile" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [exchange-accounts]
       operationId: createAccountProfile
       summary: Create a per-account profile (leverage, sizing, offsets, risk caps, allowed symbols)
+      description: >
+        Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account
+        gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025,
+        SR-E28-02): without a live one the answer is `403 step_up_required`, audited as
+        `auth.step_up_required`, and nothing is stored. The profile is created as an alternate at
+        `version` 1 (`updateAccountProfile` makes a profile the default). The body is checked first,
+        as `ProfileRejected` describes, and a `name` the account already uses, in any letter case,
+        is `409 conflict`. Audited write-ahead as `profile.created`: when that record cannot be
+        written nothing is stored (`503 audit_unavailable`). `Idempotency-Key` records are the
+        caller's own (SR-E28-17) and kept 24 h at most; one that is lost re-runs the request, which
+        then meets its own `name` (`409 conflict`).
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: recommended
       parameters:
@@ -3102,13 +3125,19 @@ paths:
                   allowed_symbols: [BTCUSDT, ETHUSDT]
       responses:
         "201":
-          description: Profile created.
+          description: Created.
+          headers:
+            ETag: { $ref: "#/components/headers/ProfileETag" }
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccountProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "422": { $ref: "#/components/responses/UnprocessableEntity" }
-        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ProfileRejected" }
+        "503": { $ref: "#/components/responses/ProfileSaveUnavailable" }
 
   /exchange-accounts/{accountId}/profiles/{profileId}:
     parameters:
@@ -3118,13 +3147,20 @@ paths:
       tags: [exchange-accounts]
       operationId: getAccountProfile
       summary: Get a per-account profile
+      description: >
+        A profile that is deleted, of another account, of an account outside the caller's grants
+        or missing is `404`, all alike. A read's `warnings` hold only the codes that need no
+        exchange data.
       x-rbac: { permissions: [accounts:read], scope: granted_accounts }
       responses:
         "200":
           description: Profile.
+          headers:
+            ETag: { $ref: "#/components/headers/ProfileETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccountProfile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -3133,13 +3169,32 @@ paths:
       operationId: updateAccountProfile
       summary: Replace a per-account profile
       description: |
-        `require_native_stop` cannot be set to `false` — the safety invariant (owner decision,
-        cross-cutting consequence #3) is enforced server-side and the field is accepted only as
-        `true`. Attempting `false` returns `validation_failed` / `native_stop_mandatory`.
+        Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. A PUT
+        replaces the whole profile: a member it leaves out takes its default, never the stored
+        value, so omitting `risk_caps` clears every cap and resets `max_orders_per_minute` to its
+        server default of 30; send the full object. It is checked as a create is, a `name` that
+        another profile of the account uses is `409 conflict`, and the profile is stored as its
+        next `version`; the previous version stays readable as a revision, and a position sized
+        from it keeps it. `require_native_stop` cannot be set to `false`: the attempt is
+        `422 validation_failed` / `native_stop_mandatory`, audited as `profile.save_refused`
+        (SR-E28-08).
+
+        `is_default: true` on an alternate makes it the account's default and the previous
+        default an alternate, as one change audited as `profile.unbound` then `profile.bound`
+        (decision D7). Such a body must equal the stored profile in every other member, and no
+        other change of `is_default` is accepted (`default_moves_alone`).
+
+        A stale `If-Match` is `412 version_conflict` and nothing changes: reload, then edit again.
+        Without `If-Match` the last write wins. Audited write-ahead as `profile.updated` with the
+        profile before and after: when that record cannot be written nothing changes
+        (`503 audit_unavailable`). A change that raises or removes a cap, or widens the symbols,
+        is labelled relaxing in that record and notifies the Owner (SR-E28-01).
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
-        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfToken"
       requestBody:
         required: true
         content:
@@ -3148,25 +3203,49 @@ paths:
       responses:
         "200":
           description: Replaced.
+          headers:
+            ETag: { $ref: "#/components/headers/ProfileETag" }
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccountProfile" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
-        "422": { $ref: "#/components/responses/UnprocessableEntity" }
-        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+        "422": { $ref: "#/components/responses/ProfileRejected" }
+        "503": { $ref: "#/components/responses/ProfileSaveUnavailable" }
     delete:
       tags: [exchange-accounts]
       operationId: deleteAccountProfile
       summary: Delete a per-account profile
-      description: "Refused with `conflict` when the profile is the account's active profile or is referenced by an armed rule."
+      description: >
+        Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. A soft
+        delete: the profile leaves every read, its revisions stay, and a position sized from it
+        keeps its version. Refused with `409 conflict`, nothing changed and `detail` naming each
+        blocker, while the profile is the account's default (make another profile the default
+        first) or while any rule scoped to the account is armed, named by its id and name (a rule
+        cannot name a profile yet). A stale `If-Match` is `412 version_conflict`. Audited
+        write-ahead as `profile.deleted`: when that record cannot be written nothing changes
+        (`503 audit_unavailable`).
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      x-idempotency: optional
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfToken"
       responses:
-        "204": { description: "Deleted." }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "204":
+          description: Deleted.
+          headers:
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
-        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "503": { $ref: "#/components/responses/ProfileSaveUnavailable" }
 
   /exchange-accounts/{accountId}/fee-rate:
     parameters: [{ $ref: "#/components/parameters/AccountId" }]
@@ -14100,6 +14179,12 @@ components:
     ETag:
       description: "Opaque version of the returned representation, for `If-Match`."
       schema: { type: string }
+    ProfileETag:
+      description: >
+        `W/"<id>:<version>"` of the profile answered. Send it as `If-Match` on
+        `updateAccountProfile` and `deleteAccountProfile`: the server compares the version it
+        names, so the weak tag matches.
+      schema: { type: string, pattern: '^W/"[0-9a-f-]{36}:[1-9][0-9]*"$' }
     IdempotencyReplayed:
       description: True when the response was replayed from the idempotency store.
       schema: { type: boolean }
@@ -14650,6 +14735,97 @@ components:
                 instance: "urn:cv:req:0193f2bb-a001"
                 code: rate_limited
                 retry_after_seconds: 41
+    ProfileRejected:
+      description: |
+        A profile save that is refused, so nothing is stored (`validation_failed`). Each entry of
+        `errors` names the body member by its JSON path (`field`, such as
+        `sizing.risk_per_trade_pct` or `allowed_symbols[2]`) and the reason (`rule`); a refusal
+        against an exchange limit also names the instrument (`symbol`) and the limit (`limit`).
+
+        A body that fails its schema (a type, an enum, a pattern, a missing or unknown member) is
+        refused with those failures alone, each `rule` the validator's own type as on every route,
+        except two members named by rule: `native_stop_mandatory` (`require_native_stop` cannot
+        be set to `false`) and `stop_defines_r` (a stop in `r_multiple`: the stop defines R).
+        Then two passes run, each listing every failure it finds, the second only when the first
+        passes. The first needs no data: `required` and `not_allowed` (the rules of
+        `AccountProfileInput`), `range` and `precision` (`limit` holds the bound broken, or the
+        decimal places allowed), `ladder_sum`, `above_leverage_cap` and `default_moves_alone`.
+
+        The second checks the exchange's current limits for the account's environment, from an
+        instrument cache at most 15 minutes old (refreshed first when older): `max_leverage`
+        (`leverage` above the maximum of a symbol the profile allows, which with `all_symbols` is
+        every listed one and for a pattern every one it matches, so a universal pattern such as
+        `*USDT` counts as `all_symbols`), `min_order_qty` and `qty_step` (`sizing.qty`),
+        `min_notional` (`risk_caps.max_position_notional_usd` below a symbol's minimum notional)
+        and `symbol_not_listed` (an entry that names no listed, trading linear USDT perpetual).
+        `native_stop_mandatory` and every refusal of the second pass are audited as
+        `profile.save_refused`.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            leverageAboveExchangeMax:
+              summary: SOLUSDT is allowed and the exchange caps it at 20x (second pass)
+              value:
+                type: "https://candleviewer.local/errors/validation_failed"
+                title: "Request body or parameters failed schema validation"
+                status: 422
+                detail: "1 member breaks an exchange limit."
+                instance: "urn:cv:req:0193f2bc-6a01-7c3e-9a11-2f8e4b1c9e01"
+                code: validation_failed
+                errors:
+                  - field: leverage
+                    rule: max_leverage
+                    symbol: SOLUSDT
+                    limit: "20"
+                    message: "SOLUSDT allows at most 20x — your 25x would be rejected."
+            nativeStopMandatory:
+              summary: The native stop-loss cannot be turned off; the attempt is audited (SR-E28-08)
+              value:
+                type: "https://candleviewer.local/errors/validation_failed"
+                title: "Request body or parameters failed schema validation"
+                status: 422
+                detail: "Every order carries a native stop-loss, so it cannot be turned off."
+                instance: "urn:cv:req:0193f2bc-6a02-7c3e-9a11-2f8e4b1c9e02"
+                code: validation_failed
+                errors:
+                  - field: require_native_stop
+                    rule: native_stop_mandatory
+                    message: "Every order carries a native stop-loss, so it cannot be turned off."
+    ProfileSaveUnavailable:
+      description: >
+        A profile write that could not be checked or recorded, so nothing changed:
+        `instrument_cache_unavailable` when the instrument cache was more than 15 minutes old and
+        its refresh, shared by concurrent saves, did not finish in time (create and replace only);
+        `audit_unavailable` when the write-ahead audit record could not be written (C-2.9);
+        `store_unavailable` as on every route. Each is retryable after `Retry-After`, and the same
+        request with the same `Idempotency-Key` is then a first submission.
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            instrumentCacheUnavailable:
+              summary: The exchange's limits could not be refreshed in time (create and replace)
+              value:
+                type: "https://candleviewer.local/errors/instrument_cache_unavailable"
+                title: "Instrument cache is stale and could not be refreshed in time to check the exchange's limits"
+                status: 503
+                detail: "The exchange's limits could not be refreshed in time; nothing was saved."
+                instance: "urn:cv:req:0193f2bc-6a03-7c3e-9a11-2f8e4b1c9e03"
+                code: instrument_cache_unavailable
+                retry_after_seconds: 2
+            auditUnavailable:
+              summary: The write-ahead audit record could not be written
+              value:
+                type: "https://candleviewer.local/errors/audit_unavailable"
+                title: "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)"
+                status: 503
+                detail: "The audit record could not be written; nothing was saved."
+                instance: "urn:cv:req:0193f2bc-6a04-7c3e-9a11-2f8e4b1c9e04"
+                code: audit_unavailable
+                retry_after_seconds: 5
     PreconditionFailed:
       description: ETag precondition failed.
       content:
@@ -15070,6 +15246,12 @@ components:
               field: { type: string }
               rule: { type: string }
               message: { type: string }
+              symbol:
+                $ref: "#/components/schemas/Symbol"
+                description: The instrument whose exchange limit the value breaks, for a rule that checks one.
+              limit:
+                $ref: "#/components/schemas/Decimal"
+                description: The limit the value breaks, in the member's own unit.
         required_permissions: { type: array, items: { type: string } }
         retry_after_seconds: { type: integer }
         idle_locked_at:

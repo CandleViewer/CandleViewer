@@ -639,6 +639,16 @@
         ],
         "type": "object"
       },
+      "Decimal": {
+        "description": "Arbitrary-precision decimal transported as a string (convention C6).",
+        "examples": [
+          "63120.50",
+          "-0.0004",
+          "0"
+        ],
+        "pattern": "^-?[0-9]+(\\.[0-9]+)?$",
+        "type": "string"
+      },
       "Drawing": {
         "description": "Response object. Readers must ignore unknown properties (C-6.3).",
         "properties": {
@@ -1896,11 +1906,19 @@
                 "field": {
                   "type": "string"
                 },
+                "limit": {
+                  "$ref": "#/components/schemas/Decimal",
+                  "description": "The limit the value breaks, in the member's own unit."
+                },
                 "message": {
                   "type": "string"
                 },
                 "rule": {
                   "type": "string"
+                },
+                "symbol": {
+                  "$ref": "#/components/schemas/Symbol",
+                  "description": "The instrument whose exchange limit the value breaks, for a rule that checks one."
                 }
               },
               "type": "object"
