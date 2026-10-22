@@ -4,8 +4,12 @@ Row 34b of the security program makes one exception to the Owner's `system` stre
 start's notice, addressed to its target. `GET /notifications` gates the exception on
 `recipient_user_id` alone, so any other writer of the column would widen it. This guard keeps the
 start's insert (`sessions_sqlalchemy._VIEW_AS_NOTICE_SQL`) the only production statement that
-writes it: an `INSERT` or `UPDATE` of `system_events` naming the column, or a keyword or dict key
-`recipient_user_id` passed anywhere.
+writes it:
+- an `INSERT`, `UPDATE`, `MERGE` or `COPY` of `system_events` (schema-qualified or not; a string,
+  an f-string's text or a `+` of strings) naming the column, or naming no columns at all;
+- a keyword, dict key or assignment target `recipient_user_id`, or any `x.recipient_user_id`
+  (an ORM or Core column) used as a dict key or assigned to.
+A tripwire, not a boundary: the control is C-10.2 review of these files.
 """
 
 from __future__ import annotations
@@ -17,24 +21,49 @@ from pathlib import Path
 import candleviewer
 
 _ROOT = Path(candleviewer.__file__).parent
-_WRITE = re.compile(r"\b(INSERT\s+INTO|UPDATE)\s+SYSTEM_EVENTS\b")
+_TABLE = r'(?:"?\w+"?\s*\.\s*)?"?SYSTEM_EVENTS\b"?'
+_WRITE = re.compile(rf"\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|COPY)\s+{_TABLE}")
+_POSITIONAL = re.compile(rf"\b(?:INSERT\s+INTO|COPY)\s+{_TABLE}\s*+(?!\()|\bINSERT\s+VALUES\b")
 _ONE_WRITER = ("storage/repositories/sessions_sqlalchemy.py",)
+
+
+def _text(node: ast.AST) -> str | None:
+    """A string, or the literal text of an f-string (each hole a name) or of a `+` of strings."""
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.JoinedStr):
+        return "".join(_text(part) or " x " for part in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _text(node.left), _text(node.right)
+        return None if left is None or right is None else left + right
+    return None
+
+
+def _names_column(node: ast.AST | None) -> bool:
+    """`"recipient_user_id"`, any `x.recipient_user_id`, or a subscript by either."""
+    if isinstance(node, ast.Constant):
+        return node.value == "recipient_user_id"
+    if isinstance(node, ast.Attribute):
+        return node.attr == "recipient_user_id"
+    return isinstance(node, ast.Subscript) and _names_column(node.slice)
 
 
 def _writes(source: str) -> list[int]:
     """The lines of `source` that write `recipient_user_id` (module docstring)."""
-    lines: list[int] = []
+    lines: set[int] = set()
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            sql = node.value.upper()
-            if _WRITE.search(sql) and "RECIPIENT_USER_ID" in sql:
-                lines.append(node.lineno)
+        if (sql := _text(node)) is not None:
+            sql = sql.upper()
+            if _WRITE.search(sql) and ("RECIPIENT_USER_ID" in sql or _POSITIONAL.search(sql)):
+                lines.add(node.lineno)
         elif isinstance(node, ast.keyword) and node.arg == "recipient_user_id":
-            lines.append(node.value.lineno)
+            lines.add(node.value.lineno)
         elif isinstance(node, ast.Dict):
-            keys = [k for k in node.keys if isinstance(k, ast.Constant)]
-            lines += [k.lineno for k in keys if k.value == "recipient_user_id"]
-    return lines
+            lines |= {key.lineno for key in node.keys if key is not None and _names_column(key)}
+        elif isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, ast.Store):
+            if _names_column(node):
+                lines.add(node.lineno)
+    return sorted(lines)
 
 
 def test_only_the_view_as_start_writes_a_recipient() -> None:
@@ -54,4 +83,31 @@ def test_the_guard_finds_a_statement_a_keyword_and_a_dict_key() -> None:
         "stmt = table.insert().values(recipient_user_id=uid)\n"
         'params = {"recipient_user_id": uid}\n'
     )
-    assert sorted(_writes(planted)) == [1, 2, 3]
+    assert _writes(planted) == [1, 2, 3]
+
+
+def test_the_guard_finds_the_shapes_a_review_named() -> None:
+    """The #4170 security look's evasions: a schema-qualified table, a positional insert, a
+    `MERGE`, an f-string and a `+`, a subscript or attribute assigned, a column object as a key."""
+    planted = (
+        'Q = "insert into public.system_events (recipient_user_id) values (:u)"\n'
+        'P = "INSERT INTO system_events VALUES (:a, :b)"\n'
+        'M = "MERGE INTO system_events USING x ON false WHEN NOT MATCHED THEN INSERT VALUES (1)"\n'
+        'F = f"INSERT INTO {schema}.system_events (recipient_user_id) VALUES ({u})"\n'
+        'C = "INSERT INTO system_events (kind, " + "recipient_user_id) VALUES (:k, :u)"\n'
+        'params["recipient_user_id"] = uid\n'
+        "row.recipient_user_id = uid\n"
+        "stmt = insert(t).values({t.c.recipient_user_id: uid})\n"
+        'K = "COPY system_events FROM STDIN"\n'
+    )
+    assert _writes(planted) == list(range(1, 10))
+
+
+def test_the_guard_passes_a_read_and_an_insert_that_leaves_the_column_out() -> None:
+    planted = (
+        'R = "SELECT id FROM system_events WHERE recipient_user_id = :user"\n'
+        'W = "INSERT INTO system_events (component, kind) VALUES (:c, :k)"\n'
+        "query = select(t).where(t.c.recipient_user_id == uid)\n"
+        "recipient_user_id: Mapped[str] = mapped_column()\n"
+    )
+    assert _writes(planted) == []

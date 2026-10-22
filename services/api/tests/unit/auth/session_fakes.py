@@ -233,6 +233,8 @@ class FakeSessionRepository:
         """As the SQL store's: every write lands at the end, together, or none does."""
         if state.ended_at is not None:
             raise ValueError("a start puts a fresh context on the row, never an ended one")
+        if notice.target_user_id != state.target_user_id:
+            raise ValueError("a start's notice is addressed to its target, never another user")
         async with self._start_lock:
             session = self.sessions.get(session_id)
             if session is None or session.is_revoked or session.is_absolute_expired(now=now):

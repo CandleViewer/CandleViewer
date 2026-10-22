@@ -752,6 +752,21 @@ async def test_the_start_unit_refuses_a_self_targeting_state_before_any_write() 
     assert log == ["_VIEW_AS_START_LOCK_SQL"] and rel.commits == 0
 
 
+async def test_the_start_unit_refuses_a_notice_to_another_user_before_any_statement() -> None:
+    repo, rel, log, _call = _unit(None)
+    elsewhere = SimpleNamespace(target_user_id=uuid.UUID(int=7), message="m", correlation_id=None)
+
+    async def never(_record: Any) -> None:
+        raise AssertionError("no hook runs")
+
+    with pytest.raises(ValueError, match="addressed to its target"):
+        await repo.start_view_as_unit(
+            "sid", _FRESH, now=_T0, notice=elsewhere, flush_pending_end=never,
+            write_ahead=never, audit_timeout_s=1.0,
+        )  # fmt: skip
+    assert log == [] and (rel.units, rel.commits) == (0, 0)
+
+
 async def test_a_failing_write_ahead_commits_nothing() -> None:
     repo, rel, log, _call = _unit(None)
 

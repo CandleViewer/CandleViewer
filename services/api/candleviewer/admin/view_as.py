@@ -298,7 +298,7 @@ class ViewAsService:
             request_id=current_request_uuid(),  # the ending request; none from the sweeper
         )
 
-    @audited("admin.view_as_started")
+    @audited("admin.view_as_started", "admin.view_as_ended")  # the ended: a pending one, late
     async def start(
         self, record: SessionRecord, target_user_id: UUID, *, reason: str, now: datetime
     ) -> ViewAsStartResult:

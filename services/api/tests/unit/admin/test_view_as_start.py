@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import json
 import warnings
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import pytest
+from structlog.testing import capture_logs
 
 import candleviewer
 from candleviewer.admin.view_as import ViewAsStartUnavailable, notice_message
@@ -187,8 +189,13 @@ async def test_a_failed_close_is_logged_and_the_start_stands() -> None:
     rig = _Rig()
     record = await _session_of(rig)
     rig.ports.fails["close_family"] = ConnectionError("hub down")
-    result = await rig.service.start(record, _TARGET, reason=_REASON, now=_T0)
+    with capture_logs() as logs:
+        result = await rig.service.start(record, _TARGET, reason=_REASON, now=_T0)
     assert result.started is not None and rig.repo.sessions[str(record.id)].view_as is not None
+    assert [(log["event"], log["context_id"], log["error"]) for log in logs] == [
+        ("admin.view_as.close_failed", None, "ConnectionError")
+    ]
+    assert str(record.id) not in json.dumps(logs) and _REASON not in json.dumps(logs)
 
 
 async def test_a_gone_or_revoked_session_starts_nothing() -> None:
@@ -208,21 +215,60 @@ async def test_a_self_targeting_start_is_a_caller_error_and_writes_nothing() -> 
     assert rig.repo.notices == [] and rig.ports.calls == []
 
 
+_STARTS = frozenset({"start_view_as", "start_view_as_unit"})
+
+
+def _uses_of_the_stores_start(source: str) -> set[tuple[str, str]]:
+    """Every use of the store's start in `source`, an attribute or a string (a `getattr`),
+    anywhere in the module, by the innermost function or lambda around it (`<module>` if none)."""
+    with warnings.catch_warnings():  # an old revision's SQL escapes are not ours
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(source)
+    scopes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+    ]
+    uses: set[tuple[str, str]] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            name = node.attr
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            name = node.value
+        else:
+            continue
+        if name in _STARTS:
+            around = [f for f in scopes if f.lineno <= node.lineno <= (f.end_lineno or f.lineno)]
+            inner = min(around, key=lambda f: (f.end_lineno or f.lineno) - f.lineno, default=None)
+            uses.add((getattr(inner, "name", "<lambda>") if inner else "<module>", name))
+    return uses
+
+
 def test_only_the_start_calls_the_stores_start() -> None:
     """S2b F4: a context starts only through `ViewAsService.start`'s unit of work, never
     through the store's bare write or from anywhere else."""
     root = Path(candleviewer.__file__).parent
-    callers: set[tuple[str, str, str]] = set()
-    for path in sorted(root.rglob("*.py")):
-        with warnings.catch_warnings():  # an old revision's SQL escapes are not ours
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        for function in ast.walk(tree):
-            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                callers |= {
-                    (path.relative_to(root).as_posix(), function.name, node.attr)
-                    for node in ast.walk(function)
-                    if isinstance(node, ast.Attribute)
-                    and node.attr in {"start_view_as", "start_view_as_unit"}
-                }
+    callers = {
+        (path.relative_to(root).as_posix(), *use)
+        for path in sorted(root.rglob("*.py"))
+        for use in _uses_of_the_stores_start(path.read_text(encoding="utf-8"))
+    }
     assert callers == {("admin/view_as.py", "start", "start_view_as_unit")}
+
+
+def test_the_start_guard_finds_an_alias_a_getattr_and_a_lambda() -> None:
+    """The #4170 security look's evasions of the guard above."""
+    planted = (
+        "begin = Store.start_view_as\n"
+        "class Rig:\n"
+        "    go = Store.start_view_as_unit\n"
+        "async def run(store):\n"
+        '    return await getattr(store, "start_view_as_unit")()\n'
+        "kick = lambda store: store.start_view_as\n"
+    )
+    assert _uses_of_the_stores_start(planted) == {
+        ("<module>", "start_view_as"),
+        ("<module>", "start_view_as_unit"),
+        ("run", "start_view_as_unit"),
+        ("<lambda>", "start_view_as"),
+    }

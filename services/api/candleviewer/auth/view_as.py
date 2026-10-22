@@ -279,7 +279,8 @@ class ViewAsSessionStore(Protocol):
           committed together: `(row, None)`.
         A hook past `audit_timeout_s` raises `WriteAheadTimeout`; a hook that fails raises its
         error; a write that fails raises the driver's. Each rolls everything back. An ended or
-        self-targeting `state` is a caller error (`ValueError`), refused before any write."""
+        self-targeting `state`, or a `notice` addressed to anyone but the state's target, is a
+        caller error (`ValueError`), refused before any write."""
         ...
 
     async def end_view_as(

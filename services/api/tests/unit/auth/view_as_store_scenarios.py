@@ -95,9 +95,10 @@ async def _written(_record: object) -> None:
     """A start's write-ahead hook that writes its record."""
 
 
-def start_unit(state: ViewAsState = FRESH) -> Call:
-    """The start request's unit of work (#3085 S13a), its hooks writing their records."""
-    kwargs = {"state": state, "now": T0, "notice": ViewAsNotice(TARGET, "m", None)}
+def start_unit(state: ViewAsState = FRESH, *, to: UUID = TARGET) -> Call:
+    """The start request's unit of work (#3085 S13a), its hooks writing their records; its notice
+    addressed `to` the state's target unless a scenario says otherwise."""
+    kwargs = {"state": state, "now": T0, "notice": ViewAsNotice(to, "m", None)}
     hooks = {"flush_pending_end": _written, "write_ahead": _written, "audit_timeout_s": 5.0}
     return Call("start_view_as_unit", "a", kwargs | hooks)
 
@@ -185,6 +186,7 @@ SCENARIOS: tuple[Scenario, ...] = (
     _one("unit-on-absolute-expired", start_unit(), None, a=Row(expires=0)),
     _one("unit-an-ended-state", start_unit(ended(FRESH, 1)), "ValueError", a=Row()),
     _one("unit-a-self-targeting-state", start_unit(SELF), "ValueError", a=Row()),
+    _one("unit-a-notice-to-another-user", start_unit(to=OTHER), "ValueError", a=Row()),
     # end: that context, not ended; a revoked row too (the sweeper ends `session_ended` there)
     # unless another, unrevoked row holds it: its successor carries it on
     _one("end-live", end(), ("a", ended(LIVE, 0, _BY_SWEEPER)), a=Row(LIVE)),

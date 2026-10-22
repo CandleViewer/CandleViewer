@@ -507,6 +507,8 @@ class SqlAlchemySessionRepository:
     ) -> tuple[Any, Any]:
         if state.ended_at is not None:
             raise ValueError("a start puts a fresh context on the row, never an ended one")
+        if notice.target_user_id != state.target_user_id:
+            raise ValueError("a start's notice is addressed to its target, never another user")
         async with self._relational.unit_of_work() as uow:
             s = uow.session
             params = {"id": session_id, "now": now}
