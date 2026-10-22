@@ -44,6 +44,7 @@ from candleviewer.exchange.bybit.trading import (
 )
 from tests._corpus import rest
 from tests.openapi_helpers import deref
+from tests.unit.exchange.bybit._private import linear_order, row
 from tests.unit.exchange.bybit._trading import (
     FakeClock,
     Venue,
@@ -484,3 +485,40 @@ async def test_every_batch_item_records_its_own_request_with_the_batchs_category
     for ack in acks:
         assert ack.record is not None
         _contract_valid(ack.record)
+
+
+# -- a pushed row's record (G-8b, #3963; 24 §14.2 rule 13) ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("topic", "pushed"),
+    [
+        ("order.linear", linear_order()),
+        ("execution.linear", row("execution")),
+        ("execution.fast.linear", row("execution-fast")),
+    ],
+)
+def test_a_push_record_holds_the_rows_allow_listed_fields_and_nothing_else(
+    topic: str, pushed: dict[str, Any]
+) -> None:
+    """SR-E29-08: the record names its topic and the row's own allow-listed fields: never a
+    `ret_msg`, `op`, `req_id`, `conn_id`, method or endpoint, never a planted key, and never a
+    value no contract field takes. Each documented row's record is a valid contract record."""
+    planted = pushed | {"conn_id": "c-planted", "ret_msg": "m-planted", "sign": "ab" * 32}
+    record = rec.push_record(topic, rec.push_fields(planted | {"orderType": "Weird"}))
+    _contract_valid(record)
+    dumped = record.model_dump(mode="json")
+    assert set(dumped) == {"transport", "topic", "response_redacted"}
+    assert (dumped["transport"], dumped["topic"]) == ("ws_private", topic)
+    wire = {contract: key for key, contract in rec.PUSH_NAMES.items()}
+    assert dumped["response_redacted"] and all(
+        wire[f] in pushed for f in dumped["response_redacted"]
+    )
+    assert "order_type" not in dumped["response_redacted"]  # "Weird" fits no contract value
+    shown = json.dumps(dumped)
+    assert not any(secret in shown for secret in ("c-planted", "m-planted", "ab" * 32))
+
+
+def test_a_push_record_never_names_a_topic_the_contract_cannot_spell() -> None:
+    assert rec.push_record("Order.Linear", {}).topic is None
+    assert rec.push_record("x" * 65, {}).topic is None

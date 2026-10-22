@@ -73,6 +73,7 @@ __all__ = [
     "kept",
     "normalised_link",
     "other_contract",
+    "owner_refusal",
     "parse",
     "set_aside",
     "to_account_info",
@@ -632,7 +633,7 @@ def normalised_link(raw: str, exchange_order_id: str) -> OrderLinkId:
     return raw if OUR_ID.fullmatch(raw) is not None else ext_key(exchange_order_id)
 
 
-def owner_refusal(link: str, account: AccountRef) -> RowRefusal | None:
+def owner_refusal(link: str, account: AccountRef) -> Literal["environment", "account"] | None:
     """Why a row under `link` is not this account's: one of our ids naming another
     environment or account (`acct4`). An `ext-` key names no account of ours."""
     owner = link_owner(link)
@@ -700,7 +701,7 @@ def to_order(row: OrderRow, account: AccountRef) -> Order:
     )
 
 
-def set_aside(raw: Mapping[str, Any]) -> RowRefusal | None:
+def set_aside(raw: Mapping[str, Any]) -> Literal["not_a_fill", "unmapped_type"] | None:
     """Why an execution row is set aside before the parse: a documented type that fills no
     order (`NOT_FILLS`) or has no `exec_type` (`UNMAPPED_TYPES`). Anything else is parsed, so an
     undocumented type, or one that is no text at all, fails the read (E8-8)."""
