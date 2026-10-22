@@ -750,10 +750,10 @@ class SessionService:
 
     async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None:
         """Read-only: the session an access handle was issued for, ignoring the
-        access TTL, idle lock and revocation. Used to bind the SR-041 CSRF token
-        to a session id (#2090) so an expired bearer still gets its MAC verified
-        and then the route's own 401, and to name the session a refusal's record
-        names (#4174); it never authorises anything."""
+        access TTL, idle lock and revocation. Used, among others, to bind the
+        SR-041 CSRF token to a session id (#2090) so an expired bearer still gets
+        its MAC verified and then the route's own 401, and to name the session a
+        refusal's record names; it never authorises anything."""
         jti = hash_access_token(raw_access_token)
         found = await self._repository.find_by_access_token_jti(str(jti))
         if found is None or not hmac.compare_digest(

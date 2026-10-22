@@ -973,6 +973,7 @@ def test_patch_disable_runs_disable_cascade(b16_audit: RecordingAuditSink, spec:
     (record,) = w.of("users.disable")
     assert (record["actor_user_id"], record["object_id"]) == (CALLER, str(M))
     assert record["after_state"]["positions_decision"] == "leave" and w.rel.committed
+    assert w.post_commit() and w.socket_users == [M]  # every socket of M (S7), after the commit
 
 
 def test_patch_disable_gives_the_cascade_the_elevated_session(
@@ -991,7 +992,6 @@ def test_patch_disable_gives_the_cascade_the_elevated_session(
     monkeypatch.setattr(w.svc, "disable", recording)
     assert env.patch(M, {"status": "disabled"}).status_code == 200
     assert given == [_SESSION]
-    assert w.post_commit() and w.socket_users == [M]  # every socket of M (S7), after the commit
 
 
 def test_patch_disable_positions_unknown_409(b16_audit: RecordingAuditSink, spec: Any) -> None:
