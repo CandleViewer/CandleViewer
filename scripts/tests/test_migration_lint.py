@@ -929,6 +929,14 @@ def upgrade() -> None:
     op.execute(sa.table("audit_log").delete())
 """
 
+_CORE_DELETE_BY_KEYWORD = """import sqlalchemy as sa
+from alembic import op
+
+
+def upgrade() -> None:
+    op.execute(sa.table(name="audit_log").delete())
+"""
+
 _CORE_UPDATE_BY_NAME = """import sqlalchemy as sa
 from alembic import op
 
@@ -1051,7 +1059,9 @@ def test_a_mutating_grant_on_every_table_of_a_schema_is_flagged(tmp_path: Path) 
     assert "every table of a schema" in message
 
 
-@pytest.mark.parametrize("source", [_CORE_DELETE, _CORE_UPDATE_BY_NAME])
+@pytest.mark.parametrize(
+    "source", [_CORE_DELETE, _CORE_DELETE_BY_KEYWORD, _CORE_UPDATE_BY_NAME]
+)
 def test_a_core_delete_or_update_of_an_audit_table_is_flagged(
     tmp_path: Path, source: str
 ) -> None:
@@ -1110,6 +1120,9 @@ def test_a_drop_whose_table_name_is_on_the_next_line_is_flagged(tmp_path: Path) 
         " SET search_path = pg_catalog, pg_temp AS $$ SELECT 1 $$",
         "CREATE ROLE cv_ro NOLOGIN",
         "CREATE USER cv_reader LOGIN",
+        "ALTER ROLE cv_app NOSUPERUSER",
+        "CREATE PROCEDURE p() LANGUAGE sql SET search_path FROM CURRENT"
+        " AS $$ SELECT 1 $$",
     ],
 )
 def test_a_statement_that_mutates_no_audit_table_is_not_flagged(
@@ -1284,6 +1297,9 @@ _UNRESOLVED_OP = "from alembic import op\nimport sqlalchemy as sa\n\n\ndef upgra
         _UNRESOLVED_OP.format("op.drop_index('ix', t)  # cv:contract-phase: R2"),
         "from alembic import op\nimport sqlalchemy as sa\n\nT = 'audit_log'\nT = 'orders'\n\n\n"
         "def upgrade() -> None:\n    op.execute(sa.table(T).delete())\n",
+        _UNRESOLVED_OP.format("op.execute(sa.table(name=t).delete())"),
+        _UNRESOLVED_OP.format("op.execute(sa.table(*[t]).delete())"),
+        _UNRESOLVED_OP.format("op.drop_table(*[t])  # cv:contract-phase: R2"),
     ],
 )
 def test_an_operation_whose_table_the_rule_cannot_resolve_is_refused(
@@ -1302,6 +1318,7 @@ def test_an_operation_whose_table_the_rule_cannot_resolve_is_refused(
         "op.drop_index('ix_orders_note')  # cv:contract-phase: R2",
         "op.drop_index(t)  # cv:contract-phase: R2",  # an index name, no table
         "op.execute(sa.table('orders').delete())",
+        "op.execute(sa.table(name='orders').delete())",
     ],
 )
 def test_an_operation_whose_table_resolves_to_another_is_not_flagged(
@@ -1340,7 +1357,13 @@ def test_a_drop_after_a_form_feed_is_paired_with_its_own_line(tmp_path: Path) ->
 
 @pytest.mark.parametrize(
     "name",
-    ["0050_audit.pyc", "0050_audit.pth", "sub/0050_audit.py", "0050_audit.sql"],
+    [
+        "0050_audit.pyc",
+        "0050_audit.pth",
+        "sub/0050_audit.py",
+        "0050_audit.sql",
+        "__init__.py",
+    ],
 )
 def test_a_file_that_is_not_a_revisions_source_is_refused_by_the_cli(
     tmp_path: Path, name: str, capsys: pytest.CaptureFixture[str]
@@ -2097,6 +2120,10 @@ _SETTING = "a setting set through set_config() or under a computed name"
         "op.execute('SET session_' + 'replication_role = replica')",
         "v = 'SET'\n    op.execute(f'{v} {name} = replica')",
         "op.execute('SET {} = replica'.format(name))",
+        "op.execute(f'CREATE FUNCTION f() RETURNS void LANGUAGE sql"
+        " SET {name} = replica AS $$ SELECT 1 $$')",
+        "op.execute('CREATE OR REPLACE PROCEDURE p() LANGUAGE sql"
+        " SET {} TO replica AS $$ SELECT 1 $$'.format(name))",
     ],
     ids=[
         "an-f-string",
@@ -2104,6 +2131,8 @@ _SETTING = "a setting set through set_config() or under a computed name"
         "a-split-name",
         "a-resolved-verb",
         "a-format-field",
+        "a-routine-header",
+        "a-procedure-header-format-field",
     ],
 )
 def test_a_setting_python_computes_the_name_of_is_flagged(
@@ -2113,6 +2142,19 @@ def test_a_setting_python_computes_the_name_of_is_flagged(
         f"from alembic import op\n\n\ndef upgrade(name: str) -> None:\n    {body}\n"
     )
     hits = _audit_hits(tmp_path, source)
+    assert hits and all(_SETTING in hit for hit in hits)
+
+
+def test_a_routine_created_by_dynamic_sql_with_a_computed_setting_is_flagged(
+    tmp_path: Path,
+) -> None:
+    """A routine's own `SET` clause under a placeholder: its body runs under a setting
+    the rule cannot name, wherever the routine is created (#4032)."""
+    sql = (
+        "DO $$ BEGIN EXECUTE format('CREATE FUNCTION f() RETURNS void LANGUAGE sql"
+        " SET %I = replica AS $x$ SELECT 1 $x$', 'session_replication_role'); END $$"
+    )
+    hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
     assert hits and all(_SETTING in hit for hit in hits)
 
 
@@ -2202,6 +2244,8 @@ def test_a_setting_python_computes_the_name_of_is_flagged(
         ("CREATE ROLE evil LOGIN IN ROLE cv_owner", "a role's membership"),
         ("CREATE USER evil IN GROUP cv_owner", "a role's membership"),
         ("CREATE ROLE evil SUPERUSER", "a role's membership"),
+        ("ALTER ROLE evil SUPERUSER", "a role's membership"),
+        ("ALTER USER cv_app WITH SUPERUSER", "a role's membership"),
     ],
 )
 def test_a_statement_that_reaches_the_audit_tables_without_naming_one_is_flagged(

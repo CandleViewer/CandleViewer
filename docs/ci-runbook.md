@@ -789,7 +789,11 @@ index alone, removing nothing.
   undecodable byte, or parses to a different tree than its decoded text
   ("the revision does not read as UTF-8 source"), one that does not parse,
   and one nested deeper than Python reads. Make it UTF-8 source, Python
-  that parses, and nested no deeper. A name or a string spelled with Unicode
+  that parses, and nested no deeper. The versions directory holds the
+  revisions' Python source and nothing else: any other file there (a
+  compiled module, a path file, an `__init__.py`, a module in a
+  subdirectory) is refused as "not a revision's Python source"; only
+  `__pycache__` and `.gitkeep` are let be. A name or a string spelled with Unicode
   escapes (`U&`) is refused too: spell it plainly.
 
   Two files are exempt, and only as far as follows:

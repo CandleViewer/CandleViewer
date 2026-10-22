@@ -355,10 +355,12 @@ _PLACEHOLDER_RE = re.compile(r"%[IsL]|\$\d+")
 _SETS = frozenset({"SET", "RESET"})
 #: A setting set under a name the rule cannot read: a placeholder (`%I`, `$1`, a
 #: `str.format` field), a Python value it cannot resolve (`_UNRESOLVED_PLACEHOLDER`),
-#: or a name its fragment ends on, which the code may go on to build.
+#: or a name its fragment ends on, which the code may go on to build. A routine's own
+#: `SET` clause counts too: its body runs under it.
 _DYNAMIC_SETTING_RE = re.compile(
-    r"\s*(?:SET(?:\s+(?:SESSION|LOCAL))?|ALTER\s+(?:ROLE|USER|DATABASE|SYSTEM|FUNCTION"
-    r"|PROCEDURE|ROUTINE)\b.*?\bSET)\s+(?:[%$\x00{]|[\w.\"]*\s*\Z)",
+    r"\s*(?:SET(?:\s+(?:SESSION|LOCAL))?|(?:ALTER\s+(?:ROLE|USER|DATABASE|SYSTEM"
+    r"|FUNCTION|PROCEDURE|ROUTINE)|CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE))"
+    r"\b.*?\bSET)\s+(?:[%$\x00{]|[\w.\"]*\s*\Z)",
     re.IGNORECASE | re.DOTALL,
 )
 #: The revision that creates the audit tables and their guard functions (21 §3.10).
@@ -556,6 +558,7 @@ def _reach(words: list[str], names: set[str]) -> str | None:
             and head[1:2] in (["ROLE"], ["USER"], ["GROUP"])
             and {"ROLE", "GROUP", "SUPERUSER"} & set(words[2:])  # `IN ROLE`, ...
         )
+        or (head in (["ALTER", "ROLE"], ["ALTER", "USER"]) and "SUPERUSER" in words[2:])
     ):
         return "role"
     if head == ["ALTER", "SCHEMA"] or (
@@ -819,7 +822,9 @@ def _run_time_tables(tree: ast.AST) -> dict[int, str]:
     names = _resolve_simple_name_constants(tree)
 
     def unresolved(node: ast.expr | None) -> bool:
-        return isinstance(node, ast.Name) and node.id not in names
+        return isinstance(node, ast.Starred) or (
+            isinstance(node, ast.Name) and node.id not in names
+        )
 
     hits: dict[int, str] = {}
     for node in ast.walk(tree):
@@ -841,9 +846,17 @@ def _run_time_tables(tree: ast.AST) -> dict[int, str]:
         callee = (
             func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
         )
-        if callee in {"table", "Table"} and node.args and unresolved(node.args[0]):
+        if callee in {"table", "Table"} and unresolved(_core_table_name(node)):
             hits.setdefault(node.lineno, _RUN_TIME)
     return hits
+
+
+def _core_table_name(node: ast.Call) -> ast.expr | None:
+    """The name a Core `table(...)`/`Table(...)` call is given: its first argument, or
+    `table()`'s `name=` keyword."""
+    if node.args:
+        return node.args[0]
+    return next((kw.value for kw in node.keywords if kw.arg == "name"), None)
 
 
 def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
@@ -854,13 +867,12 @@ def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
     names = _resolve_simple_name_constants(tree)
 
     def audit_table(node: ast.AST) -> str | None:
-        if not isinstance(node, ast.Call) or not node.args:
+        if not isinstance(node, ast.Call) or (first := _core_table_name(node)) is None:
             return None
         func = node.func
         callee = (
             func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
         )
-        first = node.args[0]
         if isinstance(first, ast.Constant):
             value = first.value
         else:
@@ -1052,8 +1064,8 @@ def check_audit_table_integrity(
 #: What a finding of `_audit_mutations` that names no table targets.
 _REACHES = {
     "*": "every table of a schema, the append-only ones too",
-    "reach:role": "a role's membership, which hands over its privileges on the "
-    "append-only tables",
+    "reach:role": "a role's membership or superuser attribute, which hands over the "
+    "privileges on the append-only tables",
     "reach:schema": "a schema, its owner or its objects, the append-only tables too",
     "reach:owned": "every object a role owns, the append-only tables too",
     "reach:pgcrypto": "the extension the audit hash chain hashes with",
@@ -1290,15 +1302,18 @@ def check_security_sensitive(
 def check_versions_dir(versions_dir: Path) -> list[LintFinding]:
     """CI-MIG-003: the versions directory holds revisions' Python source and nothing
     else the rule does not read: a file of another kind (a compiled module, a path
-    file) or a module in a subdirectory may be loaded without being read. Bytecode
-    caches (`__pycache__`) and the `.gitkeep` placeholder are not revisions."""
+    file), a package's `__init__.py` or a module in a subdirectory may be loaded
+    without being read. Bytecode caches (`__pycache__`) and the `.gitkeep` placeholder
+    are not revisions."""
     findings: list[LintFinding] = []
     for path in sorted(versions_dir.rglob("*")):
         relative = path.relative_to(versions_dir)
         if "__pycache__" in relative.parts or not path.is_file():
             continue
         if path.name == ".gitkeep" or (
-            path.suffix == ".py" and len(relative.parts) == 1
+            path.suffix == ".py"
+            and len(relative.parts) == 1
+            and path.name != "__init__.py"  # `_iter_migration_files` skips it
         ):
             continue
         findings.append(
