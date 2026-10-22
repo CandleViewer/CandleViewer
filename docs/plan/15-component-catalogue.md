@@ -48,10 +48,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-001 Button
 
 - **Tier**: Atom · **Purpose**: primary interactive trigger for all actions.
-- **Props**: `variant: "primary"|"secondary"|"ghost"|"danger"|"buy"|"sell"` (default `secondary`) · `size: "sm"|"md"|"lg"` (default `md`) · `iconLeft?/iconRight?: IconName` · `loading?: boolean` · `disabled?: boolean` · `disabledReason?: string` (renders tooltip per RBAC-deny rule) · `fullWidth?: boolean` · `onClick`.
+- **Props**: `variant: "primary"|"secondary"|"ghost"|"danger"|"buy"|"sell"` (default `secondary`) · `size: "sm"|"md"|"lg"` (default `md`) · `iconLeft?/iconRight?: IconName` · `loading?: boolean` · `disabled?: boolean` · `disabledReason?: string` (the visible reason per `14-screens-catalogue.md` §0.5.5, rendered inline or echoed by a focus+hover CMP-016 tooltip; `docs/design/E09/E09-D09.md` §2.2) · `fullWidth?: boolean` · `onClick`.
 - **Variants**: primary, secondary, ghost, danger (destructive, requires confirm wrapper), buy (green, used only in trading contexts), sell (red).
 - **States**: default, hover, focus-visible, active/pressed, disabled, disabled-with-reason, loading (spinner replaces label, width locked to prevent reflow).
-- **A11y**: role `button` (native `<button>`), `aria-disabled` + `aria-describedby` pointing at reason tooltip when disabled-with-reason (never purely `disabled` attribute for RBAC denies, so the tooltip stays reachable), `aria-busy` when loading. Keyboard: `Enter`/`Space` activates; focus ring 2px offset.
+- **A11y**: role `button` (native `<button>`), `aria-disabled` + `aria-describedby` pointing at the always-rendered reason text when disabled-with-reason (never the `disabled` attribute for an RBAC deny, so the control stays focusable and the reason reachable; a CMP-016 tooltip may echo it on hover and focus but is never the only copy), `aria-busy` when loading. Keyboard: `Enter`/`Space` activates; focus ring 2px offset.
 - **Tokens**: `color.action.*`, `color.buy`, `color.sell`, `radius.sm`, `space.button.*`, `elevation.0`.
 - **Storybook**: Default, AllVariants, AllSizes, Loading, DisabledWithReason, IconOnly, BuySellPair.
 - **Tests**: unit (variant/state matrix), visual regression (all variants × dark/light), axe, keyboard activation, RBAC-disabled-tooltip interaction test.
@@ -763,11 +763,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### CMP-079 RbacGate (disabled-with-reason wrapper)
 
-- **Tier**: Molecule (utility/organism-adjacent) · **Purpose**: standard wrapper implementing invariant §0.5.5 — controls the user may not use render disabled with a reason tooltip.
-- **Props**: `allowed: boolean` · `reason?: string` · `children` (any interactive component).
+- **Tier**: Molecule (utility/organism-adjacent) · **Purpose**: standard wrapper implementing invariant §0.5.5 — controls the session may not use render disabled with a visible reason (inline, or echoed by a focus+hover tooltip; `docs/design/E09/E09-D09.md` §2.2).
+- **Props**: `allowed: boolean` · `reason: string` (required when `allowed` is false; a key of the vocabulary in `docs/design/E09/E09-D09.md` §3) · `children` (any interactive component).
 - **A11y**: propagates `disabledReason` to the wrapped atom's native prop (CMP-001/002/004 etc. all accept it) rather than overlaying a separate non-semantic layer.
 - **Tokens**: n/a (behavioural wrapper).
-- **Storybook**: Allowed, Denied(ViewerRole), Denied(EnvMismatch).
+- **Storybook**: Allowed, Denied(Permission), Denied(OwnerOnly), Denied(Account), Denied(Env), Denied(ReadOnly), Denied(ViewAs), Denied(EnvMismatch).
 - **Tests**: unit, visual, axe, RBAC-matrix interaction test (per role × action fixture).
 
 ### CMP-080 DockPanel (dockable container)
@@ -925,8 +925,8 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-097 OnboardingChecklist
 
 - **Tier**: Organism · **Purpose**: first-run setup checklist (connect Bybit account, set recorder policy, create first workspace).
-- **Props**: `steps: {id,label,done,onGo}[]`.
-- **A11y**: list semantics with `aria-checked` per step (treated as read-only checkbox list reflecting completion state).
+- **Props**: `steps: {id,label,done,onGo,disabledReason?}[]`.
+- **A11y**: list semantics with `aria-checked` per step (treated as read-only checkbox list reflecting completion state); a step the session's role cannot complete is `aria-disabled` with its `disabledReason` as visible text (`14-screens-catalogue.md` SCR-019, §0.5.5), never removed.
 - **Tokens**: inherits CMP-066.
 - **Storybook**: Default, PartiallyComplete.
 - **Tests**: unit, visual, axe.
