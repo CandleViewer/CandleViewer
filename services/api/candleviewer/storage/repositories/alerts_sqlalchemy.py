@@ -98,6 +98,8 @@ def _alert(m: Any) -> AlertRow:
     return AlertRow(**d)
 
 
+#: `channels` binds through text in `_INSERT` and `_UPDATE`: asyncpg types a direct
+#: `alert_channel[]` cast's parameter as an array and refuses `array_literal`'s str (#4143).
 _INSERT = sa.text(
     "INSERT INTO alerts (id, owner_user_id, name, symbol, scope_account_id, condition_ir, "
     "condition_hash, enabled, trigger_mode, cooldown_seconds, expires_at, severity, channels, "

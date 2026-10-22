@@ -3204,7 +3204,7 @@ tracker).
 
 ### Fixes
 
-- **rule-engine**: creating or editing an alert works again on the production database driver; every alert write had failed since alerts shipped (#4143) (#4146)
+- **rule-engine**: creating or editing an alert no longer fails on the production database driver (asyncpg); every alert create and edit had failed since alerts shipped (#4143) (#4146)
 - **infra-devops**: correct semgrep rule-pack self-scan exclusions and test runner (#1566) (c829b96)
 - **docs**: E01-Q02 wire self-test, coverage gate and duration budget into governance job (#1560) (c8bb051)
 - **infra-devops**: enable Playwright failure-artifact capture (web + electron) (#1532) (a24d7d3)
