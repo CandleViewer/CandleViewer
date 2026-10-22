@@ -25,6 +25,7 @@ from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.storage.errors import (
     BackupCheckViolation,
     BackupWriteOnceViolation,
+    StorageConstraintViolated,
     StorageQueryFailed,
     StorageTierUnavailable,
     WriteAheadTimeout,
@@ -42,6 +43,8 @@ from candleviewer.storage.repositories.account_access import AccessBusyError
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyUnitOfWork,
     constraint_of,
+    is_outage,
+    query_failure,
     sqlstate_of,
     strip_driver_text,
 )
@@ -503,3 +506,68 @@ async def test_a_unit_of_work_that_cannot_start_closes_its_session_and_leaves_st
     if close_fails:  # the close's error keeps the start's failure as its context
         assert raised.value.__context__ is failure and not raised.value.__suppress_context__
     assert _P1 not in _rendered(raised.value)
+
+
+# -- the shared classifier and the typed error a refused statement leaves as (#2748 slice 2a) -----
+
+
+@pytest.mark.parametrize(
+    ("driver_cls", "invalidated"),
+    [
+        (asyncpg.exceptions.QueryCanceledError, False),
+        (asyncpg.exceptions.DeadlockDetectedError, False),
+        (asyncpg.exceptions.ConnectionFailureError, True),
+        (asyncpg.exceptions.LockNotAvailableError, False),
+        (asyncpg.exceptions.UniqueViolationError, False),
+        (asyncpg.exceptions.UniqueViolationError, True),
+        (asyncpg.exceptions.CheckViolationError, False),
+        (asyncpg.exceptions.InvalidTextRepresentationError, False),
+        (asyncpg.exceptions.UndefinedTableError, False),
+        (asyncpg.exceptions.RaiseError, False),
+        (asyncpg.exceptions.InFailedSQLTransactionError, False),
+    ],
+    ids=[
+        *("57014", "40P01", "08006", "55P03", "23505", "23505-invalidated", "23514"),
+        *("22P02", "42P01", "P0001", "25P02"),
+    ],
+)
+def test_is_outage_classes_a_driver_error_as_the_http_edge_does(
+    driver_cls: type[Exception], invalidated: bool
+) -> None:
+    raw, stripped = _twins(driver_cls, f"server says: {_P1}", invalidated=invalidated)
+    for error in (raw, stripped):
+        assert is_outage(error) is is_storage_outage(error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError("refused"),
+        sa_exc.TimeoutError("pool exhausted"),
+        sa_exc.InvalidRequestError("not a statement"),
+        sa_exc.OperationalError("SELECT 1", None, Exception("gone")),
+        ValueError("not storage"),
+    ],
+    ids=["oserror", "pool-timeout", "invalid-request", "operational", "other"],
+)
+def test_is_outage_classes_the_other_failures_as_the_http_edge_does(error: Exception) -> None:
+    assert is_outage(error) is is_storage_outage(error)
+
+
+@pytest.mark.parametrize(
+    ("state", "constraint", "kind"),
+    [
+        ("23505", "users_email_key", StorageConstraintViolated),
+        ("23502", None, StorageConstraintViolated),
+        ("22P02", None, StorageQueryFailed),
+        ("42P01", None, StorageQueryFailed),
+        (None, None, StorageQueryFailed),
+    ],
+)
+def test_query_failure_types_a_refused_statement_by_its_facts(
+    state: str | None, constraint: str | None, kind: type[StorageQueryFailed]
+) -> None:
+    failure = query_failure(state, constraint)
+    assert type(failure) is kind and failure.sqlstate == state
+    if isinstance(failure, StorageConstraintViolated):
+        assert failure.constraint == constraint

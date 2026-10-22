@@ -32,6 +32,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from candleviewer.storage.errors import StorageConstraintViolated, StorageQueryFailed
+
 _STATEMENT_TIMEOUT_MS = 30_000
 _SQLSTATE = re.compile(r"[0-9A-Z]{5}")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]{0,62}")
@@ -91,6 +93,37 @@ def _is_driver(error: object) -> bool:
     return isinstance(error, sa_exc.EmulatedDBAPIException) or (
         type(error).__module__.split(".")[0] in _DRIVER_PACKAGES
     )
+
+
+#: "Cannot serve this now, retry": the SQLSTATE classes and code `api.storage_outage` treats as an
+#: outage (connection, rollback, resources, operator intervention, system; lock not available).
+_OUTAGE_CLASSES = frozenset({"08", "40", "53", "57", "58"})
+_LOCK_NOT_AVAILABLE = "55P03"
+
+
+def is_outage(exc: BaseException) -> bool:
+    """Whether *exc* means the database cannot serve the call now (a 503), as
+    `api.storage_outage.is_storage_outage` classes it (`api` may not be imported here; a test
+    pins the two equal)."""
+    if isinstance(exc, OSError | sa_exc.OperationalError | sa_exc.InterfaceError):
+        return True
+    if isinstance(exc, sa_exc.TimeoutError):  # the pool's checkout timeout
+        return True
+    if not isinstance(exc, sa_exc.DBAPIError):
+        return False
+    state = sqlstate_of(exc)
+    return exc.connection_invalidated or (
+        state is not None and (state[:2] in _OUTAGE_CLASSES or state == _LOCK_NOT_AVAILABLE)
+    )
+
+
+def query_failure(state: str | None, constraint: str | None) -> StorageQueryFailed:
+    """The typed error for a statement the database refused, built from its facts alone (C-12.6):
+    class 23 is `StorageConstraintViolated`, any other `StorageQueryFailed`. Raise it `from None`;
+    pass `sqlstate_of(exc)` and `constraint_of(exc)`, never the error."""
+    if state is not None and state.startswith("23"):
+        return StorageConstraintViolated(state, constraint)
+    return StorageQueryFailed(state)
 
 
 class _DriverFacts(Exception):
