@@ -275,7 +275,7 @@ function installAppProtocol(csp: string): void {
  * Denies every Electron permission the app does not need. Nothing in
  * CandleViewer's scope needs camera, microphone, geolocation, MIDI or OS
  * notifications from the renderer's own request path (notifications are
- * surfaced via `ShellPort.notifications`, main-process initiated) — every
+ * for the main process to raise; it raises none yet) — every
  * request is therefore explicitly denied rather than left to Electron's
  * default (which varies by permission). Device access (WebHID, WebUSB, Web
  * Serial) goes through a separate check, which is denied the same way: the app
