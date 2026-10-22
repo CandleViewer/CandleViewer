@@ -11,6 +11,7 @@ asyncpg dialect builds them; the session is a fake. No DB, no network.
 from __future__ import annotations
 
 import asyncio
+import logging
 import pickle
 import traceback
 from collections.abc import Callable
@@ -528,9 +529,14 @@ class _Connection:
             raise self.fail
 
 
+async def _never() -> None:
+    """Never returns, as a stuck statement or pool wait: only a cancellation ends it."""
+    await asyncio.Event().wait()
+
+
 class _StartingSession(_Session):
-    """`at`: "connection", or the `SET LOCAL` that fails ("set-local-1", "set-local-2"); any
-    other value starts cleanly."""
+    """`at`: "connection", or the `SET LOCAL` that fails ("set-local-1", "set-local-2"), or
+    "stuck" (a `connection()` that never returns); any other value starts cleanly."""
 
     def __init__(self, at: str, failure: BaseException | None, close: BaseException | None) -> None:
         super().__init__(**({} if close is None else {"close": close}))
@@ -539,6 +545,8 @@ class _StartingSession(_Session):
 
     async def connection(self) -> _Connection:
         self.calls.append("connection")
+        if self.at == "stuck":
+            await _never()
         if self.at == "connection" and self.failure is not None:
             raise self.failure
         if self.at.startswith("set-local"):
@@ -590,6 +598,101 @@ async def test_a_unit_of_work_starts_with_its_statement_timeout_and_application_
         "SET LOCAL application_name = 'candleviewer:test'",
     ]
     assert session.calls == ["connection", "close"]
+
+
+# -- a cancellation outranks a cleanup that fails; the pool logs no row (#2748 slice 3b) -----------
+
+
+def _lost() -> Exception:
+    """A cleanup that fails as the connection is lost, with server text that must not leave."""
+    return _wrapped(
+        _driver(asyncpg.exceptions.ConnectionFailureError, f"lost: {_P1}"),
+        _Dbapi.Error,
+        sa_exc.DBAPIError,
+    )
+
+
+@pytest.mark.parametrize("at", ["connection", "set-local-1", "set-local-2"])
+async def test_a_cancelled_start_still_leaves_cancelled_when_its_close_fails(at: str) -> None:
+    lost = _lost()
+    session = _StartingSession(at, asyncio.CancelledError(), lost)
+    pending = relational._PendingUnitOfWork(cast(Any, lambda: session), "test")
+    with pytest.raises(asyncio.CancelledError) as raised:
+        async with pending:
+            pytest.fail("the unit of work must not start")
+    assert raised.value.__context__ is lost and session.calls == ["connection", "close"]
+    assert _P1 not in _rendered(raised.value)
+
+
+@pytest.mark.parametrize("step", ["rollback", "close"])
+async def test_a_cancelled_block_still_leaves_cancelled_when_its_cleanup_fails(step: str) -> None:
+    lost = _lost()
+    session = _Session(**{step: lost})
+    with pytest.raises(asyncio.CancelledError) as raised:
+        async with _uow(session):
+            raise asyncio.CancelledError
+    assert raised.value.__context__ is lost and session.calls == ["rollback", "close"]
+    assert _P1 not in _rendered(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("at", "calls"),
+    [("stuck", ["connection", "close"]), ("started", ["connection", "rollback", "close"])],
+    ids=["start", "block"],
+)
+async def test_a_deadline_still_reads_as_a_timeout_when_the_cleanup_fails(
+    at: str, calls: list[str]
+) -> None:
+    lost = _lost()
+    session = _StartingSession(at, None, lost)
+    pending = relational._PendingUnitOfWork(cast(Any, lambda: session), "test")
+    with pytest.raises(TimeoutError) as raised:
+        async with asyncio.timeout(0.01), pending:
+            await _never()  # the block's statement, when the start gets through
+    cancelled = raised.value.__cause__  # `asyncio.timeout` raises from the cancellation
+    assert isinstance(cancelled, asyncio.CancelledError) and cancelled.__context__ is lost
+    assert session.calls == calls and _P1 not in _rendered(raised.value)
+
+
+_POOL = "sqlalchemy.pool.impl.AsyncAdaptedQueuePool"  # the logger of the engine's pool
+
+
+class _Rendering(logging.Handler):
+    """Formats each record as it is emitted, as a synchronous handler does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(self.format(record))
+
+
+class _ResettingSession(_Session):
+    """A close whose reset fails: the pool logs it with `exc_info` and swallows it, as its
+    `_finalize_fairy` does."""
+
+    async def close(self) -> None:
+        self.calls.append("close")
+        try:  # the reset's ROLLBACK, on a connection already gone: no row, no parameters
+            raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed")
+        except Exception:
+            logging.getLogger(_POOL).error("Exception during reset or similar", exc_info=True)
+
+
+async def test_a_pool_log_line_during_the_cleanup_chains_the_error_already_stripped() -> None:
+    pool, rendering = logging.getLogger(_POOL), _Rendering()
+    pool.addHandler(rendering)
+    try:
+        with pytest.raises(sa_exc.IntegrityError):
+            async with _uow(_ResettingSession()):
+                raise _unique()
+    finally:
+        pool.removeHandler(rendering)
+    [line] = rendering.lines
+    assert line.startswith("Exception during reset or similar") and _P1 not in line
+    # the block's error is in the line, as the reset's context, without the server's text
+    assert "IntegrityError: database error (sqlstate 23505, constraint users_email_key)" in line
 
 
 # -- the shared classifier and the typed error a refused statement leaves as (#2748 slice 2a) -----

@@ -257,6 +257,8 @@ class SqlAlchemyUnitOfWork:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
+        if exc is not None:  # stripped first: a pool line logged in the cleanup chains it
+            strip_driver_text(exc)  # in place: `async with` re-raises this same object
         try:
             try:
                 if exc is not None and not self._committed and not self._rolled_back:
@@ -265,12 +267,12 @@ class SqlAlchemyUnitOfWork:
                 await self._session.close()  # even when the rollback failed
         except BaseException as cleanup:  # the rollback or the close failed as well
             strip_driver_text(cleanup)
+            # C7: a cancellation or an exit outranks the cleanup's error, as in SQLAlchemy's pool
+            if exc is not None and not isinstance(exc, Exception):
+                raise exc  # noqa: B904 -- its context: the stripped cleanup error (#2748)
             if exc is not None and cleanup.__context__ is None:
                 cleanup.__context__, cleanup.__suppress_context__ = exc, False
             raise
-        finally:
-            if exc is not None:
-                strip_driver_text(exc)  # in place: `async with` re-raises this same object
 
     async def commit(self) -> None:
         if self._committed:
@@ -313,7 +315,8 @@ class SqlAlchemyRelationalRepository:
         per-transaction `SET LOCAL statement_timeout`/`application_name`
         (ticket "Technical notes"), and yields the bound `SqlAlchemyUnitOfWork`.
         A start that fails closes the session and raises without the server's text; if the
-        close fails too, its error keeps the start's failure as its context (#2748).
+        close fails too, its error keeps the start's failure as its context (#2748), unless
+        the start was cancelled: the cancellation then leaves, the close's error its context.
         """
         return _PendingUnitOfWork(self._sessionmaker, self._application_name_suffix)
 
@@ -347,6 +350,9 @@ class _PendingUnitOfWork:
                 await session.close()
             except BaseException as cleanup:  # the close failed as well
                 strip_driver_text(cleanup)
+                # C7: a cancellation or an exit outranks the close's error, as in SQLAlchemy's pool
+                if not isinstance(failed, Exception):
+                    raise failed  # noqa: B904 -- its context: the stripped close error (#2748)
                 if cleanup.__context__ is None:  # the strip cuts it; keep the start's failure
                     cleanup.__context__, cleanup.__suppress_context__ = failed, False
                 raise
