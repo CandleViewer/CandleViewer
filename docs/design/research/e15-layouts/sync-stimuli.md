@@ -4,8 +4,9 @@
   This is the facilitator's copy: it holds the answer key, so participants see only the boards (the report's boards 03
   and 04), one configuration at a time. Results go on the scoring sheet below and into [`findings.md`](findings.md) §3.2.
 - **Material (ticket Accessibility notes):** text at 16 px or more, greyscale; the letter is the only group cue, never
-  colour; a panel in no group carries no badge; time limits are relaxed on request. Confound: a shared axis shows equal
-  values (C4's one interval, C5's pairs), a real product cue; step (1)'s "What told you that?" separates the two.
+  colour; a panel in no group carries no badge; time limits are relaxed on request. Confound, in every configuration: a
+  shared axis shows equal values (one symbol per symbol-sharing group, C4's one interval, C5's pairs), a real product
+  cue; step (1)'s "What told you that?" and the b/p/g cue code separate badge reading from pattern reading.
 - **Model under test (SCR-023):** a panel is in one sync group (A, B, C) or none; a change on a shared axis reaches every
   other member of that group and nothing outside it (US-LAY-003 "Sync groups"). Axes are set per group (SCR-023,
   E15-T03); today's contract cannot store C5's per-group difference (report OQ-5).
