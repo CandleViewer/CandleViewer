@@ -3,7 +3,8 @@
 Strategy 2 of the E35-K01 spike: JCS-style JSON where every number is a canonical decimal string,
 sha256 over UTF-8 bytes. Computed server-side only, before persistence (never from a jsonb
 round-trip). Any change to this algorithm changes every hash: bump ``IR_HASH_VERSION`` and ship an
-upcaster.
+upcaster. A float (only an untyped ``params`` holds one) hashes as ``Decimal(float.__repr__(x))``;
+a value with no canonical form is refused with ``IrValueError`` (``422 rule_ir_invalid``, not 500).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from candleviewer.rules.errors import RulesError
 from candleviewer.rules.ir.models import Rule
 
 IR_HASH_VERSION = 1
@@ -24,6 +26,30 @@ IR_HASH_VERSION = 1
 PRESENTATION_KEYS = frozenset({"graph_layout", "editor"})
 METADATA_KEYS = frozenset({"created_by", "created_at", "updated_at"})
 _EXCLUDED = PRESENTATION_KEYS | METADATA_KEYS
+
+
+class IrValueError(RulesError, ValueError):
+    """A value the canonical form cannot hold: a non-finite number, or (``IrTypeError``) a type
+    with no JSON form. ``loc`` is its field path, e.g. ``("actions", 0, "params", "weight")``,
+    built step by step while the error unwinds (never on the success path). ``args`` is
+    ``(loc, reason)``, so the error pickles and copies."""
+
+    def __init__(self, loc: tuple[str | int, ...], reason: str) -> None:
+        super().__init__(loc, reason)
+        self.loc = loc
+        self.reason = reason
+
+    def at(self, step: str | int) -> None:
+        """Prepend one path step (called by ``_normalise`` on the way out)."""
+        self.loc = (step, *self.loc)
+        self.args = (self.loc, self.reason)
+
+    def __str__(self) -> str:
+        return f"{self.reason} at /{'/'.join(map(str, self.loc))}"
+
+
+class IrTypeError(IrValueError, TypeError):
+    """A Python type with no canonical form: only code builds one, never JSON."""
 
 
 def parse_ir_json(text: str) -> Rule:
@@ -71,9 +97,11 @@ def _renumber(doc: Any) -> Any:
                 k: (
                     v
                     if k in _OPAQUE_KEYS
-                    else mapping.get(v, v)
-                    if k in ("node_id", "ref") and isinstance(v, str)
-                    else rewrite(v)
+                    else (
+                        mapping.get(v, v)
+                        if k in ("node_id", "ref") and isinstance(v, str)
+                        else rewrite(v)
+                    )
                 )
                 for k, v in n.items()
             }
@@ -88,15 +116,35 @@ def _renumber(doc: Any) -> Any:
 def _normalise(o: Any) -> Any:
     if isinstance(o, bool) or o is None or isinstance(o, str):
         return o
-    if isinstance(o, (int, Decimal)):
+    if isinstance(o, float):  # an untyped place (Action.params): its shortest exact decimal
+        o = Decimal(float.__repr__(o))  # float's own repr, whatever a subclass prints
+    if isinstance(o, int):
         return dec_str(Decimal(o))
+    if isinstance(o, Decimal):
+        if not o.is_finite():  # NaN / Infinity: Python's json reads them; no hash holds them
+            raise IrValueError((), "Input should be a finite number")
+        return dec_str(o)
     if isinstance(o, UUID):
         return str(o)
     if isinstance(o, dict):
-        return {k: _normalise(v) for k, v in o.items()}
+        out: dict[Any, Any] = {}
+        for k, v in o.items():
+            try:
+                out[k] = _normalise(v)
+            except IrValueError as exc:  # the path is built on failure only
+                exc.at(k)
+                raise
+        return out
     if isinstance(o, (list, tuple)):
-        return [_normalise(v) for v in o]
-    raise TypeError(f"unsupported type in IR: {type(o).__name__}")
+        items: list[Any] = []
+        for v in o:
+            try:
+                items.append(_normalise(v))
+            except IrValueError as exc:
+                exc.at(len(items))  # the failing element's index
+                raise
+        return items
+    raise IrTypeError((), f"unsupported type in IR: {type(o).__name__}")
 
 
 def _as_rule(ir: Rule | dict[str, Any]) -> Rule:

@@ -109,7 +109,7 @@ export interface MetricRef {
   account_id?: string | null;
   metric: string;
   params?: {
-    [k: string]: unknown;
+    [k: string]: boolean | number | string | null;
   };
   symbol?: string | null;
   timeframe?: string | null;
@@ -469,7 +469,20 @@ export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = deepFreeze({
           title: "Account Id",
         },
         metric: { pattern: "^[a-z][a-z0-9_]{1,48}$", title: "Metric", type: "string" },
-        params: { additionalProperties: true, title: "Params", type: "object" },
+        params: {
+          additionalProperties: {
+            anyOf: [
+              { type: "boolean" },
+              { type: "integer" },
+              { type: "number" },
+              { pattern: "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$", type: "string" },
+              { type: "string" },
+              { type: "null" },
+            ],
+          },
+          title: "Params",
+          type: "object",
+        },
         symbol: {
           anyOf: [{ pattern: "^[A-Z0-9]{4,20}$", type: "string" }, { type: "null" }],
           default: null,

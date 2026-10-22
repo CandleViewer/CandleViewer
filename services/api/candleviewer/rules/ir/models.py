@@ -7,10 +7,24 @@ control (nothing may be smuggled into a stored IR). The IR is data, never code (
 
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Discriminator,
+    Field,
+    PlainSerializer,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    Tag,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
 
 from candleviewer.domain.primitives import AccountId, Environment, Notional, RuleId, Symbol, UserId
 
@@ -47,10 +61,44 @@ _BOOLEAN_OPS = frozenset({"all_of", "any_of", "none_of", "n_of"})
 _TEMPORAL_OPS = frozenset({"sustained_for", "occurred_within", "count_within", "stable_for"})
 
 
+def _plain_decimal(d: Decimal) -> str:
+    """The JSON form of a ``Decimal`` param: ``canonical.dec_str``'s digits, so a stored or returned
+    value re-hashes as it hashed (``1E-7`` is ``"0.0000001"``, ``3.0`` is ``"3"``). Mirrored, not
+    imported: ``canonical`` imports these models."""
+    return "0" if d == 0 else format(d.normalize(), "f")
+
+
+def _one_refusal(v: Any) -> Any:
+    """One clear error for a value no member holds, in place of one per member."""
+    if (isinstance(v, float) and not math.isfinite(v)) or (
+        isinstance(v, Decimal) and not v.is_finite()
+    ):
+        raise PydanticCustomError("finite_number", "Input should be a finite number")
+    if v is not None and not isinstance(v, (bool, int, float, Decimal, str)):
+        raise PydanticCustomError(
+            "plain_value", "Input should be a plain value (true/false, a number, text or null)"
+        )
+    return v
+
+
+#: A metric parameter value, typed like ``Literal_``: a JSON number arrives as a ``Decimal``, which
+#: the hash canonicalises (``0.5`` and ``0.50`` alike). Strict members, so a JSON ``1.0`` stays a
+#: number (``Literal_``'s lax union reads it as ``True``). ``None`` stays valid, as it was before
+#: (a stored rule holding one keeps loading); NaN, a list or an object is one clear 422.
+ParamValue = Annotated[
+    StrictBool
+    | StrictInt
+    | Annotated[Decimal, PlainSerializer(_plain_decimal, return_type=str, when_used="json")]
+    | StrictStr
+    | None,
+    BeforeValidator(_one_refusal),
+]
+
+
 class MetricRef(BaseModel):
     model_config = _CFG
     metric: Annotated[str, Field(pattern=METRIC_PATTERN)]
-    params: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, ParamValue] = Field(default_factory=dict)
     symbol: Symbol | None = None
     account_id: AccountId | None = None
     timeframe: str | None = None
