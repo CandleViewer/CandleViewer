@@ -9,7 +9,9 @@ and checks `alerts:read` / `alerts:write`; `_owned` applies `scope: self` - anot
 alert is a 404 (existence is not disclosed) and the denial is audited. Every mutation writes
 an append-only audit record (C-2.9) before the response is returned. The two reads take only
 their declared query parameters (SR-026): any other key gets the shared 422 after the permission
-check and before the store is read.
+check and before the store is read. A create or update by anyone but the Owner needs a grant on
+every account the alert names (`exchange_account_id` and each account in the compiled
+condition); a refusal is a 403, audited first as `alert.scope_refused`.
 """
 
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
@@ -33,6 +35,7 @@ from candleviewer.api.alerts_http import caller
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.observability.context import current_request_uuid
+from candleviewer.rules.ir.accounts import collect_account_ids
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary.registry import MetricRegistry
 from candleviewer.storage.errors import StorageConstraintViolated
@@ -194,7 +197,14 @@ def make_alerts_router(
     lister, writer = need(READ, LIST_ALERTS_QUERY), need(WRITE)
     owned_r, owned_w = owned(READ, GET_ALERT_QUERY), owned(WRITE)
 
-    async def parse(request: Request, actor: Actor) -> tuple[AlertInput, Any]:
+    async def refuse_scope(actor: Actor, alert_id: str, op: str) -> None:
+        """C-2.9: a write refused for an ungranted account is audited first, before the 403."""
+        await d.audit_event("alert.scope_refused", actor, alert_id, outcome=AuditOutcome.DENIED,
+                            reason="account_not_granted", after_state={"op": op})  # fmt: skip
+
+    async def parse(
+        request: Request, actor: Actor, alert_id: str, op: str
+    ) -> tuple[AlertInput, Any]:
         try:
             body = AlertInput.model_validate(await request.json())
         except ValidationError as exc:
@@ -214,6 +224,7 @@ def make_alerts_router(
                            "Webhook delivery is not available yet.")  # fmt: skip
         acct = body.exchange_account_id
         if acct is not None and not actor.is_owner and str(acct) not in actor.granted_accounts:
+            await refuse_scope(actor, alert_id, op)
             raise _Problem(403, "forbidden", "Forbidden", "no grant on that account")
         started = time.perf_counter()
         try:
@@ -226,6 +237,11 @@ def make_alerts_router(
                            f"{len(exc.issues)} problem(s) in the alert.",
                            errors=[i.to_dict() for i in exc.issues]) from None  # fmt: skip
         d.on_compile(time.perf_counter() - started, None)
+        # Every account the compiled condition names (operand ids, account keys in `params`).
+        named = () if actor.is_owner else collect_account_ids(compiled.condition_ir)
+        if any(a not in actor.granted_accounts for a in named):
+            await refuse_scope(actor, alert_id, op)
+            raise _Problem(403, "forbidden", "Forbidden", "no grant on an account in the condition")
         return body, compiled
 
     def fields(body: AlertInput, compiled: Any) -> dict[str, Any]:
@@ -272,8 +288,8 @@ def make_alerts_router(
 
     @router.post("/alerts")
     async def create_alert(request: Request, actor: Annotated[Actor, Depends(writer)]) -> Response:
-        body, compiled = await parse(request, actor)
-        alert_id = str(uuid4())
+        alert_id = str(uuid4())  # before parsing: a refused create is audited against this id
+        body, compiled = await parse(request, actor, alert_id, "create")
         # Write-ahead (C-2.9): the audit record lands first; if it fails nothing is persisted.
         await d.audit_event("alert.created", actor, alert_id, after_state={
             "name": body.name, "condition_hash": compiled.condition_hash,
@@ -305,7 +321,7 @@ def make_alerts_router(
             if_match = datetime.fromisoformat(raw) if raw else row.updated_at
         except ValueError:
             raise _stale() from None
-        body, compiled = await parse(request, actor)
+        body, compiled = await parse(request, actor, row.id, "update")
         if if_match != row.updated_at:  # stale: refuse before auditing (store re-checks atomically)
             raise _stale()
         await d.audit_event("alert.updated", actor, row.id, before_state=_audit_view(row),

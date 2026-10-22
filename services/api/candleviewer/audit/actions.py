@@ -184,6 +184,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "alert.disabled",
         "alert.deleted",
         "alert.denied",
+        # E40-X01: a create or update naming an account outside the caller's grants (403).
+        "alert.scope_refused",
         # E40-T03: evaluator firings and auto-disarms (system actor, C-2.9).
         "alert.fired",
         "alert.disarmed",
