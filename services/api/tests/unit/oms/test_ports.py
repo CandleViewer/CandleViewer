@@ -57,6 +57,7 @@ from candleviewer.oms.ports import (
     InterimStopResolver,
     NoArmRecords,
     OrderEffect,
+    RateReading,
     SizedOrder,
     SizingRequest,
     StopOffset,
@@ -587,3 +588,15 @@ def test_trading_accounts_takes_the_account_id_alone() -> None:
     assert list(inspect.signature(member).parameters) == ["self", "account_id"]
     hints = get_type_hints(member)
     assert (hints["account_id"], hints["return"]) == (AccountId, AccountRef)
+
+
+def test_a_rate_reading_admits_with_no_delay_and_refuses_with_one() -> None:
+    """24 Sec.8.7: an admission carries no `Retry-After`; a refusal carries whole seconds, 1 or
+    more (429 `exchange_rate_limited`)."""
+    assert RateReading(available=True).retry_after_s is None
+    assert RateReading(available=False, retry_after_s=1).retry_after_s == 1
+    for refused in (None, 0, -1, 1.5, True, "2"):
+        with pytest.raises(ValueError, match="at least one whole second"):
+            RateReading(available=False, retry_after_s=refused)  # type: ignore[arg-type]  # bad
+    with pytest.raises(ValueError, match="no retry_after_s"):
+        RateReading(available=True, retry_after_s=1)

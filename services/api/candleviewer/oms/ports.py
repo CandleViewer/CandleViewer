@@ -22,9 +22,10 @@ resolver answers, so C-2.6 holds on every path whatever the port (C-4.14).
 `announce_interim_ports` logs one WARNING per interim port at startup and sets
 `oms_interim_ports{port}`, so nobody runs them on live unknowingly.
 
-The rate step is not a port here. #2877's G-8 rulings (item 4) have the trading port take the rate
-token once per call, and B1's `rate` verdict read a non-consuming headroom figure until E34-T02's
-`reserve()`; the second slice of #913 declares that port with its first consumer. Nothing here
+The rate step has no port of its own here. #2877's G-8 rulings (item 4) have the trading port take
+the rate token once per call, and B1's `rate` verdict read a non-consuming headroom figure until
+E34-T02's `reserve()`: `exchange.base`'s `RateHeadroomPort`, which each environment's trading port
+implements. `routing.TradingRouter.headroom` reads it and answers a `RateReading`. Nothing here
 imports the exchange adapter (C-2.2).
 
 The second slice adds two ports with no interim, both bound by slice 3's wiring. `ClockHealth` is
@@ -262,6 +263,25 @@ class TradingAccounts(Protocol):
         `OrderRefused`, with nothing recorded or sent, for an account the OMS does not trade or
         one with no active key."""
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class RateReading:
+    """The rate step's verdict (24 Sec.8.7, `routing.TradingRouter.headroom`): whether the order's
+    request would get its rate token within its lane's wait, read without taking one. A refusal
+    carries `retry_after_s`, the whole seconds of its `Retry-After` (429 `exchange_rate_limited`);
+    an admission carries none."""
+
+    available: bool
+    retry_after_s: int | None = None
+
+    def __post_init__(self) -> None:
+        delay = self.retry_after_s
+        if self.available:
+            if delay is not None:
+                raise ValueError("an admission carries no retry_after_s")
+        elif isinstance(delay, bool) or not isinstance(delay, int) or delay < 1:
+            raise ValueError("a refusal carries a retry_after_s of at least one whole second")
 
 
 class Interim:

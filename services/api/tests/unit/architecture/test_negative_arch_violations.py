@@ -126,6 +126,17 @@ def test_statechart_import_from_ws_caught_by_c_2_20() -> None:
     assert line.startswith("C-2.20") and line.endswith("BROKEN")
 
 
+def test_adapter_import_from_oms_caught_by_c_2_2() -> None:
+    """#913 (E29-T04): `candleviewer.oms` reaches the exchange only through `exchange.base`."""
+    target = REPO_ROOT / "services" / "api" / "candleviewer" / "oms" / "routing.py"
+    with _PatchedFile(target) as f:
+        f.write(f.backup + "\nimport candleviewer.exchange.bybit.trading\n")
+        result = _run(["uv", "run", "lint-imports"], cwd=REPO_ROOT / "services" / "api")
+    assert result.returncode != 0
+    line = next(ln for ln in result.stdout.splitlines() if "reaches the exchange only" in ln)
+    assert line.startswith("C-2.2 ") and line.endswith("BROKEN")
+
+
 def test_react_in_chart_engine_core_caught_by_c_2_16() -> None:
     target = REPO_ROOT / "packages" / "chart-engine" / "src" / "core" / "handle.ts"
     with _PatchedFile(target) as f:

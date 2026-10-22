@@ -204,6 +204,18 @@ def render(manifest: dict) -> str:
     lines.append("forbidden_modules =\n    " + "\n    ".join(ws["forbidden_modules"]))
     lines.append("")
 
+    # C-2.2 (E29-T04, #913): the OMS reaches the exchange through `exchange.base`'s ports only,
+    # never through the adapter package, which §3's M14 -> M4 edge would otherwise allow.
+    adapter = cc["adapter_isolation"]
+    lines.append("[importlinter:contract:forbidden-adapter-isolation]")
+    lines.append(
+        f"name = {adapter['rule']} — the OMS reaches the exchange only through exchange.base"
+    )
+    lines.append("type = forbidden")
+    lines.append("source_modules =\n    " + "\n    ".join(adapter["source_modules"]))
+    lines.append("forbidden_modules =\n    " + "\n    ".join(adapter["forbidden_modules"]))
+    lines.append("")
+
     return "\n".join(lines) + "\n"
 
 

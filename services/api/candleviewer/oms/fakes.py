@@ -15,8 +15,9 @@ from typing import Any, Final, NamedTuple
 from uuid import UUID
 
 from candleviewer.domain.order_link import EXT_ID, OUR_ID
-from candleviewer.domain.primitives import OrderLinkId
+from candleviewer.domain.primitives import AccountId, OrderLinkId
 from candleviewer.exchange.base.errors import ClockDriftError
+from candleviewer.exchange.base.models import AccountRef
 from candleviewer.storage.errors import (
     StorageQueryFailed,
     StorageTierUnavailable,
@@ -73,10 +74,12 @@ from candleviewer.storage.repositories.trade_groups import (
     render_json,
 )
 
+from .errors import AccountScopeDenied
+
 __all__ = [
     "FakeClockHealth", "InMemoryExecutionStore", "InMemoryIdempotencyAnchorStore",
     "InMemoryOrderLinkLookup", "InMemoryOrderStore", "InMemoryRecordedStopStore",
-    "InMemorySubmissionStore",
+    "InMemorySubmissionStore", "InMemoryTradingAccounts",
 ]  # fmt: skip
 
 #: Wide enough that a sum or difference of numeric(38,18) values is exact, as in Postgres.
@@ -968,3 +971,27 @@ class FakeClockHealth:
             raise self.resync_error
         self.measure(self.resync_offset_ms)
         return round(self.resync_offset_ms * 1_000)
+
+
+class InMemoryTradingAccounts:
+    """A `TradingAccounts` (`ports.py`) over the accounts a test seeds. `trading_account` records
+    the id it is asked for in `asked` and answers that id's `AccountRef`; an id with none is
+    `AccountScopeDenied`, nothing read, as the real port refuses an account the OMS does not
+    trade. `seed(..., as_id=)` answers a ref for another id, a broken resolver."""
+
+    def __init__(self, *accounts: AccountRef) -> None:
+        self._accounts: dict[AccountId, AccountRef] = {}
+        self.asked: list[AccountId] = []
+        for account in accounts:
+            self.seed(account)
+
+    def seed(self, account: AccountRef, *, as_id: AccountId | None = None) -> None:
+        self._accounts[account.account_id if as_id is None else as_id] = account
+
+    async def trading_account(self, account_id: AccountId) -> AccountRef:
+        self.asked.append(account_id)
+        await asyncio.sleep(0)
+        account = self._accounts.get(account_id)
+        if account is None:
+            raise AccountScopeDenied
+        return account
