@@ -77,6 +77,8 @@ IMPORT_REASONS = (
     "system_rule_reserved | The 'sys.' name prefix is reserved.",
     "forbidden | Only the Owner can raise a rule's action budget above the default.",
     "rule_ir_invalid | the validator's issues, a field each (a loosening reads 'Not available')",
+    "payload_too_large (#4186) | Request body or batch exceeds the operation's size ceiling",
+    "not checked | Service unavailable - rule engine vocabulary unavailable (the call refused)",
 )
 TESTS = ("abuse/test_abuse_cases.py", "abuse/test_security_review_fixes.py", "test_rule_limits.py")
 _OTHER = (
@@ -122,6 +124,8 @@ rejected n5: border.strong rule | color.border.strong | color.surface.canvas
 canonical IR text (pre) | color.text.primary | color.surface.sunken | text | s5
 the pre's described-by note | color.text.secondary | color.surface.sunken | text | s5
 row menu text (overlay) | color.text.primary | color.surface.overlay | text | s2
+row menu T2 label (overlay) | color.text.tertiary | color.surface.overlay | text | s2 s12
+row menu T2 reason (overlay) | color.text.secondary | color.surface.overlay | text | s2 s12
 diagnostic pill word (hover) | color.text.primary | color.surface.hover | text | s5
 focus ring on canvas | color.focus.ring | color.surface.canvas | non-text | s13
 focus ring on raised | color.focus.ring | color.surface.raised | non-text | s13
@@ -410,7 +414,7 @@ def gates(files: list[Path]) -> list[str]:
             "Not available — rules never loosen a stop.", "Native stops are unaffected.",
             "no screen of this ticket offers a loosening or stop-clearing control",
             "no account ids, no keys, no armed state",
-            "System rules cannot be changed.")  # fmt: skip
+            "System rules cannot be changed.", "from the IR itself")  # fmt: skip
     cons, bad = read(ROOT / "CONSTITUTION.md"), []
     for f in files:
         t = read(f)

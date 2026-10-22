@@ -1908,7 +1908,7 @@ Drag preview                Drop zones
 - **Performance:** IR is fetched on demand from `POST /api/v1/rules/{ruleId}/compile`; syntax highlighting runs in a worker for documents over 100 KB.
 - **Analytics/audit:** `rule.ir_viewed`, `rule.ir_copied` (analytics).
 - **Design sign-off acceptance checklist:** [ ] canonical IR shown read-only with a copy control [ ] the diff view used by the round-trip check drawn [ ] version and compiler-version stamps shown [ ] it is clearly labelled advanced/diagnostic [ ] error state when compilation fails, naming the offending node/row
-- **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §5–§6 (E36-D03; owner approval pending; the canonical IR with copy / export and its described-by note, the tree alternative (CMP-240 PROPOSED per E13-D02), the round-trip diff as a path table, the version / compiler / IR / hash stamps, the compile-failure and quarantined states; the >100 KB pending treatment).
+- **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §5–§6 (E36-D03; owner approval pending; the compiled IR as stored (not the canonical hash form `22` promises — a contract gap, PROPOSED) with copy / export and its described-by note, the tree alternative (CMP-240 PROPOSED per E13-D02), the round-trip diff as a path table, the version / compiler / IR / hash stamps, the compile-failure and quarantined states; the >100 KB pending treatment).
 
 ### SCR-089 — Rule import / export
 
