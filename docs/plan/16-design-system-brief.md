@@ -174,7 +174,7 @@ These rules bind every chart-engine primitive (CMP-180..199) and every non-canva
   - Panel focus/mount: `fast` fade+8px slide, reduce → instant opacity swap.
   - Dialog/drawer open: `normal` scale+fade (dialog) / slide (drawer), reduce → instant.
   - Value flash (price tick up/down): `instant`→`fast` background flash decaying to neutral, reduce → no flash, colour-only momentary text tint instead.
-  - Toast enter/exit: `fast` slide+fade, reduce → instant.
+  - Toast enter/exit: `fast` slide+fade, reduce → fade only (opacity, no transform; SCR-015, E40-D02 §8).
   - Node-graph edge draw: `fast` line-draw animation, reduce → instant full-line render.
   - Loading shimmer (Skeleton): `slow` looping shimmer, reduce → static two-tone fill, no loop.
 - **Respects `prefers-reduced-motion`** at the OS/browser level automatically, plus an explicit in-app override (Settings → Appearance → Reduce Motion) for users on shared/unconfigured machines (Electron shell) where the OS-level signal may not be set.
