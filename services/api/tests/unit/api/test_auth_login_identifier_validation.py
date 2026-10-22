@@ -38,7 +38,7 @@ class _Audit:
     is_active = True
 
     def __init__(self, writer: AuditWriter) -> None:
-        self.writer = writer
+        self.writer = self.lane = writer  # the façade without a lane is its fallback, the writer
 
 
 async def test_failed_login_with_a_nul_identifier_is_refused_and_not_audited(

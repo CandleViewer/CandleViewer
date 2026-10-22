@@ -93,6 +93,11 @@ class _Audit:
     def __init__(self, *, fail: bool = False) -> None:
         self.writer = _Writer(fail=fail)
 
+    @property
+    def lane(self) -> _Writer:
+        """The façade (ADR-0037) without a lane: its fallback, the writer, takes each row."""
+        return self.writer
+
 
 def _used() -> float:
     return float(REGISTRY.get_sample_value(SERIES) or 0.0)

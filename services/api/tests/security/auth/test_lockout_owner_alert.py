@@ -84,6 +84,11 @@ class _Audit:
     def writer(self) -> _Audit:
         return self
 
+    @property
+    def lane(self) -> _Audit:
+        """The façade (ADR-0037) without a lane: its fallback, the writer, takes each row."""
+        return self
+
     async def emit(self, action: str, **kwargs: Any) -> None:
         self.calls.append((action, kwargs))
 

@@ -11,6 +11,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.api.auth import AuditServiceLike, make_auth_router
@@ -138,12 +139,17 @@ class _FakeMinter:
         self.minted_for: list[str] = []
 
     async def mint(
-        self, user_id: str, *, ip: str | None = None, user_agent: str | None = None
+        self,
+        user_id: str,
+        *,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        session_id: uuid.UUID | None = None,
     ) -> MintedSession:
         self.minted_for.append(user_id)
         now = datetime(2026, 10, 1, tzinfo=UTC)
         return MintedSession(
-            session_id=uuid.uuid4(),
+            session_id=session_id or uuid.uuid4(),
             access_token_jti=uuid.uuid4(),
             access_token="acc",
             refresh_token="ref",
@@ -227,6 +233,11 @@ class _RecordingAuditService:
     @property
     def is_active(self) -> bool:
         return True
+
+    @property
+    def lane(self) -> _RecordingAuditWriter:
+        """The façade (ADR-0037) without a lane: every row goes to its fallback, the writer."""
+        return self.writer
 
 
 def test_successful_login_returns_mfa_challenge() -> None:
@@ -488,7 +499,12 @@ class _RefusingMinter(_FakeMinter):
     """#2911: the user was disabled after the password step, so the mint is refused."""
 
     async def mint(
-        self, user_id: str, *, ip: str | None = None, user_agent: str | None = None
+        self,
+        user_id: str,
+        *,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        session_id: uuid.UUID | None = None,
     ) -> MintedSession:
         self.minted_for.append(user_id)
         raise UserDisabled("disabled")
@@ -511,6 +527,13 @@ class _InactiveAuditService(_RecordingAuditService):
     @property
     def is_active(self) -> bool:
         return False
+
+
+def _lost(action: str) -> float:
+    """`auth_audit_outcome_lost_total{action}` on the process-default registry."""
+    return float(
+        REGISTRY.get_sample_value("auth_audit_outcome_lost_total", {"action": action}) or 0
+    )
 
 
 def _verify_for_a_disabled_user(
@@ -538,7 +561,8 @@ def _verify_for_a_disabled_user(
 
 
 def test_mfa_verify_for_a_disabled_user_mints_nothing_and_audits_the_refusal() -> None:
-    """The operation's 401 and no session; the refusal is audited like login's disabled one."""
+    """The operation's 401 and no session; the refusal is audited like login's disabled one, and
+    voids the session `auth.session_created` announced ahead of the mint (C-2.9, #2914)."""
     audit_service = _RecordingAuditService()
 
     response, uid, attempts, _ = _verify_for_a_disabled_user(audit_service)
@@ -546,34 +570,42 @@ def test_mfa_verify_for_a_disabled_user_mints_nothing_and_audits_the_refusal() -
     assert (response.status_code, response.json()["detail"]) == (401, "account is disabled")
     assert "set-cookie" not in response.headers
     assert attempts == [str(uid)]
-    calls = audit_service.writer.calls
-    assert [(c["action"], c["outcome"]) for c in calls] == [
+    verified, created, refused = audit_service.writer.calls
+    assert [(c["action"], c["outcome"]) for c in (verified, created, refused)] == [
         ("auth.mfa_verified", AuditOutcome.SUCCESS),
+        ("auth.session_created", AuditOutcome.SUCCESS),
         ("auth.login_failed", AuditOutcome.DENIED),
     ]
-    assert (calls[-1]["reason"], calls[-1]["actor_user_id"]) == ("user_disabled", uid)
+    assert (refused["reason"], refused["actor_user_id"]) == ("user_disabled", uid)
+    assert refused["session_id"] == created["session_id"]
+    assert refused["after_state"] == {"voids_session_created": str(created["session_id"])}
 
 
 def test_mfa_verify_for_a_disabled_user_with_the_refusal_record_refused_is_still_401() -> None:
-    """Error path: the writer refuses `auth.login_failed`. Not write-ahead (nothing was minted),
-    so the 401 stands, never a 500, and the lost record is logged."""
+    """Error path: the writer refuses `auth.login_failed`, and so would the lane. Not write-ahead
+    (nothing was minted), so the 401 stands, never a 500, and the lost record is counted and
+    logged (#2914)."""
     audit_service = _RecordingAuditService()
     audit_service.writer = _RefusingAuditWriter("auth.login_failed")
+    lost_before = _lost("auth.login_failed")
 
     response, uid, attempts, logs = _verify_for_a_disabled_user(audit_service)
 
     assert (response.status_code, response.json()["detail"]) == (401, "account is disabled")
     assert "set-cookie" not in response.headers
     assert attempts == [str(uid)]
-    assert [c["action"] for c in audit_service.writer.calls] == ["auth.mfa_verified"]
-    (lost,) = [e for e in logs if e["event"] == "auth.login_failed.audit_unavailable"]
+    actions = [c["action"] for c in audit_service.writer.calls]
+    assert actions == ["auth.mfa_verified", "auth.session_created"]
+    assert _lost("auth.login_failed") - lost_before == 1
+    (lost,) = [e for e in logs if e["event"] == "auth.login_audit.outcome_lost"]
     assert (lost["log_level"], lost["error"]) == ("error", "AuditUnavailable")
 
 
 def test_mfa_verify_for_a_disabled_user_with_audit_inactive_is_still_401_and_logged() -> None:
     """Error path: no audit sink. The 401 stands, nothing is minted, and the unrecorded refusal
-    is logged."""
+    is counted and logged."""
     audit_service = _InactiveAuditService()
+    lost_before = _lost("auth.login_failed")
 
     response, uid, attempts, logs = _verify_for_a_disabled_user(audit_service)
 
@@ -581,5 +613,6 @@ def test_mfa_verify_for_a_disabled_user_with_audit_inactive_is_still_401_and_log
     assert "set-cookie" not in response.headers
     assert attempts == [str(uid)]
     assert audit_service.writer.calls == []
-    (lost,) = [e for e in logs if e["event"] == "auth.login_failed.audit_unavailable"]
+    assert _lost("auth.login_failed") - lost_before == 1
+    (lost,) = [e for e in logs if e["event"] == "auth.login_audit.outcome_lost"]
     assert (lost["log_level"], lost["error"]) == ("error", "inactive")

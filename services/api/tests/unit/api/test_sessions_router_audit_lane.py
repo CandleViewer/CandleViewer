@@ -336,8 +336,8 @@ async def test_both_refusing_an_outcome_row_keeps_todays_answer_and_counts_it_lo
 
 async def test_login_flood_leaves_room_for_logout(worlds: Opener) -> None:
     """S1c's quotas (§15.6 Limits), with caps small enough to fill: `shared` records (the login rows
-    #2914's PR C will write) fill their share while the sink refuses, and the overflow falls back
-    and is refused; a sign-out, `reserved`, still fits and answers 204."""
+    `api/auth.py` writes since #2914's PR C) fill their share while the sink refuses, and the
+    overflow falls back and is refused; a sign-out, `reserved`, still fits and answers 204."""
     w = await worlds(caps=(4096, 8192))
     a, flood = await w.mint(), 64
     w.writer.accept = 0

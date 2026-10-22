@@ -3,10 +3,11 @@
 - Status: **accepted**: ratified 2026-10-20 by main-orchestrator under the owner's delegation, #2701
   issuecomment-6291902866; the owner may revoke there. It was accepted on an interim basis by main-orchestrator
   on 2026-10-17, on #3009. Amendment 1 (2026-10-21) records the lane's exit: the flag removed, EX-07 and EX-08
-  retired, and the carries left open.
+  retired, and the carries left open. Amendment 2 (2026-10-22) records the login routes' adoption of the façade
+  (#2914's PR C): EX-10 retired, Q2 answered.
 - Date: 2026-10-17 (review round 4 folded the same day)
 - Deciders: Owner (`@basiltt`) through main-orchestrator, under the owner's delegation (the ratification above).
-  Questions pending: hcl-worker-1 (Q2), main-orchestrator (Q3), the E27 owner (Q4) and Security (Q6); the
+  Questions pending: main-orchestrator (Q3), the E27 owner (Q4) and Security (Q6); the
   Security engineer reviews through the `security-review` label. Author: hpe-worker-1.
 - Numbering note: 0031 is reserved by E45-K01 (`ADR-0031-resilience-and-chaos`, not on `main`) and 0036 is the
   last on `main`, so this record takes the next free number.
@@ -236,8 +237,8 @@ Option (b), built from the proven patterns of (a) and (c) without sharing their 
     the lane and the sink both refuse, are unchanged. The action id, the `warning` severity and the memo do not
     depend on the lane taking the row: the route never reads a flag, and a lane that refuses it or is not wired
     hands it to the writer, as decision 1 says. A replay flood shares the `shared` class (64 waiters; its bound is
-    decision 4's) with the login outcome rows once #2914's PR C adopts the façade (Q2, EX-10); today the class
-    carries the replay rows and a disabled user's refused refresh.
+    decision 4's) with the login routes' outcome rows, which #2914's PR C put on the façade (Amendment 2), and a
+    disabled user's refused refresh.
 
 ## How E27 KV-D04 joins the lane
 
@@ -372,7 +373,8 @@ lane drains again without duplicates, and an older copy shows as a lower head in
   disablement stay on the writer; their joining is a carry (Amendment 1).
 - **Q2, hcl-worker-1.** If #2914's PR C lands after S3, does it call the façade itself? Does F1 stay as it is
   on the branch? Is `cv_audit_writer_refused_total{domain}` the write-ahead refusal signal you asked for, or do
-  the `503` sites also need a per-action counter?
+  the `503` sites also need a per-action counter? Answered by #2914's PR C (Amendment 2): yes, per call site; F1
+  stays as S3 shipped it; that series is the signal, and no per-action counter is added.
 - **Q3, main-orchestrator.** Are §15.6's limits enough for a dead flusher left for hours, or should S2b's chaos
   run size them first? The one `reserved` source reachable without a session is a rotated-token replay,
   bounded by the refresh route's per-address and per-session throttles (`api/sessions.py:266-272`).
@@ -391,6 +393,7 @@ lane drains again without duplicates, and an older copy shows as a lower head in
   Amendment 1's carry), and EX-07 excluded them; a later ruling the same day gives them one narrow row, EX-10
   (04 §16.2), until #2914's PR C (issuecomment-6321348055): EX-10 is now that answer, for the login family
   alone. The records that counter counts, outside auth, stay with E27 KV-D04 (How E27 KV-D04 joins the lane).
+  EX-10 left §16.2 with #2914's PR C (Amendment 2).
 - **Q8, owner.** `quarantine/` keeps PII (`actor_ip`, user and session ids) for good. Do account erasure and
   the retention job reach it, or does it follow `audit_log`'s indefinite retention (C-12.8)? Answered
   2026-10-20 with the ratification: it follows `audit_log`'s indefinite retention.
@@ -475,6 +478,7 @@ owner and the trigger that brings it back.
   write-ahead records: a refused write is not caught, so the route answers `500` (`internal_error`) with the
   session row minted and never delivered, and no record of it. PR C writes it ahead of the mint, as
   `_enrolment_only_sign_in` does, or amends decision 3. Owner: hcl-worker-1, with E09 security. Trigger: PR C.
+  **Built** by #2914's PR C, with both rows: Amendment 2.
 - **SEC-REM-01** (#3910). When the lane's alerts become pages, they need `absent()` guards on
   `cv_audit_lane_state`, `cv_audit_lane_anomalies_total` and `process_start_time_seconds`: a lane read that fails
   at a scrape drops every lane family, and the young-process arms read the start time. Owner: the Owner (#2701).
@@ -526,10 +530,58 @@ owner and the trigger that brings it back.
   and alerted by `AuthAuditOutcomeLost`. Owner: E09 security. Trigger: the next change to
   `SessionService.refresh` or to the reuse handler in `api/sessions.py`.
 
+## Amendment 2 (2026-10-22, #2914's PR C: the login routes on the façade; Q2 answered)
+
+**Built.** `api/auth.py` hands its outcome and refusal rows to `AuditService.lane` through one helper,
+`_outcome`, with the `LaneNotWired` guard and the one warning per router of `api/sessions.py`
+(`auth.login_audit.lane_unavailable`): `/auth/login`'s `auth.login_failed`, `auth.account_locked` and the
+password step's `auth.login` (no session exists yet), `/auth/mfa/verify`'s `auth.mfa_failed`, a refused mint's
+`auth.login_failed` (`_audit_refusal`, at the sign-in, the MFA step and the confirm), `/auth/mfa/recovery`'s
+refusal rows (`failed()`) and its `unplanned` `auth.session_revoked` rows, and the confirm's `auth.mfa_failed`
+rows. Each write, the lane's wait and the fallback together, is bounded by the audit timeout (`AUDIT_TIMEOUT_S`),
+as the session routes' outcome rows are. A row the lane and the writer both refuse, or whose write times out or
+is cancelled, or that has no sink, is counted on `auth_audit_outcome_lost_total{action}`, whose closed set gains
+`auth.login`, `auth.login_failed`, `auth.account_locked`, `auth.mfa_failed` and `auth.recovery_codes_exhausted`,
+and logged as `auth.login_audit.outcome_lost` with the action and the error class only; the answer stands. Any
+other error is a defect, counted and raised. Before, such a refused row was logged only (`_audit_refusal`,
+`failed()`), turned the answer into a `500` (`/auth/login`, the MFA step's and the confirm's `auth.mfa_failed`),
+or, for an `unplanned` row, ended the recovery in its `unminted` `401`; now the recovery goes on, and
+`auth.recovery.completed_unminted` names the `unplanned` ids among its `revoked_session_ids`. So EX-10 leaves
+`04-security-program.md` §16.2, and Amendment 1's carry for the login routes is built.
+
+**U42: the call site chooses, and no action is split.** The write-ahead records stay on the writer by call site,
+as unlock's do (Q1): the carried-session record; `auth.login` and `auth.session_created` of the enrolment-only
+sign-in; `auth.mfa_verified` and `auth.session_created` of `/auth/mfa/verify`; the recovery's planned
+`auth.recovery_code_used`, `auth.session_revoked` and `auth.session_created`; `auth.mfa_enroll`; and the
+confirm's planned `auth.mfa_enrolled`, `auth.recovery_codes_regenerated`, `auth.session_revoked` and
+`auth.session_created`. Decision 3's table and `LANE_ACTIONS` do not change, and its sentence on a mint's
+write-ahead records holds per call site, for `auth.login`, `auth.recovery_code_used` and `auth.session_revoked`
+too. `auth.recovery_code_used` keeps its registry row although no route hands it to the façade: its one record
+is the recovery mint's write-ahead record, so the counter's set leaves it out as well.
+`test_a_mints_write_ahead_record_never_reaches_the_lane_so_its_refusal_mints_nothing`
+(`tests/security/auth/test_login_audit_lane.py`) pins it: with the writer refusing any one of those records and
+a lane that takes every row it admits, each mint answers its refusal, mints and revokes nothing, and hands the
+lane nothing.
+
+**`/auth/mfa/verify`'s `auth.session_created`** is written ahead of the mint now, on the writer, naming the id
+the mint then uses, as `_enrolment_only_sign_in` does; decision 3 stands unamended. A refusal answers the
+operation's `401` (`audit sink not active`, as for the carried-session record) and mints nothing, and a user
+disabled since the password step gets the refusal row that voids it. `auth.mfa_verified`, written before it,
+still answers a refusal with `500`.
+
+**The recovery's `unplanned` rows** are `reserved`, as the class follows the action. They are reachable without
+a session, but only past a recovery code the same request spent (one use each, ten per user) and only for a
+session minted while that recovery ran, so they add no flood source beside Q3's.
+
+**Q2's answers.** PR C calls the façade itself, per call site (`_outcome`). F1 stays as S3 shipped it
+(`api/sessions.py`). `cv_audit_writer_refused_total{domain}` is the write-ahead refusal signal asked for: a
+refused write-ahead record of the login routes counts on `domain="auth"`, and its route answers `503`, `401` or
+`500` as before, so no per-action counter is added.
+
 ## References
 
 - `docs/plan/04-security-program.md` §8.1, §8.3, §16.1 (RR-01, and RR-16, the sink-refusal residual) and §16.2
-  (EX-07 and EX-08, until S4b-1d removed them)
+  (EX-07 and EX-08, until S4b-1d removed them, and EX-10, until #2914's PR C did)
 - `docs/plan/24-internal-schemas.md` §15.4 and §15.6; `docs/plan/21-database-schema.md` §10.7
 - `docs/security/threat-models/e09-auth-rbac.md` §3.6.1 and §3.6.2; `docs/security/threat-models/E27-accounts.md`
   KV-D04 and AC-27

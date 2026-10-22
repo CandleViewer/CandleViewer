@@ -116,7 +116,13 @@ AUDIT_OUTCOME_ACTIONS: tuple[str, ...] = (
     "auth.disabled_user_session_revoked",  # the backstop's record (`api/session_backstop_audit.py`)
     "auth.refresh_reuse_detected",  # the concurrent-refresh race (`api/sessions.py`)
     "auth.session_refreshed",  # a disabled user's refused refresh, reason `user_disabled` (#2911)
-    "auth.session_revoked",  # one per session `POST /auth/logout` revoked
+    "auth.session_revoked",  # per session `POST /auth/logout` ended, or a recovery's plan missed
+    # The login routes' outcome and refusal rows (`api/auth.py`, #2914 PR C).
+    "auth.account_locked",
+    "auth.login",  # the password step that passed, before any session
+    "auth.login_failed",
+    "auth.mfa_failed",
+    "auth.recovery_codes_exhausted",
 )
 auth_audit_outcome_lost_total = Counter(
     "auth_audit_outcome_lost_total",

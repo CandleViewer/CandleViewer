@@ -1,7 +1,7 @@
 """#2914 item 5 (D1 rider, D4): the alert rules on `auth_audit_outcome_lost_total`, the alert half
 of 04-security-program.md section 8.3 rule 2. Its retry half is the journal-first audit lane
-(ADR-0037, #3009), so for the session routes' and the backstop's records no exception in
-section 16.2 stands in for it (EX-10 covers the login routes' refusal rows until #2914's PR C).
+(ADR-0037, #3009), so for the session routes', the login routes' (#2914 PR C) and the backstop's
+records no exception in section 16.2 stands in for it.
 
 Any lost outcome record is a ticket (`system_ticket.yml`); more than 5 in 15 minutes is a page
 (`system_page.yml`, so the page policy tests of `infra/alertmanager/tests` apply to it), under a
@@ -15,7 +15,6 @@ are only checked to exist.
 
 from __future__ import annotations
 
-import ast
 import re
 from pathlib import Path
 from typing import Any
@@ -34,7 +33,6 @@ _ALERTMANAGER = _ROOT / "infra" / "alertmanager" / "alertmanager.yml"
 _PRR = _ROOT / "docs" / "plan" / "07-release-and-prr.md"
 _AUTH_RUNBOOK = _ROOT / "docs" / "ops" / "runbooks" / "auth-rbac.md"
 _SESSIONS = _ROOT / "services" / "api" / "candleviewer" / "api" / "sessions.py"
-_AUTH_ROUTER = _ROOT / "services" / "api" / "candleviewer" / "api" / "auth.py"
 
 TICKET = "AuthAuditOutcomeLost"
 PAGE = "AuthAuditOutcomesLostBurst"
@@ -102,11 +100,11 @@ def test_promtool_cases_load_both_rule_files_and_fire_and_stay_silent_for_both_a
 
 @pytest.mark.parametrize("action", AUDIT_OUTCOME_ACTIONS)
 def test_every_action_the_outcome_counter_covers_is_a_lane_registry_row(action: str) -> None:
-    """Rule 2's retry half is the lane, with no section 16.2 exception for the session routes' and
-    the backstop's records (#3009 S4b-1d; EX-10 covers the login routes' refusal rows until
-    #2914's PR C): every action the counter's closed set covers is a lane registry row, so each
-    goes to the lane first and is counted only once the lane and the writer both lose it. A route
-    that starts to write an outcome record adds its action to the counter and to the registry."""
+    """Rule 2's retry half is the lane, with no section 16.2 exception for the session routes', the
+    login routes' and the backstop's records (#3009 S4b-1d, #2914 PR C): every action the
+    counter's closed set covers is a lane registry row, so each goes to the lane first and is
+    counted only once the lane and the writer both lose it. A route that starts to write an
+    outcome record adds its action to the counter and to the registry."""
     assert action in LANE_ACTIONS
 
 
@@ -133,20 +131,11 @@ def test_the_session_routes_cite_no_exception_for_their_outcome_records() -> Non
     assert re.findall(r"EX-\d+", _SESSIONS.read_text(encoding="utf-8")) == []
 
 
-def test_the_login_routes_write_no_record_through_the_lane() -> None:
-    """EX-10's premise and U42's condition (04 section 16.2; the e09 threat model, section 3.6.2):
-    until #2914's PR C adopts the façade (ADR-0037 Q2), `api/auth.py` reaches `AuditService.lane`
-    nowhere, so each record of the login routes goes through the writer and is refused with the
-    sink. That keeps a mint's write-ahead records off the lane: `auth.login`,
-    `auth.recovery_code_used` and `auth.session_revoked` are also the write-ahead records of a
-    mint, and a lane that took them would let a session be minted while the sink refuses (U42).
-    A `.lane` access or a `lane=` argument, such as `audit_service.lane.emit(...)`, fails this
-    test: PR C splits those actions, or keeps the mints on the writer, and changes it, EX-10 and
-    U42 together."""
-    reaches: list[int] = []
-    for node in ast.walk(ast.parse(_AUTH_ROUTER.read_text(encoding="utf-8"))):
-        if isinstance(node, ast.Attribute) and node.attr.startswith("lane"):
-            reaches.append(node.lineno)  # `audit_service.lane`, `audit_service.lane_parts()`
-        elif isinstance(node, ast.keyword) and node.arg == "lane":
-            reaches.append(node.value.lineno)  # `_audit(..., lane=True)`, as `api/sessions.py`
-    assert reaches == []
+def test_the_outcome_counter_covers_the_login_routes_rows() -> None:
+    """The login routes' outcome and refusal rows go to the lane since #2914's PR C, and a lost one
+    is counted under its own action. `auth.recovery_code_used`, the sixth login action of the
+    registry, is not among them: its one row is the recovery mint's write-ahead record, which stays
+    on the writer (U42), so it is never lost after its action."""
+    logins = {"auth.login", "auth.login_failed", "auth.account_locked", "auth.mfa_failed"}
+    assert logins | {"auth.recovery_codes_exhausted"} <= set(AUDIT_OUTCOME_ACTIONS)
+    assert "auth.recovery_code_used" not in AUDIT_OUTCOME_ACTIONS

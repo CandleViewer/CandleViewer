@@ -42,6 +42,11 @@ class _Audit:
     def __init__(self) -> None:
         self.writer = _Writer()
 
+    @property
+    def lane(self) -> _Writer:
+        """The façade (ADR-0037) without a lane: its fallback, the writer, takes each row."""
+        return self.writer
+
 
 class _Auth:
     is_active = True
