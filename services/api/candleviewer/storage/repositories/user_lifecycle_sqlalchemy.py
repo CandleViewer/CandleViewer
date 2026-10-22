@@ -33,11 +33,13 @@ from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     OwnerFloorCheck,
     counted_roles,
     effective_roles,
+    floor_refusal,
     lock_active_owners,
-    refuse_floor_violation,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.user_lifecycle import (
     REVOKED_REASON,
@@ -109,8 +111,10 @@ class SqlAlchemyUserLifecycleStore:
         written, a repeat included.
 
         Raises `UserSelfTargetError`, what `check` raises, what the owner-floor check raises for
-        the last active owner, what `audit` raises, or `WriteAheadTimeout` when `audit` outlives
-        `audit_timeout_s`; on any of them the transaction rolls back and nothing changes. A
+        the last active owner, what `audit` raises, a `StorageQueryFailed` typed by its facts
+        (`StorageConstraintViolated` for a constraint) for any refusal other than this change's
+        floor (#2748), or `WriteAheadTimeout` when `audit` outlives `audit_timeout_s`; on any of
+        them the transaction rolls back and nothing changes. A
         driver or commit `TimeoutError` is raised as is: the outcome is unknown. If the commit
         landed, the revoked ids are lost with the exception; `read_back_disable` finds them
         again (#3445). A retry is AC5's no-op and returns no ids."""
@@ -118,7 +122,6 @@ class SqlAlchemyUserLifecycleStore:
             raise UserSelfTargetError(str(user_id))
         uid = str(user_id)
         counted = _NO_ROLES  # the roles the owner floor counts: an active user's
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session
@@ -148,8 +151,8 @@ class SqlAlchemyUserLifecycleStore:
                 await bounded_write_ahead(audit(change), self._audit_timeout_s)
                 await uow.commit()
         except IntegrityError as exc:
-            refuse_floor_violation(exc, self._owner_floor, counted, _NO_ROLES)
-            raise
+            state, name = sqlstate_of(exc), constraint_of(exc)
+            raise floor_refusal(self._owner_floor, counted, _NO_ROLES, state, name) from None
         return change
 
     async def read_back_disable(

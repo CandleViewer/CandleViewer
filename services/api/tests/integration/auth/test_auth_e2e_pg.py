@@ -35,6 +35,8 @@ from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.mfa_sqlalchemy import SqlAlchemyMfaRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
 from scripts.seed_fixture_user import seed
 
@@ -394,6 +396,8 @@ async def test_owner_floor_rejects_removing_the_last_owner_role(pg_dsn: str) -> 
                     )
                 )
         assert getattr(excinfo.value.orig, "sqlstate", None) == "23514"
+        # the trigger names no constraint: what `floor_refusal` reads as the floor's (#2748)
+        assert (sqlstate_of(excinfo.value), constraint_of(excinfo.value)) == ("23514", None)
         async with engine.connect() as conn:
             left = await conn.execute(
                 sa.text(

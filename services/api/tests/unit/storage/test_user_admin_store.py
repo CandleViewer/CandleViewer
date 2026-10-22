@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import traceback
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -29,7 +30,7 @@ from sqlalchemy.exc import IntegrityError
 
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
-from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.errors import StorageConstraintViolated, WriteAheadTimeout
 from candleviewer.storage.repositories import identity_sqlalchemy as identity
 from candleviewer.storage.repositories import owner_floor_sqlalchemy as f
 from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as lifecycle
@@ -44,12 +45,13 @@ _ACTOR = uuid.UUID(int=0xF)
 _T = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 _DUE = datetime(2027, 1, 17, 12, 0, tzinfo=UTC)  # a pending purge's `purge_after` (E42-T10)
 _GUARD_S = 5.0  # ends a hang if the store stops bounding its audit hook
+_ROW = "canary-2748-row"  # a value the server's DETAIL would quote
 
 
 class _PgError(Exception):
-    def __init__(self, sqlstate: str) -> None:
-        super().__init__(sqlstate)
-        self.sqlstate = sqlstate
+    def __init__(self, sqlstate: str, constraint: str | None = None) -> None:
+        super().__init__(f"Failing row contains ({_ROW})")
+        self.sqlstate, self.constraint_name = sqlstate, constraint
 
 
 def _floor(current: frozenset[str], new: frozenset[str], owners: int) -> None:
@@ -78,6 +80,7 @@ class _Db:
         self.commit_error: BaseException | None = None
         self.raise_at: Any = None  # a statement that raises `IntegrityError(sqlstate)`
         self.sqlstate = "23503"
+        self.constraint: str | None = None
         self.read_misses = False  # the `User` read finds nothing (a row the read filters out)
 
     def owners(self, rows: Mapping[uuid.UUID, dict[str, Any]] | None = None) -> int:
@@ -98,7 +101,7 @@ class _Db:
         async def execute(stmt: Any, params: dict[str, Any] | None = None) -> Any:
             self.ran.append(stmt)
             if stmt is self.raise_at:
-                raise IntegrityError("statement", None, _PgError(self.sqlstate))
+                raise IntegrityError("statement", None, _PgError(self.sqlstate, self.constraint))
             p = params or {}
             user = work.get(uuid.UUID(p["id"])) if "id" in p else None
             if stmt is role_store._STATUS:
@@ -327,7 +330,35 @@ async def test_a_trigger_violation_maps_onto_the_floor_refusal() -> None:
             audit=_Hook(db),
         )
     assert isinstance(refused.value.__context__, IntegrityError) and db.trigger_fired
+    assert refused.value.__cause__ is None and refused.value.__suppress_context__  # #2748
+    assert _ROW not in "".join(traceback.format_exception(refused.value))
     assert db.commits == 0 and db.users[_A]["roles"] == {"owner"}
+
+
+@pytest.mark.parametrize(
+    ("sqlstate", "constraint"),
+    [("23514", "users_purge_shape"), ("23502", None)],
+    ids=["named-check", "not-null"],
+)
+async def test_only_the_triggers_unnamed_23514_is_the_floor_refusal(
+    sqlstate: str, constraint: str | None
+) -> None:
+    """The floor's trigger raises 23514 naming no constraint; a named CHECK's 23514, or a NOT
+    NULL refusal (23502, which names none), in a change that drops an owner is a defect, never a
+    false `owner_floor` refusal (#2748)."""
+    db = _Db(a=("active", ("owner",)), b=("active", ("viewer",)))
+    db.raise_at, db.sqlstate, db.constraint = f.CONSTRAINTS_NOW, sqlstate, constraint
+    store = m.SqlAlchemyUserAdminStore(_rel(db), owner_floor=_lenient_then_strict())
+    with pytest.raises(StorageConstraintViolated) as refused:
+        await store.update_user(
+            _A,
+            UserPatch(roles=frozenset({"viewer"})),
+            actor=_ACTOR,
+            check=_no_check,
+            audit=_Hook(db),
+        )
+    assert (refused.value.sqlstate, refused.value.constraint) == (sqlstate, constraint)
+    assert db.commits == 0
 
 
 def _lenient_then_strict() -> Any:
@@ -460,12 +491,26 @@ async def test_a_refused_enable_record_keeps_the_purge_pending() -> None:
     assert (db.users[_B]["status"], db.users[_B]["purge_after"]) == ("disabled", _DUE)
 
 
-async def test_another_integrity_error_is_raised_as_it_is_and_nothing_commits() -> None:
-    """Only the trigger's 23514 is the floor's refusal; any other integrity error is a defect."""
+@pytest.mark.parametrize(
+    ("statement", "sqlstate", "constraint"),
+    [
+        (role_store.DROP_ROLES, "23503", "user_roles_role_id_fkey"),
+        (f.CONSTRAINTS_NOW, "23514", None),
+    ],
+    ids=["foreign-key", "not-the-floor"],
+)
+async def test_another_integrity_error_is_typed_by_its_facts_and_nothing_commits(
+    statement: Any, sqlstate: str, constraint: str | None
+) -> None:
+    """Only the trigger's 23514 for this change is the floor's refusal; any other integrity error
+    is a defect, typed by its SQLSTATE and constraint alone, never chaining the row (#2748)."""
     db = _Db(a=("active", ("owner",)), b=("active", ("viewer",)))
-    db.raise_at = role_store.DROP_ROLES
-    with pytest.raises(IntegrityError):
+    db.raise_at, db.sqlstate, db.constraint = statement, sqlstate, constraint
+    with pytest.raises(StorageConstraintViolated) as refused:
         await _update(db, _B, UserPatch(roles=frozenset({"manager"})))
+    assert (refused.value.sqlstate, refused.value.constraint) == (sqlstate, constraint)
+    assert refused.value.__cause__ is None and refused.value.__suppress_context__
+    assert _ROW not in "".join(traceback.format_exception(refused.value))
     assert db.commits == 0 and db.users[_B]["roles"] == {"viewer"}
 
 

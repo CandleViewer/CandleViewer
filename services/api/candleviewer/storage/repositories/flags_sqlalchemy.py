@@ -20,8 +20,8 @@ an integer: repairing it to another kind's value needs the data migration too (`
 
 A database that cannot serve the call is `StorageTierUnavailable` with a fixed message (no driver
 text, no bound value: C-12.6), a failed COMMIT included, though that write may have landed; any
-other database error is a bug and keeps its type, and what `prepare` raises reaches the caller as
-is.
+other database error is a bug, raised as `query_failure` (#2748), and what `prepare` raises
+reaches the caller as is.
 """
 
 from __future__ import annotations
@@ -41,6 +41,10 @@ from sqlalchemy import exc as sa_exc
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    is_outage,
+    query_failure,
+    sqlstate_of,
 )
 
 
@@ -93,12 +97,6 @@ class FlagRowMissingError(LookupError):
 #: Awaited under the row lock with the row as stored; returns the change, or raises to write none.
 RowPrepare = Callable[[FlagRow], Awaitable[FlagChange]]
 
-#: SQLSTATE classes of "the database cannot serve this now": connection (08), transaction rollback
-#: incl. deadlock (40), resources (53), operator intervention incl. statement timeout 57014 (57),
-#: system (58); plus lock_not_available 55P03. Data (22), integrity (23) and syntax or access (42)
-#: errors are bugs, and so is a missing SQLSTATE (as the settings repository, #2944).
-_OUTAGE_CLASSES: Final = frozenset({"08", "40", "53", "57", "58"})
-_LOCK_NOT_AVAILABLE: Final = "55P03"
 _FOREIGN_KEY: Final = "23503"
 
 _TIMEOUTS = sa.text(
@@ -161,45 +159,27 @@ def _log() -> Any:
     return structlog.get_logger(__name__)
 
 
-def _sqlstate(exc: BaseException) -> str | None:
-    """The SQLSTATE a driver error carries: its wrapped error (`orig`), then its causes."""
-    orig = getattr(exc, "orig", None)
-    for src in (orig, getattr(orig, "__cause__", None), exc.__cause__):
-        for attr in ("sqlstate", "pgcode"):
-            code = getattr(src, attr, None)
-            if isinstance(code, str) and len(code) == 5:
-                return code
-    return None
-
-
-def _is_outage(exc: BaseException) -> bool:
-    if isinstance(
-        exc, OSError | sa_exc.OperationalError | sa_exc.InterfaceError | sa_exc.TimeoutError
-    ):
-        return True  # unreachable, closed, pool exhausted
-    if not isinstance(exc, sa_exc.DBAPIError):
-        return False
-    if exc.connection_invalidated:
-        return True
-    state = _sqlstate(exc)
-    return state is not None and (state[:2] in _OUTAGE_CLASSES or state == _LOCK_NOT_AVAILABLE)
-
-
 @contextmanager
 def _outage(own: Sequence[BaseException] = ()) -> Iterator[None]:
-    """A database that cannot serve the call becomes `StorageTierUnavailable`; a bug, and what
-    `prepare` raised (`own`, by identity), stay as they are."""
-    # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
+    """A database that cannot serve the call becomes `StorageTierUnavailable`, any other database
+    error a `StorageQueryFailed` typed by its facts (#2748), each raised `from None`; what
+    `prepare` raised (`own`, by identity) passes as it is, re-raised after the handler."""
+    passing: BaseException | None = None
     try:
         yield
     except (OSError, sa_exc.SQLAlchemyError) as exc:
-        if any(exc is mine for mine in own) or not _is_outage(exc):
-            raise
-        state = _sqlstate(exc)
-        _log().error(
-            "feature_flag_repository_unavailable", error=type(exc).__name__, sqlstate=state
-        )
-        raise StorageTierUnavailable("the feature-flag store is unavailable") from None
+        if any(exc is mine for mine in own):
+            passing = exc  # the object `prepare` raised, which the unit of work stripped in place
+        elif not is_outage(exc):
+            raise query_failure(sqlstate_of(exc), constraint_of(exc)) from None
+        else:
+            state = sqlstate_of(exc)
+            _log().error(
+                "feature_flag_repository_unavailable", error=type(exc).__name__, sqlstate=state
+            )
+            raise StorageTierUnavailable("the feature-flag store is unavailable") from None
+    if passing is not None:
+        raise passing
 
 
 def _seed(seed: FlagSeed) -> dict[str, Any]:
@@ -281,12 +261,12 @@ class SqlAlchemyFlagRepository:
                 keep = [o["user_id"] for o in users]
                 await s.execute(_DROP_USERS, {"id": flag_id, "keep": keep})
                 put = {"id": flag_id, "overrides": json.dumps(users), "by": by}
-                # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
                 try:
                     await s.execute(_PUT_USERS, put)
                 except sa_exc.IntegrityError as exc:
-                    if _sqlstate(exc) != _FOREIGN_KEY:
-                        raise
+                    state, name = sqlstate_of(exc), constraint_of(exc)
+                    if state != _FOREIGN_KEY:
+                        raise query_failure(state, name) from None
                     raise FlagRowMissingError("an override's user") from None
                 await uow.commit()
         new = dict(change.user_overrides)

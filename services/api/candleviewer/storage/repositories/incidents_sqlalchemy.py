@@ -11,7 +11,7 @@ type: asyncpg reports a statement timeout and a data error as the same generic `
 database that cannot serve the read leaves as `StorageTierUnavailable` with no driver text (it can
 carry the DSN), its class and SQLSTATE logged here: classes 08 (connection), 53 (resources), 57
 (operator intervention, with the statement timeout 57014), 58 (system), no SQLSTATE at all, a lost
-socket or an exhausted pool. A statement the database refuses is a bug and keeps its type:
+socket or an exhausted pool. A refused statement is a bug, typed by its facts (`query_failure`):
 classes 22 (data), 23 (constraint), 42 (syntax or access rule) and XX (internal). Any other class
 is an outage too: the read is idempotent, so a retry is harmless, and the logged SQLSTATE shows one
 that never clears. Rows are `IncidentRow`s built by column name, so a drifted column fails loudly.
@@ -67,6 +67,9 @@ from candleviewer.storage.repositories.incidents import (
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    query_failure,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.user_roles_sqlalchemy import (
     WRITE_AHEAD_TIMEOUT_S,
@@ -152,7 +155,6 @@ class SqlAlchemyIncidents:
     async def page(
         self, *, status: str | None, after: Position | None, limit: int
     ) -> list[IncidentRow]:
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._rel.unit_of_work() as uow:  # read-only: no commit
                 await uow.session.execute(_TIMEOUT, {"timeout": READ_TIMEOUT})
@@ -160,7 +162,7 @@ class SqlAlchemyIncidents:
                 return [IncidentRow(**row) for row in result.mappings()]
         except (OSError, sa_exc.SQLAlchemyError) as exc:
             if not _is_outage(exc):
-                raise
+                raise query_failure(sqlstate_of(exc), constraint_of(exc)) from None
             structlog.get_logger(__name__).error(
                 "incidents_read_failed", error=type(exc).__name__, sqlstate=_sqlstate(exc)
             )
@@ -178,7 +180,6 @@ class SqlAlchemyIncidents:
     async def acknowledge(
         self, incident_id: UUID, *, by: UUID, write_ahead: AckWriteAhead
     ) -> AckResult:
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._rel.unit_of_work() as uow:
                 session = uow.session
@@ -198,7 +199,7 @@ class SqlAlchemyIncidents:
             raise  # the hook's bound, not the database's, although it is an `OSError` too
         except (OSError, sa_exc.SQLAlchemyError) as exc:
             if not _is_outage(exc):
-                raise
+                raise query_failure(sqlstate_of(exc), constraint_of(exc)) from None
             structlog.get_logger(__name__).error(
                 "incidents_write_failed", error=type(exc).__name__, sqlstate=_sqlstate(exc)
             )

@@ -5,8 +5,8 @@ two could each remove one of the last two owners. A change that can remove an ac
 the target user (`LOCK_USER`), then every active-owner grant in key order (`lock_active_owners`:
 such changes queue, never deadlock), applies the injected `OwnerFloorCheck` (M18; storage may
 not import auth) to the count read after that lock and to the target's `counted_roles`, and
-fires the deferred trigger before its write-ahead audit (`CONSTRAINTS_NOW`);
-`refuse_floor_violation` maps its 23514 onto the check.
+fires the deferred trigger before its write-ahead audit (`CONSTRAINTS_NOW`); `floor_refusal`
+maps its 23514 onto the check, from the error's facts alone (#2748).
 """
 
 from __future__ import annotations
@@ -14,8 +14,9 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import sqlalchemy as sa
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from candleviewer.storage.repositories.relational_sqlalchemy import query_failure
 
 #: `(current_roles, new_roles, active_owner_count)`; raises to refuse the change.
 OwnerFloorCheck = Callable[[frozenset[str], frozenset[str], int], None]
@@ -69,10 +70,20 @@ async def lock_active_owners(session: AsyncSession) -> int:
     return int((await session.execute(COUNT_OWNERS)).scalar_one())
 
 
-def refuse_floor_violation(
-    exc: IntegrityError, check: OwnerFloorCheck, current: frozenset[str], new: frozenset[str]
-) -> None:
-    """Map the trigger's 23514 (the database saw no active owner left) onto `check`'s refusal;
-    return for any other error, which the caller re-raises."""
-    if getattr(exc.orig, "sqlstate", None) == _CHECK_VIOLATION:
-        check(current, new, 0)
+def floor_refusal(
+    check: OwnerFloorCheck,
+    current: frozenset[str],
+    new: frozenset[str],
+    state: str | None,
+    constraint: str | None,
+) -> Exception:
+    """The error a refused statement leaves as, from its SQLSTATE and constraint alone (#2748,
+    C-12.6): the trigger's 23514 (the database saw no active owner left; it names no constraint)
+    as `check`'s refusal, anything else, a named CHECK's 23514 included, as `query_failure`. Raise
+    it `from None`."""
+    if state == _CHECK_VIOLATION and constraint is None:
+        try:
+            check(current, new, 0)
+        except Exception as refusal:  # the floor's own error (409 at the edge)
+            return refusal
+    return query_failure(state, constraint)
