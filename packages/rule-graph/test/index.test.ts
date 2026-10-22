@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import type { RuleIr as GeneratedRuleIr } from "@candleviewer/protocol/rule-ir";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import type { RuleGraphErrorCode, RuleIr } from "../src/index.js";
 
 // The public entry is the package's contract: pin what it exports at runtime. The RuleIr and
 // RuleGraphErrorCode types are erased, so only the values show.
@@ -9,5 +11,17 @@ describe("the public entry", () => {
       "RuleGraphError",
       "isRuleGraphError",
     ]);
+  });
+
+  // Erased at runtime, so `tsc` (typecheck) holds this one: test/ is in tsconfig's include.
+  it("re-exports the generated RuleIr type and exactly the error code union", () => {
+    expectTypeOf<RuleIr>().toEqualTypeOf<GeneratedRuleIr>();
+    expectTypeOf<RuleGraphErrorCode>().toEqualTypeOf<
+      | "CYCLE_DETECTED"
+      | "DANGLING_PORT"
+      | "ORPHAN_NODE"
+      | "NOT_FORM_REPRESENTABLE"
+      | "SCHEMA_VIOLATION"
+    >();
   });
 });
