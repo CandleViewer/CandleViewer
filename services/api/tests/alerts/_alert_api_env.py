@@ -149,17 +149,22 @@ class Audit:
 
 
 class Env:
-    """App with two users; `as_user` switches the caller, `perms` the caller's grants."""
+    """App with two users: `user` is the caller, `perms` its permissions, `granted` its account
+    grants and `owner` whether it holds the Owner role."""
 
     def __init__(self, *, wired: bool = True) -> None:
         self.repo, self.audit = FakeAlertRepo(), Audit()
         self.user: str | None = USER_A
         self.perms = frozenset({"alerts:read", "alerts:write"})
+        self.granted: frozenset[str] = frozenset()  # the caller's account grants
+        self.owner = False  # the caller holds the Owner role
         self.compiles: list[str | None] = []
         self.repo_up, self.registry_up = True, True
 
         def resolve(_r: Request) -> Actor | None:
-            return None if self.user is None else Actor(self.user, "s", self.perms)
+            if self.user is None:
+                return None
+            return Actor(self.user, "s", self.perms, self.granted, is_owner=self.owner)
 
         app = FastAPI()
         app.include_router(
