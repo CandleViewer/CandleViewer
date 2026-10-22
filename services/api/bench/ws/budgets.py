@@ -46,14 +46,17 @@ MIN_FEED_RATIO: Final = 0.99
 MAX_CLOCK_SKEW_MS: Final = 5.0
 #: k6's trends of the hello's clock skew, absolute ms (`tests/load/ws/lib/skew.js`). The raw one is
 #: the server's `clock_skew_ms` as it came: with k6 and the backend on one clock it is the hello's
-#: transit and queueing, not drift. The guard judges the corrected one, which takes half the hello's
-#: round trip off first. Raw is judged instead for a summary from before the correction (raw trend
+#: transit and queueing, not drift. The corrected one takes half the hello's round trip off. Pooled
+#: over the VUs, these are only the guard's fallback: it reads each VU's own pair (`clock_skew`).
+#: Raw is judged instead for a summary from before the correction (raw trend
 #: only). A run that injects a send delay (the self-check) only reports the skew: the delay holds
 #: the welcome after the server's stamp, so no reading of it means anything, and budget #6, which
 #: the self-check is about, is the server's own histogram.
 SKEW_RAW: Final = "cv_clock_skew_ms"
 SKEW_CORRECTED: Final = "cv_clock_skew_corrected_ms"
 HELLO_RTT: Final = "cv_hello_rtt_ms"
+#: `skew_estimator`: which hello the guard's figure is read at (`clock_skew`).
+MIN_RTT_HELLO, MAX_OVER_HELLOS, RAW_MAX = "min_rtt_hello", "max_over_hellos", "raw_max"
 SCRAPE_LINE: Final = "scrape.metrics_timeout"
 #: What reads the server's counter deltas, so is not judged when a boundary scrape never answered.
 SCRAPE_BUDGETS: Final = (
@@ -185,13 +188,17 @@ def _ms(value: float | None) -> str:
 class ClockSkew:
     """The hello's clock skew k6 measured, in absolute ms: the figure the guard reads, and why."""
 
-    max_ms: float  # the max over the hellos; compared with `MAX_CLOCK_SKEW_MS` when `judged`
+    skew_ms: float  # compared with `MAX_CLOCK_SKEW_MS` when `judged`
+    skew_estimator: str  # how `skew_ms` was read: `MIN_RTT_HELLO`, `MAX_OVER_HELLOS` or `RAW_MAX`
     raw: float | None  # the max of the server's own `clock_skew_ms`
     rtt_p50: float | None  # the hello-to-welcome round trip
     rtt_max: float | None
-    hellos: int  # the samples behind `max_ms`
-    rtt_corrected: bool  # `max_ms` is RTT-corrected; False: it is the raw max (see `clock_skew`)
+    hellos: int  # the samples behind `skew_ms`
+    rtt_corrected: bool  # `skew_ms` is RTT-corrected; False: it is the raw max (see `clock_skew`)
     send_delay_ms: float = 0.0  # the run's injected send delay: the skew is reported, not judged
+    hello_raw: float | None = None  # `MIN_RTT_HELLO`: that hello's own raw skew and round trip
+    hello_rtt: float | None = None
+    warning: str | None = None  # a judged fallback from `MIN_RTT_HELLO`, and why (`clock_skew`)
 
     @property
     def judged(self) -> bool:
@@ -199,20 +206,23 @@ class ClockSkew:
 
     @property
     def text(self) -> str:
-        """What the guard read, for the INVALID line and the report: `corrected max 3.0 ms against
-        5 ms (max over 6 hellos of |raw - RTT/2|; raw max 13.0 ms; hello RTT p50 20.0 ms / ...)`."""
+        """What the guard read, for the INVALID line and the report: `corrected 0.5 ms against 5 ms
+        (the minimum-RTT hello of 6: raw 2.0 ms, RTT 3.0 ms; hello RTT p50 7.5 ms / ...)`."""
         if self.rtt_corrected:
-            kind, of, note = "corrected", "|raw - RTT/2|", f"raw max {_ms(self.raw)}"
+            kind, of, note = "corrected max", "|raw - RTT/2|", f"raw max {_ms(self.raw)}"
         else:
-            kind, of = "raw", "|raw|"
+            kind, of = "raw max", "|raw|"
             note = f"not RTT-corrected: the summary has no {SKEW_CORRECTED}"
             if not self.judged:
                 note = f"send delay {self.send_delay_ms:g} ms injected: reported, not judged"
         hellos = f"{self.hellos} hello{'s' if self.hellos > 1 else ''}"
         parts = [f"max over {hellos} of {of}", note]
+        if self.skew_estimator == MIN_RTT_HELLO:  # one hello's reading, not a max
+            hello = f"raw {_ms(self.hello_raw)}, RTT {_ms(self.hello_rtt)}"
+            kind, parts = "corrected", [f"the minimum-RTT hello of {self.hellos}: {hello}"]
         if self.rtt_max is not None:
             parts.append(f"hello RTT p50 {_ms(self.rtt_p50)} / max {_ms(self.rtt_max)}")
-        head = f"{kind} max {self.max_ms:.1f} ms"
+        head = f"{kind} {self.skew_ms:.1f} ms"
         if self.judged:
             head += f" against {MAX_CLOCK_SKEW_MS:g} ms"
         return f"{head} ({'; '.join(parts)})"
@@ -278,18 +288,46 @@ def _scalar(value: float, n: float = 1.0) -> dict[str, float]:
 
 
 def clock_skew(summ: Mapping[str, Any], send_delay_ms: float = 0.0) -> ClockSkew | None:
-    """The hello's clock skew from the k6 summary: the corrected trend is read. The raw one is read
-    instead when the run injects a send delay (it holds the welcome after the server's stamp, which
-    breaks the correction's even split of the round trip) and for a summary from before the
-    correction. `None` when no welcome was timed."""
+    """The hello's clock skew from the k6 summary: the corrected skew |raw - RTT/2| of the hello
+    with the shortest round trip (`MIN_RTT_HELLO`), NTP's minimum-delay filter, from the pairs the
+    client keeps (`hellos`). A hello that queued on its way carries that wait, not the clocks'
+    offset, and the fastest one carries the least: on one host clock, profile A's run 3 read 18 ms
+    by the max over its six hellos, all of it one hello's 40 ms raw on a 44 ms round trip (the
+    median round trip was 7.5 ms). Only a usable pair for every timed hello is read (one with a
+    negative round trip, the client's clock stepped back, is dropped); otherwise the corrected
+    trend's max is (`MAX_OVER_HELLOS`, never below the minimum-RTT reading), and `warning` says so.
+    The raw max (`RAW_MAX`) is read instead when the run injects a send delay (it holds the welcome
+    after the server's stamp, which breaks the correction's even split of the round trip; its pairs
+    are never read) and for a summary from before the correction. `None` when no welcome was
+    timed."""
     raw, corrected = _stat(summ, SKEW_RAW, "max"), _stat(summ, SKEW_CORRECTED, "max")
     rtt_corrected = corrected is not None and send_delay_ms <= 0
     read = corrected if rtt_corrected else raw
+    hellos = int(_stat(summ, SKEW_CORRECTED if rtt_corrected else SKEW_RAW, "count") or 0)
+    est = MAX_OVER_HELLOS if rtt_corrected else RAW_MAX
+    hello: tuple[float, float] | None = None
+    why = f"the summary has no {SKEW_CORRECTED}"
+    if rtt_corrected:
+        why = "the summary has no per-hello pairs"
+        pairs = [(float(h["raw"]), float(h["rtt"])) for h in summ.get("hellos") or ()]
+        usable = [p for p in pairs if p[1] >= 0]
+        if pairs and len(usable) != hellos:
+            n = len(usable)
+            why = f"the summary's {n} usable per-hello pairs do not match its {hellos} timed hellos"
+        elif usable:
+            # ties on the shortest round trip (k6 times whole ms) go to the smallest |raw - RTT/2|,
+            # then to the smallest raw, so the hello read does not depend on the order they came in
+            hello = min(usable, key=lambda h: (h[1], abs(h[0] - h[1] / 2), h[0]))
+            est, read, hellos = MIN_RTT_HELLO, abs(hello[0] - hello[1] / 2), len(usable)
     if read is None:
         return None
-    hellos = int(_stat(summ, SKEW_CORRECTED if rtt_corrected else SKEW_RAW, "count") or 0)
     rtt_p50, rtt_max = _stat(summ, HELLO_RTT, "p50"), _stat(summ, HELLO_RTT, "max")
-    return ClockSkew(read, raw, rtt_p50, rtt_max, hellos, rtt_corrected, send_delay_ms)
+    h_raw, h_rtt = hello or (None, None)
+    fallback = f"{why}; the skew was measured with {est} (the fallback)"
+    note = None if hello or send_delay_ms > 0 else fallback  # a send-delay run is not judged
+    return ClockSkew(
+        read, est, raw, rtt_p50, rtt_max, hellos, rtt_corrected, send_delay_ms, h_raw, h_rtt, note
+    )
 
 
 def evaluate(
@@ -493,7 +531,7 @@ def evaluate(
     # the runner hands the backend `int(send_delay_ms)`: 0.5 injects no delay, so it is judged
     skew = clock_skew(summ, float(int(prof.get("send_delay_ms") or 0)))
     res.clock_skew = skew
-    if skew is not None and skew.judged and skew.max_ms > MAX_CLOCK_SKEW_MS:
+    if skew is not None and skew.judged and skew.skew_ms > MAX_CLOCK_SKEW_MS:
         res.invalid.append(f"clock_skew: {skew.text}")
     lag95 = _stat(summ, "cv_client_lag_ms", "p95")
     if lag95 is not None and lag95 >= CLIENT_LAG_P95_MS:

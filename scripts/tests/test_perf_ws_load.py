@@ -3,7 +3,7 @@
 Nothing else runs it: it is dispatched by hand on the self-hosted bench runner, so these are the
 checks it gets. They pin what the header claims (dispatch only, read-only permissions, inputs reach
 scripts through env, actions pinned by SHA, no token kept by the checkout, no session handle in the
-artifact, k6 pinned by sha256 twice, a first step that refuses while the 24 h soak runs) and run the
+artifact, k6 pinned by sha256 twice, a first step that refuses while a 24 h soak runs) and run the
 load step under `bash -e`, as the runner does, with a stand-in `uv`: a red run must not end the loop,
 and the step exits with the worst code of its runs.
 """
@@ -25,6 +25,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "perf-ws-load.yml"
 SOAK = ROOT / ".github" / "workflows" / "perf-ingestion-nightly.yml"
+#: The bars soak's memory legs (job `leg`, up to 23 h on the same runner); not on main yet.
+MEMDIAG = ROOT / ".github" / "workflows" / "perf-bars-memdiag.yml"
 #: A stand-in `uv`: logs its arguments, one JSON list per call, and exits with the next code of
 #: UV_EXITS (comma separated; the last one repeats).
 FAKE_UV = """import json, os, sys
@@ -122,6 +124,89 @@ def test_k6_is_pinned_by_sha256_twice_and_the_first_step_refuses_while_the_soak_
     assert (
         "bench" in _soak_job()["runs-on"]
     )  # the same runner, so the guard is the only fence
+    assert MEMDIAG.name in guard and "(HTTP 404)" in guard
+    # the guard matches a job by its display name: a `name:` or a matrix would change it
+    assert not {"name", "strategy"} & set(_soak_job())
+    if MEMDIAG.exists():  # until it lands, the API's 404 for it means none runs (below)
+        leg = _doc(MEMDIAG)["jobs"]["leg"]
+        assert "bench" in leg["runs-on"] and not {"name", "strategy"} & set(leg)
+
+
+#: A stand-in `gh` for the two calls the step makes, a paginated runs listing and a run's jobs
+#: (`per_page=100`); any other call fails. GH_ANSWER (JSON): `fail` maps a workflow file to [exit
+#: code, error line] (gh prints the error body, then that line), `runs` maps "file:status" to run
+#: ids and `jobs` a run id to [name, status] pairs, counted as the step's filter counts the queued
+#: or running jobs of the name it selects.
+FAKE_GH = """import json, os, re, sys
+args = sys.argv[1:]
+path, jq = next(a for a in args if a.startswith("repos/")), args[args.index("--jq") + 1]
+answer = json.loads(os.environ["GH_ANSWER"])
+for wf, (code, line) in answer.get("fail", {}).items():
+    if f"/workflows/{wf}/" in path:
+        print('{"message": "error"}')
+        sys.stderr.write(line + "\\n")
+        sys.exit(code)
+if m := re.fullmatch(r"repos/o/r/actions/runs/(\\d+)/jobs\\?per_page=100", path):
+    name = re.search(r'\\.name == "([^"]+)"', jq).group(1)
+    jobs = answer.get("jobs", {}).get(m.group(1), [])
+    print(sum(n == name and s in ("queued", "in_progress") for n, s in jobs))
+elif m := "--paginate" in args and re.search(r"workflows/([^/]+)/runs\\?status=(\\w+)&", path):
+    print("\\n".join(map(str, answer.get("runs", {}).get("{}:{}".format(*m.groups()), []))))
+else:
+    sys.exit("unexpected gh call: " + " ".join(args))
+"""
+NOT_FOUND = [1, "gh: Not Found (HTTP 404)"]
+# not gh's whole line, so the guard fails closed on it
+NEAR_MISS = [1, "gh: Not Found (HTTP 404) for o/r"]
+SERVER_ERROR = [1, "gh: Server Error (HTTP 500)"]
+LEGS, PACK = MEMDIAG.name, SOAK.name
+
+
+def _guard(tmp_path: Path, answer: dict[str, Any]) -> subprocess.CompletedProcess[str]:
+    """The guard step's script under `bash -e` with a stand-in `gh` that answers `answer`."""
+    bash = shutil.which("bash") or ""
+    if not bash:  # CI runs these fail-closed proofs
+        (pytest.fail if os.environ.get("CI") else pytest.skip)("bash runs the step")
+    gh = tmp_path / "gh"
+    gh.write_text(f"#!{sys.executable}\n{FAKE_GH}", encoding="utf-8")
+    gh.chmod(0o755)
+    path = f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}"
+    return subprocess.run(
+        [bash, "-e", "-c", _steps()[0]["run"]],
+        cwd=tmp_path,
+        env={"PATH": path, "GITHUB_REPOSITORY": "o/r", "GH_ANSWER": json.dumps(answer)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+def _held(wf: str, job: str, status: str) -> dict[str, Any]:
+    """An answer in which `wf` has one run whose job `job` is `status`."""
+    return {"runs": {f"{wf}:{status}": [7]}, "jobs": {"7": [[job, status]]}}
+
+
+@pytest.mark.parametrize(
+    ("answer", "code", "said"),
+    [
+        ({}, 0, ""),
+        ({"fail": {LEGS: NOT_FOUND}}, 0, f"{LEGS}: not on this repository yet"),
+        (_held(LEGS, "leg", "queued"), 1, f"{LEGS} (job leg)"),
+        (_held(LEGS, "leg", "in_progress"), 1, f"{LEGS} (job leg)"),
+        (_held(PACK, "perf-pack-full", "queued"), 1, f"{PACK} (job perf-pack-full)"),
+        ({"fail": {LEGS: SERVER_ERROR}}, 1, "(HTTP 500)"),
+        ({"fail": {LEGS: NEAR_MISS}}, 1, "(HTTP 404) for o/r"),
+        # only the legs' workflow may be missing: a 404 for the pack's fails closed
+        ({"fail": {PACK: NOT_FOUND}}, 1, "(HTTP 404)"),
+    ],
+)
+def test_the_guard_refuses_while_either_soak_holds_the_runner_and_fails_closed_on_errors(
+    tmp_path: Path, answer: dict[str, Any], code: int, said: str
+) -> None:
+    done = _guard(tmp_path, answer)
+    assert done.returncode == code, done.stdout + done.stderr
+    assert said in done.stdout + done.stderr
 
 
 def test_the_follow_up_steps_test_the_run_count_they_need() -> None:

@@ -246,8 +246,12 @@ def exit_code(answer: Mapping[str, Any]) -> int:
 
 
 def headline(answer: Mapping[str, Any]) -> str:
-    """The line `runner w5` prints first: the recommendation and why, or that there is no usable
-    answer (never "every rule met" for an answer that has no table)."""
-    if answer["recommendation"] == "no_data":
-        return "W5: no usable answer"
+    """The line `runner w5` prints first: the recommendation and why, or, for every answer
+    `exit_code` holds red (no data, no table, a mixed phase left out), that there is no usable
+    answer, so a red log never opens with a recommendation. It counts the phases left out; the
+    note under it names each one, once."""
+    if exit_code(answer):
+        n = len(answer["skipped"])
+        left = f" ({n} mixed phase{'' if n == 1 else 's'} left out)" if n else ""
+        return f"W5: no usable answer{left}"
     return f"W5: {answer['recommendation']}: {'; '.join(answer['reasons']) or 'every rule met'}"

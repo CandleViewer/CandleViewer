@@ -18,7 +18,7 @@
 import { fail } from "k6";
 import { Connection } from "./lib/client.js";
 import { checkVectors } from "./lib/cvwb.js";
-import { M, clock, summarize, summaryTrendStats } from "./lib/measure.js";
+import { M, clock, helloTrends, summarize, summaryTrendStats } from "./lib/measure.js";
 import { resolve, topicsFor, wsUrl } from "./lib/profile.js";
 
 const PORT = __ENV.PORT || "8080";
@@ -48,6 +48,8 @@ function profile() {
 const P = profile();
 const CLOCK = clock(__ENV);
 const CONNECTIONS = P.users * P.connections;
+const VUS = CONNECTIONS + (P.probe ? 1 : 0);
+const HELLOS = helloTrends(VUS); // each VU's own pair of hello trends, made in the init context
 const TH = TABLE.thresholds;
 const GATED =
   P.gate_on === "including" ? "cv_tick_decode_ms_trades" : "cv_release_decode_ms_trades";
@@ -56,7 +58,7 @@ export const options = {
   scenarios: {
     clients: {
       executor: "per-vu-iterations",
-      vus: CONNECTIONS + (P.probe ? 1 : 0),
+      vus: VUS,
       iterations: 1,
       maxDuration: `${Math.ceil((CLOCK.endAt - Date.now()) / 1000) + 120}s`,
     },
@@ -119,6 +121,7 @@ function connect() {
     probeEveryS: P.probe_every_s,
     refSymbol: TABLE.reference_symbol,
     traceSp: __ENV.TRACE_SP === "1",
+    hello: HELLOS[__VU - 1],
   }).start();
 }
 

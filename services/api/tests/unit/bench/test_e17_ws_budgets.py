@@ -9,11 +9,14 @@ self-check).
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from bench.ingestion import HARNESS_VERSION as E08_HARNESS_VERSION
 from bench.ingestion import gate
@@ -325,6 +328,124 @@ def test_a_send_delay_under_a_millisecond_injects_none_so_the_skew_is_still_judg
 def test_a_single_hello_is_not_pluralised_in_the_skew_line() -> None:
     res = evaluate(summary(cv_clock_skew_ms=trend(6.0, n=1)))
     assert "(max over 1 hello of |raw|;" in res.invalid[0]
+
+
+# -- the guard reads the minimum-RTT hello, NTP's minimum-delay filter ------------------------
+
+#: Six hellos as (signed raw skew, round trip) ms on one host clock: five clean ones and one that
+#: queued (raw 40 on a 44 ms round trip). k6's trends of them are the ones profile A's run 3
+#: recorded on cv-bench-01 on 2026-10-22 (RTT p50 7.5 / max 44, raw max 40, corrected max 18).
+RUN3_HELLOS = [(2.0, 3.0), (3.0, 4.0), (4.0, 7.0), (5.0, 8.0), (5.0, 12.0), (40.0, 44.0)]
+#: The note a fallback carries, loud in result.json and the report (`warning`).
+NO_PAIRS = (
+    "the summary has no per-hello pairs; the skew was measured with max_over_hellos (the fallback)"
+)
+
+
+def k6_trend(values: list[float]) -> dict[str, float]:
+    """`values` as a k6 trend summarises them: a percentile interpolates between two ranks."""
+    s = sorted(values)
+
+    def p(q: float) -> float:
+        i = q * (len(s) - 1)
+        return s[math.floor(i)] + (s[math.ceil(i)] - s[math.floor(i)]) * (i - math.floor(i))
+
+    return {"count": len(s), "p50": p(0.5), "p95": p(0.95), "p99": p(0.99), "max": s[-1]}
+
+
+def paired(hellos: list[tuple[float, float]], *, pairs: bool = True) -> dict[str, Any]:
+    """The summary k6 writes for `hellos`: the three pooled trends and, unless `pairs` is False (a
+    summary from before the client kept the pairs), each VU's hello in `hellos`."""
+    summ = summary(
+        cv_clock_skew_ms=k6_trend([abs(raw) for raw, _ in hellos]),
+        cv_clock_skew_corrected_ms=k6_trend([abs(raw - rtt / 2) for raw, rtt in hellos]),
+        cv_hello_rtt_ms=k6_trend([rtt for _, rtt in hellos]),
+    )
+    if pairs:
+        summ["hellos"] = [{"vu": i, "raw": r, "rtt": t} for i, (r, t) in enumerate(hellos, 1)]
+    return summ
+
+
+def test_run_3_voided_by_one_queued_hello_is_valid_on_its_minimum_rtt_hello() -> None:
+    """The max over the hellos read 18.0 ms, all of it the queued hello's wait; the fastest hello
+    (a 3 ms round trip) reads 0.5 ms. A summary without the pairs is still judged on the max."""
+    old = evaluate(paired(RUN3_HELLOS, pairs=False))
+    assert old.status == "INVALID" and old.invalid == [  # run 3's result.json, verbatim
+        "clock_skew: corrected max 18.0 ms against 5 ms (max over 6 hellos of |raw - RTT/2|; "
+        "raw max 40.0 ms; hello RTT p50 7.5 ms / max 44.0 ms)"
+    ]
+    fallback = old.as_dict()["clock_skew"]
+    assert (fallback["skew_estimator"], fallback["warning"]) == ("max_over_hellos", NO_PAIRS)
+    new = evaluate(paired(RUN3_HELLOS))
+    assert (new.status, new.invalid) == ("PASS", [])
+    assert new.clock_skew is not None and new.clock_skew.text == (
+        "corrected 0.5 ms against 5 ms (the minimum-RTT hello of 6: raw 2.0 ms, RTT 3.0 ms; "
+        "hello RTT p50 7.5 ms / max 44.0 ms)"
+    )
+    got = new.as_dict()["clock_skew"]
+    want = {"skew_estimator": "min_rtt_hello", "skew_ms": 0.5, "hello_raw": 2.0, "hello_rtt": 3.0}
+    assert {k: got[k] for k in want} == want and got["warning"] is None  # no fallback, no note
+
+
+#: VU 1's clock stepped back between its hello and the welcome: a round trip under zero.
+STEPPED = [(2.0, -3.0), *RUN3_HELLOS[1:]]
+
+
+@pytest.mark.parametrize(("pooled", "pairs"), [(RUN3_HELLOS, RUN3_HELLOS[1:]), (STEPPED, STEPPED)])
+def test_pairs_short_of_the_timed_hellos_make_the_guard_fall_back_loudly(
+    pooled: list[tuple[float, float]], pairs: list[tuple[float, float]]
+) -> None:
+    """A pair lost, or one with a negative round trip (dropped: it would be the minimum and say
+    nothing), leaves 5 usable pairs for 6 timed hellos, so the max over them is read, and said."""
+    skew = budgets.clock_skew(paired(pooled) | {"hellos": paired(pairs)["hellos"]})
+    assert skew is not None and (skew.skew_estimator, skew.skew_ms) == ("max_over_hellos", 18.0)
+    assert skew.warning == (
+        "the summary's 5 usable per-hello pairs do not match its 6 timed hellos; the skew was "
+        "measured with max_over_hellos (the fallback)"
+    )
+
+
+def test_a_clock_10_ms_off_beyond_half_of_every_round_trip_is_still_invalid() -> None:
+    """A real offset is in every hello, the fastest one too, so the minimum-RTT hello reads it."""
+    res = evaluate(paired([(rtt / 2 + 10.0, rtt) for _, rtt in RUN3_HELLOS]))
+    assert res.status == "INVALID" and res.invalid == [
+        "clock_skew: corrected 10.0 ms against 5 ms (the minimum-RTT hello of 6: raw 11.5 ms, "
+        "RTT 3.0 ms; hello RTT p50 7.5 ms / max 44.0 ms)"
+    ]
+
+
+@pytest.mark.parametrize("step", [1, -1])
+@pytest.mark.parametrize(
+    ("hellos", "want"),
+    [
+        ([(9.0, 4.0), (3.0, 4.0), (1.0, 9.0)], (1.0, 3.0, 4.0)),  # the smaller |raw - RTT/2|
+        ([(5.0, 4.0), (-1.0, 4.0)], (3.0, -1.0, 4.0)),  # equal on that too: the smaller raw
+    ],
+)
+def test_hellos_tied_on_the_minimum_rtt_give_one_reading_in_any_order(
+    hellos: list[tuple[float, float]], want: tuple[float, float, float], step: int
+) -> None:
+    """k6 times whole milliseconds, so two hellos can share the fastest round trip."""
+    skew = budgets.clock_skew(paired(hellos[::step]))
+    assert skew is not None and (skew.skew_ms, skew.hello_raw, skew.hello_rtt) == want
+
+
+def test_a_send_delay_run_never_reads_its_pairs_and_reports_its_raw_max_unjudged() -> None:
+    summ = paired(RUN3_HELLOS) | {"hellos": [{"vu": 1}]}  # pairs it could not parse
+    res = evaluate(summ, prof=PROFILE | {"send_delay_ms": 25})
+    assert res.status == "PASS" and res.as_dict()["clock_skew"]["skew_estimator"] == "raw_max"
+
+
+@settings(deadline=None, derandomize=True)
+@given(st.lists(st.tuples(st.floats(-1e4, 1e4), st.floats(0.0, 1e4)), min_size=1, max_size=12))
+def test_the_minimum_rtt_hello_never_reads_above_the_max_over_the_hellos(
+    hellos: list[tuple[float, float]],
+) -> None:
+    """So a run the max admitted, as it did runs 1 and 2 of A, the minimum-RTT hello admits too."""
+    new, old = (budgets.clock_skew(paired(hellos, pairs=p)) for p in (True, False))
+    assert new is not None and old is not None
+    assert (new.skew_estimator, old.skew_estimator) == ("min_rtt_hello", "max_over_hellos")
+    assert new.skew_ms <= old.skew_ms
 
 
 # -- a /metrics scrape that times out is a budget line ---------------------------------------
@@ -790,12 +911,24 @@ def test_a_w5_dispatch_with_no_usable_answer_is_red() -> None:
 
 def test_a_w5_headline_says_every_rule_met_only_for_an_answer_with_a_table() -> None:
     row = [{"family": "book"}]
-    met = {"recommendation": "keep_fixed", "reasons": [], "rows": row}
+    met = {"recommendation": "keep_fixed", "reasons": [], "rows": row, "skipped": []}
     assert w5.headline(met) == "W5: keep_fixed: every rule met"
-    split = {"recommendation": "per_family", "reasons": ["a", "b"], "rows": row}
+    split = {"recommendation": "per_family", "reasons": ["a", "b"], "rows": row, "skipped": []}
     assert w5.headline(split) == "W5: per_family: a; b"
-    nothing = {"recommendation": "no_data", "reasons": [], "rows": []}
+    nothing = {"recommendation": "no_data", "reasons": [], "rows": [], "skipped": []}
     assert w5.headline(nothing) == "W5: no usable answer"
+    assert w5.headline(met | {"rows": []}) == "W5: no usable answer"  # no table, whatever it says
+
+
+def test_a_red_w5_answer_leads_with_the_red_line_even_with_a_table() -> None:
+    """A table from two of the three mixed phases is red (`exit_code`), so a log of that dispatch
+    must open with that, never with a recommendation the missing class could have changed."""
+    healthy = mixed("mixed-healthy", 0, None, hold=50.0)
+    short = w5.analyze([healthy, mixed("mixed-saturated", 700, "saturated", hold=200.0)])
+    assert short["rows"] and w5.exit_code(short) == 1
+    assert w5.headline(short) == "W5: no usable answer (1 mixed phase left out)"
+    two = {"recommendation": "no_data", "reasons": [], "rows": [], "skipped": ["a", "b"]}
+    assert w5.headline(two) == "W5: no usable answer (2 mixed phases left out)"
 
 
 def mixed(name: str, rtt: int, cls: str | None, *, hold: float | None) -> w5.Phase:

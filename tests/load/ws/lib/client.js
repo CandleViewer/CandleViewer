@@ -38,7 +38,7 @@ const JSON_HEADERS = { headers: { "Content-Type": "application/json" } };
 
 export class Connection {
   /** cfg: id, url, base, origin, subprotocol, tokens {access, refresh}, topics, clock, role ('conn'|'probe'),
-   *  rttDelayMs, reauthAfterS, probeEveryS, refSymbol, traceSp */
+   *  rttDelayMs, reauthAfterS, probeEveryS, refSymbol, traceSp, hello {raw, rtt} (this VU's trends) */
   constructor(cfg) {
     this.cfg = cfg;
     this.clock = cfg.clock;
@@ -181,6 +181,8 @@ export class Connection {
       M.clockSkew.add(skew.absRaw);
       M.clockSkewCorrected.add(skew.absCorrected);
       M.helloRtt.add(skew.rtt);
+      this.cfg.hello.raw.add(skew.raw); // the pair, kept: the guard reads the minimum-RTT hello
+      this.cfg.hello.rtt.add(skew.rtt);
     }
     if (m.p.encoding !== "json") {
       M.errors.add(1);

@@ -300,6 +300,70 @@ def test_the_js_skew_correction_returns_nothing_for_a_welcome_without_a_skew_or_
     assert json.loads(done.stdout) == [None, None, None]
 
 
+#: What node loads for every `k6/*` import, so that the k6 client's modules run outside k6: a
+#: metric keeps its name and what each `add()` gave it; the rest are inert.
+K6_STUB = (
+    "export class Trend { constructor(name) { this.name = name; this.added = []; } "
+    "add(v) { this.added.push(v); } } export class Counter extends Trend {} "
+    "export class WebSocket {} export default {};"
+)
+
+
+def k6_node(body: str) -> subprocess.CompletedProcess[str]:
+    """`body`, an ES module that imports the k6 client's modules, run by node over `K6_STUB`."""
+    hook = (
+        "export async function resolve(s, c, next) { return s.startsWith('k6/') ? { url: "
+        f"'data:text/javascript,' + encodeURIComponent({json.dumps(K6_STUB)}), "
+        "shortCircuit: true } : next(s, c); }"
+    )
+    script = "import { register } from 'node:module';\n"
+    script += f"register('data:text/javascript,' + encodeURIComponent({json.dumps(hook)}));\n"
+    return node("--input-type=module", "-e", script + body)
+
+
+def test_the_js_summary_keeps_each_vus_hello_paired_and_out_of_the_pooled_trends() -> None:
+    """k6 pools a metric's samples over every VU, which loses which round trip went with which
+    skew, so each VU keeps its one hello in two trends of its own; the summary turns them into
+    `hellos`, the pairs the guard reads: one for each VU whose two trends hold one sample each."""
+    script = f"""
+    const {{ helloTrends, summarize }} = await import('{LOAD}/lib/measure.js');
+    const own = helloTrends(3);
+    const trend = (v, count) => ({{ type: 'trend', values: {{ 'p(50)': v, max: v, count }} }});
+    const metrics = {{ cv_hello_rtt_ms: trend(44, 3) }};
+    for (const [vu, raw, rtt, n] of [[3, 7, 9, 2], [2, 40, 44, 1], [1, -2, 3, 1]]) {{
+      metrics[own[vu - 1].raw.name] = trend(raw, n);
+      metrics[own[vu - 1].rtt.name] = trend(rtt, n);
+    }}
+    console.log(JSON.stringify(summarize({{ metrics }}, {{}})));
+    """
+    done = k6_node(script)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert list(out["trends"]) == ["cv_hello_rtt_ms"]  # the pooled trend stays, the pairs move
+    assert out["hellos"] == [{"vu": 1, "raw": -2, "rtt": 3}, {"vu": 2, "raw": 40, "rtt": 44}]
+
+
+def test_the_js_welcome_keeps_the_vus_hello_pair_with_its_signed_raw_skew() -> None:
+    """The line that keeps the pair, run: a server clock 5 ms behind stays -5 ms, never folded
+    into one 5 ms ahead, and the hello's round trip goes beside it."""
+    script = f"""
+    const {{ helloTrends }} = await import('{LOAD}/lib/measure.js');
+    const {{ Connection }} = await import('{LOAD}/lib/client.js');
+    Date.now = () => {NOW_MS};
+    const hello = helloTrends(1)[0];
+    const c = new Connection({{ id: 1, topics: [], tokens: {{}}, hello }});
+    c.ws = {{ readyState: 0 }};
+    c.helloSentMs = {NOW_MS - 7};
+    const p = {{ clock_skew_ms: -5, encoding: 'json', heartbeat: {{ interval_ms: 30000 }} }};
+    c.welcome({{ p }});
+    c.clearTimers();
+    console.log(JSON.stringify([hello.raw.added, hello.rtt.added]));
+    """
+    done = k6_node(script)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == [[-5], [7]]
+
+
 # -- the egress guard and the send delay ----------------------------------------------
 
 
@@ -646,9 +710,32 @@ def test_the_report_shows_the_raw_and_corrected_skew_the_hello_rtt_and_same_host
     run = hello_skew_run(tmp_path / "run", same_host=True)
     assert runner.finish(run, 0.10) == 0  # 13 ms raw is over the 5 ms guard, 3 ms corrected is not
     assert (
-        "- Clock skew at the hello (same_host true): corrected max 3.0 ms against 5 ms "
-        "(max over 6 hellos of |raw - RTT/2|; raw max 13.0 ms; hello RTT p50 20.0 ms / max 33.0 ms)"
+        "- Clock skew at the hello (same_host true, skew_estimator max_over_hellos): corrected max "
+        "3.0 ms against 5 ms (max over 6 hellos of |raw - RTT/2|; raw max 13.0 ms; hello RTT p50 "
+        "20.0 ms / max 33.0 ms)\n- WARNING: the summary has no per-hello pairs; the skew was "
+        "measured with max_over_hellos (the fallback)\n"
     ) in (run / "report.md").read_text(encoding="utf-8")
+
+
+def test_a_run_with_paired_hellos_reports_its_minimum_rtt_hello_and_names_the_estimator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
+    run = hello_skew_run(tmp_path / "run", same_host=True)
+    summ = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    pairs = [(13.0, 33.0), (9.0, 17.0), (10.0, 20.0), (11.0, 22.0), (10.0, 21.0), (12.0, 24.0)]
+    summ["hellos"] = [{"vu": i, "raw": r, "rtt": t} for i, (r, t) in enumerate(pairs, 1)]
+    (run / "summary.json").write_text(json.dumps(summ), encoding="utf-8")
+    assert runner.finish(run, 0.10) == 0
+    report = (run / "report.md").read_text(encoding="utf-8")
+    assert (  # the pairs pick the hello; the pooled trend gives the round trips' p50 and max
+        "- Clock skew at the hello (same_host true, skew_estimator min_rtt_hello): corrected 0.5 "
+        "ms against 5 ms (the minimum-RTT hello of 6: raw 9.0 ms, RTT 17.0 ms; hello RTT p50 20.0 "
+        "ms / max 33.0 ms)"
+    ) in report
+    skew = json.loads((run / "result.json").read_text(encoding="utf-8"))["result"]["clock_skew"]
+    assert skew["skew_estimator"] == "min_rtt_hello" and skew["hello_rtt"] == 17.0
+    assert skew["warning"] is None and "WARNING" not in report  # read as meant: nothing to say
 
 
 def test_result_json_keeps_the_skew_the_rtt_and_same_host_in_the_run_metadata(
@@ -660,13 +747,20 @@ def test_result_json_keeps_the_skew_the_rtt_and_same_host_in_the_run_metadata(
     body = json.loads((run / "result.json").read_text(encoding="utf-8"))
     assert body["facts"]["same_host"] is True
     assert body["result"]["clock_skew"] == {
-        "max_ms": 3.0,
+        "skew_ms": 3.0,
+        "skew_estimator": "max_over_hellos",  # its summary has no pairs: written before them
         "raw": 13.0,
         "rtt_p50": 20.0,
         "rtt_max": 33.0,
         "hellos": 6,
         "rtt_corrected": True,
         "send_delay_ms": 0.0,
+        "hello_raw": None,
+        "hello_rtt": None,
+        "warning": (
+            "the summary has no per-hello pairs; the skew was measured with max_over_hellos "
+            "(the fallback)"
+        ),
         "judged": True,
     }
 
@@ -678,9 +772,10 @@ def test_a_run_saved_before_the_correction_is_reported_as_raw_with_no_host_recor
     run = make_run(tmp_path / "old")  # only the raw skew in its summary, no same_host in run.json
     assert runner.finish(run, 0.10) == 0
     assert (
-        "- Clock skew at the hello (same_host not recorded): raw max 1.0 ms against 5 ms "
-        "(max over 100 hellos of |raw|; not RTT-corrected: the summary has no "
-        "cv_clock_skew_corrected_ms)"
+        "- Clock skew at the hello (same_host not recorded, skew_estimator raw_max): raw max 1.0 "
+        "ms against 5 ms (max over 100 hellos of |raw|; not RTT-corrected: the summary has no "
+        "cv_clock_skew_corrected_ms)\n- WARNING: the summary has no cv_clock_skew_corrected_ms; "
+        "the skew was measured with raw_max (the fallback)\n"
     ) in (run / "report.md").read_text(encoding="utf-8")
 
 
@@ -827,8 +922,17 @@ def test_the_runner_takes_only_the_pinned_k6_from_k6_bin(
     monkeypatch.setenv("K6_BIN", fake("v1.9.0"))
     with pytest.raises(SystemExit, match=r"pinned to k6 v2\.3\.0"):
         runner.k6_binary()
-    monkeypatch.setenv("K6_BIN", fake("v2.3.0"))
-    assert runner.k6_binary().endswith("k6-v2.3.0")
+    pinned = fake("v2.3.0")
+    monkeypatch.setenv("K6_BIN", pinned)
+    assert runner.k6_binary() == pinned
+    monkeypatch.setenv("K6_BIN", pinned + "/")  # the checks normalise the slash away
+    assert runner.k6_binary() == pinned  # and the path they checked is the one run and returned
+
+
+def is_file_of_python_313(self: Path, **_: object) -> bool:
+    """`Path.is_file()` from Python 3.13: `os.path.isfile`, False for every OSError. Up to 3.12 it
+    raised for EACCES and ENAMETOOLONG. The refusals must be the same under either."""
+    return os.path.isfile(self)
 
 
 @pytest.mark.parametrize(
@@ -837,26 +941,39 @@ def test_the_runner_takes_only_the_pinned_k6_from_k6_bin(
         ("bare name", "not an absolute path"),  # a PATH lookup, or the working directory's
         ("relative path", "not an absolute path"),  # a real, executable file, but a relative one
         ("directory", "not a regular file"),  # absolute and searchable, but not a file
-        ("missing file", "not a regular file"),
+        ("missing file", "not a regular file"),  # stat fails with ENOENT
+        ("through a file", "not a regular file"),  # stat fails with ENOTDIR
         ("not executable", "not executable"),  # a regular file whose mode has no x bit
+        pytest.param(  # stat fails with EACCES, not ENOENT
+            "unsearchable parent",
+            "cannot be checked",
+            marks=pytest.mark.skipif(os.geteuid() == 0, reason="root searches any directory"),
+        ),
+        ("over-long path", "cannot be checked"),  # stat fails with ENAMETOOLONG
+        ("symlink loop", "cannot be checked"),  # stat fails with ELOOP: any other OSError
     ],
 )
 def test_a_k6_bin_that_is_not_an_absolute_executable_file_is_refused_before_anything_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, why: str
 ) -> None:
     script = "#!/bin/sh\necho 'k6 v2.3.0 (commit/abc, go1.26.8, linux/amd64)'\n"
-    real = tmp_path / "k6"
-    real.write_text(script, encoding="utf-8")
-    real.chmod(0o755)
-    plain = tmp_path / "plain"
-    plain.write_text(script, encoding="utf-8")
-    plain.chmod(0o644)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    files = {tmp_path / "k6": 0o755, tmp_path / "plain": 0o644, locked / "k6": 0o755}
+    for path, mode in files.items():
+        path.write_text(script, encoding="utf-8")
+        path.chmod(mode)
+    (tmp_path / "loop").symlink_to(tmp_path / "loop")
     value = {
         "bare name": "k6",
         "relative path": "./k6",
         "directory": str(tmp_path),
         "missing file": str(tmp_path / "gone"),
-        "not executable": str(plain),
+        "through a file": str(tmp_path / "plain" / "k6"),
+        "not executable": str(tmp_path / "plain"),
+        "unsearchable parent": str(locked / "k6"),
+        "over-long path": "/" + "k" * 5000,
+        "symlink loop": str(tmp_path / "loop"),
     }[kind]
     started: list[object] = []
 
@@ -867,9 +984,43 @@ def test_a_k6_bin_that_is_not_an_absolute_executable_file_is_refused_before_anyt
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("K6_BIN", value)
     monkeypatch.setattr(subprocess, "run", spy)  # the one runner.k6_binary calls
-    with pytest.raises(SystemExit, match=why):
-        runner.k6_binary()
+    if kind == "unsearchable parent":
+        locked.chmod(0o600)  # no x bit: the k6 inside cannot be reached
+    try:
+        for is_file in (Path.is_file, is_file_of_python_313):  # the interpreter's, and 3.13's
+            monkeypatch.setattr(Path, "is_file", is_file)
+            with pytest.raises(SystemExit, match=why):
+                runner.k6_binary()
+    finally:
+        locked.chmod(0o700)  # so that tmp_path can be removed
     assert started == []  # no process was started for a path that failed the check
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [
+        PermissionError(13, "Permission denied"),
+        OSError(8, "Exec format error"),
+        subprocess.CalledProcessError(1, "k6 version"),
+        subprocess.TimeoutExpired("k6 version", 30),
+    ],
+    ids=["permission denied", "exec format error", "non-zero exit", "timeout"],
+)
+def test_a_k6_bin_that_cannot_be_run_is_refused_never_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raised: Exception
+) -> None:
+    k6 = tmp_path / "k6"  # an absolute, executable, regular file: the filesystem checks pass
+    k6.write_text("#!/bin/sh\n", encoding="utf-8")
+    k6.chmod(0o755)
+
+    def fail(*_: object, **__: object) -> None:
+        raise raised
+
+    monkeypatch.setenv("K6_BIN", str(k6))
+    monkeypatch.setattr(subprocess, "run", fail)  # the one runner.k6_binary calls
+    with pytest.raises(SystemExit, match="cannot be run") as refused:
+        runner.k6_binary()
+    assert str(k6) in str(refused.value)
 
 
 def test_a_run_plan_applies_the_overrides_to_the_resolved_profile() -> None:
@@ -1294,6 +1445,16 @@ def test_a_baseline_taken_on_another_event_loop_is_not_compared(
     path.write_text(json.dumps(data))
     g = runner.compare(res, facts, 0.05, 3)
     assert not g.gated and g.failures == [] and "not recorded" in g.reason
+    g = runner.compare(res, {k: v for k, v in facts.items() if k != "loop"}, 0.05, 3)
+    assert not g.gated and g.failures == [] and "not recorded" in g.reason  # nor is either side
+
+
+def without_loop(out: Path) -> Path:
+    """`out`'s run as an artefact from before the loop was recorded."""
+    facts = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    del facts["loop"]
+    (out / "run.json").write_text(json.dumps(facts), encoding="utf-8")
+    return out
 
 
 def test_runs_that_record_no_loop_are_not_compared_with_ones_that_do(
@@ -1301,11 +1462,26 @@ def test_runs_that_record_no_loop_are_not_compared_with_ones_that_do(
 ) -> None:
     monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
     dirs = [make_run(tmp_path / f"run{i}") for i in range(3)]
-    facts = json.loads((dirs[1] / "run.json").read_text(encoding="utf-8"))
-    del facts["loop"]  # an artefact from before the loop was recorded
-    (dirs[1] / "run.json").write_text(json.dumps(facts), encoding="utf-8")
+    without_loop(dirs[1])
     assert runner.cmd_gate(argparse.Namespace(dirs=[str(d) for d in dirs], tolerance=0.05)) == 2
     assert "differ in loop: asyncio, not recorded" in capsys.readouterr().out
+    for d in (dirs[0], dirs[2]):  # nor with each other: three runs without one share no loop
+        without_loop(d)
+    assert runner.cmd_gate(argparse.Namespace(dirs=[str(d) for d in dirs], tolerance=0.05)) == 2
+    assert "run0 does not record its event loop" in capsys.readouterr().out
+
+
+def test_a_run_that_records_no_loop_is_refused_as_a_baseline_never_a_key_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "base")
+    monkeypatch.delenv("CI", raising=False)
+    old = without_loop(make_run(tmp_path / "old"))  # full length and PASS: only the loop is missing
+    assert runner.main(["record", str(old)]) == 1  # the command's refusal, not a traceback
+    assert runner.finish(old, runner.TOLERANCE, record=True) == 0  # judged, and not recorded
+    out = capsys.readouterr().out
+    assert out.count("not recorded: the run does not record its event loop") == 2
+    assert not (tmp_path / "base").exists()
 
 
 def test_a_w5_dispatch_with_no_answer_says_so_and_exits_red(
@@ -1472,22 +1648,76 @@ def test_a_run_directory_is_cleared_of_what_an_earlier_run_left(tmp_path: Path) 
     assert left == sorted(["tokens.json", runner.MARKER])  # the backend writes its own tokens
 
 
-def test_a_directory_the_harness_did_not_make_is_never_cleared(tmp_path: Path) -> None:
-    """`--out-dir candleviewer` would otherwise delete a source tree's `bars/`: without the marker
-    of an earlier run the runner refuses, says why and deletes nothing."""
+def test_a_cleared_link_goes_and_what_it_points_at_stays(tmp_path: Path) -> None:
+    out, elsewhere = tmp_path / "run", tmp_path / "elsewhere"
+    runner._fresh(out)
+    elsewhere.mkdir()
+    (elsewhere / "BTCUSDT.state").write_text("{}", encoding="utf-8")
+    (out / "bars").symlink_to(elsewhere, target_is_directory=True)
+    runner._fresh(out)  # a `bars` link left in place would hand its target to the next backend
+    assert not os.path.lexists(out / "bars") and (elsewhere / "BTCUSDT.state").exists()
+
+
+@pytest.mark.parametrize("name", [*runner.STALE, "bars"])
+def test_the_clear_removes_a_bars_directory_and_no_other_directory(
+    tmp_path: Path, name: str
+) -> None:
+    """`bars/` is the one directory a run's backend writes. A directory named like one of the
+    seven run files is not the harness's: the clear fails on it, as unlinking a directory does,
+    and what it holds stays."""
+    runner._fresh(tmp_path)  # an empty directory, taken and marked
+    held = tmp_path / name
+    held.mkdir()
+    (held / "kept.txt").write_text("kept\n", encoding="utf-8")
+    if name == "bars":
+        runner._fresh(tmp_path)
+        assert not held.exists()
+    else:
+        with pytest.raises(OSError):
+            runner._fresh(tmp_path)
+        assert (held / "kept.txt").read_text(encoding="utf-8") == "kept\n"
+
+
+@pytest.mark.parametrize("name", [*runner.STALE, "bars", "notes.txt"])
+def test_a_directory_the_harness_did_not_make_is_never_cleared(tmp_path: Path, name: str) -> None:
+    """`--out-dir candleviewer` would otherwise delete a source tree's `bars/`, and an operator's
+    folder its `report.md`: a directory without an earlier run's marker that holds anything, one
+    entry is enough, is refused, says why, deletes nothing and is not marked."""
     foreign = tmp_path / "candleviewer"
-    (foreign / "bars").mkdir(parents=True)
-    (foreign / "bars" / "series.py").write_text("SERIES = 1\n", encoding="utf-8")
-    (foreign / "report.md").write_text("a report that is not ours\n", encoding="utf-8")
+    foreign.mkdir()
+    entry = foreign / name
+    if name == "bars":
+        entry.mkdir()
+        (entry / "series.py").write_text("SERIES = 1\n", encoding="utf-8")
+    else:
+        entry.write_text("not ours\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="not made by this harness") as refused:
         runner._fresh(foreign)
-    assert "bars" in str(refused.value) and "nothing was deleted" in str(refused.value)
-    assert (foreign / "bars" / "series.py").read_text(encoding="utf-8") == "SERIES = 1\n"
-    assert (foreign / "report.md").exists()
-    assert not (foreign / runner.MARKER).exists()  # and it did not take the directory either
+    assert name in str(refused.value) and "nothing was deleted" in str(refused.value)
+    assert [x.name for x in foreign.iterdir()] == [name]  # as it was, and no marker
+    if name == "bars":  # what it held is as it was
+        assert (entry / "series.py").read_text(encoding="utf-8") == "SERIES = 1\n"
     (foreign / runner.MARKER).write_text("e17-q03/1\n", encoding="utf-8")  # the operator's say-so
     runner._fresh(foreign)
-    assert not (foreign / "bars").exists() and not (foreign / "report.md").exists()
+    assert entry.exists() is (name == "notes.txt")  # then only the harness's own names go
+
+
+@pytest.mark.parametrize("name", ["report.md", runner.MARKER])
+def test_a_symlink_makes_a_directory_foreign_and_is_left_as_it_is(
+    tmp_path: Path, name: str
+) -> None:
+    """Neither the check nor the clear follows a link: a dangling one named like an artefact is
+    held, not missing, and a link named like the marker is not the marker a run wrote."""
+    target, foreign = tmp_path / "operator.txt", tmp_path / "foreign"
+    if name == runner.MARKER:
+        target.write_text("kept\n", encoding="utf-8")  # a run would write its marker into it
+    foreign.mkdir()
+    (foreign / name).symlink_to(target)
+    with pytest.raises(SystemExit, match="not made by this harness"):
+        runner._fresh(foreign)
+    assert (foreign / name).is_symlink() and [x.name for x in foreign.iterdir()] == [name]
+    if name == runner.MARKER:
+        assert target.read_text(encoding="utf-8") == "kept\n"  # never written through the link
 
 
 def test_a_backend_that_never_gets_ready_is_stopped_before_the_runner_gives_up(
@@ -1537,18 +1767,21 @@ async def session(be: fixture_app.Backend, path: str = "/ws") -> AsyncIterator[A
         yield ws
 
 
-async def test_the_gateway_is_served_at_the_configured_path_and_nowhere_else(
-    tmp_path: Path,
+@pytest.mark.parametrize("ws_path", ["/ws", "/api/v1/ws", "/bench/ws"])
+async def test_the_fixture_serves_both_gateway_paths_as_the_app_does(
+    ws_path: str, tmp_path: Path
 ) -> None:
+    """#3916: `create_app` serves the gateway at `/ws` and `/api/v1/ws` (`include_ws_router`), and
+    so does the fixture, whichever path k6 is given; another prefix is served as well."""
     cfg = fixture_app.BackendConfig(
-        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, flag=False,
-        ws_path="/api/v1/ws",
-    )  # fmt: skip
+        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, flag=False, ws_path=ws_path
+    )
     async with fixture_app.Backend(cfg, TABLE, tmp_path) as be:
-        async with session(be, "/api/v1/ws"):
-            pass
+        for path in dict.fromkeys(("/ws", "/api/v1/ws", ws_path)):
+            async with session(be, path):
+                pass
         with pytest.raises(websockets.exceptions.InvalidStatus):
-            async with session(be, "/ws"):
+            async with session(be, "/other/ws"):
                 pass
 
 
