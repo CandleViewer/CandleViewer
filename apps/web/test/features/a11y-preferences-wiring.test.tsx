@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { resetSharedThemeStores } from "@candleviewer/ui";
+// RouterProvider comes from "react-router", not "react-router/dom" as in App.tsx: under Vitest 3 on
+// Node >= 20.19 the dom entry loads a second router copy and error elements lose their context (#1819).
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { buildRoutes } from "../../src/routes/tree";
 import { setMeClaims, resetMeClaims } from "../../src/lib/auth/meCache";

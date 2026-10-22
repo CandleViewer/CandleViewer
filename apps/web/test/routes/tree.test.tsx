@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+// RouterProvider comes from "react-router", not "react-router/dom" as in App.tsx: under Vitest 3 on
+// Node >= 20.19 the dom entry loads a second router copy and error elements lose their context (#1819).
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { buildRoutes } from "../../src/routes/tree";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
@@ -84,7 +86,7 @@ describe("route tree x RBAC matrix", () => {
     );
   });
 
-  it("returns to /admin when Continue is pressed after a successful step-up", async () => {
+  it("returns to /admin?tab=x, replacing the entry, when Continue is pressed after a step-up", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -93,7 +95,8 @@ describe("route tree x RBAC matrix", () => {
       }),
     );
     claimsFor("owner", null);
-    renderAt("/admin");
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin?tab=x"] });
+    render(<RouterProvider router={router} />);
     fireEvent.change(await screen.findByLabelText("Password"), { target: { value: "pw" } });
     fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
@@ -102,6 +105,8 @@ describe("route tree x RBAC matrix", () => {
       await screen.findByRole("heading", { name: /R-300 — owned by E18/ }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(router.state.historyAction).toBe("REPLACE");
+    expect(router.state.location.search).toBe("?tab=x");
   });
 
   it("renders the admin stub for an owner with fresh step-up", async () => {

@@ -45,6 +45,8 @@ export function guardRoute(routeId: string, access: RouteAccess, requestUrl: str
       return;
     case "redirect-login": {
       const url = new URL(requestUrl);
+      // Nothing reads `next` yet. Its first reader must accept only a same-origin path: one
+      // leading `/`, and no `//`, `\` or scheme.
       const next = encodeURIComponent(url.pathname + url.search);
       logDenial(routeId, "unauthenticated");
       throw redirect(`/login?next=${next}`);

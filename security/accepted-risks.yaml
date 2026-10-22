@@ -134,7 +134,8 @@ entries:
   # finding outgrows its entry and blocks, the tauri alert in the alert gate too), so
   # check_accepted_risk_expiry.py enforces their dates.
   # #269 (Storybook 10) dropped addon-actions and its uuid@9: GHSA-w5hq-g745-h8pq's entry is gone.
-  # #1819: react-router 7.18, the first fixed release, is in apps/web; both react-router entries are gone.
+  # #1819: react-router 7.18, the first fixed release, is in apps/web; both react-router entries
+  # are gone.
   # #269 (E05-T03) adds vitest browser mode (packages/ui's Storybook a11y gate); its C-10.2 security
   # review covers the reason's new last clause, for the owner to ratify on #2701. packages/ui's
   # vitest.config.mjs sets that clause's two flags; test/storybook/vitest-project.test.ts pins them.
