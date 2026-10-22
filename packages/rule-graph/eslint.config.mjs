@@ -77,6 +77,16 @@ export default tseslint.config(
           "Buffer",
           "crypto", // the hash is src/sha256.ts: WebCrypto's digest is async
           "TextEncoder", // src/sha256.ts writes its own UTF-8
+          "TextDecoder",
+          "performance", // pure and synchronous: no clock, timer, task or worker in src/
+          "setTimeout",
+          "setInterval",
+          "setImmediate",
+          "queueMicrotask",
+          "console",
+          "indexedDB",
+          "location",
+          "Worker",
           "globalThis",
           "self",
         ].map((name) => ({ name, message: PURE })),

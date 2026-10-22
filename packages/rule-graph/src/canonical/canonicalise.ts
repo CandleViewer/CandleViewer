@@ -3,7 +3,8 @@
  * the server's `ir_hash` (rules/ir/canonical.py) is the authority, the client's is never stored or
  * sent as one, and a disagreement shows as "server differs", never resolved here. Hash what you
  * send, never re-hash what you load: compile returns a Decimal const as its text (`1E-7`, C-Q1),
- * which re-hashes as text, and save hashes the sent `version` but stores its own.
+ * which re-hashes as text, and save hashes the sent `version` with its own `rule_id`, `mode` and
+ * `enabled` and stores another `version`. So compare with compile's `ir_hash`, never save's.
  */
 import { sha256Hex } from "../sha256.js";
 import { type Canonical, dump } from "./schema.js";
@@ -22,6 +23,7 @@ function byCodePoint(a: string, b: string): number {
   return a.length - b.length;
 }
 
+// No `ref` rewrite (canonical.py:102): no field is named ref; free-form maps are opaque or stripped.
 /** Compact sorted JSON (canonical.py:158), numbering node ids in `_renumber`'s order (:78-113). */
 function emit(value: Canonical, ids: Map<string, string>, opaque: boolean): string {
   if (typeof value !== "object" || value === null) return JSON.stringify(value);

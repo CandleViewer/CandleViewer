@@ -1,7 +1,9 @@
 /**
- * The server's validate-and-dump step (canonical.py:156-157), from the published schema: bounds,
- * then each field with its default, numbers as decimal text, UUIDs lower-cased. Only what the
- * vectors pin is mirrored, the rest is a SCHEMA_VIOLATION; enums, ranges and patterns are E35's.
+ * The bounds `check_bounds` (rules/compiler/common.py:17-18) applies in /rules/validate and the
+ * compilers (save checks none), then the server's validate-and-dump step (canonical.py:156-157),
+ * read from the published schema: each field with its default, numbers as decimal text, UUIDs
+ * lower-cased. Only what the vectors pin is mirrored, the rest is a SCHEMA_VIOLATION; enums, ranges
+ * and patterns are E35's.
  */
 import { RULE_IR_SCHEMA } from "@candleviewer/protocol/rule-ir";
 import { RuleGraphError } from "../errors.js";
