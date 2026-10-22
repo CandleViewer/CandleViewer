@@ -49,6 +49,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     sqlstate_of,
 )
+from tests.integration._refused import rendered
 
 pytestmark = pytest.mark.integration
 
@@ -226,6 +227,7 @@ async def test_failed_reset_changes_zero_rows(pg_dsn: str) -> None:
             with pytest.raises(DBAPIError) as raised:
                 await _reset(store, uid, code)
             assert sqlstate_of(raised.value) == "P0001"  # the injected RAISE, text stripped (#2748)
+            assert "injected crash" not in rendered(raised.value)  # the RAISE's message (C-12.6)
         finally:
             async with engine.begin() as conn:
                 await conn.execute(sa.text("DROP TRIGGER bg_crash ON system_events"))

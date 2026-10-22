@@ -1,7 +1,8 @@
 """Integration: SQL user/MFA repositories against real Postgres 16 (QA #1658).
 
 Covers lockout after N failures, challenge round trip, replay guard and
-single-use recovery codes. Not run locally (no docker); exercised by CI.
+single-use recovery codes, and (#2748) that a refused write leaves without the row's values
+(C-12.6). Not run locally (no docker); exercised by CI.
 """
 
 from __future__ import annotations
@@ -10,12 +11,13 @@ import os
 import subprocess
 import sys
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+import pytest_asyncio
 import sqlalchemy as sa
 from testcontainers.postgres import PostgresContainer
 
@@ -24,9 +26,12 @@ from candleviewer.auth.models import MfaChallengeRecord, MfaMethodRecord, UserRe
 from candleviewer.storage.repositories.mfa_sqlalchemy import SqlAlchemyMfaRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
 from scripts.seed_fixture_user import seed
+from tests.integration._refused import assert_no_row_values, seed_user, server_text
 
 pytestmark = pytest.mark.integration
 
@@ -34,6 +39,11 @@ _ROOT = Path(__file__).resolve().parents[3]
 # Track real time: rows carry DB-stamped `created_at` (now()) and CHECKs such as
 # `expires_at > created_at` make a frozen date a time bomb once the wall clock passes it.
 _NOW = datetime.now(UTC).replace(microsecond=0)
+# Planted by name (a traceback prints the calling line): the P1 columns of a users row, the S hash
+# `users_pwd_argon` refuses, and a challenge's S nonce (under 31 bytes: its hex fits DETAIL's cut).
+_USER = {"email": "secret-mail@x.io", "display_name": "SECRET-NOTE name"}
+_PLAIN = "plain-SECRET-HASH"
+_TOKEN, _PURPOSE = "SECRET-MFA-TOKEN", "SECRET-purpose"
 
 
 @pytest.fixture(scope="module")
@@ -252,3 +262,34 @@ async def test_recovery_spends_once_revokes_every_method_and_rolls_back_a_lost_r
         assert await mfa.satisfy_challenge(third, now=_NOW) is True  # still open
     finally:
         await rel.dispose()
+
+
+@pytest_asyncio.fixture
+async def rel(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepository]:
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "auth-refused-it")
+    try:
+        yield rel
+    finally:
+        await rel.dispose()
+
+
+async def test_a_rehash_to_a_non_argon_hash_leaves_without_the_users_row(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    uid = seed_user(pg_dsn, **_USER)
+    users = SqlAlchemyUserRepository(rel, _rec(UserRecord), clock=lambda: _NOW)
+    with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
+        await users.rehash_password(uid, password_hash=_PLAIN, algo_params={"m": 1})
+    assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "users_pwd_argon")
+    assert_no_row_values(err.value, seen, _PLAIN, *_USER.values())  # untouched columns too
+
+
+async def test_a_challenge_of_an_unknown_purpose_leaves_without_its_nonce(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    uid, exp = seed_user(pg_dsn), _NOW + timedelta(minutes=5)
+    mfa = SqlAlchemyMfaRepository(rel, _rec(MfaMethodRecord), _rec(MfaChallengeRecord))
+    with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
+        await mfa.create_challenge(uid, purpose=_PURPOSE, mfa_token_hash=_TOKEN, expires_at=exp)
+    assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "mfa_ch_purpose")
+    assert_no_row_values(err.value, seen, _PURPOSE, _TOKEN.encode())  # the nonce, as `\x<hex>`
