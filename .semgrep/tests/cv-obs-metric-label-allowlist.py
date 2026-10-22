@@ -53,6 +53,10 @@ def ok_table(reg: object) -> None:
     reg.histogram("cv_t_seconds", "help", ("table",))  # ok: cv-obs-metric-label-allowlist
 
 
+def ok_interim_ports_913(reg: object) -> None:
+    reg.gauge("cv_x_ports", "help", ("port",))  # ok: cv-obs-metric-label-allowlist
+
+
 def ok_user_lifecycle(reg: object) -> None:
     reg.counter("cv_l_total", "help", ("action", "result"))  # ok: cv-obs-metric-label-allowlist
     reg.counter("cv_s_total", "help", ("step", "outcome"))  # ok: cv-obs-metric-label-allowlist

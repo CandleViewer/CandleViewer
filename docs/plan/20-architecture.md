@@ -1491,6 +1491,7 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | OMS | `order_submit_seconds{transport,env}` | histogram | click→ack p99 ≤ 500 ms |
 | OMS | `orders_total{state,env}` | counter | reject-rate alerting |
 | OMS | `oms_unknown_orders` | gauge | **alert > 0 for 60 s** |
+| OMS | `oms_interim_ports{port}` | gauge | order-path ports served by an interim implementation (#913 ruling R4: `sizer`, `stop_resolver`, `risk_gate`, `arm_records`), 1 per interim port and 0 per real one, set once at startup beside one WARNING log per interim port; the interim risk gate and arm records refuse every live order, so > 0 on a live process means live orders are refused (dashboard) |
 | OMS | `naked_position_alerts_total` | counter | **page immediately** |
 | OMS | `oms_db_write_seconds{table}` | histogram | OMS Postgres write time per table (`orders`, an order with its first event; `order_events`; `executions`; `positions`; `position_snapshots`), failed writes included; recorded by the M14 repositories (E29-T01); p99 near the store's 2 s statement cap means order writes are close to refusal; buckets 5 ms to 2.5 s, with edges at 1, 1.5, 2 and 2.5 s around the cap |
 | OMS | `oms_state_transitions_total{from,to,source}` | counter | committed B1 `lifecycle` steps by chart state and the event's source (`24-internal-schemas.md` §8.2), each counted once its `order_events` row is written (E29-T03) |

@@ -139,11 +139,14 @@ class CommandPort(Protocol):
     services, SR-E29-06). Each answers a 24 Sec.14.4 `OrderAck` as a mapping (`ok`, `error_code`,
     `exchange_order_id`; an attach adds the `position` row it read back) and raises on an
     ambiguous outcome (a timeout, a transport error, an HTTP 5xx, `UNKNOWN_STATE`,
-    `TRANSPORT_ERROR`, `SERVICE_UNAVAILABLE`), so the order reaches `unknown` (S1). `lookup`
-    answers the order found under the `order_link_id` in realtime and history (24 Sec.8.3 rule
-    3), or an empty mapping. `cancel` serves a KILL's cancel too (`kind` `kill_cancel`). An
-    `attach_stop` is never answered from an earlier call's result: a rebuilt machine attaches
-    under the same key and must read the position back afresh (INV-B1-f)."""
+    `TRANSPORT_ERROR`, `SERVICE_UNAVAILABLE`), so the order reaches `unknown` (S1). An accepted
+    `place` names its `exchange_order_id` as B1 keeps one (`text_id`); one that does not is an
+    ambiguous outcome too (ruling 3 on #3972; #3972's 24 Sec.8.3 rule 7), which B1 raises as
+    `ExchangeOrderIdMissingError`. `lookup` answers the order found under the `order_link_id` in
+    realtime and history (24 Sec.8.3 rule 3), or an empty mapping. `cancel` serves a KILL's cancel
+    too (`kind` `kill_cancel`). An `attach_stop` is never answered from an earlier call's result:
+    a rebuilt machine attaches under the same key and must read the position back afresh
+    (INV-B1-f)."""
 
     async def place(self, command: Command) -> Mapping[str, Any]: ...
 
@@ -195,6 +198,13 @@ class PortMissingError(RuntimeError):
 
 class RecordedFailureError(RuntimeError):
     """A re-entered invoke whose command already failed: it fails again, with nothing resent."""
+
+
+class ExchangeOrderIdMissingError(RuntimeError):
+    """An accepted `place` whose answer names no exchange order id B1 keeps (`text_id`: text of 1
+    to `MAX_TEXT` characters with no control character): an ambiguous outcome (ruling 3 on #3972;
+    #3972's 24 Sec.8.3 rule 7), so the order waits in `unknown` for reconciliation (S1), never in
+    `submitted` with nothing bound."""
 
 
 class StepOutcomeUnknown(RuntimeError):
@@ -782,6 +792,8 @@ async def _dispatch(port: CommandPort, command: Command, *, resumed: bool) -> Ma
         if found:
             return {"ok": False, "error_code": _DUPLICATE, "lookup": found}
     result = dict(await port.place(command))
+    if result.get("ok") is True and _id(result.get("exchange_order_id")) is None:
+        raise ExchangeOrderIdMissingError("an accepted place names no exchange order id B1 keeps")
     if result.get("error_code") == _DUPLICATE and "lookup" not in result:
         result["lookup"] = dict(await port.lookup(look))  # success-after-lookup, Sec.8.3 rule 3
     return result

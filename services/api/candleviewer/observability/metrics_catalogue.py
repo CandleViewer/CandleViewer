@@ -2545,6 +2545,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E45",
     ),
     _s(
+        "oms_interim_ports",
+        "gauge",
+        "ports",
+        ("port",),
+        "Order-path ports served by an interim implementation (#913 ruling R4), set once at "
+        "startup: 1 per interim port (sizer, stop_resolver, risk_gate, arm_records), 0 per real "
+        "one. The interim risk gate and arm records refuse every live order.",
+        "> 0 on env=live (dashboard)",
+        _P,
+        "E29",
+        max_series=4,
+    ),
+    _s(
         "naked_position_alerts_total",
         "counter",
         "alerts",

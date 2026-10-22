@@ -57,6 +57,9 @@ _REDACT_KEYS: Final[frozenset[str]] = frozenset(
         "x-access-token",
         "x-csrf-token",
         "proxy-authorization",
+        # the session's arm token, by its field and its header name (E29-T04, #913)
+        "arm_token",
+        "x-arm-token",
         # C-12.6 names signatures: a name is their control, as their hex shape stays readable
         "sign",
         "signature",

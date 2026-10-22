@@ -54,6 +54,29 @@ def test_equality_is_identity_not_plaintext() -> None:
     assert a == a and a != b and hash(a) != hash(b)
 
 
+def test_no_constant_time_comparison_oracle_either() -> None:
+    """The observability base grew `ComparableSecret.equals_constant_time` for arm tokens
+    (SR-043); the credential `Secret` extends the base, not that subclass, so it offers no
+    value comparison at all — not even a constant-time one."""
+    assert not hasattr(Secret(CANARY), "equals_constant_time")
+    assert not any("equals_constant_time" in vars(klass) for klass in Secret.__mro__)
+
+
+def test_no_other_secret_class_can_probe_a_credential() -> None:
+    """Neither the observability base nor `ComparableSecret` equals a credential `Secret`
+    holding the same value, in either operand order, and `equals_constant_time` refuses it."""
+    from candleviewer.observability.secret_type import ComparableSecret
+    from candleviewer.observability.secret_type import Secret as ObsSecret
+
+    cred = Secret(CANARY)
+    for probe in (ObsSecret(CANARY), ComparableSecret(CANARY)):
+        assert probe != cred and cred != probe
+        assert not (probe == cred) and not (cred == probe)
+    # The static type already refuses the operand; the test pins the runtime refusal too.
+    with pytest.raises(TypeError):
+        ComparableSecret(CANARY).equals_constant_time(cred)  # type: ignore[arg-type]
+
+
 def test_invalidate_blocks_reveal() -> None:
     s = Secret(CANARY)
     assert s.reveal() == CANARY

@@ -958,7 +958,7 @@ def test_a_structlog_line_reaches_the_buffer_as_its_redacted_event_dict() -> Non
 #: The token, header and signature names the services use, named in the redaction key list.
 _KEY_FORMS = tuple(
     "refresh_token session_token bearer x-api-key x-auth-token x-access-token x-csrf-token"
-    " proxy-authorization sign signature".split()
+    " proxy-authorization sign signature arm_token x-arm-token".split()
 )
 #: Field and header names that name no secret.
 _READABLE_NAMES = tuple(
@@ -966,7 +966,14 @@ _READABLE_NAMES = tuple(
     " x-request-id".split()
 )
 #: Twins of listed names, not listed themselves: a name is read with `-` as `_`.
-_TWINS = ("refresh-token", "access-token", "api-key", "x_api_key", "proxy_authorization")
+_TWINS = (
+    "refresh-token",
+    "access-token",
+    "api-key",
+    "x_api_key",
+    "proxy_authorization",
+    "x_arm_token",
+)
 #: Short and of no value shape: only a key name can hide it.
 _SHORT = "v1-abcd"
 _BY_NAME = [(name, "[redacted:key-name]") for name in (*_KEY_FORMS, *_TWINS)]

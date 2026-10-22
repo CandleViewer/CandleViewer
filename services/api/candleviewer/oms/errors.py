@@ -1,8 +1,17 @@
-"""Domain errors for the oms module (M14)."""
+"""Domain errors for the oms module (M14).
+
+The order path's refusals (E29-T04, #913) end the module, with `PROBLEMS`: the one table of the
+answer each OMS error gets at the HTTP edge, which the API layer renders. A refusal's `detail`
+and `errors[]` are fixed sentences of CandleViewer's own: never exchange text (SR-E29-09), an id
+or a secret (C-12.6).
+"""
 
 from __future__ import annotations
 
-from typing import Final
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import ClassVar, Final
 
 #: Codes the OMS raises itself, never mapped from an exchange answer (24 Sec.8.6).
 ILLEGAL_TRANSITION: Final = "ILLEGAL_TRANSITION"
@@ -142,3 +151,210 @@ class DuplicateOrderLinkId(OmsError):
     def __init__(self, order_link_id: str) -> None:
         super().__init__(f"order_link_id {order_link_id} is already stored")
         self.order_link_id = order_link_id
+
+
+# --- The order path's refusals and their answers (E29-T04, #913) --------------------------------
+
+#: The `errors[]` rules of `validation_failed` that 22-api-openapi.yaml `placeOrder` names.
+RULE_NATIVE_STOP_REQUIRED: Final = "native_stop_required"
+RULE_INTENT_MISMATCH: Final = "intent_mismatch"
+#: Ruling R4: a stop in `atr` or `r_multiple` units until E28-T03's stop resolver (#907) lands.
+RULE_STOP_UNIT_UNSUPPORTED: Final = "stop_unit_unsupported"
+#: Ruling R4: a `sizing.mode` other than `fixed_qty` until E28-T03's sizer (#907) lands.
+RULE_SIZING_MODE_UNSUPPORTED: Final = "sizing_mode_unsupported"
+
+
+@dataclass(frozen=True, slots=True)
+class FieldError:
+    """One `errors[]` item of a refusal (22 `Problem.errors`): the request field, the rule that
+    failed and a fixed sentence, which names no value but the instrument's own limits."""
+
+    field: str
+    rule: str
+    message: str
+
+
+class OrderRefused(OmsError):
+    """A refusal of an order request, answered with its `PROBLEMS` row. `errors` lists every rule
+    that failed, in the order they were checked, never only the first."""
+
+    default_detail: ClassVar[str] = "The order request was refused."
+
+    def __init__(self, detail: str | None = None, *, errors: Iterable[FieldError] = ()) -> None:
+        self.detail = self.default_detail if detail is None else detail
+        self.errors = tuple(errors)
+        super().__init__(self.detail)
+
+
+class OrderInvalid(OrderRefused):
+    """`validation_failed`: the native stop or the intent rule (SR-E29-01), a stop unit, a missing
+    field, or an instrument limit that no narrower code names (a price bound, the leverage)."""
+
+    default_detail = "The order failed validation."
+
+
+class StopUnitUnsupported(OrderInvalid):
+    """R4: the stop, the request's or the profile's, is in `atr` or `r_multiple` units."""
+
+    def __init__(self) -> None:
+        message = "Stops in atr or r_multiple units are not available yet."
+        super().__init__(errors=(FieldError("stop_loss", RULE_STOP_UNIT_UNSUPPORTED, message),))
+
+
+class TickSizeViolation(OrderRefused):
+    default_detail = "A price is not a multiple of the instrument's tick size."
+
+
+class LotSizeViolation(OrderRefused):
+    default_detail = "The quantity breaks the instrument's lot step, size or notional limits."
+
+
+class AccountScopeDenied(OrderRefused):
+    """A body's exchange account outside the caller's grants, or one that does not exist."""
+
+    default_detail = "The exchange account is not one you may trade."
+
+
+class RiskRefused(OrderRefused):
+    """`risk_limit_breached`: the risk gate refused the sized order (SR-E29-04), or the effective
+    profile does not allow the symbol."""
+
+    default_detail = "The account's risk limits or profile do not allow this order."
+
+
+class TradingDisabled(OrderRefused):
+    """`trading_disabled` with no `reason`: live trading not enabled, the B18 kill switch or the
+    read-only gate. The order-entry gate's refusal carries a `reason` and is the API's (#3382)."""
+
+    default_detail = "Order entry is disabled."
+
+
+class SessionNotArmed(OrderRefused):
+    default_detail = "This session is not armed for live trading."
+
+
+class OrderNotFound(OrderRefused):
+    """A foreign order id and a missing one, alike (id routes)."""
+
+    default_detail = "No such order."
+
+
+class IdempotencyKeyReuse(OrderRefused):
+    default_detail = "The Idempotency-Key was first used with another request."
+
+
+class VersionConflict(OrderRefused):
+    """A stale `If-Match` (R5): nothing is sent."""
+
+    default_detail = "The order has changed since the version you named."
+
+
+class OrderNotAmendable(OrderRefused):
+    default_detail = "The order cannot be amended in its current state."
+
+
+class RateBudgetExceeded(OrderRefused):
+    """`RATE_BUDGET_EXCEEDED` (24 Sec.8.7): the per-UID budget gave no token within its bounded
+    wait, so nothing was sent. `retry_after_s` is the answer's `Retry-After`."""
+
+    default_detail = "The exchange rate budget is spent; retry later."
+
+    def __init__(self, *, retry_after_s: int) -> None:
+        super().__init__()
+        self.retry_after_s = _positive_delay(retry_after_s)
+
+
+class ExchangeRejected(OrderRefused):
+    """A business rejection. The answer carries the exchange's return code only: the constructor
+    takes no text, so the exchange's message can never reach a problem body (SR-E29-09, 24
+    Sec.8.6 code-only rule)."""
+
+    default_detail = "The exchange refused the order."
+
+    def __init__(self, *, ret_code: int | None) -> None:
+        super().__init__()
+        self.ret_code = ret_code
+
+
+class ClockDriftBlocked(OrderRefused):
+    """Order entry halted until time sync recovers (24 Sec.8.6, `10002`); `retry_after_s` is the
+    answer's `Retry-After`."""
+
+    default_detail = "Order entry is paused until the clock is back in sync."
+
+    def __init__(self, *, retry_after_s: int) -> None:
+        super().__init__()
+        self.retry_after_s = _positive_delay(retry_after_s)
+
+
+class StoreUnavailable(OrderRefused):
+    """The order cannot be recorded before its send (S7), so nothing reaches the exchange."""
+
+    default_detail = "Orders cannot be recorded right now, so none is sent."
+
+
+class EnvironmentMismatch(OmsError):
+    """C-2.11: an order built for one environment met a route to another, a demo account's order
+    and a live client among them. Never sent; an invariant broken, so it pages."""
+
+    def __init__(self, *, order_environment: str, route_environment: str) -> None:
+        super().__init__(
+            f"an order for {order_environment} met a route to {route_environment} (C-2.11)"
+        )
+        self.order_environment = order_environment
+        self.route_environment = route_environment
+
+
+def _positive_delay(seconds: int) -> int:
+    if seconds < 1:
+        raise ValueError("retry_after_s is a delay of at least one second")
+    return seconds
+
+
+@dataclass(frozen=True, slots=True)
+class Problem:
+    """The answer of an OMS error: its HTTP status and `x-error-codes` slug, whether it carries
+    `Retry-After`, and whether it pages the operator."""
+
+    status: int
+    code: str
+    retry_after: bool = False
+    pages: bool = False
+
+
+#: A fault no row names: the API's redacted 500.
+INTERNAL_ERROR: Final = Problem(500, "internal_error")
+
+#: The one mapping table (the #913 plan's taxonomy with rulings R4, R5 and R12). A class answers
+#: with its own row or its nearest base's (`problem_for`); `OrderPlacementRefused` (`validator`)
+#: is a `TradingDisabled` and `StopUnitUnsupported` an `OrderInvalid`.
+PROBLEMS: Final[Mapping[type[OmsError], Problem]] = MappingProxyType(
+    {
+        OrderInvalid: Problem(400, "validation_failed"),
+        TickSizeViolation: Problem(400, "tick_size_violation"),
+        LotSizeViolation: Problem(400, "lot_size_violation"),
+        AccountScopeDenied: Problem(403, "account_scope_denied"),
+        RiskRefused: Problem(403, "risk_limit_breached"),
+        TradingDisabled: Problem(403, "trading_disabled"),
+        SessionNotArmed: Problem(403, "session_not_armed"),
+        OrderNotFound: Problem(404, "not_found"),
+        IdempotencyKeyReuse: Problem(409, "idempotency_key_reuse"),
+        VersionConflict: Problem(412, "version_conflict"),
+        OrderNotAmendable: Problem(422, "order_not_amendable"),
+        RateBudgetExceeded: Problem(429, "exchange_rate_limited", retry_after=True),
+        OrderLinkIdExhausted: Problem(500, "internal_error", pages=True),
+        EnvironmentMismatch: Problem(500, "internal_error", pages=True),
+        ExchangeRejected: Problem(502, "exchange_error"),
+        ClockDriftBlocked: Problem(503, "clock_drift", retry_after=True),
+        StoreUnavailable: Problem(503, "store_unavailable"),
+    }
+)
+
+
+def problem_for(error: OmsError) -> Problem:
+    """The answer of `error`'s nearest class in `PROBLEMS`; an OMS error no row names is a fault,
+    `INTERNAL_ERROR`."""
+    for cls in type(error).__mro__:
+        if issubclass(cls, OmsError) and cls in PROBLEMS:
+            return PROBLEMS[cls]
+    return INTERNAL_ERROR
