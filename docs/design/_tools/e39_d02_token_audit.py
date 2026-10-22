@@ -246,7 +246,6 @@ radius.badge | CMP-075 badge
 radius.pill | chips, the meter track
 border.focus | ring width
 opacity.scrim | the dialog scrim (black in every theme, E09-D08 D2)
-opacity.disabled | never on a T2 label (reported)
 opacity.muted | de-emphasised captions
 elevation.dialog | the override dialog
 elevation.scrim | the scrim layer
