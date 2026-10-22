@@ -1396,6 +1396,7 @@ Drag preview                Drop zones
 - **Components:** CMP-001 Button, CMP-043 Dialog, CMP-100 PriceInput, CMP-119 BracketEditor, CMP-120 TrailingStopEditor, CMP-130 SlippageEstimateChip, CMP-158 SafetyInvariantNotice.
 - **Stories:** US-ALGO-008, US-POS-004, US-ORD-008.
 - **Design sign-off acceptance checklist:** [ ] price / ticks / % / R-multiple entry modes with the others recomputed live [ ] resulting risk in account currency and R shown before confirm [ ] 'SL cannot be removed, only moved' rule stated and enforced in the UI [ ] invalid-side and beyond-liquidation validation messages drawn [ ] partial-quantity TP ladder variant drawn [ ] keyboard path equivalent to chart drag-to-modify
+- **UX research (E32-D01):** [e32-brackets-ladders.md](../design/research/e32-brackets-ladders.md) §4 R3–R5, §5 (E32-D01; heuristic research, recommendations PROPOSED pending the owner's sessions: the non-removable stop as hard-lock with the explanation at the point of refusal and its copy deck, currency-first risk with R on exits, the three-class exchange-held / app-managed wording with the fixed / % trail exchange-held, the `sl.naked` frame; DCR-9–DCR-11 against E32-D02).
 
 ### SCR-065 — Scaled / ladder order builder
 
@@ -1424,6 +1425,7 @@ Drag preview                Drop zones
 - **Performance:** Preview recomputes locally within one frame; submission fans the levels out in a single backend request so the per-account rate-limit budget is evaluated server-side and reported back before any order is sent.
 - **Analytics/audit:** **Audited:** `algo.scaled_created` with `{symbol, side, levels, totalQty, priceRange, distribution, accountIds, environment}`, `algo.scaled_cancelled`, `algo.scaled_partially_cancelled`. Analytics: `algo.scaled_previewed`, `algo.scaled_distribution_changed`.
 - **Design sign-off acceptance checklist:** [ ] start/end price, level count and distribution (flat / linear / exponential / custom) drawn [ ] full preview table with resulting average price [ ] rate-limit estimate shown before submit [ ] validation messages for tick/lot rounding and for a range crossing the mark [ ] mandatory native SL applied per level or per resulting position - drawn explicitly [ ] cancel-all-levels control
+- **UX research (E32-D01):** [e32-brackets-ladders.md](../design/research/e32-brackets-ladders.md) §4 R2, §6 (E32-D01; heuristic research, recommendations PROPOSED pending the owner's sessions: the preview as a real table with a totals row, the worst-case loss for the fully-filled ladder, the rounding disclosure and one shared stop line; the mock's arithmetic and vocabulary contradictions as DCR-1..DCR-8 against E32-D02).
 
 ### SCR-066 — TWAP builder
 
@@ -1471,6 +1473,7 @@ Drag preview                Drop zones
 - **Performance:** Leg cancellation on fill notice is driven by the private execution stream backend-side, targeting <=300 ms from fill event to opposing-leg cancel request; the UI shows the actual measured resolution time after the fact in SCR-078.
 - **Analytics/audit:** **Audited:** `algo.oco_created` `{symbol, legs, qty, accountIds}`, `algo.oco_leg_filled`, `algo.oco_leg_cancelled`, `algo.oco_race_resolved` `{winner, resolutionMs}`, `algo.oco_residual_detected` (high severity), `algo.oco_cancelled|completed|failed`.
 - **Design sign-off acceptance checklist:** [ ] entry+bracket and standalone-OCO variants drawn [ ] 'emulated - Bybit has no OCO' stated prominently [ ] race-resolution behaviour explained in the dialog [ ] residual-risk state (app offline during a fill) drawn with what the user must do [ ] the mandatory native SL floor is shown as always-present and non-removable [ ] validation messages drawn
+- **UX research (E32-D01):** [e32-brackets-ladders.md](../design/research/e32-brackets-ladders.md) §4 R1, R3, §7 (E32-D01; heuristic research, recommendations PROPOSED pending the owner's sessions: the bracket rendered as the server's one object with one status and one cancel, the residual-risk disclosure in three classes with an "(app-managed)" text marker instead of the `(estimated)` chip; DCR-6 against E32-D02).
 
 ### SCR-070 — Algo monitor panel
 
