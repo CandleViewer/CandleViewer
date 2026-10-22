@@ -16,8 +16,9 @@ import socket
 import subprocess
 import tempfile
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import httpx
 
@@ -67,6 +68,26 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
+#: k6's exit codes that leave a reading: 0 (passed) and 99 (a threshold crossed, which `verdict`
+#: judges itself). Any other code is a script, configuration or run error: no reading (#2825).
+K6_READING_EXITS: Final = frozenset({0, 99})
+
+
+def k6_reading(returncode: int, summary: Mapping[str, Any]) -> dict[str, list[float]]:
+    """Route -> [p95] from k6's `--summary-export`. A run k6 ended with an exit code other than 0
+    or 99 is refused. A route with no samples (`count` 0, or a `p(95)` that is not above 0.0) has
+    no reading, so `verdict` fails it by name, never a 0.0 that passes Budget #13 (#2825)."""
+    if returncode not in K6_READING_EXITS:
+        raise RuntimeError(f"k6 exited {returncode}: the run is invalid, not a reading (#2825)")
+    out: dict[str, list[float]] = {}
+    for route in requests_plan():
+        m = summary.get("metrics", {}).get(f"route_{route}_ms", {})
+        p95 = float(m.get("p(95)", 0.0))
+        if p95 > 0.0 and m.get("count") != 0:
+            out[route] = [p95]
+    return out
+
+
 def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
     """Full profile: real sockets, k6 load. Returns route -> [p95] (k6 aggregates for us)."""
     import uvicorn
@@ -95,7 +116,7 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
         plan.write_text(json.dumps(requests_plan()), encoding="utf-8")
         summary = Path(tmp) / "summary.json"
         try:
-            subprocess.run(  # noqa: S603 - fixed argv, loopback target asserted above
+            ran = subprocess.run(  # noqa: S603 - fixed argv, loopback target asserted above
                 [
                     k6,
                     "run",
@@ -115,16 +136,11 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
                 check=False,
                 timeout=3600,
             )
-            data = json.loads(summary.read_text(encoding="utf-8"))
+            data = json.loads(summary.read_text(encoding="utf-8")) if summary.exists() else {}
         finally:
             server.should_exit = True
             th.join(timeout=10)
-    out: dict[str, list[float]] = {}
-    for route in requests_plan():
-        m = data.get("metrics", {}).get(f"route_{route}_ms", {})
-        if "p(95)" in m:
-            out[route] = [float(m["p(95)"])]
-    return out
+    return k6_reading(ran.returncode, data)
 
 
 def verdict(sc: Scenario, lat: dict[str, list[float]]) -> budgets.Verdict:

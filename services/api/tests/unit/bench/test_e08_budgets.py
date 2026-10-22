@@ -159,11 +159,15 @@ def test_rest_verdict_gates_budget_13_only_in_the_full_profile(profile: str, pas
     assert {c.hard for c in v.checks if c.name.startswith("rest_p95[")} == {not passed}
 
 
+@pytest.mark.parametrize(
+    "absent", [("klines_warm", "trades"), ("klines_cold",)], ids=["warm", "cold"]
+)
 @pytest.mark.parametrize("profile", ["smoke", "full"])
-def test_a_route_with_no_reading_fails_the_verdict_in_every_profile(profile: str) -> None:
+def test_a_route_with_no_reading_fails_the_verdict_in_every_profile(
+    profile: str, absent: tuple[str, ...]
+) -> None:
     """#399: a route the driver did not measure (k6 wrote no p95 for it) fails, named; an
-    unmeasured warm read fails the speed-up, never a 0.0 or an `inf` that passes."""
-    absent = ("klines_warm", "trades")
+    unmeasured cold or warm read fails the speed-up, never a 0.0 or an `inf` that passes."""
     lat = {r: [20.0] * 20 for r in requests_plan() if r not in absent}
     v = rest_load.verdict(_rest(profile), lat)
     named = {c.name: c for c in v.checks if c.name.startswith("rest_measured[")}
@@ -171,6 +175,41 @@ def test_a_route_with_no_reading_fails_the_verdict_in_every_profile(profile: str
     assert all(c.hard and not c.passed for c in named.values())
     speed = next(c for c in v.checks if c.name == "klines_cache_speedup")
     assert speed.hard and not speed.passed
+
+
+#: A canned `--summary-export` (#2825): one route sampled, one with no samples, one from an export
+#: with no `count` and a 0.0 p95, one with no `count` and a real p95, one whose `count` of 0
+#: contradicts its p95; the rest absent.
+_K6 = {
+    "metrics": {
+        "route_instruments_ms": {"p(50)": 3.0, "p(95)": 8.5, "max": 20.0, "count": 300},
+        "route_klines_cold_ms": {"p(50)": 0.0, "p(95)": 0.0, "max": 0.0, "count": 0},
+        "route_klines_warm_ms": {"p(95)": 0.0},
+        "route_trades_ms": {"p(95)": 12.0},
+        "route_orderbook_ms": {"p(95)": 5.0, "count": 0},
+    }
+}
+
+
+@pytest.mark.parametrize("code", [0, 99], ids=["passed", "threshold-crossed"])
+def test_k6_reading_keeps_only_the_routes_k6_sampled(code: int) -> None:
+    """#2825: a route k6 took no samples for (`count` 0, or a 0.0 p95) has no reading, like a
+    route it wrote nothing for; a crossed threshold (99) is a reading the verdict judges."""
+    assert rest_load.k6_reading(code, _K6) == {"instruments": [8.5], "trades": [12.0]}
+
+
+@pytest.mark.parametrize("code", [1, 98, 107, 255])
+def test_k6_reading_refuses_a_run_k6_ended_with_an_error(code: int) -> None:
+    """#2825: only 0 and 99 leave a reading; a script, configuration or run error refuses it."""
+    with pytest.raises(RuntimeError, match=f"k6 exited {code}"):
+        rest_load.k6_reading(code, _K6)
+
+
+def test_a_k6_run_whose_routes_took_no_samples_fails_the_full_verdict() -> None:
+    """#2825: the canned summary through `verdict`: each route without samples fails, named."""
+    v = rest_load.verdict(_rest("full"), rest_load.k6_reading(0, _K6))
+    failed = {c.name for c in v.checks if not c.passed}
+    assert not v.passed and {"rest_measured[klines_cold]", "rest_measured[klines_warm]"} <= failed
 
 
 def test_headroom_zero_or_ip_limit_fails() -> None:
