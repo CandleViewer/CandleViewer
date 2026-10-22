@@ -16,7 +16,7 @@ import copy
 import json
 import math
 import os
-from decimal import Decimal
+from decimal import Decimal, getcontext
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +52,7 @@ NOTE = (
     "what you send, never re-hash what you load."
 )
 SLOT, KEEP = "__slot__", object()  # KEEP: that part of form_simple_0 stays as it is
+OVER_EMAX = getcontext().Emax + 1  # one past the largest exponent a Decimal holds
 REFS = {  # checked by the writer: an identical canonical (same_as), another ir_hash (differs_from)
     "edge/metric-param-spelling": {"same_as": "edge/metric-param-fraction"},
     "edge/key-order-reversed": {"same_as": "edge/unicode-keys"},
@@ -156,6 +157,9 @@ def targeted() -> dict[str, str]:
         "refused/metric-param-object": dump(edited(left={"n": {"a": 1}})),
         "refused/metric-param-nan": dump(edited(left={"n": SLOT}), "NaN"),
         "refused/action-param-nan": dump(edited(act={"channel": "ui", "w": SLOT}), "NaN"),
+        "refused/tolerance-out-of-range": dump(
+            edited(conditions={**cmp, "tolerance": SLOT}), f'"1E+{OVER_EMAX}"'
+        ),
         "refused/lone-surrogate": dump(edited(name=SLOT), '"x\\ud800"'),
         "refused/action-param-key-surrogate": dump(edited(act={SLOT: "x"}), '"\\ud800"'),
         "refused/action-param-surrogate": dump(edited(act={"note": SLOT}), '"\\udc00"'),
