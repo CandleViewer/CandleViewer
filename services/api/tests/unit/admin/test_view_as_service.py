@@ -43,7 +43,7 @@ class _Ports:
         self.reason: Ineligible | None = None
         self.asked, self.closing = 0, asyncio.Event()
         self.closed: list[tuple[str, str]] = []
-        self.closed_contexts: list[UUID] = []  # the context each close names
+        self.closed_contexts: list[UUID | None] = []  # the context each close names
         self.names: Mapping[UUID, str] = _NAMES
         self.fails: dict[str, Exception] = {}
         self.holds: set[str] = set()
@@ -59,11 +59,14 @@ class _Ports:
         call = {"action": action, "name": name, **kwargs}
         self.calls.append(await self._answer("emit_keyed", call))
 
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        self.calls.append(await self._answer("emit", {"action": action, **kwargs}))
+
     async def ineligible(self, viewer: SessionRecord, target_user_id: UUID) -> Ineligible | None:
         self.asked += 1
         return await self._answer("ineligible", self.reason)
 
-    async def close_family(self, session_id: str, *, context_id: UUID, reason: str) -> None:
+    async def close_family(self, session_id: str, *, context_id: UUID | None, reason: str) -> None:
         self.closed.append((session_id, reason))
         self.closed_contexts.append(context_id)
         self.closing.set()

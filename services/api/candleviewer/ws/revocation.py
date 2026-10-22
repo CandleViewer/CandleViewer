@@ -301,14 +301,17 @@ class RevocationHub:
         elif closer in self._sockets.get(session_id, []):
             self._contexts[(session_id, closer)] = context_id
 
-    async def close_context(self, session_id: str, context_id: str, reason: ViewAsClose) -> int:
+    async def close_context(
+        self, session_id: str, context_id: str | None, reason: ViewAsClose
+    ) -> int:
         """Close the sockets of `session_id` bound to the view-as context `context_id`, and only
-        those, with `reason`'s `bye` (§9.6: `view_as_changed`, 4401, or `view_as_expired`, 4403);
-        returns how many closes it attempted. The session is not remembered: it stays live, so the
-        socket's reconnect is never refused, as a revocation's would be. Each close is bounded, and
-        a failed one is counted and logged as `revoke`'s are. The closes run inline, not in the
-        hub's shielded task: the caller (`ViewAsService`) bounds the whole and never raises on a
-        failed close. The registration stays until the socket's own teardown ends it: the session is
+        those (None: the sockets bound to no context, which a start closes), with `reason`'s
+        `bye` (§9.6: `view_as_changed`, 4401, or `view_as_expired`, 4403); returns how many
+        closes it attempted. The session is not remembered: it stays live, so the socket's
+        reconnect is never refused, as a revocation's would be. Each close is bounded, and a failed
+        one is counted and logged as `revoke`'s are. The closes run inline, not in the hub's
+        shielded task: the caller (`ViewAsService`) bounds the whole and never raises on a failed
+        close. The registration stays until the socket's own teardown ends it: the session is
         live, so a close that fails leaves the socket where a later `revoke` (a sign-out) still
         reaches it."""
         closers = [

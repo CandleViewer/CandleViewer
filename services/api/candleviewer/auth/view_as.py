@@ -17,9 +17,10 @@ order between `ended_at`, `end_recorded_at` and `cleared_at` (a stepped clock co
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, Self
@@ -213,6 +214,33 @@ def bound_view_as(ctx: ViewAsRequestContext) -> Iterator[ViewAsRequestContext]:
         _CURRENT.reset(token)
 
 
+@dataclass(frozen=True, slots=True)
+class ViewAsNotice:
+    """The target's `system` notification of a start (22 `startViewAs`; the Q1 ruling, option A):
+    one `system_events` row addressed to the target, `auth`/`view_as_started`/`info` (no
+    incident), in the start's own unit of work. `message` names the viewer by username and the
+    window, never the reason."""
+
+    target_user_id: UUID
+    message: str
+    correlation_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class ViewAsStartResult:
+    """A start's outcome (`ViewAsService.start`): `started`, the row holding the new context;
+    `held`, the row as it stands when it holds a context a start cannot replace (409
+    `view_as_active`); neither when the session is revoked, absolute-expired or gone."""
+
+    started: SessionRecord | None = None
+    held: SessionRecord | None = None
+
+
+#: A start's hook, given the locked row: it writes the started record ahead, or a pending end's
+#: record late, or raises.
+ViewAsStartHook = Callable[["SessionRecord"], Awaitable[None]]
+
+
 class ViewAsSessionStore(Protocol):
     """The storage contract of the view-as columns of `sessions`, apart from `SessionRepository`
     until every repository implements it. Each write is one conditional write: `None` if unmet. A
@@ -226,8 +254,35 @@ class ViewAsSessionStore(Protocol):
         and holds no context, or a cleared one whose end is recorded (of two concurrent starts,
         exactly one). An ended `state`, or a self-targeting one on a row that would take it, is a
         caller error: `ValueError`, nothing written (a row that refuses the start answers `None`
-        first). The start request (#3085) wraps it, flushing a pending end and writing the notice
-        and the started record ahead."""
+        first). The start request uses `start_view_as_unit`, which issues the same write in its unit
+        of work: this bare write has no production caller."""
+        ...
+
+    async def start_view_as_unit(
+        self,
+        session_id: str,
+        state: ViewAsState,
+        *,
+        now: datetime,
+        notice: ViewAsNotice,
+        flush_pending_end: ViewAsStartHook,
+        write_ahead: ViewAsStartHook,
+        audit_timeout_s: float,
+    ) -> tuple[SessionRecord | None, SessionRecord | None]:
+        """The start request's one unit of work (22 `startViewAs`; plan section 1.6), under the
+        row's lock (`FOR NO KEY UPDATE`), so of concurrent starts exactly one writes anything.
+        It answers `(started, held)`:
+        - a row revoked, absolute-expired at `now` or gone answers `(None, None)`;
+        - a context the row holds and a start cannot replace (live, or ended and not cleared)
+          answers `(None, row)`;
+        - a cleared context whose end is not recorded has its record written late
+          (`flush_pending_end`) and is marked recorded;
+        - then the notice, the started record ahead (`write_ahead`) and the fresh `state`,
+          committed together: `(row, None)`.
+        A hook past `audit_timeout_s` raises `WriteAheadTimeout`; a hook that fails raises its
+        error; a write that fails raises the driver's. Each rolls everything back. An ended or
+        self-targeting `state`, or a `notice` addressed to anyone but the state's target, is a
+        caller error (`ValueError`), refused before any write."""
         ...
 
     async def end_view_as(

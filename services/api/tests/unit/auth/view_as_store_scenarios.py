@@ -16,7 +16,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from candleviewer.auth.models import SessionRecord
-from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
+from candleviewer.auth.view_as import ViewAsEndReason, ViewAsNotice, ViewAsState
 
 #: The viewer, whose rows these are, and the two users a context names (the Postgres half inserts
 #: these three `users` rows).
@@ -91,6 +91,18 @@ def start(state: ViewAsState = FRESH) -> Call:
     return Call("start_view_as", "a", {"state": state, "now": T0})
 
 
+async def _written(_record: object) -> None:
+    """A start's write-ahead hook that writes its record."""
+
+
+def start_unit(state: ViewAsState = FRESH, *, to: UUID = TARGET) -> Call:
+    """The start request's unit of work (#3085 S13a), its hooks writing their records; its notice
+    addressed `to` the state's target unless a scenario says otherwise."""
+    kwargs = {"state": state, "now": T0, "notice": ViewAsNotice(to, "m", None)}
+    hooks = {"flush_pending_end": _written, "write_ahead": _written, "audit_timeout_s": 5.0}
+    return Call("start_view_as_unit", "a", kwargs | hooks)
+
+
 def end(reason: ViewAsEndReason = _BY_SWEEPER) -> Call:
     return Call(
         "end_view_as", "a", {"context_id": LIVE.context_id, "ended_at": T0, "reason": reason}
@@ -163,6 +175,18 @@ SCENARIOS: tuple[Scenario, ...] = (
     # its user); a row that refuses a start answers None first
     _one("start-a-self-targeting-state", start(SELF), "ValueError", a=Row()),
     _one("start-a-self-target-on-a-revoked-row", start(SELF), None, a=Row(revoked=_LOGOUT)),
+    # #3085 S13a: the start's unit. As the start, but a cleared context whose record is owed gets
+    # it late and is replaced; a context it cannot replace answers held, which reads refused here.
+    _one("unit-on-none", start_unit(), ("a", FRESH), a=Row()),
+    _one("unit-on-cleared-and-recorded", start_unit(), ("a", FRESH), a=Row(DONE)),
+    _one("unit-on-cleared-pending", start_unit(), ("a", FRESH), a=Row(CLEARED)),
+    _one("unit-on-live", start_unit(), None, a=Row(LIVE)),
+    _one("unit-on-ended", start_unit(), None, a=Row(ENDED)),
+    _one("unit-on-revoked", start_unit(), None, a=Row(revoked=_LOGOUT)),
+    _one("unit-on-absolute-expired", start_unit(), None, a=Row(expires=0)),
+    _one("unit-an-ended-state", start_unit(ended(FRESH, 1)), "ValueError", a=Row()),
+    _one("unit-a-self-targeting-state", start_unit(SELF), "ValueError", a=Row()),
+    _one("unit-a-notice-to-another-user", start_unit(to=OTHER), "ValueError", a=Row()),
     # end: that context, not ended; a revoked row too (the sweeper ends `session_ended` there)
     # unless another, unrevoked row holds it: its successor carries it on
     _one("end-live", end(), ("a", ended(LIVE, 0, _BY_SWEEPER)), a=Row(LIVE)),
@@ -338,6 +362,9 @@ async def _outcome(store: Any, call: Call, labels: dict[str, str]) -> object:
     if call.method == "leave_view_as":
         row, ended_now = result
         return labels[str(row.id)], row.view_as, ended_now
+    if call.method == "start_view_as_unit":  # (started, held): held reads refused here
+        started, _held = result
+        return None if started is None else (labels[str(started.id)], started.view_as)
     if isinstance(result, tuple):
         names = [labels[str(row.id)] for row in result]
         return tuple(sorted(names) if call.unordered else names)

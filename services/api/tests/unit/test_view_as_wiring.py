@@ -325,6 +325,24 @@ async def test_the_closer_closes_the_sessions_own_sockets_before_walking_its_fam
     assert own.reasons == ["view_as_expired"]
 
 
+async def test_a_starts_close_takes_the_familys_sockets_bound_to_no_context() -> None:
+    """#3085 S13a: a start closes every socket the session had, none of them bound to a context;
+    a socket already on a context is not a start's to close."""
+    hub = RevocationHub()
+    unbound_old, unbound_new, on_context = _Closes(), _Closes(), _Closes()
+    for session_id, socket, context in [
+        ("pred", unbound_old, None),
+        ("succ", unbound_new, None),
+        ("succ", on_context, str(uuid4())),
+    ]:
+        hub.register(session_id, socket)
+        hub.bind(session_id, socket, context)
+    closer = HubSocketCloser(hub, cast(Any, _Family(("pred", "succ"))))
+    await closer.close_family("pred", context_id=None, reason="view_as_changed")
+    assert unbound_old.reasons == unbound_new.reasons == ["view_as_changed"]
+    assert on_context.reasons == []
+
+
 class _Evaluates:
     def __init__(self) -> None:
         self.asked: list[tuple[Any, datetime]] = []

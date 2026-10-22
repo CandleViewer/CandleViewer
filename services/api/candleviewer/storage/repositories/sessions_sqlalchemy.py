@@ -15,7 +15,8 @@ not `disabled`, read under the user-row lock in the insert's transaction, and th
 reads by id and by refresh hash carry the user's status (#2911). Every record read
 carries the row's view-as context (#3085, `0042_sessions_view_as`). The insert writes
 the context a record carries (a refresh carries it to the successor row), and the
-`ViewAsSessionStore` writes (`auth/view_as.py`) are one conditional statement each. The
+`ViewAsSessionStore` writes (`auth/view_as.py`) are one conditional statement each, but for
+the start's unit of work, which locks the row first (`start_view_as_unit`). The
 insert also writes the step-up strikes and read-only window a refresh carries from the
 claim's row (#4051): a new row, from a revoked source row whose step-up columns no writer
 can change (`_STEP_UP_SQL` needs `revoked_at IS NULL`).
@@ -25,7 +26,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -37,6 +38,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     query_failure,
     sqlstate_of,
 )
+from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_write_ahead
 
 #: `auth.session_repository.StepUpState`, restated: storage may not import `auth` (C-3.1).
 _StepUpState = tuple[dict[str, datetime], int, datetime | None]
@@ -209,6 +211,19 @@ _VIEW_AS_RECORDED_SQL = _sql(
     "UPDATE sessions SET view_as_end_recorded_at = :now "
     "WHERE id = CAST(:id AS uuid) AND view_as_context_id = CAST(:context_id AS uuid) "
     "AND view_as_ended_at IS NOT NULL AND view_as_end_recorded_at IS NULL RETURNING @COLS@"
+)
+# The start's unit of work (#3085): the row it starts on, locked as an UPDATE of non-key columns
+# locks it, so of concurrent starts exactly one goes on; a revoked or absolute-expired row is not
+# read, as `_VIEW_AS_START_SQL` would not write it.
+_VIEW_AS_START_LOCK_SQL = _sql(
+    "SELECT @COLS@ FROM sessions WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
+    "AND expires_at > :now FOR NO KEY UPDATE"
+)
+# The target's notice (the Q1 ruling, option A; 21 Sec.3.10.2): `info`, so no incident is opened.
+_VIEW_AS_NOTICE_SQL = sa.text(
+    "INSERT INTO system_events (component, kind, severity, message, correlation_id, "
+    "recipient_user_id) VALUES ('auth', 'view_as_started', 'info', :message, "
+    "CAST(:correlation_id AS uuid), CAST(:recipient AS uuid))"
 )
 # The sweeper's read. The first two conditions are `ix_sessions_view_as_due`'s predicate, which
 # serves the scan in `ORDER BY` order; the NOT EXISTS probes `ix_sessions_view_as_context`. A row a
@@ -457,7 +472,8 @@ class SqlAlchemySessionRepository:
             await uow.commit()
         return tuple(str(r._mapping["id"]) for r in rows)
 
-    # -- #3085 `ViewAsSessionStore`: one statement each; the Protocol's docstrings are the contract.
+    # -- #3085 `ViewAsSessionStore`: one statement each (the start's unit: several, in one
+    # transaction); the Protocol's docstrings are the contract.
 
     async def start_view_as(self, session_id: str, state: Any, *, now: datetime) -> Any:
         if state.ended_at is not None:
@@ -479,6 +495,65 @@ class SqlAlchemySessionRepository:
             # only where the write would apply (a row that refuses a start answers None before).
             # Never chained: the driver's DETAIL carries the failing row (C-12.6).
             raise ValueError("a session must never view as its own user") from None
+
+    async def start_view_as_unit(
+        self,
+        session_id: str,
+        state: Any,
+        *,
+        now: datetime,
+        notice: Any,
+        flush_pending_end: Callable[[Any], Awaitable[None]],
+        write_ahead: Callable[[Any], Awaitable[None]],
+        audit_timeout_s: float,
+    ) -> tuple[Any, Any]:
+        if state.ended_at is not None:
+            raise ValueError("a start puts a fresh context on the row, never an ended one")
+        if notice.target_user_id != state.target_user_id:
+            raise ValueError("a start's notice is addressed to its target, never another user")
+        async with self._relational.unit_of_work() as uow:
+            s = uow.session
+            params = {"id": session_id, "now": now}
+            row = (await s.execute(_VIEW_AS_START_LOCK_SQL, params)).first()
+            if row is None:
+                return None, None
+            fields = row_to_fields(row)
+            record, held = self._make(**fields), fields["view_as"]
+            if held is not None and held["cleared_at"] is None:
+                return None, record
+            if state.target_user_id == fields["user_id"]:  # before any write, as the CHECK would
+                raise ValueError("a session must never view as its own user")
+            if held is not None and held["end_recorded_at"] is None:
+                await bounded_write_ahead(flush_pending_end(record), audit_timeout_s)
+                marked = _held(session_id, held["context_id"], params)
+                await s.execute(_VIEW_AS_RECORDED_SQL, marked)
+            await s.execute(
+                _VIEW_AS_NOTICE_SQL,
+                {
+                    "message": notice.message,
+                    "correlation_id": (
+                        None if notice.correlation_id is None else str(notice.correlation_id)
+                    ),
+                    "recipient": str(notice.target_user_id),
+                },
+            )
+            await bounded_write_ahead(write_ahead(record), audit_timeout_s)
+            started = (
+                await s.execute(
+                    _VIEW_AS_START_SQL,
+                    {
+                        **params,
+                        "context_id": str(state.context_id),
+                        "target_user_id": str(state.target_user_id),
+                        "started_at": state.started_at,
+                        "view_as_expires_at": state.expires_at,
+                    },
+                )
+            ).first()
+            if started is None:  # the lock holds the row as read: only a driver fault lands here
+                raise RuntimeError("the locked session row refused its start")
+            await uow.commit()
+        return self._make(**row_to_fields(started)), None
 
     async def end_view_as(
         self, session_id: str, context_id: uuid.UUID, *, ended_at: datetime, reason: str
