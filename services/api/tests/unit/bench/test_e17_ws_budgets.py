@@ -304,6 +304,13 @@ def test_a_send_delay_run_reports_its_skew_and_is_never_invalid_for_it() -> None
         "raw max 6.0 ms (max over 6 hellos of |raw|; send delay 25 ms injected: reported, not "
         "judged; hello RTT p50 27.0 ms / max 29.0 ms)"
     )
+    assert res.as_dict()["clock_skew"]["judged"] is False  # result.json says so too
+
+
+def test_a_send_delay_under_a_millisecond_injects_none_so_the_skew_is_still_judged() -> None:
+    skew = hello_skew(raw=18.0, corrected=8.0, rtt_p50=20.0, rtt_max=22.0)  # `int(0.5)`: no delay
+    res = evaluate(summary(**skew), prof=PROFILE | {"send_delay_ms": 0.5})
+    assert res.status == "INVALID" and res.invalid[0].startswith("clock_skew: corrected max 8.0 ms")
 
 
 def test_a_single_hello_is_not_pluralised_in_the_skew_line() -> None:
@@ -316,7 +323,7 @@ def test_a_single_hello_is_not_pluralised_in_the_skew_line() -> None:
 
 def scraped(*timed_out_ms: float, attempted: int = 8, missing: tuple[str, ...] = ()) -> Facts:
     """`FACTS` with a steady state of `attempted` scrapes, those of `timed_out_ms` timed out."""
-    tally = budgets.Scrapes(15.0, attempted, list(timed_out_ms), list(missing))
+    tally = budgets.ScrapeTally(15.0, attempted, list(timed_out_ms), list(missing))
     return replace(FACTS, scrapes=tally)
 
 
@@ -334,6 +341,19 @@ def test_one_scrape_in_eight_that_timed_out_fails_the_run_with_the_cause_not_inv
     assert row.note == "backend did not answer /metrics within 15 s, 1 of 8 scrapes"
 
 
+@pytest.mark.parametrize(
+    ("summ", "t1", "cause"),
+    [
+        (summary(), scrape(fed=(1000, 975)), "feeder_behind"),  # the stall skipped 2.5 % of 600 s
+        (summary(cv_unplanned_closes=2), None, "cv_unplanned_closes"),  # and the server closed two
+    ],
+)
+def test_a_scrape_stall_outranks_the_guard_it_trips(summ: Any, t1: Any, cause: str) -> None:
+    res = evaluate(summ, t1, facts=scraped(15003.0))  # FAIL on the scrape; the guard stays listed
+    assert (res.status, res.exit_code, res.failed()) == ("FAIL", 1, ["scrape.metrics_timeout"])
+    assert [x.split(":")[0] for x in res.invalid] == [cause]
+
+
 @pytest.mark.parametrize("boundary", ["t0", "t1"])
 def test_a_lost_boundary_scrape_fails_the_scrape_line_and_leaves_the_deltas_unjudged(
     boundary: str,
@@ -343,9 +363,34 @@ def test_a_lost_boundary_scrape_fails_the_scrape_line_and_leaves_the_deltas_unju
     t0, t1 = (gone, scrape(extra=drop)) if boundary == "t0" else (None, gone)
     res = evaluate(summary(), t1, t0=t0, facts=scraped(15002.0, attempted=2, missing=(boundary,)))
     assert (res.status, res.failed(), res.invalid) == ("FAIL", ["scrape.metrics_timeout"], [])
-    said = "not judged (boundary scrape timed out)"
-    assert res.not_judged == [f"{b}: {said}" for b in budgets.SCRAPE_BUDGETS]
+    held = [budgets.HELD_BUDGET] if boundary == "t0" else []  # a lost t1 leaves t0's count to read
+    said = f"not judged ({boundary} scrape timed out)"
+    assert res.not_judged == [f"{b}: {said}" for b in (*budgets.SCRAPE_BUDGETS, *held)]
     assert not any(c.name.startswith("budget6") for c in res.verdict.checks)
+    assert "backend_cpu_s_per_s" not in res.verdict.metrics  # `FACTS` has the cpu: no delta to rate
+
+
+def test_a_lost_t1_still_judges_the_connections_held_at_steady_start() -> None:
+    t0 = budgets.parse_scrape("cv_ws_connections_in_use 5")
+    res = evaluate(summary(), {}, t0=t0, facts=scraped(15002.0, attempted=2, missing=("t1",)))
+    assert "5 held at steady start, 6 planned" in res.invalid[0]
+
+
+def test_a_lost_t0_says_the_held_count_was_not_measured_rather_than_zero() -> None:
+    lost = scraped(15002.0, attempted=2, missing=("t0",))
+    res = evaluate(summary(cv_connections_up=4), t0={}, facts=lost)
+    assert "held at steady start not measured (t0 scrape timed out)" in res.invalid[0]
+
+
+def test_the_backend_cpu_rate_is_over_the_seconds_the_two_scrapes_span_when_recorded() -> None:
+    facts = replace(FACTS, cpu_s=100.0, steady_s=100.0)  # 100 CPU seconds in a 100 s window
+    got = [evaluate(summary(), facts=replace(facts, steady_actual_s=x)) for x in (50.0, None)]
+    assert [r.verdict.metrics["backend_cpu_s_per_s"]["p95"] for r in got] == [2.0, 1.0]
+
+
+def test_an_rss_cap_with_no_periodic_reading_is_not_judged_rather_than_skipped_silently() -> None:
+    res = evaluate(summary(), facts=replace(scraped(15000.0, 15000.0), rss_bytes=None))
+    assert res.not_judged == ["backend_memory rss: not judged (no periodic scrape was answered)"]
 
 
 def test_a_run_saved_before_the_scrape_counts_keeps_its_verdict_and_has_no_scrape_line() -> None:

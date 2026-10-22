@@ -5,7 +5,8 @@ of the backend (steady-start t0, end t1; every server number is `t1 - t0`, a ser
 counting as 0, because most series are bound lazily). What it gives: a `Verdict` of named `Check`s
 (`bench.ingestion.budgets`), the headline `metrics` the baseline gate compares, and the run's
 validity. A budget miss fails the run with its check named; a run that trips a validity guard is
-INVALID, never a pass or a fail of a budget.
+INVALID, never a pass or a fail of a budget. The one exception: a failed `scrape.metrics_timeout`
+line outranks INVALID, as the stall that trips a guard is the finding.
 
 Budget #6 is read exactly at its bucket edge (`cv_ws_fanout_seconds_bucket{le="0.02"}`), with no
 interpolation: the pass rule is that at least 95 % of the weighted samples are at or under 20 ms.
@@ -53,14 +54,15 @@ MAX_CLOCK_SKEW_MS: Final = 5.0
 SKEW_RAW: Final = "cv_clock_skew_ms"
 SKEW_CORRECTED: Final = "cv_clock_skew_corrected_ms"
 HELLO_RTT: Final = "cv_hello_rtt_ms"
+SCRAPE_LINE: Final = "scrape.metrics_timeout"
 #: What reads the server's counter deltas, so is not judged when a boundary scrape never answered.
 SCRAPE_BUDGETS: Final = (
     "budget6.cv_ws_fanout_seconds.p95",
     "backpressure and sequence series",
     "event-loop lag",
     "feeder ratio",
-    "connections held at steady start",
 )
+HELD_BUDGET: Final = "connections held at steady start"  # reads the t0 scrape alone
 MAX_K6_CPU_FRAC: Final = 0.8
 REPRO_TOLERANCE: Final = 0.15
 #: k6 times in whole milliseconds: a latency it reports moving by that much has not changed.
@@ -148,16 +150,17 @@ def fraction_le(d: Scrape, name: str, edge: float) -> tuple[float, float]:
 
 
 @dataclass(slots=True)
-class Scrapes:
+class ScrapeTally:
     """The steady state's `/metrics` scrapes as the runner tallies them (`run.json`: `scrapes`):
     `attempted` counts the periodic ones and the two boundary ones (`t0`, `t1`), `timed_out_ms` how
-    long each scrape that timed out waited, and `missing` the boundary scrapes that never answered,
-    which leaves the counter deltas unread."""
+    long each scrape that timed out waited (a retry's wait included), `missing` the boundary scrapes
+    that never answered (the counter deltas are then unread), `retried` those a retry answered."""
 
     timeout_s: float
     attempted: int = 0
     timed_out_ms: list[float] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
+    retried: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +173,8 @@ class Facts:
     mem_max_bytes: int | None = None
     oom_events: int = 0
     cpu_s: float | None = None  # backend CPU seconds over the steady window
-    scrapes: Scrapes | None = None  # None: a run saved before the counts
+    scrapes: ScrapeTally | None = None  # None: a run saved before the counts
+    steady_actual_s: float | None = None  # real seconds t0 to t1; None: a run saved before it
 
 
 def _ms(value: float | None) -> str:
@@ -224,6 +228,8 @@ class Result:
 
     @property
     def status(self) -> str:
+        if SCRAPE_LINE in self.failed():  # outranks INVALID; the guards it trips stay listed
+            return "FAIL"
         return "INVALID" if self.invalid else "PASS" if self.verdict.passed else "FAIL"
 
     @property
@@ -238,7 +244,7 @@ class Result:
             "status": self.status,
             "invalid": self.invalid,
             "informational": [asdict(c) for c in self.informational],
-            "clock_skew": asdict(self.clock_skew) if self.clock_skew else None,
+            "clock_skew": {**asdict(cs), "judged": cs.judged} if (cs := self.clock_skew) else None,
             "not_judged": self.not_judged,
             "not_measurable": list(NOT_MEASURABLE),
         }
@@ -290,7 +296,8 @@ def evaluate(
     prof: Mapping[str, Any], summ: Mapping[str, Any], t0: Scrape, t1: Scrape, facts: Facts
 ) -> Result:
     """The run's verdict. `prof` is the resolved profile (`flag`, `gate_on`, `probe`, `name`)."""
-    lost = bool(facts.scrapes and facts.scrapes.missing)  # a boundary scrape never answered
+    sc = facts.scrapes
+    lost = sc.missing if sc else []  # the boundary scrapes that never answered
     d = {} if lost else delta(t0, t1)
     v = Verdict(str(prof["name"]))
     res = Result(v)
@@ -299,18 +306,20 @@ def evaluate(
     hours = facts.steady_s / 3600.0
     m = v.metrics
 
-    if (sc := facts.scrapes) and sc.attempted:  # a run saved before the counts has none
+    if sc and sc.attempted:  # a run saved before the counts has none
         n, within = len(sc.timed_out_ms), f"within {sc.timeout_s:g} s"
         note = f"all {sc.attempted} scrapes answered {within}"
         if n:
             note = f"backend did not answer /metrics {within}, {n} of {sc.attempted} scrapes"
-        v.add(Check("scrape.metrics_timeout", "ticket", n, 0.0, "scrapes", n == 0, True, note))
+        v.add(Check(SCRAPE_LINE, "ticket", n, 0.0, "scrapes", n == 0, True, note))
 
     # budget #6, from the server's own histogram
     share, count = fraction_le(d, "cv_ws_fanout_seconds", B6_FANOUT_S)
     p95s = quantile(d, "cv_ws_fanout_seconds", B6_QUANTILE)
     if lost:  # the budgets that read the scrape deltas have no window to read
-        res.not_judged = [f"{b}: not judged (boundary scrape timed out)" for b in SCRAPE_BUDGETS]
+        gone = f"{' and '.join(lost)} scrape timed out"
+        names = [*SCRAPE_BUDGETS, *([HELD_BUDGET] if "t0" in lost else [])]
+        res.not_judged = [f"{b}: not judged ({gone})" for b in names]
     elif count < MIN_FANOUT_SAMPLES * SAMPLE_EVERY:
         res.invalid.append(
             f"fanout_samples: {count / SAMPLE_EVERY:.0f} sampled frames, need {MIN_FANOUT_SAMPLES}"
@@ -481,7 +490,8 @@ def evaluate(
     )
     if sched and pub / sched < MIN_FEED_RATIO:
         res.invalid.append(f"feeder_behind: published {pub:.0f} of {sched:.0f} scheduled slots")
-    skew = clock_skew(summ, float(prof.get("send_delay_ms") or 0))
+    # the runner hands the backend `int(send_delay_ms)`: 0.5 injects no delay, so it is judged
+    skew = clock_skew(summ, float(int(prof.get("send_delay_ms") or 0)))
     res.clock_skew = skew
     if skew is not None and skew.judged and skew.max_ms > MAX_CLOCK_SKEW_MS:
         res.invalid.append(f"clock_skew: {skew.text}")
@@ -495,19 +505,24 @@ def evaluate(
             res.invalid.append(f"{name}: {counters[name]:.0f}")
     planned = int(prof["users"]) * int(prof["connections"]) + int(bool(prof.get("probe")))
     up, held = counters.get("cv_connections_up", 0.0), total(t0, "cv_ws_connections_in_use")
-    if up < planned or (held < planned and not lost):  # a lighter load proves nothing
+    unread = "t0" in lost  # no t0 scrape: the count is not measured, not 0
+    if up < planned or (held < planned and not unread):  # a lighter load proves nothing
+        at_start = f"{held:.0f} held at steady start"
+        if unread:
+            at_start = "held at steady start not measured (t0 scrape timed out)"
         res.invalid.append(
-            f"connections_short: {up:.0f} authenticated and {held:.0f} held at steady start, "
-            f"{planned} planned"
+            f"connections_short: {up:.0f} authenticated and {at_start}, {planned} planned"
         )
     if facts.oom_events or (
         facts.rss_bytes and facts.mem_max_bytes and facts.rss_bytes >= facts.mem_max_bytes
     ):
         res.invalid.append(f"backend_memory: rss {facts.rss_bytes}, oom events {facts.oom_events}")
+    if facts.mem_max_bytes and not facts.rss_bytes:  # a cap, and every periodic scrape timed out
+        res.not_judged.append("backend_memory rss: not judged (no periodic scrape was answered)")
     if facts.steady_s <= 0:
         res.invalid.append("no_steady_window")
-    if facts.cpu_s is not None and facts.steady_s > 0:
-        m["backend_cpu_s_per_s"] = _scalar(facts.cpu_s / facts.steady_s)
+    if facts.cpu_s is not None and facts.steady_s > 0 and not lost:  # a lost boundary: no delta
+        m["backend_cpu_s_per_s"] = _scalar(facts.cpu_s / (facts.steady_actual_s or facts.steady_s))
     if facts.rss_bytes:
         m["backend_rss_mb"] = _scalar(facts.rss_bytes / 2**20)
     return res
