@@ -1109,6 +1109,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `dom.order_placed` (audit, with price/qty/side/source=ladder), `dom.order_amended`, `dom.cancel_all`, `dom.arm_toggled`, `dom.depth_changed`.
 - **Sign-off:** [ ] colour scale legend with numeric anchors [ ] own-order markers never obscured by heatmap [ ] arm state unmistakable [ ] keyboard ladder trading demoed [ ] resync state designed [ ] detector "(estimated)" copy approved.
 - **Stories:** US-DOM-001, US-DOM-002, US-DOM-003, US-DOM-005, US-DOM-006, US-DOM-007, US-DOM-008, US-DOM-009, US-MKT-007, US-ORD-009.
+- **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the resync scrim lifts in the frame the `snap` applies, no minimum; the disconnected scrim at 0 ms).
 - **Design sign-off acceptance checklist:** [ ] ladder rows, heatmap trail, bid/ask columns, working-order column and position marker drawn at 3 depth tiers [ ] green=bid / red=ask convention with a user-configurable theme and a non-colour (side label) encoding [ ] centred / free-scroll / recentre behaviour drawn [ ] arm/disarm affordance for click-trading drawn and unmistakable in LIVE [ ] accessible grid alternative confirmed equal-status [ ] _(estimated)_ chips on queue-position and iceberg markers [ ] performance acceptance against the mandatory WebGL spike recorded (see Performance)
 
 ### SCR-051 — Heatmap & ladder settings dialog
@@ -1187,6 +1188,7 @@ Drag preview                Drop zones
 - **Stories:** US-BIG-001, US-BIG-002, US-BIG-003, US-BIG-004, US-BIG-006, US-MKT-006.
 - **Analytics/audit:** `tape.filter_changed` (size/side/aggregation), `tape.paused`, `tape.resumed`, `tape.print_clicked` (analytics).
 - **UX research (E22-D01):** [e22-tape-reading.md](../design/research/e22-tape-reading.md) — heuristic research, every default PROPOSED pending the owner's sessions: column set and order (Time · Price · Size · Notional · Side), compact density, reconstructed rows with a big-only preset, soft/hard pause, size tiers, area-linear bubble scaling (log as the switch) with an above-cap label, notional threshold per symbol class, the >20 % warning; `role="log"` / `aria-live="off"` grounded; contract gaps, contradictions and their owning E22 tickets listed in its §10.
+- **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; scrim timing; the `gapped` chip appears at 0 ms and outlives the overlay).
 - **Design sign-off acceptance checklist:** [ ] row layout (time, price, size, side, aggressor) drawn at compact and comfortable density [ ] big-trade highlighting by size tier uses weight/glyph as well as colour [ ] bubble overlay variant drawn with its size-to-notional legend [ ] pause-on-hover and explicit pause control drawn [ ] filter chips (min notional, side, aggregated-vs-raw) [ ] stale/disconnected state
 
 ### SCR-054 — OI / funding / liquidations panel
@@ -2100,6 +2102,7 @@ Drag preview                Drop zones
 - **Components:** CMP-011 Tag / Chip, CMP-026 EmptyState, CMP-049 Table, CMP-056 ColumnPicker, CMP-161 WatchlistRow, CMP-162 WatchlistGroupTabs.
 - **Stories:** US-MKT-003, US-MKT-005, US-REC-002.
 - **Analytics/audit:** `watchlist.symbol_added`, `watchlist.symbol_removed`, `watchlist.reordered`, `watchlist.column_changed`, `watchlist.symbol_activated` (analytics); adding a symbol that triggers auto-recording additionally emits the audited `recorder.auto_record_started`.
+- **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the one-shot row settle, "a stale cell never animates", the container-class mass transition at 200 rows / 60 rendered).
 - **Design sign-off acceptance checklist:** [ ] columns (symbol, last, change %, volume, funding, OI, spread) drawn with units [ ] up/down encoding uses arrows and text as well as colour [ ] flash-on-update respects reduced motion [ ] recording indicator per symbol [ ] drag-reorder with a keyboard alternative [ ] empty state with an add CTA [ ] stale-data shading
 
 ### SCR-101 — Watchlist manager
@@ -2800,6 +2803,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Performance:** Empty states render without initialising heavy resources (no GL context, no subscriptions) so an empty panel costs nothing.
 - **Analytics/audit:** `empty_state_shown` `{surface, reason}` (analytics - used to find states users hit often and should not).
 - **UX research:** [e16-recorder-mental-model.md](../design/research/e16-recorder-mental-model.md) §4 (E16-D01; recorder-dependent variant: cause sentence per cause, live-data sentence only where true).
+- **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the backfill variant's determinate CMP-023 bar, no indeterminate loop).
 - **Design sign-off acceptance checklist:** [ ] the three empty-state classes drawn (nothing created yet / nothing matches the filter / data not recorded yet) [ ] role-aware action vs explanation variants [ ] the recorder-dependent variant carries the recording-start timestamp [ ] copy for each class written and reviewed [ ] the pattern is applied consistently in every panel that can be empty
 
 ### SCR-152 — Disconnected / reconnecting state
@@ -2821,6 +2825,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Stories:** US-OBS-004, US-POS-008, US-MKT-007.
 - **Performance:** Reconnection uses exponential backoff (1s, 2s, 4s, 8s, capped 30s) with jitter; the next attempt time is shown. On reconnect, subscriptions are restored in priority order (private account state first, then the focused panel, then the rest) and a gap-fill request closes the missed window; target time-to-usable after a 30 s outage is <=5 s.
 - **Analytics/audit:** `ws.disconnected` `{reason, subscriptions}`, `ws.reconnect_attempt` `{attempt}`, `ws.reconnected` `{outageMs, gapFilled}` (analytics, and incident-log entries beyond a threshold). Orders attempted while disconnected are refused client-side and recorded as `order.blocked_offline`.
+- **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; banner content at 0 ms, dismissal fade, the PROPOSED hysteresis table and the flap collapse; `ws.banner_suppressed` proposed).
 - **Design sign-off acceptance checklist:** [ ] the global overlay and the per-panel stale shading are drawn together and are consistent [ ] last-good timestamp shown on every affected panel [ ] order entry is visibly blocked with the reason while private feeds are down [ ] the 'native stops still protect your positions' reassurance is stated where true [ ] reconnecting, gap-filling and restored states drawn [ ] the overlay never hides the positions grid entirely
 
 ### SCR-153 — Degraded-mode state

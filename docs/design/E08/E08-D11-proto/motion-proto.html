@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>E08-D11 motion prototype</title>
+    <style>
+      /* E08-D11 prototype: only `opacity` animates (the backfill bar would add `transform`); every colour flips.
+         The constants the owner's run varies (§11) are CSS custom properties set from the query string. */
+      :root {
+        --sunken: #000;
+        --overlay: #1c222b;
+        --text: #e8eaed;
+        --danger: #4e1518;
+        --success: #0e3d1f;
+        --warning: #4a3306;
+        --buy: #2ebd59;
+        --sell: #e5484d;
+        --settle: 200ms; /* motion.duration.normal; ?settle=fast → 100ms */
+        --exit: 100ms; /* the resync scrim's lift; ?exit=0 → a cut */
+        --emph-alpha: 0.25; /* the emphasis overlay's peak; ?alpha= */
+      }
+      body {
+        margin: 0;
+        background: #11151a;
+        color: var(--text);
+        font:
+          12px/1.4 system-ui,
+          sans-serif;
+      }
+      #out {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 2;
+        max-width: 1280px;
+        word-break: break-all;
+      }
+      #echo,
+      #ann {
+        padding: 2px 8px;
+        color: #b1bac4;
+      }
+      #slot {
+        width: 1280px;
+        height: 96px;
+      }
+      #banner {
+        height: 96px;
+        opacity: 0;
+        transition: opacity 100ms cubic-bezier(0.3, 0, 1, 1);
+        padding: 8px 12px;
+        box-sizing: border-box;
+      }
+      #banner.on {
+        opacity: 1;
+        transition: none;
+      } /* appears at 0 ms; the dismissal fades `fast` */
+      #banner.danger {
+        background: var(--danger);
+      }
+      #banner.success {
+        background: var(--success);
+      }
+      #banner.degraded {
+        background: var(--warning);
+      }
+      #title {
+        font-weight: 700;
+      }
+      #chrome {
+        display: flex;
+        gap: 16px;
+        padding: 4px 8px;
+      }
+      #chip {
+        border: 1px solid #2e363e;
+        border-radius: 10px;
+        padding: 1px 8px;
+      } /* the CMP-076 stand-in: it follows the words (≤ 1 swap / s, latched after a tier trips) */
+      #ladder {
+        position: relative;
+        width: 480px;
+        height: 120px;
+        background: #161b22;
+      } /* the SCR-050 stand-in Scene A drives through H6 / H8 */
+      #hdr {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        padding: 2px 8px;
+        background: #22292f;
+      } /* the panel header: its words take the title's slots and latch (D10); "Reconnected — verifying" + the age at 1 Hz carries the stable window, never a dim */
+      #scrim {
+        position: absolute;
+        inset: 0;
+        background: var(--overlay);
+        opacity: 0;
+        pointer-events: none;
+      }
+      #scrim.block {
+        opacity: 0.6;
+        transition: none;
+      } /* the first drop of an episode: scrim + block, a flip; it cuts to 0 in the fresh snapshot's frame */
+      #scrim.resync {
+        opacity: 0.6;
+        transition: none;
+      } /* the resync scrim: 0 ms on the B14 flag */
+      #scrim.lift {
+        opacity: 0;
+        transition: opacity var(--exit) cubic-bezier(0.3, 0, 1, 1);
+      } /* the lift starts in the frame the snap applies (PROPOSED fast / accelerate; 0 ms is the other arm) */
+      #scrim.hold {
+        background: var(--sunken);
+        opacity: 0.15;
+      } /* ?hold=5 only: the 15 % hold this spec routes to E11-D06 (C-14); the rule until it is accepted is the cut */
+      #ladder.blocked {
+        cursor: not-allowed;
+      } /* the block: disabled-with-reason + the lock cursor, never `inert`; focus never moves */
+      .panel {
+        position: relative;
+        width: 1280px;
+      }
+      .panel::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: var(--sunken);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity var(--settle) cubic-bezier(0.2, 0, 0, 1);
+      }
+      .panel.stale::after {
+        opacity: 0.15;
+      } /* the one container-level settle */
+      .panel.cut::after {
+        transition: none;
+      } /* the un-dim is a cut (no second settle) */
+      .panel.stale tr,
+      tr.stale {
+        background: var(--sunken);
+      } /* a flip, never a transition; the descendant selector restyles every row in the DOM */
+      table {
+        border-collapse: collapse;
+        width: 1280px;
+      }
+      td {
+        height: 24px;
+        padding: 0 8px;
+        font-variant-numeric: tabular-nums;
+        position: relative;
+      }
+      td.chip {
+        z-index: 1;
+      } /* the chip paints above the panel's dim and is never in the dimmed set (D13) */
+      td.v {
+        isolation: isolate;
+        transition: opacity var(--settle) cubic-bezier(0.2, 0, 0, 1);
+      }
+      tr.stale td.v {
+        opacity: 0.85;
+      } /* the per-row settle */
+      tr.cut td.v {
+        transition: none;
+      }
+      td.v::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        opacity: 0;
+        pointer-events: none;
+      } /* behind the digits (isolation on the cell), so the glyph edges stay crisp at 2 Hz */
+      td.up::before {
+        background: var(--buy);
+      }
+      td.down::before {
+        background: var(--sell);
+      }
+      td.flash::before {
+        animation: emph 100ms cubic-bezier(0.3, 0, 1, 1) 1;
+      }
+      tr.stale td.flash::before,
+      .panel.stale td.flash::before,
+      .panel.disc td.flash::before {
+        animation: none;
+      } /* a non-live cell never animates: the CSS gate on the same published flag */
+      @keyframes emph {
+        from {
+          opacity: var(--emph-alpha);
+        }
+        to {
+          opacity: 0;
+        }
+      }
+      .sr {
+        position: absolute;
+        left: -9999px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="out">RUNNING</div>
+    <div id="echo"></div>
+    <div id="slot">
+      <div id="banner">
+        <span id="glyph"></span> <span id="title"></span><br /><span id="age"></span>
+      </div>
+    </div>
+    <div id="chrome"><span id="chip">Live 42 ms</span><span id="ann"></span></div>
+    <div id="ladder">
+      <div id="hdr"></div>
+      <div id="scrim"></div>
+      <span id="scrimlabel"></span>
+    </div>
+    <div id="panel" class="panel">
+      <table>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div id="alert" class="sr" role="alert"></div>
+    <div id="live" class="sr" role="status" aria-live="polite"></div>
+    <script>
+      // The constants the owner's run varies (§11), read from the query string and echoed on screen. Arithmetic
+      // mode (no `play`) computes every scenario and measures Scene B; `?play=ac1|flap2hz|slow|resync|quiet|degraded`
+      // schedules the same timeline on the real clock (setTimeout → requestAnimationFrame) at `speed` ×, driving
+      // the banner slot, the glyph, the CMP-076 chip, the ladder scrim, the header words and a 60-row window with
+      // 4 Hz ticks, and prints the planned vs actual time of every applied event when the play ends.
+      const q = new URLSearchParams(location.search);
+      const P = (k, d) => (q.get(k) == null || q.get(k) === "" ? d : q.get(k));
+      const CFG = {
+        play: P("play", ""),
+        speed: +P("speed", 1),
+        stable: +P("stable", 5), // the stable window before the fill steps down (PROPOSED 5; 7, 10)
+        tier: +P("tier", 30), // the stable window once the slow-flap tier has tripped (PROPOSED 30)
+        degraded: +P("degraded", 5), // the `degraded` banner clears after this long of freshness (PROPOSED 5; 2)
+        window: +P("window", 5), // the stale chip + dim clear after this long of freshness (PROPOSED 5; 0 = r2)
+        settle: P("settle", "normal"), // the dim's settle: normal (200 ms) or fast (100 ms)
+        exit: +P("exit", 100), // the resync scrim's lift in ms (100 PROPOSED; 0 is the other arm)
+        hold: +P("hold", 0), // 0 = the cut at the snapshot (the rule); 5 = the 15 % hold proposed to E11-D06
+        alpha: +P("alpha", 0.25), // the emphasis overlay's peak
+        cap: +P("cap", 20), // emphasised cells per frame
+        ms: +P("ms", 400),
+        reps: +P("reps", 5),
+      };
+      const STABLE_S = CFG.stable,
+        TIER_STABLE_S = CFG.tier,
+        HOLD_S = 10,
+        FLAP_WINDOW_S = 5,
+        FLAP_CHANGES = 3,
+        ENTRIES = 3,
+        ENTRY_WINDOW_S = 60,
+        T1_S = 5;
+      const root = document.documentElement.style;
+      root.setProperty("--settle", CFG.settle === "fast" ? "100ms" : "200ms");
+      root.setProperty("--exit", CFG.exit + "ms");
+      root.setProperty("--emph-alpha", String(CFG.alpha));
+      const $ = (id) => document.getElementById(id);
+      const banner = $("banner"),
+        title = $("title"),
+        glyph = $("glyph"),
+        age = $("age"),
+        chip = $("chip"),
+        ladder = $("ladder"),
+        scrim = $("scrim"),
+        scrimLabel = $("scrimlabel"),
+        hdr = $("hdr"),
+        annEl = $("ann"),
+        alertEl = $("alert"),
+        liveEl = $("live"),
+        panel = $("panel"),
+        tbody = $("rows");
+      $("echo").textContent =
+        "constants: " +
+        Object.entries(CFG)
+          .filter(([k]) => !["ms", "reps"].includes(k))
+          .map(([k, v]) => k + "=" + v)
+          .join(" · ") +
+        " — every value PROPOSED until the owner's run (§11)";
+      // ---- the DOM actions one event can take (Scene A applies them at once; a play schedules them) ----------
+      const WORDS = {
+        down: "Disconnected — reconnecting",
+        up: "Reconnected — reconciling",
+        unstable: "Connection unstable — last data Ns ago",
+        recovered: "Reconnected",
+      };
+      const HDR = {
+        // the panel header's words: the same slots and latch as the title (D10); "" is the cut at the window's end
+        down: "Disconnected — last data Ns ago",
+        up: "Reconnected — verifying · last data Ns ago",
+        unstable: "Connection unstable — verifying · last data Ns ago",
+        recovered: "",
+      };
+      const act = {
+        banner: (on) => banner.classList.toggle("on", on),
+        fill: (f) => {
+          banner.classList.remove("danger", "success", "degraded");
+          if (f) banner.classList.add(f);
+        },
+        words: (w) => {
+          title.textContent = w.text;
+          glyph.textContent = w.glyph; // the glyph follows the words, never the transport (M1)
+          chip.textContent = w.chip; // so does the CMP-076 chip; its latency number is never in a live region
+          if (w.hdr !== undefined) act.hdr(w.hdr); // and the panel header's words, in the same slots (D10)
+        },
+        scrim: (level) => {
+          scrim.className = level === 0.6 ? "block" : level === 0.15 ? "hold" : "";
+        },
+        block: (on) => {
+          ladder.classList.toggle("blocked", on); // the lock cursor + disabled-with-reason; never `inert`
+          panel.classList.toggle("disc", on); // the watchlist's rows: the CSS gate stops every emphasis
+          scrimLabel.textContent = on ? "Disconnected — last data 00:00 ago" : "";
+        },
+        hdr: (text) => (hdr.textContent = hdr.dataset.tpl = text),
+        ann: (kind, text) => {
+          annEl.textContent = kind + ": " + text;
+          (kind === "alert" || kind === "assertive" ? alertEl : liveEl).textContent = text; // after the visual (D20)
+        },
+      };
+      // ---- Scene A: the flapping connection against the hysteresis table (the same arithmetic as the audit tool)
+      function flap(drops, live) {
+        const ch = [...drops.map(([d]) => [d, "down"]), ...drops.map(([, u]) => [u, "up"])].sort(
+          (a, b) => a[0] - b[0],
+        );
+        const ev = [];
+        const emit = (t, fn) => {
+          ev.push({ t, fn });
+          if (live) fn();
+        };
+        let appearances = 0,
+          collapse = Infinity,
+          occupied = false,
+          unstable = false,
+          latched = false,
+          episode = false,
+          slow = false,
+          lastFill = "",
+          attempt = 0;
+        const ann = [],
+          fills = [],
+          words = [],
+          scrims = [],
+          entries = [];
+        const wordsAt = (t, text, kind) => {
+          // title swaps: the first at 0 ms, then at most one per second; a pending swap takes the latest wording
+          const applied = words.filter((w) => w[0] <= t);
+          const slot = applied.length ? Math.max(t, applied[applied.length - 1][0] + 1) : t;
+          const w = {
+            text,
+            glyph: kind === "unstable" ? "◐" : kind === "down" ? "●" : "○",
+            chip:
+              kind === "unstable"
+                ? "Connection unstable"
+                : kind === "down"
+                  ? `Reconnecting (${attempt})`
+                  : "Live 42 ms",
+            hdr: HDR[kind], // the panel header's words take the title's slots and latch, never the transport
+          };
+          if (words.length && words[words.length - 1][0] > t) {
+            words[words.length - 1][1] = text;
+            ev[words[words.length - 1][2]].fn = () => act.words(w);
+            if (live) act.words(w);
+          } else {
+            words.push([slot, text, ev.length]);
+            emit(slot, () => act.words(w));
+          }
+          return slot;
+        };
+        const setScrim = (t, level) => {
+          scrims.push([t, level]);
+          emit(t, () => act.scrim(level));
+        };
+        for (const [t, kind] of ch) {
+          if (occupied && t >= collapse) {
+            occupied = false;
+            emit(t, () => act.banner(false));
+          }
+          const recovered = lastFill === "success";
+          const recent = ch.filter((c) => t - FLAP_WINDOW_S < c[0] && c[0] <= t).length;
+          let trip = recent >= FLAP_CHANGES && !unstable; // T5, the fast tier
+          if (kind === "down") {
+            attempt++;
+            if (!occupied || recovered) {
+              entries.push(t);
+              if (entries.filter((e) => t - ENTRY_WINDOW_S < e && e <= t).length >= ENTRIES) {
+                slow = true; // the slow-flap tier: no new alert, the title latches, a 30 s stable window
+                trip = !unstable;
+              } else {
+                ann.push(`${t} s alert`);
+                emit(t, () => act.ann("alert", "Disconnected."));
+              }
+            }
+            if (!occupied) {
+              appearances++;
+              occupied = true;
+              emit(t, () => act.banner(true));
+            }
+            if (lastFill !== "danger") {
+              fills.push([t, "danger"]);
+              lastFill = "danger";
+              emit(t, () => act.fill("danger"));
+            }
+            if (!episode) {
+              setScrim(t, 0.6); // the 0.6 scrim appears once per episode
+              episode = true;
+            }
+            emit(t, () => act.block(true)); // the block alone follows the transport; the header's words wait for their slot
+            collapse = Infinity;
+          } else {
+            if (scrims.length && scrims[scrims.length - 1][1] === 0.6)
+              setScrim(t, CFG.hold ? 0.15 : 0); // the fresh snapshot: a cut (or the ?hold arm)
+            emit(t, () => act.block(false));
+          }
+          if (trip) {
+            unstable = latched = true;
+            const slot = wordsAt(t, WORDS.unstable, "unstable");
+            ann.push(`${slot} s unstable`);
+            emit(slot, () => act.ann("polite", "Connection unstable."));
+          } else if (!latched) wordsAt(t, WORDS[kind], kind);
+          if (kind === "up") {
+            const nxt = ch.filter((c) => c[0] > t),
+              step = t + (slow ? TIER_STABLE_S : STABLE_S);
+            if (!nxt.length || nxt[0][0] >= step) {
+              fills.push([step, "success"]);
+              lastFill = "success";
+              emit(step, () => act.fill("success"));
+              ann.push(`${step} s recovered`);
+              emit(step, () => act.ann("assertive", "Reconnected."));
+              wordsAt(step, WORDS.recovered, "recovered");
+              if (scrims[scrims.length - 1][1] !== 0) setScrim(step, 0); // the header's cut rides the recovered words
+              latched = unstable = episode = slow = false;
+              attempt = 0;
+              collapse = step + HOLD_S;
+            }
+          }
+        }
+        const perS = (ts) =>
+          Math.max(...ts.map((t) => ts.filter((u) => t <= u && u < t + 1).length));
+        return {
+          row: [
+            ch.length,
+            appearances,
+            drops.length - appearances,
+            fills.length,
+            words.length,
+            perS(words.map((w) => w[0])),
+            scrims.length,
+            perS(scrims.map((s) => s[0])),
+            ann.filter((a) => a.endsWith("alert")).length,
+            collapse,
+            collapse - ch[0][0],
+          ],
+          ann,
+          ev,
+        };
+      }
+      // The quiet symbol (one print every `period` s): the stale chip's flips and the dim's settles per minute with
+      // the first-fresh-frame exit (window 0, r2) and with the clearing window of continuous freshness (r3).
+      function quietCalc(period, duration, t1, window) {
+        const ticks = [];
+        for (let t = 0; t <= duration; t += period) ticks.push(+t.toFixed(6));
+        let on = 0,
+          clears = 0,
+          shown = false;
+        for (let k = 0; k < ticks.length; k++) {
+          const enter = ticks[k] + t1;
+          if (enter >= duration || period <= t1) break;
+          if (!shown) {
+            on++;
+            shown = true;
+          }
+          const fresh = k + 1 < ticks.length ? ticks[k + 1] : duration;
+          if (fresh + window < Math.min(fresh + t1, duration)) {
+            clears++;
+            shown = false;
+          }
+        }
+        const m = 60 / duration;
+        return [window, on * m, clears * m, (on + clears) * m, (window ? on : 2 * on) * m];
+      }
+      // ---- Scene B: 200 watchlist rows going stale in one frame — per-row vs container technique, the 60-row
+      // virtualised window, and the QA-assertion arm (container 200 under 4 Hz ticks with `cap` emphasised cells).
+      let s = 7;
+      const rnd = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+      function build(n) {
+        tbody.textContent = "";
+        for (let r = 0; r < n; r++) {
+          const tr = document.createElement("tr");
+          const cells = [
+            `SYM${r}USDT`,
+            (60000 + rnd() * 5000).toFixed(1),
+            (rnd() * 4 - 2).toFixed(2) + "%",
+            (rnd() * 900).toFixed(0) + "M",
+            (rnd() * 0.02).toFixed(3),
+            (rnd() * 10 - 5).toFixed(1) + "%",
+            (rnd() * 2).toFixed(2),
+            "",
+          ];
+          cells.forEach((c, i) => {
+            const td = document.createElement("td");
+            td.className = i === 0 ? "sym" : i === cells.length - 1 ? "chip" : "v";
+            td.appendChild(document.createTextNode(c));
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        }
+        return [...tbody.children];
+      }
+      const chipText = (tr, text) => {
+        tr.lastChild.firstChild.data = text;
+      };
+      const p95 = (a) => {
+        a = [...a].sort((x, y) => x - y);
+        return a[Math.floor(a.length * 0.95)] || 0;
+      };
+      const med = (a) => {
+        a = [...a].sort((x, y) => x - y);
+        return a[a.length >> 1];
+      };
+      const raf = () => new Promise(requestAnimationFrame);
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      async function frames(ms, from) {
+        // rAF deltas for `ms`; `from` is the timestamp of the frame that contained the toggle, so that frame counts
+        const d = [];
+        let last = from == null ? await raf() : from;
+        const end = last + ms;
+        while (last < end) {
+          const now = await raf();
+          d.push(now - last);
+          last = now;
+        }
+        return d;
+      }
+      function tick(rows, cap) {
+        // the emphasis restart: one batched class removal, ONE forced reflow, then the re-add (D15), never per cell
+        const cells = [];
+        const stride = Math.max(1, Math.floor(rows.length / cap));
+        for (let i = 0; i < cap && i * stride < rows.length; i++) {
+          const td = rows[i * stride].children[1];
+          td.firstChild.data = (60000 + rnd() * 5000).toFixed(1);
+          td.className = "v " + (rnd() < 0.5 ? "up" : "down");
+          cells.push(td);
+        }
+        void tbody.offsetWidth;
+        for (const td of cells) td.classList.add("flash");
+      }
+      async function arm(cfg, winMs, reps) {
+        const rows = build(cfg.rows),
+          toggle = [],
+          frame = [],
+          idle = [];
+        const ticker = cfg.ticks ? setInterval(() => tick(rows, CFG.cap), 250) : null;
+        const set = (on) => {
+          if (cfg.perRow) rows.forEach((tr) => tr.classList.toggle("stale", on));
+          else panel.classList.toggle("stale", on);
+          rows.forEach((tr) => chipText(tr, on ? "Stale 5s" : ""));
+        };
+        for (let i = 0; i < reps; i++) {
+          idle.push(...(await frames(winMs)));
+          const at = await raf();
+          const t0 = performance.now();
+          set(true);
+          void panel.offsetHeight; /* force style + layout so the cost is not deferred */
+          toggle.push(performance.now() - t0);
+          frame.push(...(await frames(winMs, at))); /* from and including the toggle frame */
+          set(false);
+          await wait(300);
+        }
+        if (ticker) clearInterval(ticker);
+        const r2 = (x) => +x.toFixed(2);
+        return [
+          cfg.name,
+          cfg.rows,
+          r2(Math.max(...toggle)), // five samples: the max is reported as the max, not as a "p95" (N-1)
+          r2(med(toggle)),
+          r2(p95(frame)),
+          r2(Math.max(...frame)),
+          frame.length,
+          frame.filter((x) => x > 20).length,
+          frame.filter((x) => x >= 33).length,
+          r2(p95(idle)),
+        ];
+      }
+      // ---- the real-time play: the same events on the real clock, every applied event timed against its plan
+      function schedule(events, speed, done) {
+        const t0 = performance.now(),
+          applied = [];
+        let pending = events.length;
+        if (!pending) return done(applied);
+        for (const e of events) {
+          setTimeout(
+            () =>
+              requestAnimationFrame(() => {
+                e.fn();
+                applied.push([e.t, +(((performance.now() - t0) / 1000) * speed).toFixed(3)]);
+                if (--pending === 0) done(applied);
+              }),
+            Math.max(0, (e.t * 1000) / speed),
+          );
+        }
+      }
+      function scenes() {
+        const drops = {
+          ac1: [0, 2, 4, 6, 8].map((d) => [d, d + 1]),
+          flap2hz: Array.from({ length: 60 }, (_, k) => [k * 0.5, k * 0.5 + 0.25]),
+          slow: [0, 12, 24].map((d) => [d, d + 1]),
+        };
+        return drops;
+      }
+      function playScene(name) {
+        const drops = scenes()[name];
+        let ev = [];
+        const rows = build(60);
+        const ticker = setInterval(() => tick(rows, CFG.cap), 250 / CFG.speed); // the 60-row window keeps ticking
+        if (drops) ev = flap(drops, false).ev;
+        else if (name === "resync") {
+          // T4: an incident `snap` (upstream_desync) scrims at 0 ms and lifts in the frame the snap applies (3 s),
+          // with the `exit` fade; a routine `reconfigure` snap at 6 s shows nothing
+          const e = (t, fn) => ev.push({ t, fn });
+          e(0, () => {
+            scrim.className = "resync";
+            scrimLabel.textContent = "Resyncing book…";
+            ladder.classList.add("blocked");
+            act.ann("polite", "Book resyncing.");
+          });
+          e(3, () => {
+            scrim.className = "resync lift";
+            scrimLabel.textContent = "";
+            ladder.classList.remove("blocked");
+            act.ann("polite", "Book live.");
+          });
+          e(6, () => act.hdr("routine snap (reconfigure) applied — nothing shown (E17-D01 D15)"));
+          e(9, () => act.hdr(""));
+        } else if (name === "quiet" || name === "degraded") {
+          // a quiet symbol (row 0) prints every 5.5 s: the chip + dim enter at T1 and clear after `window` s of
+          // freshness (0 = the first fresh frame); `degraded` adds the warning-tone banner on the same topic,
+          // clearing after `degraded` s of freshness
+          const tr = rows[0],
+            period = 5.5,
+            dur = 60;
+          const e = (t, fn) => ev.push({ t, fn });
+          let shown = false,
+            bannerOn = false;
+          for (let k = 0, t = 0; t <= dur; k++, t = +(k * period).toFixed(6)) {
+            const tk = t;
+            e(tk, () => {
+              tr.children[1].firstChild.data = (60000 + rnd() * 5000).toFixed(1);
+            });
+            const enter = tk + T1_S,
+              fresh = Math.min(tk + period, dur);
+            if (enter < fresh) {
+              if (!shown) {
+                e(enter, () => {
+                  tr.classList.remove("cut");
+                  tr.classList.add("stale");
+                  chipText(tr, "Stale 5s");
+                });
+                shown = true;
+              } else e(enter, () => chipText(tr, "Stale 5s"));
+              if (name === "degraded" && !bannerOn) {
+                e(enter, () => {
+                  act.banner(true);
+                  act.fill("degraded");
+                  act.words({
+                    text: "Degraded — some data feeds are stale",
+                    glyph: "▲",
+                    chip: "Stale 5s",
+                  });
+                  act.ann("polite", "Degraded — some data feeds are stale.");
+                });
+                bannerOn = true;
+              }
+              e(fresh, () => chipText(tr, `Stale ${T1_S}s · live again`));
+              const clear = fresh + CFG.window;
+              if (clear < Math.min(fresh + T1_S, dur)) {
+                e(clear, () => {
+                  tr.classList.add("cut"); // the un-dim is a cut; the settle plays on entry only
+                  tr.classList.remove("stale");
+                  chipText(tr, "");
+                });
+                shown = false;
+              }
+              if (name === "degraded" && fresh + CFG.degraded < Math.min(fresh + T1_S, dur)) {
+                e(fresh + CFG.degraded, () => {
+                  act.banner(false);
+                  act.fill("");
+                  act.words({ text: "", glyph: "", chip: "Live 42 ms" });
+                });
+                bannerOn = false;
+              }
+            }
+          }
+        }
+        ev.sort((a, b) => a.t - b.t);
+        let last = null,
+          downAt = null;
+        const ageTick = setInterval(() => {
+          // the 1 Hz age text (never in a live region); the only element that states the instantaneous truth
+          const now = performance.now();
+          if (ladder.classList.contains("blocked")) downAt = downAt == null ? now : downAt;
+          const n = downAt == null ? 0 : Math.round(((now - downAt) / 1000) * CFG.speed);
+          age.textContent = banner.classList.contains("on") ? `last data ${n} s ago` : "";
+          hdr.textContent = (hdr.dataset.tpl || "").replace(/Ns ago/, `${n}s ago`);
+          if (!ladder.classList.contains("blocked") && hdr.textContent === "") downAt = null;
+          last = now;
+        }, 1000 / CFG.speed);
+        schedule(ev, CFG.speed, (applied) => {
+          setTimeout(
+            () => {
+              clearInterval(ticker);
+              clearInterval(ageTick);
+              const lag = applied.map(([p, a]) => +(a - p).toFixed(3));
+              $("out").textContent =
+                "RESULT" +
+                JSON.stringify({
+                  play: name,
+                  constants: CFG,
+                  planned_events: ev.length,
+                  applied: applied.length,
+                  max_lag_s: Math.max(...lag),
+                  last,
+                });
+            },
+            Math.max(300, 1000 / CFG.speed),
+          );
+        });
+      }
+      (async () => {
+        if (CFG.play) return playScene(CFG.play);
+        const d = scenes();
+        const ac1 = flap(d.ac1, true),
+          f2 = flap(d.flap2hz, true),
+          slow = flap(d.slow, true);
+        banner.className = "";
+        scrim.className = "";
+        ladder.className = "";
+        panel.className = "panel";
+        hdr.textContent = "";
+        const arms = [
+          { name: "per-row 200", rows: 200, perRow: true },
+          { name: "container 200 (all 200 rows in the DOM)", rows: 200 },
+          { name: "container 60 (virtualised window)", rows: 60 },
+          { name: "container 200 + 4 Hz ticks, 20 emphases", rows: 200, ticks: true },
+        ];
+        const mass = [];
+        for (const a of arms) mass.push(await arm(a, CFG.ms, CFG.reps));
+        const out = {
+          ua: navigator.userAgent,
+          cores: navigator.hardwareConcurrency,
+          host: "development laptop (WSL2, software rendering), not the 06 §3.1 reference machine",
+          win_ms: CFG.ms,
+          reps: CFG.reps,
+          constants: {
+            stable_s: STABLE_S,
+            tier_stable_s: TIER_STABLE_S,
+            window_s: CFG.window,
+            hold: CFG.hold,
+            settle: CFG.settle,
+            exit_ms: CFG.exit,
+            alpha: CFG.alpha,
+            cap: CFG.cap,
+          },
+        };
+        out.flap_columns = [
+          "changes",
+          "appearances",
+          "suppressed",
+          "fill_changes",
+          "title_swaps",
+          "title_swaps_max_per_s",
+          "scrim_flips",
+          "scrim_flips_max_per_s",
+          "alerts",
+          "earliest_collapse_s",
+          "min_visible_s",
+        ];
+        out.flap = {
+          ac1: ac1.row,
+          ac1_announcements: ac1.ann,
+          flap2hz: f2.row,
+          flap2hz_announcements: f2.ann,
+          slow: slow.row,
+          slow_announcements: slow.ann,
+        };
+        out.quiet_columns = [
+          "window_s",
+          "appearances_per_min",
+          "clears_per_min",
+          "chip_flips_per_min",
+          "settles_per_min",
+        ];
+        out.quiet = {
+          period_s: 5.5,
+          duration_s: 60,
+          t1_s: T1_S,
+          first_fresh_frame_r2: quietCalc(5.5, 60, T1_S, 0),
+          clearing_window_r3: quietCalc(5.5, 60, T1_S, CFG.window),
+        };
+        out.mass_columns = [
+          "arm",
+          "rows",
+          "toggle_ms_max",
+          "toggle_ms_med",
+          "frame_ms_p95",
+          "frame_ms_max",
+          "frames",
+          "over_20_ms",
+          "ge_33_ms",
+          "idle_frame_ms_p95",
+        ];
+        out.mass = mass;
+        $("out").textContent = "RESULT" + JSON.stringify(out);
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,77 @@
+{
+  "ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.8059.12 Safari/537.36",
+  "cores": 28,
+  "host": "development laptop (WSL2, software rendering), not the 06 §3.1 reference machine",
+  "win_ms": 400,
+  "reps": 5,
+  "constants": {
+    "stable_s": 5,
+    "tier_stable_s": 30,
+    "window_s": 5,
+    "hold": 0,
+    "settle": "normal",
+    "exit_ms": 100,
+    "alpha": 0.25,
+    "cap": 20
+  },
+  "flap_columns": [
+    "changes",
+    "appearances",
+    "suppressed",
+    "fill_changes",
+    "title_swaps",
+    "title_swaps_max_per_s",
+    "scrim_flips",
+    "scrim_flips_max_per_s",
+    "alerts",
+    "earliest_collapse_s",
+    "min_visible_s"
+  ],
+  "flap": {
+    "ac1": [10, 1, 4, 2, 4, 1, 2, 1, 1, 24, 24],
+    "ac1_announcements": ["0 s alert", "2 s unstable", "14 s recovered"],
+    "flap2hz": [120, 1, 59, 2, 3, 1, 2, 2, 1, 44.75, 44.75],
+    "flap2hz_announcements": ["0 s alert", "1 s unstable", "34.75 s recovered"],
+    "slow": [6, 1, 2, 6, 8, 1, 6, 1, 2, 65, 65],
+    "slow_announcements": [
+      "0 s alert",
+      "6 s recovered",
+      "12 s alert",
+      "18 s recovered",
+      "24 s unstable",
+      "55 s recovered"
+    ]
+  },
+  "quiet_columns": [
+    "window_s",
+    "appearances_per_min",
+    "clears_per_min",
+    "chip_flips_per_min",
+    "settles_per_min"
+  ],
+  "quiet": {
+    "period_s": 5.5,
+    "duration_s": 60,
+    "t1_s": 5,
+    "first_fresh_frame_r2": [0, 10, 10, 20, 20],
+    "clearing_window_r3": [5, 1, 0, 1, 1]
+  },
+  "mass_columns": [
+    "arm",
+    "rows",
+    "toggle_ms_max",
+    "toggle_ms_med",
+    "frame_ms_p95",
+    "frame_ms_max",
+    "frames",
+    "over_20_ms",
+    "ge_33_ms",
+    "idle_frame_ms_p95"
+  ],
+  "mass": [
+    ["per-row 200", 200, 32.2, 18.2, 16.8, 50.1, 115, 4, 4, 16.7],
+    ["container 200 (all 200 rows in the DOM)", 200, 12.8, 10.6, 16.7, 16.8, 122, 0, 0, 16.8],
+    ["container 60 (virtualised window)", 60, 4, 3.3, 16.7, 16.8, 123, 0, 0, 16.8],
+    ["container 200 + 4 Hz ticks, 20 emphases", 200, 17.2, 10.6, 16.7, 16.8, 122, 0, 0, 16.7]
+  ]
+}
