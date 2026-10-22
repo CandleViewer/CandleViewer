@@ -1,6 +1,6 @@
 """E08-Q04 assertion logic on fake samples: each budget passes and fails where it should.
 Pure (no I/O, no clock), apart from the k6 driver's tests, which fake k6, the fixture app and its
-server, and write to `tmp_path`."""
+server, and write to `tmp_path`, and the k6 script's test, which reads the script."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import copy
 import functools
 import json
 import math
+import re
 import statistics
 import subprocess
 import tempfile
@@ -230,9 +231,10 @@ def test_k6_reading_keeps_only_the_routes_k6_sampled() -> None:
     assert rest_load.k6_reading(0, json.dumps({"metrics": {}})) == {}
 
 
-def test_k6_reading_keeps_a_99_that_a_route_over_150_ms_explains() -> None:
-    """#2825: a route's p95 over Budget #13 crosses its threshold (99), and `verdict` fails it."""
-    assert rest_load.k6_reading(99, _k6(trades=160.0)) == _K6_READ | {"trades": [160.0]}
+def test_k6_reading_keeps_a_99_that_a_route_at_or_over_150_ms_explains() -> None:
+    """#2825: a route's p95 at or over Budget #13 crosses its threshold (99), so the run is kept
+    for `verdict` to judge; at exactly 150.0, which a `<=` would refuse."""
+    assert rest_load.k6_reading(99, _k6(trades=150.0)) == _K6_READ | {"trades": [150.0]}
 
 
 @pytest.mark.parametrize("code", [1, 98, 107, 255])
@@ -246,12 +248,20 @@ def test_k6_reading_refuses_a_run_k6_ended_with_an_error(code: int) -> None:
     ("code", "text", "match"),
     [
         (0, _k6({"passes": 2397, "fails": 3, "value": 0.99875}), "counted 3 failed checks"),
-        (99, _k6(), "no route's p95 over 150 ms"),
-        (99, _k6({}), "no route's p95 over 150 ms"),
+        (99, _k6(), "no route's p95 at or over 150 ms"),
+        (99, _k6({}), "no route's p95 at or over 150 ms"),
+        (99, _k6({}, trades=149.9), "no route's p95 at or over 150 ms"),
         (0, "", "wrote no summary"),
         (0, '{"metrics": {', "unreadable summary"),
     ],
-    ids=["failed-checks", "unexplained-99", "unexplained-99-no-count", "no-summary", "cut-short"],
+    ids=[
+        "failed-checks",
+        "unexplained-99",
+        "unexplained-99-no-count",
+        "unexplained-99-just-under",
+        "no-summary",
+        "cut-short",
+    ],
 )
 def test_k6_reading_refuses_a_summary_of_no_valid_run(code: int, text: str, match: str) -> None:
     """#2825: a response that was not a 200 fails a check, and a failed check refuses the run, as
@@ -330,6 +340,58 @@ def test_drive_k6_refuses_an_invalid_run_and_still_stops_the_app(
     with pytest.raises(RuntimeError, match=match):
         rest_load.drive_k6("1s", 1)
     assert [s.should_exit for s in faked_k6.servers] == [True]
+
+
+def test_drive_k6_app_up_on_the_third_sleep_reads_the_run(
+    faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2825: the driver waits for the server to listen, a short sleep at a time; one that looked
+    once would refuse every run whose app came up a moment late."""
+    faked_k6.starts = False
+    naps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        naps.append(seconds)
+        if len(naps) == 3:
+            faked_k6.servers[0].started = True
+
+    monkeypatch.setattr("bench.ingestion.rest_load.time.sleep", sleep)
+    assert rest_load.drive_k6("1s", 1) == _K6_READ and len(naps) == 3
+
+
+def test_drive_k6_refused_run_keeps_k6s_export_byte_for_byte(
+    faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#2825: k6's own bytes (CRLFs, which a text copy would not keep) where the workflow names,
+    written before `k6_reading` refuses the run: a refused run's export is its evidence."""
+    keep = tmp_path / "reports" / "rest_k6-k6-summary.json"
+    monkeypatch.setenv(rest_load.K6_EXPORT_ENV, str(keep))
+    faked_k6.code, faked_k6.text = 107, _k6().replace(", ", ",\r\n")
+    with pytest.raises(RuntimeError, match="k6 exited 107"):
+        rest_load.drive_k6("1s", 1)
+    assert keep.read_bytes() == faked_k6.text.encode("utf-8")
+
+
+def test_drive_k6_no_export_variable_writes_nothing(
+    faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#2825: unset (a local run), the driver keeps nothing: once its temporary directory is gone,
+    the directory it ran in is as empty as before."""
+    monkeypatch.delenv(rest_load.K6_EXPORT_ENV, raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert rest_load.drive_k6("1s", 1) == _K6_READ and not any(tmp_path.iterdir())
+
+
+def test_k6_script_arms_only_checks_and_each_routes_budget_13_p95() -> None:
+    """#2825: `k6_reading` blames a 99 that no route's p95 at or over Budget #13 explains on a
+    failed check, which holds while the script arms those two kinds of threshold and no other, at
+    the budget's own number: a drift fails here, not as "a check failed" on the bench runner."""
+    src = rest_load.K6_SCRIPT.read_text(encoding="utf-8")
+    assert src.count("thresholds") == 3  # declared, filled in per route, handed to `options`
+    assert re.search(r"^const thresholds = \{ checks: \['rate>0\.99'\] \};$", src, re.M)
+    route = r"^for \(const r of ROUTES\) thresholds\[`route_\$\{r\}_ms`\] = \['p\(95\)<(\d+)'\];"
+    (limit,) = re.findall(route, src, re.M)
+    assert re.search(r"^  thresholds,$", src, re.M) and float(limit) == b.B13_READ_P95_MS
 
 
 def test_headroom_zero_or_ip_limit_fails() -> None:

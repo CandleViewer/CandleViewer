@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import shutil
 import socket
 import subprocess
@@ -32,6 +33,9 @@ from bench.ingestion.fixture_app import (
 )
 
 K6_SCRIPT = Path(__file__).resolve().parents[4] / "tests" / "load" / "k6" / "ingestion_rest.js"
+#: Where `drive_k6` keeps k6's `--summary-export` when this is set (the full pack's workflow sets
+#: it, into its artifact): k6's own bytes, before `k6_reading` judges them (#2825).
+K6_EXPORT_ENV: Final = "CV_BENCH_K6_EXPORT"
 
 
 async def drive_inprocess(iterations: int, concurrency: int) -> dict[str, list[float]]:
@@ -101,13 +105,23 @@ def k6_reading(returncode: int, text: str) -> dict[str, list[float]]:
         if p95 > 0.0 and m.get("count") != 0:
             out[route] = [p95]
     if returncode == 99 and all(p < budgets.B13_READ_P95_MS for [p] in out.values()):
-        raise RuntimeError("k6 exited 99 with no route's p95 over 150 ms: a check failed (#2825)")
+        raise RuntimeError(
+            "k6 exited 99 with no route's p95 at or over 150 ms: a check failed (#2825)"
+        )
     return out
 
 
 def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
-    """Full profile: real sockets, k6 load. Returns route -> [p95] (k6 aggregates for us). Raises
-    `RuntimeError` when the fixture app does not start, or when `k6_reading` refuses the run."""
+    """Full profile: real sockets, k6 load. Returns route -> [p95] (k6 aggregates for us). Where
+    `K6_EXPORT_ENV` names a file, k6's summary is copied there unchanged first, also for a run
+    refused below; unset, nothing is kept.
+
+    Raises `RuntimeError` when k6 is not on PATH, the fixture app does not start, or `k6_reading`
+    refuses the run. Other failures propagate under their own types, never as a reading:
+    `subprocess.TimeoutExpired` when k6 runs past its hour; `OSError` when the summary cannot be
+    read or kept, `UnicodeDecodeError` when it is not UTF-8; `AttributeError` when it parses but
+    is not k6's shape (not an object, or a non-object where k6 writes one); `ValueError` or
+    `TypeError` when a route's p95 is not a number."""
     import uvicorn
 
     k6 = shutil.which("k6")
@@ -156,6 +170,10 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
                 check=False,
                 timeout=3600,
             )
+            keep = os.environ.get(K6_EXPORT_ENV)
+            if keep and summary.exists():  # the evidence of a run, before anything judges it
+                Path(keep).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(summary, keep)
             text = summary.read_text(encoding="utf-8") if summary.exists() else ""
         finally:
             server.should_exit = True
