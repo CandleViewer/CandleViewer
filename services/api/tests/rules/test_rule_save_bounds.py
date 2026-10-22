@@ -249,6 +249,22 @@ def test_rule_write_unstorable_note_or_reason_is_400_and_changes_nothing(
     assert e.c.get("/rules").json() == before and [a for a, _ in e.audits] == ["rule.created"]
 
 
+@pytest.mark.parametrize("where", ["name", "body-name", "description", "action", "metric"])
+def test_post_rules_unstorable_text_in_the_document_is_422_storing_nothing(where: str) -> None:
+    e, text, ir = _Env(), f"a{chr(0)}b", _ir()
+    body = {"ir": ir, "name": text} if where == "body-name" else {"ir": ir}
+    if where == "action":
+        ir["actions"][0]["params"]["template"] = text
+    elif where == "metric":
+        ir["conditions"]["left"]["params"]["source"] = text
+    elif where != "body-name":
+        ir[where] = text
+    r = _write(e.c, "", "", json.dumps(body).encode())
+    assert r.status_code == 422, r.text[:300]
+    assert (r.json()["code"], UNSTORABLE_TEXT in r.json()["detail"]) == ("rule_ir_invalid", True)
+    assert e.c.get("/rules").json()["items"] == [] and e.audits == []
+
+
 @WRITES
 def test_rule_write_body_nested_past_the_decoder_is_400_not_500(route: str) -> None:
     e = _Env()
