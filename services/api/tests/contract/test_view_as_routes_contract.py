@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
+from typing import Any
 
 import httpx
 import pytest
@@ -110,6 +111,13 @@ async def _nothing_to_end(w: World) -> httpx.Response:
     return await w.call("DELETE", await w.sign_in())
 
 
+async def _cleared(w: World) -> httpx.Response:
+    """The read after the viewer's own leave: its context is cleared, so none."""
+    minted = await _viewing(w)
+    await w.call("DELETE", minted)
+    return await w.call("GET", minted)
+
+
 async def _anonymous(w: World) -> httpx.Response:
     return await w.call("GET")
 
@@ -120,6 +128,7 @@ _ANSWERS: dict[str, list[tuple[int, str, Send]]] = {
         (200, "live", _live),
         (200, "held", _held),
         (204, "none", _none),
+        (204, "cleared", _cleared),
         (401, "no session", _anonymous),
         (401, "signed out", _signed_out("GET")),
         (401, "idle locked", _locked("GET")),
@@ -168,20 +177,40 @@ def test_every_declared_status_has_a_request_that_reaches_it(method: str) -> Non
     assert {status for status, *_ in _ANSWERS[method]} == _DECLARED[method]
 
 
-@pytest.mark.parametrize(("method", "status", "send"), _CASES)
-async def test_the_answer_is_declared_and_validates_against_its_response(
+def _validated(method: str, response: httpx.Response) -> dict[str, Any]:
+    """The body, once its media type and schema are the declared response's."""
+    pointer, media = _schema(method, response.status_code)
+    assert response.headers["content-type"].startswith(media)
+    body: dict[str, Any] = response.json()
+    validate_example(pointer, body)
+    return body
+
+
+def _of(statuses: range) -> list[Any]:
+    return [case for case in _CASES if case.values[1] in statuses]
+
+
+@pytest.mark.parametrize(("method", "status", "send"), _of(range(204, 205)))
+async def test_a_204_has_no_body(method: str, status: int, send: Send) -> None:
+    response = await send(World())
+    assert (response.status_code, response.content) == (204, b"")
+
+
+@pytest.mark.parametrize(("method", "status", "send"), _of(range(200, 201)))
+async def test_a_200_is_a_view_as_context_that_round_trips(
     method: str, status: int, send: Send
 ) -> None:
     response = await send(World())
-    assert response.status_code == status and status in _DECLARED[method]
-    if status == 204:
-        assert response.content == b""
-        return
-    pointer, media = _schema(method, status)
-    assert response.headers["content-type"].startswith(media)
-    body = response.json()
-    validate_example(pointer, body)
-    if status == 200:
-        assert api.ViewAsContext.model_validate(body).model_dump(mode="json") == body
-    else:
-        assert api.Problem.model_validate(body).code == body["code"]
+    assert response.status_code == 200
+    body = _validated(method, response)
+    assert api.ViewAsContext.model_validate(body).model_dump(mode="json") == body
+
+
+@pytest.mark.parametrize(("method", "status", "send"), _of(range(400, 600)))
+async def test_a_refusal_is_a_problem_of_its_declared_response(
+    method: str, status: int, send: Send
+) -> None:
+    response = await send(World())
+    assert response.status_code == status
+    body = _validated(method, response)
+    assert api.Problem.model_validate(body).code == body["code"]

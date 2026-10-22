@@ -98,15 +98,22 @@ def _unauthenticated() -> JSONResponse:
     return _problem(ErrorCode.UNAUTHENTICATED, 401, "Authentication is required.")
 
 
+#: A `DELETE`'s 503: the leave did not apply, or its outcome could not be read back.
+_NOT_LEFT: Final = "The view-as context could not be left; nothing changed."
+
+
 def _unwired() -> JSONResponse:
     return _problem(ErrorCode.STORE_UNAVAILABLE, 503, "No view-as backend is wired.")
 
 
-def _unavailable(read: str, exc: Exception) -> JSONResponse:
-    """A read that failed: logged by what it read and the error's class, never a session id."""
-    _log().error("auth.view_as_route_failed", read=read, error=type(exc).__name__)
-    detail = "The view-as context could not be read; try again shortly."
-    return _problem(ErrorCode.STORE_UNAVAILABLE, 503, detail)
+def _unavailable(
+    read: str, exc: Exception, detail: str = "The view-as context could not be read."
+) -> JSONResponse:
+    """A read that failed: logged by what it read, the error's class and a traceback (which the
+    redaction filter scans), never a session id. The catches are broad, so a defect would hide
+    behind the 503 without the traceback, as `/me` logs its own."""
+    _log().error("auth.view_as_route_failed", read=read, error=type(exc).__name__, exc_info=exc)
+    return _problem(ErrorCode.STORE_UNAVAILABLE, 503, f"{detail} Try again shortly.")
 
 
 def make_view_as_router(
@@ -150,11 +157,13 @@ def make_view_as_router(
         except Exception as exc:
             return _unavailable("view_as", exc)
         state = record.view_as
-        if binding is None or state is None:  # none, or a cleared one
+        # None, or a cleared one (`evaluate` answers no binding then); `state` is never None
+        # with a binding, and the test only narrows it for the type checker.
+        if binding is None or state is None:
             return Response(status_code=204)
         try:
             username, display_name = await names.names(str(binding.target_user_id))
-        except Exception as exc:  # `LookupError` too: the session's row keeps its target's
+        except Exception as exc:  # `LookupError` too: the row's foreign key keeps the target's
             return _unavailable("users", exc)
         context = api.ViewAsContext(
             target_user_id=binding.target_user_id,
@@ -177,15 +186,15 @@ def make_view_as_router(
             return _unwired()
         try:
             left = await service.leave(record, now=clock())
-        except Exception as exc:  # the write did not apply: nothing changed
-            return _unavailable("view_as", exc)
+        except Exception as exc:  # a store failure: the leave did not apply
+            return _unavailable("view_as", exc, _NOT_LEFT)
         if left is None:  # nothing applied: a revoked row's successor still carries the context
             try:
                 await auth.sessions.require_active(str(record.id), allow_locked=True)
             except AuthError:
                 return _unauthenticated()
             except Exception as exc:
-                return _unavailable("session", exc)
+                return _unavailable("session", exc, _NOT_LEFT)
         return Response(status_code=204)
 
     return router

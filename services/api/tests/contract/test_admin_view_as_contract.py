@@ -112,15 +112,27 @@ def test_state_changing_operations_take_the_csrf_token_and_the_read_takes_nothin
 _SERVED = frozenset({"get", "delete"})
 
 
-@pytest.mark.parametrize("method", list(_OPS))
-def test_operation_is_served_or_pending_and_has_its_rbac_matrix_row(method: str) -> None:
+def _row(method: str) -> tuple[str, dict[str, Any]]:
     key = f"{method.upper()} {_PATH[method]}"
-    row = _MATRIX["operations"][key]
+    return key, _MATRIX["operations"][key]
+
+
+@pytest.mark.parametrize("method", sorted(_SERVED))
+def test_a_served_operation_is_executed_with_no_pending_entry(method: str) -> None:
+    key, row = _row(method)
+    assert (key in _PENDING, "reason" in row, row["state"]) == (False, False, "executed")
+
+
+@pytest.mark.parametrize("method", sorted(set(_OPS) - _SERVED))
+def test_an_operation_not_served_yet_is_pending_and_not_mounted(method: str) -> None:
+    key, row = _row(method)
+    assert (_PENDING[key]["ticket"], row["state"]) == ("#3085", "not_mounted")
+
+
+@pytest.mark.parametrize("method", list(_OPS))
+def test_each_operation_has_its_rbac_matrix_row(method: str) -> None:
+    _, row = _row(method)
     _, _, rbac, _, outcomes = _OPS[method]
-    if method in _SERVED:  # executed: no pending entry and no reason
-        assert (key in _PENDING, "reason" in row, row["state"]) == (False, False, "executed")
-    else:
-        assert (_PENDING[key]["ticket"], row["state"]) == ("#3085", "not_mounted")
     assert row["outcomes"] == outcomes
     assert (row["permissions"], row["scope"]) == (rbac["permissions"], rbac["scope"])
 

@@ -18,10 +18,11 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from structlog.testing import capture_logs
 
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.csrf import CsrfMiddleware
-from candleviewer.api.deny_by_default import declared_operations
+from candleviewer.api.deny_by_default import declared_operations, served_operations
 from candleviewer.api.enrolment_guard import make_enrolment_only_guard, sessionless_operations
 from candleviewer.api.idle_lock import IdleLockMiddleware, ungated_operations
 from candleviewer.api.view_as import PATH, make_view_as_router
@@ -41,6 +42,7 @@ from tests.csrf_helpers import csrf_headers
 from tests.unit.admin.test_view_as_service import _TARGET, _VIEWER, _at, _Rig
 from tests.unit.api._fakes import BASE, CSRF_CODEC, HASHER, RecordingWriter, enrolment_recorder
 from tests.unit.auth.session_fakes import FakeSessionRepository
+from tests.unit.auth.test_step_up import _Clock
 from tests.unit.test_view_as_wiring import _real
 
 _SPEC = load_openapi_spec()
@@ -289,19 +291,70 @@ async def test_get_names_an_anonymised_target_by_its_surrogate() -> None:
     assert (response.status_code, response.json()) == (200, _context(state, "expired", anonymised))
 
 
-@pytest.mark.parametrize("read", ["eligibility", "names", "no_row"])
-async def test_get_answers_503_when_a_read_fails_never_a_fallback(read: str) -> None:
+def _eligibility_unread(w: World) -> None:
+    w.ports.fails["ineligible"] = ConnectionError("identity store unreachable")
+
+
+def _names_unread(w: World) -> None:
+    w.names.fails = ConnectionError("users store unreachable")
+
+
+def _target_row_gone(w: World) -> None:
+    w.names.rows.clear()  # the session's foreign key keeps it: a store fault, never a 204
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [_eligibility_unread, _names_unread, _target_row_gone],
+    ids=["eligibility", "names", "no-row"],
+)
+async def test_get_answers_503_when_a_read_fails_never_a_fallback(
+    arrange: Callable[[World], None],
+) -> None:
     w = World()
     minted = await w.sign_in()
     state = await w.view(minted)
-    if read == "eligibility":
-        w.ports.fails["ineligible"] = ConnectionError("identity store unreachable")
-    elif read == "names":
-        w.names.fails = ConnectionError("users store unreachable")
-    else:  # the session's foreign key keeps the target's row: a store fault, never a 204
-        w.names.rows.clear()
+    arrange(w)
     assert _code(await w.call("GET", minted)) == (503, "store_unavailable")
     assert w.held(minted) == state
+
+
+async def test_a_failed_read_is_logged_by_what_it_read_with_its_traceback() -> None:
+    """The class and a traceback (which the redaction filter scans), never a session id."""
+    w = World()
+    minted = await w.sign_in()
+    await w.view(minted)
+    _names_unread(w)
+    with capture_logs() as logs:
+        await w.call("GET", minted)
+    (line,) = [log for log in logs if log["event"] == "auth.view_as_route_failed"]
+    assert (line["read"], line["error"], type(line["exc_info"])) == (
+        "users",
+        "ConnectionError",
+        ConnectionError,
+    )
+    assert str(minted.session_id) not in str(logs)
+
+
+async def test_get_after_leaving_answers_204() -> None:
+    """The read a window makes after its own leave (22 `getViewAs`): the cleared context is none."""
+    w = World()
+    minted = await w.sign_in()
+    await w.view(minted)
+    assert (await w.call("DELETE", minted)).status_code == 204
+    response = await w.call("GET", minted)
+    assert (response.status_code, response.content) == (204, b"")
+
+
+async def test_get_after_clearing_a_held_context_answers_204() -> None:
+    w = World()
+    minted = await w.sign_in()
+    await w.view(minted)
+    row = w.repo.sessions[str(minted.session_id)]
+    assert await w.rig.service.end(row, reason=ViewAsEndReason.TARGET_INELIGIBLE, now=_at(3))
+    assert (await w.call("DELETE", minted)).status_code == 204
+    response = await w.call("GET", minted)
+    assert (response.status_code, response.content) == (204, b"")
 
 
 # -- DELETE ----------------------------------------------------------------------------------------
@@ -313,13 +366,29 @@ async def test_delete_ends_and_clears_a_live_context_and_records_it_once() -> No
     await w.view(minted)
     w.clock.now = _at(5)
     assert (await w.call("DELETE", minted)).status_code == 204
-    assert (await w.call("DELETE", minted)).status_code == 204  # nothing left: idempotent
     await w.rig.settled()
     held = w.held(minted)
     assert held is not None
     assert (held.ended_at, held.end_reason, held.cleared_at) == (_at(5), "ended", _at(5))
     assert w.ports.closed == [(str(minted.session_id), "view_as_changed")]
     assert [(c["action"], c["reason"]) for c in w.ports.calls] == [("admin.view_as_ended", "ended")]
+
+
+async def test_a_leave_ends_only_its_own_sessions_context() -> None:
+    """C-12.4 (the #4171 security look's L-1): the viewer's other session, and another user's
+    session viewing the same target, keep their contexts, and only the leaving one's sockets close.
+    """
+    w = World()
+    mine, my_other = await w.sign_in(), await w.sign_in()
+    theirs = await w.sessions.mint(str(UUID(int=4171)))
+    kept = [await w.view(minted) for minted in (mine, my_other, theirs)][1:]
+    w.clock.now = _at(5)
+    assert (await w.call("DELETE", mine)).status_code == 204
+    await w.rig.settled()
+    assert [w.held(my_other), w.held(theirs)] == kept
+    assert (await w.call("GET", my_other)).json()["state"] == "active"
+    assert w.ports.closed == [(str(mine.session_id), "view_as_changed")]
+    assert [c["action"] for c in w.ports.calls] == ["admin.view_as_ended"]
 
 
 async def test_delete_clears_a_held_context_and_records_nothing() -> None:
@@ -339,6 +408,18 @@ async def test_delete_clears_a_held_context_and_records_nothing() -> None:
         _at(5),
     )
     assert (len(w.ports.closed), len(w.ports.calls), len(w.rig.runner.tasks)) == (1, 1, 1)
+
+
+async def test_a_second_delete_after_ending_answers_204_and_records_nothing_more() -> None:
+    w = World()
+    minted = await w.sign_in()
+    await w.view(minted)
+    w.clock.now = _at(5)
+    assert (await w.call("DELETE", minted)).status_code == 204
+    await w.rig.settled()
+    assert (await w.call("DELETE", minted)).status_code == 204
+    await w.rig.settled()
+    assert [c["action"] for c in w.ports.calls] == ["admin.view_as_ended"]
 
 
 async def test_delete_with_no_context_answers_204_and_changes_nothing() -> None:
@@ -366,13 +447,10 @@ async def test_delete_on_a_session_revoked_under_it_answers_401_and_ends_nothing
     assert (w.held(minted), w.ports.closed, w.rig.runner.tasks) == (state, [], [])
 
 
-@pytest.mark.parametrize(("reread", "answer"), [("ok", 204), ("fails", 503)])
-async def test_delete_after_another_leave_rereads_the_session(reread: str, answer: int) -> None:
-    """Another leave won the write: nothing is left to leave on a live session (204), and a
-    re-read that fails is a 503, never a 204."""
-    w = World()
-    minted = await w.sign_in()
-    state = await w.view(minted)
+def _another_leave_wins(
+    w: World, state: ViewAsState, then: Callable[[], None] = lambda: None
+) -> None:
+    """Another leave lands just before this request's own write, and `then` runs after it."""
 
     async def leave_first(session_id: str) -> None:
         w.repo.on_leave = None
@@ -380,12 +458,36 @@ async def test_delete_after_another_leave_rereads_the_session(reread: str, answe
         assert await w.repo.leave_view_as(
             session_id, state.context_id, ended_at=at, reason=ended, now=at
         )
-        if reread == "fails":
-            w.repo.fails.add("find_by_id")
+        then()
 
     w.repo.on_leave = leave_first
-    assert (await w.call("DELETE", minted)).status_code == answer
-    assert (w.ports.closed, w.rig.runner.tasks) == ([], [])  # the other leave ended it
+
+
+async def test_delete_after_another_leave_rereads_the_live_session_and_answers_204() -> None:
+    """Nothing is left to leave on a live session, and the other leave ended it."""
+    w = World()
+    minted = await w.sign_in()
+    _another_leave_wins(w, await w.view(minted))
+    assert (await w.call("DELETE", minted)).status_code == 204
+    assert (w.ports.closed, w.rig.runner.tasks) == ([], [])
+
+
+async def test_delete_after_another_leave_answers_503_when_the_reread_fails() -> None:
+    """Never a 204 it cannot vouch for."""
+    w = World()
+    minted = await w.sign_in()
+    _another_leave_wins(w, await w.view(minted), lambda: w.repo.fails.add("find_by_id"))
+    assert _code(await w.call("DELETE", minted)) == (503, "store_unavailable")
+
+
+async def test_the_reread_after_another_leave_waives_the_idle_lock() -> None:
+    """A session that idle-locks between the route's read and its re-read has nothing left to
+    leave: 204, not `unauthenticated` (the security look's I-3)."""
+    w = World()
+    minted = await w.sign_in(idle_timeout_s=MIN_IDLE_TIMEOUT_S)
+    idle = _at(0) + timedelta(seconds=MIN_IDLE_TIMEOUT_S + 1)
+    _another_leave_wins(w, await w.view(minted), lambda: setattr(w.clock, "now", idle))
+    assert (await w.call("DELETE", minted)).status_code == 204
 
 
 async def test_delete_answers_503_on_a_store_failure_and_changes_nothing() -> None:
@@ -428,15 +530,27 @@ async def test_a_session_read_that_fails_answers_503(method: str) -> None:
 @pytest.mark.parametrize("guarded", [True, False], ids=["behind-the-gate", "route-alone"])
 @pytest.mark.parametrize("method", ["GET", "DELETE"])
 async def test_an_idle_locked_session_is_refused(method: str, guarded: bool) -> None:
-    """Q6: both stay behind the idle lock, which exempts neither, and the route refuses a locked
-    session on its own too."""
-    assert {("GET", PATH), ("DELETE", PATH)}.isdisjoint(ungated_operations(_SPEC))
+    """Q6: both stay behind the idle lock, and the route refuses a locked session on its own too,
+    with the lock's time."""
     w = World(guarded=guarded)
     minted = await w.sign_in(idle_timeout_s=MIN_IDLE_TIMEOUT_S)
     state = await w.view(minted)
     w.clock.now = _at(0) + timedelta(seconds=MIN_IDLE_TIMEOUT_S + 1)
-    assert _code(await w.call(method, minted)) == (401, "session_idle_locked")
+    response = await w.call(method, minted)
+    assert _code(response) == (401, "session_idle_locked") and response.json()["idle_locked_at"]
     assert w.held(minted) == state
+
+
+def test_the_idle_lock_exempts_neither_route() -> None:
+    assert {("GET", PATH), ("DELETE", PATH)}.isdisjoint(ungated_operations(_SPEC))
+
+
+@pytest.mark.parametrize("method", ["GET", "DELETE"])
+async def test_no_session_backend_answers_503_before_authenticating(method: str) -> None:
+    """As the docstring says: with no session service at all, even a caller without a bearer."""
+    w = World(guarded=False)
+    w.auth.sessions_is_active = False
+    assert _code(await w.call(method)) == (503, "store_unavailable")
 
 
 @pytest.mark.parametrize(
@@ -460,28 +574,27 @@ async def test_a_session_without_users_write_still_reads_and_leaves(
 @pytest.mark.parametrize("method", ["GET", "DELETE"])
 async def test_an_unwired_backend_answers_503_after_authenticating(method: str) -> None:
     """The fake backend has no view-as service: 503 once the caller is known (as `GET /me`
-    answers an unwired backend); a caller without a session still gets its 401."""
+    answers an unwired backend)."""
     w = World()
     w.service = None
     assert _code(await w.call(method, await w.sign_in())) == (503, "store_unavailable")
-    assert (await w.call("GET")).status_code == 401
 
 
-def test_create_app_mounts_both_over_the_apps_service_and_the_identity_read(
+def test_create_app_builds_the_routes_over_its_service_identity_read_and_auth_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """On the real backend the routes read the app's one view-as service and the identity
-    provider's names, given at build time."""
-    import candleviewer.app as appmod
-
+    """On the real backend the routes read the app's one view-as service, the identity provider's
+    names and the app's auth clock, and both are served."""
     seen: list[dict[str, Any]] = []
 
     def spy(*args: Any, **kwargs: Any) -> Any:
         seen.append(kwargs)
         return make_view_as_router(*args, **kwargs)
 
-    monkeypatch.setattr(appmod, "make_view_as_router", spy)
-    state = create_app(_real()).state
+    monkeypatch.setattr("candleviewer.app.make_view_as_router", spy)
+    app = create_app(_real(), auth_clock=(clock := _Clock()))
     (kwargs,) = seen
-    assert kwargs["views"]() is state.view_as is not None
-    assert kwargs["names"] is state.identity_provider is not None
+    assert kwargs["views"]() is app.state.view_as is not None
+    assert kwargs["names"] is app.state.identity_provider is not None
+    assert kwargs["clock"] is clock
+    assert {("GET", PATH), ("DELETE", PATH)} <= served_operations(app)
