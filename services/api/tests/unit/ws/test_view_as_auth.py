@@ -15,6 +15,7 @@ import asyncio
 from uuid import UUID, uuid4
 
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
+from candleviewer.ws.metrics import cv_ws_auth_failures_total
 from tests.unit.ws._auth_rig import DEADLINE_S, LATER, Rig, Sock, bye_of, hang_up
 
 _X, _Y = uuid4(), uuid4()
@@ -52,9 +53,16 @@ async def _first_frame_after_auth(bindings: _Bindings, *tokens: str) -> list[dic
     return frames
 
 
+def _failures() -> float:
+    """Every failed `auth` counted so far, whatever its reason (a strike is one of them)."""
+    return sum(sample.value for sample in cv_ws_auth_failures_total.collect()[0].samples)
+
+
 async def test_a_held_context_refuses_the_auth_with_view_as_expired_and_no_strike() -> None:
+    before = _failures()
     (frame,) = await _first_frame_after_auth(_Bindings(_bound(_X, ViewAsPhase.HELD)), "good-1")
     assert bye_of(frame) == ("bye", "view_as_expired", 4403)
+    assert _failures() == before  # a refused context is no failed auth (§9.6)
 
 
 async def test_a_reauth_into_another_context_closes_view_as_changed() -> None:
@@ -71,8 +79,14 @@ async def test_a_reauth_that_reads_no_context_closes_view_as_changed_never_widen
 
 
 async def test_a_start_during_the_auth_is_read_again_and_closes_view_as_changed() -> None:
-    (frame,) = await _first_frame_after_auth(_Bindings(None, _bound(_X)), "good-1")
-    assert bye_of(frame) == ("bye", "view_as_changed", 4401)
+    rig, sock = Rig(options={"view_as": _Bindings(None, _bound(_X))}), Sock()
+    async with asyncio.timeout(DEADLINE_S):
+        handler = await rig.open(sock)
+        assert bye_of(await rig.auth(sock, "good-1")) == ("bye", "view_as_changed", 4401)
+        # The registration the first read let through is undone before the close.
+        assert rig.registered() == {} and not rig.registry._conns
+        hang_up(sock)
+        await handler
 
 
 async def test_an_end_during_the_auth_is_read_again_and_refuses_it() -> None:
@@ -108,8 +122,8 @@ async def test_a_context_end_closes_the_socket_bound_to_it_and_no_other() -> Non
             "view_as_expired",
             4403,
         )
+        await handlers[0]  # the closed socket's own teardown ends its registration
         assert rig.registered() == {"sess-good-2": 1}
         assert not rig.revocation.was_revoked("sess-good-1")  # its reconnect is never refused
-        for sock in (viewing, other):
-            hang_up(sock)
-        await asyncio.gather(*handlers)
+        hang_up(other)
+        await handlers[1]

@@ -1409,7 +1409,10 @@ def make_ws_router(
                 conn.pending_session_id = None
 
     async def read_view_as(session_id: str) -> ViewAsBinding | None:
-        """§9.6: the session's view-as binding, under the `auth` call bound."""
+        """§9.6: the session's view-as binding, under the `auth` call bound. A read in flight
+        across an end's commit can return the context that end just closed: the socket binds
+        to it, and its next re-`auth`, at most one access-token lifetime later, or its own
+        expiry closes it, as after a close that failed (the backstop)."""
         if view_as is None:
             return None
         async with _auth_call("view_as", auth_call_timeout_s):

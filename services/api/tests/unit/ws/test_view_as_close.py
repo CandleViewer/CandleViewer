@@ -52,7 +52,8 @@ async def test_close_context_closes_only_the_sockets_bound_to_that_context() -> 
     assert await hub.close_context("s1", "x", "view_as_expired") == 1
     assert on_x.closes == [("view_as_expired", 4403)]
     assert (on_y.closes, unbound.closes, elsewhere.closes) == ([], [], [])
-    assert {s: len(c) for s, c in hub._sockets.items()} == {"s1": 2, "s2": 1}
+    # Every socket stays registered until its own teardown: the session is live.
+    assert {s: len(c) for s, c in hub._sockets.items()} == {"s1": 3, "s2": 1}
 
 
 async def test_close_context_never_remembers_the_session() -> None:
@@ -63,7 +64,7 @@ async def test_close_context_never_remembers_the_session() -> None:
     assert socket.closes == [("view_as_changed", 4401)] and not hub.was_revoked("s1")
 
 
-async def test_a_failed_context_close_is_counted_and_the_others_still_close() -> None:
+async def test_a_failed_context_close_is_counted_and_a_later_revoke_still_reaches_it() -> None:
     hub, gone, live = RevocationHub(), _Socket(fails=True), _Socket()
     for socket in (gone, live):
         hub.register("s1", socket)
@@ -71,7 +72,10 @@ async def test_a_failed_context_close_is_counted_and_the_others_still_close() ->
     before = ws_revocation_close_failures_total._value.get()
     assert await hub.close_context("s1", "x", "view_as_expired") == 2
     assert ws_revocation_close_failures_total._value.get() == before + 1
-    assert live.closes == [("view_as_expired", 4403)] and "s1" not in hub._sockets
+    assert live.closes == [("view_as_expired", 4403)]
+    # The session stays live, so the socket whose close failed stays registered: a sign-out's
+    # revoke still reaches it (#4064 security L-2).
+    assert await hub.revoke("s1") == 2
 
 
 def test_a_binding_needs_a_registration_and_goes_with_it() -> None:

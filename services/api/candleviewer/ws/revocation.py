@@ -297,14 +297,14 @@ class RevocationHub:
         4403); returns how many closes it attempted. The session is not remembered: it stays
         live, so the socket's reconnect is never refused, as a revocation's would be. Each close
         is bounded and a failed one is counted and logged, as `revoke`'s are, and inline: the
-        caller (`ViewAsService`) bounds the whole and never raises on a failed close."""
+        caller (`ViewAsService`) bounds the whole and never raises on a failed close. The
+        registration stays until the socket's own teardown ends it: the session is live, so a
+        close that fails leaves the socket where a later `revoke` (a sign-out) still reaches it."""
         closers = [
             closer
             for closer in self._sockets.get(session_id, [])
             if self._contexts.get((session_id, closer)) == context_id
         ]
-        for closer in closers:
-            self.unregister(session_id, closer)
         if closers:
             await self._close_each(session_id, reason, closers)
         return len(closers)
