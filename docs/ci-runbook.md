@@ -821,7 +821,10 @@ index alone, removing nothing.
     one (through an alias of `op`, `alembic.op`, a rebinding or `getattr`),
     `op` imported by name, held in a name or a collection or handed on,
     `add_column` or `batch_alter_table` on an audit table, and SQLAlchemy
-    Core's `drop_all`: call `op.<operation>` with the table's literal name;
+    Core's `drop_all`: call `op.<operation>` with the table's literal name.
+    A change an audit table genuinely needs, a new column included, lands
+    as `0045_audit_chain_hardening` did: one revision, exempt by name and
+    by its pinned statements;
   - a view switched to read its tables with its owner's privileges
     (`security_invoker` set false or reset): leave it as its invoker;
   - a name or a string spelled with Unicode escapes (`U&`): spell it

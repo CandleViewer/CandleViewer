@@ -3211,9 +3211,16 @@ def test_ops_calls_and_helpers_the_corpus_uses_are_followed(tmp_path: Path) -> N
     assert _audit_hits(tmp_path, source) == []
 
 
-def test_alembic_op_drop_on_an_audit_table_is_flagged_once(tmp_path: Path) -> None:
-    """The line reader and the call reader each see it; only one reports it."""
-    source = 'import alembic\n\n\ndef upgrade() -> None:\n    alembic.op.drop_table("audit_log")\n'
+@pytest.mark.parametrize("lead", ["", "\x0c\n"], ids=["plain", "after-a-form-feed"])
+def test_alembic_op_drop_on_an_audit_table_is_flagged_once(
+    tmp_path: Path, lead: str
+) -> None:
+    """The line reader and the call reader each see it, on the same line numbers; only
+    one reports it."""
+    source = (
+        f"import alembic\n{lead}\n\ndef upgrade() -> None:\n"
+        '    alembic.op.drop_table("audit_log")\n'
+    )
     (message,) = _audit_hits(tmp_path, source)
     assert "append-only table 'audit_log'" in message
 

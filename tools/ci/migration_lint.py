@@ -1904,7 +1904,7 @@ def _audit_findings(path: Path, forbidden_tables: frozenset[str]) -> list[LintFi
 
     operations = {
         **{line: _REACHES[reach] for line, reach in _python_settings(tree).items()},
-        **_alembic_findings(tree, forbidden_tables, source.splitlines()),
+        **_alembic_findings(tree, forbidden_tables, source.split("\n")),
         **_core_mutations(tree, forbidden_tables),
     }
     for line, target in sorted(operations.items()):
