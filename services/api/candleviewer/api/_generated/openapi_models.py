@@ -6470,7 +6470,7 @@ class KekRewrapResult(BaseModel):
     remaining: Annotated[
         int,
         Field(
-            description="Rows of the environment still at `from_version` after this run: unrevoked API key rows, failed rows included, plus auth keyring rows, which only the rotation boot moves.\n",
+            description="Rows of the environment still at `from_version` after this run: unrevoked API key rows, failed rows included, plus auth keyring rows and the environment's audit export signing keys still holding a seed (`audit_signing_keys`, ADR-0039 decision 6, Q3), which only the rotation boot moves.\n",
             ge=0,
         ),
     ]
@@ -6484,7 +6484,7 @@ class KekRewrapResult(BaseModel):
     complete: Annotated[
         bool,
         Field(
-            description="True when the run ended with `security.kek_rotated`: no unrevoked API key row and no auth keyring row is left at `from_version`, and no row failed. False when it ended with `security.kek_rotation_incomplete`.\n"
+            description="True when the run ended with `security.kek_rotated`: no unrevoked API key row, no auth keyring row and no signing key holding a seed is left at `from_version`, and no row failed. False when it ended with `security.kek_rotation_incomplete`.\n"
         ),
     ]
 

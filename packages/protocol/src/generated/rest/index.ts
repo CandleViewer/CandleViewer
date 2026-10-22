@@ -959,9 +959,11 @@ export interface paths {
      *     are untouched. Ciphertext and nonces never change: each new wrap is verified by opening
      *     the credential before a compare-and-set on the row's KEK version, and each moved row
      *     writes its `security.credential_rewrapped` record in the same transaction. The
-     *     environment's auth keyring rows (`auth_keys`) are not re-wrapped here: M2 re-wraps them
-     *     at the rotation boot (ADR-0009 Amendment 4, #2152). The call counts them, and the
-     *     rotation is complete only once none of them is left at the previous version.
+     *     environment's auth keyring rows (`auth_keys`) and its audit export signing keys still
+     *     holding a seed (`audit_signing_keys`, ADR-0039 decision 6, Q3) are not re-wrapped here:
+     *     M2 re-wraps them at the rotation boot (ADR-0009 Amendment 4, #2152). The call counts
+     *     them, and the rotation is complete only once none of them is left at the previous
+     *     version.
      *
      *     **Revoked rows are fenced.** An API key row that is revoked (`revoked_at` set or status
      *     `revoked`) is never re-wrapped, and a key revoked while the run is under way is fenced
@@ -997,9 +999,9 @@ export interface paths {
      *     moved, the latch stays, and calling again resumes. A run writes one opening record, one
      *     `security.credential_rewrapped` per moved row, one `security.kek_rotation_failed` per row
      *     it could not re-wrap (that row stays at the previous version), and a terminal
-     *     `security.kek_rotated` when no unrevoked API key row and no auth keyring row of the
-     *     environment is left at the previous version and no row failed, else
-     *     `security.kek_rotation_incomplete`. The opening record is
+     *     `security.kek_rotated` when no unrevoked API key row, no auth keyring row and no signing
+     *     key holding a seed of the environment is left at the previous version and no row failed,
+     *     else `security.kek_rotation_incomplete`. The opening record is
      *     `security.kek_rotation_resumed` (`resumed: true`) only when an earlier run had already
      *     moved rows and unrevoked API key rows are still left at the previous version; otherwise
      *     it is `security.kek_rotation_started` (`resumed: false`), so a run after an earlier one
@@ -7755,14 +7757,14 @@ export interface components {
     };
     /** @description `rewrapKek`: the counts of one run, never a key id or a key check value (KCV). */
     KekRewrapResult: {
-      /** @description True when the run ended with `security.kek_rotated`: no unrevoked API key row and no auth keyring row is left at `from_version`, and no row failed. False when it ended with `security.kek_rotation_incomplete`. */
+      /** @description True when the run ended with `security.kek_rotated`: no unrevoked API key row, no auth keyring row and no signing key holding a seed is left at `from_version`, and no row failed. False when it ended with `security.kek_rotation_incomplete`. */
       complete: boolean;
       environment: components["schemas"]["Environment"];
       /** @description API key rows this run could not re-wrap. Each stays at `from_version` and is audited as `security.kek_rotation_failed`. */
       failed: number;
       /** @description The previous KEK version, `to_version - 1`. */
       from_version: number;
-      /** @description Rows of the environment still at `from_version` after this run: unrevoked API key rows, failed rows included, plus auth keyring rows, which only the rotation boot moves. */
+      /** @description Rows of the environment still at `from_version` after this run: unrevoked API key rows, failed rows included, plus auth keyring rows and the environment's audit export signing keys still holding a seed (`audit_signing_keys`, ADR-0039 decision 6, Q3), which only the rotation boot moves. */
       remaining: number;
       /** @description True when this run opened with `security.kek_rotation_resumed`: an earlier run had already moved rows of this rotation and unrevoked API key rows were still left at `from_version`. False when it opened with `security.kek_rotation_started`: no earlier run had moved a row, or no row was left to move. */
       resumed: boolean;
@@ -12221,7 +12223,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description The run ended. `complete: false` means a row failed or rows are left at `from_version` (`remaining`): investigate every failed row, then call again. Calling again moves API key rows only: an auth keyring row left at `from_version` moves at the next rotation boot (ADR-0009 Amendment 4). */
+      /** @description The run ended. `complete: false` means a row failed or rows are left at `from_version` (`remaining`): investigate every failed row, then call again. Calling again moves API key rows only: an auth keyring row or a signing key left at `from_version` moves at the next rotation boot (ADR-0009 Amendment 4; ADR-0039 decision 6). */
       200: {
         headers: {
           [name: string]: unknown;
