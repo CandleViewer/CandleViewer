@@ -138,6 +138,7 @@ jobs:
               # coverage-thresholds follow js, so these start them too (#3230).
               - 'packages/chart-engine/**'
               - 'packages/protocol/**'
+              - 'packages/rule-graph/**'
               - 'tools/contrast/**'
               - 'packages/config/**'
               - 'packages/fixtures/**'

@@ -92,6 +92,15 @@ module.exports = {
       to: { path: "^packages/fixtures/src" },
     },
     {
+      name: "no-deep-imports-rule-graph",
+      severity: "error",
+      comment:
+        "§9 #18 deep-import ban: only `@candleviewer/rule-graph`'s declared entry points may " +
+        "be imported, never `packages/rule-graph/src/**` directly from outside it.",
+      from: { pathNot: "^packages/rule-graph" },
+      to: { path: "^packages/rule-graph/src" },
+    },
+    {
       name: "chart-engine-no-react",
       severity: "error",
       comment: "C-2.16: chart-engine must not depend on React/ReactDOM (framework-free core).",

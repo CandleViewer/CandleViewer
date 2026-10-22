@@ -713,6 +713,7 @@ CandleViewer/
 │  ├─ protocol/                   # GENERATED: TS types + decoders from OpenAPI + WS schema
 │  │  ├─ src/generated/           # do not edit; produced by `pnpm gen:protocol`
 │  │  └─ src/runtime/             # binary frame decoders, seq/resync helpers
+│  ├─ rule-graph/                 # pure rule IR ⇄ node-graph adapter, typed ports, analysis (no React/DOM)
 │  ├─ fixtures/                   # recorded Bybit fixtures + golden outputs, shared by TS & Py
 │  │  ├─ raw/                     # captured WS sessions (jsonl.gz), redacted
 │  │  ├─ golden/                  # expected bars/footprint/profile/CVD outputs

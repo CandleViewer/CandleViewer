@@ -115,6 +115,7 @@ CandleViewer/
 │  │  ├─ src/atoms/ molecules/ organisms/ trading/   # per component catalogue
 │  │  └─ src/tokens/          # generated design tokens (do not hand-edit)
 │  ├─ protocol/               # REST/WS types + codecs, GENERATED from the contract
+│  ├─ rule-graph/             # pure rule IR ⇄ node-graph adapter, typed ports, analysis (no React/DOM)
 │  └─ config/                 # shared eslint/tsconfig/tailwind/vitest presets
 ├─ services/
 │  └─ api/                    # Python modular monolith (module list = Constitution §3)

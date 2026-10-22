@@ -118,7 +118,15 @@ gate(3, "unit-backend", () => {
     "no:cacheprovider",
   ]);
 });
-gate(4, "unit-engine", () => run("pnpm", ["--filter", "@candleviewer/chart-engine", "test:cov"]));
+gate(4, "unit-engine", () =>
+  run("pnpm", [
+    "--filter",
+    "@candleviewer/chart-engine",
+    "--filter",
+    "@candleviewer/rule-graph",
+    "test:cov",
+  ]),
+);
 gate(5, "unit-frontend", () =>
   run("pnpm", ["--filter", "@candleviewer/web", "--filter", "@candleviewer/ui", "test:cov"]),
 );
