@@ -1724,7 +1724,7 @@ Drag preview                Drop zones
 - **Stories:** US-RULE-007, US-RULE-010, US-RULE-011.
 - **Performance:** The list is a virtualised table over `GET /api/v1/rules`; armed-state changes arrive on `rules` and update in place; 500 rules render without exceeding 4 ms scripting per frame.
 - **Design sign-off acceptance checklist:** [ ] columns (name, scope, trigger summary, armed state, environment, last fired, author, version) drawn [ ] armed/disarmed/error states are text plus icon [ ] filters by scope, account, environment and armed state [ ] bulk disarm with confirmation [ ] empty state with a link to the templates gallery [ ] rules depending on estimated detectors are flagged in the list
-- **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §2–§4 · [E36-D03-handoff.md](../design/E36/E36-D03-handoff.md) (E36-D03; owner approval pending; the eight columns, the status words as text + glyph with the per-state table PROPOSED, the conflict and engine-down banners, bulk disarm with per-row results, the CMP-155 / CMP-159 contracts; Penpot page by name + id in the spec).
+- **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §2–§4 · [E36-D03-handoff.md](../design/E36/E36-D03-handoff.md) (E36-D03; owner approval pending; the eight columns, the status words as text + glyph with the per-state table PROPOSED, the per-row detail plan, the conflict and engine-down banners, bulk disarm with per-row results, the system-rule row variant, the CMP-155 / CMP-159 contracts; Penpot page by name + id in the spec).
 
 ### SCR-081 — Rule editor — form mode
 
@@ -1908,7 +1908,7 @@ Drag preview                Drop zones
 - **Performance:** IR is fetched on demand from `POST /api/v1/rules/{ruleId}/compile`; syntax highlighting runs in a worker for documents over 100 KB.
 - **Analytics/audit:** `rule.ir_viewed`, `rule.ir_copied` (analytics).
 - **Design sign-off acceptance checklist:** [ ] canonical IR shown read-only with a copy control [ ] the diff view used by the round-trip check drawn [ ] version and compiler-version stamps shown [ ] it is clearly labelled advanced/diagnostic [ ] error state when compilation fails, naming the offending node/row
-- **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §5–§6 (E36-D03; owner approval pending; the canonical IR with copy / export and its described-by note, the tree alternative (CMP-240 PROPOSED per E13-D02), the round-trip diff as a path table, the version / IR / hash stamps, the compile-failure and quarantined states; the >100 KB pending treatment).
+- **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §5–§6 (E36-D03; owner approval pending; the canonical IR with copy / export and its described-by note, the tree alternative (CMP-240 PROPOSED per E13-D02), the round-trip diff as a path table, the version / compiler / IR / hash stamps, the compile-failure and quarantined states; the >100 KB pending treatment).
 
 ### SCR-089 — Rule import / export
 
@@ -1920,7 +1920,7 @@ Drag preview                Drop zones
 - **Components:** CMP-027 ErrorState / InlineError, CMP-033 CopyButton, CMP-043 Dialog, CMP-067 FileDrop / Import control, CMP-068 CopyableCodeBlock, CMP-234 ValidationPanel.
 - **Stories:** US-RULE-001, US-LAY-007.
 - **Design sign-off acceptance checklist:** [ ] export selection (single / selected / all) with a scope-stripping note [ ] the exported bundle never contains account ids, keys or armed state - stated and verified [ ] import preview with per-rule accept/skip [ ] version-mismatch handling [ ] imported rules always land disarmed - stated and verified [ ] validation failure list
-- **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §7–§8 (E36-D03; owner approval pending; export as one `cv-rule-bundle/1` per rule with the privacy note in the UI and the verifying tests named, import preview with the shipped accept / skip reasons, "imported rules always land disarmed, on demo"; the export / import operations are a contract gap, PROPOSED).
+- **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §7–§8 (E36-D03; owner approval pending; export as one `cv-rule-bundle/1` per rule with the privacy note in the UI and the verifying tests named, an import pre-check with the shipped accept / skip reasons keyed by code and an Import results list, "imported rules always land disarmed, on demo"; the export / import operations and a dry run are a contract gap, PROPOSED).
 
 ---
 

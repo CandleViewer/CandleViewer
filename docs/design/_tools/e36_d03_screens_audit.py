@@ -14,8 +14,10 @@ the high-contrast theme only; `tools/contrast/generate.mjs`: `ratio >= threshold
 (2) every token name the spec, the handoff and the thirteen edited `15` entries bind: resolved per
 theme, PROPOSED (`space.rulegroup.indent`) or another entry's DS request (EXPECTED); an unlisted
 MISSING name fails; (3) the `pairs.mjs` / `encodings.json` status of each pair; (4) the contract
-and lifecycle counts the boards quote; (5) the motion arithmetic and flash audit; (6) the string
-gates; (7) the counts (`--json`). Exit 1 on a gated FAIL or a failed gate.
+and lifecycle counts the boards quote; (5) the motion arithmetic and flash audit (the shimmer's
+relative-luminance delta against WCAG 2.3.1's 0.10); (6) the string gates; (7) every hit target's
+height per density from `size.*` against `size.target.min`; (8) the counts (`--json`). Exit 1 on a
+gated FAIL, a target under the minimum or a failed gate.
 
 Usage: python3 -I docs/design/_tools/e36_d03_screens_audit.py [--json] [--extra <file> ...]
 """
@@ -64,7 +66,18 @@ _CODES = (
 )
 CODES = _CODES.split()
 COLUMNS = "name|scope|trigger summary|state|environment|last fired|author|version"
-MENU = "Edit (form)|Edit (graph)|Duplicate|Simulate|Arm|Disarm|Export|Delete|Fire history"
+MENU = "Edit (form)|Edit (graph)|Duplicate|Run simulation…|Arm|Disarm|Export|Delete|Fire history"
+# code | message (spec section 8): the import preview / results reasons, keyed by code + message
+IMPORT_REASONS = (
+    "forbidden | The bundle references an account you cannot access.",
+    "unknown_metric | Metric '{m}' is not in the vocabulary.",
+    "schema_error | Unknown action '{a}'.",
+    "format_mismatch (PROPOSED) | This file is a `cv-rule-bundle/2` bundle; this version reads v1",
+    "name_taken | A rule named '{name}' already exists.",
+    "system_rule_reserved | The 'sys.' name prefix is reserved.",
+    "forbidden | Only the Owner can raise a rule's action budget above the default.",
+    "rule_ir_invalid | the validator's issues, a field each (a loosening reads 'Not available')",
+)
 TESTS = ("abuse/test_abuse_cases.py", "abuse/test_security_review_fixes.py", "test_rule_limits.py")
 _OTHER = (
     "font.mono color.border.invalid color.status.warn color.status.danger color.status.info "
@@ -81,15 +94,15 @@ PAIRS_TABLE = """
 row name, column text on canvas | color.text.primary | color.surface.canvas | text | s2 s5
 row name, high-contrast stretch | color.text.primary | color.surface.canvas | hc-text | s12
 hover sentence, reason line | color.text.secondary | color.surface.canvas | text | s2 s3
-v3 and "as of" captions | color.text.tertiary | color.surface.canvas | text | s2 s3
+"as of" caption (off-row) | color.text.tertiary | color.surface.canvas | text | s2 s3
 row rule, tree connector (n5 ink) | color.text.tertiary | color.surface.canvas | non-text | s4 s5
 pill words, card text on raised | color.text.primary | color.surface.raised | text | s3
-T2 reason, reason line, stamps | color.text.secondary | color.surface.raised | text | s3 s5
-ARMED / DONE / Accept glyph | color.status.success.strong | color.surface.raised | non-text | s3 s8
+T2 reason, reason line, stamps, v3 | color.text.secondary | color.surface.raised | text | s2 s3 s5
+ARMED / Accept glyph | color.status.success.strong | color.surface.raised | non-text | s3 s8
 SIMULATING glyph | color.status.info.strong | color.surface.raised | non-text | s3
 PAUSED glyph | color.status.warning.strong | color.surface.raised | non-text | s3
 OFF / ERROR / Skip glyph | color.status.danger.strong | color.surface.raised | non-text | s3 s8
-DRAFT / DISARMED glyph | color.text.secondary | color.surface.raised | non-text | s3
+DRAFT / DISARMED / DONE glyph | color.text.secondary | color.surface.raised | non-text | s3
 env pill DEMO border (E11-D02 415) | color.env.demo | color.surface.raised | non-text | s2
 env pill LIVE border | color.env.live | color.surface.raised | non-text | s2
 LIVE band rule (chrome) | color.env.live | color.surface.app | non-text | 14 0.5
@@ -119,20 +132,36 @@ focus ring, estimated chip | color.focus.ring | color.status.info.subtle | non-t
 primary button label | color.text.on-action | color.action.primary.default | text | s7
 destructive confirm label | color.text.on-action | color.status.danger.default | text | s3
 selected row text | color.text.primary | color.surface.selected | text | s4
+selected row v3 cell, in-row caption | color.text.secondary | color.surface.selected | text | s2 s12
+rejected: tertiary on a selected row | color.text.tertiary | color.surface.selected
+  | rejected-text | s12
+focus ring on a selected row | color.focus.ring | color.surface.selected | non-text | s13
+current-row outline on selected | color.border.selected | color.surface.selected | non-text | s4
+hovered row v3 cell, in-row caption | color.text.secondary | color.surface.hover | text | s2 s12
+rejected: tertiary on a hovered row | color.text.tertiary | color.surface.hover
+  | rejected-text | s12
+focus ring on a hovered row | color.focus.ring | color.surface.hover | non-text | s13
+current-row outline on hover | color.border.selected | color.surface.hover | non-text | s4
 skeleton two-tone | color.surface.hover | color.surface.raised | decorative | s3
 """
 # word | wire source or G-row  (spec section 3)
 STATUS_TABLE = """
-DRAFT | mode disabled with last_run_at null (never ran) - wire
+DRAFT | mode disabled with the shipped rules.disabled_reason null (not on the wire - D03-G7);
+  interim heuristic: last_run_at null, which misreads an armed-then-disarmed rule that never ran
 SIMULATING | mode simulate - wire
-ARMED-DEMO | mode armed, environments without live (the detail; list item D03-G4) - wire + G-row
+ARMED-DEMO | mode armed, environments without live (the detail, fetched for the visible rows;
+  "ARMED" + "Loading..." until known, never DEMO by default; D03-G4) - wire + G-row
 ARMED-LIVE | mode armed, environments with live (the detail; D03-G4) - wire + G-row
-DISARMED | mode disabled after a run or a disarm; the quarantined reason via the view fields
-  (D03-G14)
-PAUSED | B9 paused_degraded; the chrome's feed state while mode stays armed (E17-D01) - D03-G7
-OFF | B9 kill_switched (needs_human_rearm); no wire field - D03-G7
-DONE | B9 spent (once_satisfied); no wire field - D03-G7
-ERROR | last_run_status error while mode is armed or simulate - wire
+DISARMED | mode disabled with disabled_reason disarmed (not on the wire - D03-G7); interim
+  heuristic: last_run_at set or the rules broadcast of rule.disarmed, which misreads an OFF rule
+  as DISARMED; the quarantined reason via the view fields (D03-G14)
+PAUSED | B9 paused_degraded - no wire field (D03-G7); until then the mode word, and the hover
+  sentence says rules pause while their feed is degraded
+OFF | B9 kill_switched = disabled_reason kill_switched (not on the wire - D03-G7); until then the
+  mode word (the interim heuristic shows DISARMED)
+DONE | B9 spent (once_satisfied); no wire field - D03-G7; until then the mode word
+ERROR | last_run_status error while mode is armed or simulate - wire; latched until the next ok
+  run plus 1 s
 """
 # n | element | duration token | easing | reduce | carrier | rate note  (spec section 10)
 MOTION_TABLE = """
@@ -141,7 +170,8 @@ MOTION_TABLE = """
   row | -
 3 | CMP-140 row reorder | fast | standard | instant | the move announcement, the renumbered names
   | -
-4 | CMP-141 group expand / collapse | fast | standard | instant (chevron flips) | aria-expanded | -
+4 | CMP-141 group expand / collapse | instant | none | n/a - the group does not collapse (E36-D02
+  section 6) | the legend "any of" and the bracket carry the grouping | -
 5 | CMP-234 error-count change | fast | standard | instant | the count text, the log announcement
   | debounce
 6 | round-trip indicator transition | fast | standard | instant swap | word, glyph, one announcement
@@ -161,6 +191,24 @@ MOTION_TABLE = """
 """
 EASINGS = ("standard", "decelerate", "accelerate", "none", "decelerate / accelerate")
 COALESCE_MS, DEBOUNCE_MS, SHIMMER_MS, FLASH_BAR, LOOP_STOP_S = 250, 300, 1200, 3.0, 5
+FLASH_LUM_BAR = 0.10  # WCAG 2.3.1: a flash is a relative-luminance change of 0.10 or more
+# target | compact height source | comfortable height source  (spec section 13; 16 section 3);
+# "pill20" = the 20 px pill plus its 2 px padded hit box on each side
+TARGETS_TABLE = """
+row selection checkbox (CMP-005) | size.control.compact | size.control.comfortable
+row-menu button (CMP-002) | size.control.compact | size.control.comfortable
+estimated chip (CMP-227) | pill20 | size.control.comfortable
+sort header button | size.control.compact | size.control.comfortable
+inspector segment (CMP-003) | size.control.compact | size.control.comfortable
+Copy IR / Copy hash / Copy path / Export JSON | size.control.compact | size.control.comfortable
+Set priority (CMP-159 action) | size.control.compact | size.control.comfortable
+file input Choose files (CMP-067) | size.control.compact | size.control.comfortable
+export radios (CMP-006) | size.control.compact | size.control.comfortable
+tree item (CMP-240) | size.row.compact | size.row.comfortable
+filter chip (CMP-055) | size.control.compact | size.control.comfortable
+bulk-bar buttons (CMP-243) | size.control.compact | size.control.comfortable
+"""
+PILL_PX, PILL_PAD = 20, 2
 Tokens = dict[str, dict[str, object]]
 
 
@@ -308,6 +356,24 @@ def contract() -> dict[str, object]:
     return con
 
 
+def px_of(name: str, prim: Tokens) -> int:
+    if name == "pill20":
+        return PILL_PX + 2 * PILL_PAD
+    return int(str(resolve(prim[name]["$value"], prim)))
+
+
+def targets(prim: Tokens) -> tuple[list[list[str]], list[str]]:
+    """Every hit target's height per density against `size.target.min` (spec section 13)."""
+    minimum, table, problems = px_of("size.target.min", prim), [], []
+    for target, compact, comfortable in rows(TARGETS_TABLE):
+        c, k = px_of(compact, prim), px_of(comfortable, prim)
+        verdict = "PASS" if c >= minimum and k >= minimum else "FAIL"
+        if verdict != "PASS":
+            problems.append(f"target under {minimum} px: {target}")
+        table.append([target, f"{c} px ({compact})", f"{k} px ({comfortable})", verdict])
+    return table, problems
+
+
 def motion(prim: Tokens) -> tuple[list[list[str]], list[str], dict[str, float]]:
     slow, table, problems = ms_of("slow", prim), [], []
     for n, element, dur, easing, reduce, carrier, note in rows(MOTION_TABLE):
@@ -324,8 +390,13 @@ def motion(prim: Tokens) -> tuple[list[list[str]], list[str], dict[str, float]]:
         "shimmer_slow_bound_per_s": round(1000 / slow, 2),
     }
     rates |= {"flash_bar_per_s": FLASH_BAR, "loop_stop_s": LOOP_STOP_S}
+    hover, raised = hex_of("color.surface.hover", prim), hex_of("color.surface.raised", prim)
+    delta = round(abs(lum(hover) - lum(raised)), 3) if hover and raised else 1.0
+    rates |= {"skeleton_lum_delta": delta, "flash_lum_bar": FLASH_LUM_BAR}
     if rates["debounce_per_s"] <= FLASH_BAR:
         problems.append("debounce arithmetic: row 5 must be flash-free by construction")
+    if delta >= FLASH_LUM_BAR:
+        problems.append("skeleton shimmer: the two tones differ by a flash-level luminance step")
     return table, problems, rates
 
 
@@ -338,7 +409,8 @@ def gates(files: list[Path]) -> list[str]:
     need = ("5 errors in a row", "re-arm", "The stop only ever tightens.",
             "Not available — rules never loosen a stop.", "Native stops are unaffected.",
             "no screen of this ticket offers a loosening or stop-clearing control",
-            "no account ids, no keys, no armed state")  # fmt: skip
+            "no account ids, no keys, no armed state",
+            "System rules cannot be changed.")  # fmt: skip
     cons, bad = read(ROOT / "CONSTITUTION.md"), []
     for f in files:
         t = read(f)
@@ -383,7 +455,8 @@ def counts(
     distinct = {(str(p["fg"]), str(p["bg"])) for p in gated}
     t4 = handoff.split("### Table 4")[-1].split("### Table 5")[0].splitlines()
     n = {"status_words": len(rows(STATUS_TABLE)), "boards": 12, "entries_15": len(ENTRIES)}
-    n |= {"import_reasons": 4, "motion_rows": len(rows(MOTION_TABLE))}
+    n |= {"import_reasons": len(IMPORT_REASONS), "motion_rows": len(rows(MOTION_TABLE))}
+    n |= {"targets": len(rows(TARGETS_TABLE))}
     n |= {"columns": len(COLUMNS.split("|")), "menu_items": len(MENU.split("|"))}
     n |= {"pairs_rows": len(pairs), "pairs_gated": len(gated)}
     for k in ("b9_states", "rule_paths", "audit_keys", "validator_codes"):
@@ -426,6 +499,8 @@ def main(argv: list[str]) -> int:
     ]
     bound = bindings(themes, spec + handoff + "".join(m.group(0) for m in ent if m))
     mtable, bad, rates = motion(themes["dark"])
+    ttable, tbad = targets(themes["dark"])
+    bad += tbad
     memo = {"text.primary/surface.canvas": 15.20, "text.primary/status.warning.subtle": 9.86}
     memo |= {"text.secondary/surface.canvas": 9.33, "text.tertiary/surface.raised": 5.62}
     memo |= {"text.tertiary/status.warning.subtle": 3.86}
@@ -468,9 +543,16 @@ def main(argv: list[str]) -> int:
     )
     print("\n".join("| " + " | ".join(r) + " |" for r in mtable))
     print(f"- rates: {rates} (coalescing is data, 0 flashes; the debounce rate is above")
-    print(f"  {FLASH_BAR}/s, so row 5 has no flash by design; the shimmer stops on data or at 5 s)")
+    print(f"  {FLASH_BAR}/s, so row 5 has no flash by design; the shimmer stops on data or at 5 s;")
+    print(f"  its two tones differ by a relative luminance of {rates['skeleton_lum_delta']}, under")
+    print(f"  the {FLASH_LUM_BAR} flash bar)")
     print("\n".join(f"- status {w}: {src}" for w, src in rows(STATUS_TABLE)))
-    print("\n## 6. String gates and 7. counts\n\n" + ("\n".join(bad) if bad else "gates: all pass"))
+    print("\n## 6. Import reasons (code | message)\n")
+    print("\n".join(f"- {r}" for r in IMPORT_REASONS))
+    print("\n## 7. Hit targets per density (against size.target.min)\n")
+    print("| target | compact | comfortable | verdict |\n|" + " --- |" * 4)
+    print("\n".join("| " + " | ".join(r) + " |" for r in ttable))
+    print("\n## 8. String gates and counts\n\n" + ("\n".join(bad) if bad else "gates: all pass"))
     print(json.dumps(n))
     return 1 if bad else 0
 
