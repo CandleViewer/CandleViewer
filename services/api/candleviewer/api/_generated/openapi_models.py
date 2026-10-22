@@ -2396,6 +2396,9 @@ class Scaled(BaseModel):
 
 
 class TakeProfitLevel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
     offset: Offset | None = None
     pct_of_position: Annotated[
         str | None,
@@ -2482,7 +2485,10 @@ class PlaceOrderRequest(BaseModel):
     tpsl_mode: Literal["Full", "Partial"] | None = None
     algo: AlgoSpec | None = None
     profile_id: Annotated[
-        UUID | None, Field(description="Override the account's active profile for this order.")
+        UUID | None,
+        Field(
+            description="An alternate profile of this order's account; it only narrows the account's bound profile (later narrows, as on `createTradeGroup`; SR-E28-03). Any other id, another account's, a deleted one or one that does not exist, is `404 not_found` after the account-scope check, the same answer for each."
+        ),
     ] = None
     note: Annotated[str | None, Field(max_length=280)] = None
 
@@ -2789,7 +2795,12 @@ class Overrides(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    profile_id: UUID | None = None
+    profile_id: Annotated[
+        UUID | None,
+        Field(
+            description="An alternate profile of this leg's account; it only narrows the bound profile. Any other id, a profile of another account (granted or not), a deleted one or one that does not exist, refuses the whole request with `404 not_found` after the account-scope check, the same answer for each (SR-E28-03).\n"
+        ),
+    ] = None
     sizing: Sizing | None = None
     price: Annotated[
         str | None,
@@ -2832,7 +2843,7 @@ class TradeGroupLegInput(BaseModel):
     overrides: Annotated[
         Overrides | None,
         Field(
-            description="Per-leg overrides layered on top of the account profile and request defaults."
+            description="Per-leg values that only narrow the account's bound profile, after the request's `defaults` (later narrows; see `createTradeGroup`, SR-E28-03).\n"
         ),
     ] = None
 
@@ -2903,9 +2914,6 @@ class CreateTradeGroupRequest(BaseModel):
         ),
     ]
     note: Annotated[str | None, Field(max_length=280)] = None
-    rule_id: Annotated[
-        UUID | None, Field(description="Set when the group originates from the rule engine.")
-    ] = None
 
 
 class ResolvedLegParams(BaseModel):
@@ -3051,7 +3059,8 @@ class AmendTradeGroupRequest(BaseModel):
     legs: Annotated[
         list[Leg] | None,
         Field(
-            description="Per-leg amendments; when present, the top-level fields are ignored for those legs."
+            description="Per-leg amendments; when present, the top-level fields are ignored for those legs.",
+            max_length=20,
         ),
     ] = None
 
@@ -6711,7 +6720,7 @@ class TradeGroupLeg(BaseModel):
     account_profile_id: Annotated[
         UUID | None,
         Field(
-            description="The profile that produced `resolved`. Null when the ticket overrode the profile entirely."
+            description="The profile the leg was sized from (24-internal-schemas.md section 9.1). Null only once that profile row is gone; the leg's snapshot keeps the id.\n"
         ),
     ] = None
     status: (

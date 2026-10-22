@@ -312,8 +312,9 @@ def test_forbidden_names_the_scope_and_arm_refusals() -> None:
     forbidden = _SPEC["components"]["responses"]["Forbidden"]
     text = _words(forbidden["description"])
     assert (
-        "`placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions` refuse an "
-        "exchange account named in their body that is outside the caller's grants, and one that "
+        "`placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, "
+        "`closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition` refuse "
+        "an exchange account named in their body that is outside the caller's grants, and one that "
         "does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`)" in text
     )
     leg = _SCHEMAS["TradeGroupLegInput"]["properties"]["exchange_account_id"]["description"]
@@ -334,8 +335,9 @@ def test_forbidden_names_the_scope_and_arm_refusals() -> None:
     assert "decided after account scope like the gate" in text
     scope = _words(_SPEC["components"]["responses"]["AccountScopeDenied"]["description"])
     assert (  # scoped: getExchangeAccount's own 404 is E27-X03's (KV-I13)
-        "On the order routes that name an account in their body (`placeOrder`, "
-        "`createTradeGroup`, `cancelAllOrders` and `closeAllPositions`; see `Forbidden`), an "
+        "On the order and trade-group routes that name an account in their body (`placeOrder`, "
+        "`createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, "
+        "`createTradeGroupDefinition` and `updateTradeGroupDefinition`; see `Forbidden`), an "
         "account that does not exist is answered with the same status, code and `detail` shape "
         "(SR-E29-13)" in scope
     )
