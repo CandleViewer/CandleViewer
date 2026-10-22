@@ -36,6 +36,7 @@ from candleviewer.audit.models import (
     ChainBreakKind,
     VerifyResult,
 )
+from candleviewer.audit.repository import HASHED_FIELDS as HASHED_FIELDS  # re-exported
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.observability.context import spawn
@@ -47,25 +48,6 @@ VERIFY_BATCH_SIZE = 10_000
 #: The `audit_verify_max_span` default (#2392): the most ids one range may span.
 VERIFY_MAX_SPAN: int = Settings.model_fields["audit_verify_max_span"].default
 _PREFETCH = "audit.verify.prefetch"
-#: The hashed columns after `prev_hash`, in the order `audit_chain()` hashes them
-#: (`21-database-schema.md` §3.10.1).
-HASHED_FIELDS = (
-    "actor_user_id",
-    "actor_label",
-    "actor_ip",
-    "session_id",
-    "action",
-    "object_kind",
-    "object_id",
-    "outcome",
-    "severity",
-    "reason",
-    "before_state",
-    "after_state",
-    "request_id",
-    "env",
-    "event_ts",
-)
 #: The recorded states, as (`detail` key, `audit_log` column).
 _STATES = (("before", "before_state"), ("after", "after_state"))
 #: Deepest container nesting of a state the Owner's page returns. The response serializer

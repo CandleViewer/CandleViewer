@@ -99,16 +99,18 @@ _CHECKPOINTS_SQL = sa.text(
     "SELECT c.head_id, c.head_hash, a.entry_hash FROM audit_checkpoints c "
     "LEFT JOIN audit_log a ON a.id = c.head_id WHERE c.head_id <= :to_id ORDER BY c.head_id"
 )
-#: Rendered UTF-8 bytes per verify batch: a batch stops before a row once the rows before it
-#: reach this, so it holds at most the budget plus one entry (the first row always goes in),
-#: and each entry is capped at `VERIFY_MAX_ENTRY_BYTES`.
+#: Rendered UTF-8 bytes per verify or export batch: a batch stops before a row once the rows
+#: before it reach this, so it holds at most the budget plus one entry (the first row always goes
+#: in), and each entry is capped at `VERIFY_MAX_ENTRY_BYTES`.
 VERIFY_BATCH_MAX_BYTES = 8 * 1024 * 1024
 #: The `audit_verify_max_entry_bytes` default: the most rendered UTF-8 bytes one entry may
-#: have for verify to fetch it. A larger entry ends a run with `AuditEntryTooLarge`.
+#: have for verify to fetch it. A larger entry ends a run with `AuditEntryTooLarge`; an export
+#: reads it alone instead.
 VERIFY_MAX_ENTRY_BYTES: int = Settings.model_fields["audit_verify_max_entry_bytes"].default
-#: Default per-statement budget for verify's reads (the head, the anchor, each batch),
-#: client-side and as `statement_timeout`: the `audit_verify_statement_timeout_ms` default, a
-#: backstop far above one keyset batch. An overrun is 503.
+#: Default per-statement budget for verify's reads (the head, the anchor, each batch) and the
+#: export's (each batch, the count), client-side and as `statement_timeout`: the
+#: `audit_verify_statement_timeout_ms` default, a backstop far above one keyset batch. An overrun
+#: is 503, or fails an export job.
 VERIFY_READ_TIMEOUT_MS: int = Settings.model_fields["audit_verify_statement_timeout_ms"].default
 
 #: Every hashed column is rendered to text *by Postgres*, with exactly the
@@ -228,6 +230,39 @@ _VERIFY_BATCH_SQL = sa.text(
     "w.severity, w.reason, w.before_state, w.after_state, w.request_id, w.env, w.event_ts"
     ") f ON w.n <= :max_entry WHERE w.before < :max_bytes AND (w.big = 0 OR w.k = 1) "
     "ORDER BY w.id"
+)
+
+#: The export's keyset batch (#889 S8), projecting `EXPORT_COLUMNS`: `_VERIFY_BATCH_SQL`'s
+#: renderings, written alike so both read the text the trigger hashed (a unit test holds them
+#: equal), then `record_id` and `object_label`, counted in `n` too. It cuts as verify's does, but
+#: an entry over `:max_entry` is never left out: it ends the batch before it, and comes first and
+#: alone, with every member.
+_EXPORT_BATCH_SQL = sa.text(
+    "SELECT w.id, w.prev_hash, w.entry_hash, w.actor_user_id, w.actor_label, w.actor_ip, "
+    "w.session_id, w.action, w.object_kind, w.object_id, w.outcome, w.severity, w.reason, "
+    "w.before_state, w.after_state, w.request_id, w.env, w.event_ts, w.record_id, "
+    "w.object_label FROM ("
+    "SELECT r.*, sum(r.n) OVER o - r.n AS before, row_number() OVER o AS k, "
+    "count(*) FILTER (WHERE r.n > :max_entry) OVER o AS big FROM ("
+    "SELECT q.*, octet_length(concat(actor_user_id, actor_label, actor_ip, session_id, "
+    "action, object_kind, object_id, outcome, severity, reason, before_state, after_state, "
+    "request_id, env, event_ts, record_id, object_label)) AS n FROM ("
+    "SELECT id, prev_hash, entry_hash, actor_user_id::text AS actor_user_id, actor_label, "
+    "actor_ip::text AS actor_ip, session_id::text AS session_id, action, object_kind, "
+    "object_id, outcome::text AS outcome, severity::text AS severity, reason, "
+    "before_state::text AS before_state, after_state::text AS after_state, "
+    "request_id::text AS request_id, env::text AS env, "
+    "to_char(event_ts AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.USOF') AS event_ts, "
+    "record_id::text AS record_id, object_label "
+    "FROM audit_log WHERE id > :after_id AND id <= :to_id ORDER BY id ASC LIMIT :limit"
+    ") q) r WINDOW o AS (ORDER BY r.id)) w "
+    "WHERE w.before < :max_bytes AND (w.big = 0 OR w.k = 1) ORDER BY w.id"
+)
+#: The export span's entries, counted up to `:cap`: it reads at most `:cap` ids, and the statement
+#: budget of `_bounded_read` (10 s by default) bounds its time.
+_EXPORT_COUNT_SQL = sa.text(
+    "SELECT count(*) FROM (SELECT 1 FROM audit_log "
+    "WHERE id >= :first_id AND id <= :last_id LIMIT :cap) s"
 )
 
 #: For given rows, by id: the renderings the trigger hashed (as `_VERIFY_BATCH_SQL`, each cut
@@ -500,7 +535,7 @@ class SqlAlchemyAuditRepository:
             return row[0] if row is not None else None
 
     async def fetch_anchor_hash(self, before_id: int) -> str | None:
-        rows = await self._bounded_read(_ANCHOR_SQL, {"before_id": before_id})
+        rows = await self._bounded_read(_ANCHOR_SQL, {"before_id": before_id}, "anchor")
         return str(rows[0][0]) if rows else None
 
     async def fetch_verify_batch(
@@ -508,34 +543,48 @@ class SqlAlchemyAuditRepository:
     ) -> list[tuple[Any, ...]]:
         params = {"after_id": after_id, "to_id": to_id, "limit": limit}
         params.update(max_bytes=self._batch_bytes, max_entry=self._entry_bytes)
-        rows = await self._bounded_read(_VERIFY_BATCH_SQL, params)
+        rows = await self._bounded_read(_VERIFY_BATCH_SQL, params, "verify_batch")
         big = next((row[0] for row in rows if row[-1] > self._entry_bytes), None)
         if big is not None:  # only ever the first row, its renderings never fetched
             raise AuditEntryTooLarge(int(big))
         return [row[:-1] for row in rows]
 
+    async def fetch_export_batch(
+        self, *, after_id: int, to_id: int, limit: int
+    ) -> list[tuple[Any, ...]]:
+        params = {"after_id": after_id, "to_id": to_id, "limit": limit}
+        params.update(max_bytes=self._batch_bytes, max_entry=self._entry_bytes)
+        return await self._bounded_read(_EXPORT_BATCH_SQL, params, "export_batch")
+
+    async def count_export_span(self, *, first_id: int, last_id: int, cap: int) -> int:
+        params = {"first_id": first_id, "last_id": last_id, "cap": cap}
+        [(found,)] = await self._bounded_read(_EXPORT_COUNT_SQL, params, "export_count")
+        return int(found)
+
     async def read_head(self) -> tuple[int, str] | None:
-        rows = await self._bounded_read(_HEAD_SQL, {})
+        rows = await self._bounded_read(_HEAD_SQL, {}, "head")
         return (int(rows[0][0]), str(rows[0][1])) if rows else None
 
     async def read_bounds(self) -> tuple[int, int] | None:
-        [(first, head)] = await self._bounded_read(_BOUNDS_SQL, {})
+        [(first, head)] = await self._bounded_read(_BOUNDS_SQL, {}, "bounds")
         return None if head is None else (int(first), int(head))
 
     async def fetch_checkpoints(self, to_id: int) -> list[tuple[int, str, str | None]]:
-        rows = await self._bounded_read(_CHECKPOINTS_SQL, {"to_id": to_id})
+        rows = await self._bounded_read(_CHECKPOINTS_SQL, {"to_id": to_id}, "checkpoints")
         return [(int(h), str(hh), None if e is None else str(e)) for h, hh, e in rows]
 
     async def fetch_checkpoint_above(self, head_id: int) -> int | None:
-        [(above,)] = await self._bounded_read(_CHECKPOINT_ABOVE_SQL, {"head_id": head_id})
+        params = {"head_id": head_id}
+        [(above,)] = await self._bounded_read(_CHECKPOINT_ABOVE_SQL, params, "checkpoint_above")
         return None if above is None else int(above)
 
     async def _bounded_read(
-        self, statement: sa.TextClause, params: dict[str, Any]
+        self, statement: sa.TextClause, params: dict[str, Any], read: str
     ) -> list[tuple[Any, ...]]:
-        """One read under the verify statement budget, rows as plain tuples. Failures as in
-        `query_page`: the builtin `TimeoutError`, or `AuditReadFailed` with the SQLSTATE
-        only, raised `from None` so no database error rides along (C-12.6)."""
+        """One read of verify's or the export's under the statement budget, rows as plain tuples.
+        Failures as in `query_page`: the builtin `TimeoutError`, or `AuditReadFailed` with the
+        SQLSTATE only, raised `from None` so no database error rides along (C-12.6). The two
+        warnings are shared by every such read, and `read` names the statement in them."""
         budget = asyncio.timeout(self._verify_timeout_ms / 1000)
         timed_out, error, state = False, "", None
         try:
@@ -551,9 +600,10 @@ class SqlAlchemyAuditRepository:
             timed_out = state == _QUERY_CANCELED or budget.expired()
             error = type(exc).__name__
         if timed_out:
-            _log().warning("audit.verify_read.timeout", budget_ms=self._verify_timeout_ms)
+            budget_ms = self._verify_timeout_ms
+            _log().warning("audit.verify_read.timeout", read=read, budget_ms=budget_ms)
             raise TimeoutError("audit read exceeded its time budget") from None
-        _log().warning("audit.verify_read.failed", error=error, sqlstate=state)
+        _log().warning("audit.verify_read.failed", read=read, error=error, sqlstate=state)
         raise AuditReadFailed(state) from None
 
     async def count(self) -> int:

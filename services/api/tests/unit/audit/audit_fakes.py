@@ -10,6 +10,7 @@ import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from candleviewer.audit.repository import EXPORT_COLUMNS, HASHED_FIELDS
 from candleviewer.storage.errors import AuditEntryTooLarge
 
 GENESIS = "0" * 64
@@ -43,6 +44,7 @@ class FakeAuditRepository:
         self.checkpoints: dict[int, dict[str, Any]] = {}
         self.page_calls: list[dict[str, Any]] = []
         self.verify_calls: list[tuple[int, int, int]] = []  # (after_id, to_id, limit)
+        self.export_calls: list[tuple[int, int, int]] = []  # (after_id, to_id, limit)
         self.max_bytes: int | None = None  # the batch byte budget, when a test sets one
         self.max_entry: int | None = None  # the per-entry cap, when a test sets one
         self.over_cap: set[int] = set()
@@ -179,29 +181,54 @@ class FakeAuditRepository:
         earlier = [r for r in self.rows if r["id"] < before_id]
         return str(max(earlier, key=lambda r: r["id"])["entry_hash"]) if earlier else None
 
-    async def fetch_verify_batch(
-        self, *, after_id: int, to_id: int, limit: int
-    ) -> list[tuple[Any, ...]]:
-        """As the repository: keyset `after_id < id <= to_id` in id order, as tuples
-        `(id, prev_hash, entry_hash, *renderings)` in `HASHED_FIELDS` order."""
-        from candleviewer.audit.query import HASHED_FIELDS
+    def _span(self, after_id: int, to_id: int, limit: int) -> list[dict[str, Any]]:
+        """The keyset `after_id < id <= to_id`, in id order, at most `limit` rows."""
+        rows = (r for r in self.rows if after_id < r["id"] <= to_id)
+        return sorted(rows, key=lambda r: r["id"])[:limit]
 
-        self.verify_calls.append((after_id, to_id, limit))
-        sel = sorted((r for r in self.rows if after_id < r["id"] <= to_id), key=lambda r: r["id"])
-        head = ("id", "prev_hash", "entry_hash")
-        rows = [tuple(r[k] for k in (*head, *HASHED_FIELDS)) for r in sel[:limit]]
-        budget, before, out = self.max_bytes, 0, []
-        for row in rows:  # as the repository: cut once the bytes before a row reach the budget
-            if budget is not None and before >= budget:
+    def _cut(self, rows: list[tuple[Any, ...]], *, alone: bool) -> list[tuple[Any, ...]]:
+        """As the repository's batch statements: a batch stops before a row once the bytes of the
+        texts after the hashes in the rows before it reach `max_bytes`, and an entry over
+        `max_entry` only ever comes first. Verify's read then refuses it; the export's (`alone`)
+        returns it alone, with every member."""
+        out: list[tuple[Any, ...]] = []
+        before = 0
+        for row in rows:
+            if self.max_bytes is not None and before >= self.max_bytes:
                 break
             n = len("".join(v for v in row[3:] if v is not None).encode())
-            if self.max_entry is not None and n > self.max_entry:  # only ever fetched first
+            if self.max_entry is not None and n > self.max_entry:
                 if out:
                     break
-                raise AuditEntryTooLarge(row[0])
+                if not alone:
+                    raise AuditEntryTooLarge(row[0])
+                return [row]
             out.append(row)
             before += n
         return out
+
+    async def fetch_verify_batch(
+        self, *, after_id: int, to_id: int, limit: int
+    ) -> list[tuple[Any, ...]]:
+        """As the repository: tuples `(id, prev_hash, entry_hash, *renderings)` in
+        `HASHED_FIELDS` order, cut as `_cut` says."""
+        self.verify_calls.append((after_id, to_id, limit))
+        head = ("id", "prev_hash", "entry_hash")
+        span = self._span(after_id, to_id, limit)
+        return self._cut([tuple(r[k] for k in (*head, *HASHED_FIELDS)) for r in span], alone=False)
+
+    async def count_export_span(self, *, first_id: int, last_id: int, cap: int) -> int:
+        return min(cap, sum(1 for r in self.rows if first_id <= r["id"] <= last_id))
+
+    async def fetch_export_batch(
+        self, *, after_id: int, to_id: int, limit: int
+    ) -> list[tuple[Any, ...]]:
+        """As the repository: tuples in `EXPORT_COLUMNS` order, every member after `id` as text,
+        cut as `_cut` says."""
+        self.export_calls.append((after_id, to_id, limit))
+        span = self._span(after_id, to_id, limit)
+        texts = [[None if r[k] is None else str(r[k]) for k in EXPORT_COLUMNS[1:]] for r in span]
+        return self._cut([(r["id"], *t) for r, t in zip(span, texts, strict=True)], alone=True)
 
     async def read_head(self) -> tuple[int, str] | None:
         return (self.rows[-1]["id"], self.rows[-1]["entry_hash"]) if self.rows else None

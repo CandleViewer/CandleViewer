@@ -1,12 +1,14 @@
-"""Integration: verify's batch statement on Postgres 16 (#2464). A batch stops before a row
-once the renderings before that row reach the byte budget, so it holds at most the budget
-plus one entry: an entry over the whole budget comes alone when it is first, and ends the
-batch it lands in otherwise; the walk goes on past short batches. An entry over the per-entry
-cap is never fetched: the read that starts with it names it, and a run stops there. Entries
-go in through the repository's own `insert`.
+"""Integration: verify's and the export's batch statements on Postgres 16 (#2464; #889 S8). A
+batch stops before a row once the renderings before that row reach the byte budget, so it holds
+at most the budget plus one entry: an entry over the whole budget comes alone when it is first,
+and ends the batch it lands in otherwise; the walk goes on past short batches. Verify never
+fetches an entry over the per-entry cap: the read that starts with it names it, and a run stops
+there. The export's batch renders verify's columns alike, then `record_id` and `object_label`,
+and reads an entry over the cap alone, with every member. Entries go in through the
+repository's own `insert`.
 
-Not run locally (no docker); exercised by the CI integration job (testcontainers). Its
-statements were also run by hand on a scratch Postgres 16.4 before review.
+Exercised by the CI integration job (testcontainers). Before review, verify's statements were
+also run by hand on a scratch Postgres 16.4, and these tests on a local Postgres 16 container.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.audit.query import AuditQueryService
@@ -134,3 +137,83 @@ async def test_an_entry_over_the_cap_is_never_fetched_and_stops_the_run(
     assert err.value.entry_id == big
     with pytest.raises(AuditEntryTooLarge):
         await AuditQueryService(repo).verify(from_id=ids[0], to_id=last, batch_size=10)
+
+
+async def _user(relational: SqlAlchemyRelationalRepository) -> uuid.UUID:
+    """A `users` row, which a set `actor_user_id` must reference."""
+    user = uuid.uuid4()
+    async with relational.unit_of_work() as uow:
+        await uow.session.execute(
+            sa.text(
+                "INSERT INTO users (id, email, username, password_hash, status) VALUES "
+                "(:id, :email, :username, '$argon2id$synthetic', 'active')"
+            ),
+            {"id": user, "email": f"{user.hex}@example.invalid", "username": f"it_{user.hex[:12]}"},
+        )
+        await uow.commit()
+    return user
+
+
+def _full(actor: uuid.UUID, i: int, label: str) -> dict[str, Any]:
+    """An entry with every nullable column set, each to a value of its own."""
+    return {
+        "record_id": uuid.uuid4(),
+        "actor_user_id": actor,
+        "actor_label": f"it {i}",
+        "actor_ip": f"203.0.113.{i + 1}",
+        "session_id": uuid.uuid4(),
+        "action": "orders.submit",
+        "object_kind": "order",
+        "object_id": f"o-{i}",
+        "object_label": label,
+        "outcome": "denied",
+        "severity": "warning",
+        "reason": f"reason {i}",
+        "before_state": {"qty": f"{i}.5"},
+        "after_state": {"qty": "é", "n": [i]},
+        "request_id": uuid.uuid4(),
+        "env": "demo",
+        "event_ts": (_T0 + timedelta(seconds=i)).isoformat(),
+    }
+
+
+async def test_an_export_batch_renders_verify_s_columns_then_record_id_and_object_label(
+    relational: SqlAlchemyRelationalRepository,
+) -> None:
+    """#889 S8: with every nullable column set to a value of its own, an export batch carries
+    verify's renderings, then `record_id` as text and `object_label` as stored."""
+    repo, labels = SqlAlchemyAuditRepository(relational), ("BTC 注文", "Zoë")
+    head, actor = await repo.read_head(), await _user(relational)
+    base = 0 if head is None else head[0]
+    records = [_full(actor, i, label) for i, label in enumerate(labels)]
+    for record in records:
+        await repo.insert(record)
+    written = await repo.read_head()
+    assert written is not None
+    batch = await repo.fetch_export_batch(after_id=base, to_id=written[0], limit=10)
+    verify = await repo.fetch_verify_batch(after_id=base, to_id=written[0], limit=10)
+    assert [row[:18] for row in batch] == verify and all(None not in row for row in batch)
+    for row, record, label in zip(batch, records, labels, strict=True):
+        assert (row[18], row[19]) == (str(record["record_id"]), label)
+
+
+async def test_an_export_batch_reads_an_entry_over_the_cap_alone_and_whole(
+    relational: SqlAlchemyRelationalRepository,
+) -> None:
+    repo = SqlAlchemyAuditRepository(relational, verify_max_entry_bytes=2000)
+    base, ids = await _append(repo, [10, 10, 5000, 10])  # the third is over the cap
+    big, last = ids[2], ids[3]
+    fetch = repo.fetch_export_batch
+    assert _ids(await fetch(after_id=base, to_id=last, limit=10)) == ids[:2]
+    (alone,) = await fetch(after_id=ids[1], to_id=last, limit=10)
+    assert (alone[0], alone[12]) == (big, "r" * 5000)  # first and alone, with every member
+    assert _ids(await fetch(after_id=big, to_id=last, limit=10)) == [last]
+
+
+async def test_an_export_span_count_stops_at_its_cap(
+    relational: SqlAlchemyRelationalRepository,
+) -> None:
+    repo = SqlAlchemyAuditRepository(relational)
+    _, ids = await _append(repo, [10, 10, 10, 10])
+    span = {"first_id": ids[0], "last_id": ids[-1]}  # four entries, more ids since 0045
+    assert [await repo.count_export_span(**span, cap=cap) for cap in (3, 9)] == [3, 4]
