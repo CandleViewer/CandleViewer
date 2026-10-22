@@ -705,6 +705,22 @@ async def test_the_start_unit_locks_then_writes_the_notice_the_record_ahead_and_
     assert start[1] == _VIEW_AS_CALLS["start_view_as"][2] | {"context_id": str(_FRESH.context_id)}
 
 
+def test_the_notice_names_no_account_or_symbol() -> None:
+    """The addressed read filters on the environment alone, never on the caller's grants, so the
+    notice names no account and no symbol (#3085 S13a; the #4139 re-check's Info 7)."""
+    sql = str(sessions_sqlalchemy._VIEW_AS_NOTICE_SQL)
+    columns = re.search(r"INSERT INTO system_events \(([^)]*)\)", sql)
+    assert columns is not None
+    assert [c.strip() for c in columns.group(1).split(",")] == [
+        "component",
+        "kind",
+        "severity",
+        "message",
+        "correlation_id",
+        "recipient_user_id",
+    ]
+
+
 async def test_the_start_unit_writes_a_pending_ends_record_late_and_marks_it_first() -> None:
     repo, rel, log, call = _unit(_STATES["pending-end"])
     started, _held = await call(repo)
