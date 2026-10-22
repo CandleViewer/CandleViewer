@@ -31,20 +31,33 @@ wired at all). A `503` on DELETE changed nothing.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any, Final, Protocol
+from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import ValidationError
 
+from candleviewer.admin.errors import ViewAsStartUnavailable
+from candleviewer.admin.http import AuditEmitter, PrincipalResolver, admin_router
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.idle_lock import idle_locked_problem, problem
-from candleviewer.api.step_up import _bearer  # the guard's parse: one rule for both
+from candleviewer.api.step_up import (
+    StepUpAuth,
+    _bearer,  # the guard's parse: one rule for both
+    require_elevation_for,
+)
+from candleviewer.api.step_up_challenge import ChallengeText, quote_label
+from candleviewer.api.view_as_refusals import StartReason, ViewAsRefusalUnrecorded, Viewer
+from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import AuthError, SessionIdleLocked
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord
-from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
+from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase, ViewAsStartResult, ViewAsState
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 PATH: Final = "/auth/session/view-as"
@@ -196,5 +209,188 @@ def make_view_as_router(
             except Exception as exc:
                 return _unavailable("session", exc, _NOT_LEFT)
         return Response(status_code=204)
+
+    return router
+
+
+# -- #3085 S13b: `POST /admin/view-as` (`startViewAs`) ---------------------------------------------
+
+START_PATH: Final = "/view-as"  # under the admin router's `/admin`
+#: A start's body: a 500-character reason, every character escaped, fits with room to spare.
+MAX_START_BODY_BYTES: Final = 8192
+#: The refusals before the step-up gate, in the contract's order, and their statuses.
+START_REFUSALS: Final[Mapping[StartReason, int]] = MappingProxyType(
+    {
+        "view_as_active": 409,
+        "view_as_self_target": 403,
+        "not_found": 404,
+        "conflict": 409,
+        "view_as_owner_target": 403,
+    }
+)
+#: The statuses a target cannot be viewed in: a `locked` user is only locked out of signing in.
+_UNVIEWABLE: Final = frozenset({"invited", "disabled"})
+
+
+class StartViewAs(Protocol):
+    """`ViewAsService.start` (`admin/view_as.py`)."""
+
+    async def start(
+        self, record: SessionRecord, target_user_id: UUID, *, reason: str, now: datetime
+    ) -> ViewAsStartResult: ...
+
+
+class StartRefusals(Protocol):
+    """`ViewAsRefusalRecorder.refuse_start` (`api/view_as_refusals.py`)."""
+
+    async def refuse_start(
+        self,
+        viewer: Viewer,
+        reason: StartReason,
+        *,
+        target_user_id: UUID,
+        held: ViewAsState | None = None,
+        ip: str | None = None,
+        request_id: str | UUID | None = None,
+    ) -> bool: ...
+
+
+class TargetUsers(Protocol):
+    """`SqlAlchemyIdentityProvider.user`: an undeleted user's `User`; `LookupError` for none."""
+
+    async def user(self, user_id: str) -> dict[str, Any]: ...
+
+
+def _invalid(field: str, rule: str) -> JSONResponse:
+    detail = "The body does not match StartViewAsRequest."
+    errors = [{"field": field, "rule": rule}]
+    code = ErrorCode.VALIDATION_FAILED
+    return problem(422, code.value, ERROR_META[code].title, detail, errors=errors)
+
+
+async def _start_body(request: Request) -> api.StartViewAsRequest | JSONResponse:
+    """The body, or its `422`, which writes no record (22). Never echoed: no value, and no name of
+    a member the contract lacks (`field` empty), so a reason reaches no answer and no log."""
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > MAX_START_BODY_BYTES:
+            return _invalid("", "body_too_large")
+    try:
+        return api.StartViewAsRequest.model_validate_json(bytes(raw))
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        field = "" if first["type"] == "extra_forbidden" else ".".join(map(str, first["loc"]))
+        return _invalid(field, first["type"])
+
+
+def make_view_as_start_router(
+    auth: StepUpAuth,
+    *,
+    resolver: PrincipalResolver | None,
+    audit: AuditEmitter | None,
+    views: Callable[[], StartViewAs | None],
+    refusals: Callable[[], StartRefusals | None],
+    users: TargetUsers | None,
+    clock: Callable[[], datetime],
+) -> APIRouter:
+    """`POST /admin/view-as` (22 `startViewAs`) behind the admin-area guard (`users:write`), which
+    records a caller without it as a denied `admin.area_entered` and answers `403 forbidden`.
+    Then, in the contract's order and before the step-up gate (class `users`), so a refused start
+    is never a challenge: `422` (no record), and each of `START_REFUSALS`, recorded as one
+    `admin.view_as_refused` ahead of its answer within the viewer's own cap (`refusals`; one that
+    cannot be written answers `503 audit_unavailable`). The start itself is `ViewAsService.start`'s
+    one unit of work: `201` with the context, `409 view_as_active` (recorded) when a concurrent
+    start won, `401` when the session went meanwhile, `503` when its records cannot be written.
+    *views* and *refusals* are read per request (`None` on the fake backend: `503`)."""
+    router = admin_router(Permission.USERS_WRITE, resolver=resolver, audit=audit)
+
+    async def refused(
+        recorder: StartRefusals,
+        viewer: Viewer,
+        reason: StartReason,
+        target: UUID,
+        who: AuditPrincipal,
+        held: ViewAsState | None = None,
+    ) -> JSONResponse:
+        try:
+            await recorder.refuse_start(
+                viewer,
+                reason,
+                target_user_id=target,
+                held=held,
+                ip=who.ip,
+                request_id=who.request_id,
+            )
+        except ViewAsRefusalUnrecorded:
+            detail = "The refusal could not be recorded."
+            return _problem(ErrorCode.AUDIT_UNAVAILABLE, 503, detail)
+        code = ErrorCode(reason)
+        return _problem(code, START_REFUSALS[reason], ERROR_META[code].title)
+
+    @router.post(START_PATH, status_code=201)  # nosem: audit-write-required reason=write-ahead-inside-start_view_as_unit-under-the-row-lock-admin.view_as_started owner=@CandleViewer/security review=2027-03-25  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
+    async def start_view_as(request: Request) -> Response:
+        who: AuditPrincipal = request.state.admin_principal  # left there by the guard
+        body = await _start_body(request)
+        if isinstance(body, JSONResponse):
+            return body
+        recorder = refusals()
+        if recorder is None or users is None:
+            return _unwired()
+        try:  # the row itself: the guard authenticated it, and it may have gone since
+            record: SessionRecord = await auth.sessions.authenticate_access_token(
+                _bearer(request) or ""
+            )
+        except AuthError:
+            return _unauthenticated()
+        except Exception as exc:
+            return _unavailable("session", exc)
+        viewer, target = Viewer(record.user_id, record.id, who.actor_name), body.target_user_id
+        held = record.view_as
+        if held is not None and held.cleared_at is None:  # live or held, never replaced here
+            return await refused(recorder, viewer, "view_as_active", target, who, held)
+        if target == record.user_id:
+            return await refused(recorder, viewer, "view_as_self_target", target, who)
+        try:
+            user = await users.user(str(target))
+        except LookupError:
+            return await refused(recorder, viewer, "not_found", target, who)
+        except Exception as exc:
+            return _unavailable("users", exc)
+        if user["status"] in _UNVIEWABLE:
+            return await refused(recorder, viewer, "conflict", target, who)
+        if "owner" in user["roles"]:
+            return await refused(recorder, viewer, "view_as_owner_target", target, who)
+        if not auth.step_up_is_active:
+            return _unwired()
+        username = str(user["username"])
+        summary = ChallengeText(f"View as user {quote_label(username)}, read-only")
+        gate = await require_elevation_for(auth, str(record.id), "users", text=summary)
+        if gate is not None:
+            return gate
+        service = views()
+        if service is None:  # the fake backend: no context can start
+            return _unwired()
+        try:
+            result = await service.start(record, target, reason=body.reason, now=clock())
+        except ViewAsStartUnavailable as exc:
+            return _problem(ErrorCode(exc.code), 503, "Nothing started; try again shortly.")
+        started = result.started.view_as if result.started is not None else None
+        if started is None:
+            if result.held is not None and result.held.view_as is not None:  # a concurrent start
+                return await refused(
+                    recorder, viewer, "view_as_active", target, who, result.held.view_as
+                )
+            return _unauthenticated()  # the session was revoked or expired meanwhile
+        context = api.ViewAsContext(
+            target_user_id=target,
+            target_username=username,
+            target_display_name=user["display_name"],
+            started_at=started.started_at,
+            expires_at=started.expires_at,
+            read_only=True,
+            state="active",
+        )
+        return JSONResponse(context.model_dump(mode="json"), status_code=201)
 
     return router

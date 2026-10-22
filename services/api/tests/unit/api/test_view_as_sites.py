@@ -46,6 +46,9 @@ _SESSIONS_OWN = {
     ("api/view_as.py", "make_view_as_router._caller"): (
         "the viewer's own session's context, which the routes read and leave (S12)"
     ),
+    ("api/view_as.py", "make_view_as_start_router.start_view_as"): (
+        "the viewer's own session's row, whose context the start checks and begins (S13b)"
+    ),
     ("api/view_as_guard.py", "make_view_as_guard.view_as_guard"): (
         "classifies the session's context (S7)"
     ),

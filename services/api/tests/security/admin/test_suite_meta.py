@@ -131,6 +131,14 @@ def test_the_cells_cover_every_served_admin_route(world: AdminWorld) -> None:
         assert op.gate is not None and op.gate.where == "path", op.key
 
 
+def test_a_row_kept_out_of_the_fresh_cells_is_an_executed_cell() -> None:
+    """`NO_FRESH_CELL` excuses one state's cells, never a route: each key is an executed row whose
+    none and stale cells still run, so an excuse cannot outlive its route."""
+    executed = {op.key for op in cells.OPS}
+    assert set(cells.NO_FRESH_CELL) <= executed
+    assert not {op.key for op in cells.ops_for("fresh")} & set(cells.NO_FRESH_CELL)
+
+
 def test_every_handler_gated_cell_has_its_class_and_its_request() -> None:
     gated = {op.key: op for op in cells.OPS if op.gate is not None and op.gate.where == "handler"}
     assert gated, "no handler-gated route among the cells"

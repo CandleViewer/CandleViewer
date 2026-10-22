@@ -4,8 +4,7 @@ and the read and the end on `/auth/session/view-as`, the caller's own session (S
 session-wide rules (the viewer's own operations, read-only, protective writes, scope, expiry and
 hold, the actor, the refusal budget) live in the "View-as session" section of `info.description`,
 the WebSocket rules in `23-ws-protocol.md` §9.6. Five problem codes and three audit actions are
-registered. Additive (C-6.3). S12 serves the read and the end; the start stays pending until S13b
-serves it."""
+registered. Additive (C-6.3). S12 serves the read and the end, and S13b the start."""
 
 from __future__ import annotations
 
@@ -108,8 +107,8 @@ def test_state_changing_operations_take_the_csrf_token_and_the_read_takes_nothin
     assert {(m, p) for p in {*_PATH.values()} for m in SPEC["paths"][p]} == {*_PATH.items()}
 
 
-#: The operations served so far: S12 serves the read and the end; S13b adds the start.
-_SERVED = frozenset({"get", "delete"})
+#: The operations served: S12 serves the read and the end, S13b the start.
+_SERVED = frozenset({"get", "delete", "post"})
 
 
 def _row(method: str) -> tuple[str, dict[str, Any]]:

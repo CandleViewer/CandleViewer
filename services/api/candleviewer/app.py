@@ -170,7 +170,7 @@ from candleviewer.api.users import (
     make_user_admin_router,
     make_users_router,
 )
-from candleviewer.api.view_as import make_view_as_router
+from candleviewer.api.view_as import make_view_as_router, make_view_as_start_router
 from candleviewer.api.view_as_guard import make_view_as_guard, view_as_unstamped_handler
 from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
@@ -1926,6 +1926,20 @@ def create_app(
     )
     app.state.view_as_refusals = view_as_refusals
     app.state.view_as_refusal_flush = view_as_refusals.flush
+    # #3085 S13b: the Owner starts a view-as context (`startViewAs`) behind the admin-area guard
+    # (`users:write`); its refusals before the step-up gate are recorded within the viewers' cap.
+    # The service and the recorder are read per request; without them (fake backend) it is a 503.
+    app.include_router(
+        make_view_as_start_router(
+            ctx.auth,
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
+            views=lambda: app.state.view_as,
+            refusals=lambda: app.state.view_as_refusals,
+            users=identity,
+            clock=auth_clock or (lambda: datetime.now(UTC)),
+        )
+    )
     # A chain break also raises a critical system event, as the recorder's job does: from the
     # on-demand route and from the scheduled verify run (#2966).
     chain_break_events = (

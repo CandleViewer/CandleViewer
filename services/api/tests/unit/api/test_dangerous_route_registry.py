@@ -261,14 +261,15 @@ async def _stand_in() -> None:
 @pytest.mark.parametrize(
     ("method", "prefix", "route"),
     [
-        ("POST", "/admin", "/view-as"),  # startViewAs, handler-gated `users`, not mounted yet
+        ("POST", "/admin", "/backups/{backupId}/restore"),  # restoreBackup, not mounted yet
     ],
 )
 def test_mounting_a_step_up_operation_without_its_gate_is_caught(
     method: str, prefix: str, route: str
 ) -> None:
-    """A pending handler gate mounted with no handler behind it is caught (#3083); the export
-    download, its first case, has had its handler since #889 S9."""
+    """A pending handler gate mounted with no handler behind it is caught (#3083). The export
+    download, its first case, has had its handler since #889 S9, and `startViewAs`, its second,
+    since #3085 S13b."""
     app = create_app()
     router = APIRouter(prefix=prefix)
     router.add_api_route(route, _stand_in, methods=[method])
@@ -317,6 +318,8 @@ def test_a_path_level_extension_object_is_not_read_as_an_operation() -> None:
         ("setFeatureFlag", {"flags", "killswitch", "live_enablement"}),
         # Checked by the operation itself, after the requester check (`exportAuditLog`, Download).
         ("downloadAuditExport", {"audit"}),
+        # After RBAC and the five view-as refusals, so a refused start is never a challenge (#3085).
+        ("startViewAs", {"users"}),
     ],
 )
 def test_ad_f01_operations_are_handler_gated_with_their_documented_classes(
@@ -611,7 +614,6 @@ _PENDING_HANDLER_GATES = {
     ("POST", "/recording/symbols"),
     ("PATCH", "/recording/symbols/{recordedSymbolId}"),
     ("DELETE", "/recording/symbols/{recordedSymbolId}"),
-    ("POST", "/admin/view-as"),  # #3085: its server slice mounts it and drops this row
 }
 
 
