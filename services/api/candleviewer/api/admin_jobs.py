@@ -1,8 +1,9 @@
 """`GET /admin/jobs/{jobId}` (`getJob`, `admin:read`): every `202` job's poll, on the audited admin
 router (E42-T01), so every poll is recorded (`admin.area_entered`) and a refused one counted, like
 any admin route (#966 Q15, AD-F22); its `501` and `503` are the guard's. Jobs live in process
-memory (ADR-0004): every `404` is one body, rule `job_unknown`, never issued, evicted or lost on
-a restart alike (#966 Q10), and `LostJobsCount` counts what a restart loses."""
+memory (ADR-0004): every `404` is one body, rule `job_unknown`, never issued, evicted, lost on
+a restart or another user's `audit_export` alike (#966 Q10, #889 S9), and `LostJobsCount` counts
+what a restart loses."""
 
 from __future__ import annotations
 
@@ -12,11 +13,12 @@ import stat
 from typing import Annotated, Any, Final
 
 import structlog
-from fastapi import APIRouter, Path
+from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse
 
 from candleviewer.admin.http import AuditEmitter, PrincipalResolver, admin_router
 from candleviewer.api.recorder_admin import AdminJobStore
+from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.observability.context import run_in_thread
 from candleviewer.observability.metrics import MetricChild
@@ -47,11 +49,12 @@ def make_admin_jobs_router(
     router = admin_router(Permission.ADMIN_READ, resolver=resolver, audit=audit)
 
     @router.get("/jobs/{jobId}")
-    async def get_job(job_id: Annotated[str, Path(alias="jobId")]) -> JSONResponse:
+    async def get_job(
+        request: Request, job_id: Annotated[str, Path(alias="jobId")]
+    ) -> JSONResponse:
+        who: AuditPrincipal = request.state.admin_principal  # left there by the guard
         job = jobs.get(job_id)
-        # An `audit_export` job is its requester's alone, and `Job` records no requester: unknown
-        # until E42-T02 records one and checks it here (fail closed, SR-BK7-03).
-        if job is None or job.kind == "audit_export":
+        if job is None or job.hidden_from(who):  # another user's export: as an unknown job
             return JSONResponse(_JOB_UNKNOWN, 404, media_type="application/problem+json")
         return JSONResponse(job.view())  # the shape the recorder jobs were always polled in
 

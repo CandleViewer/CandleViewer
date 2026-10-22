@@ -7,7 +7,7 @@ import asyncio
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -16,7 +16,7 @@ from prometheus_client import REGISTRY
 
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
-from candleviewer.api.recorder_admin import AdminJobStore
+from candleviewer.api.recorder_admin import AdminJobStore, Job
 from tests.unit.admin._admin_fakes import AuditSpy, Resolver, expected_record
 from tests.unit.api._job_poll import mount_job_poll
 
@@ -35,20 +35,22 @@ async def _get(
         return await c.get(f"/admin/jobs/{job}", headers={"x-role": role})
 
 
-async def _finished(store: AdminJobStore, kind: str = "retention_sweep") -> str:
+async def _finished(
+    store: AdminJobStore, kind: str = "retention_sweep", requester: str | None = None
+) -> str:
     async def work(progress: Callable[[float], None]) -> dict[str, object]:
         return {"compacted": 2}
 
     async def done(job: object) -> None:
         return None
 
-    job = store.submit(kind, ("u", str(uuid4()), "h"), work, done)
+    job = store.submit(kind, ("u", str(uuid4()), "h"), work, done, requester=requester)
     await asyncio.sleep(0)  # one scheduler turn: the job runs to its end in its first step
     assert job.status == "succeeded"
     return job.id
 
 
-_CAUSES = ["never-issued", "malformed", "evicted", "lost-on-restart", "audit-export"]
+_CAUSES = ["never-issued", "malformed", "evicted", "lost-on-restart", "export", "unnamed-export"]
 
 
 @pytest.mark.parametrize("cause", _CAUSES)
@@ -65,12 +67,32 @@ async def test_every_404_is_not_found_with_rule_job_unknown(
     elif cause == "lost-on-restart":
         job_id = await _finished(store)
         store = AdminJobStore()  # the restarted process's empty store
-    elif cause == "audit-export":  # its requester's alone, and no requester is recorded yet
-        job_id = await _finished(store, "audit_export")
+    elif cause == "export":  # another user's, another Owner's included: its requester's alone
+        job_id = await _finished(store, "audit_export", str(UUID(int=99)))
+    elif cause == "unnamed-export":  # one that names no requester is no one's (fail closed)
+        store._jobs[job_id] = Job(job_id, "audit_export", "succeeded")
     refused = await _get(store, job_id)
     assert (refused.status_code, refused.json()) == (404, _JOB_UNKNOWN)
     assert refused.headers["content-type"] == "application/problem+json"
     assert api.Problem.model_validate(refused.json()).code == "not_found"
+
+
+async def test_an_audit_export_job_answers_its_requester() -> None:
+    """#889 S9 (22 `getJob`, C-12.4); anyone else gets the `404` above."""
+    store = AdminJobStore()
+    job = store.get(await _finished(store, "audit_export", str(UUID(int=1))))  # the Owner's
+    assert job is not None
+    polled = await _get(store, job.id)
+    assert (polled.status_code, polled.json()) == (200, job.view())
+
+
+def test_an_audit_export_job_must_name_its_requester() -> None:
+    with pytest.raises(ValueError, match="names its requester"):
+        AdminJobStore().submit("audit_export", ("u", "k", "h"), _never, _never)
+
+
+async def _never(*_: Any) -> Any:
+    raise AssertionError("never run")
 
 
 def _denied() -> float:

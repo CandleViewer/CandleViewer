@@ -44,6 +44,8 @@ MAX_JOBS = 256
 JOB_KIND = "retention_sweep"
 IMPORT_JOB_KIND = "archive_import"
 IMPORT_MAX_DAYS = 366
+#: 22 `Job.kind`: an audit export, its requester's alone (#889 S9).
+AUDIT_EXPORT = "audit_export"
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 #: (symbols | None, older_than_days | None, progress callback) -> result document.
@@ -99,6 +101,13 @@ class Job:
     finished_at: datetime | None = None
     result: dict[str, object] | None = None
     error: str | None = None
+    #: Who asked for it (`requester_key`), which an `audit_export` job records. Never in `view()`.
+    requester: str | None = None
+
+    def hidden_from(self, principal: AuditPrincipal) -> bool:
+        """22 `getJob`: an `audit_export` job is its requester's alone, hidden from anyone else,
+        another Owner included (#889 S9)."""
+        return self.kind == AUDIT_EXPORT and self.requester != requester_key(principal)
 
     def view(self) -> dict[str, object]:
         def iso(d: datetime | None) -> str | None:
@@ -114,6 +123,11 @@ class Job:
             "result": self.result,
             "error": self.error,
         }
+
+
+def requester_key(principal: AuditPrincipal) -> str:
+    """How a job names who asked for it, as the requester rule matches a caller: the user id."""
+    return str(principal.user_id)
 
 
 class JobConflict(Exception):
@@ -165,11 +179,15 @@ class AdminJobStore:
         on_done: Callable[[Job], Awaitable[None]],
         job_id: str | None = None,
         on_settled: Callable[[], None] | None = None,
+        requester: str | None = None,
     ) -> Job:
         """`key` = (actor, idempotency key, body hash). `on_settled` is called once the job's task
-        is done: after `on_done`, or cancelled, even before it started (E42-T05)."""
+        is done: after `on_done`, or cancelled, even before it started (E42-T05). `requester` is
+        the `requester_key` of who asked, which an `audit_export` job must name."""
+        if kind == AUDIT_EXPORT and requester is None:
+            raise ValueError("an audit_export job names its requester")
         self.ensure_free(kind)
-        job = Job(id=job_id or str(uuid.uuid4()), kind=kind)
+        job = Job(id=job_id or str(uuid.uuid4()), kind=kind, requester=requester)
         self._jobs[job.id] = job
         self._by_key[(key[0], key[1])] = (job.id, key[2])
         self._evict()
