@@ -81,8 +81,9 @@ Major 1, not M1), is its ruling of 13:59Z:
   can fire, and a leak elsewhere reads ELSEWHERE. Bars the store keeps past its cap grow it: LEAK IN
   BARS. So does a leak of anything the parser allocates, wherever it is held (trade prints, their stamps,
   prices and sizes): the netting cannot tell it from live bars. In raw snapshots, a live bar adds 832 B
-  at the builder's lines for 272-480 B at the parser's, so parser lines growing faster than about 0.58
-  of the builder's point to trade prints, not bars.
+  over the builder's lines for 272-480 B over the parser's, so the parser's lines, summed per file,
+  growing faster than about 0.58 of the builder's summed lines point to trade prints, not bars. Compare
+  the files, never single lines: one builder line holds a fraction of a bar's 832 B.
   Reading raw snapshots by hand, a LEAK whose LEAK lines are only the turnover's (`bars/time_builder.py`,
   `exchange/*/trades.py`, with `bars/reader.py` among `shrank_h2`) reads as "Python heap grows, not
   attributed to a line" once the total clears M4's 2.7 MiB, as `judge` reads it with those lines netted.
@@ -121,7 +122,7 @@ How `judge` applies it (the constants and `rule` in `memdiag.py`):
   a symbol (a run over hours 2-12 needs about 0.13), under R4's 0.18. M4's floor is net of the same
   fall: it flags growth no line explains only from 2.7 + 2.96 = 5.66 MiB over 10 h, about 0.19 MiB/h a
   symbol, just above R4's 0.18. A bursty or diffuse leak between about 0.13 and 0.19 escapes both tests.
-  At R4's measured 0.2475 it raises the total by about 4.5 MiB over hours 2-12, and with the
+  At R4's measured 0.2475 it raises the total by about 4.5 MiB or more over hours 2-12, and with the
   turnover's lines netted, M4 alone catches it. Each snapshot records its filtered total and the lines
   that shrank most since hour 2.
 - **Validity.** A leg counts only if: its length reached; R3 passed; its own allocator setting seen and

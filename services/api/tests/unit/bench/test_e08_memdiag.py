@@ -366,15 +366,17 @@ UNREAD, FRAG = {"reading": False, "overrides": {"duration_s": 3600.0}}, "FRAGMEN
 UNFOLDED = [asdict(R3), asdict(R3) | {"name": "bars_closes_folded", "passed": False}]
 TB = "services/api/candleviewer/bars/time_builder.py:159"  # the store's turnover (M-1), as round 1
 TR = "services/api/candleviewer/exchange/bybit/trades.py:64"  # measured it: a live bar's lines up
-RD = "services/api/candleviewer/bars/reader.py:573"  # 0.8 and 0.3 MiB/h, the stored bar's down 1.3
-SN = "services/api/candleviewer/domain/sql_names.py:59"  # of it: 0.9 at the reader's, 0.4 here
+RD = "services/api/candleviewer/bars/reader.py:573"  # 0.8 and 0.3 MiB/h, the stored bar's down 1.3;
+SN = "services/api/candleviewer/domain/sql_names.py:59"  # split 0.9 / 0.4 by choice, not measured
+TB2 = "services/api/candleviewer/bars/time_builder.py:158"  # netted by file, never by line
+EX = "services/api/candleviewer/exchange/base/boundary.py:40"  # outside the store: never netted
 
 
 def _store(rise: float, leak: Mapping[str, float] | None = None) -> Doc:
-    """A tracemalloc leg over the store's turnover, hours 2-12: `TB` and `TR` up, `RD` and `SN`
-    down and in `shrank_h2` only (as in a soak's top-100), -0.2 MiB/h net; `leak` adds MiB/h to a
-    line, new or not; the filtered total rises `rise` MiB/h a symbol."""
-    rates = {TB: 0.8, TR: 0.3, RD: -0.9, SN: -0.4}
+    """A tracemalloc leg over the store's turnover, hours 2-12: `TB`, `TB2` and `TR` up, `RD` and
+    `SN` down and in `shrank_h2` only (as in a soak's top-100), -0.2 MiB/h net; `leak` adds MiB/h
+    to a line, new or not; the filtered total rises `rise` MiB/h a symbol."""
+    rates = {TB: 0.5, TB2: 0.3, TR: 0.3, RD: -0.9, SN: -0.4}
     for w, r in (leak or {}).items():
         rates[w] = rates.get(w, 0.0) + r
     sizes = {w: [20 + r * h for h in range(11)] for w, r in rates.items()}
@@ -449,6 +451,7 @@ def test_why_not_names_each_reason_a_leg_is_no_reading(
         ([D, _heap(0, TURNOVER), M, MM], "INCONCLUSIVE", "annotation: candleviewer/bars/reader."),
         ([D, _store(0.3), M, MM], "INCONCLUSIVE", "Python heap grows, not attributed to a"),  # M-1
         ([D, _store(0.3, {ELSE: 0.3}), M, MM], "LEAK ELSEWHERE", f"LEAK line {ELSE}: +3.00 MiB"),
+        ([D, _store(0.3, {EX: 0.3}), M, MM], "LEAK ELSEWHERE", f"LEAK line {EX}: +3.00 MiB"),
         ([D, _store(0.3, {BARS: 0.3}), M, MM], "LEAK IN BARS", f"LEAK line {BARS}: +3.00 MiB"),
         ([D, _store(0.3, {TB: 0.5}), M, MM], "LEAK IN BARS", "100% of"),  # the store's line grows
         ([D, _store(0.05), M, MM_DOWN], FRAG, "filtered traced total +1.50 MiB"),  # not MIXED
