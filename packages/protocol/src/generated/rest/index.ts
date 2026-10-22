@@ -4029,8 +4029,9 @@ export interface paths {
      *       `validation_failed` / `native_stop_required`.
      *     * **Only the owner can loosen a stop** (24-internal-schemas.md section 8.8 rule 5). A
      *       stop-loss moved to loosen it (a long position's lower, a short's higher, in Partial mode
-     *       a smaller cover than the record's or the position's size, or a wider `trailing_stop`)
-     *       needs the owner's role and a live `risk_caps` step-up: the
+     *       an `sl_size` below the lesser of the recorded cover and the position's size, or a trail
+     *       that is cleared, wider or armed later; section 8.8 rule 5 defines it) needs the owner's
+     *       role and a live `risk_caps` step-up: the
      *       owner without one gets `403 step_up_required` (`action_class: risk_caps`), and any
      *       other role `403 risk_limit_breached`, its refusal audited (`sl.loosen_refused`), with
      *       nothing sent. The owner's loosening is audited before it is sent (`sl.loosened`).

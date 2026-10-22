@@ -69,16 +69,36 @@ def test_rule_5_puts_one_synchronous_check_at_the_recorded_stop_writer() -> None
     for phrase in (
         "its trigger is further from the market on the position's side (lower for a long, higher "
         "for a short)",
-        "in Partial mode, its size covers less than the lesser of the record's size and the "
-        "position's size at the write, so a position that shrank",
-        "for a native trail, its distance is greater, or the trigger it would set",
+        "A stop is looser than the record in force when:",
+        "its cover is smaller: a Full-mode stop covers the whole position and a Partial-mode one "
+        "its size, and a request's cover is looser when it is less than the lesser of the "
+        "record's cover and the position's size at the write",
+        "compared only with the record's native trail: it clears that trail, its distance is "
+        "greater, or it arms later (a higher activation price for a long, a lower one for a "
+        "short; a trail with no activation price arms at once)",
+        "Adding a trail where the record has none never loosens.",
         "The check is synchronous (C-2.21) and sits once, at the recorded-stop writer (rule 6)",
         "every stop request, from every writer, is compared with the record in force before its "
         "own record is written",
         "so before B8's `LOOSEN_SL` and before any send",
         "No route or rule keeps a copy of the check",
-        "A tightening is never refused by it (§8.10, C-2.6), and neither is attaching a stop where "
-        "the exchange shows none",
+        "A tightening is never refused by it (§8.10, C-2.6). The watchdog's write (rule 3) is the "
+        "one exception, and it is no loosening path",
+        "No other writer's request is exempt.",
+    ):
+        assert phrase in rule, phrase
+    assert "neither is attaching a stop where the exchange shows none" not in rule  # D-4137-02
+
+
+def test_the_watchdog_attaches_the_record_in_force_where_it_can() -> None:
+    """Rule 3 (D-4137-02): over a record in force the watchdog sends that recorded stop, as step 5
+    would, and its profile fallback only where none is in force or none can be placed."""
+    section = _INTERNAL_DOC.split("\n### 8.8 ", 1)[1].split("\n### 8.9 ", 1)[0]
+    rule = _words(section.split("\n3. ", 1)[1].split("\n4. ", 1)[0])
+    for phrase in (
+        "Where a record is in force for the position (rule 6) and its trigger can still be placed",
+        "the watchdog attaches that recorded stop, as §8.5 step 5 would; otherwise it attaches a "
+        "fallback SL at `profile.fallback_sl_offset`",
     ):
         assert phrase in rule, phrase
 
@@ -101,7 +121,8 @@ def test_both_loosening_actions_are_in_the_closed_audit_vocabulary() -> None:
     )
     assert (
         "with the actor, role and account, the position as the object, and the stop before and "
-        "after (trigger price, and the size in Partial mode). A refusal is outcome `denied`."
+        "after (trigger price, the size in Partial mode, and a native trail's distance and "
+        "activation price). A refusal is outcome `denied`."
     ) in text
     assert "`amendOrder` and `amendTradeGroup` refuse a looser stop as their own" in text
 
@@ -116,7 +137,8 @@ def test_set_position_tp_sl_lets_only_the_owner_loosen_under_a_step_up() -> None
         "and any other role `403 risk_limit_breached`, its refusal audited "
         "(`sl.loosen_refused`), with nothing sent",
         "The owner's loosening is audited before it is sent (`sl.loosened`)",
-        "or a wider `trailing_stop`",
+        "an `sl_size` below the lesser of the recorded cover and the position's size, or a trail "
+        "that is cleared, wider or armed later",
         "a tightening is never refused by it (C-2.6)",
     ):
         assert phrase in text, phrase
