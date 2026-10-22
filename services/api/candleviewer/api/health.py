@@ -106,7 +106,8 @@ def make_health_router(
             if rep.status is not HealthStatus.STOPPED:
                 ok = rep.status is HealthStatus.OK
                 checks.append(ReadyCheck(name=INGESTION, ok=ok, detail=rep.detail))
-        if secrets_health is not None:  # E27-T02: KEK unavailable = trading off
+        # M2 DEGRADED: the KEK (trading off), or the export signing key alone (#889)
+        if secrets_health is not None:
             rep = secrets_health()
             if rep.status is not HealthStatus.STOPPED:
                 ok = rep.status is HealthStatus.OK

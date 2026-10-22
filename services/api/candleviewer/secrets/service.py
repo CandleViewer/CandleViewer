@@ -6,7 +6,9 @@ step), then records metric/log/audit. A KEK is published only after: process har
 worker is zeroed), the FIFO nonce-ack written once every handle is drained, the KEK version
 policy (no reused/retired/out-of-sequence KEK), a KCV check without trust-on-first-use (the
 previous KEK first, #2266), the count of stranded rows (latched, but the broker is kept), and
-a successful `security.kek_loaded` audit. No runtime re-load; recovery is a restart.
+a successful `security.kek_loaded` audit. No runtime re-load; recovery is a restart. Then the
+audit export signing key is opened, or generated when the environment has none (#889,
+`_export_custody`): a failure degrades `secrets` and pages but latches nothing (ADR-0039).
 
 Capabilities (C-3.2): `AppContext.secrets` is `SecretsLifecycle` (start/stop/health only);
 `admin` is injected `SecretsMetadata`; the M4 signing capability is minted once in
@@ -29,7 +31,7 @@ import structlog
 
 from candleviewer.observability.context import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
-from candleviewer.secrets import _kek, _source
+from candleviewer.secrets import _export_custody, _kek, _source
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.broker import ALLOWED_CALLERS, Purpose, _m2_only
@@ -72,6 +74,11 @@ ROTATION_REMEDIATION = (
     "KEK rotation: a re-wrap run latched order entry read-only before its first row; new orders "
     "stay disabled until the restart that ends the rotation. Cancels and stop-loss amendments "
     "keep signing. See docs/ops/runbooks/kek-custody.md."
+)
+#: #889: the audit export signing key cannot be used; export alone is refused (ADR-0039).
+EXPORT_REMEDIATION = (
+    "Audit export signing key unavailable (reason={reason}): export is refused, trading is not. "
+    "A stranded key needs CV_KEK_PREV_HANDLE at a restart. See docs/ops/runbooks/kek-custody.md."
 )
 #: The broker's reasons for a record it could not write (`CredentialBroker._audit`).
 _AUDIT_FAILURES = frozenset({"audit_unavailable", "audit_timeout"})
@@ -232,9 +239,11 @@ class SecretsService:
         self._load_timeout = load_timeout_s
         #: The environment's auth keyring rows a re-wrap run counts (#3505).
         self._auth_keys = auth_keys
-        #: Its audit export signing keys: a re-wrap run counts them, and a KEK enrolment with no
-        #: API key row as evidence trials the active one (#889, ADR-0039 decision 6).
+        #: Its audit export signing keys: boot opens or generates one, a re-wrap run counts them,
+        #: and a KEK enrolment with no API key row as evidence trials it (#889, ADR-0039).
         self._export_keys = export_keys
+        #: Why the signing key cannot be used while the KEK is up; None when it opens (ADR-0039).
+        self._export_reason: str | None = None
         self._broker: RotatingBroker | None = None
         self._kek_version: int | None = None
         self._reason: str | None = None
@@ -405,6 +414,36 @@ class SecretsService:
         m.kek_version.set(kek.version)
         self._kek_version = kek.version
         self._broker = broker
+        if self._export_keys is not None:
+            try:
+                await self._open_export_key(self._export_keys, kek, prev)
+            except BaseException:  # a cancelled boot: unpublished, the KEKs zeroed, latched
+                self._broker = None
+                broker.drop_kek()
+                m.kek_version.set(0)
+                self._latch(ctx, "kek_unavailable")
+                raise
+
+    async def _open_export_key(
+        self, keys: ExportKeyStore, kek: _kek.LoadedKek, prev: _kek.LoadedKek | None
+    ) -> None:
+        """#889 (ADR-0039 decision 2), once the KEK is published. A failure degrades `secrets`
+        and pages, as a keyring failure does (Amendment 4), then records it at error, as `_degrade`
+        does; it latches no order entry: export alone is unavailable."""
+        try:
+            reason = await _export_custody.open_at_boot(keys, kek, prev)
+        except Exception as exc:  # a record M2 cannot read: never a reason to stop the boot
+            _log().error("secrets.export_key_open_failed", error=type(exc).__name__)
+            reason = "export_key_unopenable"
+        self._export_reason = reason
+        m.export_key_unavailable_state.set(reason is not None)
+        if reason is not None:
+            text = EXPORT_REMEDIATION.format(reason=reason)
+            _log().critical("secrets.export_key_unavailable", reason=reason, remediation=text)
+            try:  # an audit outage must not hide the page above
+                await self._audit(_export_custody.UNAVAILABLE, {"env": self._env, "reason": reason})
+            except Exception:
+                m.credential_outcome_audit_failures_total.inc()
 
     @staticmethod
     def _close(*keks: _kek.LoadedKek) -> None:
@@ -562,6 +601,10 @@ class SecretsService:
         if self._broker is None or self._latched:  # stranded rows keep the broker (#2266)
             return HealthReport(
                 module="secrets", status=HealthStatus.DEGRADED, detail=self._reason or ""
+            )
+        if self._export_reason is not None:  # export alone is unavailable (#889)
+            return HealthReport(
+                module="secrets", status=HealthStatus.DEGRADED, detail=self._export_reason
             )
         return HealthReport(module="secrets", status=HealthStatus.OK)
 

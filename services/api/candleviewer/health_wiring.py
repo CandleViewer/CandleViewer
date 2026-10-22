@@ -386,7 +386,9 @@ def register_ingestion_probe(registry: HealthRegistry, health: Callable[[], Heal
     registry.register(CallableProbe(INGESTION, probe, timeout=1.0))
 
 
-#: E27-T02: M2 component; DOWN while the KEK is unavailable (trading latched off).
+#: E27-T02: M2 component; DOWN whenever M2 reads DEGRADED: the KEK unavailable (trading latched
+#: off), or since #889 the audit export signing key alone (export unavailable, trading not). S6b's
+#: paging rule on `cv_audit_signing_key_unavailable_state` settles what pages (ADR-0039).
 SECRETS = "secrets"
 
 

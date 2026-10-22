@@ -16,6 +16,8 @@ EXPORTED_NAMES = frozenset(
         "cv_dek_cache_hits_total",
         "cv_credential_touch_failures_total",
         "cv_kek_degraded_state",
+        "cv_audit_signing_key_unavailable_state",
+        "cv_audit_signing_key_boot_failures_total",
         "cv_process_hardening_failures_total",
         "cv_credential_outcome_audit_failures_total",
     }

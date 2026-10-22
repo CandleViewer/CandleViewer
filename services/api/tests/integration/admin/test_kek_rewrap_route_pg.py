@@ -52,6 +52,9 @@ _USER = (
 _RUN = "SELECT action, object_id FROM audit_log WHERE after_state->>'run_id' = %s"
 _STARTED, _ROTATED = "security.kek_rotation_started", "security.kek_rotated"
 _MOVED = "security.credential_rewrapped"
+#: #889: the signing key the staged boot generated, and its record (ADR-0039 decision 7).
+_SIGNING = "SELECT key_id, version, kek_version, status FROM audit_signing_keys WHERE env = 'demo'"
+_GENERATED = "SELECT object_kind, severity FROM audit_log WHERE action = %s AND object_id = %s"
 _LINEAGES = [("demo", 1), ("demo", 2), ("live", 1)]
 
 
@@ -124,6 +127,9 @@ async def test_a_staged_rotation_runs_end_to_end_through_the_route(
     records = _sql(pg_dsn, _RUN, r.json()["run_id"])  # WAL and in-transaction rows interleave
     run_records = [(_STARTED, None), (_ROTATED, None)] + [(_MOVED, str(k)) for k in demo]
     assert sorted(records) == sorted(run_records)  # one per moved row, none about a live key
+    [(key_id, *signing)] = _sql(pg_dsn, _SIGNING)  # generated under v2, so not left at v1
+    generated = _sql(pg_dsn, _GENERATED, "security.audit_signing_key_generated", key_id)
+    assert (signing, generated) == ([1, 2, "active"], [("audit_signing_key", "info")])
     assert (after.health().status, lineages) == (HealthStatus.OK, _LINEAGES)
 
 

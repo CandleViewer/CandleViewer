@@ -83,13 +83,15 @@ async def test_a_signing_key_store_unreadable_at_enrolment_latches_with_the_stor
 
 async def test_with_an_api_key_row_as_evidence_the_signing_key_is_not_trialled() -> None:
     """The API key row proves the KEK; a signing key whose wrap opens under none is not read
-    at the enrolment, so the KEK enrols and nothing latches."""
+    at the enrolment, so the KEK enrols and nothing latches: the boot's own check of the key
+    then makes export alone unavailable (#889 S6a-2b)."""
     store = InMemoryCredentialStore()
     await _store_one(await _boot(store, _Src(KEK_V1, 1)))
     store.kcvs.clear()  # its enrolment lost: this boot must prove its KEK again
     svc, ctx = await _enrolling(await _signing_key(**DAMAGED), _Src(KEK_V1, 1), store)
     assert (list(store.kcvs), ctx.oms_read_only_gate.is_read_only) == ([("demo", 1)], False)
     assert (await svc.verify_kek_possession()).kcv_ok
+    assert svc.health().detail == "export_key_unopenable"
 
 
 @pytest.mark.parametrize("change", [{}, DAMAGED], ids=["opens", "damaged"])

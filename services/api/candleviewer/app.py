@@ -842,7 +842,7 @@ def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsBundle:
     store = SqlAlchemyCredentialStore(relational, audit_row=audit_row)  # #2266: in-tx records
     # #3505: a KEK re-wrap run counts this environment's auth keyring rows.
     keyring = SqlAlchemyAuthKeyStore(relational, env=settings.environment.value)
-    # #889: a re-wrap counts the audit export signing keys, and a KEK enrolment may trial one.
+    # #889: boot opens or generates the signing key; a re-wrap counts it, an enrolment may trial it.
     keys = SqlAlchemyExportKeyStore(relational, env=settings.environment.value, audit_row=audit_row)
     return build_secrets_service(store, store, audit, auth_keys=keyring, export_keys=keys)
 

@@ -101,6 +101,12 @@ Option (a), with Ed25519.
    cannot be opened makes export unavailable and nothing else: `start()` latches no order entry for it, while a KEK
    failure still does (ADR-0009 Amendment 1). A key that exists but cannot be opened is never generated over.
    2026-10-22 (#889 S6a-2a): one exception, at a KEK's enrolment boot, is decision 6's dated clause.
+   2026-10-22 (#889 S6a-2b): boot generates version 1 only when the environment has no key, and the store commits it
+   with `security.audit_signing_key_generated`, so a record that fails stores no key; keys with none active (an
+   out-of-band retire) are never generated over. A failure leaves `secrets` health `degraded` with an `export_key_*`
+   reason and `cv_audit_signing_key_unavailable_state` at 1, writes `security.audit_signing_key_unavailable` at error,
+   and latches nothing. A failed Q3 destroy or re-wrap at boot degrades nothing; it is logged and counted
+   (`cv_audit_signing_key_boot_failures_total{step}`), and the KEK re-wrap's count waits for what it left.
 3. **An injected signer, no new module edge (ruling 1).** `audit` owns a `Signer` Protocol with one call,
    `sign_audit_export(key_id, digest, job_id, actor_user_id) -> signature`: `digest` is the 32 raw bytes of the file's
    SHA-256, `job_id` and `actor_user_id` (the acting Owner, passed as for `CandidateSigner`, SR-E27-09) are for its
@@ -237,7 +243,7 @@ path is S0 → S2 → S8 → S9 → S10; S3 starts at once, S5 merges after S0, 
 | S3 | SR-E42-10: `audit_chain()` draws the id under the chain lock. A migration, and a two-connection test with a raw INSERT | — |
 | S4 | The signing-key table and its store (`audit_signing_keys`, `21-database-schema.md` §3.1.5b): a DEK-wrapped seed, one active key per environment, write-once except for the retire, the seed's destroy (per Q3) and the KEK re-wrap; a rotated key's row carries its request's `Idempotency-Key` and fingerprint (`client_ref`, `client_body_sha256`, read with the Owner's `created_by`), decision 5's durable record; its store, `ExportKeyStore` (`secrets/store.py`, with M10's `SqlAlchemyExportKeyStore`), retires the old key and destroys its seed in one UPDATE, inserts the next version and commits the rotation's record in one transaction, starts the boot key from its generation record's `event_ts`, and answers a retried rotation with its `200` and the stored fingerprint, which the caller compares; a rotation is revocation-class state for #3084's restore replay (`e42-admin.md` §6 step 8); it adds the sealed seed to `21-database-schema.md` §8.1 | S3 (one migration head) |
 | S5 | The M2 Ed25519 core: generate, wrap, sign the prefix and the digest, zero; the key object is never held beyond the call and `private_bytes` is never called, the Python copy of the seed being the stated SR-009 residual. Unit: the RFC 8032 §7.1 vectors; the seed in no repr, pickle, traceback or log | S0 |
-| S6 | M2 creates the key at boot, after the KEK is published (export alone degrades without it, never trading; any failure, of the store write or of its record, leaves `secrets` degraded and export unavailable and never latches order entry), mints the export signer and its key directory and writes `security.audit_export_signed` ahead, with the job id and the Owner (decision 7); the KEK re-wrap and its check cover the new rows and skip only retired rows whose seed is already destroyed (per Q3). Unit: the record-before-sign spy; the refusals before any decrypt; a stranded key latches no order entry; a generation record that fails at boot leaves no latch and no key; `secrets` at 95% coverage or more, with mutation testing. Notes for S6, to confirm there: M2's audit port derives `object_kind: api_key` from any `key_id` field (`admin/wiring.py:103`), so name the record's field differently or extend the mapping; a failure after the write-ahead record appends a failed record, as `security.credential_sign_failed` does (Amendment 2); export unavailable answers `503` with a code S2 names; a key that cannot be opened reports `secrets` degraded and pages, as a keyring failure does (Amendment 4), the signal `e42-admin.md` §10.2 lists | S4, S5 |
+| S6 | M2 creates the key at boot, after the KEK is published (export alone degrades without it, never trading; any failure, of the store write or of its record, leaves `secrets` degraded and export unavailable and never latches order entry), mints the export signer and its key directory and writes `security.audit_export_signed` ahead, with the job id and the Owner (decision 7); the KEK re-wrap and its check cover the new rows and skip only retired rows whose seed is already destroyed (per Q3). Unit: the record-before-sign spy; the refusals before any decrypt; a stranded key latches no order entry; a generation record that fails at boot leaves no latch and no key; `secrets` at 95% coverage or more, with mutation testing. Notes for S6, to confirm there: M2's audit port derives `object_kind: api_key` from any `key_id` field (`admin/wiring.py:103`), so name the record's field differently or extend the mapping; a failure after the write-ahead record appends a failed record, as `security.credential_sign_failed` does (Amendment 2); export unavailable answers `503` with a code S2 names; a key that cannot be opened reports `secrets` degraded and pages, as a keyring failure does (Amendment 4), the signal `e42-admin.md` §10.2 lists. Answered (2026-10-22): the first by S6a-1 (decision 7's clause), the fourth by S6a-2b but its paging rule, which S6b adds with the second; the third is S2's `503 signing_unavailable`, which S10 answers from M2's state | S4, S5 |
 | S7 | The list and rotate routes: the list marks `verified` only from M2's check (decision 4); rotation is single-flight and rate-capped (decision 5) | S2, S6 |
 | S8 | The export writer: batches with verify's renderings, canonical lines, deterministic gzip, SHA-256, off-loop I/O, the file `0600` and opened `O_NOFOLLOW` (repo practice; S8b confirms both). Unit: the lines pinned byte for byte | S2 |
 | S9 | The download and the requester rule (`getJob` too), dark until S10. 2026-10-22: three PRs, S9-0 the requester rule and `getJob`, S9-1 the download, S9-2 the boot sweep and the hard-link probe | S2, S8 |
@@ -288,6 +294,16 @@ Q1 and Q2 are tracked here and on #889; any still open when S10 opens is filed t
   2026-10-22 (#889 S4a): the trigger as shipped also permits the retire itself (decision 5) and the KEK re-wrap of a
   row that holds its seed (decision 6); the destroy is the retire's own UPDATE or a later one, never undone
   (`21-database-schema.md` §3.1.5b).
+  2026-10-22 (#889 S6a-2b, security F3): boot's retried destroy writes its record with the change, before the store
+  knows which rows changed, so the record carries the count read just before, in its own transaction, and names no
+  key. S6b has `destroy_retired_seeds` return the changed rows' key ids and fingerprints
+  (`UPDATE … RETURNING`) for the record to name, and the count taken from them.
+- **Q4, S6a-2b's (code lens m4): recovering a signing key that cannot be used.** A stranded key recovers with
+  `CV_KEK_PREV_HANDLE` at a restart (decision 6). A key that does not open or does not match (`export_key_unopenable`,
+  `export_key_mismatch`) recovers only through S7's rotation, which has not shipped, so export stays unavailable until
+  it does; and `export_key_inactive` (keys exist, none active) has no recovery even then, since a rotation retires
+  the active key and boot never generates over keys. Open for S7: whether its rotation admits a first key when none
+  is active, or an Owner-run step under change control does.
 
 ## Validation
 
