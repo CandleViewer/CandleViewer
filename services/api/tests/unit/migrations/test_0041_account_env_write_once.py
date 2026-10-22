@@ -1,7 +1,8 @@
 """`0041_account_env_write_once` (#2333): offline render, two-way plan-doc parity, the trigger's
-shape, and the downgrade. The application side (no SQL assigns `env`, no patch or PATCH body
-carries it, the store's typed error): `tests/unit/storage/test_account_env_write_once_surface.py`
-and `tests/unit/storage/test_accounts_store_sqlalchemy.py`.
+shape, and the downgrade. The application side (no UPDATE or upsert assigns `env` after the
+INSERT, no patch or PATCH body carries it, the store's typed error):
+`tests/unit/storage/test_account_env_write_once_surface.py` and
+`tests/unit/storage/test_accounts_store_sqlalchemy.py`.
 Real Postgres: `tests/integration/storage/test_account_env_write_once_migration.py`."""
 
 from __future__ import annotations
