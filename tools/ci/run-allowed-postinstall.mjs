@@ -6,17 +6,17 @@
 // in `pnpm-workspace.yaml`'s `allowBuilds` block.
 //
 // An entry without `run` gets `pnpm rebuild <name>`: its own lifecycle scripts (esbuild's
-// postinstall). An entry with `run` pins one `bin` of the package's own package.json, resolved from
-// the `from` workspace, and the runner executes that file with node and no shell: Electron 42 and
-// later ship their binary fetch as the `install-electron` bin, not as a postinstall (#1819). Every
-// entry is checked, and every pinned bin found, before anything runs; a field the runner does not
-// run, or a pinned bin the installed package no longer ships, fails the run.
+// postinstall). An entry with `run` pins one `bin` of the package's own package.json, read from
+// exactly `<from>/node_modules/<name>` (its link resolved; no walk up the tree, no NODE_PATH), and
+// the runner executes that file with node and no shell: Electron 42 and later ship their binary
+// fetch as the `install-electron` bin, not as a postinstall (#1819). Every entry is checked, and
+// every pinned bin found, before anything runs; a field the runner does not run, or a pinned bin
+// the installed package no longer ships or that resolves outside it, fails the run.
 //
 // Usage: node tools/ci/run-allowed-postinstall.mjs
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -47,13 +47,20 @@ function isWorkspacePath(value) {
   );
 }
 
+/** True when `file` lies strictly inside `dir` (both already in the same form). */
+function isInside(dir, file) {
+  const inside = path.relative(dir, file);
+  return inside !== "" && inside.split(path.sep)[0] !== ".." && !path.isAbsolute(inside);
+}
+
 function checkRun(name, run) {
   if (!isRecord(run)) {
     refuse(`${name}: run must be an object with ${RUN_KEYS.join(" and ")}`);
   }
   const keys = Object.keys(run).sort();
   if (keys.join() !== [...RUN_KEYS].sort().join()) {
-    refuse(`${name}: run must have exactly ${RUN_KEYS.join(" and ")}, found: ${keys.join(", ")}`);
+    const found = keys.length > 0 ? keys.join(", ") : "none";
+    refuse(`${name}: run must have exactly ${RUN_KEYS.join(" and ")}, found: ${found}`);
   }
   if (typeof run.bin !== "string" || !BIN_NAME.test(run.bin)) {
     refuse(`${name}: run.bin must be a bare bin name of the package`);
@@ -66,9 +73,14 @@ function checkRun(name, run) {
 
 /** The allowlist's entries, each checked against the reviewed shape. */
 export function loadEntries(root) {
-  const parsed = JSON.parse(readFileSync(path.join(root, ALLOWLIST), "utf8"));
-  if (!Array.isArray(parsed.packages)) {
-    throw new Error("tools/ci/allowed-postinstall.json is missing a packages[] array");
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(path.join(root, ALLOWLIST), "utf8"));
+  } catch (error) {
+    refuse(`cannot be read as JSON: ${error.message}`);
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.packages)) {
+    refuse("is missing a packages[] array");
   }
   const seen = new Set();
   return parsed.packages.map((entry, index) => {
@@ -97,28 +109,26 @@ export function loadAllowlist(root) {
 }
 
 /**
- * The file a `run` entry executes: the pinned bin of the package's own package.json, as installed
- * for the `from` workspace. Throws, naming the package, when the package is not installed there,
- * no longer ships that bin (a later release can move its install step), or points it outside the
- * package.
+ * The file a `run` entry executes: the pinned bin of the package's own package.json, read from
+ * exactly `<from>/node_modules/<name>/package.json` with its link resolved, never found by walking
+ * up the tree or through NODE_PATH (so an `exports` map does not apply). Throws, naming the
+ * package, when it is not installed there, no longer ships that bin (a later release can move its
+ * install step), or the bin, its links resolved, lies outside the package.
  */
 export function resolvePinnedBin(root, entry) {
   const { name } = entry;
   const { bin, from } = entry.run;
-  const workspace = path.join(root, from, "package.json");
-  if (!existsSync(workspace)) {
+  if (!existsSync(path.join(root, from, "package.json"))) {
     refuse(`${name}: run.from names no workspace (${from}/package.json is missing)`);
   }
-  let manifestPath;
-  try {
-    manifestPath = createRequire(workspace).resolve(`${name}/package.json`);
-  } catch (error) {
-    refuse(
-      `${name} is not installed for ${from} (${error.code ?? error.message}); run pnpm install`,
-    );
+  const linked = path.join(root, from, "node_modules", ...name.split("/"), "package.json");
+  if (!existsSync(linked)) {
+    const missing = path.relative(root, linked).split(path.sep).join("/");
+    refuse(`${name} is not installed for ${from} (${missing} is missing); run pnpm install`);
   }
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const manifestPath = realpathSync(linked);
   const packageDir = path.dirname(manifestPath);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   const target = isRecord(manifest.bin) ? manifest.bin[bin] : undefined;
   if (typeof target !== "string") {
     refuse(
@@ -127,14 +137,20 @@ export function resolvePinnedBin(root, entry) {
     );
   }
   const file = path.resolve(packageDir, target);
-  const inside = path.relative(packageDir, file);
-  if (inside === "" || inside.split(path.sep)[0] === ".." || path.isAbsolute(inside)) {
+  if (!isInside(packageDir, file)) {
     refuse(`${name}: bin "${bin}" points outside the package (${target})`);
   }
-  if (!existsSync(file) || !statSync(file).isFile()) {
+  if (!existsSync(file)) {
     refuse(`${name}@${manifest.version}: bin "${bin}" names ${target}, which the package lacks`);
   }
-  return { file, packageDir, version: manifest.version };
+  const realFile = realpathSync(file);
+  if (!isInside(realpathSync(packageDir), realFile)) {
+    refuse(`${name}: bin "${bin}" points outside the package through a link (${target})`);
+  }
+  if (!statSync(realFile).isFile()) {
+    refuse(`${name}@${manifest.version}: bin "${bin}" names ${target}, which is not a file`);
+  }
+  return { file: realFile, packageDir, version: manifest.version };
 }
 
 function main() {
@@ -157,9 +173,11 @@ function main() {
     });
   }
   for (const { entry, file, packageDir, version } of pinned) {
-    const shown = path.relative(repoRoot, file);
-    process.stdout.write(`running ${entry.name}@${version}'s ${entry.run.bin} bin (${shown})\n`);
+    const label = `${entry.name}@${version}'s ${entry.run.bin} bin`;
+    process.stdout.write(`running ${label} (${path.relative(repoRoot, file)})\n`);
+    const started = Date.now();
     execFileSync(process.execPath, [file], { cwd: packageDir, stdio: "inherit" });
+    process.stdout.write(`${label} done in ${((Date.now() - started) / 1000).toFixed(1)}s\n`);
   }
 }
 

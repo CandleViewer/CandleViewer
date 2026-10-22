@@ -43,6 +43,7 @@ SECURITY = [
     ".npmrc",
     ".pnpmfile.cjs",  # its readPackage hook rewrites dependencies at install time
     "tools/ci/allowed-postinstall.json",  # SR-138: whose install scripts CI runs
+    "tools/ci/run-allowed-postinstall.mjs",  # and the runner that runs them (#1819)
     "services/api/pyproject.toml",
     "services/api/uv.lock",
     "scripts/requirements-ci.txt",
@@ -113,7 +114,7 @@ def test_the_rules_follow_the_c10_2_clause_verbatim() -> None:
 
 def test_the_named_paths_exist_so_a_rename_cannot_drop_one_silently() -> None:
     assert all((ROOT / "services/api/candleviewer" / m).is_dir() for m in s.MODULES)
-    for path in (*s.WEB_AUTH_PATHS, s.POSTINSTALL, *s.GATE):
+    for path in (*s.WEB_AUTH_PATHS, *s.POSTINSTALL, *s.GATE):
         assert (ROOT / path).is_dir() if path.endswith("/") else (ROOT / path).is_file(), path
 
 
