@@ -74,14 +74,14 @@ ruling of 13:59Z:
   (the other keeps every line's hourly size), so the turnover's lines (8 of 25 at hour 3) crowd out none.
 - **M-1**, to B1 and M4: B1's total keeps the store's turnover out only while nothing else grows it, so
   the store's lines are netted first. The lines of the files a live bar is built at
-  (`bars/time_builder.py`, `exchange/bybit/trades.py`) and a stored bar is held at (`bars/reader.py`,
+  (`bars/time_builder.py`, `exchange/*/trades.py`) and a stored bar is held at (`bars/reader.py`,
   `domain/sql_names.py`) are one line under `candleviewer/bars/`, `STORE_LINE`, which takes B1 and the
   LEAK test like any line; those lines are not tested alone. A replaced bar moves it by -208 to 0 B, so a
   total rising for any other reason no longer makes the builder's and the parser's lines LEAK lines: M4
   can fire, and a leak elsewhere reads ELSEWHERE. Bars the store keeps past its cap grow it: LEAK IN
   BARS. So does a leak at the parser's lines, which the netting cannot tell from live bars.
   Reading raw snapshots by hand, a LEAK whose LEAK lines are only the turnover's (`bars/time_builder.py`,
-  `exchange/bybit/trades.py`, with `bars/reader.py` among `shrank_h2`) reads as "Python heap grows, not
+  `exchange/*/trades.py`, with `bars/reader.py` among `shrank_h2`) reads as "Python heap grows, not
   attributed to a line".
 - **N5**, to "grows monotonically": strictly increasing, each hourly snapshot larger than the one before.
   Monotone growth is the leak signature: a leaked object is never freed, so its line only grows, hour
@@ -108,7 +108,7 @@ How `judge` applies it (the constants and `rule` in `memdiag.py`):
   volume 334.8, time 99.9, range about 12.9). Live bars held a symbol, of 27 000 in series that close:
   5 155 at h2, 10 131 at h12, 11 822 at h24. A stored bar holds 1 312 B at `bars/reader.py`'s and
   `domain/sql_names.py`'s lines; a live one 832 B at `bars/time_builder.py`'s and 272-480 B at
-  `exchange/bybit/trades.py`'s: -208 to 0 B a bar replaced, -208 the end that masks most. Over h2-7 the
+  `exchange/*/trades.py`'s: -208 to 0 B a bar replaced, -208 the end that masks most. Over h2-7 the
   three symbols replace 10 044 bars: `time_builder.py:159` grows +1.99 MiB and `trades.py:64` +2.0-4.0 MiB,
   every hour, while the filtered total falls by up to 2.96 MiB by h12 (14 928 replaced, at the -208 B end).
   The netting (M-1) sums those four files' lines into `STORE_LINE`: at each snapshot from hour 3, their
