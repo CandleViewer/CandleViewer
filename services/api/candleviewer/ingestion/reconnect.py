@@ -20,11 +20,11 @@ __all__ = ["ConnectionRateGuard", "ReconnectPolicy"]
 class ConnectionRateGuard:
     """Schedules opens so no window of `window_s` holds `>= limit` opens.
 
-    No production caller since G-8b (#3963): the composition root gives the public stream the
-    public lane of the adapter's `ConnectionBudget` (24 §14.2 rule 13), and the chaos rig and
-    the E08-X02 suite draw on that lane too. It stays only as the guard seven unit-test modules
-    under `tests/unit/ingestion/` build for `ConnectionManager`, which G-8b's write set leaves
-    alone; moving them to the lane lets it go."""
+    Superseded by the budget's lanes: since G-8b (#3963) the composition root gives the public
+    stream the public lane of the adapter's `ConnectionBudget` (24 §14.2 rule 13), and the chaos
+    rig and the E08-X02 suite draw on that lane too. Retained only for the seven modules under
+    `tests/unit/ingestion/` that build it for `ConnectionManager`; retire it together with
+    them."""
 
     def __init__(
         self,
