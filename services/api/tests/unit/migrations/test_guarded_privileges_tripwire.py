@@ -312,11 +312,11 @@ def test_tripwire_skips_a_docstring_in_upgrade_and_its_helpers() -> None:
 
 
 def _imports_candleviewer(node: ast.AST) -> bool:
-    match node:
-        case ast.ImportFrom(module=module, level=level):
-            return level > 0 or (module or "").split(".")[0] == "candleviewer"
-        case ast.Import(names=names):
-            return any(alias.name.split(".")[0] == "candleviewer" for alias in names)
+    # isinstance, not `match`: Semgrep's Python parser refuses this `match` (CI-SEC-005).
+    if isinstance(node, ast.ImportFrom):
+        return node.level > 0 or (node.module or "").split(".")[0] == "candleviewer"
+    if isinstance(node, ast.Import):
+        return any(alias.name.split(".")[0] == "candleviewer" for alias in node.names)
     return False
 
 
