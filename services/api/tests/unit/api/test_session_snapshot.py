@@ -24,7 +24,7 @@ class _Sessions:
         if self.exc is not None:
             raise self.exc
         self.touched.append(touch)
-        return SimpleNamespace(id=uuid.uuid4(), user_id=_UID)
+        return SimpleNamespace(view_as=None, id=uuid.uuid4(), user_id=_UID)
 
 
 class _Identity:

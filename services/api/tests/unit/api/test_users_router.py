@@ -101,7 +101,7 @@ class _Sessions:
     async def authenticate_access_token(self, token: str) -> Any:
         if token != "tok":  # noqa: S105
             raise SessionNotFound("x")
-        return SimpleNamespace(id=SESSION, user_id=OWNER)
+        return SimpleNamespace(view_as=None, id=SESSION, user_id=OWNER)
 
     async def peek_access_token(self, token: str) -> Any:
         """A refusal's read of its session (#4174): it authorises nothing."""

@@ -48,7 +48,7 @@ class FakeBearerSessions:
 
     async def peek_access_token(self, token: str) -> Any:
         if token in self._bearers:
-            return SimpleNamespace(id=TEST_SID, user_id=TEST_SID)
+            return SimpleNamespace(view_as=None, id=TEST_SID, user_id=TEST_SID)
         return None
 
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:

@@ -318,7 +318,7 @@ class _RealSessions:
 
         if token not in ("trader", "viewer"):
             raise SessionNotFound("nope")
-        return SimpleNamespace(id=uuid.uuid4(), user_id=token)
+        return SimpleNamespace(view_as=None, id=uuid.uuid4(), user_id=token)
 
 
 class _RealIdentity:

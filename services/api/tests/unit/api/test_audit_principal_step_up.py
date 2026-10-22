@@ -55,7 +55,7 @@ class _Sessions:
 
 
 def _row(**extra: object) -> SimpleNamespace:
-    return SimpleNamespace(id=uuid.uuid4(), user_id=uuid.uuid4(), **extra)
+    return SimpleNamespace(view_as=None, id=uuid.uuid4(), user_id=uuid.uuid4(), **extra)
 
 
 async def _resolve(record: object) -> AuditPrincipal:

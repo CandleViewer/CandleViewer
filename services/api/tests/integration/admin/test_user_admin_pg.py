@@ -146,7 +146,7 @@ class _Elevated:
         self.sessions = self.step_up = self
 
     async def authenticate_access_token(self, token: str, **_: Any) -> Any:
-        return SimpleNamespace(id=uuid.uuid5(uuid.NAMESPACE_URL, token), user_id=None)
+        return SimpleNamespace(view_as=None, id=uuid.uuid5(uuid.NAMESPACE_URL, token), user_id=None)
 
     async def peek_access_token(self, token: str) -> Any:
         return None

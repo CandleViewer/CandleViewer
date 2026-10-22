@@ -118,7 +118,9 @@ class _Sessions:
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         if token != "admin-token":  # noqa: S105
             raise SessionNotFound("x")
-        return SimpleNamespace(id=_ADMIN_SID, user_id=ADMIN, mfa_satisfied_at=MFA_PROVED_AT)
+        return SimpleNamespace(
+            view_as=None, id=_ADMIN_SID, user_id=ADMIN, mfa_satisfied_at=MFA_PROVED_AT
+        )
 
 
 async def _authenticate(presented: str) -> tuple[str, uuid.UUID, datetime]:
