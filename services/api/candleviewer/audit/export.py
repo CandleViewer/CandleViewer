@@ -1,6 +1,7 @@
 """The audit export writer (#889 S8, ADR-0039): the file whose bytes `24-internal-schemas.md`
 §15.7 defines, for a planned chain span. Nothing routes to it yet: S10 plans, signs and wires it,
-and S9 serves the file.
+and S9 serves the file by the name `export_name` gives it and deletes it once expired
+(`remove_exports`).
 
 The header line, then one line per entry of the span in id order, read in keyset batches with the
 renderings verify hashes (`AuditExportReader`); gzipped as one deterministic stream when
@@ -18,10 +19,11 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import struct
 import uuid
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +51,11 @@ _DIR_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 #: Never opens what already holds the name, a link included, and never waits on it.
 _TMP_FLAGS: Final = (
     os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+)
+#: An export's file (`export_name`) or its temporary name (`.<file>.tmp`), group 2 the job id: the
+#: only names `remove_exports` removes.
+_EXPORT_FILE: Final = re.compile(
+    r"(\.)?([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\.ndjson(?:\.gz)?(?(1)\.tmp|)"
 )
 
 
@@ -297,7 +304,7 @@ async def write_export(
         count = await reader.count_export_span(first_id=first, last_id=last, cap=max_rows + 1)
         if count > max_rows:
             raise ExportTooLarge
-    name = f"{job_id}.ndjson.gz" if plan.compressed else f"{job_id}.ndjson"
+    name = export_name(job_id, plan.compressed)
     sink, kept = _Sink(data_dir / EXPORT_DIR, name, plan.compressed, max_bytes), False
     try:
         await _off_loop(sink.open)
@@ -309,3 +316,34 @@ async def write_export(
     finally:
         await _off_loop(sink.close, kept)
     return ExportFile(name, sink.size, sink.sha.hexdigest(), count, first, last)
+
+
+def export_name(job_id: uuid.UUID, compressed: bool) -> str:
+    """Export `job_id`'s file in the export directory: built from the job's id, never from a
+    request, so the download opens no other file."""
+    return f"{job_id}.ndjson.gz" if compressed else f"{job_id}.ndjson"
+
+
+def remove_exports(directory: Path, names: Iterable[str]) -> None:
+    """In a worker thread: unlink each export file or temporary name of `names` (the link itself,
+    never what it points to) through the directory's descriptor; any other name is left alone."""
+    fd = os.open(directory, _DIR_FLAGS)
+    try:
+        _unlink(fd, [name for name in names if _EXPORT_FILE.fullmatch(name)])
+    finally:
+        os.close(fd)
+
+
+def _unlink(directory: int, names: Iterable[str]) -> None:
+    """Each name, whatever another's removal does, one already gone skipped; then the first failure
+    is raised, as `_Sink.close` does."""
+    failed: list[OSError] = []
+    for name in names:
+        try:
+            os.unlink(name, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            failed.append(exc)
+    if failed:
+        raise failed[0]
