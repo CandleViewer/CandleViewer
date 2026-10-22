@@ -5,6 +5,8 @@
     uv run python -m bench.ingestion.runner rest_k6 --profile full --serve   # k6 target
 
 Exit 1 when any hard check fails or the baseline gate FAILs (never auto-updates a baseline).
+The reports are rewritten after every scenario, so a pack stopped part-way (a cancel, the job's
+timeout) keeps the reports of the scenarios that finished, marked partial (#399 R4).
 """
 
 from __future__ import annotations
@@ -29,6 +31,13 @@ from bench.ingestion.engine import (
 )
 
 PREFERRED = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+
+
+def _replace(path: Path, text: str) -> None:
+    """Write a sibling, then rename it over `path`: a stopped run never leaves half a report."""
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
 
 
 def _lane_cfg(sc: Scenario, **over: Any) -> LaneConfig:
@@ -211,8 +220,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     names = SCENARIOS if a.scenario == "all" else (a.scenario,)
     profile = machine_profile()
     started = datetime.now(UTC)
-    runs = []
-    for name in names:
+    stamp = started.strftime("%Y%m%dT%H%M%SZ")
+    md = a.out_dir / f"e08-{a.profile}-{stamp}.md"
+    runs: list[tuple[Scenario, budgets.Verdict, gate.GateResult]] = []
+
+    def rewrite_reports(pending: Sequence[str]) -> None:
+        a.out_dir.mkdir(parents=True, exist_ok=True)
+        partial = ""  # until the last scenario, both markdown reports open with this banner
+        if pending:
+            count = f"{len(runs)} of {len(runs) + len(pending)} scenarios have finished"
+            partial = f"> **Partial:** {count}; not run yet: {', '.join(pending)}.\n\n"
+        rendered = report.render(runs, profile, started, datetime.now(UTC), a.grafana_url)
+        _replace(md, partial + rendered)
+        verdicts = [
+            {
+                "verdict": v.as_dict(),
+                "gate": {
+                    "status": g.status,
+                    "diff": g.diff,
+                    "failures": g.failures,
+                    "warnings": g.warnings,
+                },
+            }
+            for _, v, g in runs
+        ]
+        _replace(md.with_suffix(".json"), json.dumps(verdicts, indent=2) + "\n")
+        diffs = (f"### {sc.name} ({g.status})\n\n{gate.render_diff(g)}" for sc, _, g in runs)
+        _replace(a.out_dir / "gate-diff.md", partial + "\n\n".join(diffs))
+
+    for i, name in enumerate(names):
         sc = load(name, a.profile)
         t0 = time.perf_counter()
         v = asyncio.run(run_scenario(sc))
@@ -232,36 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"::error::{name}: {f}")
         if a.record_baseline:
             print(f"  baseline -> {gate.record(v, profile, sc.scaling, a.profile)}")
-    finished = datetime.now(UTC)
-    a.out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = started.strftime("%Y%m%dT%H%M%SZ")
-    md = a.out_dir / f"e08-{a.profile}-{stamp}.md"
-    md.write_text(report.render(runs, profile, started, finished, a.grafana_url), encoding="utf-8")
-    js = a.out_dir / f"e08-{a.profile}-{stamp}.json"
-    js.write_text(
-        json.dumps(
-            [
-                {
-                    "verdict": v.as_dict(),
-                    "gate": {
-                        "status": g.status,
-                        "diff": g.diff,
-                        "failures": g.failures,
-                        "warnings": g.warnings,
-                    },
-                }
-                for _, v, g in runs
-            ],
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    diff = a.out_dir / "gate-diff.md"
-    diff.write_text(
-        "\n\n".join(f"### {sc.name} ({g.status})\n\n{gate.render_diff(g)}" for sc, _, g in runs),
-        encoding="utf-8",
-    )
+        rewrite_reports(names[i + 1 :])
     print(f"report: {md}")
     failed = any(not v.passed for _, v, _ in runs) or any(g.failures for _, _, g in runs)
     return 1 if failed else 0
