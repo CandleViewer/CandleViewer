@@ -189,6 +189,7 @@ def _is_outage(exc: BaseException) -> bool:
 def _outage(own: Sequence[BaseException] = ()) -> Iterator[None]:
     """A database that cannot serve the call becomes `StorageTierUnavailable`; a bug, and what
     `prepare` raised (`own`, by identity), stay as they are."""
+    # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
     try:
         yield
     except (OSError, sa_exc.SQLAlchemyError) as exc:
@@ -280,6 +281,7 @@ class SqlAlchemyFlagRepository:
                 keep = [o["user_id"] for o in users]
                 await s.execute(_DROP_USERS, {"id": flag_id, "keep": keep})
                 put = {"id": flag_id, "overrides": json.dumps(users), "by": by}
+                # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
                 try:
                     await s.execute(_PUT_USERS, put)
                 except sa_exc.IntegrityError as exc:

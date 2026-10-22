@@ -223,6 +223,7 @@ class SqlAlchemyAlertRepository:
             "secret_enc": webhook_secret_enc,
             "template": message_template,
         }
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 row = (await uow.session.execute(_INSERT, params)).mappings().one()
@@ -296,6 +297,7 @@ class SqlAlchemyAlertRepository:
             "channels": array_literal(channels),
             "template": message_template,
         }
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 row = (await uow.session.execute(_UPDATE, params)).mappings().first()

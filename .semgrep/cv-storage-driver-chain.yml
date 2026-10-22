@@ -1,0 +1,364 @@
+# #2748 (C-12.6, C-5.9): a relational adapter must not let a database driver error's text out.
+# The error's message and its cause chain carry the server's DETAIL (`Failing row contains (...)`,
+# `Key (col)=(val)`: P1 and S values), which `hide_parameters=True` leaves.
+#
+# A driver handler is an `except` whose class names a SQLAlchemy error or a module-qualified
+# asyncpg/psycopg one; `except (..., $EXC, ...)` also matches a single class. Semgrep matches a
+# `try` (in a pattern or a `pattern-inside`) only when the target's `else` and `finally` clauses
+# match too, so each shape is listed with the four clause combinations.
+#
+# Not covered: `except Exception` around a driver call (the adapters catch the driver classes),
+# and an error stored in a variable and raised later or through a renamed variable. Groups 2
+# and 3 report a match anywhere in a `try` that has a driver handler, not only in the handler: a
+# logger's `exception()` or `exc_info=`, or a `traceback` call, in its body, in a sibling
+# handler or in its `finally`, is reported too. So is a nested `try` in a driver handler whose
+# own handler re-raises. Rewrite such code, or suppress it with a reason.
+rules:
+  - id: cv-storage-driver-chain
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A relational adapter lets a database driver error's text out: it chains or re-raises the
+      error, raises a new error without `from None`, or puts the error, or its text, into a
+      message, a log line or a traceback. That text carries the server's `DETAIL` (`Failing row
+      contains (...)`, `Key (col)=(val)`: P1 and S values), which `hide_parameters=True` leaves
+      (C-12.6, C-5.9, #2748). Raise a typed error `from None`, or raise it after the `except`
+      block, carrying only `sqlstate_of(exc)` / `constraint_of(exc)` (relational_sqlalchemy).
+      Import SQLAlchemy's classes under their own names and the drivers as modules. A chain or
+      re-raise is reported on its `try`.
+    metadata:
+      rule-id: cv-storage-driver-chain
+      references:
+        - "#2748 (C-12.6, C-5.9)"
+    pattern-either:
+      # 1. A raise in a driver handler that lets the error out: `from` the error or anything
+      #    holding it, the error itself (also `from None`), a bare `raise`, or a new error with
+      #    no `from` (its context is the error). Reported on the `try`.
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $X from <... $E ...>
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $X from <... $E ...>
+                  else:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $X from <... $E ...>
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $X from <... $E ...>
+                  else:
+                      ...
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $E from $Y
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $E from $Y
+                  else:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $E from $Y
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $E from $Y
+                  else:
+                      ...
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise
+                  else:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise
+                  else:
+                      ...
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $X
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $X
+                  else:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $X
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                      raise $X
+                  else:
+                      ...
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                      raise
+              - pattern: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                      raise
+                  else:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                      raise
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                      raise
+                  else:
+                      ...
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                      raise $X
+              - pattern: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                      raise $X
+                  else:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                      raise $X
+                  finally:
+                      ...
+              - pattern: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                      raise $X
+                  else:
+                      ...
+                  finally:
+                      ...
+          - metavariable-regex:
+              metavariable: $EXC
+              regex: '(?s)^.*(\b(SQLAlchemyError|StatementError|DBAPIError|IntegrityError|DataError|OperationalError|ProgrammingError|InterfaceError|InternalError|DatabaseError|NotSupportedError|PendingRollbackError)\b|\b(asyncpg|psycopg2?)\.)'
+      # 2. In a `try` with a driver handler that names the error: the error, or its text,
+      #    passed on (`str`, `repr`, formatting, its `args`, `statement`, `params` or its
+      #    `orig`'s text, a raise or a logger call carrying it), a logger's `exception()` or
+      #    `exc_info=`, or `traceback`. Reported on its own line.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+              - pattern-inside: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                  else:
+                      ...
+              - pattern-inside: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                  finally:
+                      ...
+              - pattern-inside: |
+                  try:
+                      ...
+                  except $EXC as $E:
+                      ...
+                  else:
+                      ...
+                  finally:
+                      ...
+          - pattern-either:
+              - pattern: str($E)
+              - pattern: repr($E)
+              - pattern: 'f"...{$E}..."'
+              - pattern: 'f"...{$E!r}..."'
+              - pattern: '"..." % $E'
+              - pattern: '"..." % (..., $E, ...)'
+              - pattern: '"...".format(..., $E, ...)'
+              - pattern: $E.args
+              - pattern: $E.statement
+              - pattern: $E.params
+              - pattern: $E.with_traceback(...)
+              - pattern: str($E.orig)
+              - pattern: repr($E.orig)
+              - pattern: 'f"...{$E.orig}..."'
+              - pattern: $E.orig.args
+              - pattern: $E.orig.detail
+              - pattern: $E.orig.message
+              - pattern: $E.orig.pgerror
+              - pattern: $E.orig.hint
+              - pattern: raise $X(..., $E, ...) from $Y
+              - pattern: $LOG.exception(...)
+              - pattern: traceback.$FN(...)
+              - patterns:
+                  - pattern-either:
+                      - pattern: $LOG.$M(..., $E, ...)
+                      - pattern: $LOG.$M(..., $K=$E, ...)
+                      - pattern: $LOG.$M(..., exc_info=$V, ...)
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: "^(debug|info|warning|warn|error|exception|critical|fatal|log|msg)$"
+          - metavariable-regex:
+              metavariable: $EXC
+              regex: '(?s)^.*(\b(SQLAlchemyError|StatementError|DBAPIError|IntegrityError|DataError|OperationalError|ProgrammingError|InterfaceError|InternalError|DatabaseError|NotSupportedError|PendingRollbackError)\b|\b(asyncpg|psycopg2?)\.)'
+      # 3. The same logger and `traceback` calls in a `try` whose driver handler does not
+      #    name the error.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+              - pattern-inside: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                  else:
+                      ...
+              - pattern-inside: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                  finally:
+                      ...
+              - pattern-inside: |
+                  try:
+                      ...
+                  except (..., $EXC, ...):
+                      ...
+                  else:
+                      ...
+                  finally:
+                      ...
+          - pattern-either:
+              - pattern: $LOG.exception(...)
+              - pattern: traceback.$FN(...)
+              - patterns:
+                  - pattern-either:
+                      - pattern: $LOG.$M(..., exc_info=$V, ...)
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: "^(debug|info|warning|warn|error|exception|critical|fatal|log|msg)$"
+          - metavariable-regex:
+              metavariable: $EXC
+              regex: '(?s)^.*(\b(SQLAlchemyError|StatementError|DBAPIError|IntegrityError|DataError|OperationalError|ProgrammingError|InterfaceError|InternalError|DatabaseError|NotSupportedError|PendingRollbackError)\b|\b(asyncpg|psycopg2?)\.)'
+      # 4. A SQLAlchemy driver class imported under another name, a driver module under an
+      #    alias, or any name imported out of a driver module (asyncpg, psycopg, psycopg2):
+      #    groups 1 to 3 recognise a driver's classes only through the module's own name.
+      - patterns:
+          - pattern: from sqlalchemy.exc import $C as $A
+          - metavariable-regex:
+              metavariable: $C
+              regex: "^(SQLAlchemyError|StatementError|DBAPIError|IntegrityError|DataError|OperationalError|ProgrammingError|InterfaceError|InternalError|DatabaseError|NotSupportedError|PendingRollbackError)$"
+      - patterns:
+          - pattern-either:
+              - pattern: from $MOD import $C
+              - pattern: from $MOD import $C as $A
+              - pattern: import $MOD as $A
+          - metavariable-regex:
+              metavariable: $MOD
+              regex: '^(asyncpg|psycopg2?)(\.\w+)*$'
+    paths:
+      include:
+        - "services/api/candleviewer/storage/repositories/**"

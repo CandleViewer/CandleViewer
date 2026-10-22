@@ -349,11 +349,13 @@ _T = TypeVar("_T")  # not PEP 695 `[T]`: Semgrep 1.99.0 (CI) would skip the rest
 async def _deadlock_retry(run: Callable[[], Awaitable[_T]]) -> _T:  # noqa: UP047 (see _T)
     """Run one whole transaction; after a `40P01` (rolled back by the unit of work's exit) run
     it once more. A second deadlock is a store outage (503, retryable), never a 500."""
+    # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
     try:
         return await run()
     except DBAPIError as exc:
         if not _is_deadlock(exc):
             raise
+    # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
     try:
         return await run()
     except DBAPIError as exc:
@@ -424,6 +426,7 @@ class SqlAlchemyDrawingRepository:
                 await uow.commit()
             return _to_row(row)
 
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             return await _deadlock_retry(attempt)
         except IntegrityError as exc:
@@ -457,6 +460,7 @@ class SqlAlchemyDrawingRepository:
                 await uow.commit()
             return _to_row(row)
 
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             return await _deadlock_retry(attempt)
         except IntegrityError as exc:
@@ -480,6 +484,7 @@ class SqlAlchemyDrawingRepository:
             for i, op in enumerate(ops)
             if not isinstance(op, DeleteOp)
         ]
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             return await _deadlock_retry(lambda: self._apply_batch_once(owner, ops, refs))
         except IntegrityError as exc:

@@ -242,6 +242,7 @@ class SqlAlchemyUserAdminStore:
         each rolls the transaction back, so nothing changes."""
         uid, counted = str(user_id), _NO_ROLES
         wanted = _NO_ROLES if patch.roles is None else patch.roles
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session

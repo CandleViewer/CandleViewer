@@ -543,6 +543,7 @@ class SqlAlchemyAccountsStore:
             "label": new.label,
             "caller": str(owner.user_id),
         }
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._gate(uow, owner)
@@ -613,6 +614,7 @@ class SqlAlchemyAccountsStore:
             "margin_mode": patch.margin_mode,
             "if_match": if_match,
         }
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._gate(uow, owner)
@@ -677,6 +679,7 @@ class SqlAlchemyAccountsStore:
             "new": new,
             "caller": str(owner.user_id),
         }
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._gate(uow, owner)
@@ -713,6 +716,7 @@ class SqlAlchemyAccountsStore:
             "grace": new.grace_seconds,
             "caller": str(owner.user_id),
         }
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._gate(uow, owner)
