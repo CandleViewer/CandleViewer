@@ -169,7 +169,7 @@ Override Confirm label (CMP-001 danger) | color.text.on-action | color.status.da
   | text | E39-D01 s9.4; E39-D03 s12 row 1
 Primary button label (Release...) | color.text.on-action | color.action.primary.default | text
   | spec s4, s5
-Danger button fill on the page (FREEZE ALL -- CMP-211 global; the override Confirm)
+Danger button fill on the page (FREEZE... -- CMP-211 global; the override Confirm)
   | color.status.danger.default | color.surface.app | non-text | E39-D03 s12 row 20
 Refused-field border on the dialog; the outline buttons' danger stroke (Freeze..., I've read
   this, Ask the owner for an override) on their overlay fill | color.status.danger.default
@@ -200,7 +200,7 @@ CR: light warning.default = palette.amber.700, on the raised row
 # token | bound by
 BINDINGS_TABLE = """
 color.status.danger.subtle | CMP-117 LOCK / FROZEN surface, CMP-028 critical banner
-color.status.danger.default | LOCK fill (table + banner glyph), FREEZE ALL / Confirm, refused field
+color.status.danger.default | LOCK fill (table + banner glyph), FREEZE... / Confirm, refused field
 color.status.danger.strong | banner rule, FROZEN glyph (E40 CR-25), over-cap marker, shield slash
 color.status.warning.subtle | CMP-117 WARN twin, stale callout
 color.status.warning.default | CMP-138 near-cap fill (reinforcement, Q-D02-4)
