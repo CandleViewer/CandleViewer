@@ -234,7 +234,7 @@
     },
     "0048_account_default_binding": {
       "path": "services/api/candleviewer/migrations/versions/0048_account_default_binding.py",
-      "sha256": "d7d6b8f5700a2ecfc52844cb47f91e6749c075a92f6b25ad914c8728104c98f0",
+      "sha256": "b732b0cb4b980b410426b883ddfacff1dfacdafc90affe7bcfe3cfca7cbc8481",
       "down_revision": "0047_system_events_recipient"
     }
   }

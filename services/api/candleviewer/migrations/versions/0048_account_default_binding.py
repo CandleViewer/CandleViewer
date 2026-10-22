@@ -13,12 +13,17 @@ matches after it, even once the default is back on the same profile (the 2026-10
   ALTER takes the PG 11+ fast path and rewrites no row (Sec.9.3 rule 2); every account starts at 1,
   its bootstrap `Default` being its first binding.
 * `trg_ap_default_binding` (AFTER UPDATE OF is_default on `account_profiles`, per row, WHEN a
-  profile becomes the default, `ENABLE ALWAYS`) adds one, whichever statement moves the default;
+  profile becomes the default, `ENABLE ALWAYS`) adds one, whichever UPDATE moves the default;
   an unset alone, an insert and every other edit do not. Its function pins `search_path` and is
   no SECURITY DEFINER: `cv_app` holds UPDATE on `exchange_accounts`.
+* Residual: the owner role, superusers and a `cv_app` session can still rewind the version, or move
+  the default without a bump by unsetting it and inserting a profile as the default. A rewind
+  leaves no trace in the database until #906 D2's records carry `binding_version`; the nearest
+  threat-model row is PF-T08, which does not yet name this column.
 * No GRANT (`cv_app`'s table-level DML covers the column) and no comment tag (P0).
 * `lock_timeout = 5s` both ways (C-5.6): the ALTER waits for ACCESS EXCLUSIVE on
-  `exchange_accounts`, the trigger for SHARE ROW EXCLUSIVE on `account_profiles`.
+  `exchange_accounts`, the trigger for SHARE ROW EXCLUSIVE on `account_profiles`; the downgrade's
+  DROP TRIGGER waits for ACCESS EXCLUSIVE on `account_profiles`.
 * Additive (C-5.1) and reversible (C-5.2): the downgrade drops the trigger, its function, the CHECK
   and the column. The versions are lost, so a tag issued before it could match again after a
   re-upgrade: a rollback-only path.
