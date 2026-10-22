@@ -228,6 +228,17 @@ role's plans, ZAP's output, the scan's own `zap.log` (`<role>-scan-zap.log`) and
 exported audit rows and the API's log. Triage each alert like any security finding: severity,
 disposition, remediation; an accepted one goes into the baseline by a reviewed PR.
 
+To triage a red `dast-rules` or `dast-market` run (#3991: `dast-rules-nightly.yml` and
+`dast-market-nightly.yml`, through `_dast-low-priv.yml`, as a synthetic Viewer), find the step that
+failed: "Start the API" as above; "Write the plan" means the contract has no path on the profile's
+surface (exit 1) or `--out` was refused (exit 2); a red "The passive and active scan, as the
+Viewer" is a failed image pull, a failed sign-in (`mint_sessions.py`) or ZAP's own exit code (read
+the plan failures and warnings at the end of its log); "The scan stayed signed in, and no new
+medium+ alert" is `check_liveness.py` (both `/me` requestors ran and answered 200), then
+`baseline_gate.py` against the profile's baseline, which also names each alert the plan's
+`alertFilter` waived as a false positive; "No session value in the plan, logs or report" as above.
+These two nightlies file no issue yet (#4151): look at the run.
+
 ## 3. Reading the `ci-required` resolver summary
 
 `pr.yml`'s `ci-required` job is the only job branch protection actually

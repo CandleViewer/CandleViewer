@@ -148,6 +148,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p zap-reports && chmod a+rwx zap-reports "$WORK" # the image runs as its own user
+          docker pull --quiet "$ZAP_IMAGE" # before the mint, so a cold pull spends no bearer time
           envfile="$RUNNER_TEMP/cv/viewer-scan.env" # a fresh session: a bearer lives 12 minutes
           python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "$ZAP_VIEWER_USER" \
             --password-env ZAP_VIEWER_PASSWORD --totp-secret-file "$RUNNER_TEMP/cv/viewer.totp" \
