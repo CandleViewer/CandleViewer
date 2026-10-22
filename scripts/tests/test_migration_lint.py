@@ -3053,6 +3053,147 @@ def test_an_alembic_operation_on_another_table_is_not_flagged(
     assert _audit_hits(tmp_path, source) == []
 
 
+_AUDIT_LOG = "append-only table 'audit_log'"
+_GUARD = "the append-only guard function 'audit_chain'"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DO $$ BEGIN EXECUTE format('DELETE FROM audit_%s', 'log'); END $$",
+        "DO $$ BEGIN EXECUTE format('DELETE FROM audit_%I', 'log'); END $$",
+        "DO $$ BEGIN EXECUTE format('UPDATE public.audit_%1$s SET x = 1', 'log'); END $$",
+    ],
+)
+def test_a_name_glued_to_a_placeholder_is_built_at_run_time(
+    tmp_path: Path, sql: str
+) -> None:
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "a table it names only at run time" in message
+
+
+_PY = "from alembic import op\n\n\ndef upgrade(x: str = '') -> None:\n    {}\n"
+
+
+@pytest.mark.parametrize(
+    ("body", "target"),
+    [
+        ("op.execute(f'DELETE FROM audit_{x}')", "a table it names only at run time"),
+        ("v = get()\n    op.execute(f'{v} FROM audit_log')", _AUDIT_LOG),
+        ("op.execute('%s FROM audit_log' % get())", _AUDIT_LOG),
+        ("op.execute(get() + ' FROM audit_log')", _AUDIT_LOG),
+        ("v = 'DEL' + 'ETE'\n    op.execute(v + ' FROM audit_log')", _AUDIT_LOG),
+        ("op.execute(b'DELETE'.decode() + ' FROM audit_log')", _AUDIT_LOG),
+        ("op.execute(f'{x} FUNCTION audit_chain()')", _GUARD),
+    ],
+)
+def test_a_statement_python_computes_part_of_counts_what_it_names(
+    tmp_path: Path, body: str, target: str
+) -> None:
+    """A verb the rule cannot resolve may be any verb, and a name glued to a value it
+    cannot resolve is built at run time (#4032)."""
+    (message,) = _audit_hits(tmp_path, _PY.format(body))
+    assert f"targets {target}" in message
+
+
+def test_a_message_python_computes_is_not_flagged(tmp_path: Path) -> None:
+    """Only what a computed statement names counts: prose names no table."""
+    source = _PY.format("n = count()\n    print(f'{n} rows migrated')")
+    assert _audit_hits(tmp_path, source) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '"""DELETE FROM %s"""\n\nfrom alembic import op\n\n\ndef upgrade() -> None:\n'
+        '    op.execute(__doc__ % "audit_log")\n',
+        'from alembic import op\n\n\ndef upgrade() -> None:\n    """DELETE FROM audit_log"""\n'
+        "    op.execute(upgrade.__doc__)\n",
+        "import inspect\n\nfrom alembic import op\n\n\ndef upgrade() -> None:\n"
+        '    """DELETE FROM %s"""\n'
+        '    op.execute(inspect.getdoc(upgrade) % "audit_log")\n',
+    ],
+)
+def test_a_docstring_the_revision_reads_is_read_as_sql(
+    tmp_path: Path, source: str
+) -> None:
+    assert _audit_hits(tmp_path, source)
+
+
+@pytest.mark.parametrize(
+    ("sql", "flagged"),
+    [
+        ("ALTER VIEW v SET (security_invoker = false)", True),
+        (
+            "ALTER VIEW IF EXISTS v SET (check_option = local, security_invoker = 0)",
+            True,
+        ),
+        ("ALTER VIEW v RESET (security_invoker)", True),
+        ("ALTER TABLE v SET (security_invoker = off)", True),
+        ("ALTER VIEW v SET (security_invoker = true)", False),
+        ("ALTER VIEW v SET (security_invoker)", False),
+        ("ALTER VIEW v RENAME TO w", False),
+    ],
+)
+def test_a_view_switched_to_its_owners_privileges_is_refused(
+    tmp_path: Path, sql: str, flagged: bool
+) -> None:
+    """Any view: a grant on it later would reach an audit table it reads (#4032)."""
+    hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert bool(hits) is flagged
+    assert all(
+        "a view switched to read its tables with its owner" in hit for hit in hits
+    )
+
+
+_UNFOLLOWED = "an Alembic operation the rule cannot follow"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from alembic.op import drop_table\n\n\ndef upgrade() -> None:\n"
+        "    drop_table('audit_log')\n",
+        _OPS.format("drop = op.drop_table\n    drop('audit_log')"),
+        _OPS.format("for o in (op,):\n        o.drop_table('audit_log')"),
+        _OPS.format("fns = {'d': op.drop_table}\n    fns['d']('audit_log')"),
+        _OPS.format("helper(op)"),
+        _OPS.format("drop = getattr(op, 'drop_table')\n    drop('audit_log')"),
+        "import alembic\n\n\ndef upgrade() -> None:\n    run(alembic.op)\n",
+    ],
+)
+def test_an_alembic_operation_the_rule_cannot_follow_is_refused(
+    tmp_path: Path, source: str
+) -> None:
+    """`op` imported by name, held in a name or a collection, or handed on (#4032)."""
+    assert any(_UNFOLLOWED in hit for hit in _audit_hits(tmp_path, source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import alembic\n\n\ndef upgrade() -> None:\n    o = alembic.op\n"
+        "    o.drop_table('audit_log')\n",
+        _OPS.format("o = op\n    o.drop_table('audit_log')"),
+    ],
+)
+def test_op_rebound_to_another_name_is_followed(tmp_path: Path, source: str) -> None:
+    hits = _audit_hits(tmp_path, source)
+    assert any("append-only table 'audit_log'" in hit for hit in hits)
+    assert not any(_UNFOLLOWED in hit for hit in hits)
+
+
+def test_ops_calls_and_helpers_the_corpus_uses_are_followed(tmp_path: Path) -> None:
+    source = _OPS.format(
+        "with op.batch_alter_table('orders') as b:\n"
+        "        b.add_column(sa.Column('x', sa.Text()))\n"
+        "    op.execute(sa.text('SELECT 1').bindparams(x=op.inline_literal('y')))\n"
+        "    op.get_bind().execute(sa.text('SELECT 1'))\n"
+        "    getattr(op, 'create_index')('ix_orders_x', 'orders', ['x'])"
+    )
+    assert _audit_hits(tmp_path, source) == []
+
+
 def test_alembic_op_drop_on_an_audit_table_is_flagged_once(tmp_path: Path) -> None:
     """The line reader and the call reader each see it; only one reports it."""
     source = 'import alembic\n\n\ndef upgrade() -> None:\n    alembic.op.drop_table("audit_log")\n'

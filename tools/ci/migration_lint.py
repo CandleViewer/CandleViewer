@@ -600,6 +600,9 @@ _TARGET_VERBS = (
 _SLOT_WORDS = frozenset({"ONLY", "TABLE", "IF", "EXISTS"})
 # A placeholder in dynamic SQL: its target is an argument, read where it is passed.
 _PLACEHOLDER_RE = re.compile(r"%[IsL]|\$\d+")
+# The tokens a placeholder opens with: a format conversion, a parameter, a Python
+# field the rule cannot resolve (`_UNRESOLVED_PLACEHOLDER`).
+_PLACEHOLDER_MARKS = frozenset({"%", "$", _UNRESOLVED_PLACEHOLDER})
 _SETS = frozenset({"SET", "RESET"})
 #: A setting set under a name the rule cannot read: a placeholder (`%I`, `$1`, a
 #: `str.format` field), a Python value it cannot resolve (`_UNRESOLVED_PLACEHOLDER`),
@@ -776,7 +779,11 @@ class _Chunk:
     chunk's end."""
 
     def __init__(self, statement: str) -> None:
-        self.tokens: list[str] = _CODE_TOKEN_RE.findall(_code_text(statement))
+        found = list(_CODE_TOKEN_RE.finditer(_code_text(statement)))
+        self.tokens: list[str] = [token[0] for token in found]
+        # Whether each token runs straight on into the next, with no space between.
+        self.glued = [a.end() == b.start() for a, b in itertools.pairwise(found)]
+        self.glued.append(False)
         self.words = words = [token.upper() for token in self.tokens]
         size = len(words)
         self.names = _head_identifiers(statement)
@@ -964,14 +971,17 @@ def _reach(chunk: _Chunk, at: int) -> str | None:
     return None
 
 
-def _named(tokens: list[str], at: int) -> bool:
+def _named(chunk: _Chunk, at: int) -> bool:
     """Whether a name starts at token `at`, after `ONLY`, `TABLE` or `IF EXISTS`:
     one to three parts joined by `.`, each a word that is not a number or a quoted
-    name."""
+    name. A part glued to a placeholder (`audit_%s`) is built at run time."""
+    tokens = chunk.tokens
     while at < len(tokens) and tokens[at].upper() in _SLOT_WORDS:
         at += 1
     for _ in range(3):
         if at >= len(tokens) or not (tokens[at][0] in '"_' or tokens[at][0].isalpha()):
+            return False
+        if chunk.glued[at] and tokens[at + 1] in _PLACEHOLDER_MARKS:
             return False
         if tokens[at + 1 : at + 2] != ["."]:
             return True
@@ -989,9 +999,9 @@ def _open_target(chunk: _Chunk, at: int) -> bool:
         if words[at : at + len(verb)] == verb:
             if at + len(verb) == size and len(verb) == 1 and not chunk.open_end:
                 return False  # a verb on its own is a value: `TG_OP = 'UPDATE'`
-            return not _named(tokens, at + len(verb))
+            return not _named(chunk, at + len(verb))
     if (kind := _routine_kind(words, at)) is not None:
-        return not _named(tokens, kind + 1)
+        return not _named(chunk, kind + 1)
     if _creates(words, at) == "RULE":
         slot = chunk.next_to[at]
     elif (
@@ -1002,7 +1012,7 @@ def _open_target(chunk: _Chunk, at: int) -> bool:
         slot = chunk.next_on[at]
     else:
         return False
-    return slot < size and not _named(tokens, slot + 1)
+    return slot < size and not _named(chunk, slot + 1)
 
 
 def _closing(tokens: list[str]) -> dict[int, int]:
@@ -1109,6 +1119,20 @@ def _audit_mutations(
             and _sql_identifiers(statement) & tables
         ):
             hits.add("reach:view")
+        if (
+            any(
+                words[at : at + 2] in (["ALTER", "VIEW"], ["ALTER", "TABLE"])
+                for at in chunk.starts
+            )
+            and "SECURITY_INVOKER" in words
+            and ("RESET" in words or not _security_invoker(words))
+        ):
+            hits.add("reach:view_owner")
+        # A verb Python computes (`f"{verb} FROM audit_log"`) may be any verb: what the
+        # statement names counts as mutated.
+        computed_verb = executable and any(
+            chunk.tokens[at] == _UNRESOLVED_PLACEHOLDER for at in chunk.starts
+        )
         mutating = [at for at in chunk.starts if _mutates(chunk, at)]
         if any(words[at] == "GRANT" and chunk.every_table_after[at] for at in mutating):
             hits.add("*")
@@ -1131,10 +1155,10 @@ def _audit_mutations(
             )
             and _foreign_language(statement)
         )
-        if mutating or passed_in or open_target or foreign:
+        if mutating or passed_in or open_target or foreign or computed_verb:
             named = _sql_identifiers(statement)
             hits |= named & tables
-            if not owner and (passed_in or open_target):
+            if not owner and (passed_in or open_target or computed_verb):
                 hits |= {f"fn:{name}" for name in named & _AUDIT_FUNCTIONS}
             if open_target and not named & (tables | _AUDIT_FUNCTIONS):
                 hits.add("dynamic")
@@ -1323,13 +1347,60 @@ def _op_names(tree: ast.AST) -> set[str]:
             }
     for _ in range(3):  # a rebinding of a rebinding
         for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Assign)
-                and isinstance(node.value, ast.Name)
-                and node.value.id in names
+            if isinstance(node, ast.Assign) and (
+                (isinstance(node.value, ast.Name) and node.value.id in names)
+                or _is_alembic_op(node.value)
             ):
                 names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
     return names
+
+
+def _is_alembic_op(node: ast.AST) -> bool:
+    """`alembic.op`."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "op"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "alembic"
+    )
+
+
+def _untracked_op(tree: ast.AST) -> list[int]:
+    """The lines where `op` (any name bound to it, `alembic.op`) is used but called:
+    an operation imported by name (`from alembic.op import drop_table`), held in a
+    name or a collection, or handed on. The rule cannot follow what that calls."""
+    names = _op_names(tree)
+    followed: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute):
+                followed.add(id(func.value))  # `op.<name>(...)`
+            if (
+                isinstance(func, ast.Call)
+                and isinstance(func.func, ast.Name)
+                and func.func.id == "getattr"
+                and func.args
+            ):
+                followed.add(id(func.args[0]))  # `getattr(op, "<name>")(...)`
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Name):
+            followed.add(id(node.value))  # `o = op`, followed by `_op_names`
+        elif isinstance(node, ast.Assign) and _is_alembic_op(node.value):
+            followed.add(id(node.value))
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+            "alembic.op"
+        ):
+            lines.append(node.lineno)
+        elif id(node) in followed:
+            continue
+        elif isinstance(node, ast.Name) and node.id in names:
+            if isinstance(node.ctx, ast.Load):
+                lines.append(node.lineno)
+        elif isinstance(node, ast.Attribute) and _is_alembic_op(node):
+            lines.append(node.lineno)
+    return lines
 
 
 def _op_calls(tree: ast.AST) -> Iterator[tuple[ast.Call, str | None, bool]]:
@@ -1341,12 +1412,7 @@ def _op_calls(tree: ast.AST) -> Iterator[tuple[ast.Call, str | None, bool]]:
     def is_op(node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
             return node.id in names
-        return (
-            isinstance(node, ast.Attribute)
-            and node.attr == "op"
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "alembic"
-        )
+        return _is_alembic_op(node)
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -1385,7 +1451,11 @@ def _alembic_findings(
     a name bound to one, and one a `getattr` picks at run time (#4032)."""
     names = _resolve_simple_name_constants(tree)
     reshapes = {"rename_table", "alter_column", "batch_alter_table"}
-    hits: dict[int, str] = {}
+    hits: dict[int, str] = {
+        line: "an Alembic operation the rule cannot follow (imported by name, held "
+        "in a name or a collection, or handed on)"
+        for line in _untracked_op(tree)
+    }
     for call, method, plain in _op_calls(tree):
         if method is None:
             hits.setdefault(call.lineno, "an Alembic operation picked at run time")
@@ -1707,6 +1777,8 @@ _REACHES = {
     "reach:schema": "a schema, its owner or its objects, the append-only tables too",
     "reach:owned": "every object a role owns, the append-only tables too",
     "reach:pgcrypto": "the extension the audit hash chain hashes with",
+    "reach:view_owner": "a view switched to read its tables with its owner's "
+    "privileges, which a grant on it hands over",
     "reach:default_privileges": "a mutating privilege every table created later gets by "
     "default, a new append-only table too",
     "reach:replication_role": "the setting that turns the append-only tables' triggers "
@@ -1773,14 +1845,17 @@ def _audit_findings(path: Path, forbidden_tables: frozenset[str]) -> list[LintFi
             for line in deviations
         ]
 
-    # A docstring never runs, and a piece of a bigger string is read with it: their
-    # open targets and body languages are not read on their own.
+    # A docstring never runs, unless the revision reads one (`__doc__`, `getdoc`),
+    # and a piece of a bigger string is read with it: their open targets and body
+    # languages are not read on their own.
+    docs_run = "__doc__" in source or "getdoc" in source
     prose = _fragments(tree) | {
         (node.lineno, node.value.value)
         for node in ast.walk(tree)
         if isinstance(node, ast.Expr)
         and isinstance(node.value, ast.Constant)
         and isinstance(node.value.value, str)
+        and not docs_run
     }
     for lineno, literal, unresolved in _iter_string_literals(path, source):
         statements = [_normalise_sql(s) for s in _sql_split(literal)]
