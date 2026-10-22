@@ -23,11 +23,12 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api import rules_crud
 from candleviewer.domain.text import UNSTORABLE_TEXT
-from candleviewer.rules.compiler.common import MAX_DEPTH, MAX_ITEMS
+from candleviewer.rules.compiler.common import MAX_DEPTH, MAX_ITEMS, check_bounds
+from candleviewer.rules.issues import RuleCompileError
 from candleviewer.rules.manager import RuleError, is_reserved_name
 from tests.rules.test_rules_manager import OWNER, _mgr
 from tests.rules.test_rules_routes import A1, A2, _Env, _ir, _scoped
-from tests.rules.test_scope_crud import C, _setup
+from tests.rules.test_scope_crud import A, C, _setup
 from tests.rules.test_validator_endpoints import RULE_ID, _client
 
 CORPUS = Path(__file__).parents[1] / "fixtures/rule_corpus"
@@ -83,6 +84,13 @@ def _over(kind: str, **over: Any) -> dict[str, Any]:
 
 def _at(kind: str) -> dict[str, Any]:
     return _sized(MAX_ITEMS) if kind == "values" else _nested(MAX_DEPTH)
+
+
+class _Unwalked(list[Any]):
+    """A list the test fails on if anything iterates it: the bounds refuse it by its length."""
+
+    def __iter__(self) -> Any:
+        raise AssertionError("a container over the bound was walked")
 
 
 def _issues(issues: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
@@ -146,6 +154,21 @@ async def test_save_document_at_the_bounds_is_stored(kind: str) -> None:
     rid = (await m.create(_at(kind), OWNER))["id"]
     renamed = {**_at(kind), "name": "renamed"}
     assert (await m.update(rid, renamed, 1, OWNER))["version"]["version"] == 2
+
+
+def test_check_bounds_wide_container_over_the_bound_is_refused_before_it_is_walked() -> None:
+    check_bounds({"pad": [0] * (MAX_ITEMS - 2)}, "rule")  # exactly at the bound: no refusal
+    with pytest.raises(RuleCompileError, match="too large"):
+        check_bounds({"pad": _Unwalked([0] * (MAX_ITEMS + 1))}, "rule")
+
+
+async def test_import_rule_over_a_bound_is_refused_before_the_bundle_is_walked() -> None:
+    m, audits, _ = _mgr()
+    ir = _ir(graph_layout={"pad": _Unwalked([0] * (MAX_ITEMS + 1))})
+    with pytest.raises(RuleError) as refused:
+        await m.import_rule({"format": "cv-rule-bundle/1", "ir": ir}, OWNER)
+    assert (refused.value.status, refused.value.code) == (422, "rule_ir_invalid")
+    assert (await m.list_rules(OWNER))["items"] == [] and audits == []
 
 
 @pytest.mark.parametrize("name", sorted(RULES))
@@ -227,25 +250,27 @@ def test_put_rule_body_over_the_ceiling_is_413_and_changes_nothing(route: str) -
     assert [a for a, _ in e.audits] == ["rule.created"]
 
 
-@pytest.mark.parametrize("ch", [chr(0xD800), chr(0xDC00), chr(0)], ids=["high", "low", "nul"])
+@pytest.mark.parametrize(
+    "value", [chr(0xD800), chr(0xDC00), chr(0), 7, None], ids=["high", "low", "nul", "int", "null"]
+)
 @pytest.mark.parametrize(
     ("route", "field", "sent"),
     [("", "note", {"ir": _ir("2", name="other")}), ("/{rid}", "note", {"ir": _ir("2")}),
      ("/{rid}/active-version", "note", {}), ("/{rid}/mode", "reason", {"mode": "simulate"})],
     ids=["create", "update", "active-version", "mode"],
 )  # fmt: skip
-def test_rule_write_unstorable_note_or_reason_is_400_and_changes_nothing(
-    route: str, field: str, sent: dict[str, Any], ch: str
+def test_rule_write_note_or_reason_not_storable_text_is_400_and_changes_nothing(
+    route: str, field: str, sent: dict[str, Any], value: Any
 ) -> None:
-    e = _Env()
+    e, text = _Env(), isinstance(value, str)
     rid, before = e.create(), e.c.get("/rules").json()
-    body = {**sent, field: f"a{ch}b"}
+    body = {**sent, field: f"a{value}b" if text else value}
     if route.endswith("active-version"):
         body["version_id"] = before["items"][0]["active_version_id"]
     r = _write(e.c, route, rid, json.dumps(body).encode())
     assert r.status_code == 400, r.text[:300]
-    want = ("validation_failed", f"'{field}' {UNSTORABLE_TEXT}")
-    assert (r.json()["code"], r.json()["detail"]) == want
+    why = UNSTORABLE_TEXT if text else "must be a string"
+    assert (r.json()["code"], r.json()["detail"]) == ("validation_failed", f"'{field}' {why}")
     assert e.c.get("/rules").json() == before and [a for a, _ in e.audits] == ["rule.created"]
 
 
@@ -326,9 +351,15 @@ def test_put_rule_cross_account_keeps_its_audited_404_over_a_bound() -> None:
 
 
 @KINDS
-def test_post_rules_cross_account_keeps_its_audited_403_over_a_bound(kind: str) -> None:
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+def test_rule_save_over_a_bound_is_the_bounds_422_before_the_scope_check(
+    method: str, kind: str
+) -> None:
+    """After the permission gate and the rule's visibility, the bounds come before the scope check
+    reads the document's scope: an ungranted account in it is never looked up."""
     c, audits, _src, _m = _setup()
-    scope = {"level": "account", "account_ids": [str(C)]}
-    assert c.post("/rules", json={"ir": _over(kind, scope=scope)}).status_code == 403
-    assert audits == ["rule_scope_denied"]
-    assert c.get("/rules").json()["items"] == []
+    rid = c.post("/rules", json={"ir": _ir(scope={"level": "account", "account_ids": [str(A)]})})
+    doc = _over(kind, scope={"level": "account", "account_ids": [str(C)]})
+    url = "/rules" + (f"/{rid.json()['id']}" if method == "PUT" else "")
+    _bounds_problem(c.request(method, url, json={"ir": doc}, headers={"If-Match": "1"}))
+    assert audits == [] and len(c.get("/rules").json()["items"]) == 1
