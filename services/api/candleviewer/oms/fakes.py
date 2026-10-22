@@ -842,8 +842,10 @@ class InMemoryRecordedStopStore:
     """`RecordedStopStore` over an `InMemoryOrderStore`'s recorded stops
     (`recorded_stops_sqlalchemy.py`'s contract): one request's rows inserted together, each
     refused by the name Postgres gives it (`ux_rs_in_flight` among them); a settle by
-    compare-and-set; every read and update inside the account but the startup sweep over every
-    account. A write's write-ahead hook is awaited, bounded, before its commit."""
+    compare-and-set, a void (`refused`, `not_shown`) refused before anything with no write-ahead
+    hook (C-2.9), as the SQL store refuses it; every read and update inside the account but the
+    startup sweep over every account. A write's write-ahead hook is awaited, bounded, before its
+    commit."""
 
     def __init__(
         self, db: InMemoryOrderStore, *, audit_timeout_s: float = STOP_AUDIT_TIMEOUT_S
@@ -874,6 +876,8 @@ class InMemoryRecordedStopStore:
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("a settle names each row of the request once")
         port.require_aware("at", at)
+        if outcome != "answered" and write_ahead is None:  # 21 Sec.3.3.11: no void unaudited
+            raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
         await self._db._turn()
         rows = [self._db._stops.get(record_id) for record_id in ids]
         live = [

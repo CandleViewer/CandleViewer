@@ -280,6 +280,10 @@ async def partial(h: Harness, order: NewOrder) -> object:
     return await h.executions.commit_fill(OrderFill(step=step, execution=execution, totals=totals))
 
 
+async def audited(_: object) -> None:
+    """A write-ahead hook whose record lands."""
+
+
 async def refuses(_: object) -> None:
     raise RuntimeError("the audit trail refused the record")
 
@@ -618,15 +622,29 @@ class SubmissionContract:
     async def test_a_stop_request_is_settled_once_and_only_in_its_account(
         self, h: Harness, outcome: Any, status: str, answered: bool, closed: bool
     ) -> None:
+        """A void passes its write-ahead hook, as every void must (C-2.9)."""
         account, _ = h.new_account()
         [recorded] = await h.stops.insert([trading_stop(account)])
+        hook = None if outcome == "answered" else audited
         with pytest.raises(StaleRecordedStop):
-            await h.stops.settle(uuid4(), [recorded.id], outcome, at=T0)
-        [settled] = await h.stops.settle(account, [recorded.id], outcome, at=T0)
+            await h.stops.settle(uuid4(), [recorded.id], outcome, at=T0, write_ahead=hook)
+        [settled] = await h.stops.settle(account, [recorded.id], outcome, at=T0, write_ahead=hook)
         times = (settled.answered_at is not None, settled.closed_at is not None)
         assert (settled.status, *times) == (status, answered, closed)
         with pytest.raises(StaleRecordedStop):
             await h.stops.settle(account, [recorded.id], "answered", at=T0)
+
+    @pytest.mark.parametrize("outcome", ["refused", "not_shown"])
+    async def test_a_void_without_its_hook_is_refused_before_anything(
+        self, h: Harness, outcome: Any
+    ) -> None:
+        """SEC-4057-F-01 (21 Sec.3.3.11 "Audit"): the store takes no void without its write-ahead
+        hook, `ValueError` before any statement, so the row is still in flight after it."""
+        account, _ = h.new_account()
+        [recorded] = await h.stops.insert([trading_stop(account)])
+        with pytest.raises(ValueError, match="audited write-ahead"):
+            await h.stops.settle(account, [recorded.id], outcome, at=T0)
+        assert await waiting(h, account) == (recorded,)
 
     async def test_a_settle_is_audited_before_its_commit_or_settles_nothing(
         self, h: Harness
