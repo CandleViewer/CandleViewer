@@ -16,7 +16,7 @@ import uuid
 from typing import Any
 
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
 from candleviewer.bars.models import BarSpec
 from candleviewer.ws.permissions import (
@@ -26,6 +26,7 @@ from candleviewer.ws.permissions import (
     _audit_denials,
 )
 from tests.unit.ws._auth_rig import DEADLINE_S, LATER, Rig, Sock, bye_of, hang_up, user_of
+from tests.unit.ws._seq_support import ACC_A, ACC_B
 
 _VIEWER, _TARGET = user_of("good-1"), user_of("good-9")
 
@@ -230,3 +231,57 @@ async def test_a_viewing_sockets_audit_rows_name_the_viewer_and_its_session() ->
         _VIEWER,
         "sess-good-1",
     )
+
+
+# --- S16's scope, the Owner viewing a Manager (#3085; the S11 security look's M-2) ---------------
+
+#: The viewer an Owner, the target a Manager granted account A only (23 §9.6, S16).
+_S16 = {
+    _VIEWER: PrincipalSnapshot(_VIEWER, frozenset({"owner"}), frozenset(Permission)),
+    _TARGET: PrincipalSnapshot(
+        _TARGET,
+        frozenset({"manager"}),
+        frozenset({Permission.ORDERS_READ, Permission.MARKETDATA_READ}),
+        (AccountGrant(ACC_A, True, False, False),),
+    ),
+}
+
+
+async def _owner_viewing_a_manager() -> tuple[Rig, Sock, Any]:
+    rig, sock = _viewing({"principals": _S16}), Sock()
+    handler = await rig.open(sock)
+    assert (await rig.auth(sock, "good-1"))["t"] == "auth_ok"
+    return rig, sock, handler
+
+
+async def _frames_before_a_pong(sock: Sock) -> list[dict[str, Any]]:
+    sock.feed({"t": "ping", "id": "barrier"})
+    frames: list[dict[str, Any]] = []
+    while (frame := await sock.sent.get())["t"] != "pong":
+        frames.append(frame)
+    return frames
+
+
+async def test_s16_a_viewing_socket_is_refused_an_account_outside_its_targets_grants() -> None:
+    """The Owner's reach is not the view's: `orders` on account B is refused as the Manager's own
+    `sub` would be (`23-ws-protocol.md` S16, §9.6 scope)."""
+    async with asyncio.timeout(DEADLINE_S):
+        _rig, sock, handler = await _owner_viewing_a_manager()
+        entry = {"ch": "orders", "opts": {"exchange_account_ids": [str(ACC_B)]}}
+        sock.feed({"t": "sub", "id": "s", "p": {"topics": [entry]}})
+        (result,) = (await sock.sent.get())["p"]["results"]
+        assert (result["ok"], result["error"]["code"]) == (False, "account_scope_denied")
+        hang_up(sock)
+        await handler
+
+
+async def test_s16_an_owner_only_system_frame_never_reaches_a_viewing_socket() -> None:
+    """A `feature_flags` frame with no flag predicate reaches only an Owner (§15.9); the viewing
+    socket's role is its target's, so it is withheld there."""
+    async with asyncio.timeout(DEADLINE_S):
+        rig, sock, handler = await _owner_viewing_a_manager()
+        flags = {"kind": "feature_flags", "feature_flags": {"trading.one_click": True}}
+        rig.hub.broadcast_system(flags)
+        assert [f for f in await _frames_before_a_pong(sock) if f.get("ch") == "system"] == []
+        hang_up(sock)
+        await handler
