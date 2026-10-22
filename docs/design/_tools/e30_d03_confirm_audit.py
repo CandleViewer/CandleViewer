@@ -9,7 +9,9 @@ binds is registered; (4) the WCAG contrast matrix of every pair the four screens
 `packages/ui/tokens/tests/verify_tokens.py` resolves it, judged on the unrounded ratio; (5) the
 CVD rows (Brettel / Vienot via `docs/research/_tools/cvd_simulate.py`, dE76, JND 5.0) and the
 Rec. 601 luma greys of the DEMO / LIVE pair; (6) the string gates on the spec, the handoff file
-and any extra file given; (7) the counts the boards and the PR quote.
+and any extra file given, including the line-anchor gates: every `14` field anchor, every `15`
+component anchor, every `22` schema anchor and every `24` section anchor the spec cites must
+point at the line it names at the base; (7) the counts the boards and the PR quote.
 
 Usage: python3 -I docs/design/_tools/e30_d03_confirm_audit.py [--json] [extra files to gate...]
 Exit 1 only on a gated FAIL. `decorative` and `exempt` rows are reported, never gated.
@@ -101,12 +103,13 @@ CONST_SRC = (
 )
 C = {k: D(v) for k, v in (s.split("=") for s in CONST_SRC.split())}
 C["daily_cap"] = cents(C["equity"] * C["daily_cap_pct"])
-# account env sizing value leverage equity sent  (spec section 3; mock values, synthetic names)
+# account env sizing value leverage equity sent served  (spec sections 3 and 6; mock values,
+# synthetic names; served = the legs the fan-out budget frame can send now, M-2)
 LEG_SRC = (
-    "Main LIVE fixed_qty 0.250 10 12500 yes",
-    "sub_001 LIVE fixed_qty 0.100 5 6000 yes",
-    "sub_002 LIVE risk_based 0.005 10 4000 yes",
-    "sub_003 LIVE fixed_qty 0.100 10 3000 no",
+    "Main LIVE fixed_qty 0.250 10 12500 yes yes",
+    "sub_001 LIVE fixed_qty 0.100 5 6000 yes yes",
+    "sub_002 LIVE risk_based 0.005 10 4000 yes no",
+    "sub_003 LIVE fixed_qty 0.100 10 3000 no no",
 )
 LEGS = [r.split() for r in LEG_SRC]
 COL_SRC = "qty entry stop ticks notional pct_eq im avail_after risk risk_pct fee tp_r"
@@ -172,6 +175,14 @@ FRAMES = {
         EQ,
         E + 2 * C["profile_sl_ticks"] * C["tick"],
     ),
+    "SCR-114 template apply (swing short 0.100: stop 200 ticks above, TP 2 R)": money(
+        D("0.100"),
+        E,
+        E + C["profile_sl_ticks"] * C["tick"],
+        LEV,
+        EQ,
+        E - 2 * C["profile_sl_ticks"] * C["tick"],
+    ),
 }
 FEE_UNIT, RB_QTY, CLAMP_QTY = risk_based(EQ * C["risk_pct"], E, S)
 EXPLAIN = (
@@ -179,29 +190,42 @@ EXPLAIN = (
     f" → max_position_notional {C['max_position']:,} USD → {CLAMP_QTY} BTC"
 )
 LEG_ROWS: list[dict[str, str]] = []
-for acct, env, mode, value, lev, eq, sent in LEGS:
+for acct, env, mode, value, lev, eq, sent, served in LEGS:
     qty = D(value) if mode == "fixed_qty" else risk_based(D(eq) * D(value), E, S)[1]
     row = money(qty, E, S, D(lev), D(eq))
-    row.update(account=acct, env=env, mode=mode, leverage=f"{lev}x", sent=sent)
+    row.update(account=acct, env=env, mode=mode, leverage=f"{lev}x", sent=sent, served=served)
     row["explain"] = f"{mode}: {qty} BTC"
     if mode == "risk_based":
         budget = cents(D(eq) * D(value))
         row["explain"] = f"risk_based: {budget} USD / ({abs(E - S)} + {FEE_UNIT} fee) = {qty} BTC"
     LEG_ROWS.append(row)
 SENT = [r for r in LEG_ROWS if r["sent"] == "yes"]
+SERVED = [r for r in LEG_ROWS if r["served"] == "yes"]
 
 
-def tot(key: str, places: int) -> str:
-    return f"{sum(dec(r[key]) for r in SENT):,.{places}f}"
+def tot(rows: list[dict[str, str]], key: str, places: int) -> str:
+    return f"{sum(dec(r[key]) for r in rows):,.{places}f}"
 
 
-TOTALS = {
-    "accounts": f"{len(SENT)} of {len(LEG_ROWS)}",
-    "qty": tot("qty", 3),
-    "notional": tot("notional", 2),
-    "risk": tot("risk", 2),
-    "fee": tot("fee", 2),
-}
+def totals(rows: list[dict[str, str]]) -> dict[str, str]:
+    return {
+        "accounts": f"{len(rows)} of {len(LEG_ROWS)}",
+        "qty": tot(rows, "qty", 3),
+        "notional": tot(rows, "notional", 2),
+        "risk": tot(rows, "risk", 2),
+        "fee": tot(rows, "fee", 2),
+    }
+
+
+TOTALS = totals(SENT)
+# the fan-out budget frame's "send now" subset (spec section 6; M-2 of text round 2): the served
+# legs are confirmed and submitted as one intent, so 24 section 9.4 rule 4 checks what was confirmed
+SEND_NOW = totals(SERVED)
+SEND_NOW["held"] = " and ".join(r["account"] for r in LEG_ROWS if r["served"] == "no")
+SEND_NOW["button"] = f"Send {SEND_NOW['accounts']} legs now…"
+SEND_NOW["restate"] = (
+    f"{SEND_NOW['accounts']} legs — {SEND_NOW['held']} not sent (held by the rate limit)"
+)
 # ---- 2. gates and timers (every value beside its source) -----------------------------------------
 RETRY_AFTER_S = 42
 _abs = (14 * 3600 + 31 * 60 + 28 + RETRY_AFTER_S) % 86400
@@ -226,6 +250,14 @@ TIMERS = [
         "replay",
         "opens on a fresh settled preview of the held intent, never the held numbers",
         "spec D2; 14 SCR-158 Performance",
+    ),
+    (
+        "send now (fan-out budget)",
+        (
+            "re-runs the preview for the served legs; SCR-076 opens on the fresh settled answer"
+            " behind the same 400 ms gate; 24 section 9.4 rule 4 then checks that same intent"
+        ),
+        "spec D8; 24 section 9.4 rule 4",
     ),
     ("appearance budget", "100 ms from in-memory state, no fetch", "14 SCR-076 Performance"),
     ("SCR-114 save round-trip", "400 ms", "14 SCR-114 Performance"),
@@ -358,7 +390,7 @@ FORBID = [
     "#/work" + "space",
     "IP-level",
 ]
-FORBID.append("penpot." + "candleviewer.com")
+HOST_RE = re.compile(r"\bpenpot\.[a-z0-9-]+\.[a-z]{2,}", re.IGNORECASE)  # any Penpot host
 LIVE_SENTENCE = "You are about to send a LIVE order"
 STOP_KEY = re.compile(r"^(confirm|drawer|ratelimit|selector|template)\..*stop")
 S14 = (PLAN / "14-screens-catalogue.md").read_text(encoding="utf-8").splitlines()
@@ -375,6 +407,13 @@ for _f in (
 ):
     FIELD14[_f] = _f
 ANCHOR14 = re.compile(r"`14` (?:SCR-\d{3} )?(\w+) :(\d+)|(\w+) \(`14` :(\d+)\)")
+S15 = (PLAN / "15-component-catalogue.md").read_text(encoding="utf-8").splitlines()
+ANCHOR15 = re.compile(r"`15` CMP-(\d{3}) :(\d+)|CMP-(\d{3}) [^()|\n]*?\(:(\d+)\)")
+Y_LINES, S24_LINES = Y.splitlines(), S24.splitlines()
+PIN22 = re.compile(r"`22` schema lines at the base \(([^)]*)\)")
+NAMED22 = re.compile(r"`([^`\s]+)` :(\d+)")
+DOC_MARK = re.compile(r"`\d\d`")
+H24 = [(m.group(1), i) for i, ln in enumerate(S24_LINES) if (m := re.match(r"### (\d+\.\d+) ", ln))]
 
 
 def read(p: Path) -> str:
@@ -402,9 +441,9 @@ def tick(cell: str) -> str:
     return mt.group(1) if mt else cell
 
 
-def anchor_gates(spec: str) -> int:
-    """Every `14` line anchor that names a field must point at that field's line (F-7)."""
-    n = 0
+def anchor_gates(spec: str) -> dict[str, int]:
+    """Every `14` / `15` / `22` / `24` line anchor must point at the line it names (F-7; M-1)."""
+    n14 = n15 = n22 = n24 = 0
     for m in ANCHOR14.finditer(spec):
         field, ln = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
         if field not in FIELD14:
@@ -412,8 +451,43 @@ def anchor_gates(spec: str) -> int:
         line = S14[int(ln) - 1] if int(ln) <= len(S14) else ""
         if not line.startswith(f"- **{FIELD14[field]}"):
             FAILS.append(f"14 anchor :{ln} is not the {field} line")
-        n += 1
-    return n
+        n14 += 1
+    for m in ANCHOR15.finditer(spec):
+        cmp_id, ln = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        line = S15[int(ln) - 1] if int(ln) <= len(S15) else ""
+        if not line.startswith(f"### CMP-{cmp_id} "):
+            FAILS.append(f"15 anchor :{ln} is not the CMP-{cmp_id} heading")
+        n15 += 1
+    # 22: the pinned schema lines are verified by name; every other `22` anchor must be one of them
+    pinned: set[str] = set()
+    pin = PIN22.search(spec)
+    for name, ln in NAMED22.findall(pin.group(1)) if pin else []:
+        key = name.split("/")[-1].split(".")[-1]
+        line = Y_LINES[int(ln) - 1] if int(ln) <= len(Y_LINES) else ""
+        if key not in line:
+            FAILS.append(f"22 anchor :{ln} is not the {name} line")
+        pinned.add(ln)
+        n22 += 1
+    for cite in re.finditer(r"`22`", spec):
+        window = spec[cite.end() : cite.end() + 120]
+        stop = DOC_MARK.search(window)
+        window = window[: stop.start()] if stop else window
+        num = re.search(r"(?<![\d:])\(?:(\d{3,5})", window)
+        if num and num.group(1) not in pinned:
+            FAILS.append(f"22 anchor :{num.group(1)} is not a pinned schema line")
+        n22 += bool(num)
+    for cite in re.finditer(r"`24` §(\d+\.\d+)", spec):
+        window = spec[cite.end() : cite.end() + 120]
+        stop = DOC_MARK.search(window)
+        window = window[: stop.start()] if stop else window
+        starts = [i for sec, i in H24 if sec == cite.group(1)]
+        nxt = [i for _, i in H24 if starts and i > starts[0]]
+        lo, hi = (starts[0] + 1, (nxt[0] if nxt else len(S24_LINES))) if starts else (0, -1)
+        for num in re.findall(r"(?<![\d:]):(\d{3,5})", window):
+            if not lo <= int(num) <= hi:
+                FAILS.append(f"24 anchor :{num} is outside section {cite.group(1)}")
+            n24 += 1
+    return {"anchors14": n14, "anchors15": n15, "anchors22": n22, "anchors24": n24}
 
 
 def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
@@ -422,6 +496,8 @@ def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
         for bad in [*FORBID, HOME_USER]:
             if bad and bad in txt:
                 FAILS.append(f"{name}: forbidden text {bad!r}")
+        if HOST_RE.search(txt):
+            FAILS.append(f"{name}: a Penpot hostname")
     if LIVE_SENTENCE not in spec:
         FAILS.append("spec: the LIVE confirm sentence is missing")
     for cid in sorted(set(re.findall(r"\bC-\d+\.\d+\b", spec + hand))):
@@ -442,12 +518,11 @@ def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
             if key not in d02 or not q or q.group(1) not in d02[key]:
                 FAILS.append(f"copy deck {key}: differs from E30-D02 section 14")
     live = spec.count(LIVE_SENTENCE)
-    anchors = anchor_gates(spec)
     return {
         "copy_keys": len(deck),
         "d02_reused": reused,
         "live_sentence": live,
-        "anchors14": anchors,
+        **anchor_gates(spec),
     }
 
 
@@ -548,7 +623,14 @@ def main() -> int:
     )
     label = f"Send {TOTALS['accounts']} legs — BUY BTCUSDT limit {w['entry']}"
     intent = f"BUY {w['qty']} BTCUSDT limit {w['entry']} · stop {w['stop']}"
-    p(f'confirm labels from the same rows: "{intent}"; "{label}"\n')
+    p(f'confirm labels from the same rows: "{intent}"; "{label}"')
+    SEND_NOW["confirm"] = f"Send {SEND_NOW['accounts']} legs — BUY BTCUSDT limit {w['entry']}"
+    p(
+        f"send-now (the served legs, one confirmed intent): {SEND_NOW['accounts']} accounts · "
+        f"{SEND_NOW['qty']} BTC · {SEND_NOW['notional']} USDT · risk {SEND_NOW['risk']} USDT · fee "
+        f"{SEND_NOW['fee']} USDT; \"{SEND_NOW['button']}\"; \"{SEND_NOW['restate']}\"; "
+        f"\"{SEND_NOW['confirm']}\"\n"
+    )
     p("## 2. Gates and timers\n\n| gate | value | source |\n|---|---|---|")
     p("\n".join(f"| {a} | {b} | {c} |" for a, b, c in TIMERS))
     p("\n## 3. Code registries (parsed from 22 / 24 as text)\n")
@@ -630,6 +712,7 @@ def main() -> int:
             "frames": FRAMES,
             "legs": LEG_ROWS,
             "totals": TOTALS,
+            "send_now": SEND_NOW,
             "explain": EXPLAIN,
             "clamp": [str(RB_QTY), str(CLAMP_QTY), str(FEE_UNIT)],
             "retry_at": RETRY_AT,
