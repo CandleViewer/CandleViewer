@@ -13,6 +13,8 @@ also run by hand on a scratch Postgres 16.4, and these tests on a local Postgres
 
 from __future__ import annotations
 
+import gzip
+import json
 import os
 import subprocess
 import sys
@@ -26,7 +28,9 @@ import pytest
 import sqlalchemy as sa
 from testcontainers.postgres import PostgresContainer
 
-from candleviewer.audit.query import AuditQueryService
+from candleviewer.audit.export import EXPORT_DIR, ExportPlan, write_export
+from candleviewer.audit.query import AuditQueryService, _canonical_hash
+from candleviewer.settings import Environment
 from candleviewer.storage.errors import AuditEntryTooLarge
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -217,3 +221,26 @@ async def test_an_export_span_count_stops_at_its_cap(
     _, ids = await _append(repo, [10, 10, 10, 10])
     span = {"first_id": ids[0], "last_id": ids[-1]}  # four entries, more ids since 0045
     assert [await repo.count_export_span(**span, cap=cap) for cap in (3, 9)] == [3, 4]
+
+
+async def test_an_export_written_from_postgres_recomputes_every_hash_and_link(
+    relational: SqlAlchemyRelationalRepository, tmp_path: Path
+) -> None:
+    """#889 S8: the writer over the real trigger's renderings, an entry over the cap included."""
+    repo = SqlAlchemyAuditRepository(relational, verify_max_entry_bytes=2000)
+    _, ids = await _append(repo, [10, 5000, 10])
+    head = await repo.read_head()
+    assert head is not None
+    anchor = await repo.fetch_anchor_hash(ids[0]) or "0" * 64
+    key = {"key_id": "cv-audit-export-v1:" + "0" * 16, "public_key": "A" * 43 + "="}
+    plan: dict[str, Any] = {"from_ts": _T0, "to_ts": _T0 + timedelta(hours=1), **key}
+    plan |= {"first_id": ids[0], "last_id": head[0], "anchor_hash": anchor, "head_id": head[0]}
+    plan |= {"head_hash": head[1], "environment": Environment.TESTNET, "compressed": True}
+    done = await write_export(ExportPlan(**plan), repo, data_dir=tmp_path, job_id=uuid.uuid4())
+    plain = gzip.decompress((tmp_path / EXPORT_DIR / done.name).read_bytes())
+    entries = [json.loads(line) for line in plain.split(b"\n")[1:-1]]
+    for entry in entries:
+        assert entry["prev_hash"] == anchor, entry["id"]
+        assert _canonical_hash(anchor, entry) == entry["entry_hash"], entry["id"]
+        anchor = entry["entry_hash"]
+    assert done.row_count == len(entries) == 3
