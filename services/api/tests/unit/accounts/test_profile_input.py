@@ -101,6 +101,15 @@ def test_a_stop_in_r_multiple_is_refused_as_stop_defines_r() -> None:
     assert _schema({**raw, "require_native_stop": False}) == [_STOP_IN_R, _STOP_OFF]
 
 
+def test_the_stop_in_r_rule_reads_only_the_unit_and_replaces_only_its_entry() -> None:
+    (value,) = _model_errors(_with(stop_loss={"unit": "ticks", "value": "1e3"}))
+    assert (value.field, value.rule) == ("stop_loss.value", "string_pattern_mismatch")
+    in_r = _with(stop_loss={"unit": "r_multiple", "value": "1e3"})
+    assert _schema(in_r) == [value, _STOP_IN_R]  # the model's entry for the value stays
+    ticks = _with(stop_loss={"unit": "ticks", "value": "r_multiple"})
+    assert _schema(ticks) == [value]  # a value that says r_multiple is not the unit
+
+
 @pytest.mark.parametrize(
     ("member", "message"),
     [
@@ -156,6 +165,53 @@ def test_the_create_example_maps_to_its_domain_profile() -> None:
          "max_leverage_cap": "10", "allowed_symbols": ["BTCUSDT", "ETHUSDT"]}
         """)
     assert _map(body) == _profile(**expected)
+
+
+#: Every member but `sizing` at a value that is not its default, and the fields they land in.
+_NON_DEFAULT_BODY: dict[str, Any] = json.loads("""
+    {"is_default": true, "enabled": false, "trading_enabled": true, "margin_mode": "isolated",
+     "position_mode": "hedge", "all_symbols": true, "blocked_symbols": ["DOGEUSDT"],
+     "default_time_in_force": "PostOnly", "reduce_only_default": true, "slippage_tolerance_bps": 0,
+     "stop_loss": {"unit": "atr", "value": "15", "atr_period": 21, "atr_multiple": "3.5",
+                   "fallback_pct": "4.5"},
+     "take_profit": {"unit": "ticks", "value": "30"},
+     "take_profit_ladder": [{"qty_pct": "30", "r": "1.5"}, {"qty_pct": "20.5", "r": "3"}],
+     "risk_caps": {"max_position_notional_usd": "5000", "max_position_pct_equity": "12.5",
+                   "max_daily_loss_usd": "250", "max_daily_loss_pct": "2.5",
+                   "max_open_positions": 4, "max_concurrent_orders": 40,
+                   "max_leverage_cap": "9.5", "max_orders_per_minute": 45}}
+    """)
+_NON_DEFAULT_FIELDS: dict[str, Any] = json.loads("""
+    {"is_default": true, "enabled": false, "trading_enabled": true, "margin_mode": "isolated",
+     "position_mode": "hedge", "all_symbols": true, "denied_symbols": ["DOGEUSDT"],
+     "time_in_force_default": "PostOnly", "reduce_only_default": true, "slippage_tolerance_bps": 0,
+     "sl_offset_value": "15", "sl_offset_unit": "atr", "sl_atr_period": 21,
+     "sl_atr_multiple": "3.5", "fallback_sl_offset_pct": "0.045",
+     "tp_offset_value": "30", "tp_offset_unit": "ticks",
+     "tp_ladder": [{"qty_pct": "0.3", "r": "1.5"}, {"qty_pct": "0.205", "r": "3"}],
+     "max_position_notional": "5000", "max_position_pct_equity": "0.125",
+     "max_daily_loss": "250", "max_daily_loss_pct": "0.025", "max_open_positions": 4,
+     "max_concurrent_orders": 40, "max_leverage_cap": "9.5", "max_orders_per_minute": 45}
+    """)
+
+
+@pytest.mark.parametrize(
+    ("mode", "member", "field"),
+    [
+        ("fixed_qty", "qty", "fixed_qty"),
+        ("fixed_notional", "notional_usd", "fixed_notional"),
+        ("risk_based", "risk_per_trade_usd", "risk_fixed_amount"),
+    ],
+)
+def test_every_member_maps_to_its_own_domain_field(mode: str, member: str, field: str) -> None:
+    fields = {"sizing_mode": mode, "fixed_qty": None} | {field: "42.5"} | _NON_DEFAULT_FIELDS
+    sizing = {"mode": mode, member: "42.5"}
+    assert _map(_with(sizing=sizing, **_NON_DEFAULT_BODY)) == _profile(**fields)
+
+
+def test_the_version_and_updated_at_of_the_store_pass_through() -> None:
+    mapped = map_profile_input(_BASE, profile_id=_PID, account_id=_AID, version=7, updated_at=99)
+    assert (mapped.version, mapped.updated_at) == (7, 99)
 
 
 def test_a_member_left_out_takes_its_contract_default() -> None:
