@@ -38,11 +38,12 @@ jobs:
       source: /zap/wrk/security/zap/role_session.js # the checkout, mounted at /zap/wrk
   # Before any request: a job applies from where it runs. No rule thresholds are set here. ZAP
   # 2.17.0 logs the per-rule thresholds this job sets, but they do not reach the rules: in run
-  # 39600018445 the admin probe below drew no 10021, which at Low includes error responses (#3991,
-  # settling #3996's R2-S1). At their defaults the header rules read 2xx responses only, which the
-  # scanning roles never get from the admin surface. So the admin routes' headers rest on the code:
-  # `nosniff` on every response (`NoSniff`, #3990) and no HTML to frame or script. 10049 (storable
-  # and cacheable content) is not in the pinned 2.17.0 image either.
+  # 39600018445 the admin probe below drew no 10021, which at Low includes error responses, though
+  # its log read "passiveScan-config set rule 10021 threshold to LOW" first (#3991, for #3996's
+  # R2-S1). At its default 10021 reads no error response, and the scanning roles got no 2xx from the
+  # admin surface in any run. So the admin routes' headers rest on the code: `nosniff` on every
+  # response (`NoSniff`, #3990) and no HTML to frame or script. 10049 (storable and cacheable
+  # content) is not in the pinned 2.17.0 image either.
   - type: passiveScan-config
     parameters: { maxAlertsPerRule: 10, scanOnlyInScope: true }
   # A refused admin response: the session reaches the admin surface and RBAC refuses it with 403,

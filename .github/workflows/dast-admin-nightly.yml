@@ -18,7 +18,8 @@ name: dast-admin-nightly
 # (check_artefact_secrets.py).
 # Every credential is made here, per run, masked and never echoed: no repository secret is read,
 # and the target is loopback, never an input (admin_requests.py and mint_sessions.py refuse any
-# other). A red run comments on, or opens, the signal's issue (_nightly-issue.yml, #1849).
+# other). A red run on main comments on, or opens, the signal's issue (_nightly-issue.yml, #1849);
+# a dispatch on a branch files nothing.
 on:
   schedule:
     - cron: "27 3 * * *"
@@ -190,8 +191,9 @@ jobs:
           set -uo pipefail
           rc=0
           for role in manager viewer; do # both roles are checked, then the step fails
-            # Both GET /me requestors of the scan plan ran and answered 200 (no "lost authentication").
-            python3 security/zap/check_liveness.py "$WORK/$role-scan.log" "zap-reports/admin-surface-$role.json" || rc=1
+            # The plan's three requestors ran: the refused-page probe and both GET /me, each with
+            # its planned status (no "lost authentication").
+            python3 security/zap/check_liveness.py --requestors 3 "$WORK/$role-scan.log" "zap-reports/admin-surface-$role.json" || rc=1
             python3 security/zap/baseline_gate.py "zap-reports/admin-surface-$role.json" .zap/admin-surface-baseline.json || rc=1
           done
           exit "$rc"
