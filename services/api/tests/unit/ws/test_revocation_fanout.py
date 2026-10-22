@@ -175,7 +175,10 @@ class _World:
     def connect(
         self, uid: uuid.UUID, topics: list[Any], send: Send | None = None
     ) -> ConnectionAuthz:
-        authz = ConnectionAuthz(self.principals[uid], self.registry.services)
+        # Each socket its own upgrade id, so a row naming a neighbour's fails (#4103 L1).
+        authz = ConnectionAuthz(
+            self.principals[uid], self.registry.services, request_id=uuid.uuid4()
+        )
         for topic in topics:
             assert authz.admit(topic)[1] is not None
         index, frames = len(self.frames), list[dict[str, Any]]()

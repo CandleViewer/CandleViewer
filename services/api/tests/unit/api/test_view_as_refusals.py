@@ -212,7 +212,7 @@ async def test_recorder_writes_each_objects_exact_record_and_no_masked_state() -
     await rec.refuse_operation(
         _CTX, "view_as_read_only", method="post", template="/x/{id}", ip=ip, request_id=rid
     )
-    await rec.refuse_frame(_CTX, "x_action", ip=ip)
+    await rec.refuse_frame(_CTX, "x_action", ip=ip, request_id=rid)
     await rec.refuse_start(
         _CALLER, "view_as_active", target_user_id=_OTHER, held=_HELD, ip=ip, request_id=rid
     )
@@ -229,7 +229,7 @@ async def test_recorder_writes_each_objects_exact_record_and_no_masked_state() -
     held["expires_at"] = "2026-10-20T12:30:00+00:00"
     assert [(action, kw) for action, kw, _ in w.records] == [
         (VIEW_AS_REFUSED, {**base, **operation}),
-        (VIEW_AS_REFUSED, {**base, **frame, "request_id": None}),
+        (VIEW_AS_REFUSED, {**base, **frame}),
         (VIEW_AS_REFUSED, {**base, **user, "reason": "view_as_active", "before_state": held}),
         (VIEW_AS_REFUSED, {**base, **user, "reason": "not_found"}),
     ]

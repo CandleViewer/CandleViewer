@@ -144,7 +144,12 @@ class ViewAsRefusalRecorder:
         )
 
     async def refuse_frame(
-        self, viewer: _Viewer, frame_type: str, *, ip: str | None = None
+        self,
+        viewer: _Viewer,
+        frame_type: str,
+        *,
+        ip: str | None = None,
+        request_id: UUID | None = None,
     ) -> bool:
         """A refused WebSocket action frame: the object is its type, never its payload, and a type
         off `FRAME_TYPE` is `INVALID_FRAME_TYPE`, with its length alone. 23 section 9.6 sends the
@@ -162,6 +167,7 @@ class ViewAsRefusalRecorder:
                 obj,
                 after_state=after,
                 ip=ip,
+                request_id=request_id,  # the socket's upgrade id ([AUDIT-REQUEST-ID])
                 answered=True,
             )
         except ViewAsRefusalUnrecorded:  # counted by the budget, as `answered` asks

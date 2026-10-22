@@ -52,7 +52,6 @@ from candleviewer.bars.errors import (
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.series_store import Hold
 from candleviewer.bars.spec import check_param_bounds, from_wire, qty_step_for
-from candleviewer.observability.context import current_request_id
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
 from candleviewer.orderflow.errors import (
     InstanceCapError,
@@ -2192,7 +2191,7 @@ async def _audit_grants(authz: ConnectionAuthz, subs: list[Subscription]) -> Non
             outcome=AuditOutcome.SUCCESS,
             severity=Severity.INFO,
             after_state={"count": len(private), "subscriptions": listed},
-            request_id=current_request_id(),
+            request_id=authz.request_id,  # the socket's upgrade id, wherever this runs
         )
     except asyncio.CancelledError:
         count_audit_failure()

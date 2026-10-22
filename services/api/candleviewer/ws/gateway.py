@@ -301,6 +301,7 @@ class ViewAsFrameRefusals(Protocol):
         viewer_session_id: str,
         frame_type: str,
         ip: str | None,
+        request_id: uuid.UUID | None = None,
     ) -> bool: ...
 
 
@@ -1472,6 +1473,7 @@ def make_ws_router(
                         viewer_session_id=session_id,
                         frame_type=kind,
                         ip=_source_ip(conn.ws.scope),
+                        request_id=authz.request_id,  # the socket's upgrade ([AUDIT-REQUEST-ID])
                     )
             except Exception:
                 count_audit_failure()  # SR-E17-04: the `err` is sent anyway (§9.6)

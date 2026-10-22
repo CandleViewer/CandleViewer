@@ -93,6 +93,8 @@ async def test_a_viewing_sessions_action_frame_is_refused_recorded_and_the_socke
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(gateway, "ACTION_FRAME_TYPES", frozenset({"act"}))
+    upgrade = uuid.uuid4()  # the id the upgrade bound, as `CorrelationMiddleware` does
+    monkeypatch.setattr(gateway, "current_request_uuid", lambda: upgrade)
     refusals = _Refusals()
     reply, _ = await _send_action(refusals, viewing=True)
     assert (reply["t"], reply["p"]["code"], reply["id"]) == ("err", "view_as_read_only", "x1")
@@ -102,6 +104,7 @@ async def test_a_viewing_sessions_action_frame_is_refused_recorded_and_the_socke
             "viewer_session_id": "sess-good-1",
             "frame_type": "act",
             "ip": "127.0.0.1",
+            "request_id": upgrade,
         }
     ]
 
@@ -129,10 +132,12 @@ async def test_an_action_frame_outside_a_view_is_an_unknown_frame_as_before(
 
 class _Recorder:
     def __init__(self) -> None:
-        self.calls: list[tuple[Any, str, str | None]] = []
+        self.calls: list[tuple[Any, str, str | None, Any]] = []
 
-    async def refuse_frame(self, viewer: Any, frame_type: str, *, ip: str | None) -> bool:
-        self.calls.append((viewer, frame_type, ip))
+    async def refuse_frame(
+        self, viewer: Any, frame_type: str, *, ip: str | None, request_id: Any = None
+    ) -> bool:
+        self.calls.append((viewer, frame_type, ip, request_id))
         return True
 
 
@@ -148,9 +153,11 @@ async def test_the_record_names_the_viewer_by_username_and_the_viewers_session()
     recorder, session = _Recorder(), uuid.uuid4()
     labels = cast(Any, _Labels({_VIEWER: "owner"}))  # the identity read, faked
     port = SessionViewAsRefusals(lambda: cast(Any, recorder), labels)
+    rid = uuid.uuid4()
     kwargs = {"viewer_session_id": str(session), "frame_type": "act", "ip": "10.0.0.1"}
-    assert await port.refuse_frame(viewer_user_id=_VIEWER, **kwargs) is True
-    ((viewer, frame_type, ip),) = recorder.calls
+    assert await port.refuse_frame(viewer_user_id=_VIEWER, request_id=rid, **kwargs) is True
+    ((viewer, frame_type, ip, request_id),) = recorder.calls
+    assert request_id == rid  # the socket's upgrade id reaches the record ([AUDIT-REQUEST-ID])
     assert (viewer.viewer_user_id, viewer.viewer_session_id, viewer.viewer_label) == (
         _VIEWER,
         session,
