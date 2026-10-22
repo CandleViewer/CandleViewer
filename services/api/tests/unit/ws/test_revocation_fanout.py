@@ -216,6 +216,7 @@ def _revoked_rows(world: _World) -> list[dict[str, Any]]:
                 **({"rs": f["rs"]} if "rs" in f else {}),
                 **_socket(authz),  # #415 (E17-R-16): and the socket's connection
             },
+            "request_id": authz.request_id,  # [AUDIT-REQUEST-ID]: its socket's upgrade id
         }
         for authz, frames in zip(world.sockets, world.revoked(), strict=True)
         for f in frames
@@ -539,6 +540,7 @@ async def test_a_stale_fan_out_is_refused_on_every_socket_and_never_undoes_the_n
             "severity": Severity.WARNING,
             "reason": "stale",
             "after_state": {"event": "grant_change", "applied_version": 2, "refused_version": 1},
+            "request_id": s.request_id,  # [AUDIT-REQUEST-ID]
         }
         for s in sockets
     ]

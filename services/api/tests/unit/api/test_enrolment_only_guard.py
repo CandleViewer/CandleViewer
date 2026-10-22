@@ -554,12 +554,14 @@ def test_guard_refusal_is_audited_with_the_actor_session_and_route_template(
     }
 
 
-@pytest.mark.parametrize(("channel", "named"), [("http", True), ("ws", False)])
-async def test_guard_refusal_names_the_http_request_not_a_ws_one(channel: Any, named: bool) -> None:
+@pytest.mark.parametrize("channel", ["http", "ws"])
+async def test_guard_refusal_names_the_request_or_the_socket(channel: Any) -> None:
+    """#3990: an HTTP refusal names its request; a socket's, its connection, whose upgrade
+    `CorrelationMiddleware` bound for the socket's life ([AUDIT-REQUEST-ID])."""
     audit, bound = _Audit(), uuid.uuid4()
     with bind_context(request_id=str(bound)):  # as `CorrelationMiddleware` binds it (#3990)
         await _refusals(audit).refused(_record(), channel=channel, method="GET", path="/x", ip=None)
-    assert [r["request_id"] for r in audit.records] == [bound if named else None]
+    assert [r["request_id"] for r in audit.records] == [bound]
 
 
 def test_guard_refusal_is_counted_and_logged_with_the_template_never_the_raw_path(

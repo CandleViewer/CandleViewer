@@ -29,6 +29,7 @@ import structlog
 
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.ws.lifecycle import OriginRefusal
 from candleviewer.ws.metrics import count_audit_failure
 from candleviewer.ws.permissions import AuditSink
@@ -105,6 +106,7 @@ class OriginRefusalAudit:
                 outcome=AuditOutcome.FAILURE,
                 severity=Severity.WARNING,
                 reason=check.value,
+                request_id=current_request_uuid(),  # the refused upgrade's ([AUDIT-REQUEST-ID])
             )
         )
         try:

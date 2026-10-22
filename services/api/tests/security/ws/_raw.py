@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NamedTuple
+from typing import Any, Final, NamedTuple
 from unittest.mock import patch
 
 import pytest
@@ -40,6 +40,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MintedSession
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService
+from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import make_ws_router
@@ -132,6 +133,7 @@ class RawWorld(World):
         ):
             super().__init__(backpressure=backpressure)  # `World`: no audit sink on its router
         self.registry.services.audit = self.audit  # production's one sink also takes `sub`'s rows
+        self.app.add_middleware(CorrelationMiddleware)  # as `create_app`: a socket's own id
 
     def utc_now(self) -> datetime:
         return datetime.fromtimestamp(self.clock.wall_ms() / 1000, tz=UTC)
@@ -198,6 +200,7 @@ class RawWorld(World):
         return {
             "session_id": closed["session_id"],
             "after_state": {"connection_id": closed["object_id"]},
+            "request_id": CONNECTION_REQUEST_ID,  # the upgrade's ([AUDIT-REQUEST-ID])
         }
 
     def leaks(self, secret: str, c: RawClient) -> list[str]:
@@ -217,11 +220,16 @@ class RawWorld(World):
         return [name for name, text in texts.items() if any(w in text for w in windows)]
 
 
+#: The correlation id each raw socket's upgrade sends, which its audit rows carry (#3990).
+CONNECTION_REQUEST_ID: Final = uuid.UUID("5d3e2f8a-4c1b-4e6f-9a2d-7b8c9d0e1f2a")
+
+
 @contextmanager
 def raw_connect(world: RawWorld, query: str = "") -> Iterator[RawClient]:
     """A socket on `/ws?<query>` in the running test's wire, sending what it likes unvalidated."""
     url = f"/ws?{query}" if query else "/ws"
-    with world.client.websocket_connect(url, subprotocols=current_offer()) as ws:
+    headers = {"x-correlation-id": str(CONNECTION_REQUEST_ID)}  # what its rows carry
+    with world.client.websocket_connect(url, subprotocols=current_offer(), headers=headers) as ws:
         assert ws.accepted_subprotocol == WIRE_SUBPROTOCOL[current_wire()]
         yield RawClient(ws, conform=False)
 

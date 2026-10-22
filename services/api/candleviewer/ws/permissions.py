@@ -477,8 +477,13 @@ class ConnectionAuthz:
         version: int = 0,
         clock: Callable[[], float] | None = None,
         viewer_user_id: uuid.UUID | None = None,
+        request_id: uuid.UUID | None = None,
     ) -> None:
         self.principal = principal
+        #: The connection's correlation id, bound at its upgrade (`CorrelationMiddleware`): each
+        #: audit row of the socket carries it as `request_id`, whatever request or job writes the
+        #: row ([AUDIT-REQUEST-ID], #3990).
+        self.request_id = request_id
         #: §9.6 (#3085): the viewer while the socket views as another user, whose principal it
         #: holds; `None` otherwise (`actor_user_id`).
         self.viewer_user_id = viewer_user_id
@@ -1447,6 +1452,7 @@ class ConnectionRegistry:
             "severity": Severity.WARNING,
             "reason": "stale",
             "after_state": {"event": event, **versions},
+            "request_id": authz.request_id,
         }
         return [], [_AuditRow(audit, "ws.permission_snapshot.refused", fields)]
 
@@ -2037,6 +2043,7 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
             severity=Severity.WARNING,
             reason=reason,
             after_state=after,
+            request_id=authz.request_id,
         )
     except Exception:
         count_audit_failure()  # SR-E17-04: `timeout` (it may still land) or `error`
@@ -2079,6 +2086,7 @@ async def audit_rebuild_refusal(authz: ConnectionAuthz) -> None:
             severity=Severity.WARNING,
             reason=reason,
             after_state={"connection_id": authz.connection_id},
+            request_id=authz.request_id,
         )
     except Exception:
         count_audit_failure()  # SR-E17-04: `timeout` (it may still land) or `error`
@@ -2137,6 +2145,7 @@ def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> li
                         **({"rs": f["rs"]} if "rs" in f else {}),
                         "connection_id": authz.connection_id,
                     },
+                    "request_id": authz.request_id,
                 },
             )
         )

@@ -122,7 +122,7 @@ from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
 from candleviewer.net import RESOLVED_SOURCE_KEY
-from candleviewer.observability.context import current_request_id, spawn
+from candleviewer.observability.context import current_request_id, current_request_uuid, spawn
 from candleviewer.settings import CLOSE_AUDIT_TIMEOUT_S, CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.codec import (
@@ -1527,6 +1527,7 @@ def make_ws_router(
                     version=snap.version,
                     clock=conn.clock,  # SR-193: the rebuild budget's window
                     viewer_user_id=None if bound is None else user_id,  # §9.6: who acts
+                    request_id=current_request_uuid(),  # the upgrade's: the socket's own
                 )
                 registry.register(conn.authz, conn.send, conn.evict, conn.closer)
                 conn.registered = conn.authz

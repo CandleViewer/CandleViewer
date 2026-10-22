@@ -58,7 +58,8 @@ WS_ORIGIN_REFUSED = "auth.ws_origin_refused"
 
 
 def _record(check: str, actor_ip: str | None) -> dict[str, Any]:
-    """The whole record a refusal writes: these fields and nothing else (no header value)."""
+    """The whole record a refusal writes: these fields and nothing else (no header value). Its
+    `request_id` is the upgrade's, which `CorrelationMiddleware` binds: none in these apps."""
     return {
         "action": WS_ORIGIN_REFUSED,
         "actor_label": "(unknown)",
@@ -67,6 +68,7 @@ def _record(check: str, actor_ip: str | None) -> dict[str, Any]:
         "outcome": AuditOutcome.FAILURE,
         "severity": Severity.WARNING,
         "reason": check,
+        "request_id": None,
     }
 
 
@@ -531,19 +533,20 @@ def _created(settings: Settings, spy: _Spy) -> tuple[TestClient, _TrackedAudit]:
 
 def test_create_app_audits_a_refusal_with_the_address_mesh_only_admitted() -> None:
     """Behind the configured proxy, `actor_ip` is the right-most forwarded hop (#2275); the
-    action passes the registry check the real writer applies."""
+    action passes the registry check the real writer applies, and names its upgrade (#3990)."""
     settings = Settings(
         allowed_origins=ORIGIN,
         mesh_cidrs_csv="100.64.0.0/10",
         mesh_trusted_proxy_header="x-forwarded-for",
         mesh_trusted_proxy_address="127.0.0.1",
     )
-    spy = _Spy()
+    spy, upgrade = _Spy(), uuid.uuid4()
     client, audit = _created(settings, spy)
     headers = {"origin": EVIL, "x-forwarded-for": "203.0.113.9, 100.64.1.2"}
     with client:
-        assert _refuse(client, headers) == 4403
-    assert audit.records == [_record("origin_not_allowed", "100.64.1.2")]
+        assert _refuse(client, headers | {"x-correlation-id": str(upgrade)}) == 4403
+    # The app's correlation middleware binds the upgrade's id, which the record names.
+    assert audit.records == [_record("origin_not_allowed", "100.64.1.2") | {"request_id": upgrade}]
     assert spy.tokens == []
 
 
