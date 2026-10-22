@@ -55,8 +55,8 @@ fragmentation". Made precise here and committed before any dispatch; the thresho
 > - INCONCLUSIVE: top-N is flat and no allocator leg moves the slope, or legs are still missing. Name the missing legs. Add a `uordblks` growth ratio as an annotation, not as an outcome.
 
 Refinements made with this PR from the methodology review. They narrow ruling (b)'s call; the
-orchestrator accepted B1-M4 (2026-10-22, 06:46Z) and N5 (12:26Z), and the store's netting, M-1, is its
-ruling of 13:59Z:
+orchestrator accepted B1-M4 (2026-10-22, 06:46Z) and N5 (12:26Z), and the store's netting, M-1 (delta 5's
+Major 1, not M1), is its ruling of 13:59Z:
 
 - **B1**, to "grows monotonically ⇒ leak": a LEAK run counts only if the snapshots' filtered traced total
   also grew by `LEAK_MIN_GROWTH_MIB` or more over the same hours. The bars store's turnover is no leak.
@@ -79,10 +79,13 @@ ruling of 13:59Z:
   LEAK test like any line; those lines are not tested alone. A replaced bar moves it by -208 to 0 B, so a
   total rising for any other reason no longer makes the builder's and the parser's lines LEAK lines: M4
   can fire, and a leak elsewhere reads ELSEWHERE. Bars the store keeps past its cap grow it: LEAK IN
-  BARS. So does a leak at the parser's lines, which the netting cannot tell from live bars.
+  BARS. So does a leak of anything the parser allocates, wherever it is held (trade prints, their stamps,
+  prices and sizes): the netting cannot tell it from live bars. In raw snapshots, a live bar adds 832 B
+  at the builder's lines for 272-480 B at the parser's, so parser lines growing faster than about 0.58
+  of the builder's point to trade prints, not bars.
   Reading raw snapshots by hand, a LEAK whose LEAK lines are only the turnover's (`bars/time_builder.py`,
   `exchange/*/trades.py`, with `bars/reader.py` among `shrank_h2`) reads as "Python heap grows, not
-  attributed to a line".
+  attributed to a line" once the total clears M4's 2.7 MiB, as `judge` reads it with those lines netted.
 - **N5**, to "grows monotonically": strictly increasing, each hourly snapshot larger than the one before.
   Monotone growth is the leak signature: a leaked object is never freed, so its line only grows, hour
   after hour. A cache or table that reaches its working size plateaus. A line that grows in bursts with
@@ -118,7 +121,7 @@ How `judge` applies it (the constants and `rule` in `memdiag.py`):
   a symbol (a run over hours 2-12 needs about 0.13), under R4's 0.18. M4's floor is net of the same
   fall: it flags growth no line explains only from 2.7 + 2.96 = 5.66 MiB over 10 h, about 0.19 MiB/h a
   symbol, just above R4's 0.18. A bursty or diffuse leak between about 0.13 and 0.19 escapes both tests.
-  At R4's measured 0.2475 it raises the total by 4.5 MiB or more over hours 2-12, and with the
+  At R4's measured 0.2475 it raises the total by about 4.5 MiB over hours 2-12, and with the
   turnover's lines netted, M4 alone catches it. Each snapshot records its filtered total and the lines
   that shrank most since hour 2.
 - **Validity.** A leg counts only if: its length reached; R3 passed; its own allocator setting seen and

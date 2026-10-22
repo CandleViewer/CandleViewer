@@ -367,13 +367,14 @@ UNFOLDED = [asdict(R3), asdict(R3) | {"name": "bars_closes_folded", "passed": Fa
 TB = "services/api/candleviewer/bars/time_builder.py:159"  # the store's turnover (M-1), as round 1
 TR = "services/api/candleviewer/exchange/bybit/trades.py:64"  # measured it: a live bar's lines up
 RD = "services/api/candleviewer/bars/reader.py:573"  # 0.8 and 0.3 MiB/h, the stored bar's down 1.3
+SN = "services/api/candleviewer/domain/sql_names.py:59"  # of it: 0.9 at the reader's, 0.4 here
 
 
 def _store(rise: float, leak: Mapping[str, float] | None = None) -> Doc:
-    """A tracemalloc leg over the store's turnover, hours 2-12: `TB` and `TR` up, `RD` down and in
-    `shrank_h2` only (as in a soak's top-100), -0.2 MiB/h net; `leak` adds MiB/h to a line, new or
-    not; the filtered total rises `rise` MiB/h a symbol."""
-    rates = {TB: 0.8, TR: 0.3, RD: -1.3}
+    """A tracemalloc leg over the store's turnover, hours 2-12: `TB` and `TR` up, `RD` and `SN`
+    down and in `shrank_h2` only (as in a soak's top-100), -0.2 MiB/h net; `leak` adds MiB/h to a
+    line, new or not; the filtered total rises `rise` MiB/h a symbol."""
+    rates = {TB: 0.8, TR: 0.3, RD: -0.9, SN: -0.4}
     for w, r in (leak or {}).items():
         rates[w] = rates.get(w, 0.0) + r
     sizes = {w: [20 + r * h for h in range(11)] for w, r in rates.items()}
@@ -448,7 +449,7 @@ def test_why_not_names_each_reason_a_leg_is_no_reading(
         ([D, _heap(0, TURNOVER), M, MM], "INCONCLUSIVE", "annotation: candleviewer/bars/reader."),
         ([D, _store(0.3), M, MM], "INCONCLUSIVE", "Python heap grows, not attributed to a"),  # M-1
         ([D, _store(0.3, {ELSE: 0.3}), M, MM], "LEAK ELSEWHERE", f"LEAK line {ELSE}: +3.00 MiB"),
-        ([D, _store(0.3, {BARS: 0.3}), M, MM], "LEAK IN BARS", "100% of"),  # not the builder's
+        ([D, _store(0.3, {BARS: 0.3}), M, MM], "LEAK IN BARS", f"LEAK line {BARS}: +3.00 MiB"),
         ([D, _store(0.3, {TB: 0.5}), M, MM], "LEAK IN BARS", "100% of"),  # the store's line grows
         ([D, _store(0.05), M, MM_DOWN], FRAG, "filtered traced total +1.50 MiB"),  # not MIXED
         ([D_MIX, TM, M, MM_DOWN], FRAG, ""),  # the most of W24's steps, not of the whole run's
