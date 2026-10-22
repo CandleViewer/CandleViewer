@@ -481,7 +481,7 @@ class ConnectionAuthz:
         self.principal = principal
         #: The connection's correlation id, bound at its upgrade (`CorrelationMiddleware`): each
         #: audit row of the socket carries it as `request_id`, whatever request or job writes the
-        #: row ([AUDIT-REQUEST-ID], #3990).
+        #: row (#3990).
         self.request_id = request_id
         #: §9.6 (#3085): the viewer while the socket views as another user, whose principal it
         #: holds; `None` otherwise (`actor_user_id`).

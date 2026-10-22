@@ -1,6 +1,7 @@
-"""#3990: every audit write an HTTP route makes names the request.
+"""#3990: every audit write an HTTP route or a socket makes names the request.
 
-An `emit`, `emit_keyed` or `enforce` call under `candleviewer/api` or `candleviewer/admin` passes a
+An `emit`, `emit_keyed` or `enforce` call under `candleviewer/api`, `candleviewer/admin` or
+`candleviewer/ws` (a socket's rows name its upgrade's request, #3085) passes a
 `request_id=` that is not `None` and reads no header (the defect), or a `**mapping` in a file that
 says `request_id`. The values are checked at run time (`tests/security/admin/` and
 `tests/security/auth/test_audit_request_id_on_auth_paths.py`). The scan reads calls by name only:
@@ -72,20 +73,21 @@ def _scan(source: str) -> list[tuple[int, bool]]:
 
 @functools.cache
 def _calls() -> tuple[tuple[str, int, bool], ...]:
-    """`(file, line, names the request)` of every audit call under the two areas."""
+    """`(file, line, names the request)` of every audit call under the three areas."""
     return tuple(
         (path.relative_to(_ROOT).as_posix(), line, carries)
-        for area in ("api", "admin")
+        for area in ("api", "admin", "ws")
         for path in sorted((_ROOT / area).rglob("*.py"))
         if "_generated" not in path.parts
         for line, carries in _scan(path.read_text(encoding="utf-8"))
     )
 
 
-def test_the_scan_sees_the_audit_calls_of_both_areas() -> None:
+def test_the_scan_sees_the_audit_calls_of_each_area() -> None:
     files = {file for file, _, _ in _calls()}
     assert len(_calls()) > 80
     assert {"api/users.py", "api/invites.py", "api/auth.py", "admin/http.py"} <= files
+    assert {"ws/gateway.py", "ws/permissions.py", "ws/origin_audit.py"} <= files
 
 
 def test_the_calls_that_do_not_name_the_request_are_exactly_those_exempt_files_pin() -> None:

@@ -61,4 +61,4 @@ def test_ac_csrf_11_cross_site_socket_flood_is_refused_counted_and_audited_withi
         "reason": "cross_site",
     }
     named = [row | {"request_id": i} for i in ids[:REFUSAL_AUDITS_PER_WINDOW]]
-    assert rows == named  # capped; each names its upgrade ([AUDIT-REQUEST-ID]), never a header
+    assert rows == named  # capped; each names its upgrade (#3990), never a header

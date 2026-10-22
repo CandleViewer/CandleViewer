@@ -200,7 +200,7 @@ class RawWorld(World):
         return {
             "session_id": closed["session_id"],
             "after_state": {"connection_id": closed["object_id"]},
-            "request_id": CONNECTION_REQUEST_ID,  # the upgrade's ([AUDIT-REQUEST-ID])
+            "request_id": CONNECTION_REQUEST_ID,  # the upgrade's (#3990)
         }
 
     def leaks(self, secret: str, c: RawClient) -> list[str]:

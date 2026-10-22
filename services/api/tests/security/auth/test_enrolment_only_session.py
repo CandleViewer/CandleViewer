@@ -10,6 +10,7 @@ wall clock. Each refusal must leave a trail: the audit record and the scraped me
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import timedelta
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -341,8 +342,12 @@ def _hello_auth(ws: Any, token: str) -> dict[str, Any]:
     return _recv(ws)
 
 
+#: The id each socket here upgrades with (`CorrelationMiddleware`'s `X-Correlation-ID`).
+_UPGRADE = uuid.UUID("5d0c6b1e-2f43-4a8e-9b1c-7e2f4a6d8c90")
+
+
 def _socket(stack: Stack) -> Any:
-    headers = {"origin": ORIGIN}
+    headers = {"origin": ORIGIN, "x-correlation-id": str(_UPGRADE)}
     return stack.client.websocket_connect("/ws", subprotocols=["cv.v1.json"], headers=headers)
 
 
@@ -385,6 +390,7 @@ def test_ws_refusal_is_audited_and_counted_on_the_scraped_registry(stack: Stack)
         "127.0.0.1",
     )
     assert record["after_state"] == {"channel": "ws", "method": "GET", "path": "/ws"}
+    assert record["request_id"] == _UPGRADE  # #3990: the upgrade's, end to end
     assert _refusals(stack, "ws", "enrolment_only") == before + 1
     assert stack.scraped("cv_ws_revoked_total") == revoked  # not a revocation, unlike #2911's
     (line,) = [e for e in logs if e["event"] == "ws auth refused"]

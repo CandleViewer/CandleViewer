@@ -154,10 +154,14 @@ async def test_the_record_names_the_viewer_by_username_and_the_viewers_session()
     labels = cast(Any, _Labels({_VIEWER: "owner"}))  # the identity read, faked
     port = SessionViewAsRefusals(lambda: cast(Any, recorder), labels)
     rid = uuid.uuid4()
-    kwargs = {"viewer_session_id": str(session), "frame_type": "act", "ip": "10.0.0.1"}
+    kwargs: dict[str, Any] = {
+        "viewer_session_id": str(session),
+        "frame_type": "act",
+        "ip": "10.0.0.1",
+    }
     assert await port.refuse_frame(viewer_user_id=_VIEWER, request_id=rid, **kwargs) is True
     ((viewer, frame_type, ip, request_id),) = recorder.calls
-    assert request_id == rid  # the socket's upgrade id reaches the record ([AUDIT-REQUEST-ID])
+    assert request_id == rid  # the socket's upgrade id reaches the record (#3990)
     assert (viewer.viewer_user_id, viewer.viewer_session_id, viewer.viewer_label) == (
         _VIEWER,
         session,

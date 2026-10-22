@@ -452,7 +452,7 @@ def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing
     row |= {"object_kind": "ws_topic", "object_id": "orders", "outcome": "denied"}
     row |= {"severity": "warning", "reason": "forbidden", "session_id": named["session_id"]}
     row |= {"after_state": json.dumps(after, sort_keys=True)}
-    row |= {"request_id": str(named["request_id"])}  # the socket's upgrade ([AUDIT-REQUEST-ID])
+    row |= {"request_id": str(named["request_id"])}  # the socket's upgrade (#3990)
     order = {"actor_label": "oms", "object_kind": "order", "outcome": "success", "severity": "info"}
     orders = [order | {"action": "orders.submit", "object_id": f"o{s}"} for s in ordered]
     assert [r for r in rows if r["action"] == DENIED] == [row] * BUDGET  # one a frame, 20 a minute

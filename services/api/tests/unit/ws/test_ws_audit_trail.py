@@ -154,7 +154,7 @@ async def test_a_sub_frame_writes_one_granted_row_for_its_new_private_subscripti
         "outcome": AuditOutcome.SUCCESS,
         "severity": Severity.INFO,
         "after_state": {"count": 2, "subscriptions": listed},
-        "request_id": None,  # the upgrade's E04 id on a socket; none outside a request
+        "request_id": None,  # the socket's upgrade id (its authz's); this authz has none
     }
     assert sink.sent_before == {DENIED: [], GRANTED: ["sub_ok"]}  # after the reply is queued
 
@@ -166,6 +166,16 @@ async def test_a_viewing_sockets_granted_row_names_the_viewer() -> None:
     await _sub(authz, sent, _acc("orders", A))
     (row,) = sink.rows
     assert row["actor_user_id"] == viewer
+
+
+async def test_a_granted_row_names_the_sockets_request() -> None:
+    """#3990: the upgrade's id, which the socket's authz carries; a frame runs outside the
+    request the middleware bound."""
+    authz, sent, sink = _connection()
+    authz.request_id = upgrade = uuid.uuid4()
+    await _sub(authz, sent, _acc("orders", A))
+    (row,) = sink.rows
+    assert row["request_id"] == upgrade
 
 
 @pytest.mark.parametrize(

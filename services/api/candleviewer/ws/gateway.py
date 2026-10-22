@@ -1473,7 +1473,7 @@ def make_ws_router(
                         viewer_session_id=session_id,
                         frame_type=kind,
                         ip=_source_ip(conn.ws.scope),
-                        request_id=authz.request_id,  # the socket's upgrade ([AUDIT-REQUEST-ID])
+                        request_id=authz.request_id,  # the socket's upgrade (#3990)
                     )
             except Exception:
                 count_audit_failure()  # SR-E17-04: the `err` is sent anyway (§9.6)

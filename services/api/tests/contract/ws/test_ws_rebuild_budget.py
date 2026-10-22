@@ -188,7 +188,7 @@ def test_ac31_a_user_s_first_refusal_in_each_window_is_audited_once(offer: list[
         "reason": "user",
         "session_id": w.session,  # the socket's session and connection, as the denial row's
         "after_state": {"connection_id": authz.connection_id},
-        "request_id": authz.request_id,  # its socket's ([AUDIT-REQUEST-ID])
+        "request_id": authz.request_id,  # its socket's (#3990)
     }
 
 
