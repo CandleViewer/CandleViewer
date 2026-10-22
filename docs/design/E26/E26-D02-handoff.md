@@ -12,71 +12,75 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 ## Handoff checklist — CMP-170 ReplayScrubber (E26-D02 in context, #509)
 
 - [ ] **Final Penpot link** — PENDING: page `E26-D02`, boards 01, 07, 16 and 17; PNGs `cmp-170-coverage-scrubber-in-context-dark.png` and `-light.png`
-- [x] **Variants × States matrix** — table 1: the catalogued stories plus the states SCR-097 adds (Seeking, GapAhead, EndOfRange, SessionExpired, the E26-D05 ticket's own list, and Error, CoverageClasses, ThumbStates, ReadOnlyRole)
-- [x] **Keyboard table** — table 2; checked against `05` §3.2 and §3.3 and the keymap's Replay rows (`apps/web/src/keymap/keymap.json:730-839`): the thumb's keys mean what the page's keys mean, nothing overrides a global binding, no trading action sits on a bare key, `Esc` is only ever a cancel, `Ctrl+K` untouched
+- [x] **Variants × States matrix** — table 1: the catalogued stories plus the states SCR-097 adds (Seeking, GapAhead, EndOfRange, SessionExpired, the E26-D05 ticket's own list, and Error, CoverageClasses, ThumbStates; ReadOnlyRole only if Viewers are granted sessions, spec D-26)
+- [x] **Keyboard table** — table 2; checked against `05` §3.2 and §3.3 and the keymap's Replay rows (`apps/web/src/keymap/keymap.json:730-839`): the thumb's keys mean what the page's keys mean, nothing overrides a global binding, no trading action sits on a bare key, `Esc` is only ever a cancel, a focused form control keeps `Space` (spec D-21), `Ctrl+K` untouched
 - [x] **Accessible name / role table** — table 3
 - [x] **Live data** — shared table 5
 - [ ] **Motion pair** — N/A — every change here is a state flip, instant in both modes (E11-D06 D15, D20, in-flight); the thumb's position is data, not an animation; E26-D06 writes the motion pairs
 - [x] **Density notes** — shared density table
 - [x] **Essential-exceptions log** — none
-- [ ] **Tokens used** — PENDING E26-D05: `15` CMP-170 lists `color.action.primary` and `font.mono`; in context the track binds `color.surface.sunken`, `color.neutral.default`, `color.text.tertiary`, `color.text.primary`, `color.text.secondary`, `color.surface.raised`, `color.surface.overlay`, `color.focus.ring`, `type.num.xs` / `.sm` and `radius.pill`, never the primary blue (spec D-7); the coverage-state tokens are E26-D05's to define
-- [x] **Data contract confirmed** — `GET /market/data-coverage` (`DataCoverage`, spec §6.1), `ReplaySession` `from`, `to`, `state`, the control actions of spec §5.1, the `replay_seek` snaps (`23` §11) and `machines.replay:{id}.state` (`23` §6.4); the gaps are spec §15.1 (CC-1, CC-3, CC-4, CC-9, CC-15)
+- [ ] **Tokens used** — PENDING E26-D05: `15` CMP-170 lists `color.action.primary` and `font.mono`; in context the track binds `color.surface.sunken`, `color.neutral.default`, `color.text.tertiary`, `color.text.primary`, `color.text.secondary`, `color.surface.raised`, `color.surface.overlay`, `color.focus.ring`, `type.num.xs` / `.sm` and `radius.pill`, never the primary blue (spec D-7); the coverage-state tokens and the groove hatch (E11-D02 CR-6's geometry with a 2 px `color.neutral.default` stroke, spec §11) are E26-D05's to define, the hatch with E11-D05
+- [x] **Data contract confirmed** — `GET /market/data-coverage` (`DataCoverage`, spec §6.1), `ReplaySession` `from`, `to`, `state`, the control actions of spec §5.1, the `replay_seek` snaps (`23` §11) and `machines.replay:{id}.state` (`23` §6.4); the gaps are spec §15.1 (CC-1, CC-3, CC-4, CC-9, CC-15, CC-20), and the step rows depend on CC-16 (no step reaches the clock today)
 - [ ] **Contrast and CVD** — computed (spec §12.2); PENDING the `cvd_sim.py` renders and the pairs in `tools/contrast/pairs.mjs`, with the boards
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — at the end
 - [ ] **Sign-off** — PENDING: the owner's `approved` on #509 or the merge of the spec PR
 
 ### Table 1 — Variants × States
 
-| Variant   | State                                                                           | Penpot   | Story name                         | Notes                                                    |
-| --------- | ------------------------------------------------------------------------------- | -------- | ---------------------------------- | -------------------------------------------------------- |
-| transport | paused; playing                                                                 | B06, B04 | `Paused`, `Playing` (catalogued)   | the step unit and the five glyphs, spec D-6              |
-| transport | seeking: the four rungs, landed, cancelled, a held second target                | B07      | `Seeking` (E26-D05 list)           | spec §6.3, D-16                                          |
-| transport | gap ahead: the stop callout; the skipped notice                                 | B08      | `GapAhead` (E26-D05 list)          | spec D-13; the callout's actions come first in Tab order |
-| transport | end of range; restart refused by the quota                                      | B11      | `EndOfRange` (E26-D05 list)        | spec D-18                                                |
-| transport | session expiring (9:58 left); closed with `Resume`                              | B12      | `SessionExpired` (E26-D05 list)    | spec D-20                                                |
-| transport | error with a mapped cause                                                       | B13      | `Error` (new)                      | spec D-23, §7.1                                          |
-| transport | high speed; speed-limited                                                       | B09      | `HighSpeed` (catalogued)           | spec D-8                                                 |
-| transport | Viewer: every control disabled with its reason                                  | B17      | `ReadOnlyRole` (new)               | spec D-26                                                |
-| track     | recorded, partial, no data (gap, not recorded), coverage unknown, history start | B16      | `CoverageClasses` (new)            | spec D-12, §6.1                                          |
-| track     | bookmarks, merged markers, a bookmark over pruned data                          | B16      | `WithBookmarks` (catalogued)       | needs CC-15                                              |
-| thumb     | rest, hover, focus, drag with its pill, a release into a gap                    | B16      | `ThumbStates` (new)                | spec §6.2                                                |
-| keyboard  | the precedence and the focus order                                              | B19      | `KeyboardControlDemo` (catalogued) | spec §10, §12.1                                          |
+| Variant   | State                                                                                                                       | Penpot   | Story name                         | Notes                                                     |
+| --------- | --------------------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------- | --------------------------------------------------------- |
+| transport | paused; stepping (every control held, `Stepping…`); playing                                                                 | B06, B04 | `Paused`, `Playing` (catalogued)   | the step unit and the five glyphs, spec D-6, D-22         |
+| transport | seeking: the four rungs, landed, cancelled, a held second target                                                            | B07      | `Seeking` (E26-D05 list)           | spec §6.3, D-16                                           |
+| transport | gap ahead: the stop callout; the skipped notice                                                                             | B08      | `GapAhead` (E26-D05 list)          | spec D-13; the callout's actions come first in Tab order  |
+| transport | end of range; restart refused by the quota                                                                                  | B11      | `EndOfRange` (E26-D05 list)        | spec D-18                                                 |
+| transport | session expiring (9:58 left); closed with `Resume`                                                                          | B12      | `SessionExpired` (E26-D05 list)    | spec D-20                                                 |
+| transport | error with a mapped cause                                                                                                   | B13      | `Error` (new)                      | spec D-23, §7.1                                           |
+| transport | high speed; speed-limited                                                                                                   | B09      | `HighSpeed` (catalogued)           | spec D-8                                                  |
+| transport | Viewer: drawn only if the owner grants Viewers sessions (today R-170 and a not-found R-171)                                 | —        | `ReadOnlyRole` (conditional)       | spec D-26, OQ-10                                          |
+| track     | full (solid), some (half height), no data (the gap hatch: gap, not recorded), coverage unknown (bare groove), history start | B16      | `CoverageClasses` (new)            | spec D-12, §6.1; the hatch means no data, as on the chart |
+| track     | bookmarks, merged markers, a bookmark over pruned data                                                                      | B16      | `WithBookmarks` (catalogued)       | needs CC-15                                               |
+| thumb     | rest, hover, focus, drag with its pill, a release into a gap                                                                | B16      | `ThumbStates` (new)                | spec §6.2                                                 |
+| keyboard  | the precedence and the focus order                                                                                          | B19      | `KeyboardControlDemo` (catalogued) | spec §10, §12.1                                           |
 
 ### Table 2 — Keyboard (the thumb and the transport; the page layer is spec §10)
 
-| Key                         | Action                                       | Focus after         | Global conflict?                                                            | Notes                                 |
-| --------------------------- | -------------------------------------------- | ------------------- | --------------------------------------------------------------------------- | ------------------------------------- |
-| `←` / `→` (thumb)           | one bar back (a seek) / forward (a step)     | stays on the thumb  | none: the meaning of the Replay rows `:746`, `:755`                         | repeats coalesce per 250 ms or key-up |
-| `Shift+←` / `Shift+→`       | one tick back / forward                      | stays               | none: `:764`, `:773`                                                        | as above                              |
-| `Ctrl+←` / `Ctrl+→`         | one minute back / forward                    | stays               | none: `:782`, `:791`                                                        | as above                              |
-| `↑` / `↓`                   | as `→` / `←`                                 | stays               | none (APG slider)                                                           | —                                     |
-| `PageUp` / `PageDown`       | ten bars forward / back                      | stays               | the chart's ±10-bar alias fires only with the chart focused (E06-D03 D6)    | —                                     |
-| `Home` / `End`              | the window's start / end (seeks)             | stays               | none                                                                        | —                                     |
-| `Enter` (the `Go to` field) | seek to the typed UTC time                   | the thumb           | none                                                                        | an invalid time names the field       |
-| `Esc`                       | cancel the seek in flight                    | stays               | proposed `replay.cancel_seek` (spec §10); elsewhere `Esc` keeps its meaning | only while seeking                    |
-| `Space` / `Enter` (buttons) | activate the focused transport button        | stays on the button | native activation: the page's `Space` carve-out (spec D-21)                 | —                                     |
-| `Tab` / `Shift+Tab`         | the next / previous control; no roving group | per spec §12.1      | none                                                                        | spec D-6                              |
+| Key                         | Action                                       | Focus after         | Global conflict?                                                            | Notes                                                        |
+| --------------------------- | -------------------------------------------- | ------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `←` / `→` (thumb)           | one bar back (a seek) / forward (a step)     | stays on the thumb  | none: the meaning of the Replay rows `:746`, `:755`                         | repeats coalesce per 250 ms or key-up                        |
+| `Shift+←` / `Shift+→`       | one tick back / forward                      | stays               | none: `:764`, `:773`                                                        | as above                                                     |
+| `Ctrl+←` / `Ctrl+→`         | one minute back / forward                    | stays               | none: `:782`, `:791`                                                        | as above                                                     |
+| `↑` / `↓`                   | as `→` / `←`                                 | stays               | none (APG slider)                                                           | —                                                            |
+| `PageUp` / `PageDown`       | ten bars forward / back                      | stays               | the chart's ±10-bar alias fires only with the chart focused (E06-D03 D6)    | —                                                            |
+| `Home` / `End`              | the window's start / end (seeks)             | stays               | none                                                                        | —                                                            |
+| `Enter` (the `Go to` field) | seek to the typed UTC time                   | the thumb           | none                                                                        | an invalid time names the field                              |
+| `Esc`                       | cancel the seek in flight                    | stays               | proposed `replay.cancel_seek` (spec §10); elsewhere `Esc` keeps its meaning | only while seeking; in the `Go to` field it reverts the edit |
+| `Space` / `Enter` (buttons) | activate the focused transport button        | stays on the button | none: native activation wins (below)                                        | —                                                            |
+| `Tab` / `Shift+Tab`         | the next / previous control; no roving group | per spec §12.1      | none                                                                        | spec D-6                                                     |
+
+`Space` (spec D-21, §10): Space is play/pause only when focus is on the page body, a panel region, the thumb or a
+non-interactive element; on any focused form control (button, checkbox, switch, radio, menu item, option, text field)
+the native activation wins.
 
 ### Table 3 — Accessible name / role
 
-| Element            | Role                    | Accessible name (source)                                          | States / properties                                                                                                |
-| ------------------ | ----------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| thumb on the track | `slider`                | "Replay position"                                                 | `aria-valuemin` / `max` the window in epoch seconds; `aria-valuetext` "13:38:04 UTC, 13 September 2026 — recorded" |
-| `\|<<`, `<`, `>`   | `button`                | "Restart from 13:00", "Step back one bar", "Step forward one bar" | `aria-keyshortcuts`; disabled with `aria-describedby` → the reason (spec §5.1)                                     |
-| `Play` / `Pause`   | `button`                | the visible word                                                  | `aria-keyshortcuts="Space"`; reads `Cancel seek` while seeking                                                     |
-| step unit          | `radiogroup` (2 radios) | "Step by" · "Bar", "Tick"                                         | `aria-checked`; the arrows move between the two here (the page's step keys yield, spec D-21)                       |
-| `Leave replay`     | `button`                | the visible words                                                 | `aria-keyshortcuts="R"`                                                                                            |
-| `Go to`            | `textbox`               | "Go to time, UTC"                                                 | `aria-describedby` → "hh:mm:ss inside 13:00–15:00", the date added for a window over two days                      |
-| coverage `Details` | `button` + a list       | "Coverage details"                                                | the list names each segment, its range and its cause                                                               |
-| bookmark marker    | `button`                | "Bookmark 1, 13:41:07, <label>"                                   | the note as plain text in its description (threat model RP-T03)                                                    |
-| clock              | `timer`                 | "Replay clock"                                                    | `aria-live="off"`; text at most once a second (spec D-19)                                                          |
-| transport status   | `status` / `alert`      | "Replay status"                                                   | polite for discrete events; `alert` once for a gap stop, expiry, error (spec §12.1)                                |
+| Element            | Role                    | Accessible name (source)                                          | States / properties                                                                                                                                  |
+| ------------------ | ----------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| thumb on the track | `slider`                | "Replay position"                                                 | `aria-valuemin` / `max` the window and `aria-valuenow` the position, in epoch seconds; `aria-valuetext` "13:38:04 UTC, 13 September 2026 — recorded" |
+| `\|<<`, `<`, `>`   | `button`                | "Restart from 13:00", "Step back one bar", "Step forward one bar" | `aria-keyshortcuts`; disabled with `aria-describedby` → the reason (spec §5.1)                                                                       |
+| `Play` / `Pause`   | `button`                | the visible word                                                  | `aria-keyshortcuts="Space"`; reads `Cancel seek` while seeking                                                                                       |
+| step unit          | `radiogroup` (2 radios) | "Step by" · "Bar", "Tick"                                         | `aria-checked`; the arrows move between the two here (the page's step keys yield, spec D-21)                                                         |
+| `Leave replay`     | `button`                | the visible words                                                 | `aria-keyshortcuts="R"`                                                                                                                              |
+| `Go to`            | `textbox`               | "Go to time, UTC"                                                 | `aria-describedby` → "hh:mm:ss inside 13:00–15:00", the date added for a window over two days; `Esc` reverts the edit                                |
+| coverage `Details` | `button` + a list       | "Coverage details"                                                | the list names each segment, its range and its cause                                                                                                 |
+| bookmark marker    | `button`                | "Bookmark 1, 13:41:07, <label>"                                   | the note as plain text in its description (threat model RP-T03)                                                                                      |
+| clock              | `timer`                 | "Replay clock"                                                    | `aria-live="off"`; text at most once a second (spec D-19)                                                                                            |
+| transport status   | `status` / `alert`      | "Replay status"                                                   | polite for discrete events; `alert` once for a gap stop, expiry, error (spec §12.1)                                                                  |
 
 ## Handoff checklist — CMP-171 ReplaySpeedPicker (E26-D02 in context, #509)
 
 - [ ] **Final Penpot link** — PENDING: page `E26-D02`, boards 04, 09, 10 and 17; PNGs `cmp-171-transport-and-speed-states-dark.png` and `-light.png`
 - [x] **Variants × States matrix** — table 1
-- [x] **Keyboard table** — table 2; the arrows move only inside the picker (a radio group, spec D-21); `.` and `,` work page-wide and are proposed (spec §10)
+- [x] **Keyboard table** — table 2; the arrows move only inside the picker (a radio group, spec D-21); `.` and `,` work page-wide and are proposed (spec §10); Space is play/pause only when focus is on the page body, a panel region, the thumb or a non-interactive element; on any focused form control (button, checkbox, switch, radio, menu item, option, text field) the native activation wins.
 - [x] **Accessible name / role table** — table 3
 - [x] **Live data** — shared table 5: the achieved-rate readout
 - [ ] **Motion pair** — N/A — the readout and the selection change in one frame; E26-D06 writes the motion pairs
@@ -90,13 +94,13 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Table 1 — Variants × States
 
-| Variant      | State                                                        | Penpot | Story name             | Notes                 |
-| ------------ | ------------------------------------------------------------ | ------ | ---------------------- | --------------------- |
-| presets row  | rest; selected (fill, border, check)                         | B04    | `Default` (catalogued) | seven presets, D01 §4 |
-| presets row  | paused with a new preset held for `Play`                     | B06    | `HeldUntilPlay` (new)  | spec D-7              |
-| presets row  | above 25× disabled while simulated orders or positions exist | B10    | `PaperLimit` (new)     | spec D-9              |
-| custom field | empty, valid, invalid, clamped                               | B17    | `Custom` (new)         | 0.1–100, one decimal  |
-| readout      | at the request; below it (warning); unknown                  | B09    | `AchievedRate` (new)   | spec D-8, §5.2        |
+| Variant      | State                                                                    | Penpot | Story name             | Notes                 |
+| ------------ | ------------------------------------------------------------------------ | ------ | ---------------------- | --------------------- |
+| presets row  | rest; selected (fill, border, check)                                     | B04    | `Default` (catalogued) | seven presets, D01 §4 |
+| presets row  | paused with a new preset held for `Play`                                 | B06    | `HeldUntilPlay` (new)  | spec D-7              |
+| presets row  | above 25× disabled while this page's simulated orders or positions exist | B10    | `PaperLimit` (new)     | spec D-9              |
+| custom field | empty, valid, invalid, clamped                                           | B17    | `Custom` (new)         | 0.1–100, one decimal  |
+| readout      | at the request; below it (warning); unknown                              | B09    | `AchievedRate` (new)   | spec D-8, §5.2        |
 
 ### Table 2 — Keyboard
 
@@ -130,7 +134,7 @@ cut at 24 h, `CV_REPLAY_MAX_WINDOW_HOURS`) and for `Resume` (the same window and
 - [ ] **Density notes** — N/A — the picker lives in SCR-098
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — N/A — none bound here
-- [x] **Data contract confirmed** — the pre-seed uses only `ReplaySession` fields (`symbols`, `from`, `to`, `cursor_ts`, `speed`, `streams`, `depth`, `paper_account_id`); a destroyed session's fields need CC-6
+- [ ] **Data contract confirmed** — PENDING CC-14: the pre-seed uses `ReplaySession` `symbols`, `from`, `to`, `cursor_ts`, `speed`, `streams`, `depth` and `paper_account_id`, but the shipped row stores one symbol and no `streams` or `depth`; a destroyed session's fields need CC-6, and a resume costs two buffering phases until CC-19
 - [ ] **Contrast and CVD** — N/A — no colour pair introduced
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — at the end (for SCR-097)
 - [ ] **Sign-off** — PENDING: as CMP-170
@@ -173,7 +177,7 @@ No Table 4: nothing animates (each block's Motion line).
 - [x] Keyboard and name/role tables (tables 2, 3); canvas alternatives stay the panels' own; the track is DOM
 - [x] Motion: none here (E26-D06); targets 24 compact and a 40 comfortable band (spec §11)
 - [ ] Accessibility sign-off — PENDING: E26-D06 review and the owner
-- [x] Trading safety: on `/replay` the ticket binds only to the paper account (D-11); the environment is unambiguous wherever an order can be placed (D-4, D-10); no estimated value introduced
+- [x] Trading safety: on `/replay` the ticket binds only to the paper account and its panels show only `is_paper` rows (D-11); the environment is unambiguous wherever an order can be placed (D-4, D-10); no estimated value introduced
 - [x] Reuse: CMP-001, 002, 003, 028, 035, 043, 044, 079 and the three replay components; no near-duplicate
 
 ## Accessibility acceptance criteria (`05` §10) — SCR-097
@@ -193,8 +197,8 @@ Feature: SCR-097 replay page — accessibility acceptance criteria
       error once, assertively; the position reads as an absolute time with its date and coverage class
 
   Scenario: Colour-independence
-    Then replay is told by the word, the date, the frame width, the dimmed future and the glyph, coverage by solid,
-      hatched and dashed patterns and text, and the frames pass the three colour-vision renders
+    Then replay is told by the word, the date, the frame width, the dimmed future and the glyph, coverage by full,
+      half-height and hatched marks and by text, and the frames pass the three colour-vision renders
 
   Scenario: Contrast, reduced motion and the automated gates
     Then chrome text meets 4.5:1 and indicators 3:1 in dark and high contrast (spec §12.2)
@@ -208,28 +212,30 @@ Screen readers: NVDA by E26-D06 and E26-Q05; no exception is claimed.
 
 - **State-to-contract map:** spec §7 (each state → B12 / `replay_state`, the signal, the copy, the actions, the
   announcement) and spec §5.1 (each control → its `22` action, payload and B12 event); board 21 draws both. The client
-  conditions are seeking, the gap stop until CC-1, the speed-limited readout and disconnected.
+  conditions are seeking, stepping's held controls, the gap stop until CC-1, the speed-limited readout and disconnected.
 - **Copy deck:** every string of SCR-097 is in spec §5.1 (reasons), §5.2 (speed), §6.1 (classes and cause words),
   §6.3 (seeking), §7 and §7.1 (states, errors), D-15 (not replayed), D-17 (leave confirm) and D-20 (expiry). None
-  carries a path, dataset id, session id or account id; the server's `error` text is never shown (D-23; D07 Security
+  carries a path, dataset id, session id or account id; the server's `error` token is never shown (D-23; D07 Security
   notes).
 - **Load-bearing (return to design before changing):** D-2 (frame and chip on every panel, the date on every chip),
-  D-3, D-4, D-9, D-10, D-11, D-12 (the coverage carriers), D-16, D-19 (the 1 Hz clock), D-21.
+  D-3, D-4, D-9, D-10, D-11, D-12 (the coverage carriers), D-16, D-19 (the 1 Hz clock), D-21, D-22 (the stepping hold).
 - **Performance constraints:** the 1 Hz clock text and the fixed 27-character timestamp (D-5, D-19); one seek per release
   and coalesced back-steps (D-16); the thumb moved by transform; motion suppressed above a stated speed (E26-D06, D01 Q8).
 - **Analytics:** spec §13 (`replay.started`, `replay.seek`, `replay.paper_fill`).
-- **Before E26-S02 is Ready:** the owner's OQ-1 to OQ-10; E26-T05's CC-1 to CC-15 and D01's open G-list; the
-  contradictions X-1 to X-10 routed; E26-D05's entries for CMP-170 and CMP-171; D01 C3 for the fills panel.
+- **Before E26-S02 is Ready:** the owner's OQ-1 to OQ-10 and OQ-12; CC-1 to CC-20 (their owners) and D01's open
+  G-list; the contradictions X-1 to X-10 routed; E26-D05's entries for CMP-170 and CMP-171; D01 C3 for the fills panel.
 - **Design-QA checklist for E26-D08** (from the SCR-097 sign-off checklist):
   1. Transport: the five glyphs, the step unit, the seven presets and custom, `Go to`; each control's disabled reason
      (spec §5.1) appears with its state.
   2. Chrome: every replaying panel has the 4 px frame and the chip with the date; the header carries the date to the
      millisecond; a single-panel crop in greyscale is still identifiable (spec §14.3).
   3. Every order-flow panel works under replay; not-replayed panels say so and never show live data (spec §9).
-  4. Simulated: the five carriers on board 10; no account id, UID or balance anywhere on `/replay`.
-  5. History bounds: "Recorded from" at the track's history start; the five coverage classes by pattern and text.
+  4. Simulated: the five carriers on board 10; the private panels show only `is_paper` rows (D-11); no account id, UID
+     or balance anywhere on `/replay`.
+  5. History bounds: "Recorded from" at the track's history start; the five coverage classes by full, half-height and
+     hatched marks and by text; the hatch means no data on the track and on the chart alike.
   6. Preparation and seeking: the three rungs and the cancel at the times of spec §6.3; panels change together.
   7. Speed limits: the achieved-rate readout appears and recovers per D-8; paper fills off above 25× per D-9.
-  8. The gap callout with the exact range and both actions; the skipped notice under `skip`.
+  8. The gap callout naming what is missing, with the exact range and both actions; the skipped notice under `skip`.
   9. End of range, expiry with resume, error and disconnected as spec §7 draws them.
   10. The keyboard layer of spec §10 in each region; `Esc` cancels a seek only from the transport or the thumb.
