@@ -74,3 +74,19 @@ Negative / risks:
 - Spike S4: 3–5 sub-account fan-out on demo — all legs < 1.5 s, no 10018 under the designed budget, every leg observed with an exchange-side SL.
 - Chaos test: kill the process immediately after the first leg's ack; assert on restart that reconciliation finds the leg, that its native SL exists, and that the group state is `PARTIAL`.
 - Security test: a Manager attempting to fan out to an account outside their scope receives 403 and an audit entry, with no adapter call made.
+
+## Amendment 1 (2026-10-21, E28-T02 #906; contract rulings of main-orchestrator on #906, issuecomment-6327140077)
+
+Refines binding rule 3 and the _As built_ note above; reverses neither. The REST profile (`22-api-openapi.yaml`) is a
+view of the stored profile that rule 3 snapshots, and two things hold of it:
+
+1. **The profile body carries exactly its stored columns.** Every member of `AccountProfileInput`, at any depth, maps to
+   a writable column of `account_profiles` (`21-database-schema.md` §3.2.4) and every writable column to a member;
+   enums and defaults are the column's, bounds the column's or tighter, and any other member is refused (C-6.3). Gone,
+   having no column: `trailing_stop`, `default_tpsl_mode`, `sizing.round_to_lot` and `max_notional_usd`, the offset's
+   `atr_bar_type` and `atr_param`, the caps' `max_consecutive_losses` and `lockout_minutes_after_breach`, `is_active`.
+2. **`AccountProfile` is the envelope** `{id, exchange_account_id, version, created_at, updated_at, profile: AccountProfileInput}`:
+   `id` and `version` are what a snapshot cites, and `profile` is the body `updateAccountProfile` takes back unchanged.
+
+This breaks the `/v1` contract (C-6.3) before any route serves it: all five operations are `not_mounted` and no client
+reads these types, so no `/v2` is cut. The commit's `!` and `BREAKING CHANGE` footer record it (C-6.4).

@@ -5656,36 +5656,98 @@ export interface components {
     };
     /** @enum {string} */
     AccountKind: "main" | "sub";
-    AccountProfile: components["schemas"]["AccountProfileInput"] & {
+    /** @description A stored profile. `profile` holds every member, its default included, and is the body `updateAccountProfile` takes back. `version` is 1 at creation and grows by one with each change (a default move changes two profiles); `ProfileETag` names it. */
+    AccountProfile: {
       /** Format: date-time */
-      created_at?: string;
+      created_at: string;
       /** Format: uuid */
-      exchange_account_id?: string;
+      exchange_account_id: string;
       /** Format: uuid */
-      id?: string;
-      is_active?: boolean;
+      id: string;
+      profile: components["schemas"]["AccountProfileInput"];
       /** Format: date-time */
-      updated_at?: string;
+      updated_at: string;
+      version: number;
     };
+    /**
+     * @description A per-account profile as written; 24-internal-schemas.md section 9.2 maps each member to
+     *     its domain field and column. Values are in stored units: a percent is the percent shown
+     *     (`"0.5"` is 0.5 %), and a decimal holds at most the places of its column (18 for USDT
+     *     amounts, quantities and offsets, 6 for percents of equity and `stop_loss.fallback_pct`, 4
+     *     for `stop_loss.atr_multiple`, 2 for `leverage` and `risk_caps.max_leverage_cap`), refused
+     *     rather than rounded (`precision`). A create and a replace alike give a member they leave
+     *     out its default, `null` where nullable (no cap), never the stored value.
+     *
+     *     Beyond its schema the body must hold (`ProfileRejected` names each rule): the sizing
+     *     amount of `sizing.mode` and no other (`required`, `not_allowed`); a `stop_loss` when
+     *     `sizing.mode` is `risk_based` (`required`); no `allowed_symbols` with `all_symbols`
+     *     (`not_allowed`); every cap of `ProfileRiskCaps` bounded when `trading_enabled` is set
+     *     (`required`); `leverage` at most `risk_caps.max_leverage_cap` (`above_leverage_cap`); and
+     *     rungs that take at most the whole leg (`ladder_sum`).
+     */
     AccountProfileInput: {
-      /** @description Empty means "all instruments permitted by the deployment". */
-      allowed_symbols?: components["schemas"]["Symbol"][];
-      default_time_in_force?: components["schemas"]["TimeInForce"];
-      default_tpsl_mode?: components["schemas"]["TpSlMode"];
+      /**
+       * @description Allows every listed USDT linear perpetual, with no `allowed_symbols`.
+       * @default false
+       */
+      all_symbols: boolean;
+      /**
+       * @description Empty without `all_symbols`, it allows nothing (decision D11).
+       * @default []
+       */
+      allowed_symbols: components["schemas"]["ProfileSymbolPattern"][];
+      /**
+       * @description Refused even when allowed, by `allowed_symbols` or `all_symbols`.
+       * @default []
+       */
+      blocked_symbols: components["schemas"]["ProfileSymbolPattern"][];
+      /** @default GTC */
+      default_time_in_force: components["schemas"]["TimeInForce"];
+      /**
+       * @description A disabled profile sizes nothing.
+       * @default true
+       */
+      enabled: boolean;
+      /**
+       * @description The account's default, its ceiling (decision D7). A create is never the default; a replace may change it only from `false` to `true`, changing no other member (`default_moves_alone`).
+       * @default false
+       */
+      is_default: boolean;
+      /** @description At least 1, at most 100, and at most the exchange maximum of each allowed symbol. */
       leverage: components["schemas"]["Decimal"];
+      /** @default cross */
+      margin_mode: components["schemas"]["ProfileMarginMode"];
+      /** @description Unique per account, in any letter case. */
       name: string;
+      /** @default one_way */
+      position_mode: components["schemas"]["PositionMode"];
+      /** @default false */
+      reduce_only_default: boolean;
       /**
        * @description Always true; the safety invariant cannot be disabled (arch P4). The order path never reads it: the stop requirement keys on each order's effect on the position (SR-E29-01).
        * @default true
        * @constant
        */
       require_native_stop: true;
-      risk_caps?: components["schemas"]["RiskCaps"];
-      sizing: components["schemas"]["Sizing"];
-      stop_loss?: components["schemas"]["Offset"];
-      take_profit?: components["schemas"]["Offset"];
-      trailing_stop?: components["schemas"]["Offset"];
-    };
+      risk_caps?: components["schemas"]["ProfileRiskCaps"];
+      sizing: components["schemas"]["ProfileSizing"];
+      /**
+       * @description The slippage a market order may take, in basis points.
+       * @default 10
+       */
+      slippage_tolerance_bps: number;
+      /** @description Required with `risk_based`; left out, it is 10 ticks. */
+      stop_loss?: components["schemas"]["ProfileStopLoss"];
+      /** @description `null` or left out: no take-profit distance. */
+      take_profit?: components["schemas"]["ProfileTakeProfit"] | null;
+      /** @default [] */
+      take_profit_ladder: components["schemas"]["ProfileTakeProfitRung"][];
+      /**
+       * @description The profile sizes orders only when set, and then bounds every cap (decision D11).
+       * @default false
+       */
+      trading_enabled: boolean;
+    } & (unknown & unknown);
     AddRecordedSymbolRequest: {
       /**
        * @default 200
@@ -8533,6 +8595,11 @@ export interface components {
        */
       type: string;
     };
+    /**
+     * @description `MarginMode` without `portfolio` (`ap_margin_mode`).
+     * @enum {string}
+     */
+    ProfileMarginMode: "cross" | "isolated";
     ProfilePeriod: {
       hvn?: components["schemas"]["Decimal"][];
       lvn?: components["schemas"]["Decimal"][];
@@ -8557,6 +8624,23 @@ export interface components {
       split?: "composite" | "session" | "fixed";
       symbol?: components["schemas"]["Symbol"];
     };
+    /** @description Server-enforced caps, one gate each (SR-052, SR-053); `null` is no cap. A trading-enabled profile bounds every one (decision D11, `required`): `max_open_positions`, `max_concurrent_orders`, `max_leverage_cap`, and one cap of each pair, position size and daily loss. */
+    ProfileRiskCaps: {
+      max_concurrent_orders?: number | null;
+      /** @description Percent of equity lost in a day, at least 0.1 and at most 50 (SCR-131). */
+      max_daily_loss_pct?: components["schemas"]["Decimal"] | null;
+      /** @description USDT lost in a day, above 0. */
+      max_daily_loss_usd?: components["schemas"]["Decimal"] | null;
+      /** @description At least 1, at most 100, and at least `leverage`. */
+      max_leverage_cap?: components["schemas"]["Decimal"] | null;
+      max_open_positions?: number | null;
+      /** @default 30 */
+      max_orders_per_minute: number;
+      /** @description USDT, above 0. */
+      max_position_notional_usd?: components["schemas"]["Decimal"] | null;
+      /** @description Percent of equity, above 0 and at most 100. */
+      max_position_pct_equity?: components["schemas"]["Decimal"] | null;
+    };
     ProfileRow: {
       buy_volume?: components["schemas"]["Decimal"];
       delta?: components["schemas"]["Decimal"];
@@ -8565,6 +8649,78 @@ export interface components {
       tpo_count?: number;
       volume?: components["schemas"]["Decimal"];
     };
+    /** @description Exactly the amount of `mode` is set and the others are absent or `null`: `qty` (`fixed_qty`), `notional_usd` (`fixed_notional`), `pct` (`pct_equity`), and one of `risk_per_trade_pct` and `risk_per_trade_usd` (`risk_based`). */
+    ProfileSizing: {
+      /**
+       * @description A leg below this notional, in USDT, is skipped rather than rejected; at least 0.
+       * @default 0
+       */
+      min_leg_notional_usd: components["schemas"]["Decimal"];
+      mode: components["schemas"]["ProfileSizingMode"];
+      /** @description USDT per order, above 0. */
+      notional_usd?: components["schemas"]["Decimal"] | null;
+      /** @description Percent of equity per order, above 0 and at most 100. */
+      pct?: components["schemas"]["Decimal"] | null;
+      /** @description Contracts per order, above 0. */
+      qty?: components["schemas"]["Decimal"] | null;
+      /** @description Percent of equity lost at the stop, above 0 and at most 100. */
+      risk_per_trade_pct?: components["schemas"]["Decimal"] | null;
+      /** @description USDT lost at the stop, above 0. */
+      risk_per_trade_usd?: components["schemas"]["Decimal"] | null;
+    } & (unknown & unknown & unknown & unknown);
+    /**
+     * @description A profile's sizing mode, the Postgres type `sizing_mode` exactly: a profile never holds `SizingMode`'s request-time values `pct_position` and `profile`.
+     * @enum {string}
+     */
+    ProfileSizingMode: "fixed_qty" | "fixed_notional" | "pct_equity" | "risk_based";
+    /** @description The native stop every order carries (C-2.6): `value` in `ticks` or `percent` of the reference price, or `atr_multiple` times ATR(`atr_period`), with `fallback_pct` while the ATR is unavailable. The member `unit` uses is required; the others take their defaults when left out and are kept for a later change of unit. */
+    ProfileStopLoss: {
+      /**
+       * @description The multiple of the ATR, above 0.
+       * @default 2
+       */
+      atr_multiple: components["schemas"]["Decimal"];
+      /** @default 14 */
+      atr_period: number;
+      /**
+       * @description The stop while the ATR is unavailable, in percent, above 0 and below 100.
+       * @default 2
+       */
+      fallback_pct: components["schemas"]["Decimal"];
+      unit: components["schemas"]["ProfileStopUnit"];
+      /**
+       * @description The distance, above 0, in whole ticks or in percent (1.5 is 1.5 %).
+       * @default 10
+       */
+      value: components["schemas"]["Decimal"];
+    } & unknown;
+    /**
+     * @description A profile stop's unit: `offset_unit` without `r_multiple` (`ap_sl_unit`), because the stop defines R (24-internal-schemas.md section 9.3.1), and never `price`.
+     * @enum {string}
+     */
+    ProfileStopUnit: "ticks" | "percent" | "atr";
+    /**
+     * @description A listed USDT linear perpetual (`BTCUSDT`), or an anchored suffix pattern (`*USDT`) that is stored as written and matched against the listed, trading linear USDT perpetuals each time it is evaluated (SR-E28-06). A bare `*` is refused.
+     * @example BTCUSDT
+     * @example *USDT
+     */
+    ProfileSymbolPattern: string;
+    ProfileTakeProfit: {
+      unit: components["schemas"]["ProfileTargetUnit"];
+      /** @description The distance, above 0, in `unit`; `r_multiple` is a multiple of the stop distance. */
+      value: components["schemas"]["Decimal"];
+    };
+    ProfileTakeProfitRung: {
+      /** @description Percent of the leg's filled size, above 0 and at most 100. */
+      qty_pct: components["schemas"]["Decimal"];
+      /** @description The target, in R multiples of the stop distance, above 0. */
+      r: components["schemas"]["Decimal"];
+    };
+    /**
+     * @description A profile take-profit's unit, the Postgres type `offset_unit` exactly; never `price`.
+     * @enum {string}
+     */
+    ProfileTargetUnit: "ticks" | "percent" | "r_multiple" | "atr";
     PublicTrade: {
       /** @description Number of raw prints merged when clustering is on. */
       cluster_size?: number;
