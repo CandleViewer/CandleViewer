@@ -300,40 +300,68 @@ def test_the_js_skew_correction_returns_nothing_for_a_welcome_without_a_skew_or_
     assert json.loads(done.stdout) == [None, None, None]
 
 
-#: What node loads for `k6/metrics` so that `measure.js` runs outside k6: a metric keeps its name.
-K6_METRICS = (
-    "export class Trend { constructor(name) { this.name = name; } } "
-    "export class Counter extends Trend {}"
+#: What node loads for every `k6/*` import, so that the k6 client's modules run outside k6: a
+#: metric keeps its name and what each `add()` gave it; the rest are inert.
+K6_STUB = (
+    "export class Trend { constructor(name) { this.name = name; this.added = []; } "
+    "add(v) { this.added.push(v); } } export class Counter extends Trend {} "
+    "export class WebSocket {} export default {};"
 )
+
+
+def k6_node(body: str) -> subprocess.CompletedProcess[str]:
+    """`body`, an ES module that imports the k6 client's modules, run by node over `K6_STUB`."""
+    hook = (
+        "export async function resolve(s, c, next) { return s.startsWith('k6/') ? { url: "
+        f"'data:text/javascript,' + encodeURIComponent({json.dumps(K6_STUB)}), "
+        "shortCircuit: true } : next(s, c); }"
+    )
+    script = "import { register } from 'node:module';\n"
+    script += f"register('data:text/javascript,' + encodeURIComponent({json.dumps(hook)}));\n"
+    return node("--input-type=module", "-e", script + body)
 
 
 def test_the_js_summary_keeps_each_vus_hello_paired_and_out_of_the_pooled_trends() -> None:
     """k6 pools a metric's samples over every VU, which loses which round trip went with which
     skew, so each VU keeps its one hello in two trends of its own; the summary turns them into
-    `hellos`, the pairs the guard reads (a VU whose welcome was never timed has none)."""
-    hook = (
-        "export async function resolve(s, c, next) { return s === 'k6/metrics' ? { url: "
-        f"'data:text/javascript,' + encodeURIComponent({json.dumps(K6_METRICS)}), "
-        "shortCircuit: true } : next(s, c); }"
-    )
+    `hellos`, the pairs the guard reads: one for each VU whose two trends hold one sample each."""
     script = f"""
-    import {{ register }} from 'node:module';
-    register('data:text/javascript,' + encodeURIComponent({json.dumps(hook)}));
     const {{ helloTrends, summarize }} = await import('{LOAD}/lib/measure.js');
     const own = helloTrends(3);
-    const one = (v) => ({{ type: 'trend', values: {{ 'p(50)': v, max: v, count: 1 }} }});
-    const metrics = {{ cv_hello_rtt_ms: one(44) }};
-    for (const [vu, raw, rtt] of [[2, 40, 44], [1, -2, 3]]) {{
-      metrics[own[vu - 1].raw.name] = one(raw);
-      metrics[own[vu - 1].rtt.name] = one(rtt);
+    const trend = (v, count) => ({{ type: 'trend', values: {{ 'p(50)': v, max: v, count }} }});
+    const metrics = {{ cv_hello_rtt_ms: trend(44, 3) }};
+    for (const [vu, raw, rtt, n] of [[3, 7, 9, 2], [2, 40, 44, 1], [1, -2, 3, 1]]) {{
+      metrics[own[vu - 1].raw.name] = trend(raw, n);
+      metrics[own[vu - 1].rtt.name] = trend(rtt, n);
     }}
     console.log(JSON.stringify(summarize({{ metrics }}, {{}})));
     """
-    done = node("--input-type=module", "-e", script)
+    done = k6_node(script)
     assert done.returncode == 0, done.stderr
     out = json.loads(done.stdout)
     assert list(out["trends"]) == ["cv_hello_rtt_ms"]  # the pooled trend stays, the pairs move
     assert out["hellos"] == [{"vu": 1, "raw": -2, "rtt": 3}, {"vu": 2, "raw": 40, "rtt": 44}]
+
+
+def test_the_js_welcome_keeps_the_vus_hello_pair_with_its_signed_raw_skew() -> None:
+    """The line that keeps the pair, run: a server clock 5 ms behind stays -5 ms, never folded
+    into one 5 ms ahead, and the hello's round trip goes beside it."""
+    script = f"""
+    const {{ helloTrends }} = await import('{LOAD}/lib/measure.js');
+    const {{ Connection }} = await import('{LOAD}/lib/client.js');
+    Date.now = () => {NOW_MS};
+    const hello = helloTrends(1)[0];
+    const c = new Connection({{ id: 1, topics: [], tokens: {{}}, hello }});
+    c.ws = {{ readyState: 0 }};
+    c.helloSentMs = {NOW_MS - 7};
+    const p = {{ clock_skew_ms: -5, encoding: 'json', heartbeat: {{ interval_ms: 30000 }} }};
+    c.welcome({{ p }});
+    c.clearTimers();
+    console.log(JSON.stringify([hello.raw.added, hello.rtt.added]));
+    """
+    done = k6_node(script)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == [[-5], [7]]
 
 
 # -- the egress guard and the send delay ----------------------------------------------
@@ -684,7 +712,8 @@ def test_the_report_shows_the_raw_and_corrected_skew_the_hello_rtt_and_same_host
     assert (
         "- Clock skew at the hello (same_host true, skew_estimator max_over_hellos): corrected max "
         "3.0 ms against 5 ms (max over 6 hellos of |raw - RTT/2|; raw max 13.0 ms; hello RTT p50 "
-        "20.0 ms / max 33.0 ms)"
+        "20.0 ms / max 33.0 ms)\n- WARNING: the summary has no per-hello pairs; the skew was "
+        "measured with max_over_hellos (the fallback)\n"
     ) in (run / "report.md").read_text(encoding="utf-8")
 
 
@@ -694,16 +723,19 @@ def test_a_run_with_paired_hellos_reports_its_minimum_rtt_hello_and_names_the_es
     monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
     run = hello_skew_run(tmp_path / "run", same_host=True)
     summ = json.loads((run / "summary.json").read_text(encoding="utf-8"))
-    summ["hellos"] = [{"vu": 1, "raw": 13.0, "rtt": 33.0}, {"vu": 2, "raw": 9.0, "rtt": 17.0}]
+    pairs = [(13.0, 33.0), (9.0, 17.0), (10.0, 20.0), (11.0, 22.0), (10.0, 21.0), (12.0, 24.0)]
+    summ["hellos"] = [{"vu": i, "raw": r, "rtt": t} for i, (r, t) in enumerate(pairs, 1)]
     (run / "summary.json").write_text(json.dumps(summ), encoding="utf-8")
     assert runner.finish(run, 0.10) == 0
+    report = (run / "report.md").read_text(encoding="utf-8")
     assert (  # the pairs pick the hello; the pooled trend gives the round trips' p50 and max
         "- Clock skew at the hello (same_host true, skew_estimator min_rtt_hello): corrected 0.5 "
-        "ms against 5 ms (the minimum-RTT hello of 2: raw 9.0 ms, RTT 17.0 ms; hello RTT p50 20.0 "
+        "ms against 5 ms (the minimum-RTT hello of 6: raw 9.0 ms, RTT 17.0 ms; hello RTT p50 20.0 "
         "ms / max 33.0 ms)"
-    ) in (run / "report.md").read_text(encoding="utf-8")
+    ) in report
     skew = json.loads((run / "result.json").read_text(encoding="utf-8"))["result"]["clock_skew"]
     assert skew["skew_estimator"] == "min_rtt_hello" and skew["hello_rtt"] == 17.0
+    assert skew["warning"] is None and "WARNING" not in report  # read as meant: nothing to say
 
 
 def test_result_json_keeps_the_skew_the_rtt_and_same_host_in_the_run_metadata(
@@ -725,6 +757,10 @@ def test_result_json_keeps_the_skew_the_rtt_and_same_host_in_the_run_metadata(
         "send_delay_ms": 0.0,
         "hello_raw": None,
         "hello_rtt": None,
+        "warning": (
+            "the summary has no per-hello pairs; the skew was measured with max_over_hellos "
+            "(the fallback)"
+        ),
         "judged": True,
     }
 
@@ -738,7 +774,8 @@ def test_a_run_saved_before_the_correction_is_reported_as_raw_with_no_host_recor
     assert (
         "- Clock skew at the hello (same_host not recorded, skew_estimator raw_max): raw max 1.0 "
         "ms against 5 ms (max over 100 hellos of |raw|; not RTT-corrected: the summary has no "
-        "cv_clock_skew_corrected_ms)"
+        "cv_clock_skew_corrected_ms)\n- WARNING: the summary has no cv_clock_skew_corrected_ms; "
+        "the skew was measured with raw_max (the fallback)\n"
     ) in (run / "report.md").read_text(encoding="utf-8")
 
 

@@ -336,6 +336,10 @@ def test_a_single_hello_is_not_pluralised_in_the_skew_line() -> None:
 #: queued (raw 40 on a 44 ms round trip). k6's trends of them are the ones profile A's run 3
 #: recorded on cv-bench-01 on 2026-10-22 (RTT p50 7.5 / max 44, raw max 40, corrected max 18).
 RUN3_HELLOS = [(2.0, 3.0), (3.0, 4.0), (4.0, 7.0), (5.0, 8.0), (5.0, 12.0), (40.0, 44.0)]
+#: The note a fallback carries, loud in result.json and the report (`warning`).
+NO_PAIRS = (
+    "the summary has no per-hello pairs; the skew was measured with max_over_hellos (the fallback)"
+)
 
 
 def k6_trend(values: list[float]) -> dict[str, float]:
@@ -370,7 +374,8 @@ def test_run_3_voided_by_one_queued_hello_is_valid_on_its_minimum_rtt_hello() ->
         "clock_skew: corrected max 18.0 ms against 5 ms (max over 6 hellos of |raw - RTT/2|; "
         "raw max 40.0 ms; hello RTT p50 7.5 ms / max 44.0 ms)"
     ]
-    assert old.as_dict()["clock_skew"]["skew_estimator"] == "max_over_hellos"
+    fallback = old.as_dict()["clock_skew"]
+    assert (fallback["skew_estimator"], fallback["warning"]) == ("max_over_hellos", NO_PAIRS)
     new = evaluate(paired(RUN3_HELLOS))
     assert (new.status, new.invalid) == ("PASS", [])
     assert new.clock_skew is not None and new.clock_skew.text == (
@@ -379,7 +384,25 @@ def test_run_3_voided_by_one_queued_hello_is_valid_on_its_minimum_rtt_hello() ->
     )
     got = new.as_dict()["clock_skew"]
     want = {"skew_estimator": "min_rtt_hello", "skew_ms": 0.5, "hello_raw": 2.0, "hello_rtt": 3.0}
-    assert {k: got[k] for k in want} == want  # result.json names the estimator and its hello
+    assert {k: got[k] for k in want} == want and got["warning"] is None  # no fallback, no note
+
+
+#: VU 1's clock stepped back between its hello and the welcome: a round trip under zero.
+STEPPED = [(2.0, -3.0), *RUN3_HELLOS[1:]]
+
+
+@pytest.mark.parametrize(("pooled", "pairs"), [(RUN3_HELLOS, RUN3_HELLOS[1:]), (STEPPED, STEPPED)])
+def test_pairs_short_of_the_timed_hellos_make_the_guard_fall_back_loudly(
+    pooled: list[tuple[float, float]], pairs: list[tuple[float, float]]
+) -> None:
+    """A pair lost, or one with a negative round trip (dropped: it would be the minimum and say
+    nothing), leaves 5 usable pairs for 6 timed hellos, so the max over them is read, and said."""
+    skew = budgets.clock_skew(paired(pooled) | {"hellos": paired(pairs)["hellos"]})
+    assert skew is not None and (skew.skew_estimator, skew.skew_ms) == ("max_over_hellos", 18.0)
+    assert skew.warning == (
+        "the summary's 5 usable per-hello pairs do not match its 6 timed hellos; the skew was "
+        "measured with max_over_hellos (the fallback)"
+    )
 
 
 def test_a_clock_10_ms_off_beyond_half_of_every_round_trip_is_still_invalid() -> None:
@@ -392,16 +415,24 @@ def test_a_clock_10_ms_off_beyond_half_of_every_round_trip_is_still_invalid() ->
 
 
 @pytest.mark.parametrize("step", [1, -1])
-def test_hellos_tied_on_the_minimum_rtt_give_the_smallest_corrected_skew_in_any_order(
-    step: int,
+@pytest.mark.parametrize(
+    ("hellos", "want"),
+    [
+        ([(9.0, 4.0), (3.0, 4.0), (1.0, 9.0)], (1.0, 3.0, 4.0)),  # the smaller |raw - RTT/2|
+        ([(5.0, 4.0), (-1.0, 4.0)], (3.0, -1.0, 4.0)),  # equal on that too: the smaller raw
+    ],
+)
+def test_hellos_tied_on_the_minimum_rtt_give_one_reading_in_any_order(
+    hellos: list[tuple[float, float]], want: tuple[float, float, float], step: int
 ) -> None:
     """k6 times whole milliseconds, so two hellos can share the fastest round trip."""
-    skew = budgets.clock_skew(paired([(9.0, 4.0), (3.0, 4.0), (1.0, 9.0)][::step]))
-    assert skew is not None and (skew.skew_ms, skew.hello_raw, skew.hello_rtt) == (1.0, 3.0, 4.0)
+    skew = budgets.clock_skew(paired(hellos[::step]))
+    assert skew is not None and (skew.skew_ms, skew.hello_raw, skew.hello_rtt) == want
 
 
-def test_a_send_delay_run_with_paired_hellos_still_reports_its_raw_max_unjudged() -> None:
-    res = evaluate(paired(RUN3_HELLOS), prof=PROFILE | {"send_delay_ms": 25})
+def test_a_send_delay_run_never_reads_its_pairs_and_reports_its_raw_max_unjudged() -> None:
+    summ = paired(RUN3_HELLOS) | {"hellos": [{"vu": 1}]}  # pairs it could not parse
+    res = evaluate(summ, prof=PROFILE | {"send_delay_ms": 25})
     assert res.status == "PASS" and res.as_dict()["clock_skew"]["skew_estimator"] == "raw_max"
 
 

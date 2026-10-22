@@ -125,31 +125,40 @@ def test_k6_is_pinned_by_sha256_twice_and_the_first_step_refuses_while_the_soak_
         "bench" in _soak_job()["runs-on"]
     )  # the same runner, so the guard is the only fence
     assert MEMDIAG.name in guard and "(HTTP 404)" in guard
+    # the guard matches a job by its display name: a `name:` or a matrix would change it
+    assert not {"name", "strategy"} & set(_soak_job())
     if MEMDIAG.exists():  # until it lands, the API's 404 for it means none runs (below)
-        assert "bench" in _doc(MEMDIAG)["jobs"]["leg"]["runs-on"]
+        leg = _doc(MEMDIAG)["jobs"]["leg"]
+        assert "bench" in leg["runs-on"] and not {"name", "strategy"} & set(leg)
 
 
-#: A stand-in `gh api <path> --jq <filter>` answering GH_ANSWER (JSON): `fail` maps a workflow file
-#: to [exit code, error line] (gh prints the error body, then that line), `runs` maps
-#: "file:status" to run ids and `jobs` a run id to [name, status] pairs, counted as the step's
-#: filter counts the queued or running jobs of the name it selects.
+#: A stand-in `gh` for the two calls the step makes, a paginated runs listing and a run's jobs
+#: (`per_page=100`); any other call fails. GH_ANSWER (JSON): `fail` maps a workflow file to [exit
+#: code, error line] (gh prints the error body, then that line), `runs` maps "file:status" to run
+#: ids and `jobs` a run id to [name, status] pairs, counted as the step's filter counts the queued
+#: or running jobs of the name it selects.
 FAKE_GH = """import json, os, re, sys
-path, jq = sys.argv[2], sys.argv[-1]
+args = sys.argv[1:]
+path, jq = next(a for a in args if a.startswith("repos/")), args[args.index("--jq") + 1]
 answer = json.loads(os.environ["GH_ANSWER"])
 for wf, (code, line) in answer.get("fail", {}).items():
     if f"/workflows/{wf}/" in path:
         print('{"message": "error"}')
         sys.stderr.write(line + "\\n")
         sys.exit(code)
-if path.endswith("/jobs"):
+if m := re.fullmatch(r"repos/o/r/actions/runs/(\\d+)/jobs\\?per_page=100", path):
     name = re.search(r'\\.name == "([^"]+)"', jq).group(1)
-    jobs = answer.get("jobs", {}).get(path.split("/")[-2], [])
+    jobs = answer.get("jobs", {}).get(m.group(1), [])
     print(sum(n == name and s in ("queued", "in_progress") for n, s in jobs))
+elif m := "--paginate" in args and re.search(r"workflows/([^/]+)/runs\\?status=(\\w+)&", path):
+    print("\\n".join(map(str, answer.get("runs", {}).get("{}:{}".format(*m.groups()), []))))
 else:
-    wf, status = re.search(r"workflows/([^/]+)/runs\\?status=(\\w+)", path).groups()
-    print("\\n".join(map(str, answer.get("runs", {}).get(f"{wf}:{status}", []))))
+    sys.exit("unexpected gh call: " + " ".join(args))
 """
 NOT_FOUND = [1, "gh: Not Found (HTTP 404)"]
+# not gh's whole line, so the guard fails closed on it
+NEAR_MISS = [1, "gh: Not Found (HTTP 404) for o/r"]
+SERVER_ERROR = [1, "gh: Server Error (HTTP 500)"]
 LEGS, PACK = MEMDIAG.name, SOAK.name
 
 
@@ -182,12 +191,14 @@ def _held(wf: str, job: str, status: str) -> dict[str, Any]:
     ("answer", "code", "said"),
     [
         ({}, 0, ""),
-        ({"fail": {LEGS: NOT_FOUND}}, 0, f"{LEGS}: not on this repository yet (HTTP 404)"),
+        ({"fail": {LEGS: NOT_FOUND}}, 0, f"{LEGS}: not on this repository yet"),
         (_held(LEGS, "leg", "queued"), 1, f"{LEGS} (job leg)"),
         (_held(LEGS, "leg", "in_progress"), 1, f"{LEGS} (job leg)"),
         (_held(PACK, "perf-pack-full", "queued"), 1, f"{PACK} (job perf-pack-full)"),
-        ({"fail": {LEGS: [1, "gh: Server Error (HTTP 500)"]}}, 1, "(HTTP 500)"),
-        ({"fail": {PACK: NOT_FOUND}}, 1, "(HTTP 404)"),  # only the legs' workflow may be missing
+        ({"fail": {LEGS: SERVER_ERROR}}, 1, "(HTTP 500)"),
+        ({"fail": {LEGS: NEAR_MISS}}, 1, "(HTTP 404) for o/r"),
+        # only the legs' workflow may be missing: a 404 for the pack's fails closed
+        ({"fail": {PACK: NOT_FOUND}}, 1, "(HTTP 404)"),
     ],
 )
 def test_the_guard_refuses_while_either_soak_holds_the_runner_and_fails_closed_on_errors(
