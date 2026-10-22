@@ -229,7 +229,7 @@ def test_backups_is_a_no_grace_class_for_restore_download_and_delete_only() -> N
     assert "backups" in klass["enum"]
     assert "`deleteBackup`), one fresh code per action" in text(klass["description"])
     step_up = text(_STEP_UP["description"])
-    assert "`live_enablement`, `killswitch` and `backups` are no-grace" in step_up
+    assert "`live_enablement`, `killswitch`, `backups` and `sl_loosen` are no-grace" in step_up
     assert _RESTORE["summary"] == "Restore from a backup (owner, step-up `backups`)"
     gated = "`403 step_up_required` with `action_class` set to `backups`"
     assert all(gated in text(op["description"]) for op in (_RESTORE, _ISSUE, _DELETE))
@@ -308,7 +308,9 @@ def test_docs_share_the_audit_vocabulary_and_the_backups_step_up() -> None:
         assert "`backup.created`" not in doc and "`backup.restored`" not in doc
     assert "and restoring, downloading or deleting a backup (one fresh code each)" in sec
     assert "✔(restore+delete step-up)" in sec and "✔(step-up: restore, delete, link)" in sec
-    assert "(`live_enablement`/`killswitch`/`backups`: none, fresh code each time)" in internal
+    assert "(`live_enablement`/`killswitch`/`backups`/`sl_loosen`: none, fresh code each time)" in (
+        internal
+    )
     assert "never embeds `str(exc)` or raw probe output" in internal
     # No-grace grants bind the request their handler validated, so issue and delete register as
     # handler-gated rows, as restore does (`test_no_path_gated_row_names_a_no_grace_class`).

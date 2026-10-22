@@ -27,13 +27,20 @@ def _description(path: str, method: str) -> str:
     return " ".join(str(paths[path][method]["description"]).split())
 
 
+#: No-grace classes the contract declares before the service accepts them (C-6.1, contract
+#: first): `sl_loosen`, the owner's stop loosening (#4137), which E29-T07 lands.
+_NO_GRACE_AHEAD: frozenset[str] = frozenset({"sl_loosen"})
+
+
 def test_grace_placement_follows_the_contract_text() -> None:
     """`authStepUp` names the no-grace classes; `flags` is not among them."""
     named = re.search(
         r"((?:`\w+`(?:, | and )?)+) are no-grace", _description("/auth/step-up", "post")
     )
     assert named is not None
-    assert set(re.findall(r"`(\w+)`", named[1])) == step_up_service.NO_GRACE_ACTION_CLASSES
+    named_classes = set(re.findall(r"`(\w+)`", named[1]))
+    assert named_classes == step_up_service.NO_GRACE_ACTION_CLASSES | _NO_GRACE_AHEAD
+    assert not _NO_GRACE_AHEAD & step_up_service.ACTION_CLASSES  # a landed class leaves it
     flag_write = _description("/admin/feature-flags/{flagKey}", "put")
     assert "every other write needs `flags` (5-minute grace)" in flag_write
     assert "flags" in step_up_service.ACTION_CLASSES - step_up_service.NO_GRACE_ACTION_CLASSES

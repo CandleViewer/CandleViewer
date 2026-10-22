@@ -1873,7 +1873,7 @@ export interface paths {
      *     **Binding (no-grace classes).** For each no-grace class the one-shot grant is bound to the challenged request: its method, its path including any query string, and its canonical JSON body. The fingerprint is the hex SHA-256 of the method, a line feed, the raw request target (path and query string exactly as received, with no percent-decoding and no trailing-slash or parameter-order normalisation), a line feed, and the RFC 8785 (JCS) serialisation of the body as the operation validated it (empty when the operation takes no body). The server parses and validates the body once, and `action_summary`, the fingerprint and the executed action all come from that one object, so number forms, string escapes and duplicate member names cannot make them disagree; no Unicode normalisation is applied. Headers, `Idempotency-Key` included, are not part of the binding. Only that identical request can use the grant. Any other request of the class is refused with `403 step_up_required`, which is a new challenge for that request, and audited as `auth.step_up_mismatch`. The refusal does not use up the grant: it stays bound to the challenged request until that request uses it or a newer step-up for the class replaces it. The grant expires 60 seconds after the step-up, which leaves time only for the immediate re-send, and it also ends when the session turns read-only, when it idle-locks (#2301) and at logout. For a no-grace class the `200`'s `elevated_until` is that expiry, 60 seconds after the step-up, and its `step_up_expires_at` is null. A session holds at most one grant per no-grace class. Grace classes keep the unbound 5-minute window described below.
      *     **Write-ahead audit and `503` (C-2.9).** The record an answer depends on is written before the answer is sent: `auth.step_up_mismatch` before the `403` that refuses a swapped request, `auth.step_up_failed` before the `400` of a challenge that cannot be answered (while the per-session refusal budget lasts) and `auth.mfa_reset_by_owner` before an owner TOTP reset revokes anything. When the audit writer cannot take that record within 2 seconds (it is down, not started or too slow) the answer is `503 audit_unavailable` instead, whatever the refusal would have been: no challenge is issued, no failure is counted, nothing is elevated or revoked, and a grant bound to a held request is neither used nor ended, so the client sends the same request again once the audit writer recovers. An operation that gates a no-grace class lists the same `503` among its responses and answers it when the `auth.step_up_mismatch` record of its refusal cannot be written; `resetUserMfa` answers it when its own record cannot.
      *     **Holding the refused request.** The client keeps the refused request unchanged (method, path, body and `Idempotency-Key`) and re-sends it as is after a successful step-up. The refusal bound no idempotency key (Idempotency, "Binding point"), so the re-send is a first submission and executes once. On cancel, at `challenge_expires_at`, on the third failure (`session_read_only`), on idle lock and at absolute session expiry the client drops the request without sending it and tells the user it was not sent. If the re-send gets no answer after a successful step-up (a network error or a timeout), the action may have executed: the client never reports it as not sent and never re-sends it on its own, and reads the affected state back to learn the outcome.
-     *     Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement`, `killswitch` and `backups` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
+     *     Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement`, `killswitch`, `backups` and `sl_loosen` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
      *     **Session rotation (SR-013).** A successful step-up also rotates the session, the way `POST /auth/refresh` does: the server mints a replacement session with a new id, access token and refresh token. The replacement keeps the old session's absolute expiry and idle timeout, so rotation never extends the session's lifetime; it carries over the live step-up grants, including the one just granted, and drops the pending challenge. The old session is revoked as `rotated` and linked into the session family, so its access and refresh tokens stop working at once and replaying that refresh token at `POST /auth/refresh` revokes the whole family (reuse detection). The `200` carries the new access token in `tokens` (the `TokenBundle` of `POST /auth/mfa/verify`; the refresh token travels only in the cookie, so `refresh_token` is null) and sets rotated `cv_refresh` and `__Host-cv_csrf` cookies bound to the new session (SR-041). The client continues with the returned access token. A client that loses the `200` keeps only the old tokens: its next `POST /auth/refresh` trips reuse detection, so the user must sign in again.
      */
     post: operations["authStepUp"];
@@ -3795,6 +3795,13 @@ export interface paths {
      *     `intent`: SR-E29-01) can never be cleared while the leg is open (C-2.6, arch P4),
      *     which returns `validation_failed` / `native_stop_required`.
      *
+     *     A `stop_loss` moved to loosen it on an entry is refused with `403 risk_limit_breached`,
+     *     whatever the caller's role, before any send: compared with the stop it replaces, a long
+     *     entry's stop may only rise and a short entry's only fall, before the fill and after it
+     *     (the ratchet `amendTradeGroup` applies). The one way to loosen a stop is the owner's
+     *     override on `setPositionTpSl` (24-internal-schemas.md section 8.8 rule 5). A tightening
+     *     is never refused by this check (C-2.6; section 8.10).
+     *
      *     Amending only one side of a TP/SL pair breaks Bybit's OCO pairing (digest 06 §19); the
      *     server therefore re-sends both sides whenever either changes, and records the paired
      *     amend in `order_events`.
@@ -4015,11 +4022,31 @@ export interface paths {
      *       ATR-based request is translated server-side into a price distance using the current
      *       mark price / ATR, and both the requested unit and the resolved distance are echoed.
      *     * Sending only one of TP/SL breaks Bybit's OCO pairing, so the server always re-asserts
-     *       both sides; pass `null` explicitly to clear one.
+     *       both sides; pass `null` explicitly to clear the take-profit (the stop-loss of an open
+     *       position is never cleared, below).
      *     * `tpsl_mode: Partial` requires `tp_size`/`sl_size` that match the position size rules.
      *     * The stop-loss of an open position can never be cleared (C-2.6): the rule keys on the
      *       open exposure, never on a profile setting or an order's `intent` (SR-E29-01) —
      *       `validation_failed` / `native_stop_required`.
+     *     * **Only the owner can loosen a stop** (24-internal-schemas.md section 8.8 rule 5). A
+     *       stop-loss moved to loosen it (a long position's lower, a short's higher, than the trigger
+     *       in force, which under a recorded trail is the tighter of the record's and the stop the
+     *       position reports; in Partial mode an `sl_size` below the lesser of the recorded cover
+     *       and the position's size; or a trail that is wider or armed later or, until the venue's
+     *       behaviour is confirmed, one not yet armed that arms further from the market than that
+     *       trigger, or an armed one that re-arms there; section 8.8 rule 5 defines it) needs the
+     *       owner's role and a live `sl_loosen` step-up, a no-grace class (one fresh code per
+     *       loosening, bound to the request): the owner without one gets
+     *       `403 step_up_required` (`action_class: sl_loosen`), and any other role
+     *       `403 risk_limit_breached`, its refusal audited (`sl.loosen_refused`), with nothing sent.
+     *       The owner's loosening is audited before it is sent (`sl.loosened`). The check sits
+     *       once, at the recorded-stop writer, for every writer of the stop; a tightening is never
+     *       refused by it (C-2.6).
+     *     * **A trail is never cleared here.** `trailing_stop: null` over a trail is refused for
+     *       every role, the owner included, with `400 validation_failed` (rule
+     *       `trail_clear_unsupported`) before any record or audit is written, until an audited
+     *       clear-trail operation exists (24-internal-schemas.md section 8.8 rule 5). An omitted
+     *       `trailing_stop` leaves the trail in place.
      */
     put: operations["setPositionTpSl"];
     post?: never;
@@ -6146,7 +6173,7 @@ export interface components {
       take_profit?: components["schemas"]["Offset"] | null;
       trigger_price?: components["schemas"]["Decimal"];
     };
-    /** @description Checked against each targeted leg's bound profile before any leg is amended (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit` or `trailing_stop`; `stop_loss: null` is refused on an entry leg, or on any leg whose position is open (`native_stop_required`). */
+    /** @description Checked against each targeted leg's bound profile before any leg is amended (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit`; `trailing_stop: null` over a trail is refused with `400 validation_failed` (rule `trail_clear_unsupported`, 24-internal-schemas.md section 8.8 rule 5), and an omitted one leaves the trail in place; `stop_loss: null` is refused on an entry leg, or on any leg whose position is open (`native_stop_required`). */
     AmendTradeGroupRequest: {
       /** @description Per-leg amendments; when present, the top-level fields are ignored for those legs. */
       legs?: {
@@ -9918,7 +9945,7 @@ export interface components {
       [key: string]: unknown;
     };
     SetTpSlRequest: {
-      /** @description Arms the trailing stop only once price reaches this level. */
+      /** @description Arms the trailing stop only once price reaches this level. Omitted, it arms at once, and its record takes the `sl_trigger_by` price the writer reads as its activation price (24-internal-schemas.md section 8.8 rule 6). */
       activation_price?: components["schemas"]["Decimal"];
       sl_size?: components["schemas"]["Decimal"];
       sl_trigger_by?: components["schemas"]["TriggerBy"];
@@ -10987,8 +11014,10 @@ export interface components {
      *     increases exposure requires it, as the order-entry gate classifies them
      *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
      *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-     *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-     *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+     *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+     *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
+     *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
+     *     requires it for `reversePosition` and for a
      *     leverage change in either direction, which that section does not classify. One live
      *     account among a request's targets is enough. Missing, expired, revoked or bound to
      *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
@@ -13597,7 +13626,7 @@ export interface operations {
       content: {
         "application/json": {
           /**
-           * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required. `audit` gates the audit-log export (`exportAuditLog`) and the download of its file (`downloadAuditExport`); `backups` gates a backup restore or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`, `deleteBackup`), one fresh code per action.
+           * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required. `audit` gates the audit-log export (`exportAuditLog`) and the download of its file (`downloadAuditExport`); `backups` gates a backup restore or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`, `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md section 8.8 rule 5), one fresh code per loosening; declared ahead of the service (C-6.1), which E29-T07 extends.
            * @enum {string}
            */
           action_class?:
@@ -13609,10 +13638,11 @@ export interface operations {
             | "recorder"
             | "flags"
             | "audit"
-            | "backups";
+            | "backups"
+            | "sl_loosen";
           /**
            * Format: uuid
-           * @description The `challenge_id` of the `403 step_up_required` being answered (#2304). Required for a no-grace class (`live_enablement`, `killswitch` or `backups`, named by the live challenge or by `action_class`): omitting it is `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a grace class: without it the server uses the session's live challenge. This grace-class optionality is transitional and ends with #2725 (the web client sends `challenge_id` on every step-up); from then on it is required whenever the session has a live challenge. A value that does not name the live challenge (expired, superseded, already used or unknown), or that is sent when there is none, gets `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is decided before the password and code are checked: no factor is verified, no failure is counted and nothing is elevated. The client then drops the held request without sending it.
+           * @description The `challenge_id` of the `403 step_up_required` being answered (#2304). Required for a no-grace class (`live_enablement`, `killswitch`, `backups` or `sl_loosen`, named by the live challenge or by `action_class`): omitting it is `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a grace class: without it the server uses the session's live challenge. This grace-class optionality is transitional and ends with #2725 (the web client sends `challenge_id` on every step-up); from then on it is required whenever the session has a live challenge. A value that does not name the live challenge (expired, superseded, already used or unknown), or that is sent when there is none, gets `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is decided before the password and code are checked: no factor is verified, no failure is counted and nothing is elevated. The client then drops the held request without sending it.
            */
           challenge_id?: string;
           code: string;
@@ -16845,8 +16875,10 @@ export interface operations {
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
          *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
+         *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
+         *     requires it for `reversePosition` and for a
          *     leverage change in either direction, which that section does not classify. One live
          *     account among a request's targets is enough. Missing, expired, revoked or bound to
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
@@ -17017,8 +17049,10 @@ export interface operations {
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
          *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
+         *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
+         *     requires it for `reversePosition` and for a
          *     leverage change in either direction, which that section does not classify. One live
          *     account among a request's targets is enough. Missing, expired, revoked or bound to
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
@@ -17281,8 +17315,10 @@ export interface operations {
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
          *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
+         *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
+         *     requires it for `reversePosition` and for a
          *     leverage change in either direction, which that section does not classify. One live
          *     account among a request's targets is enough. Missing, expired, revoked or bound to
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
@@ -17353,8 +17389,10 @@ export interface operations {
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
          *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
+         *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
+         *     requires it for `reversePosition` and for a
          *     leverage change in either direction, which that section does not classify. One live
          *     account among a request's targets is enough. Missing, expired, revoked or bound to
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
@@ -17422,8 +17460,10 @@ export interface operations {
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
          *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
+         *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
+         *     requires it for `reversePosition` and for a
          *     leverage change in either direction, which that section does not classify. One live
          *     account among a request's targets is enough. Missing, expired, revoked or bound to
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
@@ -19471,8 +19511,10 @@ export interface operations {
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
          *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
+         *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
+         *     requires it for `reversePosition` and for a
          *     leverage change in either direction, which that section does not classify. One live
          *     account among a request's targets is enough. Missing, expired, revoked or bound to
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
@@ -19567,8 +19609,10 @@ export interface operations {
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
          *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
+         *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
+         *     requires it for `reversePosition` and for a
          *     leverage change in either direction, which that section does not classify. One live
          *     account among a request's targets is enough. Missing, expired, revoked or bound to
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a

@@ -3371,7 +3371,7 @@ class SetTpSlRequest(BaseModel):
     activation_price: Annotated[
         str | None,
         Field(
-            description="Arms the trailing stop only once price reaches this level.",
+            description="Arms the trailing stop only once price reaches this level. Omitted, it arms at once, and its record takes the `sl_trigger_by` price the writer reads as its activation price (24-internal-schemas.md section 8.8 rule 6).",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),

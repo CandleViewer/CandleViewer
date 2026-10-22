@@ -5499,6 +5499,13 @@ paths:
         `intent`: SR-E29-01) can never be cleared while the leg is open (C-2.6, arch P4),
         which returns `validation_failed` / `native_stop_required`.
 
+        A `stop_loss` moved to loosen it on an entry is refused with `403 risk_limit_breached`,
+        whatever the caller's role, before any send: compared with the stop it replaces, a long
+        entry's stop may only rise and a short entry's only fall, before the fill and after it
+        (the ratchet `amendTradeGroup` applies). The one way to loosen a stop is the owner's
+        override on `setPositionTpSl` (24-internal-schemas.md section 8.8 rule 5). A tightening
+        is never refused by this check (C-2.6; section 8.10).
+
         Amending only one side of a TP/SL pair breaks Bybit's OCO pairing (digest 06 §19); the
         server therefore re-sends both sides whenever either changes, and records the paired
         amend in `order_events`.
@@ -6376,11 +6383,31 @@ paths:
           ATR-based request is translated server-side into a price distance using the current
           mark price / ATR, and both the requested unit and the resolved distance are echoed.
         * Sending only one of TP/SL breaks Bybit's OCO pairing, so the server always re-asserts
-          both sides; pass `null` explicitly to clear one.
+          both sides; pass `null` explicitly to clear the take-profit (the stop-loss of an open
+          position is never cleared, below).
         * `tpsl_mode: Partial` requires `tp_size`/`sl_size` that match the position size rules.
         * The stop-loss of an open position can never be cleared (C-2.6): the rule keys on the
           open exposure, never on a profile setting or an order's `intent` (SR-E29-01) —
           `validation_failed` / `native_stop_required`.
+        * **Only the owner can loosen a stop** (24-internal-schemas.md section 8.8 rule 5). A
+          stop-loss moved to loosen it (a long position's lower, a short's higher, than the trigger
+          in force, which under a recorded trail is the tighter of the record's and the stop the
+          position reports; in Partial mode an `sl_size` below the lesser of the recorded cover
+          and the position's size; or a trail that is wider or armed later or, until the venue's
+          behaviour is confirmed, one not yet armed that arms further from the market than that
+          trigger, or an armed one that re-arms there; section 8.8 rule 5 defines it) needs the
+          owner's role and a live `sl_loosen` step-up, a no-grace class (one fresh code per
+          loosening, bound to the request): the owner without one gets
+          `403 step_up_required` (`action_class: sl_loosen`), and any other role
+          `403 risk_limit_breached`, its refusal audited (`sl.loosen_refused`), with nothing sent.
+          The owner's loosening is audited before it is sent (`sl.loosened`). The check sits
+          once, at the recorded-stop writer, for every writer of the stop; a tightening is never
+          refused by it (C-2.6).
+        * **A trail is never cleared here.** `trailing_stop: null` over a trail is refused for
+          every role, the owner included, with `400 validation_failed` (rule
+          `trail_clear_unsupported`) before any record or audit is written, until an audited
+          clear-trail operation exists (24-internal-schemas.md section 8.8 rule 5). An omitted
+          `trailing_stop` leaves the trail in place.
       x-rbac: { permissions: [positions:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -11403,13 +11430,12 @@ paths:
 
         Grants a **5-minute** server-side grace for `action_class` on the current session
         (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the
-        earlier 15). `live_enablement`, `killswitch` and `backups` are no-grace: the response is
-        `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the
-        session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints
-        that require elevation return `403` with `code: step_up_required` until this
-        succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`,
-        `auth.step_up_failed`, `auth.step_up_mismatch`,
-        `auth.session_readonly_downgrade`).
+        earlier 15). `live_enablement`, `killswitch`, `backups` and `sl_loosen` are no-grace: the
+        response is `single_use: true` and no window is opened. Three consecutive invalid codes
+        downgrade the session to read-only for 5 minutes (`403 session_read_only` on every
+        write). Endpoints that require elevation return `403` with `code: step_up_required`
+        until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`,
+        `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
 
         **Session rotation (SR-013).** A successful step-up also rotates the session, the way
         `POST /auth/refresh` does: the server mints a replacement session with a new id, access
@@ -11443,8 +11469,8 @@ paths:
                 challenge_id:
                   description: >
                     The `challenge_id` of the `403 step_up_required` being answered (#2304).
-                    Required for a no-grace class (`live_enablement`, `killswitch` or `backups`,
-                    named by the live challenge or by `action_class`): omitting it is
+                    Required for a no-grace class (`live_enablement`, `killswitch`, `backups` or
+                    `sl_loosen`, named by the live challenge or by `action_class`): omitting it is
                     `400 validation_failed` with
                     `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a
                     grace class: without it the server uses the session's live challenge. This
@@ -11467,7 +11493,10 @@ paths:
                     `audit` gates the audit-log export (`exportAuditLog`) and the download of
                     its file (`downloadAuditExport`); `backups` gates a backup restore
                     or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`,
-                    `deleteBackup`), one fresh code per action.
+                    `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's
+                    loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md
+                    section 8.8 rule 5), one fresh code per loosening; declared ahead of the
+                    service (C-6.1), which E29-T07 extends.
                   type: string
                   enum:
                     [
@@ -11480,6 +11509,7 @@ paths:
                       flags,
                       audit,
                       backups,
+                      sl_loosen,
                     ]
       responses:
         "200":
@@ -13871,8 +13901,10 @@ components:
         increases exposure requires it, as the order-entry gate classifies them
         (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
         reduce-only ones included) and an amend with any risk-increasing component (quantity
-        up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-        `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+        up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+        owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
+        looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
+        requires it for `reversePosition` and for a
         leverage change in either direction, which that section does not classify. One live
         account among a request's targets is enough. Missing, expired, revoked or bound to
         another session → `403 session_not_armed`, audited, before any exchange call; so is a
@@ -18030,7 +18062,7 @@ components:
       additionalProperties: false
       description: >
         Checked against each targeted leg's bound profile before any leg is amended
-        (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit` or `trailing_stop`;
+        (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit`; `trailing_stop: null` over a trail is refused with `400 validation_failed` (rule `trail_clear_unsupported`, 24-internal-schemas.md section 8.8 rule 5), and an omitted one leaves the trail in place;
         `stop_loss: null` is refused on an entry leg, or on any leg whose position is open
         (`native_stop_required`).
       properties:
@@ -18202,7 +18234,9 @@ components:
         activation_price:
           {
             $ref: "#/components/schemas/Decimal",
-            description: "Arms the trailing stop only once price reaches this level.",
+            description: "Arms the trailing stop only once price reaches this level. Omitted, it
+              arms at once, and its record takes the `sl_trigger_by` price the writer reads
+              as its activation price (24-internal-schemas.md section 8.8 rule 6).",
           }
         tpsl_mode: { $ref: "#/components/schemas/TpSlMode" }
         tp_size: { $ref: "#/components/schemas/Decimal" }

@@ -299,7 +299,9 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "leg is a failed leg, so the group's `leg_failure_policy` applies (§9.5). An "
         "`all_or_none` unwind, like any reduce-only close, goes as the reduce-only MARKET close "
         "of §9.5.1 and B3 `reduce_only_close`, never as a gated `placeOrder`. Risk-increasing "
-        "amends (quantity up, stop loosened, trigger re-armed) are refused the same way. Cancels, "
+        "amends (quantity up, trigger re-armed, and the owner's loosened stop on "
+        "`setPositionTpSl`, the one loosening §8.8 rule 5 allows; `amendOrder` and "
+        "`amendTradeGroup` refuse a looser stop outright) are refused the same way. Cancels, "
         "`closePosition` and `closeAllPositions`, quantity-reducing amends and stop-tightening "
         "amends are never gated, so they keep working while order entry is paused (C-2.6). "
         + _PROTECTIVE
