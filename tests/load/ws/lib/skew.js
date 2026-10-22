@@ -30,7 +30,7 @@ export const helloTrendName = (part, vu) => `cv_hello_${part}_ms_v${vu}`;
 const HELLO_TREND = /^cv_hello_(raw|rtt)_ms_v(\d+)$/;
 
 /** The summary's trends (name -> stats) split into the pooled ones and `hellos`, `[{ vu, raw, rtt }]`
- * in VU order: one for each VU whose welcome was timed. */
+ * in VU order: one for each VU whose two trends hold one sample each (any other count is no pair). */
 export function splitHellos(trends) {
   const pooled = {};
   const byVu = new Map();
@@ -41,7 +41,7 @@ export function splitHellos(trends) {
       continue;
     }
     const h = byVu.get(Number(m[2])) || { vu: Number(m[2]) };
-    if (t.count > 0) h[m[1]] = t.max;
+    if (t.count === 1) h[m[1]] = t.max;
     byVu.set(h.vu, h);
   }
   const hellos = [...byVu.values()].filter((h) => "raw" in h && "rtt" in h);

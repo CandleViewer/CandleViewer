@@ -657,6 +657,7 @@ def render(res: Result, facts: Mapping[str, Any], g: gate.GateResult) -> str:
             f"- Clock skew at the hello (same_host {same}, skew_estimator {cs.skew_estimator}): "
             f"{cs.text}"
         )
+        lines += [f"- WARNING: {cs.warning}"] if cs.warning else []  # a fallback is said
     lines += [
         "",
         "| check | budget | measured | limit | unit | result |",
@@ -700,6 +701,8 @@ def finish(out: Path, tolerance: float, *, record: bool = False) -> int:
     lead = "INVALID" if res.status == "INVALID" else "also invalid:"
     for text in res.invalid:
         print(f"  {lead} {text}")
+    if res.clock_skew is not None and res.clock_skew.warning:
+        print(f"::warning::{facts['profile']}: clock skew: {res.clock_skew.warning}")
     for w in g.warnings:
         print(f"::warning::{facts['profile']}: {w}")
     for f in g.failures:

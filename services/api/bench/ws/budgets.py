@@ -46,8 +46,9 @@ MIN_FEED_RATIO: Final = 0.99
 MAX_CLOCK_SKEW_MS: Final = 5.0
 #: k6's trends of the hello's clock skew, absolute ms (`tests/load/ws/lib/skew.js`). The raw one is
 #: the server's `clock_skew_ms` as it came: with k6 and the backend on one clock it is the hello's
-#: transit and queueing, not drift. The guard judges the corrected one, which takes half the hello's
-#: round trip off first. Raw is judged instead for a summary from before the correction (raw trend
+#: transit and queueing, not drift. The corrected one takes half the hello's round trip off. Pooled
+#: over the VUs, these are only the guard's fallback: it reads each VU's own pair (`clock_skew`).
+#: Raw is judged instead for a summary from before the correction (raw trend
 #: only). A run that injects a send delay (the self-check) only reports the skew: the delay holds
 #: the welcome after the server's stamp, so no reading of it means anything, and budget #6, which
 #: the self-check is about, is the server's own histogram.
@@ -197,6 +198,7 @@ class ClockSkew:
     send_delay_ms: float = 0.0  # the run's injected send delay: the skew is reported, not judged
     hello_raw: float | None = None  # `MIN_RTT_HELLO`: that hello's own raw skew and round trip
     hello_rtt: float | None = None
+    warning: str | None = None  # a judged fallback from `MIN_RTT_HELLO`, and why (`clock_skew`)
 
     @property
     def judged(self) -> bool:
@@ -291,29 +293,40 @@ def clock_skew(summ: Mapping[str, Any], send_delay_ms: float = 0.0) -> ClockSkew
     client keeps (`hellos`). A hello that queued on its way carries that wait, not the clocks'
     offset, and the fastest one carries the least: on one host clock, profile A's run 3 read 18 ms
     by the max over its six hellos, all of it one hello's 40 ms raw on a 44 ms round trip (the
-    median round trip was 7.5 ms). A summary without the pairs is judged on the corrected trend's
-    max as before (`MAX_OVER_HELLOS`, never below the minimum-RTT reading). The raw max
-    (`RAW_MAX`) is read instead when the run injects a send delay (it holds the welcome after the
-    server's stamp, which breaks the correction's even split of the round trip) and for a summary
-    from before the correction. `None` when no welcome was timed."""
+    median round trip was 7.5 ms). Only a usable pair for every timed hello is read (one with a
+    negative round trip, the client's clock stepped back, is dropped); otherwise the corrected
+    trend's max is (`MAX_OVER_HELLOS`, never below the minimum-RTT reading), and `warning` says so.
+    The raw max (`RAW_MAX`) is read instead when the run injects a send delay (it holds the welcome
+    after the server's stamp, which breaks the correction's even split of the round trip; its pairs
+    are never read) and for a summary from before the correction. `None` when no welcome was
+    timed."""
     raw, corrected = _stat(summ, SKEW_RAW, "max"), _stat(summ, SKEW_CORRECTED, "max")
     rtt_corrected = corrected is not None and send_delay_ms <= 0
     read = corrected if rtt_corrected else raw
     hellos = int(_stat(summ, SKEW_CORRECTED if rtt_corrected else SKEW_RAW, "count") or 0)
     est = MAX_OVER_HELLOS if rtt_corrected else RAW_MAX
     hello: tuple[float, float] | None = None
-    pairs = [(float(h["raw"]), float(h["rtt"])) for h in summ.get("hellos") or ()]
-    if rtt_corrected and pairs:
-        # ties on the shortest round trip (k6 times whole ms) go to the smallest |raw - RTT/2|, so
-        # the pick does not depend on the order the hellos came in
-        hello = min(pairs, key=lambda h: (h[1], abs(h[0] - h[1] / 2)))
-        est, read, hellos = MIN_RTT_HELLO, abs(hello[0] - hello[1] / 2), len(pairs)
+    why = f"the summary has no {SKEW_CORRECTED}"
+    if rtt_corrected:
+        why = "the summary has no per-hello pairs"
+        pairs = [(float(h["raw"]), float(h["rtt"])) for h in summ.get("hellos") or ()]
+        usable = [p for p in pairs if p[1] >= 0]
+        if pairs and len(usable) != hellos:
+            n = len(usable)
+            why = f"the summary's {n} usable per-hello pairs do not match its {hellos} timed hellos"
+        elif usable:
+            # ties on the shortest round trip (k6 times whole ms) go to the smallest |raw - RTT/2|,
+            # then to the smallest raw, so the hello read does not depend on the order they came in
+            hello = min(usable, key=lambda h: (h[1], abs(h[0] - h[1] / 2), h[0]))
+            est, read, hellos = MIN_RTT_HELLO, abs(hello[0] - hello[1] / 2), len(usable)
     if read is None:
         return None
     rtt_p50, rtt_max = _stat(summ, HELLO_RTT, "p50"), _stat(summ, HELLO_RTT, "max")
     h_raw, h_rtt = hello or (None, None)
+    fallback = f"{why}; the skew was measured with {est} (the fallback)"
+    note = None if hello or send_delay_ms > 0 else fallback  # a send-delay run is not judged
     return ClockSkew(
-        read, est, raw, rtt_p50, rtt_max, hellos, rtt_corrected, send_delay_ms, h_raw, h_rtt
+        read, est, raw, rtt_p50, rtt_max, hellos, rtt_corrected, send_delay_ms, h_raw, h_rtt, note
     )
 
 
