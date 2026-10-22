@@ -18,6 +18,18 @@ const outPath = join(packageRoot, "src", "generated", "ruleIr", "index.ts");
 const script = join(packageRoot, "scripts", "generate-rule-ir-types.mjs");
 const schemaPath = join(repoRoot, "services", "api", "candleviewer", "rules", "ir", "rule-ir.json");
 
+const minimal: RuleIr = {
+  rule_id: "00000000-0000-4000-8000-000000000001",
+  version: 1,
+  name: "minimal",
+  enabled: false,
+  mode: "disabled",
+  scope: { level: "global" },
+  trigger: { type: "on_price_update" },
+  conditions: { node_id: "c1", op: "is_true", left: { metric: "position_open" } },
+  actions: [{ node_id: "a1", type: "send_notification", params: {} }],
+};
+
 describe("generated rule IR surface", () => {
   it("matches a fresh generation from rule-ir.json (drift check)", () => {
     const committed = readFileSync(outPath, "utf8").split("\r\n").join("\n");
@@ -39,18 +51,30 @@ describe("generated rule IR surface", () => {
     expect(RULE_IR_SCHEMA_ID).toBe("https://candleviewer.local/schemas/rule-ir-v1.json");
   });
 
+  it("freezes the published schema at every depth", () => {
+    const defs = RULE_IR_SCHEMA["$defs"] as Record<string, unknown>;
+    const trigger = defs["Trigger"] as { properties: { type: { enum: string[] } } };
+    expect(Object.isFrozen(RULE_IR_SCHEMA)).toBe(true);
+    expect(Object.isFrozen(defs)).toBe(true);
+    expect(Object.isFrozen(trigger)).toBe(true);
+    expect(Object.isFrozen(trigger.properties.type.enum)).toBe(true);
+  });
+
   it("types a minimal valid document", () => {
-    const doc: RuleIr = {
-      rule_id: "00000000-0000-4000-8000-000000000001",
-      version: 1,
-      name: "minimal",
-      enabled: false,
-      mode: "disabled",
-      scope: { level: "global" },
-      trigger: { type: "on_price_update" },
-      conditions: { node_id: "c1", op: "is_true", left: { metric: "position_open" } },
-      actions: [{ node_id: "a1", type: "send_notification", params: {} }],
+    expect(minimal.actions).toHaveLength(1);
+  });
+
+  it("refuses, at compile time, a key and a mode the schema does not have", () => {
+    const withVariables: RuleIr = {
+      ...minimal,
+      // @ts-expect-error: `variables` is not a RuleIr key, and the server forbids extra keys
+      variables: {},
     };
-    expect(doc.actions).toHaveLength(1);
+    const badMode: RuleIr = {
+      ...minimal,
+      // @ts-expect-error: "live" is not one of the schema's modes (disabled, simulate, armed)
+      mode: "live",
+    };
+    expect([withVariables, badMode]).toHaveLength(2);
   });
 });

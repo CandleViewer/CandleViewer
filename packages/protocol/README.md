@@ -15,6 +15,12 @@ decoders and sequence/resync helpers.
 - `src/generated/index.ts` — barrel re-exporting the `rest`, `ws`, `policy` and
   `bars` surfaces as namespaces, written by `scripts/generate-barrel.mjs`.
   `src/generated/cvwb/` stays out of it: `src/runtime` imports it directly.
+- `src/generated/ruleIr/` — the rule IR types (`RuleIr` and its node interfaces) and the
+  published JSON Schema (`RULE_IR_SCHEMA`, deeply frozen, and `RULE_IR_SCHEMA_ID`), compiled
+  from the committed `services/api/candleviewer/rules/ir/rule-ir.json`. Not in the barrel: it
+  is exposed as `@candleviewer/protocol/rule-ir`, so the schema stays out of the main bundle.
+  `generated.rest`'s `components["schemas"]["RuleIr"]` is the OpenAPI projection, not this
+  type. **Never hand-edit.**
 - All of `src/generated/` is marked `linguist-generated` in `.gitattributes`;
   `pnpm generate` regenerates it and records every file's sha256 in
   `.cache/generated-manifest.json`, which is git-ignored and never committed
@@ -47,6 +53,8 @@ The Python side of this same contract pair (pydantic v2 models under
   `generate-bar-types.mjs` (bar model schema → `src/generated/bars/`),
   `generate-cvwb-layout.mjs` (`cvwb-layout.json` → `src/generated/cvwb/` and the
   Python twin `services/api/candleviewer/ws/_generated/cvwb_layout.py`),
+  `generate-rule-ir-types.mjs` (`services/api/candleviewer/rules/ir/rule-ir.json` →
+  `src/generated/ruleIr/`),
   `generate-barrel.mjs` (→ `src/generated/index.ts`),
   `update-manifest.mjs` (records `.cache/generated-manifest.json`), then
   `check-generated-guard.mjs`.

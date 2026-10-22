@@ -48,6 +48,9 @@ async function main() {
   const doc = JSON.parse(readFileSync(schemaPath, "utf8"));
   // Compile a copy: `doc` itself is embedded verbatim below.
   const copy = JSON.parse(JSON.stringify(doc));
+  // Fail clearly, not with a bare TypeError, if the schema no longer has what is stripped below.
+  if (!copy.$defs?.Trigger?.allOf)
+    throw new Error("rule-ir.json has no $defs.Trigger.allOf: update the strip in this script");
   // The published title ("CandleViewer Rule IR") would name the root interface after itself.
   copy.title = "RuleIr";
   // Strip per-property titles so scalar fields inline (no `Op`/`Type` alias clutter or name
@@ -67,10 +70,20 @@ async function main() {
   });
   const data = `export const RULE_IR_SCHEMA_ID = ${JSON.stringify(doc.$id)};
 
+// Freezes a value and everything reachable from it (plain JSON: no cycles).
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null) {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 /**
  * The published schema, verbatim; the canonical mirror reads defaults and field kinds from it.
+ * Frozen at every depth, so no consumer can change what another reads.
  */
-export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = ${JSON.stringify(doc)};
+export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = deepFreeze(${JSON.stringify(doc)});
 `;
   const chunks = [HEADER, types, data];
   mkdirSync(dirname(outPath), { recursive: true });

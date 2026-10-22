@@ -2,7 +2,9 @@
 // Writes src/generated/index.ts, the barrel src/index.ts re-exports as `generated`. Every file
 // under src/generated comes from a generator: CI's `gen` gate fails a committed file there
 // that `pnpm generate` does not write (CI-GEN-005, #3299). To export another generated surface,
-// add it to SURFACES. ./cvwb stays out of the barrel: src/runtime imports it directly.
+// add it to SURFACES. ./cvwb and ./ruleIr stay out of the barrel: src/runtime imports ./cvwb
+// directly, and ./ruleIr is its own entry, @candleviewer/protocol/rule-ir, so the schema constant
+// stays out of the main bundle.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

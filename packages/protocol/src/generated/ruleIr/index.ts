@@ -241,10 +241,20 @@ export interface Trigger {
 
 export const RULE_IR_SCHEMA_ID = "https://candleviewer.local/schemas/rule-ir-v1.json";
 
+// Freezes a value and everything reachable from it (plain JSON: no cycles).
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null) {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 /**
  * The published schema, verbatim; the canonical mirror reads defaults and field kinds from it.
+ * Frozen at every depth, so no consumer can change what another reads.
  */
-export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = {
+export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = deepFreeze({
   $defs: {
     Action: {
       additionalProperties: false,
@@ -718,4 +728,4 @@ export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = {
   ],
   title: "CandleViewer Rule IR",
   type: "object",
-};
+});
