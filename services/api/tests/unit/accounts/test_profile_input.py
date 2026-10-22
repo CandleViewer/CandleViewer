@@ -209,6 +209,12 @@ def test_every_member_maps_to_its_own_domain_field(mode: str, member: str, field
     assert _map(_with(sizing=sizing, **_NON_DEFAULT_BODY)) == _profile(**fields)
 
 
+@pytest.mark.parametrize("member", ["is_default", "all_symbols", "reduce_only_default"])
+def test_each_flag_set_alone_lands_in_its_own_field(member: str) -> None:
+    # The every-member bodies set these three flags alike; one alone tells them apart.
+    assert _map(_with(**{member: True})) == _profile(**{member: True})
+
+
 def test_the_version_and_updated_at_of_the_store_pass_through() -> None:
     mapped = map_profile_input(_BASE, profile_id=_PID, account_id=_AID, version=7, updated_at=99)
     assert (mapped.version, mapped.updated_at) == (7, 99)
@@ -314,7 +320,9 @@ def test_a_wrong_shape_is_a_type_error(member: str, value: object, message: str)
         _map(_with(**{member: value}))
 
 
-@pytest.mark.parametrize("edit", [{"leverage": "101"}, {"require_native_stop": False}])
+@pytest.mark.parametrize(
+    "edit", [{"leverage": "101"}, {"leverage": "0"}, {"require_native_stop": False}]
+)
 def test_a_body_the_domain_refuses_does_not_map(edit: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):  # a ValueError: the floor holds at the domain too
         _map(_with(**edit))
