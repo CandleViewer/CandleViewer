@@ -3621,7 +3621,8 @@ export interface paths {
      *     reduces joins no trade group (`OrderAcceptance`).
      *
      *     **Invariants enforced server-side:**
-     *     * The account's active profile must be enabled and trading-enabled and allow the symbol,
+     *     * The account's bound profile, its default (`is_default`), must be enabled and
+     *       trading-enabled and allow the symbol,
      *       otherwise `risk_limit_breached` (24-internal-schemas.md section 9.3 step 1; the profile
      *       an account is created with is not trading-enabled, `21-database-schema.md` section
      *       3.2.4).
@@ -8621,7 +8622,7 @@ export interface components {
       price?: components["schemas"]["Decimal"];
       /**
        * Format: uuid
-       * @description An alternate profile of this order's account; it only narrows the account's bound profile, its active profile (later narrows, as on `createTradeGroup`; SR-E28-03): every cap the guard reads and the allowed symbols stay the bound profile's or stricter. Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each.
+       * @description An alternate profile of this order's account; it only narrows the account's bound profile, its default profile (`is_default`, D7; later narrows, as on `createTradeGroup`; SR-E28-03): every cap the guard reads and the allowed symbols stay the bound profile's or stricter. Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each.
        */
       profile_id?: string | null;
       /** @default false */

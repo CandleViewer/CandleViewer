@@ -2487,7 +2487,7 @@ class PlaceOrderRequest(BaseModel):
     profile_id: Annotated[
         UUID | None,
         Field(
-            description="An alternate profile of this order's account; it only narrows the account's bound profile, its active profile (later narrows, as on `createTradeGroup`; SR-E28-03): every cap the guard reads and the allowed symbols stay the bound profile's or stricter. Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each."
+            description="An alternate profile of this order's account; it only narrows the account's bound profile, its default profile (`is_default`, D7; later narrows, as on `createTradeGroup`; SR-E28-03): every cap the guard reads and the allowed symbols stay the bound profile's or stricter. Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each."
         ),
     ] = None
     note: Annotated[str | None, Field(max_length=280)] = None

@@ -282,6 +282,7 @@ def test_a_leg_only_narrows_its_bound_profile_and_a_widening_request_is_refused_
     preview = _words(_OPS["previewTradeGroup"]["description"])
     assert "never a leg returned with `would_submit: false`" in preview
     assert "cap the request does not move still marks that leg alone" in preview
+    assert "(`intent_mismatch`, with any `native_stop_required` it lists)" in preview
     assert (
         "is `404 not_found`, decided at validation, after the account-scope check and before any "
         "leg is sized, as on the submit" in preview
@@ -309,6 +310,8 @@ def test_a_profile_id_of_another_account_is_answered_as_a_missing_one(operation:
     assert "`404 not_found`, decided at validation, after the account-scope check" in text
     if operation == "placeOrder":  # SEC-4107-02: an alternate never relaxes a cap
         assert "every cap the guard reads and the allowed symbols stay the bound profile's" in text
+        assert "the account's bound profile, its default profile (`is_default`, D7;" in text
+        assert "active profile" not in text  # D-4107-01: `active_profile_id` is not the ceiling
     order = _words(_SPEC["info"]["description"])  # the owner of the order of the checks
     assert (
         "then validation (where a `profile_id` that is not one of the account's own profiles is "
@@ -473,6 +476,7 @@ def test_adr_0008_records_p1b() -> None:
         "Amend and cancel name at most 20 legs, as a group holds",
         "a reduction or a tightening is never refused",
         "still rejects only its leg",
+        "on a submit, an account-state cap the request does not move",
         "issuecomment-6335477829",
         "This breaks the `/v1` contract (C-6.3) before any route serves it",
     ):

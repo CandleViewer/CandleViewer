@@ -117,16 +117,18 @@ Refines binding rules 1 to 3; reverses none. Three things now hold of the contra
 1. **Each account's bound profile is the ceiling: later narrows.** Request defaults, per-leg overrides and an
    alternate `profile_id`, `placeOrder`'s included, only narrow it, field by field, judged on the resulting leg
    (SR-E28-03, SR-E28-04). A request that would widen any leg is refused whole with `risk_limit_breached`, never
-   clamped and never a partial group (C-12.5, E28 threat model D6), and the preview answers as the submit does; an
-   account-state cap the request does not move (the daily loss, open positions, margin) still rejects only its leg.
+   clamped and never a partial group (C-12.5, E28 threat model D6), and the preview answers as the submit does; on
+   a submit, an account-state cap the request does not move (the daily loss, open positions, margin) still rejects
+   only its leg.
    An alternate `profile_id` must be one of its account's profiles; any other answers as a missing one, at
    validation, after the account-scope check.
 2. **A rule origin is internal.** Only the rule engine's internal path (M15) sets a group's `rule_id`; the public
    request has none, so a manual group never takes the rule-origin default policy or another user's attribution
    (SR-E28-05).
-3. **Rule 2 holds after admission.** A group amend never clears an entry leg's stop, as `amendOrder` never does, nor the stop of any leg whose position is open,
-   never loosens a stop (a long leg's may only rise, a short leg's only fall) and never takes a leg past its bound
-   profile; a reduction or a tightening is never refused, and a refusal is the whole request's. A group cancel never
+3. **Rule 2 holds after admission.** A group amend never clears an entry leg's stop, as `amendOrder` never does,
+   nor the stop of any leg whose position is open, never loosens a stop (a long leg's may only rise, a short leg's
+   only fall) and never takes a leg past its bound profile; a reduction or a tightening is never refused, and a
+   refusal is the whole request's. A group cancel never
    cancels an open leg's stop-loss, attached or a separate order under `tpsl_mode: Partial`, and keeps its
    take-profits too, as `cancelAllOrders` keeps reduce-only exits by default, unless it flattens the leg first; that
    unwind removes the stop only once the leg is flat (SR-E28-33). Amend and cancel name at most 20 legs, as a group
