@@ -1,8 +1,8 @@
 # E15-D01 — Observer's note template (one copy per session)
 
-One sheet per session, filed under its session id on the private drive the owner designates (OQ-2), never in the repository; no real
-name, account id, key fragment, balance or real position size goes on it. Times are recording times (mm:ss); anything
-only said, not done, is marked "stated".
+One sheet per session, filed under its session id on the private drive the owner designates (OQ-2), never in the
+repository; no real name, account id, key fragment, balance or real position size goes on it. Times are recording times
+(mm:ss); anything only said, not done, is marked "stated".
 
 | Header field                                                                   | Entry |
 | ------------------------------------------------------------------------------ | ----- |

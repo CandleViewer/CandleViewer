@@ -7,7 +7,7 @@
 > **low-confidence** because it rests on heuristics alone. The instruments in this directory let the owner run the
 > study later; results are added here as a dated addendum, and each label then becomes `(session: Pn)`.
 
-- **Ticket:** E15-D01 (#205) · **Status:** draft; text pass and boards r1 done · **Owner approval pending** (Agent-delivery
+- **Ticket:** E15-D01 (#205) · **Status:** draft; text pass and boards r2 done · **Owner approval pending** (Agent-delivery
   adaptations, owner decision 2026-09-25) · **Method:** heuristic and documentation review; no session was run.
 - **Scope:** SCR-011, SCR-020..029, SCR-049, SCR-150, SCR-153; CMP-073, CMP-080..083, CMP-196, CMP-214..218;
   US-LAY-001..008. Feeds E15-D02 (#248), then D04 (#320), D05 (#321), D06 (#360), D08 (#362), D15 (#369), the K01 spike
@@ -24,7 +24,7 @@
 - **In plain words.** Act first on the five Pri 0 findings (§9): sync can re-point an armed order panel (F1), the badge
   does not say what a group shares (F2), panel focus decides where trading hotkeys land (F3), the move gesture shares
   `Alt` with a market order (F4), a seeded profile gives `Esc` to cancel-all (F5). Every open question has a recommended
-  default (§15) that stands until the owner overrides it; AM-1 (docking scope) was ruled on #205 on 2026-10-22. **Ids:** F
+  default (§15) that stands until the owner overrides it; AM-1 (docking scope) was ruled on #205, 2026-10-22. **Ids:** F
   finding · AD adopted decision · AM amendment proposal · OQ open question · C1–C6 sync configurations · H1–H10 Nielsen
   heuristics · Pri 0–2 · `14` = `docs/plan/14-screens-catalogue.md`, likewise `NN` · E15-S03 and similar = ticket bodies
   in `docs/plan/backlog/E15.json` · P1..P6 = session pseudonyms (P1 is the owner); personas carry a `persona-` prefix.
@@ -61,7 +61,7 @@ pending the owner run; **open** = needs sessions or an owner decision; **deviati
 | DoD: walkthrough with CDO, Architect and FE lead, attendance recorded                                                                 | §17, ready to post on #205; the owner's walk through it is the attendance record                                                                                                                                                                                                                                                   | open (not yet posted)                  |
 | DoD: CDO sign-off recorded on the ticket                                                                                              | the owner's `approved` comment on #205 (§17 item 7)                                                                                                                                                                                                                                                                                | open                                   |
 | Test plan 5: every US-LAY story named, or recorded as not covered                                                                     | US-LAY-001 §2, §6; US-LAY-002 §5, §8; US-LAY-003 §3; US-LAY-004 only §3.1 (Y-scale is its per-pane link, not a group axis; the link UI is E15-D06's and S05's); US-LAY-005 §4; US-LAY-006 §2, §6; US-LAY-007 (SCR-026) **not covered** (no research question: E15-D09, S07); US-LAY-008 only §7's 1280×800 findings (E15-D12, S08) | done                                   |
-| Penpot boards and PNGs (`docs/design/README.md` approval rule)                                                                        | Research boards, below; six boards drawn 2026-10-22                                                                                                                                                                                                                                                                                | done (boards r1)                       |
+| Penpot boards and PNGs (`docs/design/README.md` approval rule)                                                                        | Research boards, below; six boards drawn 2026-10-22                                                                                                                                                                                                                                                                                | done (boards r2)                       |
 
 ## Research boards (Penpot)
 
@@ -137,7 +137,7 @@ presets: four map to Scalping, Order-flow, 2×2 and Analyst, "Replay" to none, a
 
 | Rank | Preset (SCR-022)                                     | Panels     | Who                                                | Storable today (`21` §3.8.1, `22` `PaneKind`) | Note                                                                                             |
 | ---- | ---------------------------------------------------- | ---------- | -------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 1    | Scalping (chart+DOM+ticket+tape)                     | 3 + drawer | persona-P1, persona-P2a (`10` §2 scenario 2)       | partly: no `ticket` pane kind                 | the owner's pre-selected first-run default                                                       |
+| 1    | Scalping (chart+DOM+ticket+tape)                     | 3 + drawer | persona-P1, persona-P2a (`10` §2 scenario 2)       | partly: no `ticket` pane kind                 | the owner's pre-selected first-run default; `10` §2 scenario 2 is "Absorption long (intraday)"   |
 | 2    | Order-flow (chart+footprint+CVD+profile)             | 4          | persona-P1, persona-P2a                            | yes: a footprint is a `chart` pane            | exactly US-LAY-001's four order-flow panes; RSK-005's cap would break it (§11)                   |
 | 3    | Swing (3 timeframes)                                 | 3          | persona-P2b                                        | yes                                           | ships with its charts in sync group A (AD-4); the managers' default                              |
 | 4    | 2×2                                                  | 4          | all                                                | yes (`2x2`)                                   | the dev seed (`21` §10.8) and the checklist's "Multi-chart 2x2"                                  |
@@ -161,9 +161,10 @@ Q1-h). One-instrument presets (Scalping, Order-flow, Swing) ship in group A; geo
 "Selective sync" and E15-S04's criteria use symbol on, interval off, as persona-P2b's multi-timeframe layout needs; time
 range stays off, since sharing it carries pan and zoom to every member (E11-D01 Q1-h) and would squeeze that layout's
 4 h chart into its 15 m window, while the crosshair already aligns time (E11-D01 recommends time on: OQ-5). Drawings
-follow the E14-D01 draft (PR #4047, in flight), which leaves "defaults for new sync groups" to this ticket. Sources name
-three to seven axes (F8); the shipped `symbol_sync` and `level_sync` (price levels, a subset of drawings; no flag covers full drawings sync, which E14-D01 and E15-S04 name) default to false (AM-4); the
-contract has three per-layout flags, none per group and none for interval or time range (`21` §3.8.1; OQ-5).
+follow E14-D01 (PR #4047, merged as `b0669716e`), which leaves "defaults for new sync groups" to this ticket. Sources
+name three to seven axes (F8); the shipped `symbol_sync` and `level_sync` (price levels, a subset of drawings; no flag
+covers full drawings sync, which E14-D01 and E15-S04 name) default to false (AM-4); the contract has three per-layout
+flags, none per group and none for interval or time range (`21` §3.8.1; OQ-5).
 **Confidence:** Low.
 
 **3.2 The six configurations** (`sync-stimuli.md`; letters are the only cue, as the ticket's Technical notes require).
@@ -287,7 +288,8 @@ live: the badge in every window and on a maximised panel; SCR-049 keeps one per 
 badge, which H5 leaves to this study, is not recommended, since TopBar and StatusBar already repeat the environment
 (E10-D02) `(heuristic)`. Multi-monitor: a floating window whose display is gone reopens on the primary one (SCR-027),
 with monitor-relative bounds kept across restarts (`ShellPort.ts`, US-SET-009). Reduced motion and high contrast: no
-animation needed, no hue-only cue (`05` §4, §7). Viewer: session-only rearranging; Save disabled, "Read-only role".
+animation needed, no hue-only cue (`05` §4, §5 item 6, §7). Viewer: session-only rearranging; Save disabled,
+"Read-only role".
 
 ## 9. Ranked findings and friction list (all `(heuristic)`)
 
@@ -410,7 +412,7 @@ and `22`'s example profile (`Esc Esc`, ungated) against `05` §3.3 item 3 (F5); 
 | OQ    | Question (decider; consumer)                                                                                                                                                                                                                                                                                                                                                      | Recommended default                                                                                                                                       | Settled by                                           |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | OQ-1  | the ≥5-session deviation; who moderates the owner's session; the reduced-sample bar (owner)                                                                                                                                                                                                                                                                                       | approve; run the guide now (no prototype needed); two thirds, rounded up                                                                                  | owner, then the sessions                             |
-| OQ-2  | retention of research recordings: `04` has no rule (owner; `consent-form.md`)                                                                                                                                                                                                                                                                                                     | delete when the owner approves the addendum that reports them (#205); never in the repository                                                             | owner                                                |
+| OQ-2  | retention of research recordings, and the private drive that holds them: `04` has no rule (owner; `consent-form.md`)                                                                                                                                                                                                                                                              | delete when the owner approves the addendum that reports them (#205); never in the repository; the drive: one the owner names before the first session    | owner                                                |
 | OQ-3  | docking: AM-1's reduce, go as specified, or no-go (owner, before E15-D02; E15-D04, S02)                                                                                                                                                                                                                                                                                           | reduce                                                                                                                                                    | ruled: reduce (#205, 2026-10-22)                     |
 | OQ-4  | the save model, AM-3 (owner; E15-D08, S03, X01)                                                                                                                                                                                                                                                                                                                                   | explicit save with a local working copy; autosave opt-in                                                                                                  | guide block E, then owner                            |
 | OQ-5  | default axes and per-group storage; AD-4 keeps time range off where E11-D01 Q1-h item 4 recommends it on (owner, contract first; E15-S04, S05, T03, D06; E11-S09)                                                                                                                                                                                                                 | AD-4 (time range off; Y-scale only as the per-pane `scale_mode: linked`, AM-11); flags stay per layout until a contract PR adds per-group ones            | C4 and C5 results; the owner's ruling; a contract PR |
@@ -432,7 +434,7 @@ Beyond `docs/plan/` (`04`–`06`, `10`–`18`, `21`–`23`, `30`, `32`, ADR-0001
 backlog `E15.json`, `E30.json`: `apps/web/src/keymap/`, `apps/web/src/shell/`, `services/api/candleviewer/`
 (`api/workspaces.py`, `api/workspaces_presets.py`, `app.py`), `docs/design/E10/E10-D02.md`, `E11/E11-D02.md`,
 `E17/E17-D01.md`, `E29/E29-D01.md`, E11-D01 (#239, PR #3828: `docs/design/research/e11-chart-navigation-research.md`),
-`docs/research/01-tradingview-charting.md` §6, and E14-D01 in flight (PR #4047).
+`docs/research/01-tradingview-charting.md` §6, and E14-D01 (PR #4047, merged as `b0669716e`).
 
 ## 17. Owner walkthrough checklist (ready to post on #205; owner approval pending)
 
