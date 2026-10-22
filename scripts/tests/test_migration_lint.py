@@ -1310,6 +1310,36 @@ def test_an_operation_whose_table_resolves_to_another_is_not_flagged(
     assert _audit_hits(tmp_path, _UNRESOLVED_OP.format(body)) == []
 
 
+def test_a_drop_after_a_form_feed_is_paired_with_its_own_line(tmp_path: Path) -> None:
+    """Lines are numbered as the AST numbers them, so a form feed earlier in the file
+    cannot move a drop away from the call the rule read."""
+    source = (
+        'from alembic import op\n\x0c\nt = "audit_log"\n\n\ndef upgrade() -> None:\n'
+        "    # cv:contract-phase: R2\n    op.drop_table(\n        t\n    )\n"
+    )
+    assert any(
+        "append-only table 'audit_log'" in h for h in _audit_hits(tmp_path, source)
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["0050_audit.pyc", "0050_audit.pth", "sub/0050_audit.py", "0050_audit.sql"],
+)
+def test_a_file_that_is_not_a_revisions_source_is_refused_by_the_cli(
+    tmp_path: Path, name: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    versions = tmp_path / "versions"
+    (versions / name).parent.mkdir(parents=True, exist_ok=True)
+    (versions / name).write_bytes(b"x")
+    (versions / ".gitkeep").write_bytes(b"")
+    (versions / "__pycache__").mkdir()
+    (versions / "__pycache__" / "0001.cpython-312.pyc").write_bytes(b"x")
+    assert main(["--versions-dir", str(versions)]) == 1
+    (line,) = capsys.readouterr().err.splitlines()
+    assert name.split("/")[-1] in line and "not a revision's Python source" in line
+
+
 def test_a_python_revision_nested_too_deeply_is_refused_by_the_cli_with_its_sibling(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

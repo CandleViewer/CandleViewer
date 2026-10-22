@@ -1182,7 +1182,9 @@ def check_destructive_annotations(
     drops = frozenset({"drop_column", "drop_table", "drop_index", "drop_constraint"})
     for path in paths:
         source = _read_revision(path)
-        lines = source.splitlines()
+        # Numbered as the AST numbers them: `splitlines()` would also split at a form feed
+        # or a Unicode line separator, and pair each index with another line's call.
+        lines = source.split("\n")
         try:  # the call's arguments, from the line it starts on, however it wraps
             audit_drops = _op_targets(ast.parse(source), drops, forbidden_tables)
         except (SyntaxError, RecursionError):  # the audit rule refuses such a revision
@@ -1282,6 +1284,33 @@ def check_security_sensitive(
     return findings
 
 
+def check_versions_dir(versions_dir: Path) -> list[LintFinding]:
+    """CI-MIG-003: the versions directory holds revisions' Python source and nothing
+    else the rule does not read: a file of another kind (a compiled module, a path
+    file) or a module in a subdirectory may be loaded without being read. Bytecode
+    caches (`__pycache__`) and the `.gitkeep` placeholder are not revisions."""
+    findings: list[LintFinding] = []
+    for path in sorted(versions_dir.rglob("*")):
+        relative = path.relative_to(versions_dir)
+        if "__pycache__" in relative.parts or not path.is_file():
+            continue
+        if path.name == ".gitkeep" or (
+            path.suffix == ".py" and len(relative.parts) == 1
+        ):
+            continue
+        findings.append(
+            LintFinding(
+                code="CI-MIG-003",
+                path=path,
+                message=(
+                    "not a revision's Python source in the versions directory: "
+                    "refused, the audit-table rule cannot read it (C-5.7, ADR-0013 rule 9)"
+                ),
+            )
+        )
+    return findings
+
+
 def _iter_migration_files(versions_dir: Path) -> list[Path]:
     return sorted(p for p in versions_dir.glob("*.py") if p.name != "__init__.py")
 
@@ -1305,7 +1334,7 @@ def main(argv: list[str] | None = None) -> int:
     # A revision that is not UTF-8 source gets the audit rule's one refusal; no other
     # reader opens it.
     readable = [path for path in paths if _reads_as_utf8(path)]
-    findings: list[LintFinding] = []
+    findings = check_versions_dir(versions_dir)
     findings.extend(check_if_not_exists(readable))
     findings.extend(check_destructive_annotations(readable))
     findings.extend(check_audit_table_integrity(paths))
