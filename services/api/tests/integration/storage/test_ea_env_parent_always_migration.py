@@ -143,14 +143,21 @@ def test_a_sub_account_in_its_parents_environment_is_kept(pg_dsn: str, role: str
         raise psycopg.Rollback
 
 
-def test_a_sub_account_of_no_existing_parent_is_refused_as_before(pg_dsn: str) -> None:
-    """0017's rule: a parent that does not exist has no environment to share."""
-    with _conn(_fresh(pg_dsn)) as c:
+@pytest.mark.parametrize("role", ["origin", "replica"])
+def test_a_sub_account_of_no_existing_parent_is_refused_as_before(pg_dsn: str, role: str) -> None:
+    """0017's rule: a parent that does not exist has no environment to share. Under the replica
+    role the self-reference's foreign key does not fire, so there the guard is the only refusal
+    (SEC-3962-01). The insert runs under a savepoint, so the count is read on after it."""
+    with _conn(_fresh(pg_dsn)) as c, c.transaction():
         before = _accounts(c)
-        with pytest.raises(pgerr.CheckViolation) as exc:
+        c.execute(sql.SQL("SET LOCAL session_replication_role = {}").format(sql.Literal(role)))
+        with pytest.raises(pgerr.CheckViolation) as exc, c.transaction():
             _insert(c, "demo", parent=str(uuid.uuid4()))
         assert exc.value.diag.constraint_name == "trg_ea_env_parent"
+        message = exc.value.diag.message_primary or ""
+        assert message.startswith("trg_ea_env_parent:") and "demo" not in message
         assert _accounts(c) == before
+        raise psycopg.Rollback
 
 
 def test_re_parenting_a_sub_account_into_another_environment_is_refused(pg_dsn: str) -> None:
