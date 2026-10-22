@@ -261,8 +261,8 @@ degraded:lagging | connection_quality.class lagging | global chrome, panel chrom
   announcement, motion
 degraded:saturated (Delayed) | connection_quality.class saturated or overflowing; applied | -
 offline (retry stopped) in a mounted workspace | TransportState offline; Link.offline.cause fatal
-  (1002, 1009, 4400; bye.reconnect false is folded into fatal by closePolicy) - never a shell
-  cause | -
+  (1002, 1009, 4400; a 4403 close code is the session-ended row; bye.reconnect false is folded
+  into fatal by closePolicy) - never a shell cause | -
 offline: shell cause on the login screen (SCR-001 inline, SCR-159) | the shell's ConnectionState
   offline, tailnet_unreachable, backend_unreachable (the folded fatal, C27) with no workspace
   mounted | panel chrome
@@ -288,11 +288,14 @@ system unknown (D11) | WsState.systemStream not live; KillSwitchView unknown | p
 flapping (T5) | >= 3 transport changes in 5 s (transitionSeq) | panel chrome
 long-outage / T4 steps (10 s, 30 s, 5 min) | continuous Disconnected (client clock) | panel chrome
 session ended (no retry) | bye.reconnect false: session_revoked (4401), user_disabled (4403),
-  mfa_enrollment_required (4403); told apart from a fatal close only with G12 | -
+  mfa_enrollment_required (4403); a bare 4403 (Link.offline.closeCode) lands here today; told
+  apart from a 4401 fatal close only with G12 | -
 backend-health conditions (CMP-092): blocking only for the causes the order path refuses on
-  (24 s8.10), info / warning for the rest | system health components[] (database -> blocking;
-  ingestion, recorder, rule engine, GPU fallback, cold tier -> info / warning), notice read-only
-  codes, account_notice, maintenance.enabled; wallet health[] per account (23 s15.4) | panel chrome
+  (24 s8.10), info / warning for the rest | system health components[] (postgres -> blocking: the
+  gate reads its flags from the Postgres store and MaintenanceGate fails closed; the overall
+  health word routes nothing by itself; ingestion, recorder, rule engine, GPU fallback, cold tier
+  -> info / warning), notice read-only codes, account_notice, maintenance.enabled; wallet
+  health[] per account (23 s15.4) | panel chrome
 err by errorMapping class (23 s10.3) | err protocol_violation / frame_malformed / invalid_options
   (client bug); subscription_limit / client_rate_limited (capacity); resync_rate_limited (rebuild
   budget, 23 s7.5) | global chrome
