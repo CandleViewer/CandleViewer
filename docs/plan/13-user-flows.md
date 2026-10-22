@@ -32,6 +32,7 @@ flowchart TD
 ```
 
 **Notes / edge cases**
+
 - Recovery codes (10 single-use) are shown exactly once at step 4; if the Owner closes the wizard without acknowledging, the wizard resumes at step 4 on next launch (codes are not regenerated silently).
 - No Bybit account is configured yet — the Terminal shows an empty state prompting "Add your first Bybit account" (links to flow §2).
 - If the wizard is abandoned mid-way (app closed), it resumes at the last completed step; partial Owner records are not left in a usable-but-unenrolled state (TOTP enrollment is transactional with account creation).
@@ -74,6 +75,7 @@ flowchart TD
 ```
 
 **Safety invariants**
+
 - Withdrawal-capable keys are **never persisted**, even transiently — the verification call happens before the encrypted-store commit is finalized; on hard-stop the plaintext key material is discarded from memory immediately.
 - Key material is shown in the UI **exactly once** (at entry) and never re-displayed; `/admin/keys/:keyId` shows metadata only (masked key id suffix, permissions, IP whitelist, expiry) never the secret.
 - Every step in this flow writes an audit log entry (key added, verification result, warnings acknowledged).
@@ -101,6 +103,7 @@ flowchart TD
 ```
 
 **Notes**
+
 - Profiles are versioned (append new version rather than destructive overwrite) so historical trade-group fan-outs can be traced to the profile version active at execution time (journal traceability).
 - Editing a profile that is currently in use by open positions shows a non-blocking warning: "N open positions use this profile — changes apply to new orders only."
 
@@ -397,6 +400,7 @@ flowchart TD
 ```
 
 **Notes**
+
 - Journal entries are generated automatically on position close (no manual "create trade" step) from the OMS fill/position-close event stream; manual edits are limited to tags/notes, never to the recorded fill data itself (audit integrity).
 - Viewer access to Journal/Analytics is granted per-account by the Owner (`10-personas.md` §7); ungranted accounts are simply absent from the Viewer's filter list, not shown-then-blocked.
 - `M-019` (quick-note) and `M-025` (export) are the only modal/drawer surfaces in this flow; everything else is full-page routes.
@@ -722,7 +726,200 @@ frame are specified in `docs/design/E09/E09-D02.md`.
 
 ---
 
-## 22. Traceability
+## 22. Bar modes, intervals and chart types — F-BAR-1..5 (E12-D02)
+
+**Actors:** P1, P2, P3; market data only, and no order can be placed from these surfaces. **Route:** R-101, no
+route change. **Screens:** SCR-030, SCR-031, SCR-041, SCR-042, SCR-045, SCR-047, SCR-048.
+Frames, slots, copy and budgets: `docs/design/E12/E12-D02.md`; state precedence: the SCR-030 entry of
+`14-screens-catalogue.md`. Shared rules: the previous series stays drawn until the new one paints (never an empty
+pane); a failed or cancelled change keeps the working chart; focus is never moved by a system event.
+
+### 22.1 F-BAR-1 — Switch time interval (cache hit, cache miss, progressive backfill)
+
+```mermaid
+flowchart TD
+  A1["Chart focused: BTCUSDT 1m, streaming"] --> B1{"Entry point"}
+  B1 -->|1..9 favourite hotkey| C1["Target 5m resolved: the pill shows 5m with a pending mark, the legend still names 1m"]
+  B1 -->|SCR-042 Time item, Enter| C1
+  B1 -->|SCR-041 interval row or tf deep link| C1
+  C1 --> D1{"5m series in the client cache?"}
+  D1 -->|hit| E1["Re-bind from cache: axes, drawings and toolbar stay mounted, visible time centre kept"]
+  E1 --> F1["Painted within 200 ms from cached bars, reconciled with the new snapshot by generation and index, older bars re-read over REST"]
+  F1 --> V1["Old bars topic unsubscribed at the swap: the server keeps that series warm for 30 s, so a quick switch back keeps it"]
+  D1 -->|miss| G1["1m frame held, never an empty pane, after 600 ms the strip reads Loading 5m"]
+  D1 -->|miss on a fresh panel| U1["Skeleton CMP-029 until first data, a failure here is SCR-048"]
+  G1 --> H1["Visible window requested first: one REST page of at most 5 000 bars, or the WS snapshot at the live edge"]
+  U1 --> H1
+  H1 --> I1{"First data"}
+  I1 -->|covers the visible window, or reaches a known boundary inside it, budget 600 ms| J1["Swap in one frame, centre kept, a boundary inside the window drawn as such: recording start, start of the built range, a coverage hole"]
+  J1 --> V1
+  J1 --> K1["Progressive backfill: older windows load leftward behind the frontier tag, each request about one page at the density of the bars held, within the per-request caps"]
+  K1 --> L1{"Next older page"}
+  L1 -->|fails, after halving any refused or failing window wider than one page| M1["Frontier reads Could not load older bars, Retry, painted bars stay"]
+  L1 -->|reaches recording start| P1
+  L1 -->|reaches the start of the built range, also where it meets the lookback on a non-time series| X1["SCR-030/built-from with Build earlier bars, never an automatic build"]
+  L1 -->|reaches the lookback| N1["SCR-030/lookback-boundary with Load more: the US-CHART-010 lookback, E11-S15 maxBars and memory budget"]
+  I1 -->|retryable failure| O1["1m kept, toolbar reverts to 1m, strip offers Retry 5m and Dismiss"]
+  I1 -->|refused, not retryable| W1["1m kept, the cause inline with no Retry: a bound, or a setting not available"]
+  I1 -->|no bars in the window, or 422 no_data_recorded| P1["F-BAR-5"]
+  I1 -->|user picks another interval first| Q1["Latest intent wins, this request is dropped"]
+  F1 --> R1["chart.interval_changed, cache hit"]
+  J1 --> S1["chart.interval_changed, cache miss, first_paint_ms"]
+  O1 --> T1["chart.error_shown, surface inline"]
+  W1 --> T1
+```
+
+- **Keyboard:** with the chart focused, `1..9` (generated keymap: interval presets); or `Tab` to the toolbar, the
+  interval button, `Enter`, `↓` to the Time group, `Enter`. Committing returns focus to the trigger when the menu
+  was opened from it, and to the chart region when it was opened by hotkey; never to the page body. The result is
+  announced once, politely.
+- **Paging:** each older request stays within the per-request caps (time 400 days and 250 000 bars; non-time 31 days
+  and about 250 000 bars estimated from the window's prints, about 6 hours of a 1 M-print day for range and Renko)
+  and is sized from the density of the bars already held, about one page (≤5 000 bars), as E12-D02 §3 does for a
+  historical centre. On `bar_window_too_large`, or a 503 on a window wider than one page's span, the client halves
+  the window and retries, without telling the user, before the frontier offers Retry.
+- **Events:** `chart.interval_changed {from, to, source, cache, first_paint_ms}`; `chart.error_shown` on a failure.
+
+### 22.2 F-BAR-2 — Switch to a non-time bar mode and enter its parameter
+
+```mermaid
+flowchart TD
+  A2["Chart on time 1m"] --> B2["Open SCR-042: toolbar interval button, or its new key I, OQ-4"]
+  B2 --> C2["Down to the group Bar modes: the x-axis is not time"]
+  C2 --> D2{"Symbol has recorded prints?"}
+  D2 -->|none yet| E2["Mode rows disabled with the reason Needs recorded prints"]
+  E2 --> F2["Esc closes with no change, or pick a time interval: F-BAR-1"]
+  D2 -->|yes| G2{"Commit as shown, or edit the parameter?"}
+  G2 -->|Enter on Volume, 50 BTC per bar| H2["Commit volume:50"]
+  G2 -->|Right arrow| I2["Inline editor: Volume per bar in BTC, recent values, the G-2 build estimate, Estimating until it arrives, Size not known yet if it fails, and the commit still proceeds"]
+  G2 -->|after G-2, Enter on a row that reads Needs a build or has no status yet| I2
+  I2 --> J2{"Within the server bounds?"}
+  J2 -->|no| K2["Message below the field names the bound, nothing is sent, focus stays"]
+  K2 --> I2
+  J2 -->|yes, Enter| H2
+  H2 --> L2["Menu closes, focus back where the menu was opened from, pill reads Vol 50 BTC with a pending mark"]
+  L2 --> M2{"Where is the volume:50 series?"}
+  M2 -->|client cache| N2["Swap within 200 ms, axis caption Bar order, not time, drawings keep their timestamps"]
+  M2 -->|stored rows cover the window| O2["Load and page older windows as in the F-BAR-1 miss branch, previous frame held, drawings keep their timestamps"]
+  M2 -->|zero rows over recorded prints, not built| P2["Build the loaded window: F-BAR-3, never SCR-047. Before G-2: the live series from its first bar, built-from boundary"]
+  N2 --> Q2["chart.bar_mode_changed"]
+  O2 --> Q2
+  N2 --> R2{"Window reaches before recording start, or holds recording gaps?"}
+  O2 --> R2
+  R2 -->|yes| S2["F-BAR-5"]
+```
+
+- **Keyboard:** `I` (a new keymap entry, OQ-4) or the toolbar path; `↓` into the bar-mode group; `Enter` commits
+  the mode with its shown parameter (on a row that reads "Needs a build" or has no status yet, it opens the editor
+  with the estimate), or `→` opens the editor, then type and `Enter`. `Esc` in the editor returns to the row.
+- **Events:** `chart.bar_mode_changed {from, to, source, cache}` when the new mode paints.
+
+### 22.3 F-BAR-3 — Change a parameter: rebuild, progress, cancel, revert
+
+```mermaid
+flowchart TD
+  A3["Chart on Volume 50 BTC, the user commits 75 in SCR-042, SCR-031 or a favourite after seeing the G-2 estimate: about 3.1 M prints, about 30 s"] --> B3["Pill reads Vol 75 BTC with a pending mark, Volume 50 stays drawn and live, labelled as shown"]
+  B3 --> C3["Server builds volume:75 over the chart's loaded window from recorded prints, at most 250 000 staged bars, a 31-day bound proposed for G-2: chunked, cancellable, published by generation swap, contract G-2"]
+  C3 --> V3["chart.bar_rebuild_started"]
+  C3 --> D3{"Elapsed time"}
+  D3 -->|under 600 ms| E3["No progress UI"]
+  D3 -->|600 ms to 2 s| F3["Strip: Building Volume 75 BTC, indeterminate, Esc cancels"]
+  D3 -->|over 2 s| G3["Strip: Building Volume 75 BTC, 40 percent, 1.24 M of 3.1 M prints, about 19 s left, Cancel button, an unknown total stays indeterminate"]
+  E3 --> H3{"Outcome"}
+  F3 --> H3
+  G3 --> H3
+  H3 -->|done| I3["One-frame swap to the new generation, every bar redrawn, drawings keep their timestamps, focus unchanged"]
+  H3 -->|cancel at 40 percent, button or Esc| J3["Cancel sent, Volume 50 is already on screen: no refetch, no empty chart"]
+  J3 --> K3["Pill and field revert to 50, strip: Build cancelled at 40 percent, still showing Volume 50, Retry Volume 75, Dismiss"]
+  H3 -->|refused or failed| N3["Restore as on cancel. The strip names the cause and the next step: too many bars, choose a larger size or a shorter window, the service is busy, or, for another setting, no memory to stage the build. Change size opens the editor with the refused value, Retry when busy, Dismiss"]
+  H3 -->|connection lost| O3["The disconnect cancels the build, Volume 50 frozen with its last-good time, Retry after reconnect"]
+  H3 -->|user picks another setting| P3["Superseded: this build is cancelled, the new intent proceeds"]
+  I3 --> Q3["chart.bar_rebuild_completed and chart.bar_mode_changed"]
+  K3 --> R3["chart.bar_rebuild_cancelled, reason user"]
+  N3 --> S3["chart.bar_rebuild_failed"]
+  O3 --> T3["chart.bar_rebuild_cancelled, reason disconnect"]
+  P3 --> U3["chart.bar_rebuild_cancelled, reason superseded"]
+```
+
+- **Keyboard:** `Cancel` is the strip's stop, after the status chips and before the first pane's legend in E11-D02's
+  `Tab` order; `Esc` cancels the build last, when no ticket, popover, editor, drawing, chip, axis or expanded bar
+  takes it first (E12-D02 D-11). Completion never moves focus, except from a `Cancel` button that disappears, and
+  then to the plot cursor. Announced politely at start and end only.
+- **Build earlier bars:** the built-from boundary's action runs this flow over a wider window with the same setting;
+  the strip says every bar is redrawn. D-1 holds only until the server's swap, when the old generation stops: from
+  then the client stages only the visible window of the new generation, labels the held frame "Updating..." after
+  600 ms, and on a staging failure loads the new generation through the F-BAR-1 miss branch with the frame held
+  (`chart.error_shown`, not `_failed`: the server's build succeeded). Restore as on cancel applies only before that
+  swap, or to another setting, whose staged generation lives in worker memory until the swap: under memory pressure
+  that build fails with its cause and never touches the visible window.
+- **Events:** `chart.bar_rebuild_started` / `_completed` / `_cancelled {reason, progress_pct, elapsed_ms}` /
+  `_failed`; duration is measured against the 10 s per 1 M prints budget (US-CHART-003).
+- **Rejected:** an instant Renko repaint with no intermediate state (E12-D02 §9, R-1).
+
+### 22.4 F-BAR-4 — Switch chart type, with the unsupported combination
+
+```mermaid
+flowchart TD
+  A4["Chart-type control CMP-222, or Alt+C"] --> B4{"Requested type"}
+  B4 -->|Heikin-Ashi, footprint off, time bars| C4["Client-side transform within 100 ms, no refetch, drawings stay on real time and price"]
+  C4 --> D4["Then Baseline: re-render within 100 ms, no refetch, reference level shown"]
+  B4 -->|Heikin-Ashi while footprint is on| E4["Not applied: Candles with footprint keep rendering"]
+  E4 --> F4["Inline callout, focus on its first button: footprint needs a real-price bar type"]
+  F4 --> G4{"Choice"}
+  G4 -->|Keep Candles, the default, or Esc| H4["Callout closes, focus back on the control, nothing changed"]
+  G4 -->|Use Heikin-Ashi and turn footprint off| I4["Footprint turned off, and said so, then Heikin-Ashi applied"]
+  B4 -->|Heikin-Ashi in a non-time mode| J4["Same callout: Heikin-Ashi is offered on time bars, switch to time bars or keep the mode"]
+  K4["Footprint toggled on with F while Heikin-Ashi is active"] --> L4["Mirror callout: switch to Candles with footprint, or keep Heikin-Ashi"]
+  C4 --> M4["chart.chart_type_changed, proposed"]
+  F4 --> N4["chart.unsupported_combination_shown, proposed"]
+```
+
+- **Keyboard:** `Tab` to the chart-type group, `←`/`→` to choose; in the callout `Tab` between its two buttons,
+  `Enter` to choose, `Esc` keeps Candles. The callout says why: Heikin-Ashi recomputes each bar's open and close,
+  so footprint cells would not line up with traded prices (US-CHART-002). Footprint is never turned off silently.
+- **Events:** `chart.chart_type_changed {from, to, source}` and `chart.unsupported_combination_shown {requested,
+conflict, choice}`, both proposed in E12-D02 §10.
+
+### 22.5 F-BAR-5 — Insufficient recorded history
+
+```mermaid
+flowchart TD
+  A5["Series requested or painted: the recording start and /market/data-coverage compared with the window. Coverage counts only inside the span it reports, the last 90 days as built, so an older window is unknown and takes the /market/bars answer: rows, 422 no_data_recorded or not built"] --> Z5{"Instrument trading?"}
+  Z5 -->|no| L5["With bars: bars kept with the E08 delisted state, E11-D04. With no bars: SCR-047 not trading"]
+  Z5 -->|yes| B5{"Bar family"}
+  B5 -->|time, 1m and longer| C5{"Window before recording start?"}
+  C5 -->|no| D5["Normal chart"]
+  C5 -->|partly| E5["Dashed boundary with a tag: order flow from the recording start, earlier bars from exchange klines"]
+  C5 -->|entirely| F5["Kline bars shown, the strip says this window predates recording and has no order flow"]
+  C5 -->|exchange returned no bars| M5["SCR-047 names the first available timestamp"]
+  B5 -->|non-time, or sub-minute after OQ-1| G5{"Recorded prints in the window, per data coverage inside its span, else per /market/bars?"}
+  G5 -->|all| D5
+  G5 -->|part| H5["Requested from the recording start: bars from the boundary on, the band left of it reads History starts at that time, recording began then"]
+  G5 -->|none, 422 no_data_recorded or no trades in data coverage inside its span| I5["SCR-047 no data in this range, before recording start or inside a recording gap: Go to recorded data, Switch to time bars"]
+  G5 -->|first load with no bars in the window, not built| Q5["Never SCR-047: build the window, F-BAR-3. Before G-2: the live series from its first bar, with the built-from boundary. A backfill page past the built range's start takes the built-from boundary, F-BAR-1"]
+  G5 -->|symbol never recorded| J5["SCR-047 not recorded: copy and CTA follow autorecord_enabled and the recorder status refusal, E12-D02 §8"]
+  J5 --> K5["Bars build from the live stream either way: the first live bar replaces SCR-047 with the built-from boundary"]
+  D5 --> R5{"Reported recording gaps or generation changes inside the window?"}
+  E5 --> R5
+  H5 --> R5
+  R5 -->|yes| S5["Time axis: a hatched, labelled band per gap over its time slots, its kline bars where kline rows fill it, otherwise empty slots, or a seam where no slots exist. Non-time: a seam between the bars that straddle it. A builder cold start adds a seam, a rebuild swap the built-from boundary"]
+  I5 -->|inside a gap| N5["chart.empty_state_shown, reason no_data_in_range"]
+  I5 -->|before recording start| O5
+  M5 --> N5
+  J5 --> O5["chart.empty_state_shown, reason not_recorded"]
+  L5 -->|no bars| P5["chart.empty_state_shown, reason symbol_delisted"]
+```
+
+- **Keyboard:** the data cursor (`←`/`→`) names the boundary at its first bar ("first bar with recorded prints",
+  "first built bar; earlier prints are not built yet" or "first loaded bar") and a gap at the bar after it; `Alt+T`
+  opens SCR-045, where the boundary and each gap would be separator rows (proposed, E12-D02 OQ-14); SCR-047's
+  heading, text and buttons are in the `Tab` order.
+- **Events:** `chart.empty_state_shown {reason}`; the boundary and the gaps are not announced, they are part of the
+  chart's accessible description (C-2.14: the true available range is always stated).
+
+---
+
+## 23. Traceability
 
 - All routes/modals referenced (`R-###`, `M-###`) are defined in `12-sitemap.md`.
 - State machines referenced (order, rule, algo, connection) are formalized as state diagrams in `17-ux-diagrams.md` §4.
