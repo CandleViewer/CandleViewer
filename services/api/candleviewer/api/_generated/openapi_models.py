@@ -877,41 +877,240 @@ class RiskCaps(BaseModel):
     lockout_minutes_after_breach: Annotated[int | None, Field(ge=0, le=1440)] = 60
 
 
-class AccountProfileInput(BaseModel):
-    name: Annotated[str, Field(max_length=80, min_length=1)]
-    leverage: Annotated[
+class ProfileSymbolPattern(RootModel[str]):
+    root: Annotated[
         str,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="A listed USDT linear perpetual (`BTCUSDT`), or an anchored suffix pattern (`*USDT`) that is stored as written and matched against the listed, trading linear USDT perpetuals each time it is evaluated (SR-E28-06). A bare `*` is refused.\n",
+            examples=["BTCUSDT", "*USDT"],
+            pattern="^(\\*[A-Z0-9]{0,16}|[A-Z0-9]{2,16})USDT$",
+        ),
+    ]
+
+
+class ProfileSizing(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    mode: Annotated[
+        Literal["fixed_qty", "fixed_notional", "pct_equity", "risk_based"],
+        Field(
+            description="A profile's sizing mode, the Postgres type `sizing_mode` exactly: a profile never holds `SizingMode`'s request-time values `pct_position` and `profile`.\n"
+        ),
+    ]
+    qty: Annotated[Decimal | None, Field(description="Contracts per order, above 0.")] = None
+    notional_usd: Annotated[Decimal | None, Field(description="USDT per order, above 0.")] = None
+    pct: Annotated[
+        Decimal | None, Field(description="Percent of equity per order, above 0 and at most 100.")
+    ] = None
+    risk_per_trade_pct: Annotated[
+        Decimal | None,
+        Field(description="Percent of equity lost at the stop, above 0 and at most 100."),
+    ] = None
+    risk_per_trade_usd: Annotated[
+        Decimal | None, Field(description="USDT lost at the stop, above 0.")
+    ] = None
+    min_leg_notional_usd: Annotated[
+        str | None,
+        Field(
+            description="A leg below this notional, in USDT, is skipped rather than rejected; at least 0.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = "0"
+
+
+class ProfileStopLoss(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    unit: Annotated[
+        Literal["ticks", "percent", "atr"],
+        Field(
+            description="A profile stop's unit: `offset_unit` without `r_multiple` (`ap_sl_unit`), because the stop defines R (24-internal-schemas.md section 9.3.1), and never `price`.\n"
+        ),
+    ]
+    value: Annotated[
+        str | None,
+        Field(
+            description="The distance, above 0, in whole ticks or in percent (1.5 is 1.5 %).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = "10"
+    atr_period: Annotated[int | None, Field(ge=2, le=200)] = 14
+    atr_multiple: Annotated[
+        str | None,
+        Field(
+            description="The multiple of the ATR, above 0.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = "2"
+    fallback_pct: Annotated[
+        str | None,
+        Field(
+            description="The stop while the ATR is unavailable, in percent, above 0 and below 100.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = "2"
+
+
+class ProfileTakeProfit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    unit: Annotated[
+        Literal["ticks", "percent", "r_multiple", "atr"],
+        Field(
+            description="A profile take-profit's unit, the Postgres type `offset_unit` exactly; never `price`."
+        ),
+    ]
+    value: Annotated[
+        str,
+        Field(
+            description="The distance, above 0, in `unit`; `r_multiple` is a multiple of the stop distance.",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ]
-    sizing: Sizing
-    stop_loss: Offset | None = None
-    take_profit: Offset | None = None
-    trailing_stop: Offset | None = None
-    risk_caps: RiskCaps | None = None
-    allowed_symbols: Annotated[
-        list[Symbol] | None,
-        Field(description='Empty means "all instruments permitted by the deployment".'),
+
+
+class ProfileTakeProfitRung(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    qty_pct: Annotated[
+        str,
+        Field(
+            description="Percent of the leg's filled size, above 0 and at most 100.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    r: Annotated[
+        str,
+        Field(
+            description="The target, in R multiples of the stop distance, above 0.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+
+
+class ProfileRiskCaps(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    max_position_notional_usd: Annotated[Decimal | None, Field(description="USDT, above 0.")] = None
+    max_position_pct_equity: Annotated[
+        Decimal | None, Field(description="Percent of equity, above 0 and at most 100.")
     ] = None
+    max_daily_loss_usd: Annotated[
+        Decimal | None, Field(description="USDT lost in a day, above 0.")
+    ] = None
+    max_daily_loss_pct: Annotated[
+        Decimal | None,
+        Field(
+            description="Percent of equity lost in a day, at least 0.1 and at most 50 (SCR-131)."
+        ),
+    ] = None
+    max_open_positions: Annotated[int | None, Field(ge=1, le=50)] = None
+    max_concurrent_orders: Annotated[int | None, Field(ge=1, le=500)] = None
+    max_leverage_cap: Annotated[
+        Decimal | None, Field(description="At least 1, at most 100, and at least `leverage`.")
+    ] = None
+    max_orders_per_minute: Annotated[int | None, Field(ge=1, le=600)] = 30
+
+
+class AccountProfileInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[
+        str,
+        Field(description="Unique per account, in any letter case.", max_length=80, min_length=1),
+    ]
+    is_default: Annotated[
+        bool | None,
+        Field(
+            description="The account's default, its ceiling (decision D7). A create is never the default; a replace may change it only from `false` to `true`, changing no other member (`default_moves_alone`).\n"
+        ),
+    ] = False
+    enabled: Annotated[bool | None, Field(description="A disabled profile sizes nothing.")] = True
+    trading_enabled: Annotated[
+        bool | None,
+        Field(
+            description="The profile sizes orders only when set, and then bounds every cap (decision D11)."
+        ),
+    ] = False
+    leverage: Annotated[
+        str,
+        Field(
+            description="At least 1, at most 100, and at most the exchange maximum of each allowed symbol.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    margin_mode: Annotated[
+        Literal["cross", "isolated"] | None,
+        Field(description="`MarginMode` without `portfolio` (`ap_margin_mode`)."),
+    ] = "cross"
+    position_mode: Literal["one_way", "hedge"] | None = "one_way"
+    sizing: ProfileSizing
+    stop_loss: Annotated[
+        ProfileStopLoss | None,
+        Field(description="Required with `risk_based`; left out, it is 10 ticks."),
+    ] = None
+    take_profit: Annotated[
+        ProfileTakeProfit | None, Field(description="`null` or left out: no take-profit distance.")
+    ] = None
+    take_profit_ladder: Annotated[
+        list[ProfileTakeProfitRung] | None, Field(max_length=10, validate_default=True)
+    ] = []
+    risk_caps: ProfileRiskCaps | None = None
+    all_symbols: Annotated[
+        bool | None,
+        Field(description="Allows every listed USDT linear perpetual, with no `allowed_symbols`."),
+    ] = False
+    allowed_symbols: Annotated[
+        list[ProfileSymbolPattern] | None,
+        Field(
+            description="Empty without `all_symbols`, it allows nothing (decision D11).",
+            max_length=500,
+            validate_default=True,
+        ),
+    ] = []
+    blocked_symbols: Annotated[
+        list[ProfileSymbolPattern] | None,
+        Field(
+            description="Refused even when allowed, by `allowed_symbols` or `all_symbols`.",
+            max_length=500,
+            validate_default=True,
+        ),
+    ] = []
     require_native_stop: Annotated[
         Literal[True],
         Field(
             description="Always true; the safety invariant cannot be disabled (arch P4). The order path never reads it: the stop requirement keys on each order's effect on the position (SR-E29-01).\n"
         ),
     ] = True
-    default_time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = None
-    default_tpsl_mode: Literal["Full", "Partial"] | None = None
+    default_time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = "GTC"
+    reduce_only_default: bool | None = False
+    slippage_tolerance_bps: Annotated[
+        int | None,
+        Field(description="The slippage a market order may take, in basis points.", ge=0, le=1000),
+    ] = 10
 
 
-class AccountProfile(AccountProfileInput):
-    id: UUID | None = None
-    exchange_account_id: UUID | None = None
-    is_active: bool | None = None
-    created_at: AwareDatetime | None = None
-    updated_at: AwareDatetime | None = None
+class AccountProfile(BaseModel):
+    id: UUID
+    exchange_account_id: UUID
+    version: Annotated[int, Field(ge=1)]
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    profile: AccountProfileInput
 
 
 class Instrument(BaseModel):

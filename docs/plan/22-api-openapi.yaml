@@ -906,6 +906,8 @@ x-contract-validation:
         - { schema: KeyStatus, pg_type: key_status }
         - { schema: SizingMode, pg_type: sizing_mode, superset: [pct_position, profile] }
         - { schema: OffsetUnit, pg_type: offset_unit, superset: [price] }
+        - { schema: ProfileSizingMode, pg_type: sizing_mode }
+        - { schema: ProfileTargetUnit, pg_type: offset_unit }
         - { schema: TradeGroupStatus, pg_type: trade_group_status }
         - { schema: LegStatus, pg_type: leg_status }
         - { schema: OrderIntent, pg_type: order_intent }
@@ -3074,24 +3076,22 @@ paths:
             schema: { $ref: "#/components/schemas/AccountProfileInput" }
             examples:
               riskBased:
+                summary: 0.5 % of equity at risk to a 1.5 x ATR(14) stop, trading-enabled with every cap bounded
                 value:
                   name: "Alice — 0.5R"
+                  trading_enabled: true
                   leverage: "10"
-                  sizing:
-                    mode: risk_based
-                    risk_per_trade_usd: "250"
-                    max_notional_usd: "50000"
-                    round_to_lot: true
-                  stop_loss: { unit: atr, value: "1.5", atr_period: 14 }
+                  margin_mode: isolated
+                  sizing: { mode: risk_based, risk_per_trade_pct: "0.5", min_leg_notional_usd: "5" }
+                  stop_loss: { unit: atr, atr_period: 14, atr_multiple: "1.5" }
                   take_profit: { unit: r_multiple, value: "2" }
                   risk_caps:
-                    max_daily_loss_usd: "1500"
-                    max_open_positions: 3
                     max_position_notional_usd: "60000"
-                    max_orders_per_minute: 30
-                    lockout_minutes_after_breach: 60
-                  allowed_symbols: ["BTCUSDT", "ETHUSDT"]
-                  require_native_stop: true
+                    max_daily_loss_pct: "3"
+                    max_open_positions: 3
+                    max_concurrent_orders: 20
+                    max_leverage_cap: "10"
+                  allowed_symbols: [BTCUSDT, ETHUSDT]
       responses:
         "201":
           description: Profile created.
@@ -15890,21 +15890,220 @@ components:
         max_orders_per_minute: { type: integer, minimum: 1, maximum: 600 }
         max_consecutive_losses: { type: integer, minimum: 1, maximum: 50 }
         lockout_minutes_after_breach: { type: integer, minimum: 0, maximum: 1440, default: 60 }
+    ProfileSizingMode:
+      type: string
+      enum: [fixed_qty, fixed_notional, pct_equity, risk_based]
+      x-db-enum: sizing_mode
+      description: >
+        A profile's sizing mode, the Postgres type `sizing_mode` exactly: a profile never holds
+        `SizingMode`'s request-time values `pct_position` and `profile`.
+    ProfileStopUnit:
+      type: string
+      enum: [ticks, percent, atr]
+      description: >
+        A profile stop's unit: `offset_unit` without `r_multiple` (`ap_sl_unit`), because the stop
+        defines R (24-internal-schemas.md section 9.3.1), and never `price`.
+    ProfileTargetUnit:
+      type: string
+      enum: [ticks, percent, r_multiple, atr]
+      x-db-enum: offset_unit
+      description: "A profile take-profit's unit, the Postgres type `offset_unit` exactly; never `price`."
+    ProfileMarginMode:
+      type: string
+      enum: [cross, isolated]
+      description: "`MarginMode` without `portfolio` (`ap_margin_mode`)."
+    ProfileSymbolPattern:
+      type: string
+      pattern: '^(\*[A-Z0-9]{0,16}|[A-Z0-9]{2,16})USDT$'
+      description: >
+        A listed USDT linear perpetual (`BTCUSDT`), or an anchored suffix pattern (`*USDT`) that is
+        stored as written and matched against the listed, trading linear USDT perpetuals each time
+        it is evaluated (SR-E28-06). A bare `*` is refused.
+      examples: [BTCUSDT, "*USDT"]
+    ProfileSizing:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      description: >
+        Exactly the amount of `mode` is set and the others are absent or `null`: `qty`
+        (`fixed_qty`), `notional_usd` (`fixed_notional`), `pct` (`pct_equity`), and one of
+        `risk_per_trade_pct` and `risk_per_trade_usd` (`risk_based`).
+      properties:
+        mode: { $ref: "#/components/schemas/ProfileSizingMode" }
+        qty:
+          description: Contracts per order, above 0.
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+        notional_usd:
+          description: USDT per order, above 0.
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+        pct:
+          description: Percent of equity per order, above 0 and at most 100.
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+        risk_per_trade_pct:
+          description: Percent of equity lost at the stop, above 0 and at most 100.
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+        risk_per_trade_usd:
+          description: USDT lost at the stop, above 0.
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+        min_leg_notional_usd:
+          $ref: "#/components/schemas/Decimal"
+          default: "0"
+          description: A leg below this notional, in USDT, is skipped rather than rejected; at least 0.
+      allOf:
+        - if: { properties: { mode: { const: fixed_qty } } }
+          then: { required: [qty] }
+        - if: { properties: { mode: { const: fixed_notional } } }
+          then: { required: [notional_usd] }
+        - if: { properties: { mode: { const: pct_equity } } }
+          then: { required: [pct] }
+        - if: { properties: { mode: { const: risk_based } } }
+          then: { anyOf: [{ required: [risk_per_trade_pct] }, { required: [risk_per_trade_usd] }] }
+    ProfileStopLoss:
+      type: object
+      additionalProperties: false
+      required: [unit]
+      description: >
+        The native stop every order carries (C-2.6): `value` in `ticks` or `percent` of the
+        reference price, or `atr_multiple` times ATR(`atr_period`), with `fallback_pct` while the
+        ATR is unavailable. The member `unit` uses is required; the others take their defaults
+        when left out and are kept for a later change of unit.
+      properties:
+        unit: { $ref: "#/components/schemas/ProfileStopUnit" }
+        value:
+          $ref: "#/components/schemas/Decimal"
+          default: "10"
+          description: The distance, above 0, in whole ticks or in percent (1.5 is 1.5 %).
+        atr_period: { type: integer, minimum: 2, maximum: 200, default: 14 }
+        atr_multiple:
+          $ref: "#/components/schemas/Decimal"
+          default: "2"
+          description: The multiple of the ATR, above 0.
+        fallback_pct:
+          $ref: "#/components/schemas/Decimal"
+          default: "2"
+          description: The stop while the ATR is unavailable, in percent, above 0 and below 100.
+      allOf:
+        - if: { properties: { unit: { const: atr } } }
+          then: { required: [atr_multiple] }
+          else: { required: [value] }
+    ProfileTakeProfit:
+      type: object
+      additionalProperties: false
+      required: [unit, value]
+      properties:
+        unit: { $ref: "#/components/schemas/ProfileTargetUnit" }
+        value:
+          $ref: "#/components/schemas/Decimal"
+          description: The distance, above 0, in `unit`; `r_multiple` is a multiple of the stop distance.
+    ProfileTakeProfitRung:
+      type: object
+      additionalProperties: false
+      required: [qty_pct, r]
+      properties:
+        qty_pct:
+          $ref: "#/components/schemas/Decimal"
+          description: Percent of the leg's filled size, above 0 and at most 100.
+        r:
+          $ref: "#/components/schemas/Decimal"
+          description: The target, in R multiples of the stop distance, above 0.
+    ProfileRiskCaps:
+      type: object
+      additionalProperties: false
+      description: >
+        Server-enforced caps, one gate each (SR-052, SR-053); `null` is no cap. A trading-enabled
+        profile bounds every one (decision D11, `required`): `max_open_positions`,
+        `max_concurrent_orders`, `max_leverage_cap`, and one cap of each pair, position size and
+        daily loss.
+      properties:
+        max_position_notional_usd:
+          description: USDT, above 0.
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+        max_position_pct_equity:
+          description: Percent of equity, above 0 and at most 100.
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+        max_daily_loss_usd:
+          description: USDT lost in a day, above 0.
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+        max_daily_loss_pct:
+          description: Percent of equity lost in a day, at least 0.1 and at most 50 (SCR-131).
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+        max_open_positions: { type: ["integer", "null"], minimum: 1, maximum: 50 }
+        max_concurrent_orders: { type: ["integer", "null"], minimum: 1, maximum: 500 }
+        max_leverage_cap:
+          description: At least 1, at most 100, and at least `leverage`.
+          oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+        max_orders_per_minute: { type: integer, minimum: 1, maximum: 600, default: 30 }
     AccountProfileInput:
       type: object
+      additionalProperties: false
       required: [name, leverage, sizing]
+      description: |
+        A per-account profile as written; 24-internal-schemas.md section 9.2 maps each member to
+        its domain field and column. Values are in stored units: a percent is the percent shown
+        (`"0.5"` is 0.5 %), and a decimal holds at most the places of its column (18 for USDT
+        amounts, quantities and offsets, 6 for percents of equity and `stop_loss.fallback_pct`, 4
+        for `stop_loss.atr_multiple`, 2 for `leverage` and `risk_caps.max_leverage_cap`), refused
+        rather than rounded (`precision`). A create and a replace alike give a member they leave
+        out its default, `null` where nullable (no cap), never the stored value.
+
+        Beyond its schema the body must hold (`ProfileRejected` names each rule): the sizing
+        amount of `sizing.mode` and no other (`required`, `not_allowed`); a `stop_loss` when
+        `sizing.mode` is `risk_based` (`required`); no `allowed_symbols` with `all_symbols`
+        (`not_allowed`); every cap of `ProfileRiskCaps` bounded when `trading_enabled` is set
+        (`required`); `leverage` at most `risk_caps.max_leverage_cap` (`above_leverage_cap`); and
+        rungs that take at most the whole leg (`ladder_sum`).
       properties:
-        name: { type: string, minLength: 1, maxLength: 80 }
-        leverage: { $ref: "#/components/schemas/Decimal" }
-        sizing: { $ref: "#/components/schemas/Sizing" }
-        stop_loss: { $ref: "#/components/schemas/Offset" }
-        take_profit: { $ref: "#/components/schemas/Offset" }
-        trailing_stop: { $ref: "#/components/schemas/Offset" }
-        risk_caps: { $ref: "#/components/schemas/RiskCaps" }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Unique per account, in any letter case.
+        is_default:
+          type: boolean
+          default: false
+          description: >
+            The account's default, its ceiling (decision D7). A create is never the default; a
+            replace may change it only from `false` to `true`, changing no other member
+            (`default_moves_alone`).
+        enabled: { type: boolean, default: true, description: "A disabled profile sizes nothing." }
+        trading_enabled:
+          type: boolean
+          default: false
+          description: The profile sizes orders only when set, and then bounds every cap (decision D11).
+        leverage:
+          $ref: "#/components/schemas/Decimal"
+          description: At least 1, at most 100, and at most the exchange maximum of each allowed symbol.
+        margin_mode: { $ref: "#/components/schemas/ProfileMarginMode", default: cross }
+        position_mode: { $ref: "#/components/schemas/PositionMode", default: one_way }
+        sizing: { $ref: "#/components/schemas/ProfileSizing" }
+        stop_loss:
+          $ref: "#/components/schemas/ProfileStopLoss"
+          description: Required with `risk_based`; left out, it is 10 ticks.
+        take_profit:
+          description: "`null` or left out: no take-profit distance."
+          oneOf: [{ $ref: "#/components/schemas/ProfileTakeProfit" }, { type: "null" }]
+        take_profit_ladder:
+          type: array
+          maxItems: 10
+          default: []
+          items: { $ref: "#/components/schemas/ProfileTakeProfitRung" }
+        risk_caps: { $ref: "#/components/schemas/ProfileRiskCaps" }
+        all_symbols:
+          type: boolean
+          default: false
+          description: Allows every listed USDT linear perpetual, with no `allowed_symbols`.
         allowed_symbols:
           type: array
-          description: Empty means "all instruments permitted by the deployment".
-          items: { $ref: "#/components/schemas/Symbol" }
+          maxItems: 500
+          default: []
+          description: Empty without `all_symbols`, it allows nothing (decision D11).
+          items: { $ref: "#/components/schemas/ProfileSymbolPattern" }
+        blocked_symbols:
+          type: array
+          maxItems: 500
+          default: []
+          description: Refused even when allowed, by `allowed_symbols` or `all_symbols`.
+          items: { $ref: "#/components/schemas/ProfileSymbolPattern" }
         require_native_stop:
           type: boolean
           const: true
@@ -15912,18 +16111,33 @@ components:
           description: >
             Always true; the safety invariant cannot be disabled (arch P4). The order path never
             reads it: the stop requirement keys on each order's effect on the position (SR-E29-01).
-        default_time_in_force: { $ref: "#/components/schemas/TimeInForce" }
-        default_tpsl_mode: { $ref: "#/components/schemas/TpSlMode" }
-    AccountProfile:
+        default_time_in_force: { $ref: "#/components/schemas/TimeInForce", default: GTC }
+        reduce_only_default: { type: boolean, default: false }
+        slippage_tolerance_bps:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          default: 10
+          description: The slippage a market order may take, in basis points.
       allOf:
-        - $ref: "#/components/schemas/AccountProfileInput"
-        - type: object
-          properties:
-            id: { type: string, format: uuid }
-            exchange_account_id: { type: string, format: uuid }
-            is_active: { type: boolean }
-            created_at: { type: string, format: date-time }
-            updated_at: { type: string, format: date-time }
+        - if: { properties: { sizing: { properties: { mode: { const: risk_based } } } } }
+          then: { required: [stop_loss] }
+        - if: { required: [all_symbols], properties: { all_symbols: { const: true } } }
+          then: { properties: { allowed_symbols: { maxItems: 0 } } }
+    AccountProfile:
+      type: object
+      required: [id, exchange_account_id, version, created_at, updated_at, profile]
+      description: >
+        A stored profile. `profile` holds every member, its default included, and is the body
+        `updateAccountProfile` takes back. `version` is 1 at creation and grows by one with each
+        change (a default move changes two profiles); `ProfileETag` names it.
+      properties:
+        id: { type: string, format: uuid }
+        exchange_account_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        profile: { $ref: "#/components/schemas/AccountProfileInput" }
 
     # === Instruments / market data ==========================================
     Instrument:
