@@ -5539,4 +5539,4 @@ This number follows G-8b's §19.25 (#4135), open when this was written; whicheve
   - the E29 threat model's SR-E29-06 (ii), E29-D01's "Edit SL — loosen" and 04's capability matrix still name a user's confirmation;
   - `risk_limit_breached`'s title, which E29-T07's error-metadata change widens;
   - the step-up class: `risk_caps` is a five-minute grace class, and a no-grace class would bind the step-up to the exact request, the owner's decision for E29-T07;
-  - E35's `rules.loosen_stop` permission and `widen_stop` action, which this rule now refuses at the writer.
+  - E35's `rules.loosen_stop` permission, `widen_stop` action and `modify_stop_loss`'s `only_tighten=false`: dead vocabulary under this rule, which a step-up bound to a live request can never reach from an automated fire. E35's owner retires them from §11.6 in a contract PR, deprecated and then removed, rather than keeping an unseeded permission that implies a path (the orchestrator's ruling on L-4137-01).
