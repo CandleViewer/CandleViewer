@@ -15,6 +15,7 @@ import * as P from "@candleviewer/protocol";
 import { expect, it } from "vitest";
 import { decodeFrame, isTopic, validateCvwb } from "../../../src/lib/ws/protocol/codec";
 import { MAX_ID_LENGTH } from "../../../src/lib/ws/protocol/frames";
+import { BODY, DIAGNOSTIC } from "./support/cvwbDiagnostics";
 import { checked, kindOf } from "./support/fuzzCaps";
 
 const CORPORA = fileURLToPath(new URL("../../../../../tests/fuzz/ws-frames/", import.meta.url));
@@ -155,30 +156,6 @@ function run<T>(target: string, c: Case, call: () => T): T {
 
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const WIRE = ["envelope", "payload"]; // what `decodeFrame` refuses with; `validateCvwb`'s are below
-const BODY = ["cvwb", "unsupported_body_kind", "unsupported_format_version"];
-const INT = String.raw`\d+`; // a header integer
-const FITS = String.raw`count=${INT} x ${INT} bytes exceeds the ${INT} bytes left in the buffer`;
-/**
- * What `validateCvwb` may say: the decoders' own diagnostics (src/runtime/index.ts), which are fixed
- * words and header integers, never payload bytes, and the codec's fallback for an untyped throw.
- */
-const DIAGNOSTICS = [
-  String.raw`binary frame too short for the ${INT}-byte common header \(got ${INT} bytes\)`,
-  String.raw`bad magic 0x[0-9a-f]+, expected 0x[0-9a-f]+ \("CVWB"\)`,
-  String.raw`unknown body_kind ${INT}`,
-  String.raw`unsupported \(body_kind=${INT}, format_version=${INT}\); expected format_version ${INT}`,
-  String.raw`(?:book levels|trades|footprint groups|footprint group ${INT}|heatmap rows): ${FITS}`,
-  String.raw`(?:book|trade|bar) record ${INT} runs past the buffer \(record_count=${INT}\)`,
-  String.raw`footprint group ${INT} prefix runs past the buffer \(record_count=${INT}\)`,
-  String.raw`footprint cell ${INT} in group ${INT} runs past the buffer \(cell_count=${INT}\)`,
-  String.raw`heatmap row ${INT} runs past the buffer \(row_count=${INT}\)`,
-  String.raw`invalid (?:book|trade) side byte ${INT} at record ${INT}`,
-  String.raw`book snapshot missing its ${INT}-byte xu/xseq trailer`,
-  String.raw`bars body is ${INT} bytes, expected ${INT} for record_count=${INT}`,
-  "heatmap column body shorter than its fixed prefix",
-  "binary body is undecodable",
-];
-const DIAGNOSTIC = new RegExp(`^(?:${DIAGNOSTICS.join("|")})$`);
 
 /**
  * A typed `frame_malformed` whose message is safe to log: a `decodeFrame` refusal is plain words, a
