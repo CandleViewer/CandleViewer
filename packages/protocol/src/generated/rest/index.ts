@@ -4030,13 +4030,18 @@ export interface paths {
      *     * **Only the owner can loosen a stop** (24-internal-schemas.md section 8.8 rule 5). A
      *       stop-loss moved to loosen it (a long position's lower, a short's higher, in Partial mode
      *       an `sl_size` below the lesser of the recorded cover and the position's size, or a trail
-     *       that is cleared, wider or armed later; section 8.8 rule 5 defines it) needs the owner's
-     *       role and a live `risk_caps` step-up: the
+     *       that is wider or armed later; section 8.8 rule 5 defines it) needs the owner's role and
+     *       a live `risk_caps` step-up: the
      *       owner without one gets `403 step_up_required` (`action_class: risk_caps`), and any
      *       other role `403 risk_limit_breached`, its refusal audited (`sl.loosen_refused`), with
      *       nothing sent. The owner's loosening is audited before it is sent (`sl.loosened`).
      *       The check sits once, at the recorded-stop writer, for every writer of the stop; a
      *       tightening is never refused by it (C-2.6).
+     *     * **A trail is never cleared here.** `trailing_stop: null` over a trail is refused for
+     *       every role, the owner included, with `400 validation_failed` (rule
+     *       `trail_clear_unsupported`) before any record or audit is written, until an audited
+     *       clear-trail operation exists (24-internal-schemas.md section 8.8 rule 5). An omitted
+     *       `trailing_stop` leaves the trail in place.
      */
     put: operations["setPositionTpSl"];
     post?: never;
@@ -6163,7 +6168,7 @@ export interface components {
       take_profit?: components["schemas"]["Offset"] | null;
       trigger_price?: components["schemas"]["Decimal"];
     };
-    /** @description Checked against each targeted leg's bound profile before any leg is amended (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit` or `trailing_stop`; `stop_loss: null` is refused on an entry leg, or on any leg whose position is open (`native_stop_required`). */
+    /** @description Checked against each targeted leg's bound profile before any leg is amended (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit`; `trailing_stop: null` over a trail is refused with `400 validation_failed` (rule `trail_clear_unsupported`, 24-internal-schemas.md section 8.8 rule 5), and an omitted one leaves the trail in place; `stop_loss: null` is refused on an entry leg, or on any leg whose position is open (`native_stop_required`). */
     AmendTradeGroupRequest: {
       /** @description Per-leg amendments; when present, the top-level fields are ignored for those legs. */
       legs?: {

@@ -87,8 +87,12 @@ def test_rule_5_puts_one_synchronous_check_at_the_recorded_stop_writer() -> None
         "own record is written",
         "so before B8's `LOOSEN_SL` and before any send",
         "No route or rule keeps a copy of the check",
-        "A tightening is never refused by it (§8.10, C-2.6). The watchdog's write (rule 3) is the "
-        "one exception, and it is no loosening path",
+        "A tightening is never refused by it (§8.10, C-2.6). The missing-stop attach is the one "
+        "exception: rule 3's watchdog and rule 4's attach of a missing stop (§8.5 step 5)",
+        "against its `sl_trigger_by` price (the mark price by default)",
+        "B8's `attach_fallback_sl` sends that stop, the recorded one first",
+        "with `400 validation_failed` (rule `trail_clear_unsupported`), a refusal of the request's "
+        "shape that writes no `sl.*` record",
         "attached only where no record is in force or the market is already through the recorded "
         "trigger",
         "No other writer's request is exempt, and the writer takes no stop terms from a caller for "
@@ -117,6 +121,34 @@ def test_the_watchdog_attaches_the_record_in_force_where_it_can() -> None:
         five
     )
     assert "so a loosening by necessity is visible, never silent" in five
+
+
+def test_a_group_amend_never_clears_a_trail() -> None:
+    """D3-4137-01: `amendTradeGroup`'s body refuses a trail clear as `setPositionTpSl` does."""
+    request = _words(_SPEC["components"]["schemas"]["AmendTradeGroupRequest"]["description"])
+    assert (
+        "`trailing_stop: null` over a trail is refused with `400 validation_failed` (rule "
+        "`trail_clear_unsupported`"
+    ) in request
+    assert "`null` clears `take_profit` or `trailing_stop`" not in request
+
+
+def test_the_other_texts_follow_rule_5() -> None:
+    """D3-4137-04/-06: section 10.7, rule 6, the restore's cap, the rule table and step 5's code."""
+    doc = _words(_INTERNAL_DOC)
+    for phrase in (
+        "re-issues it as the price moves, never wider than the trail in force (§8.8 rule 5)",
+        "and whether a re-sent armed trail is re-based at the market) are the E29 threat model's "
+        "open input O-4",
+        "the nearer trigger with the larger size (at most the position's)",
+        "| No native SL >10 s → attach the recorded stop, else the fallback (§8.8 rule 3) + "
+        "critical alert |",
+    ):
+        assert phrase in doc, phrase
+    step_5 = _INTERNAL_DOC.split("\n### 8.5 ", 1)[1].split("\n### 8.6 ", 1)[0]
+    assert "await oms.attach_missing_sl(p)" in step_5
+    assert "looser(cur, rec, p)" in step_5
+    assert 'attach_protective_sl(p, rec, reason="reconcile_missing_sl")' not in step_5
 
 
 def test_step_5_and_the_rule_table_defer_to_rule_3() -> None:
@@ -172,7 +204,10 @@ def test_set_position_tp_sl_lets_only_the_owner_loosen_under_a_step_up() -> None
         "(`sl.loosen_refused`), with nothing sent",
         "The owner's loosening is audited before it is sent (`sl.loosened`)",
         "an `sl_size` below the lesser of the recorded cover and the position's size, or a trail "
-        "that is cleared, wider or armed later",
+        "that is wider or armed later",
+        "**A trail is never cleared here.** `trailing_stop: null` over a trail is refused for "
+        "every role, the owner included, with `400 validation_failed` (rule "
+        "`trail_clear_unsupported`) before any record or audit is written",
         "a tightening is never refused by it (C-2.6)",
     ):
         assert phrase in text, phrase
