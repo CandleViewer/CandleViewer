@@ -188,6 +188,21 @@ export const PAIRS = [
   { fg: "color.action.primary.default", bg: "color.surface.app", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.action.secondary.default", bg: "color.surface.app", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.neutral.default", bg: "color.surface.app", threshold: THRESHOLD.NON_TEXT },
+
+  // --- Drawer surfaces and notice tints (E08-D06 SCR-103, spec §13) --
+  // Held out (E47-D03 retune): `color.text.link` on `color.surface.overlay`, 6.15:1 in HC (H-8).
+  { fg: "color.text.primary", bg: "color.surface.overlay", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.secondary", bg: "color.surface.overlay", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.tertiary", bg: "color.surface.overlay", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.secondary", bg: "color.surface.sunken", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.tertiary", bg: "color.surface.sunken", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.primary", bg: "color.status.warning.subtle", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.primary", bg: "color.status.info.subtle", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.primary", bg: "color.status.danger.subtle", threshold: THRESHOLD.TEXT },
+  { fg: "color.status.warning.strong", bg: "color.surface.sunken", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.warning.strong", bg: "color.surface.overlay", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.danger.strong", bg: "color.surface.overlay", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.status.info.strong", bg: "color.surface.overlay", threshold: THRESHOLD.NON_TEXT },
 ];
 
 /**

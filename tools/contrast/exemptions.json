@@ -47,22 +47,7 @@
       "owner": "basiltt"
     },
     {
-      "token": "color.status.danger.subtle",
-      "reason": "Low-emphasis status background tint always paired with the corresponding *.strong text token (already declared).",
-      "owner": "basiltt"
-    },
-    {
-      "token": "color.status.info.subtle",
-      "reason": "Low-emphasis status background tint always paired with the corresponding *.strong text token (already declared).",
-      "owner": "basiltt"
-    },
-    {
       "token": "color.status.success.subtle",
-      "reason": "Low-emphasis status background tint always paired with the corresponding *.strong text token (already declared).",
-      "owner": "basiltt"
-    },
-    {
-      "token": "color.status.warning.subtle",
       "reason": "Low-emphasis status background tint always paired with the corresponding *.strong text token (already declared).",
       "owner": "basiltt"
     },
