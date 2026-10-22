@@ -14,8 +14,10 @@ nothing is imported from it), and prints, with a source label on every row:
    section 5) with PASS or FAIL. The UNROUNDED ratio is compared, as the CI gate does
    (`tools/contrast/generate.mjs`: `ratio >= threshold`); the display rounds to the hundredth
    and a value that would round onto a bar is printed to four decimals (the #4056 2.9992 lesson).
-   `rejected-*` rows are pairs the spec considered and designed around; `decorative` rows carry
-   no meaning or are WCAG 1.4.3 inactive-component exemptions: reported, never gated. A `mix(a,b,p)`
+   `rejected-*` rows are pairs the spec considered and designed around (among them the
+   `color.text.disabled` label E09-D09 T2 forbids on a disabled-with-reason control; the label
+   binds `color.text.tertiary` with the lock glyph, the reason `color.text.secondary`);
+   `decorative` rows carry no meaning: reported, never gated. A `mix(a,b,p)`
    background is the composite the spec draws (p of b over a: the 15 % stale dim, the 0.6 scrim);
    a composite cannot be a `pairs.mjs` row and is counted apart. The six E08-D03 section 6 pairs
    are reproduced from the token JSON (that tool held Penpot-read RGB values).
@@ -154,14 +156,16 @@ Not connected - order not sent (inline refusal) | color.text.primary | color.sur
   | SCR-050 Validation; E17-D01 D13
 refusal glyph on the ladder | color.status.danger.strong | color.surface.canvas | non-text | spec
   s4 in-panel
-Positions as of 00:12 ago note on the grid | color.text.secondary | color.surface.raised | text |
-  E17-D01 s5 Disconnected
+Positions as of 00:12 ago note on the grid; the CMP-079 reason sentence (E09-D09 T2) |
+  color.text.secondary | color.surface.raised | text | E17-D01 s5 Disconnected; E09-D09 T2
 CMP-210 chip glyph beside an issue (warn) | color.status.warning.strong | color.surface.raised |
   non-text | spec s8
 CMP-210 chip glyph beside an issue (error) | color.status.danger.strong | color.surface.raised |
   non-text | spec s8
-disabled-with-reason control label (CMP-079; WCAG 1.4.3 inactive exemption) | color.text.disabled
-  | color.surface.raised | decorative | 14 s0.5.5 (reason text is text.secondary)
+disabled-with-reason control label with the lock glyph (CMP-079; E09-D09 T2) | color.text.tertiary
+  | color.surface.raised | text | E09-D09 T2, s2.4 (the submit while Disconnected); 14 s0.5.5
+rejected: color.text.disabled on the disabled label (E09-D09 T2, DS-1) | color.text.disabled |
+  color.surface.raised | rejected-text | E09-D09 s11 (rejected by design; never bound here)
 E08-D03 s6 pair 6: workspace note (annotation only) | color.text.tertiary | color.surface.app |
   text | E08-D03 s6
 """.replace("{DIM_RAISED}", DIM_RAISED).replace("{DIM}", DIM).replace("{SCRIM}", SCRIM)
@@ -180,11 +184,11 @@ color.status.info.default | CMP-076 delayed glyph (pending A7), CMP-092 info gly
 color.status.info.strong | CMP-092 info (reported only)
 color.text.primary | words on every surface (the cross-spec agreement)
 color.text.secondary | body lines, ages, stillWorks
-color.text.tertiary | E08-D03 s6 annotation
+color.text.tertiary | CMP-079 disabled label + lock glyph (E09-D09 T2); E08-D03 s6 annotation
 color.text.inverse | long-outage step
 color.text.link | Details
 color.text.on-action | Retry now label
-color.text.disabled | CMP-079 disabled control (exempt)
+color.text.disabled | rejected on the CMP-079 label by E09-D09 T2 (reported, never bound)
 color.action.primary.default | Retry now pill
 color.surface.raised | TopBar (CMP-072), the chip's bar, SCR-001 card
 color.surface.sunken | CMP-208 StatusBar (the ws dot's surface)
@@ -218,7 +222,7 @@ elevation.scrim | per-panel scrims
 elevation.chrome | the connection region in the banner slot
 elevation.popover | the chip popover
 opacity.scrim | the scrims (0.6)
-opacity.disabled | CMP-079 disabled control
+opacity.disabled | rejected on the CMP-079 label, glyph and reason by E09-D09 T2 (reported)
 radius.badge | chips and tags
 radius.control | Retry now pill
 type.ui.caption | compact chip, tags
@@ -246,18 +250,22 @@ PRIMITIVE_ONLY = ("elevation.5",)
 
 # matrix row | producing frame or field | columns with "no treatment" (comma list, or -)
 STATES_TABLE = """
-connecting | TransportState connecting (first socket of a session) | panel chrome
+connecting before the session's first auth_ok | TransportState connecting (a reconnect attempt's
+  socket emits it too, connection.ts open(): row 3's in-flight phase) | panel chrome
 connected (Live) | TransportState connected; every topic live | panel chrome, announcement, motion
-reconnecting (Disconnected) | TransportState reconnecting; Link.reconnecting.attempt /
-  nextAttemptAtMs | -
+reconnecting (Disconnected): a retry scheduled or in flight | TransportState reconnecting
+  (Link.reconnecting.attempt / nextAttemptAtMs); offline with a shell cause (offline /
+  tailnet_unreachable / backend_unreachable: the retry timer runs); connecting after the first
+  auth_ok | -
 degraded:lagging | connection_quality.class lagging | global chrome, panel chrome, copy,
   announcement, motion
 degraded:saturated (Delayed) | connection_quality.class saturated or overflowing; applied | -
-offline (retry stopped; a fatal close or a shell cause in a mounted workspace) | TransportState
-  offline; Link.offline.cause fatal (1002, 1009, 4400) or offline / tailnet_unreachable /
-  backend_unreachable | -
-offline: shell cause on the login screen (SCR-001 inline, SCR-159) | OfflineCause offline,
-  tailnet_unreachable, backend_unreachable with no workspace mounted | panel chrome
+offline (retry stopped) in a mounted workspace | TransportState offline; Link.offline.cause fatal
+  (1002, 1009, 4400; bye.reconnect false is folded into fatal by closePolicy) - never a shell
+  cause | -
+offline: shell cause on the login screen (SCR-001 inline, SCR-159) | the shell's ConnectionState
+  offline, tailnet_unreachable, backend_unreachable (the folded fatal, C27) with no workspace
+  mounted | panel chrome
 shutdown_pending (Read-only, countdown) | system shutdown_notice: closing_in_ms,
   expected_downtime_ms, message | panel chrome
 topic_resyncing (Resyncing) | TopicStatus resyncing; exchange_state.public_ws resyncing +
@@ -275,25 +283,29 @@ topic_revoked / permission change | revoked (reason, resubscribe_allowed, remove
 recovered / reconciling | auth_ok + public snapshots; then private snapshots + system or
   auth_ok.kill_switch | -
 read-only reason (the region's slot) | system kill_switch, clock_drift; auth_ok.kill_switch;
-  B20 lockout; exchange.private_ws down; view-as (23 s9.6) | panel chrome
+  B20 lockout; exchange.private_ws down > 10 s; view-as (23 s9.6) | panel chrome
 system unknown (D11) | WsState.systemStream not live; KillSwitchView unknown | panel chrome, motion
 flapping (T5) | >= 3 transport changes in 5 s (transitionSeq) | panel chrome
 long-outage / T4 steps (10 s, 30 s, 5 min) | continuous Disconnected (client clock) | panel chrome
 session ended (no retry) | bye.reconnect false: session_revoked (4401), user_disabled (4403),
-  mfa_enrollment_required (4403) | -
-read-only: backend-health / D17 condition (CMP-092) | system health components[] down or
-  degraded, notice read-only codes, account_notice, maintenance.enabled; wallet health[] per
-  account (23 s15.4) | panel chrome
+  mfa_enrollment_required (4403); told apart from a fatal close only with G12 | -
+backend-health conditions (CMP-092): blocking only for the causes the order path refuses on
+  (24 s8.10), info / warning for the rest | system health components[] (database -> blocking;
+  ingestion, recorder, rule engine, GPU fallback, cold tier -> info / warning), notice read-only
+  codes, account_notice, maintenance.enabled; wallet health[] per account (23 s15.4) | panel chrome
 err by errorMapping class (23 s10.3) | err protocol_violation / frame_malformed / invalid_options
   (client bug); subscription_limit / client_rate_limited (capacity); resync_rate_limited (rebuild
   budget, 23 s7.5) | global chrome
+upstream private reconnect (E17-D01 s5; CMP-092 warning, then R5 at 10 s) | system
+  exchange_state.private_ws connecting / resyncing (health.exchange.private_ws), until the private
+  snap with reason upstream_reconnect | -
 """
 
 # group | stories  -- the Storybook list (spec section 15; PROPOSED).
 STORIES_TABLE = """
 Organisms/ConnectionStatus | Live, Delayed, Stale, StaleEscalated, StaleServer, UpstreamDown,
   Reconnecting, Offline, Compact, Comfortable, TooltipOpen, HighContrast, Greyscale
-Organisms/ReconnectOverlay | Reconnecting, OfflineFatal, OfflineUnreachable, SessionEnded,
+Organisms/ReconnectOverlay | Reconnecting, OfflineFatal, ReconnectingUnreachable, SessionEnded,
   Recovered, LongOutage, ReadOnlyShutdown, ReadOnlyKillSwitch, DetailsOwner, DetailsViewer,
   Keyboard, ReducedMotion
 Molecules/StaleDataShade | Fresh, Stale, Escalated, StaleServer, Disconnected, ReducedMotion
@@ -317,10 +329,12 @@ BYE_REASONS = (
     "not_authenticated",
     "token_expired",
     "client_rate_limited",
+    "too_many_connections",
     "view_as_changed",
     "view_as_expired",
     "mfa_enrollment_required",
     "origin_forbidden",
+    "unsupported_protocol",
 )
 E08_D03_PAIRS = (
     ("color.text.primary", "color.status.danger.subtle"),
