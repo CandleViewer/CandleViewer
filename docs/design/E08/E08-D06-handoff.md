@@ -177,7 +177,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — the entry inherits CMP-023 for the admin row; patch A-6 binds the CMP-036 row tokens and `color.text.secondary` for the state word; no new token
 - [x] **Data contract confirmed** — the E16-S02 store (`recorder` topic, `RecorderUpdate`, `23` §15.8; `GET /recording/symbols`, `RecordedSymbol`) and `GET /market/data-coverage` (`DataCoverage`, spec §4.3); `role_restricted` read as "restricted"; confirmed against `22` / `23` as shipped; what the server leaves empty or limits is drawn as its §4.3 fallback or label: first recorded time (CR-8), archive label (CR-12), not-trading coverage (CR-13), the 90-day window (#2216), no session rows yet (#2188) and the `recorder` topic's server (E16-T08, #492)
-- [x] **Contrast and CVD** — words carry every state; glyphs are decorative (spec §13)
+- [x] **Contrast and CVD** — words carry every state; glyphs are decorative (spec §13); the Recorder settings link misses high contrast's 7:1 on `surface.overlay` until spec H-8's token retune
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING
 
