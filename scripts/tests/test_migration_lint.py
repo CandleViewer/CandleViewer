@@ -1318,6 +1318,29 @@ _UNRESOLVED_OP = (
         _UNRESOLVED_OP.format("op.execute(sa.table(names[0]).delete())"),
         _UNRESOLVED_OP.format("op.execute(sa.table(name_of()).delete())"),
         _UNRESOLVED_OP.format("op.drop_table('audit_' + t)  # cv:contract-phase: R2"),
+        _UNRESOLVED_OP.format("op.drop_table(table_name=t)  # cv:contract-phase: R2"),
+        _UNRESOLVED_OP.format(
+            "op.drop_column(table_name=t, column_name='x')  # cv:contract-phase: R2"
+        ),
+        _UNRESOLVED_OP.format("op.rename_table(old_table_name=t, new_table_name='x')"),
+        _UNRESOLVED_OP.format(
+            "op.alter_column(table_name=t, column_name='x', nullable=True)"
+        ),
+        _UNRESOLVED_OP.format(
+            "op.drop_constraint('c', table_name=t)  # cv:contract-phase: R2"
+        ),
+        _UNRESOLVED_OP.format(
+            "args = ['c', 'audit_log']\n    op.drop_constraint(*args)  # cv:contract-phase: R2"
+        ),
+        _UNRESOLVED_OP.format(
+            "args = ['ix', 'audit_log']\n    op.drop_index(*args)  # cv:contract-phase: R2"
+        ),
+        _UNRESOLVED_OP.format(
+            "kw = {'table_name': 'audit_log'}\n    op.drop_table(**kw)  # cv:contract-phase: R2"
+        ),
+        _UNRESOLVED_OP.format(
+            "kw = {'name': 'audit_log'}\n    op.execute(sa.table(**kw).delete())"
+        ),
     ],
     ids=[
         "a-drop",
@@ -1338,6 +1361,15 @@ _UNRESOLVED_OP = (
         "a-core-table-from-a-subscript",
         "a-core-table-from-a-call",
         "a-drop-built-with-plus",
+        "a-drop-by-keyword",
+        "a-drop-column-by-keyword",
+        "a-rename-by-keyword",
+        "an-alter-column-by-keyword",
+        "a-drop-constraint-by-keyword",
+        "a-starred-list-before-the-slot",
+        "a-starred-index-list",
+        "a-drop-from-kwargs",
+        "a-core-table-from-kwargs",
     ],
 )
 def test_an_operation_whose_table_the_rule_cannot_resolve_is_refused(
@@ -1367,6 +1399,9 @@ _REBOUND = (
         "match {}:\n    case {**T}:\n        pass",
         "def f() -> None:\n    global T",
         "from m import *",
+        "from m import x as T",
+        "import T.sub",
+        "async def T() -> None: ...",
     ],
     ids=[
         "an-import",
@@ -1378,6 +1413,9 @@ _REBOUND = (
         "a-match-rest",
         "a-global",
         "a-star-import",
+        "an-import-alias",
+        "a-dotted-import",
+        "an-async-function",
     ],
 )
 def test_a_name_another_binding_may_rebind_does_not_resolve(
@@ -1421,6 +1459,19 @@ def test_a_revision_whose_tree_cannot_be_dumped_is_read_by_the_cli(
         _raw_sql_revision("SELECT 1") + "N = 0x" + "f" * 3600 + "\n",
     )
     assert main(["--versions-dir", str(versions)]) == 0
+
+
+def test_if_not_exists_after_a_form_feed_is_numbered_as_the_ast_numbers_it(
+    tmp_path: Path,
+) -> None:
+    """A form feed is no line break to Python: the finding names the line it reads."""
+    source = (
+        "from alembic import op\n\x0c\n\ndef upgrade() -> None:\n"
+        '    op.execute("CREATE TABLE IF NOT EXISTS t (id int)")\n'
+    )
+    path = _write(tmp_path, "0050_if_not_exists.py", source)
+    (finding,) = check_if_not_exists([path])
+    assert finding.message.startswith("line 5:")
 
 
 def test_a_drop_after_a_form_feed_is_paired_with_its_own_line(tmp_path: Path) -> None:
@@ -2204,6 +2255,8 @@ _SETTING = "a setting set through set_config() or under a computed name"
         "op.execute(f'ALTER DATABASE cv SET {name} = replica')",
         "op.execute(f'ALTER FUNCTION f() SET {name} = replica')",
         "op.execute(f'ALTER PROCEDURE p() SET {name} TO replica')",
+        "op.execute(f'ALTER SYSTEM SET {name} = replica')",
+        "op.execute(f'ALTER ROUTINE f() SET {name} = replica')",
         "op.execute(f'CREATE FUNCTION f() RETURNS void LANGUAGE sql"
         " SET {name} = replica AS $$ SELECT 1 $$')",
         "op.execute('CREATE OR REPLACE PROCEDURE p() LANGUAGE sql"
@@ -2224,6 +2277,8 @@ _SETTING = "a setting set through set_config() or under a computed name"
         "an-alter-database",
         "an-alter-function",
         "an-alter-procedure",
+        "an-alter-system",
+        "an-alter-routine",
         "a-routine-header",
         "a-procedure-header-format-field",
         "a-format-field-after-a-prefix",

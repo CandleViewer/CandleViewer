@@ -353,8 +353,9 @@ _BLOCK_OPENERS = frozenset(
     {"BEGIN", "THEN", "ELSE", "LOOP", "IN", "QUERY", "ATOMIC", "ALSO", "INSTEAD"}
 )
 _MUTATING_GRANTS = frozenset({"UPDATE", "DELETE", "TRUNCATE", "ALL", "TRIGGER"})
-#: A role attribute that hands over the audit tables as a membership does: a superuser
-#: passes every privilege check, and a role-creating role can grant itself into others.
+#: A role attribute that reaches the audit tables past their grants: a superuser passes
+#: every privilege check, and a role-creating role creates roles, and before PostgreSQL 16
+#: could grant itself into any other. Refused either way (fail-closed).
 _HANDING_ATTRIBUTES = frozenset({"SUPERUSER", "CREATEROLE"})
 # A placeholder in dynamic SQL: its target is an argument, read where it is passed.
 _PLACEHOLDER_RE = re.compile(r"%[IsL]|\$\d+")
@@ -853,7 +854,9 @@ def _run_time_tables(tree: ast.AST) -> dict[int, str]:
             and func.value.id == "op"
         ):
             position, keyword = _TABLE_SLOTS[func.attr]
-            given = [kw.value for kw in node.keywords if kw.arg == keyword]
+            # The keyword, `**kw`, a starred list up to the slot, or the slot itself.
+            given = [kw.value for kw in node.keywords if kw.arg in (keyword, None)]
+            given += [a for a in node.args[:position] if isinstance(a, ast.Starred)]
             if len(node.args) > position:
                 given.append(node.args[position])
             if any(unresolved(arg) for arg in given):
@@ -868,10 +871,10 @@ def _run_time_tables(tree: ast.AST) -> dict[int, str]:
 
 def _core_table_name(node: ast.Call) -> ast.expr | None:
     """The name a Core `table(...)`/`Table(...)` call is given: its first argument, or
-    `table()`'s `name=` keyword."""
+    `table()`'s `name=` keyword, or a `**kw` that may hold it."""
     if node.args:
         return node.args[0]
-    return next((kw.value for kw in node.keywords if kw.arg == "name"), None)
+    return next((kw.value for kw in node.keywords if kw.arg in ("name", None)), None)
 
 
 def _python_settings(tree: ast.AST) -> dict[int, str]:
@@ -1030,6 +1033,8 @@ def check_if_not_exists(paths: list[Path]) -> list[LintFinding]:
     findings: list[LintFinding] = []
     for path in paths:
         text = _read_revision(path)
+        # At "\n" only, as the AST numbers lines: `splitlines()` also breaks at a form feed
+        # and would number every later line one too far (#4032).
         for lineno, line in enumerate(text.split("\n"), start=1):
             if _IF_NOT_EXISTS_RE.search(line) and not _CREATE_EXTENSION_RE.search(line):
                 findings.append(

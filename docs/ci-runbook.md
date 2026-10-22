@@ -781,10 +781,11 @@ index alone, removing nothing.
     condition into a variable first;
   - anything but a literal, or a Python name bound to one value, where a
     table goes, in SQL, an Alembic operation or a Core table: a name
-    assigned twice, a loop target, a parameter, an expression (`+`, an
-    f-string, an attribute, a subscript, a call), or a name completed by a
-    placeholder after a literal prefix. Give each table its own literal or
-    constant;
+    assigned twice or imported, any name in a file with a star import, a
+    loop target, a parameter, a starred list or `**kw`, an expression
+    (`+`, an f-string, an attribute, a subscript, a call), or a name
+    completed by a placeholder after a literal prefix. Give each table its
+    own literal or constant;
   - a message or a value that opens with `Set` and one word, read as a
     setting under a name the rule cannot read: reword it.
 
@@ -797,8 +798,8 @@ index alone, removing nothing.
   that parses, and nested no deeper. The versions directory holds the
   revisions' Python source and nothing else: any other file there (a
   compiled module, a path file, an `__init__.py`, a module in a
-  subdirectory) is refused as "not a revision's Python source"; only
-  `__pycache__` and `.gitkeep` are let be. A name or a string spelled
+  subdirectory) is refused as "not a revision's Python source": move or
+  delete it. Only `__pycache__` and `.gitkeep` are let be. A name or a string spelled
   with Unicode escapes (`U&`) is refused too: spell it plainly.
 
   Two files are exempt, and only as far as follows:
