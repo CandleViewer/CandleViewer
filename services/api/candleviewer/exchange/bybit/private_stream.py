@@ -446,7 +446,9 @@ class _PrivateConn:
             return
         epoch = self._epoch
         if self._terminal is not None:
-            self._timer = self._owner.spawn(self._send(interp, "SHUTDOWN", epoch), "private-ws-end")
+            self._timer = self._owner.spawn(
+                self._send_armed(interp, "SHUTDOWN", epoch), "private-ws-end"
+            )
             return
         delay = self._owner.policy.next_delay(self.attempt)
 
@@ -455,7 +457,7 @@ class _PrivateConn:
             if self.queue.down_pending:  # a stalled consumer holds the dial (OQ-D): counted once
                 bybit_private_reconnect_waited_total.inc()
                 await self.queue.drained()
-            await self._send(interp, "BACKOFF_DUE", epoch)
+            await self._send_armed(interp, "BACKOFF_DUE", epoch)
 
         self._timer = self._owner.spawn(due(), "private-ws-backoff")
 
@@ -466,8 +468,8 @@ class _PrivateConn:
 
         async def recheck() -> None:
             await self._owner.sleep(BUDGET_RECHECK_S)
-            await self._send(interp, "BUDGET_RECHECK", epoch)
-            await self._send(interp, "CONNECT", epoch)
+            await self._send_armed(interp, "BUDGET_RECHECK", epoch)
+            await self._send_armed(interp, "CONNECT", epoch)
 
         self._timer = self._owner.spawn(recheck(), "private-ws-budget")
 
@@ -579,7 +581,7 @@ class _PrivateConn:
         )
         self.queue.put_status(status)
 
-    async def _send(self, interp: Any, event: str, epoch: int) -> None:
+    async def _send_armed(self, interp: Any, event: str, epoch: int) -> None:
         """An event armed at `epoch`, sent only while that socket is current and the stream is
         not closing: one left from an earlier socket is dropped, never deferred into a later one."""
         if self._stop or epoch != self._epoch:
@@ -733,9 +735,9 @@ class _PrivateConn:
         watch = workers["watch"]
         if watch in done and not watch.cancelled() and watch.exception() is None:
             self._down_reason = "pong_timeout"
-            await self._send(interp, "PONG_DEADLINE", epoch)
+            await self._send_armed(interp, "PONG_DEADLINE", epoch)
         else:
-            await self._send(interp, "SOCKET_CLOSED", epoch)
+            await self._send_armed(interp, "SOCKET_CLOSED", epoch)
 
 
 class _Stream:

@@ -149,7 +149,7 @@ async def test_an_event_armed_for_an_earlier_socket_never_moves_a_later_one() ->
         return real(event, *args, **kwargs)
 
     interp.send = recording
-    await conn._send(interp, "SOCKET_CLOSED", 1)  # armed for epoch 1
+    await conn._send_armed(interp, "SOCKET_CLOSED", 1)  # armed for epoch 1
     await clock.advance(30)
     assert sent == [] and len(venue.sockets) == 2 and conn.state() == "open"
     interp.send = real
