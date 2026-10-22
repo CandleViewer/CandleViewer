@@ -110,9 +110,10 @@ Banner title / body; critical banner lead (CMP-117, CMP-028 danger) | color.text
   | color.status.danger.subtle | text | E40-D01 CR-23; spec s5
 Banner facts row, caption (OD-12 bracket) | color.text.secondary | color.status.danger.subtle
   | text | E40-D01 CR-24; spec s5
-Banner leading rule, LOCK / FROZEN glyph fill on the banner | color.status.danger.strong
+Banner leading rule; FROZEN glyph fill on the banner | color.status.danger.strong
   | color.status.danger.subtle | non-text | E40-D01 CR-25; spec s5
-Banner rule alternative -- REJECTED (danger.default) | color.status.danger.default
+Banner rule alternative -- REJECTED (danger.default); as the LOCK glyph's interior fill it is
+  reinforcement inside the text.primary stroke (2.88 dark reported) | color.status.danger.default
   | color.status.danger.subtle | rejected-non-text | spec s11: fails dark
 WARN twin title; stale callout text | color.text.primary | color.status.warning.subtle | text
   | spec s5, s4 stale
@@ -166,12 +167,13 @@ LIVE as coloured text -- REJECTED | color.env.live | color.surface.app | rejecte
   | E39-D03 s12 row 32
 Override Confirm label (CMP-001 danger) | color.text.on-action | color.status.danger.default
   | text | E39-D01 s9.4; E39-D03 s12 row 1
-Primary button label (Release..., Freeze my account..., I've read this) | color.text.on-action
-  | color.action.primary.default | text | spec s4, s5
-Danger button fill on the page (Override lockout...) | color.status.danger.default
-  | color.surface.app | non-text | E39-D03 s12 row 20
-Refused-field border on the dialog | color.status.danger.default | color.surface.overlay
-  | non-text | E39-D03 s12 row 21
+Primary button label (Release...) | color.text.on-action | color.action.primary.default | text
+  | spec s4, s5
+Danger button fill on the page (FREEZE ALL -- CMP-211 global; the override Confirm)
+  | color.status.danger.default | color.surface.app | non-text | E39-D03 s12 row 20
+Refused-field border on the dialog; the outline buttons' danger stroke (Freeze..., I've read
+  this, Ask the owner for an override) on their overlay fill | color.status.danger.default
+  | color.surface.overlay | non-text | E39-D03 s12 row 21
 Focus ring on the page | color.focus.ring | color.surface.app | non-text | 05 s3.4 item 6
 Focus ring on the raised row / banner host | color.focus.ring | color.surface.raised | non-text
   | 05 s3.4 item 6
@@ -198,8 +200,8 @@ CR: light warning.default = palette.amber.700, on the raised row
 # token | bound by
 BINDINGS_TABLE = """
 color.status.danger.subtle | CMP-117 LOCK / FROZEN surface, CMP-028 critical banner
-color.status.danger.default | LOCK fill (reinforcement), Override lockout... button, refused field
-color.status.danger.strong | banner rule and glyph (E40 CR-25), over-cap marker
+color.status.danger.default | LOCK fill (table + banner glyph), FREEZE ALL / Confirm, refused field
+color.status.danger.strong | banner rule, FROZEN glyph (E40 CR-25), over-cap marker, shield slash
 color.status.warning.subtle | CMP-117 WARN twin, stale callout
 color.status.warning.default | CMP-138 near-cap fill (reinforcement, Q-D02-4)
 color.status.warning.strong | WARN rule and diamond glyph
@@ -225,7 +227,7 @@ color.border.subtle | row separators
 color.border.default | hairlines
 color.border.strong | track outline (decorative); the rejected tick alternative
 color.focus.ring | the 2 px ring
-color.action.primary.default | Release..., Freeze my account..., I've read this
+color.action.primary.default | Release... (Freeze my account... and I've read this are outline)
 color.action.selected | checked box / radio fill in the dialog
 color.data-confidence.stale.indicator | the CMP-239 stale since chip glyph
 space.2 | control row and table gaps
@@ -366,7 +368,7 @@ shared_meter_current | 212
 shared_meter_cap | 250
 shared_meter_pct | 85
 warning_frame_pct | 95
-lock_frame_pct | 100
+lock_frame_pct | 105
 over_cap_pct | 112
 stale_age_s | 14
 push_within_ms | 500
@@ -375,7 +377,7 @@ countdown_threshold_s_1 | 60
 countdown_threshold_s_2 | 10
 countdown_threshold_s_3 | 0
 dim_pct | 85
-kill_switch_grace_min | 5
+risk_caps_grace_min | 5
 """
 
 
