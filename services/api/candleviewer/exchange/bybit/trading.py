@@ -59,6 +59,7 @@ from candleviewer.exchange.base.guards import (
     check_key_ref,
     check_lookup_id,
     check_stop,
+    check_stop_mode,
     check_window,
 )
 from candleviewer.exchange.base.models import (
@@ -662,6 +663,7 @@ class BybitTradingPort:
         left `None` is not sent."""
         self._check_environment(req.account)
         check_stop(req.stop_loss, req.sl_size, req.tp_size, req.trailing_distance)
+        check_stop_mode(req.tpsl_mode, req.tp_size, req.sl_size)
         body = _stop_body(req)
         answer = await self._trade("set_trading_stop", req.account, body=body)
         fields = rec.request_fields(body)
@@ -928,7 +930,8 @@ def _cancel_all_body(symbol: Symbol | None) -> dict[str, Any]:
 def _stop_body(req: TradingStopRequest) -> dict[str, Any]:
     """§8.9's stop write: a side left `None` is not sent, nor its trigger source. A side's size
     (`tpSize`, `slSize`) goes beside it in Partial mode only: the request refuses a size in Full
-    mode and a Partial-mode price without its size (24 §14.4)."""
+    mode and a Partial-mode price without its size (24 §14.4), and `check_stop_mode` refuses a
+    Full-mode size a `model_copy` carried before this is built."""
     body: dict[str, Any] = {
         "category": "linear",
         "symbol": req.symbol,

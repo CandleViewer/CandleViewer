@@ -28,6 +28,7 @@ __all__ = [
     "check_key_ref",
     "check_lookup_id",
     "check_stop",
+    "check_stop_mode",
     "check_window",
 ]
 
@@ -81,6 +82,15 @@ def check_stop(*values: Decimal | None) -> None:
             raise ValueError(
                 "a stop-loss, a stop size or a trailing distance must be a positive number"
             )
+
+
+def check_stop_mode(mode: str, *sizes: Decimal | None) -> None:
+    """24 §8.9 and §14.4: a size goes with a Partial-mode stop only, as a Full-mode stop covers
+    the whole position. `TradingStopRequest` refuses one at construction; one a `model_copy`
+    carried is refused here, before any token is taken or anything is signed, so no port sends
+    a size with a Full-mode stop. `ValueError` otherwise."""
+    if mode != "partial" and any(size is not None for size in sizes):
+        raise ValueError("a Full-mode stop covers the whole position and takes no size")
 
 
 def check_lookup_id(link: OrderLinkId | None) -> None:

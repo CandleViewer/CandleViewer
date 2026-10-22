@@ -18,6 +18,10 @@ from uuid import UUID
 import pytest
 
 from candleviewer.exchange.base.errors import AuthError
+from candleviewer.exchange.bybit.metrics import (
+    bybit_private_ws_auth_total,
+    bybit_private_ws_disconnects_total,
+)
 from candleviewer.secrets import (
     CredentialBorrower,
     CredentialUnavailable,
@@ -42,6 +46,12 @@ from tests.unit.exchange.bybit._trading import SIGNER_ID, account
 
 def _measured(skew: int = 0) -> Callable[[], int | None]:
     return lambda: skew
+
+
+def _count(metric: Any, **labels: str) -> float:
+    """A counter's value so far (process-wide: the tests read deltas)."""
+    value: float = metric.labels(**labels)._value.get()
+    return value
 
 
 @pytest.mark.parametrize("skew", [None, -12_000, 3_000])
@@ -70,7 +80,9 @@ async def test_every_dial_signs_a_fresh_auth_through_m2_ten_seconds_ahead(skew: 
 
 async def test_three_measured_refusals_close_the_stream_and_mark_the_key() -> None:
     """Ruling 10: the stream ends `closed(auth_refused)` and a later stream on the key is refused
-    (`AuthError`) before anything is signed or dialled."""
+    (`AuthError`) before anything is signed or dialled; each refusal and the close are counted."""
+    refusals = _count(bybit_private_ws_auth_total, result="refused")
+    closes = _count(bybit_private_ws_disconnects_total, reason="auth_refused")
     clock, calls = VirtualClock(), list[Call]()
     venue = PrivateVenue(clock)
     venue.auth.extend([REFUSED_AUTH] * 3)
@@ -78,6 +90,8 @@ async def test_three_measured_refusals_close_the_stream_and_mark_the_key() -> No
     consumer = Consumer(await streams.open(account(), clock_offset_ms=_measured()))
     await until(clock, lambda: consumer.task.done(), within_s=60, what="closed")
     assert consumer.statuses() == ["closed:auth_refused:3"]
+    assert _count(bybit_private_ws_auth_total, result="refused") == refusals + 3
+    assert _count(bybit_private_ws_disconnects_total, reason="auth_refused") == closes + 1
     assert (len(calls), len(venue.dialled), streams.count()) == (3, 3, 0)
     with pytest.raises(AuthError) as refused:
         await streams.open(account(), clock_offset_ms=_measured())

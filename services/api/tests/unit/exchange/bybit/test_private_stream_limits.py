@@ -27,6 +27,7 @@ from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.metrics import (
     bybit_private_frames_rejected_total,
     bybit_private_rows_refused_total,
+    bybit_private_ws_streams,
 )
 from candleviewer.exchange.bybit.private_stream import DATA_SLOTS, FRAME_BYTES, _PrivateConn
 from tests._signing import Call
@@ -73,6 +74,7 @@ async def test_the_stream_cap_refuses_as_a_budget_told_apart_from_a_refused_toke
     streams = make_streams(venue, calls=calls, max_streams=2)
     first = await streams.open(account(ACCOUNT_A))
     second = await streams.open(account(ACCOUNT_B))
+    assert bybit_private_ws_streams._value.get() == 2
     await clock.advance(5)
     signed, dialled = len(calls), len(venue.dialled)
     capped = _value(ws_conn_budget_refused_total, scope="streams")
@@ -84,8 +86,10 @@ async def test_the_stream_cap_refuses_as_a_budget_told_apart_from_a_refused_toke
     assert (len(calls), len(venue.dialled)) == (signed, dialled)
     token = RateBudgetExceededError("no rate token within the lane's wait; nothing was sent")
     assert token.reason == "token_bucket"  # what the REST governor raises: another reason
+    assert bybit_private_ws_streams._value.get() == 2  # the refused one never counted
     for stream in (first, second):
         await stream.aclose()
+    assert bybit_private_ws_streams._value.get() == 0
     await streams.aclose()
 
 

@@ -49,7 +49,8 @@ Source: `CONSTITUTION.md` C-2.2, C-2.6, C-2.8, C-2.10, C-2.11, C-12.7, C-13.5; `
 ## WebSockets
 
 - Public: snapshot + delta with sequence checks; gap / out-of-order / duplicate means resync from snapshot (C-2.5).
-- Private (`order`, `execution.fast`, `position`, `wallet`): heartbeat watchdog; on drop, REST reconciliation.
+- Private (`order`, `execution`, `position`, `wallet`; `execution.fast` optional): heartbeat watchdog;
+  on drop, REST reconciliation.
   The private stream's contract (ping, watchdog, backoff, statuses, revoke) is 24 §14.2 rule 13.
 - Ping per Bybit spec; reconnect with exponential backoff + jitter; bounded queues (C-2.18).
 

@@ -14,7 +14,11 @@ ruling); a dial the consumer never held is not counted.
 from __future__ import annotations
 
 from candleviewer.exchange.base.models import Execution
-from candleviewer.exchange.bybit.metrics import bybit_private_reconnect_waited_total
+from candleviewer.exchange.bybit.metrics import (
+    bybit_private_reconnect_waited_total,
+    bybit_private_ws_auth_total,
+    bybit_private_ws_disconnects_total,
+)
 from candleviewer.exchange.bybit.private_stream import REQUIRED_OPS, STABLE_RESET_S
 from tests._signing import Call
 from tests.chaos.ingestion._clock import VirtualClock
@@ -41,6 +45,8 @@ def _waited() -> float:
 
 
 async def test_a_dropped_socket_reconnects_reauthenticates_and_resyncs() -> None:
+    granted = bybit_private_ws_auth_total.labels(result="granted")._value.get()
+    dropped = bybit_private_ws_disconnects_total.labels(reason="socket_closed")._value.get()
     clock, calls = VirtualClock(), list[Call]()
     venue = PrivateVenue(clock)
     streams = make_streams(venue, calls=calls)
@@ -75,6 +81,10 @@ async def test_a_dropped_socket_reconnects_reauthenticates_and_resyncs() -> None
     assert _subscribes(venue, 0) == _subscribes(venue, 1) == SUBSCRIBED
     assert venue.sockets[0].closed and not venue.sockets[1].closed
     assert all(isinstance(e.payload, Execution) for e in consumer.events())
+    # One `auth` granted per dial, one socket lost, each counted once.
+    assert bybit_private_ws_auth_total.labels(result="granted")._value.get() == granted + 2
+    lost = bybit_private_ws_disconnects_total.labels(reason="socket_closed")._value.get()
+    assert lost == dropped + 1
     await consumer.stop()
     await streams.aclose()
 

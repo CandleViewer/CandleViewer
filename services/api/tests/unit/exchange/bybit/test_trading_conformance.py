@@ -491,6 +491,7 @@ async def _every_call(port: TradingPort, ref: AccountRef) -> AsyncIterator[Calla
     yield lambda: port.wallet(ref)
     yield lambda: port.fee_rate(ref, "BTCUSDT")
     yield lambda: port.account_info(ref)
+    yield lambda: port.subscribe_private(ref)  # 24 §14.1: it refuses as every call does
 
 
 async def test_both_refuse_another_environments_account_before_anything(harness: Harness) -> None:
@@ -736,6 +737,34 @@ async def test_both_still_send_a_positive_stop_on_every_path(harness: Harness, p
     )
     await STOP_PATHS[path](harness.port, value)
     assert harness.sent() > 0
+
+
+#: Sizes no model admits (pydantic refuses them), which only a `model_copy` carries.
+NOT_FINITE = ["NaN", "Infinity", "-Infinity"]
+
+
+@pytest.mark.parametrize("value", NOT_FINITE)
+@pytest.mark.parametrize("side", ["sl", "tp"])
+async def test_both_refuse_a_stop_size_that_is_not_finite_before_anything(
+    harness: Harness, side: str, value: str
+) -> None:
+    """A non-finite size is no positive number either: refused on the `model_copy` path, the
+    one that can carry it, with nothing sent."""
+    with pytest.raises(ValueError, match="positive number"):
+        await harness.port.set_trading_stop(_sized(side, Decimal(value)))
+    assert harness.sent() == 0
+
+
+@pytest.mark.parametrize("side", ["sl", "tp"])
+async def test_both_refuse_a_size_on_a_full_mode_stop_before_anything(
+    harness: Harness, side: str
+) -> None:
+    """24 §14.4: a size goes with a Partial-mode stop only. A Full-mode stop a `model_copy` gave
+    a size is refused before anything is sent, so `tpSize` and `slSize` never go with `Full`."""
+    full = _sized(side, Decimal("0.01")).model_copy(update={"tpsl_mode": "full"})
+    with pytest.raises(ValueError, match="Full-mode stop"):
+        await harness.port.set_trading_stop(full)
+    assert harness.sent() == 0
 
 
 async def test_both_answer_a_cancel_naming_our_id_and_another_exchange_id_not_found(

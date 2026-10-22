@@ -34,6 +34,7 @@ from .guards import (
     check_key_ref,
     check_lookup_id,
     check_stop,
+    check_stop_mode,
     check_window,
 )
 from .models import (
@@ -500,6 +501,7 @@ class FakeTradingPort:
 
     async def set_trading_stop(self, req: TradingStopRequest) -> OrderAck:
         check_stop(req.stop_loss, req.sl_size, req.tp_size, req.trailing_distance)
+        check_stop_mode(req.tpsl_mode, req.tp_size, req.sl_size)
         self._enter("set_trading_stop", req.account, req, "critical")
         outcome = self._outcome("set_trading_stop")
         if isinstance(outcome, FakeReject):
