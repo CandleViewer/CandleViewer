@@ -273,7 +273,9 @@ class RecordedStopStore(Protocol):
         """Answer one request's rows together (21 Sec.3.3.11): each must be the account's and in
         flight, else `StaleRecordedStop` with nothing written. `write_ahead`, when given, is
         awaited with the settled rows before the commit, bounded; `WriteAheadTimeout` when it
-        outlasts the bound, with nothing written. Returns them as stored."""
+        outlasts the bound, with nothing written. A void (`refused`, `not_shown`) needs it: with
+        none, `ValueError` before any statement (C-2.9), here as in the M14 facade. Returns them
+        as stored."""
         ...
 
     async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:

@@ -215,6 +215,8 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("a settle names each row of the request once")
         require_aware("at", at)
+        if outcome != "answered" and write_ahead is None:  # 21 Sec.3.3.11: no void unaudited
+            raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
         async with self._unit_of_work() as uow:
             await uow.session.execute(lock_stops_statement(account_id, ids))
             stmt = settle_statement(account_id, ids, outcome, at)

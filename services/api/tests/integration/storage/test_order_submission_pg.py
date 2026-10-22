@@ -47,6 +47,7 @@ from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderS
 from candleviewer.storage.repositories.recorded_stops import (
     EVERY_ACCOUNT,
     NewRecordedStop,
+    RecordedStopRow,
     StaleRecordedStop,
     SweptStop,
 )
@@ -389,8 +390,13 @@ async def test_a_stop_request_is_settled_once_and_only_in_its_account(
         await stops.settle(uuid.uuid4(), [record], "answered", at=_T0)  # another account's view
     [answered] = await stops.settle(account, [record], "answered", at=_T0)
     assert (answered.status, answered.answered_at) == ("pending", _T0)
+    noted: list[tuple[RecordedStopRow, ...]] = []
+
+    async def audited(rows: tuple[RecordedStopRow, ...]) -> None:  # a void's write-ahead hook
+        noted.append(rows)
+
     with pytest.raises(StaleRecordedStop):
-        await stops.settle(account, [record], "refused", at=_T0)
+        await stops.settle(account, [record], "refused", at=_T0, write_ahead=audited)
     trading = NewRecordedStop(
         id=uuid.uuid4(), exchange_account_id=account, symbol="BTCUSDT", position_idx=0,
         position_side="Buy", kind="stop_loss", source="trading_stop", order_id=None,
@@ -398,8 +404,9 @@ async def test_a_stop_request_is_settled_once_and_only_in_its_account(
         audit_record_id=uuid.uuid4(), actor_user_id=user, position_marker="m1",
     )  # fmt: skip
     [recorded] = await stops.insert([trading])
-    [voided] = await stops.settle(account, [recorded.id], "not_shown", at=_T0)
+    [voided] = await stops.settle(account, [recorded.id], "not_shown", at=_T0, write_ahead=audited)
     assert (voided.status, voided.answered_at, voided.closed_at) == ("void", None, _T0)
+    assert noted == [(voided,)]  # the stale refusal wrote nothing, so audited nothing
     assert [row.id for row in await stops.for_order(account, order.id)] == [record]
     assert await stops.for_order(uuid.uuid4(), order.id) == ()
 

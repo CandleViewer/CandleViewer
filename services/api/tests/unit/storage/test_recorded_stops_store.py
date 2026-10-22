@@ -296,6 +296,16 @@ async def test_a_settle_refuses_a_malformed_call_before_any_statement(
     assert rel.statements == []
 
 
+@pytest.mark.parametrize("outcome", ["refused", "not_shown"])
+async def test_a_void_without_its_hook_is_refused_before_any_statement(outcome: Any) -> None:
+    """SEC-4057-F-01 (C-2.9, 21 section 3.3.11): the store, not only the M14 facade, refuses a
+    void with no write-ahead hook, so no caller voids a protective-stop record unaudited."""
+    rel = _Rel()
+    with pytest.raises(ValueError, match="audited write-ahead"):
+        await _store(rel).settle(_ACCOUNT, [_SL], outcome, at=_T)
+    assert rel.statements == []
+
+
 async def test_for_order_reads_the_entry_rows_oldest_first() -> None:
     rel = _Rel([_row(_SL), _row(_TP, kind="take_profit")])
     rows = await _store(rel).for_order(_ACCOUNT, _ORDER)
