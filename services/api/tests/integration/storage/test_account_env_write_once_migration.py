@@ -124,12 +124,13 @@ def test_a_main_account_with_a_sub_account_never_changes_its_environment(pg_dsn:
 
 def test_a_sub_account_never_changes_its_environment(pg_dsn: str) -> None:
     """A sub-account is refused too: `trg_ea_env_parent` (0017) sorts before the write-once guard
-    and refuses first, with SQLSTATE 23514 and no constraint name."""
+    and refuses first, with SQLSTATE 23514, naming itself since 0049 (#3962)."""
     with _conn(_fresh(pg_dsn)) as c:
         child = _account(c, parent=_account(c))
         with pytest.raises(pgerr.CheckViolation) as exc:
             c.execute("UPDATE exchange_accounts SET env = 'live' WHERE id = %s", (child,))
         assert exc.value.sqlstate == "23514"
+        assert exc.value.diag.constraint_name == "trg_ea_env_parent"
         assert (exc.value.diag.message_primary or "").startswith("trg_ea_env_parent:")
         assert _env_of(c, child) == "demo"
 
