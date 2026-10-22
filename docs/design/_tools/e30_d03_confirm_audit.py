@@ -217,7 +217,16 @@ TIMERS = [
         "aria-live=off; polite at 0:10 and at 0:00",
         "15 CMP-035; 14 SCR-158",
     ),
-    ("Enter gate", "400 ms after open", "14 SCR-076 A11y"),
+    (
+        "Confirm activation gate",
+        "Enter, Space or pointer: accepted 400 ms after open",
+        "14 SCR-076 A11y; spec D3",
+    ),
+    (
+        "replay",
+        "opens on a fresh settled preview of the held intent, never the held numbers",
+        "spec D2; 14 SCR-158 Performance",
+    ),
     ("appearance budget", "100 ms from in-memory state, no fetch", "14 SCR-076 Performance"),
     ("SCR-114 save round-trip", "400 ms", "14 SCR-114 Performance"),
     ("SCR-158 announcement cadence", "at most once per 10 s", "14 SCR-158 A11y"),
@@ -352,6 +361,20 @@ FORBID = [
 FORBID.append("penpot." + "candleviewer.com")
 LIVE_SENTENCE = "You are about to send a LIVE order"
 STOP_KEY = re.compile(r"^(confirm|drawer|ratelimit|selector|template)\..*stop")
+S14 = (PLAN / "14-screens-catalogue.md").read_text(encoding="utf-8").splitlines()
+FIELD14 = {"Analytics": "Analytics/audit", "checklist": "Design sign-off acceptance checklist"}
+for _f in (
+    "Type",
+    "Note",
+    "Data",
+    "Components",
+    "A11y",
+    "Performance",
+    "Validation",
+    "Interactions",
+):
+    FIELD14[_f] = _f
+ANCHOR14 = re.compile(r"`14` (?:SCR-\d{3} )?(\w+) :(\d+)|(\w+) \(`14` :(\d+)\)")
 
 
 def read(p: Path) -> str:
@@ -377,6 +400,20 @@ def rows(md: str, start: str, end: str | None = None) -> list[list[str]]:
 def tick(cell: str) -> str:
     mt = re.search(r"`([^`]+)`", cell)
     return mt.group(1) if mt else cell
+
+
+def anchor_gates(spec: str) -> int:
+    """Every `14` line anchor that names a field must point at that field's line (F-7)."""
+    n = 0
+    for m in ANCHOR14.finditer(spec):
+        field, ln = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        if field not in FIELD14:
+            continue
+        line = S14[int(ln) - 1] if int(ln) <= len(S14) else ""
+        if not line.startswith(f"- **{FIELD14[field]}"):
+            FAILS.append(f"14 anchor :{ln} is not the {field} line")
+        n += 1
+    return n
 
 
 def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
@@ -405,7 +442,13 @@ def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
             if key not in d02 or not q or q.group(1) not in d02[key]:
                 FAILS.append(f"copy deck {key}: differs from E30-D02 section 14")
     live = spec.count(LIVE_SENTENCE)
-    return {"copy_keys": len(deck), "d02_reused": reused, "live_sentence": live}
+    anchors = anchor_gates(spec)
+    return {
+        "copy_keys": len(deck),
+        "d02_reused": reused,
+        "live_sentence": live,
+        "anchors14": anchors,
+    }
 
 
 def counts(spec: str, hand: str) -> dict[str, int | dict[str, int]]:
