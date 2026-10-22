@@ -113,3 +113,55 @@ def test_the_base_secret_offers_no_comparison_oracle() -> None:
     assert not hasattr(Secret("CANARY-SECRET"), "equals_constant_time")
     assert "equals_constant_time" not in vars(Secret)
     assert issubclass(ComparableSecret, Secret)
+
+
+class _Guarded(Secret[str]):
+    """A stand-in for a subclass whose value must never be probed through the base (M2)."""
+
+    __slots__ = ()
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def __hash__(self) -> int:
+        return id(self)
+
+
+def test_equality_never_crosses_secret_classes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A base or comparable secret never equals a secret of another class, in either operand
+    order, whatever the values — so no sibling class can be used to probe a guarded value."""
+    monkeypatch.setattr(Secret, "reveal", lambda self: pytest.fail("reveal() was called"))
+    guarded = _Guarded("CANARY-SECRET")
+    for probe in (Secret("CANARY-SECRET"), ComparableSecret("CANARY-SECRET")):
+        assert probe != guarded
+        assert guarded != probe
+        assert not (probe == guarded)
+        assert not (guarded == probe)
+    assert Secret("CANARY-SECRET") != ComparableSecret("CANARY-SECRET")
+    assert ComparableSecret("CANARY-SECRET") != Secret("CANARY-SECRET")
+
+
+def test_equals_constant_time_refuses_any_other_kind_of_secret() -> None:
+    guarded = _Guarded("CANARY-SECRET")
+    with pytest.raises(TypeError, match="two ComparableSecret values"):
+        ComparableSecret("CANARY-SECRET").equals_constant_time(guarded)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="two ComparableSecret values"):
+        ComparableSecret("CANARY-SECRET").equals_constant_time(
+            Secret("CANARY-SECRET")  # type: ignore[arg-type]
+        )
+
+
+def test_comparable_secrets_compare_through_the_constant_time_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`==` on two comparable secrets is the constant-time comparison, never the values' own."""
+    compared = _spy_compare_digest(monkeypatch)
+    assert ComparableSecret("CANARY-SECRET") == ComparableSecret("CANARY-SECRET")
+    assert ComparableSecret("CANARY-SECRET") != ComparableSecret("CANARY-OTHER")
+    assert compared == [
+        (b"CANARY-SECRET", b"CANARY-SECRET"),
+        (b"CANARY-SECRET", b"CANARY-OTHER"),
+    ]
+    assert ComparableSecret("CANARY-SECRET") != "CANARY-SECRET"
+    assert hash(ComparableSecret("a")) == hash(ComparableSecret("b"))
+    assert len({ComparableSecret("a"), ComparableSecret("a"), ComparableSecret("b")}) == 2

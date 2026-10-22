@@ -41,8 +41,13 @@ class Secret[T]:
         return _REDACTED
 
     def __eq__(self, other: object) -> bool:
+        # Only secrets of exactly this class compare by value: a subclass may hold a value that
+        # must never be probed through the base (the credential `Secret` in `secrets/` is
+        # identity-only), and Python's reflected-operand rule alone does not shield a sibling.
         if isinstance(other, Secret):
-            return self._value == other._value  # type: ignore[no-any-return]
+            if type(other) is not type(self):
+                return False
+            return bool(self._value == other._value)
         return NotImplemented
 
     def __hash__(self) -> int:
@@ -50,22 +55,37 @@ class Secret[T]:
 
 
 class ComparableSecret[T](Secret[T]):
-    """A `Secret` whose value may be compared with another's, in constant time and without
-    revealing either side. Only the wrappers that must be compared (a presented arm token against
-    the issued one, SR-043) extend it; the credential `Secret` in `secrets/` stays identity-only
-    (no plaintext comparison oracle, M2), so this class never appears in `secrets/`."""
+    """A `Secret` whose value may be compared with another `ComparableSecret`'s, in constant time
+    and without revealing either side. Only the wrappers that must be compared (a presented arm
+    token against the issued one, SR-043) extend it; the credential `Secret` in `secrets/` stays
+    identity-only (no plaintext comparison oracle, M2), so this class never appears in `secrets/`
+    and never compares against any other kind of `Secret`."""
 
     __slots__ = ()
 
     def equals_constant_time(self, other: ComparableSecret[T]) -> bool:
-        """Whether two secrets hold the same `str` or `bytes` value, compared in constant time
-        (`hmac.compare_digest` over the encoded bytes), so the time the comparison takes tells
-        nothing of how much of a presented value matches (SR-043). Neither value is revealed, so
-        a caller outside `secrets/` can compare without the plaintext (M2 R10). Any other value
-        type raises `TypeError`: there is no fall-back to the values' own `==`."""
+        """Whether two comparable secrets hold the same `str` or `bytes` value, compared in
+        constant time (`hmac.compare_digest` over the encoded bytes), so the time the comparison
+        takes tells nothing of how much of a presented value matches (SR-043). Neither value is
+        revealed, so a caller outside `secrets/` can compare without the plaintext (M2 R10). Any
+        other operand or value type raises `TypeError`: there is no fall-back to the values' own
+        `==`, and no other kind of `Secret` can be probed through this method."""
+        if not isinstance(other, ComparableSecret):
+            raise TypeError("equals_constant_time compares two ComparableSecret values")
         mine, theirs = self._value, other._value
         if isinstance(mine, str) and isinstance(theirs, str):
             return hmac.compare_digest(mine.encode(), theirs.encode())
         if isinstance(mine, bytes) and isinstance(theirs, bytes):
             return hmac.compare_digest(mine, theirs)
         raise TypeError("equals_constant_time compares two str secrets or two bytes secrets")
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, ComparableSecret):
+            return self.equals_constant_time(other)
+        if isinstance(other, Secret):
+            return False
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        # Equal values must hash alike, and the hash must carry nothing of the value.
+        return hash(ComparableSecret)

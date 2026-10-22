@@ -62,6 +62,20 @@ def test_no_constant_time_comparison_oracle_either() -> None:
     assert not any("equals_constant_time" in vars(klass) for klass in Secret.__mro__)
 
 
+def test_no_other_secret_class_can_probe_a_credential() -> None:
+    """Neither the observability base nor `ComparableSecret` equals a credential `Secret`
+    holding the same value, in either operand order, and `equals_constant_time` refuses it."""
+    from candleviewer.observability.secret_type import ComparableSecret
+    from candleviewer.observability.secret_type import Secret as ObsSecret
+
+    cred = Secret(CANARY)
+    for probe in (ObsSecret(CANARY), ComparableSecret(CANARY)):
+        assert probe != cred and cred != probe
+        assert not (probe == cred) and not (cred == probe)
+    with pytest.raises(TypeError):
+        ComparableSecret(CANARY).equals_constant_time(cred)  # type: ignore[arg-type]
+
+
 def test_invalidate_blocks_reveal() -> None:
     s = Secret(CANARY)
     assert s.reveal() == CANARY
