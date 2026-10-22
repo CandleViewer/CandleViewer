@@ -10,6 +10,7 @@ from ipaddress import IPv4Address, IPv6Address
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+import re
 from decimal import Decimal as _StdlibDecimal
 
 from pydantic import (
@@ -26,10 +27,24 @@ from pydantic import (
 )
 
 
+_C6_DECIMAL = re.compile("^-?[0-9]+(\\.[0-9]+)?$")
+
+
+def _c6_decimal(value: object) -> _StdlibDecimal:
+    """Convention C6: a decimal on the wire is a string that fully matches the contract's
+    `Decimal` pattern, checked before any conversion. Trusted code may pass a `Decimal`; the
+    `Decimal` validation that follows refuses a non-finite one."""
+    if isinstance(value, _StdlibDecimal):
+        return value
+    if isinstance(value, str) and _C6_DECIMAL.fullmatch(value):
+        return _StdlibDecimal(value)
+    raise ValueError(f"must be a decimal string matching {_C6_DECIMAL.pattern} (convention C6)")
+
+
 Decimal = Annotated[
     _StdlibDecimal,
     PlainSerializer(lambda d: format(d, "f"), return_type=str),
-    BeforeValidator(_StdlibDecimal),
+    BeforeValidator(_c6_decimal),
 ]
 """Arbitrary-precision decimal (convention C6): serialises as a JSON/YAML
 string on the wire, but is a real `decimal.Decimal` in Python — money and
@@ -281,7 +296,7 @@ class MfaVerifyRequest(BaseModel):
         Field(description="TOTP digits or a recovery code.", pattern="^[0-9A-Za-z-]{6,32}$"),
     ] = None
     webauthn_assertion: dict[str, Any] | None = None
-    remember_device_days: Annotated[int | None, Field(ge=0, le=30)] = 0
+    remember_device_days: Annotated[int, Field(ge=0, le=30)] = 0
 
 
 class MfaEnrollRequest(BaseModel):
@@ -520,7 +535,7 @@ class AccountHealth(BaseModel):
 
 class WalletBalance(BaseModel):
     is_paper: Annotated[
-        bool | None,
+        bool,
         Field(
             description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
         ),
@@ -688,7 +703,7 @@ class CreateApiKeyRequest(BaseModel):
     api_key: Annotated[SecretStr, Field(max_length=128, min_length=8)]
     api_secret: Annotated[SecretStr, Field(max_length=256, min_length=8)]
     label: Annotated[str | None, Field(max_length=80)] = None
-    read_only: bool | None = False
+    read_only: bool = False
     expected_uid: Annotated[
         str | None,
         Field(description="Must equal the account's `exchange_uid`; mismatch is rejected."),
@@ -794,7 +809,7 @@ class Offset(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ]
-    atr_period: Annotated[int | None, Field(description="Used when `unit=atr`.", ge=2, le=200)] = 14
+    atr_period: Annotated[int, Field(description="Used when `unit=atr`.", ge=2, le=200)] = 14
     atr_bar_type: (
         Literal["time", "tick", "volume", "range", "delta", "renko", "pnf", "heikin_ashi"] | None
     ) = None
@@ -861,7 +876,7 @@ class Sizing(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    round_to_lot: bool | None = True
+    round_to_lot: bool = True
 
 
 class RiskCaps(BaseModel):
@@ -895,7 +910,7 @@ class RiskCaps(BaseModel):
     ] = None
     max_orders_per_minute: Annotated[int | None, Field(ge=1, le=600)] = None
     max_consecutive_losses: Annotated[int | None, Field(ge=1, le=50)] = None
-    lockout_minutes_after_breach: Annotated[int | None, Field(ge=0, le=1440)] = 60
+    lockout_minutes_after_breach: Annotated[int, Field(ge=0, le=1440)] = 60
 
 
 class ProfileSymbolPattern(RootModel[str]):
@@ -932,7 +947,7 @@ class ProfileSizing(BaseModel):
         Decimal | None, Field(description="USDT lost at the stop, above 0.")
     ] = None
     min_leg_notional_usd: Annotated[
-        str | None,
+        str,
         Field(
             description="A leg below this notional, in USDT, is skipped rather than rejected; at least 0.",
             examples=["63120.50", "-0.0004", "0"],
@@ -952,16 +967,16 @@ class ProfileStopLoss(BaseModel):
         ),
     ]
     value: Annotated[
-        str | None,
+        str,
         Field(
             description="The distance, above 0, in whole ticks or in percent (1.5 is 1.5 %).",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = "10"
-    atr_period: Annotated[int | None, Field(ge=2, le=200)] = 14
+    atr_period: Annotated[int, Field(ge=2, le=200)] = 14
     atr_multiple: Annotated[
-        str | None,
+        str,
         Field(
             description="The multiple of the ATR, above 0.",
             examples=["63120.50", "-0.0004", "0"],
@@ -969,7 +984,7 @@ class ProfileStopLoss(BaseModel):
         ),
     ] = "2"
     fallback_pct: Annotated[
-        str | None,
+        str,
         Field(
             description="The stop while the ATR is unavailable, in percent, above 0 and below 100.",
             examples=["63120.50", "-0.0004", "0"],
@@ -1042,7 +1057,7 @@ class ProfileRiskCaps(BaseModel):
     max_leverage_cap: Annotated[
         Decimal | None, Field(description="At least 1, at most 100, and at least `leverage`.")
     ] = None
-    max_orders_per_minute: Annotated[int | None, Field(ge=1, le=600)] = 30
+    max_orders_per_minute: Annotated[int, Field(ge=1, le=600)] = 30
 
 
 class ProfileWarning(BaseModel):
@@ -1067,7 +1082,7 @@ class ProfileWarning(BaseModel):
             pattern="^[A-Z0-9]{2,20}USDT$",
         ),
     ] = None
-    estimated: Annotated[bool | None, Field(description="Derived from an estimate (C10).")] = False
+    estimated: Annotated[bool, Field(description="Derived from an estimate (C10).")] = False
 
 
 class AccountProfileInput(BaseModel):
@@ -1079,14 +1094,14 @@ class AccountProfileInput(BaseModel):
         Field(description="Unique per account, in any letter case.", max_length=80, min_length=1),
     ]
     is_default: Annotated[
-        bool | None,
+        bool,
         Field(
             description="The account's default, its ceiling (decision D7). A profile write never changes it: the default binding moves only through its own operation (#906 slice 0d), so `true` on a create, or on a replace a value other than the stored one, is refused (`default_has_own_operation`).\n"
         ),
     ] = False
-    enabled: Annotated[bool | None, Field(description="A disabled profile sizes nothing.")] = True
+    enabled: Annotated[bool, Field(description="A disabled profile sizes nothing.")] = True
     trading_enabled: Annotated[
-        bool | None,
+        bool,
         Field(
             description="The profile sizes orders only when set, and then bounds every cap (decision D11)."
         ),
@@ -1100,10 +1115,10 @@ class AccountProfileInput(BaseModel):
         ),
     ]
     margin_mode: Annotated[
-        Literal["cross", "isolated"] | None,
+        Literal["cross", "isolated"],
         Field(description="`MarginMode` without `portfolio` (`ap_margin_mode`)."),
     ] = "cross"
-    position_mode: Literal["one_way", "hedge"] | None = "one_way"
+    position_mode: Literal["one_way", "hedge"] = "one_way"
     sizing: ProfileSizing
     stop_loss: Annotated[
         ProfileStopLoss | None,
@@ -1113,15 +1128,15 @@ class AccountProfileInput(BaseModel):
         ProfileTakeProfit | None, Field(description="`null` or left out: no take-profit distance.")
     ] = None
     take_profit_ladder: Annotated[
-        list[ProfileTakeProfitRung] | None, Field(max_length=10, validate_default=True)
+        list[ProfileTakeProfitRung], Field(max_length=10, validate_default=True)
     ] = []
     risk_caps: ProfileRiskCaps | None = None
     all_symbols: Annotated[
-        bool | None,
+        bool,
         Field(description="Allows every listed USDT linear perpetual, with no `allowed_symbols`."),
     ] = False
     allowed_symbols: Annotated[
-        list[ProfileSymbolPattern] | None,
+        list[ProfileSymbolPattern],
         Field(
             description="Empty without `all_symbols`, it allows nothing (decision D11).",
             max_length=500,
@@ -1129,7 +1144,7 @@ class AccountProfileInput(BaseModel):
         ),
     ] = []
     blocked_symbols: Annotated[
-        list[ProfileSymbolPattern] | None,
+        list[ProfileSymbolPattern],
         Field(
             description="Refused even when allowed, by `allowed_symbols` or `all_symbols`.",
             max_length=500,
@@ -1142,10 +1157,10 @@ class AccountProfileInput(BaseModel):
             description="Always true; the safety invariant cannot be disabled (arch P4). The order path never reads it: the stop requirement keys on each order's effect on the position (SR-E29-01).\n"
         ),
     ] = True
-    default_time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = "GTC"
-    reduce_only_default: bool | None = False
+    default_time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] = "GTC"
+    reduce_only_default: bool = False
     slippage_tolerance_bps: Annotated[
-        int | None,
+        int,
         Field(description="The slippage a market order may take, in basis points.", ge=0, le=1000),
     ] = 10
 
@@ -1587,7 +1602,7 @@ class FootprintImbalance(BaseModel):
     ] = None
     stacked: bool | None = None
     stack_size: int | None = None
-    estimated: bool | None = False
+    estimated: bool = False
 
 
 class UnfinishedAuction(BaseModel):
@@ -1833,7 +1848,7 @@ class HeatmapResponse(BaseModel):
     ] = None
     max_value: float | None = None
     normalize: Literal["none", "column", "window"] | None = None
-    estimated: bool | None = False
+    estimated: bool = False
 
 
 class MetricPoint(BaseModel):
@@ -2079,12 +2094,11 @@ class AddRecordedSymbolRequest(BaseModel):
                 "open_interest",
                 "funding",
             ]
-        ]
-        | None,
+        ],
         Field(min_length=1),
     ] = ["trades", "orderbook_delta", "tickers", "liquidations"]
-    depth: Literal[1, 50, 200, 500] | None = 200
-    pinned: bool | None = False
+    depth: Literal[1, 50, 200, 500] = 200
+    pinned: bool = False
     retention_days: Annotated[int | None, Field(ge=1, le=3650)] = 30
 
 
@@ -2214,7 +2228,7 @@ class RetentionPolicyInput(BaseModel):
     retain_days: Annotated[int, Field(ge=1, le=3650)]
     action: Literal["drop", "archive_parquet", "downsample", "pin"]
     symbol: Annotated[Symbol | None, Field(description="Null = global default.")] = None
-    applies_to_pinned: bool | None = False
+    applies_to_pinned: bool = False
 
 
 class RetentionPolicy(RetentionPolicyInput):
@@ -2267,7 +2281,7 @@ class CreateReplaySessionRequest(BaseModel):
     from_: Annotated[AwareDatetime, Field(alias="from")]
     to: AwareDatetime
     speed: Annotated[
-        float | None,
+        float,
         Field(description="0 = as fast as possible (used by rule simulation).", ge=0.0, le=100.0),
     ] = 1
     streams: (
@@ -2285,9 +2299,9 @@ class CreateReplaySessionRequest(BaseModel):
         ]
         | None
     ) = None
-    depth: Literal[1, 50, 200, 500] | None = 200
+    depth: Literal[1, 50, 200, 500] = 200
     paper_account_id: UUID | None = None
-    autostart: bool | None = False
+    autostart: bool = False
 
 
 class ReplaySession(BaseModel):
@@ -2362,7 +2376,7 @@ class Oco(BaseModel):
     ] = None
     other_trigger: TriggerSpec | None = None
     cancel_timeout_ms: Annotated[
-        int | None,
+        int,
         Field(
             description="Max time to cancel the loser after the winner's fill notice arrives on the WS.",
             ge=100,
@@ -2383,8 +2397,8 @@ class Iceberg(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    refresh_on_fill_pct: Annotated[float | None, Field(ge=1.0, le=100.0)] = 100
-    randomize_display_pct: Annotated[float | None, Field(ge=0.0, le=50.0)] = 0
+    refresh_on_fill_pct: Annotated[float, Field(ge=1.0, le=100.0)] = 100
+    randomize_display_pct: Annotated[float, Field(ge=0.0, le=50.0)] = 0
 
 
 class Twap(BaseModel):
@@ -2393,7 +2407,7 @@ class Twap(BaseModel):
     )
     duration_seconds: Annotated[int | None, Field(ge=10, le=86400)] = None
     slices: Annotated[int | None, Field(ge=2, le=500)] = None
-    randomize_pct: Annotated[float | None, Field(ge=0.0, le=50.0)] = 0
+    randomize_pct: Annotated[float, Field(ge=0.0, le=50.0)] = 0
     limit_offset_ticks: Annotated[
         int | None, Field(description="Omit for market slices.", ge=0, le=1000)
     ] = None
@@ -2403,11 +2417,11 @@ class Chase(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    offset_ticks: Annotated[int | None, Field(ge=0, le=100)] = 0
-    max_chases: Annotated[int | None, Field(ge=1, le=500)] = 20
+    offset_ticks: Annotated[int, Field(ge=0, le=100)] = 0
+    max_chases: Annotated[int, Field(ge=1, le=500)] = 20
     max_slippage_ticks: Annotated[int | None, Field(ge=1, le=10000)] = None
-    repricing_interval_ms: Annotated[int | None, Field(ge=50, le=10000)] = 250
-    fallback_to_market: bool | None = False
+    repricing_interval_ms: Annotated[int, Field(ge=50, le=10000)] = 250
+    fallback_to_market: bool = False
 
 
 class Scaled(BaseModel):
@@ -2498,19 +2512,16 @@ class PlaceOrderRequest(BaseModel):
     ]
     side: Literal["buy", "sell"]
     order_type: Literal["market", "limit"]
-    intent: (
-        Literal[
-            "entry",
-            "stop_loss",
-            "take_profit",
-            "scale_in",
-            "scale_out",
-            "flatten",
-            "reverse",
-            "algo_child",
-        ]
-        | None
-    ) = "entry"
+    intent: Literal[
+        "entry",
+        "stop_loss",
+        "take_profit",
+        "scale_in",
+        "scale_out",
+        "flatten",
+        "reverse",
+        "algo_child",
+    ] = "entry"
     sizing: Sizing
     price: Annotated[
         str | None,
@@ -2521,8 +2532,8 @@ class PlaceOrderRequest(BaseModel):
         ),
     ] = None
     time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = None
-    reduce_only: bool | None = False
-    close_on_trigger: bool | None = False
+    reduce_only: bool = False
+    close_on_trigger: bool = False
     position_idx: Annotated[
         Literal[0, 1, 2] | None, Field(description="Required in hedge mode (1 = long, 2 = short).")
     ] = None
@@ -2599,13 +2610,13 @@ class CancelAllRequest(BaseModel):
         | None
     ) = None
     exclude_reduce_only: Annotated[
-        bool | None, Field(description="Protects TP/SL exits from a blanket cancel.")
+        bool, Field(description="Protects TP/SL exits from a blanket cancel.")
     ] = True
 
 
 class Order(BaseModel):
     is_paper: Annotated[
-        bool | None,
+        bool,
         Field(
             description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
         ),
@@ -2793,7 +2804,7 @@ class TradeGroupDefinitionMember(BaseModel):
     )
     exchange_account_id: UUID
     enabled: Annotated[
-        bool | None,
+        bool,
         Field(
             description="A disabled member stays in the definition, and a ticket does not target it."
         ),
@@ -2872,8 +2883,7 @@ class Overrides(BaseModel):
     tpsl_mode: Literal["Full", "Partial"] | None = None
     position_idx: Literal[0, 1, 2] | None = None
     skip: Annotated[
-        bool | None,
-        Field(description="Keep the leg in the group for auditability but do not send it."),
+        bool, Field(description="Keep the leg in the group for auditability but do not send it.")
     ] = False
 
 
@@ -2930,26 +2940,23 @@ class CreateTradeGroupRequest(BaseModel):
     ]
     side: Literal["buy", "sell"]
     order_type: Literal["market", "limit"]
-    intent: (
-        Literal[
-            "entry",
-            "stop_loss",
-            "take_profit",
-            "scale_in",
-            "scale_out",
-            "flatten",
-            "reverse",
-            "algo_child",
-        ]
-        | None
-    ) = "entry"
-    reduce_only: bool | None = False
-    atomicity: Literal["best_effort", "all_or_none"] | None = "best_effort"
+    intent: Literal[
+        "entry",
+        "stop_loss",
+        "take_profit",
+        "scale_in",
+        "scale_out",
+        "flatten",
+        "reverse",
+        "algo_child",
+    ] = "entry"
+    reduce_only: bool = False
+    atomicity: Literal["best_effort", "all_or_none"] = "best_effort"
     compensate: Annotated[
-        Literal["none", "flatten_filled"] | None,
+        Literal["none", "flatten_filled"],
         Field(description="Applies when `all_or_none` fails after sending."),
     ] = "none"
-    max_concurrent_legs: Annotated[int | None, Field(ge=1, le=20)] = 5
+    max_concurrent_legs: Annotated[int, Field(ge=1, le=20)] = 5
     defaults: Defaults | None = None
     algo: AlgoSpec | None = None
     legs: Annotated[
@@ -3156,9 +3163,9 @@ class SetKillSwitchRequest(BaseModel):
     engaged: bool
     scope: Literal["global", "accounts"]
     exchange_account_ids: list[UUID] | None = None
-    cancel_open_orders: bool | None = True
-    flatten_positions: bool | None = False
-    disarm_rules: bool | None = True
+    cancel_open_orders: bool = True
+    flatten_positions: bool = False
+    disarm_rules: bool = True
     reason: Annotated[str, Field(max_length=280, min_length=3)]
 
 
@@ -3191,7 +3198,7 @@ class KillSwitchResult(BaseModel):
 
 class Position(BaseModel):
     is_paper: Annotated[
-        bool | None,
+        bool,
         Field(
             description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
         ),
@@ -3437,7 +3444,7 @@ class ReversePositionRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    size_mode: Literal["same", "profile", "custom"] | None = "same"
+    size_mode: Literal["same", "profile", "custom"] = "same"
     qty: Annotated[
         str | None,
         Field(
@@ -3446,7 +3453,7 @@ class ReversePositionRequest(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    order_type: Literal["market", "limit"] | None = "market"
+    order_type: Literal["market", "limit"] = "market"
     price: Annotated[
         str | None,
         Field(
@@ -3459,7 +3466,7 @@ class ReversePositionRequest(BaseModel):
 
 class Execution(BaseModel):
     is_paper: Annotated[
-        bool | None,
+        bool,
         Field(
             description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
         ),
@@ -3662,28 +3669,26 @@ class RuleAction(BaseModel):
     params: Annotated[
         dict[str, Any], Field(description="Validated against a per-action JSON Schema.")
     ]
-    on_error: Literal["abort_remaining", "continue", "retry_once"] | None = "abort_remaining"
-    targets: Literal["scope_accounts", "originating_account", "all_accounts"] | None = (
-        "scope_accounts"
-    )
-    dry_run_only: bool | None = False
+    on_error: Literal["abort_remaining", "continue", "retry_once"] = "abort_remaining"
+    targets: Literal["scope_accounts", "originating_account", "all_accounts"] = "scope_accounts"
+    dry_run_only: bool = False
 
 
 class RuleLimits(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    once: bool | None = False
+    once: bool = False
     once_per: Literal["position", "day", "group", "rule_lifetime"] | None = None
-    cooldown_ms: Annotated[int | None, Field(ge=0)] = 1000
-    max_fires_per_hour: Annotated[int | None, Field(ge=1)] = 60
-    max_fires_per_day: Annotated[int | None, Field(ge=1)] = 500
-    max_actions_per_fire: Annotated[int | None, Field(ge=1, le=10)] = 10
+    cooldown_ms: Annotated[int, Field(ge=0)] = 1000
+    max_fires_per_hour: Annotated[int, Field(ge=1)] = 60
+    max_fires_per_day: Annotated[int, Field(ge=1)] = 500
+    max_actions_per_fire: Annotated[int, Field(ge=1, le=10)] = 10
     max_notional_per_fire: Decimal | None = None
     max_daily_notional: Decimal | None = None
-    require_confirmation: bool | None = False
-    evaluation_timeout_ms: Annotated[int | None, Field(ge=10, le=5000)] = 250
-    kill_switch_on_error_count: Annotated[int | None, Field(ge=1)] = 5
+    require_confirmation: bool = False
+    evaluation_timeout_ms: Annotated[int, Field(ge=10, le=5000)] = 250
+    kill_switch_on_error_count: Annotated[int, Field(ge=1)] = 5
 
 
 class RuleTrigger(BaseModel):
@@ -3711,7 +3716,7 @@ class RuleTrigger(BaseModel):
         str | None, Field(description="Required for `on_schedule`; 5-field UTC cron.")
     ] = None
     metric: Annotated[str | None, Field(description="Required for `on_metric_change`.")] = None
-    debounce_ms: Annotated[int | None, Field(ge=0)] = 0
+    debounce_ms: Annotated[int, Field(ge=0)] = 0
 
 
 class RuleBindings(BaseModel):
@@ -3820,7 +3825,7 @@ class SimulateRuleRequest(BaseModel):
     replay_session_id: UUID | None = None
     symbols: list[Symbol] | None = None
     exchange_account_ids: list[UUID] | None = None
-    speed: Annotated[float | None, Field(ge=0.0, le=100.0)] = 0
+    speed: Annotated[float, Field(ge=0.0, le=100.0)] = 0
     starting_equity_usd: Annotated[
         str | None,
         Field(
@@ -4192,20 +4197,19 @@ class WorkspaceInput(BaseModel):
         ),
     ]
     is_default: Annotated[
-        bool | None,
+        bool,
         Field(
             description="At most one live default per user; `true` clears the previous default in the same transaction."
         ),
     ] = False
     icon_token: Annotated[
-        Literal["workspace.default"] | None,
+        Literal["workspace.default"],
         Field(
             description="Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a token\nis an additive change (C-6.3). Writers must send a listed value; the server keeps the same\nallow-list. `workspace.default` is the only token until the design-system icon registry\n(CMP-019) publishes workspace icons.\n"
         ),
     ] = "workspace.default"
     sort_order: Annotated[
-        int | None,
-        Field(description="Client-defined tab order; ties break by `id`.", ge=0, le=32767),
+        int, Field(description="Client-defined tab order; ties break by `id`.", ge=0, le=32767)
     ] = 0
 
 
@@ -4394,7 +4398,7 @@ class LayoutPaneInput(BaseModel):
     ] = None
     pane_config: PaneConfig | None = None
     scale_mode: Annotated[
-        Literal["auto", "linked", "manual", "log"] | None,
+        Literal["auto", "linked", "manual", "log"],
         Field(description="Price-scale behaviour (`lp_scale`). **Open-ended for readers.**"),
     ] = "auto"
 
@@ -4483,7 +4487,7 @@ class Config(BaseModel):
 
 class ChartTemplateInput(BaseModel):
     name: Annotated[str, Field(max_length=80, min_length=1)]
-    shared: bool | None = False
+    shared: bool = False
     config: Annotated[
         Config,
         Field(
@@ -4649,9 +4653,9 @@ class DrawingInput(BaseModel):
             min_length=1,
         ),
     ] = None
-    locked: bool | None = False
-    visible: bool | None = True
-    z_index: Annotated[int | None, Field(ge=-32768, le=32767)] = 0
+    locked: bool = False
+    visible: bool = True
+    z_index: Annotated[int, Field(ge=-32768, le=32767)] = 0
 
 
 class Drawing(BaseModel):
@@ -4919,10 +4923,10 @@ class HotkeyBinding(BaseModel):
         ),
     ]
     scope: Literal["global", "chart", "dom", "tape", "orders", "positions"]
-    requires_arm: Annotated[
-        bool | None, Field(description="Forced true for order-sending actions.")
-    ] = True
-    confirm: bool | None = False
+    requires_arm: Annotated[bool, Field(description="Forced true for order-sending actions.")] = (
+        True
+    )
+    confirm: bool = False
     params: dict[str, Any] | None = None
 
 
@@ -5830,32 +5834,32 @@ class RiskSummary(BaseModel):
 
 
 class Iceberg1(BaseModel):
-    enabled: bool | None = True
-    min_reloads: Annotated[int | None, Field(ge=2, le=50)] = 3
-    price_tolerance_ticks: Annotated[int | None, Field(ge=0, le=10)] = 0
-    window_ms: Annotated[int | None, Field(ge=200, le=60000)] = 5000
+    enabled: bool = True
+    min_reloads: Annotated[int, Field(ge=2, le=50)] = 3
+    price_tolerance_ticks: Annotated[int, Field(ge=0, le=10)] = 0
+    window_ms: Annotated[int, Field(ge=200, le=60000)] = 5000
 
 
 class StopRun(BaseModel):
-    enabled: bool | None = True
-    lookback_bars: Annotated[int | None, Field(ge=2, le=500)] = 20
-    penetration_ticks: Annotated[int | None, Field(ge=1, le=100)] = 2
-    reversal_pct: Annotated[float | None, Field(ge=0.0, le=100.0)] = 60
+    enabled: bool = True
+    lookback_bars: Annotated[int, Field(ge=2, le=500)] = 20
+    penetration_ticks: Annotated[int, Field(ge=1, le=100)] = 2
+    reversal_pct: Annotated[float, Field(ge=0.0, le=100.0)] = 60
 
 
 class Absorption(BaseModel):
-    enabled: bool | None = True
-    min_volume_multiple: Annotated[float | None, Field(ge=1.0, le=50.0)] = 3
-    max_price_move_ticks: Annotated[int | None, Field(ge=0, le=50)] = 1
+    enabled: bool = True
+    min_volume_multiple: Annotated[float, Field(ge=1.0, le=50.0)] = 3
+    max_price_move_ticks: Annotated[int, Field(ge=0, le=50)] = 1
 
 
 class Exhaustion(BaseModel):
-    enabled: bool | None = True
-    min_delta_divergence: Annotated[float | None, Field(ge=0.0)] = 0.5
+    enabled: bool = True
+    min_delta_divergence: Annotated[float, Field(ge=0.0)] = 0.5
 
 
 class BigTrade(BaseModel):
-    mode: Literal["absolute_usd", "percentile"] | None = "percentile"
+    mode: Literal["absolute_usd", "percentile"] = "percentile"
     absolute_usd: Annotated[
         str | None,
         Field(
@@ -5864,7 +5868,7 @@ class BigTrade(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    percentile: Annotated[float | None, Field(ge=50.0, le=99.99)] = 99
+    percentile: Annotated[float, Field(ge=50.0, le=99.99)] = 99
 
 
 class DetectorConfig(BaseModel):
@@ -5917,8 +5921,8 @@ class Signal1(BaseModel):
     unit: str | None = None
     enum_values: list[str] | None = None
     params_schema: dict[str, Any] | None = None
-    requires_recording: bool | None = False
-    estimated: bool | None = False
+    requires_recording: bool = False
+    estimated: bool = False
     description: str | None = None
     valid_range: str | None = None
     warmup_bars: int | None = None
@@ -5926,7 +5930,7 @@ class Signal1(BaseModel):
     confidence: Literal["exact", "estimated"] | None = None
     dependencies: list[str] | None = None
     when_unavailable: str | None = None
-    available: bool | None = True
+    available: bool = True
     unavailable_reason: str | None = None
     missing_dependency: dict[str, Any] | None = None
     recorder_action: dict[str, Any] | None = None
@@ -5944,16 +5948,16 @@ class Action1(BaseModel):
     display_name: str | None = None
     params_schema: dict[str, Any] | None = None
     required_permissions: list[str]
-    requires_step_up: bool | None = False
+    requires_step_up: bool = False
     idempotent: bool | None = None
     guarded: bool | None = None
     targets: dict[str, str] | None = None
-    available: bool | None = True
-    simulate_only: bool | None = False
+    available: bool = True
+    simulate_only: bool = False
     restriction: str | None = None
     notes: str | None = None
     loosens_risk: Annotated[
-        bool | None,
+        bool,
         Field(
             description="Actions that can widen or remove a stop are flagged so the editors can warn and the engine can gate them behind the owner-only permission.\n"
         ),
@@ -6566,7 +6570,7 @@ class CreateUserRequest(BaseModel):
             min_length=1,
         ),
     ]
-    mfa_required: bool | None = True
+    mfa_required: bool = True
     account_access: list[AccountAccessGrantInput] | None = None
 
 
@@ -6608,7 +6612,7 @@ class ExchangeAccount(BaseModel):
     health: Annotated[
         AccountHealth | None, Field(description="`null` until the account is monitored.")
     ] = None
-    enabled: bool | None = True
+    enabled: bool = True
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
 
@@ -6842,7 +6846,7 @@ class TradeGroupLeg(BaseModel):
 
 class TradeGroup(BaseModel):
     is_paper: Annotated[
-        bool | None,
+        bool,
         Field(
             description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
         ),
@@ -6914,7 +6918,7 @@ class LayoutGridTabset(BaseModel):
     type: Literal["tabset"]
     children: Annotated[list[LayoutGridLeaf], Field(max_length=16, min_length=1)]
     active: Annotated[
-        int | None, Field(description="Index of the visible tab in `children`.", ge=0, le=15)
+        int, Field(description="Index of the visible tab in `children`.", ge=0, le=15)
     ] = 0
 
 
@@ -6952,13 +6956,13 @@ class IndicatorPresetInput(BaseModel):
         ),
     ] = None
     pane_target: Annotated[
-        Literal["overlay", "subpane"] | None,
+        Literal["overlay", "subpane"],
         Field(
             description="Where the indicator draws: over the price pane, or in a sub-pane of its own."
         ),
     ] = "overlay"
     is_favourite: Annotated[
-        bool | None,
+        bool,
         Field(
             description="Starred in the indicator picker. A built-in is starred by saving a copy of it (`createIndicatorPreset`), possible only once `listIndicators` lists the built-in's indicator."
         ),
@@ -7021,7 +7025,7 @@ class IndicatorDescriptor(BaseModel):
         ),
     ]
     estimated: Annotated[
-        bool | None, Field(description="True for heuristic signals that infer unobservable intent.")
+        bool, Field(description="True for heuristic signals that infer unobservable intent.")
     ] = False
     params_schema: Annotated[
         dict[str, Any],
@@ -7225,7 +7229,7 @@ class RuleTemporalNode(BaseModel):
         ),
     ]
     window_ms: Annotated[int, Field(ge=100, le=86400000)]
-    min_count: Annotated[int | None, Field(ge=1)] = 1
+    min_count: Annotated[int, Field(ge=1)] = 1
 
 
 class RuleIr(BaseModel):
@@ -7271,7 +7275,7 @@ class RuleInput(BaseModel):
     name: Annotated[str, Field(max_length=120, min_length=1)]
     description: Annotated[str | None, Field(max_length=1000)] = None
     scope: Literal["global", "account", "symbol", "position", "trade_group"]
-    editor: Literal["form", "graph"] | None = "form"
+    editor: Literal["form", "graph"] = "form"
     tags: list[Tag] | None = None
     bindings: RuleBindings | None = None
     ir: RuleIr
@@ -7300,7 +7304,7 @@ class AlertInput(BaseModel):
     name: Annotated[str, Field(max_length=120, min_length=1)]
     symbol: Symbol | None = None
     exchange_account_id: UUID | None = None
-    trigger_mode: Literal["once", "every_time", "once_per_bar"] | None = "once"
+    trigger_mode: Literal["once", "every_time", "once_per_bar"] = "once"
     channels: Annotated[
         list[Literal["in_app", "email", "webhook", "push", "desktop"]], Field(min_length=1)
     ]
@@ -7315,7 +7319,7 @@ class AlertInput(BaseModel):
     severity: Literal["debug", "info", "warning", "error", "critical"] | None = None
     expires_at: AwareDatetime | None = None
     webhook_url: AnyUrl | None = None
-    enabled: bool | None = True
+    enabled: bool = True
 
 
 class WorkspaceDetail(Workspace):
@@ -7363,7 +7367,7 @@ class LayoutInput(BaseModel):
         ),
     ]
     grid_preset: Annotated[
-        Literal["1x1", "2x1", "1x2", "2x2", "1+3", "3x3", "custom"] | None,
+        Literal["1x1", "2x1", "1x2", "2x2", "1+3", "3x3", "custom"],
         Field(
             description="Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset stores\nonly its name and fixed cell proportions: `grid_spec` is `null`, and a pane's `slot_index`\nis its cell in row-major reading order (a slot beyond the preset's cells is placed by the\nclient, e.g. floating). Any other arrangement, including a named grid whose divider was\ndragged, is saved as `custom` with its tree in `grid_spec`. **Open-ended for readers.**\n"
         ),
@@ -7373,15 +7377,11 @@ class LayoutInput(BaseModel):
         Field(description="Required when `grid_preset` is `custom`, otherwise `null` or omitted."),
     ] = None
     crosshair_sync: Annotated[
-        bool | None,
+        bool,
         Field(description="Layout default for crosshair sync between panes of one sync group."),
     ] = True
-    level_sync: Annotated[
-        bool | None, Field(description="Layout default for price-level sync.")
-    ] = False
-    symbol_sync: Annotated[bool | None, Field(description="Layout default for symbol sync.")] = (
-        False
-    )
+    level_sync: Annotated[bool, Field(description="Layout default for price-level sync.")] = False
+    symbol_sync: Annotated[bool, Field(description="Layout default for symbol sync.")] = False
     hotkey_slot: Annotated[
         int | None,
         Field(
@@ -7391,7 +7391,7 @@ class LayoutInput(BaseModel):
         ),
     ] = None
     is_default: Annotated[
-        bool | None,
+        bool,
         Field(
             description="At most one live default per workspace; `true` clears the previous default in the same transaction."
         ),

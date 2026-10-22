@@ -7,7 +7,9 @@ Wraps `datamodel-code-generator` (pinned in pyproject.toml [dependency-groups]
 dev) and post-processes the output so money/size/price fields (convention C6)
 generate as a `Decimal`-backed type instead of a bare `str` RootModel — the
 generator has no native "this string is money" concept, so we patch it here
-rather than accept float/str drift on the backend.
+rather than accept float/str drift on the backend. That type enforces the contract's `Decimal`
+pattern on the raw input, and a member the contract defaults and does not mark nullable refuses
+`null` (`--strict-nullable`): the generated models are no laxer than the contract (#906 slice G).
 
 It also writes `candleviewer/api/_generated/contract_subset.json` (#2555): the pruned copy of
 the REST contract that the app reads at runtime, since the API image ships no `docs/plan`.
@@ -68,6 +70,36 @@ PACKAGE_INIT = '"""Generated model package (E02-T09). Never hand-edit."""\n'
 _DECIMAL_ROOTMODEL_RE = re.compile(
     r"class Decimal\(RootModel\[str\]\):\n(?:[ \t].*\n)+",
 )
+# The `pattern="..."` literal inside that block: the contract's own `Decimal` pattern.
+_DECIMAL_PATTERN_RE = re.compile(r'pattern=("(?:[^"\\]|\\.)*")')
+
+# What replaces the block. The pattern is checked before anything converts the input, so a bad
+# string is a `ValueError` (a 422), never an `InvalidOperation` (a 500), and an exponent string is
+# never converted. `fullmatch`, not `match`: Python's `$` also matches before a trailing newline.
+_C6_DECIMAL_SOURCE = '''\
+_C6_DECIMAL = re.compile(__C6_PATTERN__)
+
+
+def _c6_decimal(value: object) -> _StdlibDecimal:
+    """Convention C6: a decimal on the wire is a string that fully matches the contract's
+    `Decimal` pattern, checked before any conversion. Trusted code may pass a `Decimal`; the
+    `Decimal` validation that follows refuses a non-finite one."""
+    if isinstance(value, _StdlibDecimal):
+        return value
+    if isinstance(value, str) and _C6_DECIMAL.fullmatch(value):
+        return _StdlibDecimal(value)
+    raise ValueError(f"must be a decimal string matching {_C6_DECIMAL.pattern} (convention C6)")
+
+
+Decimal = Annotated[
+    _StdlibDecimal,
+    PlainSerializer(lambda d: format(d, "f"), return_type=str),
+    BeforeValidator(_c6_decimal),
+]
+"""Arbitrary-precision decimal (convention C6): serialises as a JSON/YAML
+string on the wire, but is a real `decimal.Decimal` in Python — money and
+size/price fields must never round-trip through float."""
+'''
 
 
 def _run_datamodel_codegen(*, input_path: Path, input_file_type: str, output_path: Path) -> None:
@@ -92,6 +124,9 @@ def _run_datamodel_codegen(*, input_path: Path, input_file_type: str, output_pat
         "3.12",
         "--use-annotated",
         "--field-constraints",
+        # A member the contract defaults and does not mark nullable is `X = default`, not
+        # `X | None = default`: omitted it takes the default, but `null` is refused.
+        "--strict-nullable",
         "--collapse-root-models",
         "--enum-field-as-literal",
         "all",
@@ -123,44 +158,39 @@ def _patch_decimal_money_type(source: str) -> str:
     `decimal.Decimal`-backed annotated type, per convention C6: money/size/price
     fields must never round-trip through float, and `Decimal` should mean the
     stdlib type everywhere it is referenced in the generated module.
+
+    Its `BeforeValidator` enforces the `Decimal` pattern read from the block it replaces.
     """
     if "class Decimal(RootModel[str]):" not in source:
         # No money fields in this document (e.g. a WS schema subset) — nothing to patch.
         return source
 
-    replacement = (
-        "Decimal = Annotated[\n"
-        "    _StdlibDecimal,\n"
-        '    PlainSerializer(lambda d: format(d, "f"), return_type=str),\n'
-        "    BeforeValidator(_StdlibDecimal),\n"
-        "]\n"
-        '"""Arbitrary-precision decimal (convention C6): serialises as a JSON/YAML\n'
-        "string on the wire, but is a real `decimal.Decimal` in Python — money and\n"
-        'size/price fields must never round-trip through float."""\n'
-    )
-    patched = _DECIMAL_ROOTMODEL_RE.sub(replacement, source, count=1)
-    if patched == source:
+    block = _DECIMAL_ROOTMODEL_RE.search(source)
+    if block is None:
         raise RuntimeError(
             "generate_protocol_models: found the Decimal RootModel marker but the "
             "replace regex did not match — datamodel-code-generator's output shape "
             "changed; update _DECIMAL_ROOTMODEL_RE."
         )
+    pattern = _DECIMAL_PATTERN_RE.search(block.group(0))
+    if pattern is None:
+        raise RuntimeError(
+            "generate_protocol_models: the Decimal RootModel carries no pattern (or its literal "
+            "is not double-quoted), so there is no C6 pattern for the validator to enforce — "
+            "restore `pattern` on the contract's `Decimal` schema, or update _DECIMAL_PATTERN_RE."
+        )
+    replacement = _C6_DECIMAL_SOURCE.replace("__C6_PATTERN__", pattern.group(1))
+    patched = source[: block.start()] + replacement + source[block.end() :]
 
     # Add the extra imports the replacement needs, right after the pydantic import block.
-    import_block = (
-        "from decimal import Decimal as _StdlibDecimal\n\n"
-        "from pydantic import BeforeValidator, PlainSerializer\n"
-    )
+    stdlib_imports = "import re\nfrom decimal import Decimal as _StdlibDecimal\n\n"
+    import_block = stdlib_imports + "from pydantic import BeforeValidator, PlainSerializer\n"
     marker = "from pydantic import (\n"
     if marker in patched:
         # Insert BeforeValidator/PlainSerializer into the existing pydantic import
         # tuple instead of a second `from pydantic import` line, so isort/ruff
         # never has to dedupe on a subsequent regen.
-        patched = patched.replace(
-            marker,
-            "from decimal import Decimal as _StdlibDecimal\n\n" + marker,
-            1,
-        )
+        patched = patched.replace(marker, stdlib_imports + marker, 1)
         for name in ("BeforeValidator", "PlainSerializer"):
             if f"    {name},\n" not in patched:
                 patched = patched.replace(marker, marker + f"    {name},\n", 1)

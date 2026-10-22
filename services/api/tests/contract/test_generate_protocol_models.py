@@ -14,12 +14,16 @@ code path CI's `generated-code` check runs, not a hand-simulated shortcut.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT = _SERVICE_ROOT / "scripts" / "generate_protocol_models.py"
@@ -92,6 +96,48 @@ def test_rest_models_reject_float_input_would_lose_precision(generated_rest_modu
     probe = _Probe.model_validate({"amount": exact})
     assert str(probe.amount) == exact
     assert probe.amount != Decimal(str(float(exact)))
+
+
+# The `Decimal` schema as the code generator emits it, with a pattern that is not the contract's.
+_DECIMAL_BLOCK = """\
+from typing import Annotated
+
+from pydantic import (
+    Field,
+    RootModel,
+)
+
+
+class Decimal(RootModel[str]):
+    root: str = Field(pattern="^[0-9]{3}$")
+"""
+
+
+def _generator() -> ModuleType:
+    """`scripts/generate_protocol_models.py`, loaded by path (`scripts` is no package)."""
+    spec = importlib.util.spec_from_file_location("_cv_generate_protocol_models", _SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_patched_decimal_enforces_the_pattern_of_the_block_it_replaces() -> None:
+    """The pattern is the contract's, read from the generated block, never one the script holds."""
+    namespace: dict[str, Any] = {}
+    code = compile(_generator()._patch_decimal_money_type(_DECIMAL_BLOCK), "<patched>", "exec")
+    exec(code, namespace)  # noqa: S102 - the generator's own output for a fixed fixture
+    adapter: TypeAdapter[Any] = TypeAdapter(namespace["Decimal"])
+    assert adapter.validate_python("123") == Decimal("123")
+    for refused in ("1234", "12", "abc", "1e2", " 123", "123\n", 123):
+        with pytest.raises(ValidationError):
+            adapter.validate_python(refused)
+
+
+def test_a_decimal_block_without_a_pattern_stops_the_generator() -> None:
+    bare = _DECIMAL_BLOCK.replace('Field(pattern="^[0-9]{3}$")', "Field()")
+    with pytest.raises(RuntimeError, match="carries no pattern"):
+        _generator()._patch_decimal_money_type(bare)
 
 
 def test_ws_models_module_imports_cleanly(generated_ws_module) -> None:  # type: ignore[no-untyped-def]
