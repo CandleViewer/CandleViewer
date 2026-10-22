@@ -99,8 +99,14 @@ def test_the_watchdog_attaches_the_record_in_force_where_it_can() -> None:
         "Where a record is in force for the position (rule 6) and its trigger can still be placed",
         "the watchdog attaches that recorded stop, as §8.5 step 5 would; otherwise it attaches a "
         "fallback SL at `profile.fallback_sl_offset`",
+        "through B8's fallback path (`attach_fallback_sl`; INV-B8-d, INV-B8-f)",
     ):
         assert phrase in rule, phrase
+    five = _rule_5()
+    assert "That fallback is B8's path, never a free choice: bounded by `CV_B8_MAX_FALLBACK`" in (
+        five
+    )
+    assert "audited as a fallback attach with its reason, so a loosening by necessity is " in five
 
 
 def test_a_rule_action_that_widens_a_stop_is_refused_at_the_writer() -> None:
