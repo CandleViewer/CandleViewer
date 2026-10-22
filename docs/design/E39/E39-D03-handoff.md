@@ -17,7 +17,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none (the targets are reached by the control height, never by glyph size)
 - [x] **Tokens used** — `color.status.danger.default/strong/subtle`, `color.text.on-action`, `color.text.primary/secondary/tertiary`, `color.surface.raised/hover/selected/overlay`, `color.border.default/strong`, `color.focus.ring`, `border.focus`, `radius.control`, `radius.pill`, `size.control.height`, `size.target.min`, `space.2`, `space.inset.sm/md`, `type.ui.label`, `type.num.sm`, `motion.duration.fast/instant` = the `15` CMP-211 Tokens field; `motion.duration.hold-confirm` is PROPOSED (spec G12), none invented; Penpot token sets = `packages/ui/tokens` at `a2ef490cb6aff92ba1a829359c2bdb5ad4047711`
 - [x] **Data contract confirmed** — `POST /trading/kill-switch` (`SetKillSwitchRequest`: `engaged`, `scope`, `exchange_account_ids`, `cancel_open_orders` default true, `flatten_positions` default false, `disarm_rules` default true, `reason` 3–280) → `KillSwitchResult` (`state`, `actions.orders_cancelled / positions_flattened / rules_disarmed / failures[]`); `POST /orders/cancel-all` (`CancelAllRequest.intents`, `exclude_reduce_only`); `POST /positions/close-all`; the `system` frame `kind: "kill_switch"` with the `23` §15.9 role cut; `persisted`, the audit id and the verification time are PROPOSED additions (spec G1, G2, G13)
-- [ ] **Contrast and CVD** — PENDING (8 PROPOSED `pairs.mjs` rows — #4085 registered five and #4122 three of the original 16 — are registered by the first implementation ticket and the gate is green only then; CVD planned on the exports): spec §12: 44 rows, 31 gated, 0 FAIL (unrounded compare); the Confirm label 5.05 / 10.31 / 4.54, the cluster label 14.35 / 15.62 / 16.25, the T2 label 5.62 / 5.92 / 11.21 and reason 8.81 / 8.98 / 14.35, the hold ring fill 3.43 / 8.95 / 4.05, the focus ring on the cluster 6.66 / 5.86 / 17.30; the focus ring against the danger fill rejected (1.94 / 1.53 / 4.27 — the 2 px offset); PROPOSED rows named in spec §12; non-colour encodings in spec §12 (CVD statement)
+- [ ] **Contrast and CVD** — PENDING (8 PROPOSED `pairs.mjs` rows — #4085 registered five and #4122 three of the original 16 — are registered by the first implementation ticket and the gate is green only then; the G18 caption redraw): spec §12: 44 rows, 31 gated, 0 FAIL (unrounded compare); the Confirm label 5.05 / 10.31 / 4.54, the cluster label 14.35 / 15.62 / 16.25, the T2 label 5.62 / 5.92 / 11.21 and reason 8.81 / 8.98 / 14.35, the hold ring fill 3.43 / 8.95 / 4.05, the focus ring on the cluster 6.66 / 5.86 / 17.30; the focus ring against the danger fill rejected (1.94 / 1.53 / 4.27 — the 2 px offset); PROPOSED rows named in spec §12; non-colour encodings in spec §12 (CVD statement); the export audit and `cvd_sim.py` run on the 14 exports on 2026-10-22 (spec §12): 1,732 / 1,735 rendered text lines ≥ 4.5:1 — the 3 below are the warning callout's caption, G18 —, 113 / 113 drawn targets ≥ 24 px, 42 / 42 status glyphs ≥ 3:1 with a word; greyscale + deuteranopia renders of every export reviewed, 14 PASS, 0 colour-only states
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B below
 - [ ] **Sign-off** — owner approval pending (owner `approved` comment or merged spec PR)
 
@@ -115,9 +115,9 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 ## A. Design QA checklist (`16` §12) — CMP-211, SCR-072, SCR-134
 
 - [x] Only published Tier-2/Tier-3 tokens; zero hard-coded hex / px in the spec beyond the anatomy px derived from tokens (spec §4–§6); the one new token (`motion.duration.hold-confirm`) is a PROPOSED change request, never bound as existing (spec §12).
-- [ ] Verified in all three themes at both densities — the matrix is computed for the three themes (spec §12: 31 gated rows, 0 FAIL); the visual parity check runs on the drawn boards (owed with the a11y audit).
+- [x] Verified in all three themes at both densities — the matrix is computed for the three themes (spec §12: 31 gated rows, 0 FAIL); the visual parity check is made on the drawn boards: board 14 draws the confirm, the cluster and one fieldset in light and high-contrast beside the dark frames and board 07 the cluster compact and comfortable; the export audit (spec §12) measured the light and hc frames with the dark ones (395 / 395 lines on board 14).
 - [x] Passes the contrast matrix for every pair introduced or touched (44 rows; 8 PROPOSED `pairs.mjs` rows named, five of the original 16 registered by #4085 and three by #4122; 6 decorative, 3 exempt and 4 rejected rows reported with their reasons).
-- [ ] CVD simulation reviewed — planned on the exports (`cvd_sim.py`); the non-colour encodings are stated (spec §12 CVD statement).
+- [x] CVD simulation reviewed — `cvd_sim.py` greyscale and deuteranopia renders of all 14 exports (`docs/design/E39/img/E39-D03-NN-<slug>-greyscale.png`, `…-deuteranopia.png`), each checked state by state (spec §12 CVD table: 14 PASS, 0 colour-only states; protanopia / tritanopia argued per pair, the tool's limit); the non-colour encodings are stated (spec §12 CVD statement).
 - [ ] Every documented state has a Penpot variant and a story — PENDING the DS library variants (the boards draw every state as a frame): the variants are planned in Table 1; the 33 stories of spec §17 cover every state and frame.
 - [x] Disabled states use disabled-with-reason (CMP-079 / E09-D09 T2): the Viewer cluster, the Manager's global controls, the offline cluster, the manager's flatten box and "All 3 accounts" radio, the locked cancel option, the Degraded block switch, Release… while not durable (spec §4–§6).
 - [x] Loading / empty / error states designed explicitly: `executing` (per-account progress), `engaged-not-durable`, `partial-failure`, `cancel-not-verified`, `save-refused-policy-floor`, `save-conflict`, the measured value's "Unavailable" expression (spec §4, §6).
@@ -125,7 +125,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] Accessible-name / role table completed (Table 3).
 - [x] N/A — canvas / WebGL-adjacent: no canvas surface here.
 - [x] Motion-safe / motion-reduce pair specified (Table 4; spec §11, every row PROPOSED against E09-D08's open draft).
-- [x] Hit targets ≥ 24 px in compact and ≥ 32 px in comfortable; no essential exception.
+- [x] Hit targets ≥ 24 px in compact and ≥ 32 px in comfortable; no essential exception (export audit, spec §12: 113 / 113 drawn targets ≥ 24 px, smallest drawn button 28 px, boxes 24 × 24; the compact cluster is drawn 28 px where this table says 24 — the redline stands, the drawing is aligned at the next board pass).
 - [ ] Accessibility role sign-off — owner approval pending (agent-delivery adaptation).
 - [x] Confirm-gate variant stated explicitly: CMP-044 `variant="standard"` for SCR-072 (CMP-211 `confirmMode: "single"`, E39-D01 D2 — Q1 RULED 2026-10-22 01:13Z), `hold` with the discrete fallback for FLATTEN ALL… in DEMO and CANCEL ALL…, `typed` (`FLATTEN`) for FLATTEN ALL… in LIVE; the keyboard-only path for each gate is Table 2 (spec §5).
 - [x] N/A — no heuristic / estimated value is displayed by these surfaces.
@@ -164,12 +164,15 @@ Feature: E39-D03 kill-switch modal, panic cluster and risk policy — accessibil
     When the state is rendered
     Then the state is also conveyed via glyph and text, not colour alone (two bars + FROZEN, the badge text,
       the Confirm label naming the effect, the lock glyph + reason sentence on disabled controls)
-    And the surfaces pass deuteranopia / protanopia / tritanopia simulation review (planned on the exports)
+    And the surfaces pass deuteranopia simulation review, rendered and checked on the 14 exports (E39-D03 §12 CVD table:
+      14 PASS); protanopia / tritanopia are argued per pair through the same non-colour channels (the tool's limit)
 
   Scenario: Contrast
     Given the surfaces are rendered in the dark theme and the high-contrast theme
     Then all text meets >=4.5:1 and all meaningful non-text elements meet >=3:1 per the token contrast
       matrix (E39-D03 §12: 44 rows, 31 gated, 0 FAIL; the on-action label on the danger button 5.05 dark / 4.54 hc)
+    And the export audit of the drawn boards (E39-D03 §12) confirms it on 1,732 of 1,735 rendered text lines; the 3 below
+      are the warning callout's caption, 3.86 in dark, corrected by `color.text.secondary` (G18)
 
   Scenario: Reduced motion
     Given the user has prefers-reduced-motion enabled
