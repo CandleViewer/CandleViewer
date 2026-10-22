@@ -1,14 +1,14 @@
 # E25-D05 — Per-component handoff checklist (`16` §11.4; the first `*-handoff.md` in the repo)
 
-Six blocks (one per component; every line of the `16` §11.4 block kept), then Tables 1–5, the Density table and the Essential-exceptions table **once each with a leading `Component` column** so every component's rows are present without six copies (deviation recorded in `E25-D05.md` §19 item 6; the fallback is per-component tables). The Penpot line follows the page-ref rule (page name + page id; never a hostname, team or file id, or a workspace URL — `E25-D05.md` C9 / CR-6) and reads BLOCKED-PENPOT until hpe-worker-1 draws the boards. CMP-032 gets no block: it is E05's atom and this ticket only adds one confirming sentence to its `15` entry. Spec: `docs/design/E25/E25-D05.md`; tokens: `packages/ui/tokens` at `95a27fff7e6a42b6fcb6c918bcfcf3bdcaf4cd98`; matrix: `docs/design/_tools/e25_d05_token_audit.py`.
+Six blocks (one per component; every line of the `16` §11.4 block kept), then Tables 1–5, the Density table and the Essential-exceptions table **once each with a leading `Component` column** so every component's rows are present without six copies (deviation recorded in `E25-D05.md` §19 item 6; the fallback is per-component tables). The Penpot line follows the page-ref rule (page name + page id; never a hostname, team or file id, or a workspace URL — `E25-D05.md` C9 / CR-6) and names the drawn page (`E25-D05 Detector components and estimated badge` · id `1287fb3e-19bb-80d3-8008-d41fd763344c`). CMP-032 gets no block: it is E05's atom and this ticket only adds one confirming sentence to its `15` entry. Spec: `docs/design/E25/E25-D05.md`; tokens: `packages/ui/tokens` at `95a27fff7e6a42b6fcb6c918bcfcf3bdcaf4cd98`; matrix: `docs/design/_tools/e25_d05_token_audit.py`.
 
 ## Handoff checklist — CMP-227 EstimatedBadge (E25-D05, #619)
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E25-D05 Detector components and estimated badge` (page id pinned after the first build), specimens `CMP-227 · EstimatedBadge` on this ticket's own page (never the DS library file); PNG per state planned at `docs/design/E25/img/E25-D05-02-cmp-227-variants-states.png` and `docs/design/E25/img/E25-D05-03-cmp-227-themes-greyscale.png`
-- [ ] **Variants × States matrix** — PENDING (a Penpot variant exists only once the boards are drawn, BLOCKED-PENPOT): 3 variants × 2 sizes × 9 states (spec §4.2; no disabled, loading, error or empty state by construction); Table 1 below
+- [x] **Final Penpot link** — page `E25-D05 Detector components and estimated badge` · id `1287fb3e-19bb-80d3-8008-d41fd763344c`, specimens `CMP-227 · EstimatedBadge` on this ticket's own page (never the DS library file); PNG per state planned at `docs/design/E25/img/E25-D05-02-cmp-227-variants-states.png` and `docs/design/E25/img/E25-D05-03-cmp-227-themes-greyscale.png`
+- [ ] **Variants × States matrix** — PENDING (the boards draw every state as a frame; Penpot variants come with the DS library promotion, E05-D02): 3 variants × 2 sizes × 9 states (spec §4.2; no disabled, loading, error or empty state by construction); Table 1 below
 - [x] **Keyboard table** — `Tab`, `Enter` / `Space`, `Esc` (innermost-cancel); no view-local override, no single unmodified key, `Esc` / `Ctrl+K` untouched (spec §4.3); Table 2
 - [x] **Accessible name / role table** — native `<button>`, "Estimated, <display name>[, <word> confidence]", `aria-describedby`, `aria-haspopup="dialog"` (spec §4.4); Table 3
 - [ ] N/A — **Live data**: the chip binds no streaming value of its own (its `estimated` flag is set once per value); the hosts' fields are Table 5's rows
@@ -26,8 +26,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E25-D05 Detector components and estimated badge` (page id pinned after the first build), specimens `CMP-131 · SpeedOfTapeGauge`; PNG planned at `docs/design/E25/img/E25-D05-04-cmp-131-gauge-states.png`
-- [ ] **Variants × States matrix** — PENDING (Penpot variants once the boards are drawn, BLOCKED-PENPOT): modes gauge / strip / number × 14 states (spec §5.3, §11; delayed and focus-visible added by the text lens round 1); Table 1
+- [x] **Final Penpot link** — page `E25-D05 Detector components and estimated badge` · id `1287fb3e-19bb-80d3-8008-d41fd763344c`, specimens `CMP-131 · SpeedOfTapeGauge`; PNG planned at `docs/design/E25/img/E25-D05-04-cmp-131-gauge-states.png`
+- [ ] **Variants × States matrix** — PENDING (the boards draw every state as a frame; Penpot variants come with the DS library promotion, E05-D02): modes gauge / strip / number × 14 states (spec §5.3, §11; delayed and focus-visible added by the text lens round 1); Table 1
 - [x] **Keyboard table** — the window control (roving `←` / `→`), the alert affordance, `Alt+T` (the global toggle, not a new key) (spec §10); Table 2
 - [x] **Accessible name / role table** — the readout is the panel's primary accessible value (`aria-live="off"`), the band chip is text, one `role="status"` per panel (spec §5.2); Table 3
 - [x] **Live data** — readout off; band change polite ≤1 per 5 s, the band pushed by the backend with its hysteresis and ≥1 s dwell applied there (spec §5.2, PROPOSED, G4); Delayed entry / exit polite once each, the tag "Updates every 1 s, ×4 slower" shown ≥5 s (E17-D01 D5 / T3); needle and strip 4 Hz (the applied cadence when delayed), digits ≤2 Hz; the peak marker decorative; Table 5
@@ -45,8 +45,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E25-D05 Detector components and estimated badge` (page id pinned after the first build), specimen `CMP-187 · SpeedOfTapePane`; PNG planned at `docs/design/E25/img/E25-D05-05-cmp-187-pane.png`
-- [ ] **Variants × States matrix** — PENDING (Penpot variants once the boards are drawn, BLOCKED-PENPOT): one pane mode × 8 states (spec §5.6, §11; loading / disconnected / error are chassis-level, E11-D02 D16); Table 1
+- [x] **Final Penpot link** — page `E25-D05 Detector components and estimated badge` · id `1287fb3e-19bb-80d3-8008-d41fd763344c`, specimen `CMP-187 · SpeedOfTapePane`; PNG planned at `docs/design/E25/img/E25-D05-05-cmp-187-pane.png`
+- [ ] **Variants × States matrix** — PENDING (the boards draw every state as a frame; Penpot variants come with the DS library promotion, E05-D02): one pane mode × 8 states (spec §5.6, §11; loading / disconnected / error are chassis-level, E11-D02 D16); Table 1
 - [x] **Keyboard table** — the E11-D02 D18 chassis order (legend row → plot cursor → gutter), `Alt+T`, `Ctrl+\` leaves (spec §10); Table 2
 - [x] **Accessible name / role table** — the sparkline `role="img"` with its summary; the table alternative; the legend row's controls (spec §5.6); Table 3
 - [x] **Live data** — the line appends per push at 4 Hz (the applied cadence when delayed, the tag in the caption), no announcement; the pane caption off; Table 5
@@ -64,8 +64,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E25-D05 Detector components and estimated badge` (page id pinned after the first build), specimens `CMP-132 · ImbalanceStackIndicator`; PNG planned at `docs/design/E25/img/E25-D05-06-cmp-132-marks.png`
-- [ ] **Variants × States matrix** — PENDING (Penpot variants once the boards are drawn, BLOCKED-PENPOT): status active / tested / broken × direction bid / ask × 8 states (spec §6.2, §11; no hover state by design — parity by construction); Table 1
+- [x] **Final Penpot link** — page `E25-D05 Detector components and estimated badge` · id `1287fb3e-19bb-80d3-8008-d41fd763344c`, specimens `CMP-132 · ImbalanceStackIndicator`; PNG planned at `docs/design/E25/img/E25-D05-06-cmp-132-marks.png`
+- [ ] **Variants × States matrix** — PENDING (the boards draw every state as a frame; Penpot variants come with the DS library promotion, E05-D02): status active / tested / broken × direction bid / ask × 8 states (spec §6.2, §11; no hover state by design — parity by construction); Table 1
 - [x] **Keyboard table** — one roving stop per pane, `↑` / `↓` nearest-first, `Enter` selects the SCR-056 row, `Tab` to the inherited chip, `Esc` back to the plot (spec §6.3); Table 2
 - [x] **Accessible name / role table** — the DOM-mirror surrogate per zone with the full sentence; the cross-highlighted surrogate carries `aria-current="true"` (spec §6.3); Table 3
 - [x] **Live data** — zone events ≤4 Hz, appended; re-rank on bar close or a boundary cross; focus follows the zone id; the panel summary ≤1 per 5 s; Table 5
@@ -83,8 +83,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E25-D05 Detector components and estimated badge` (page id pinned after the first build), specimens `CMP-133 · RegimeIndicatorChip`; PNG planned at `docs/design/E25/img/E25-D05-07-cmp-133-regime-chip.png`
-- [ ] **Variants × States matrix** — PENDING (Penpot variants once the boards are drawn, BLOCKED-PENPOT): five regimes × 7 states (spec §7.2, §11); Table 1
+- [x] **Final Penpot link** — page `E25-D05 Detector components and estimated badge` · id `1287fb3e-19bb-80d3-8008-d41fd763344c`, specimens `CMP-133 · RegimeIndicatorChip`; PNG planned at `docs/design/E25/img/E25-D05-07-cmp-133-regime-chip.png`
+- [ ] **Variants × States matrix** — PENDING (the boards draw every state as a frame; Penpot variants come with the DS library promotion, E05-D02): five regimes × 7 states (spec §7.2, §11); Table 1
 - [x] **Keyboard table** — one host button: `Tab`, `Enter` / `Space`, `Esc` (spec §7.4); Table 2
 - [x] **Accessible name / role table** — "Trending up (estimated) · medium — market regime, medium confidence" (starts with the visible text, SC 2.5.3; spec §7.4); Table 3
 - [x] **Live data** — ≤1 Hz, rendered on change; the regime change polite once, ≤1 per 5 s; the evidence row off; Table 5
@@ -102,8 +102,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E25-D05 Detector components and estimated badge` (page id pinned after the first build), specimens `CMP-134 · DetectorEventCard`; PNG planned at `docs/design/E25/img/E25-D05-08-cmp-134-event-cards.png`
-- [ ] **Variants × States matrix** — PENDING (Penpot variants once the boards are drawn, BLOCKED-PENPOT): five detector types × presentation static / flat × 12 states (spec §8, §11); Table 1
+- [x] **Final Penpot link** — page `E25-D05 Detector components and estimated badge` · id `1287fb3e-19bb-80d3-8008-d41fd763344c`, specimens `CMP-134 · DetectorEventCard`; PNG planned at `docs/design/E25/img/E25-D05-08-cmp-134-event-cards.png`
+- [ ] **Variants × States matrix** — PENDING (the boards draw every state as a frame; Penpot variants come with the DS library promotion, E05-D02): five detector types × presentation static / flat × 12 states (spec §8, §11); Table 1
 - [x] **Keyboard table** — APG Feed: `↑` / `↓` and `Page Up` / `Page Down` between cards, `Home` / `End`, `Ctrl+Home` / `Ctrl+End` leave the feed, `Enter` detail, `Tab` into the chip then `actions`, `Esc` back, `Shift+F10` menu (spec §8.3); Table 2
 - [x] **Accessible name / role table** — `article` in a `role="feed"` (`aria-labelledby`, `aria-describedby`, `aria-posinset` / `aria-setsize`), the name starts with the header sentence (SC 2.5.3), `aria-current` on the cross-highlighted card; the chip's own name (spec §8.3); Table 3
 - [x] **Live data** — cards appended at ≤4 Hz without focus or per-card announcement; the panel summary ≤1 per 5 s; Table 5
@@ -222,10 +222,10 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 ## A. Design QA checklist (`16` §12) — the six components
 
 - [x] Only published Tier-2 tokens; zero hard-coded hex / px in the spec (the px are anatomy derived from tokens; the two pattern ids are PROPOSED registry entries, CR-1).
-- [ ] Verified in all three themes at both densities — the matrix is computed for the three themes (spec §12.1); the visual parity check runs on the boards (BLOCKED-PENPOT).
+- [ ] Verified in all three themes at both densities — the matrix is computed for the three themes (spec §12.1); the visual parity check runs on the drawn boards (owed with the a11y audit).
 - [x] Passes the contrast matrix for every pair introduced or touched (29 gated rows, 0 FAIL with the unrounded compare; one pair re-classed decorative at 2.9992 in light; 11 PROPOSED `pairs.mjs` rows named; 14 registered after #4085).
 - [ ] CVD simulation reviewed — planned on the exports (`cvd_sim.py`); the non-colour encodings are stated (spec §12.3).
-- [ ] Every documented state has a Penpot variant and a story — PENDING the boards (BLOCKED-PENPOT): the variants are planned in Table 1; the 95 stories of spec §13 cover every state.
+- [ ] Every documented state has a Penpot variant and a story — PENDING the DS library variants (the boards draw every state as a frame): the variants are planned in Table 1; the 95 stories of spec §13 cover every state.
 - [x] Disabled states use disabled-with-reason (CMP-079) — the role-gated `actions` slot of CMP-134 and the alert affordance of CMP-131.
 - [x] Loading / empty / error states designed explicitly (spec §11, §8.4).
 - [x] Keyboard-interaction table completed (Table 2); matches the tested path once the stories exist (implementation ticket).
