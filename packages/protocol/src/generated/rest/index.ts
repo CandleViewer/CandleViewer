@@ -5028,7 +5028,7 @@ export interface paths {
      *     overrides.
      *
      *     **Resolution per leg: later narrows** (SR-E28-03, SR-E28-04; E28 threat model F-01).
-     *     The leg's account's bound profile, its active profile (`active_profile_id`), is the
+     *     The leg's account's bound profile, its default profile (`is_default`), is the
      *     ceiling (E28 threat model D7): request-level
      *     `defaults` and the leg's `overrides`, an alternate `overrides.profile_id` included, only
      *     narrow it, field by field, judged on the resulting leg after the sizer and its clamps
@@ -5145,7 +5145,9 @@ export interface paths {
      *     Before any leg is amended, each targeted leg goes through the resolver, the sizer and
      *     the guard again under `createTradeGroup`'s later-narrows rule. A refusal is the whole
      *     request's, as on `createTradeGroup`: nothing is amended, `errors[]` names every
-     *     offending leg, and the refusal is audited with a result per leg.
+     *     offending leg, and the refusal is audited with a result per leg. On an amend an
+     *     account-state cap refuses the whole request too, unlike on `createTradeGroup`, where it
+     *     rejects only its leg.
      *     * `stop_loss: null`, at the top level or in `legs`, on a leg whose order is an entry
      *       (classified by its effect, never by its `intent`: SR-E29-01) is refused as
      *       `amendOrder` refuses a cleared stop: `400 validation_failed` / `native_stop_required`
@@ -5159,7 +5161,8 @@ export interface paths {
      *       the stop above what its bound profile allows is refused with
      *       `403 risk_limit_breached`, never clamped (C-12.5, D6).
      *     * A reduction or a tightening is never refused by these checks: a smaller `qty`, or a
-     *       stop moved toward the market, passes (C-2.6; 24-internal-schemas.md section 8.10).
+     *       stop moved the ratchet's way (a long leg's up, a short leg's down), passes (C-2.6;
+     *       24-internal-schemas.md section 8.10).
      *       When one request holds both a `400` and a `403` offender, the `400` answers.
      */
     post: operations["amendTradeGroup"];
@@ -5212,7 +5215,7 @@ export interface paths {
     put?: never;
     /**
      * Dry-run a fan-out - resolved per-account sizing, risk and rejections
-     * @description Runs the full fan-out pipeline (24-internal-schemas.md section 9.3 sizing, 9.4 fan-out) **without submitting anything**, returning exactly what each leg would send. Legs that would be rejected (cap breach, symbol not allowed, insufficient margin, rate budget exhausted) are returned with their reason so the ticket can show them before the user commits. Never mutates state and is therefore safe to call on every keystroke; it is rate-limited rather than idempotency-keyed. It takes `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token. It takes `createTradeGroup`'s body under the same rules and answers as that submit would. A `legs[].exchange_account_id` outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied` (SR-E28-21, SR-E29-13), so the answer never tells whether the account exists. A request whose submitted values would widen a leg past its bound profile is refused whole with `403 risk_limit_breached` and one `errors[]` entry per offending leg (C-12.5, E28 threat model D6), never a leg returned with `would_submit: false`; an account-state cap the request does not move still marks that leg alone (`would_submit: false`, `rejection.code: cap_breached`). An `overrides.profile_id` that is not one of its leg's account's own profiles is `404 not_found`, decided at validation, after the account-scope check and before any leg is sized, as on the submit; a body the submit refuses whole with `400` (`intent_mismatch`, `native_stop_required`) answers `400` here too.
+     * @description Runs the full fan-out pipeline (24-internal-schemas.md section 9.3 sizing, 9.4 fan-out) **without submitting anything**, returning exactly what each leg would send. Legs that would be rejected (cap breach, symbol not allowed, insufficient margin, rate budget exhausted) are returned with their reason so the ticket can show them before the user commits. Never mutates state and is therefore safe to call on every keystroke; it is rate-limited rather than idempotency-keyed. It takes `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token. It takes `createTradeGroup`'s body under the same rules and answers as that submit would. A `legs[].exchange_account_id` outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied` (SR-E28-21, SR-E29-13), so the answer never tells whether the account exists. A request whose submitted values would widen a leg past its bound profile is refused whole with `403 risk_limit_breached` and one `errors[]` entry per offending leg (C-12.5, E28 threat model D6), never a leg returned with `would_submit: false`; an account-state cap the request does not move still marks that leg alone (`would_submit: false`, `rejection.code: cap_breached`). An `overrides.profile_id` that is not one of its leg's account's own profiles is `404 not_found`, decided at validation, after the account-scope check and before any leg is sized, as on the submit; a body the submit refuses whole with `400` (`intent_mismatch`, with any `native_stop_required` it lists) answers `400` here too.
      */
     post: operations["previewTradeGroup"];
     delete?: never;
@@ -6110,7 +6113,7 @@ export interface components {
       take_profit?: components["schemas"]["Offset"] | null;
       trigger_price?: components["schemas"]["Decimal"];
     };
-    /** @description Checked against each targeted leg's bound profile before any leg is amended (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit` or `trailing_stop`; `stop_loss: null` is refused on an entry leg (`native_stop_required`). */
+    /** @description Checked against each targeted leg's bound profile before any leg is amended (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit` or `trailing_stop`; `stop_loss: null` is refused on an entry leg, or on any leg whose position is open (`native_stop_required`). */
     AmendTradeGroupRequest: {
       /** @description Per-leg amendments; when present, the top-level fields are ignored for those legs. */
       legs?: {

@@ -5728,7 +5728,7 @@ paths:
         overrides.
 
         **Resolution per leg: later narrows** (SR-E28-03, SR-E28-04; E28 threat model F-01).
-        The leg's account's bound profile, its active profile (`active_profile_id`), is the
+        The leg's account's bound profile, its default profile (`is_default`), is the
         ceiling (E28 threat model D7): request-level
         `defaults` and the leg's `overrides`, an alternate `overrides.profile_id` included, only
         narrow it, field by field, judged on the resulting leg after the sizer and its clamps
@@ -5987,7 +5987,9 @@ paths:
         Before any leg is amended, each targeted leg goes through the resolver, the sizer and
         the guard again under `createTradeGroup`'s later-narrows rule. A refusal is the whole
         request's, as on `createTradeGroup`: nothing is amended, `errors[]` names every
-        offending leg, and the refusal is audited with a result per leg.
+        offending leg, and the refusal is audited with a result per leg. On an amend an
+        account-state cap refuses the whole request too, unlike on `createTradeGroup`, where it
+        rejects only its leg.
         * `stop_loss: null`, at the top level or in `legs`, on a leg whose order is an entry
           (classified by its effect, never by its `intent`: SR-E29-01) is refused as
           `amendOrder` refuses a cleared stop: `400 validation_failed` / `native_stop_required`
@@ -6001,7 +6003,8 @@ paths:
           the stop above what its bound profile allows is refused with
           `403 risk_limit_breached`, never clamped (C-12.5, D6).
         * A reduction or a tightening is never refused by these checks: a smaller `qty`, or a
-          stop moved toward the market, passes (C-2.6; 24-internal-schemas.md section 8.10).
+          stop moved the ratchet's way (a long leg's up, a short leg's down), passes (C-2.6;
+          24-internal-schemas.md section 8.10).
           When one request holds both a `400` and a `403` offender, the `400` answers.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
@@ -12118,8 +12121,8 @@ paths:
         `rejection.code: cap_breached`). An `overrides.profile_id` that is not one of its leg's
         account's own profiles is `404 not_found`, decided at validation, after the
         account-scope check and before any leg is sized, as on the submit; a body the submit
-        refuses whole with `400` (`intent_mismatch`, `native_stop_required`) answers `400` here
-        too.
+        refuses whole with `400` (`intent_mismatch`, with any `native_stop_required` it lists)
+        answers `400` here too.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
@@ -17756,7 +17759,8 @@ components:
       description: >
         Checked against each targeted leg's bound profile before any leg is amended
         (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit` or `trailing_stop`;
-        `stop_loss: null` is refused on an entry leg (`native_stop_required`).
+        `stop_loss: null` is refused on an entry leg, or on any leg whose position is open
+        (`native_stop_required`).
       properties:
         price: { $ref: "#/components/schemas/Decimal" }
         stop_loss: { oneOf: [{ $ref: "#/components/schemas/Offset" }, { type: "null" }] }

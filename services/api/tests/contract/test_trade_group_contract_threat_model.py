@@ -264,8 +264,8 @@ def test_a_leg_only_narrows_its_bound_profile_and_a_widening_request_is_refused_
     create = _words(_OPS["createTradeGroup"]["description"])
     for phrase in (
         "**Resolution per leg: later narrows** (SR-E28-03, SR-E28-04; E28 threat model F-01)",
-        "The leg's account's bound profile, its active profile (`active_profile_id`), is the "
-        "ceiling (E28 threat model D7)",
+        "The leg's account's bound profile, its default profile (`is_default`), is the ceiling "
+        "(E28 threat model D7)",
         "only narrow it, field by field, judged on the resulting leg after the sizer and its "
         "clamps run again: quantity, notional, leverage, margin and risk at the stop may not rise",
         "and the stop may not move further from entry",
@@ -386,13 +386,17 @@ def test_a_group_amend_never_clears_or_loosens_a_stop() -> None:
         "above what its bound profile allows is refused with `403 risk_limit_breached`, never "
         "clamped (C-12.5, D6)",
         "A reduction or a tightening is never refused by these checks",
+        "a stop moved the ratchet's way (a long leg's up, a short leg's down), passes",
         "When one request holds both a `400` and a `403` offender, the `400` answers",
+        "On an amend an account-state cap refuses the whole request too",
     ):
         assert phrase in text, phrase
+    assert "toward the market" not in text  # a pending conditional entry's stop (RC-4107-02)
 
 
 def test_a_group_amend_declares_its_refusals_and_keeps_its_bounds() -> None:
-    """The statuses the text names, and the body's shape: a reducing leg may clear its stop."""
+    """The statuses the text names, and the body's shape: `stop_loss: null` stays in the shape,
+    and the request's own text refuses it on an entry leg and on any leg whose position is open."""
     amend = _OPS["amendTradeGroup"]
     assert amend["responses"]["400"] == _ref("responses", "BadRequest")
     group_id = _words(_SPEC["components"]["parameters"]["TradeGroupId"]["description"])
@@ -401,7 +405,10 @@ def test_a_group_amend_declares_its_refusals_and_keeps_its_bounds() -> None:
     anchor = _words(_OPS["amendOrder"]["description"])
     assert "which returns `validation_failed` / `native_stop_required`" in anchor
     body = _SCHEMAS["AmendTradeGroupRequest"]["properties"]
-    cleared = {"oneOf": [_ref("schemas", "Offset"), {"type": "null"}]}  # a reducing leg's clear
+    # `null` stays in the shape; the request's text refuses it (RC-4107-03).
+    cleared = {"oneOf": [_ref("schemas", "Offset"), {"type": "null"}]}
+    request = _words(_SCHEMAS["AmendTradeGroupRequest"]["description"])
+    assert "refused on an entry leg, or on any leg whose position is open" in request
     assert body["stop_loss"] == body["legs"]["items"]["properties"]["stop_loss"] == cleared
     assert body["legs"]["maxItems"] == 20
 
@@ -460,6 +467,7 @@ def test_adr_0008_records_p1b() -> None:
         "is refused whole with `risk_limit_breached`, never clamped and never a partial group",
         "2. **A rule origin is internal.**",
         "3. **Rule 2 holds after admission.**",
+        "nor the stop of any leg whose position is open",
         "unless it flattens the leg first; that unwind removes the stop only once the leg is flat",
         "and keeps its take-profits too, as `cancelAllOrders` keeps reduce-only exits by default",
         "Amend and cancel name at most 20 legs, as a group holds",

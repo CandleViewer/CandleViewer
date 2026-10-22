@@ -124,7 +124,7 @@ Refines binding rules 1 to 3; reverses none. Three things now hold of the contra
 2. **A rule origin is internal.** Only the rule engine's internal path (M15) sets a group's `rule_id`; the public
    request has none, so a manual group never takes the rule-origin default policy or another user's attribution
    (SR-E28-05).
-3. **Rule 2 holds after admission.** A group amend never clears an entry leg's stop, as `amendOrder` never does,
+3. **Rule 2 holds after admission.** A group amend never clears an entry leg's stop, as `amendOrder` never does, nor the stop of any leg whose position is open,
    never loosens a stop (a long leg's may only rise, a short leg's only fall) and never takes a leg past its bound
    profile; a reduction or a tightening is never refused, and a refusal is the whole request's. A group cancel never
    cancels an open leg's stop-loss, attached or a separate order under `tpsl_mode: Partial`, and keeps its
