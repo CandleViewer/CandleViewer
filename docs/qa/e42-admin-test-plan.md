@@ -76,7 +76,7 @@ The handles below are fixed here. The fixture slices define each one as an idemp
 | AUDIT-10M                             | 10 million generated audit entries, from the generator E42-K01 shares                        |
 | AUDIT-CORRUPT                         | A chain with one altered entry at a known `first_bad_id`; it loads only into a test database |
 | AUDIT-KEY-ENTRY                       | An entry whose before and after states referenced key material, by fingerprint               |
-| FLAG-HEAT                             | The liquidation-heat estimate flag, on                                                       |
+| FLAG-UI                               | A catalogued UI flag, `rules.graph_editor`, on (see Q-9)                                     |
 | FLAG-LIVE-BLOCKED                     | `trading.live_enabled` off, with the pen-test sign-off outstanding                           |
 | RULES-ON-FLAG                         | Two armed rules that depend on a flag being disabled                                         |
 | HEALTH-SUB002-WS-DOWN, HEALTH-TIMEOUT | Health payloads: `sub_002`'s private WebSocket down; the health read timing out              |
@@ -435,7 +435,7 @@ entry")
 **AD-S05-01 A flag change reaches every user within 10 s [R]** (`e2e`; E42-S05 "Toggle a flag";
 US-ADMIN-007)
 
-- Pre: OWNER, elevated; FLAG-HEAT (the liquidation-heat estimate flag, on); MGR-M and VIEWER-V connected.
+- Pre: OWNER, elevated; FLAG-UI, on; MGR-M and VIEWER-V connected. See Q-9.
 - Steps: disable the flag through its dialog.
 - Expected: the feature disappears for every connected user within **≤10 s** of the `flags.change`
   record, through the `system` topic.
@@ -892,6 +892,11 @@ Each is a question for the implementing story, not a guess.
   expects a record with the owner's identity, under the action the story's contract slice registers.
 - **Q-8:** E42-S07 does not name the recorder purge's action. The registry has `retention.purge` and
   `data.deleted`. AD-S07-07 expects the one the purge's operation documents.
+- **Q-9:** E42-S05's examples use a liquidation-heat estimate flag, and its scope asks for flags of every kind
+  (boolean, percentage and variant). The flag catalogue (`admin/flags/catalogue.py`, `21` §10.7) holds no
+  such flag and only boolean ones, and a flag outside it cannot be written. AD-S05-01 uses a catalogued UI
+  flag, and the fixtures seed the catalogued flags; a percentage or variant case waits for a catalogued
+  flag of that kind.
 - **Q-10:** E42-S02 expects a deleted user under a "Disabled/Deleted" filter. A user has no deleted status
   (22 `UserStatus`), and D02 lists disabled users in the default view. AD-S02-03 asserts neither until the
   story settles it. E42-S02 also implies an immediate anonymised reference; the contract anonymises it 90
