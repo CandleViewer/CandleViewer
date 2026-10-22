@@ -753,7 +753,8 @@ index alone, removing nothing.
     tables' guard functions (as a function, a procedure, an aggregate or a
     routine), or a routine named as a function the hash chain calls;
   - the statements that reach the tables without naming them: a role
-    grant (or a role created in another, or a group given a member), an
+    grant (or a role created in another, or a group given a member), a
+    role made a superuser or able to create roles, an
     altered schema or one dropped with `CASCADE`, a dropped or
     reassigned role's objects, the `pgcrypto` extension dropped or
     altered, a role's or a database's `search_path`, and an event trigger;
@@ -780,8 +781,8 @@ index alone, removing nothing.
   - a Python name bound to more than one value (assigned twice, a loop
     target, a parameter) where a table goes, in SQL, an Alembic operation
     or a Core table: give each table its own literal or constant;
-  - a message or a value that opens with `Set` or `Reset` and one word,
-    read as a setting under a name the rule cannot read: reword it.
+  - a message or a value that opens with `Set` and one word, read as a
+    setting under a name the rule cannot read: reword it.
 
   A string literal that opens with an SQL command word is read as SQL. A
   revision is read as the import system reads it, and one the rule cannot
@@ -793,15 +794,15 @@ index alone, removing nothing.
   revisions' Python source and nothing else: any other file there (a
   compiled module, a path file, an `__init__.py`, a module in a
   subdirectory) is refused as "not a revision's Python source"; only
-  `__pycache__` and `.gitkeep` are let be. A name or a string spelled with Unicode
-  escapes (`U&`) is refused too: spell it plainly.
+  `__pycache__` and `.gitkeep` are let be. A name or a string spelled
+  with Unicode escapes (`U&`) is refused too: spell it plainly.
 
   Two files are exempt, and only as far as follows:
   - `0003_audit_log`, which creates the tables, their triggers and the
     guard functions, may create those triggers, drop the tables and their
-    triggers (its downgrade does), and define and drop the functions. The
-    exemption holds for that file alone, which the migrations lockfile
-    pins by name and content.
+    triggers (its downgrade does), and define, alter and drop the
+    functions. The exemption holds for that file alone, which the
+    migrations lockfile pins by name and content.
   - `0045_audit_chain_hardening` (#889, SR-E42-10) may replace
     `audit_chain()` with the text the lint pins by SHA-256 (0003's function
     with its own `search_path` and its row id drawn under the chain lock)

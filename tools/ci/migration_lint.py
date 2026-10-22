@@ -107,9 +107,10 @@ def _resolve_simple_name_constants(tree: ast.AST) -> dict[str, str]:
     """Map a name to the string constant it is bound to (`tbl = "audit_log"`), so a
     placeholder or an argument that is just a `Name` can be read as that constant. A name
     is resolved only when every binding of it in the file gives it that one constant (an
-    assignment, a loop, `with` or `except` target, a parameter, an import, a definition):
-    which of two values a statement sees depends on the order the code runs in, so such a
-    name reads as unresolved, and an unresolved name where a table goes is refused."""
+    assignment, a loop, `with` or `except` target, a parameter, an import, a definition,
+    a `del`): which of two values a statement sees depends on the order the code runs in,
+    so such a name reads as unresolved, and an unresolved name where a table goes is
+    refused. A star import may bind any name: in a file that has one, none resolves."""
     # The `Name` targets of an assignment of a string constant, by node.
     constants: dict[int, str] = {}
     for node in ast.walk(tree):
@@ -149,6 +150,8 @@ def _resolve_simple_name_constants(tree: ast.AST) -> dict[str, str]:
             bound = [(name, None) for name in node.names]
         for name, value in bound:
             values.setdefault(name, set()).add(value)
+    if "*" in values:  # `from m import *`
+        return {}
     resolved: dict[str, str] = {}
     for name, bound_to in values.items():
         (value,) = bound_to if len(bound_to) == 1 else (None,)
@@ -350,6 +353,9 @@ _BLOCK_OPENERS = frozenset(
     {"BEGIN", "THEN", "ELSE", "LOOP", "IN", "QUERY", "ATOMIC", "ALSO", "INSTEAD"}
 )
 _MUTATING_GRANTS = frozenset({"UPDATE", "DELETE", "TRUNCATE", "ALL", "TRIGGER"})
+#: A role attribute that hands over the audit tables as a membership does: a superuser
+#: passes every privilege check, and a role-creating role can grant itself into others.
+_HANDING_ATTRIBUTES = frozenset({"SUPERUSER", "CREATEROLE"})
 # A placeholder in dynamic SQL: its target is an argument, read where it is passed.
 _PLACEHOLDER_RE = re.compile(r"%[IsL]|\$\d+")
 _SETS = frozenset({"SET", "RESET"})
@@ -536,15 +542,16 @@ def _shadowed_callees(words: list[str], statement: str, names: set[str]) -> set[
 
 def _reach(words: list[str], names: set[str]) -> str | None:
     """What the clause `words` (its statement uses `names`) hands over, drops or
-    redirects that holds the audit tables or what their guards run on, without naming
-    a table, or None: a role's membership (`role`; whoever owns the audit tables can
-    drop their triggers), a schema with everything in it, or its owner (`schema`),
-    every object a role owns (`owned`), the extension `audit_chain` hashes with
-    (`pgcrypto`), the `search_path` a role or a database resolves the chain's calls
-    through (`search_path`), a mutating privilege every table created later gets by
-    default (`default_privileges`), as a new audit table would, the setting that turns
-    the tables' triggers off (`replication_role`), a setting set through `set_config()`
-    (`set_config`), or an event trigger, which runs on later DDL (`event_trigger`)."""
+    redirects that holds the audit tables or what their guards run on, without naming a
+    table, or None: a role's membership, or a superuser or role-creating attribute
+    (`role`; whoever owns the audit tables can drop their triggers), a schema with
+    everything in it, or its owner (`schema`), every object a role owns (`owned`), the
+    extension `audit_chain` hashes with (`pgcrypto`), the `search_path` a role or a
+    database resolves the chain's calls through (`search_path`), a mutating privilege
+    every table created later gets by default (`default_privileges`), as a new audit
+    table would, the setting that turns the tables' triggers off (`replication_role`), a
+    setting set through `set_config()` (`set_config`), or an event trigger, which runs
+    on later DDL (`event_trigger`)."""
     head = words[:2]
     if (
         (
@@ -556,9 +563,12 @@ def _reach(words: list[str], names: set[str]) -> str | None:
         or (
             head[:1] == ["CREATE"]
             and head[1:2] in (["ROLE"], ["USER"], ["GROUP"])
-            and {"ROLE", "GROUP", "SUPERUSER"} & set(words[2:])  # `IN ROLE`, ...
+            and {"ROLE", "GROUP", *_HANDING_ATTRIBUTES} & set(words[2:])  # `IN ROLE`
         )
-        or (head in (["ALTER", "ROLE"], ["ALTER", "USER"]) and "SUPERUSER" in words[2:])
+        or (
+            head in (["ALTER", "ROLE"], ["ALTER", "USER"])
+            and _HANDING_ATTRIBUTES & set(words[2:])
+        )
     ):
         return "role"
     if head == ["ALTER", "SCHEMA"] or (
@@ -597,9 +607,10 @@ def _audit_mutations(sql: str, tables: frozenset[str], *, owner: bool) -> set[st
     """The audit tables a statement in `sql` mutates (or `*`: every table, by a
     schema-wide grant; `fn:<name>`: a guard function it redefines or drops;
     `callee:<name>`: a routine the hash chain calls, redefined, altered or dropped;
-    `reach:<what>`: what `_reach` names; `unicode`: a name or a string spelled with
-    Unicode escapes). A statement counts when a clause of it mutates (`_clauses`, `_mutates`: a body or
-    a rule starts one mid-statement) and it names an audit table as an identifier
+    `reach:<what>`: what `_reach` names, or `reach:set_config` for a setting under a
+    computed name; `unicode`: a name or a string spelled with Unicode escapes). A
+    statement counts when a clause of it mutates (`_clauses`, `_mutates`: a body or a
+    rule starts one mid-statement) and it names an audit table as an identifier
     (`_sql_identifiers`, fail-closed: a subquery's table counts too), or
     when SQL nested in it mutates a placeholder's target and the statement names an
     audit table (`EXECUTE format('DELETE FROM %I', ...)`). Nested SQL is read the
@@ -991,7 +1002,7 @@ def check_if_not_exists(paths: list[Path]) -> list[LintFinding]:
     findings: list[LintFinding] = []
     for path in paths:
         text = _read_revision(path)
-        for lineno, line in enumerate(text.splitlines(), start=1):
+        for lineno, line in enumerate(text.split("\n"), start=1):
             if _IF_NOT_EXISTS_RE.search(line) and not _CREATE_EXTENSION_RE.search(line):
                 findings.append(
                     LintFinding(
@@ -1064,8 +1075,8 @@ def check_audit_table_integrity(
 #: What a finding of `_audit_mutations` that names no table targets.
 _REACHES = {
     "*": "every table of a schema, the append-only ones too",
-    "reach:role": "a role's membership or superuser attribute, which hands over the "
-    "privileges on the append-only tables",
+    "reach:role": "a role's membership or a superuser or role-creating attribute, "
+    "which hands over the privileges on the append-only tables",
     "reach:schema": "a schema, its owner or its objects, the append-only tables too",
     "reach:owned": "every object a role owns, the append-only tables too",
     "reach:pgcrypto": "the extension the audit hash chain hashes with",
@@ -1300,11 +1311,10 @@ def check_security_sensitive(
 
 
 def check_versions_dir(versions_dir: Path) -> list[LintFinding]:
-    """CI-MIG-003: the versions directory holds revisions' Python source and nothing
-    else the rule does not read: a file of another kind (a compiled module, a path
-    file), a package's `__init__.py` or a module in a subdirectory may be loaded
-    without being read. Bytecode caches (`__pycache__`) and the `.gitkeep` placeholder
-    are not revisions."""
+    """CI-MIG-003: the versions directory holds revisions' Python source only, since
+    anything else may be loaded without being read: a file of another kind (a compiled
+    module, a path file), a package's `__init__.py` or a module in a subdirectory.
+    Bytecode caches (`__pycache__`) and the `.gitkeep` placeholder are not revisions."""
     findings: list[LintFinding] = []
     for path in sorted(versions_dir.rglob("*")):
         relative = path.relative_to(versions_dir)

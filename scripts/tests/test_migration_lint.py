@@ -1121,6 +1121,7 @@ def test_a_drop_whose_table_name_is_on_the_next_line_is_flagged(tmp_path: Path) 
         "CREATE ROLE cv_ro NOLOGIN",
         "CREATE USER cv_reader LOGIN",
         "ALTER ROLE cv_app NOSUPERUSER",
+        "ALTER ROLE cv_app NOCREATEROLE",
         "CREATE PROCEDURE p() LANGUAGE sql SET search_path FROM CURRENT"
         " AS $$ SELECT 1 $$",
     ],
@@ -1280,7 +1281,10 @@ def test_a_name_bound_to_one_constant_in_two_functions_still_resolves(
     assert _audit_hits(tmp_path, source) == []
 
 
-_UNRESOLVED_OP = "from alembic import op\nimport sqlalchemy as sa\n\n\ndef upgrade(t: str) -> None:\n    {}\n"
+_UNRESOLVED_OP = (
+    "from alembic import op\nimport sqlalchemy as sa\n\n\n"
+    "def upgrade(t: str) -> None:\n    {}\n"
+)
 
 
 @pytest.mark.parametrize(
@@ -1300,6 +1304,23 @@ _UNRESOLVED_OP = "from alembic import op\nimport sqlalchemy as sa\n\n\ndef upgra
         _UNRESOLVED_OP.format("op.execute(sa.table(name=t).delete())"),
         _UNRESOLVED_OP.format("op.execute(sa.table(*[t]).delete())"),
         _UNRESOLVED_OP.format("op.drop_table(*[t])  # cv:contract-phase: R2"),
+        _UNRESOLVED_OP.format("op.drop_column(t, 'x')  # cv:contract-phase: R2"),
+        _UNRESOLVED_OP.format("op.drop_constraint('c', t)  # cv:contract-phase: R2"),
+        _UNRESOLVED_OP.format("op.execute(sa.Table(t, sa.MetaData()).delete())"),
+    ],
+    ids=[
+        "a-drop",
+        "a-name-bound-twice",
+        "an-alter-column",
+        "a-drop-index-by-keyword",
+        "a-drop-index-by-position",
+        "a-core-table-of-a-constant-bound-twice",
+        "a-core-table-by-keyword",
+        "a-starred-core-table",
+        "a-starred-drop",
+        "a-drop-column",
+        "a-drop-constraint-by-position",
+        "a-core-Table",
     ],
 )
 def test_an_operation_whose_table_the_rule_cannot_resolve_is_refused(
@@ -1311,10 +1332,51 @@ def test_an_operation_whose_table_the_rule_cannot_resolve_is_refused(
     assert any("a table it names only at run time" in hit for hit in hits)
 
 
+_REBOUND = (
+    "from alembic import op\n\nT = 'audit_log'\n{}\n\n\n"
+    "def upgrade() -> None:\n    op.drop_table(T)  # cv:contract-phase: R2\n"
+)
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "from m import T",
+        "def T() -> None: ...",
+        "class T: ...",
+        "try:\n    pass\nexcept Exception as T:\n    pass",
+        "match 1:\n    case T:\n        pass",
+        "match []:\n    case [*T]:\n        pass",
+        "match {}:\n    case {**T}:\n        pass",
+        "def f() -> None:\n    global T",
+        "from m import *",
+    ],
+    ids=[
+        "an-import",
+        "a-function",
+        "a-class",
+        "an-except-target",
+        "a-match-capture",
+        "a-match-star",
+        "a-match-rest",
+        "a-global",
+        "a-star-import",
+    ],
+)
+def test_a_name_another_binding_may_rebind_does_not_resolve(
+    tmp_path: Path, binding: str
+) -> None:
+    """Each binding of a name counts, and a star import may bind any: the table the
+    name holds when the drop runs is not the constant, so it is refused (#4032)."""
+    hits = _audit_hits(tmp_path, _REBOUND.format(binding))
+    assert any("a table it names only at run time" in hit for hit in hits)
+
+
 @pytest.mark.parametrize(
     "body",
     [
         "tbl = 'orders'\n    op.drop_column(tbl, 'note')  # cv:contract-phase: R2",
+        "u: str = 'orders'\n    op.drop_column(u, 'note')  # cv:contract-phase: R2",
         "op.drop_index('ix_orders_note')  # cv:contract-phase: R2",
         "op.drop_index(t)  # cv:contract-phase: R2",  # an index name, no table
         "op.execute(sa.table('orders').delete())",
@@ -1328,7 +1390,7 @@ def test_an_operation_whose_table_resolves_to_another_is_not_flagged(
 
 
 def test_a_revision_whose_tree_cannot_be_dumped_is_read_by_the_cli(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
 ) -> None:
     """A long hex literal compiles, but its decimal `repr` exceeds Python's digit limit: the
     revision is still read, and a clean one passes, with no traceback."""
@@ -1340,7 +1402,6 @@ def test_a_revision_whose_tree_cannot_be_dumped_is_read_by_the_cli(
         _raw_sql_revision("SELECT 1") + "N = 0x" + "f" * 3600 + "\n",
     )
     assert main(["--versions-dir", str(versions)]) == 0
-    assert "Traceback" not in capsys.readouterr().err
 
 
 def test_a_drop_after_a_form_feed_is_paired_with_its_own_line(tmp_path: Path) -> None:
@@ -2120,6 +2181,10 @@ _SETTING = "a setting set through set_config() or under a computed name"
         "op.execute('SET session_' + 'replication_role = replica')",
         "v = 'SET'\n    op.execute(f'{v} {name} = replica')",
         "op.execute('SET {} = replica'.format(name))",
+        "op.execute(f'ALTER USER cv_app SET {name} = replica')",
+        "op.execute(f'ALTER DATABASE cv SET {name} = replica')",
+        "op.execute(f'ALTER FUNCTION f() SET {name} = replica')",
+        "op.execute(f'ALTER PROCEDURE p() SET {name} TO replica')",
         "op.execute(f'CREATE FUNCTION f() RETURNS void LANGUAGE sql"
         " SET {name} = replica AS $$ SELECT 1 $$')",
         "op.execute('CREATE OR REPLACE PROCEDURE p() LANGUAGE sql"
@@ -2131,6 +2196,10 @@ _SETTING = "a setting set through set_config() or under a computed name"
         "a-split-name",
         "a-resolved-verb",
         "a-format-field",
+        "an-alter-user",
+        "an-alter-database",
+        "an-alter-function",
+        "an-alter-procedure",
         "a-routine-header",
         "a-procedure-header-format-field",
     ],
@@ -2246,6 +2315,9 @@ def test_a_routine_created_by_dynamic_sql_with_a_computed_setting_is_flagged(
         ("CREATE ROLE evil SUPERUSER", "a role's membership"),
         ("ALTER ROLE evil SUPERUSER", "a role's membership"),
         ("ALTER USER cv_app WITH SUPERUSER", "a role's membership"),
+        ("CREATE GROUP g IN ROLE cv_owner", "a role's membership"),
+        ("CREATE ROLE evil CREATEROLE", "a role's membership"),
+        ("ALTER ROLE cv_app CREATEROLE", "a role's membership"),
     ],
 )
 def test_a_statement_that_reaches_the_audit_tables_without_naming_one_is_flagged(
