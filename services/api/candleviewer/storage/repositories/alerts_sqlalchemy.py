@@ -98,14 +98,16 @@ def _alert(m: Any) -> AlertRow:
     return AlertRow(**d)
 
 
+#: `channels` binds through text in `_INSERT` and `_UPDATE`: asyncpg types a direct
+#: `alert_channel[]` cast's parameter as an array and refuses `array_literal`'s str (#4143).
 _INSERT = sa.text(
     "INSERT INTO alerts (id, owner_user_id, name, symbol, scope_account_id, condition_ir, "
     "condition_hash, enabled, trigger_mode, cooldown_seconds, expires_at, severity, channels, "
     "webhook_url_enc, webhook_secret_enc, message_template) VALUES (CAST(:id AS uuid), "
     "CAST(:owner AS uuid), :name, :symbol, CAST(:account AS uuid), CAST(:ir AS jsonb), :hash, "
     ":enabled, CAST(:mode AS alert_trigger_mode), :cooldown, :expires_at, "
-    "CAST(:severity AS severity), CAST(:channels AS alert_channel[]), :url_enc, :secret_enc, "
-    ":template) RETURNING "
+    "CAST(:severity AS severity), CAST(CAST(:channels AS text) AS alert_channel[]), "
+    ":url_enc, :secret_enc, :template) RETURNING "
     "id::text AS id, owner_user_id::text AS owner_user_id, name, symbol, "
     "scope_account_id::text AS scope_account_id, condition_ir, "
     "condition_hash::text AS condition_hash, enabled, trigger_mode::text AS trigger_mode, "
@@ -143,7 +145,7 @@ _UPDATE = sa.text(
     "enabled = :enabled, condition_ir = CAST(:ir AS jsonb), condition_hash = :hash, "
     "trigger_mode = CAST(:mode AS alert_trigger_mode), cooldown_seconds = :cooldown, "
     "expires_at = :expires_at, severity = CAST(:severity AS severity), "
-    "channels = CAST(:channels AS alert_channel[]), message_template = :template, "
+    "channels = CAST(CAST(:channels AS text) AS alert_channel[]), message_template = :template, "
     "updated_at = clock_timestamp() WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL "
     "AND updated_at = :if_match RETURNING "
     "id::text AS id, owner_user_id::text AS owner_user_id, name, symbol, "
