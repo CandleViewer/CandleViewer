@@ -30,13 +30,17 @@ from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.secrets._rotation import RotatingBroker as CredentialBroker
 from candleviewer.secrets.errors import CredentialUnavailable, SnapshotInvalid
+from candleviewer.secrets.models import CredentialRow
 from candleviewer.secrets.secret import Secret
 from candleviewer.storage.repositories.auth_keys_sqlalchemy import SqlAlchemyAuthKeyStore
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.export_keys_sqlalchemy import SqlAlchemyExportKeyStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
+from tests.integration._refused import assert_no_row_values, server_text
 from tests.unit.credentials_m2._vectors import AuditLog
 
 pytestmark = pytest.mark.integration
@@ -47,6 +51,10 @@ _REWRAPPED = "security.credential_rewrapped"
 _ENROLLED = "security.kek_enrolled"
 _CHAIN_LOCK = "SELECT pg_advisory_xact_lock(hashtext('audit_log'))"
 _TERMINATE = "SELECT pg_terminate_backend(%s)"
+# S ciphertexts and a wrapped-DEK ref, planted by name (#2748); under 31 bytes, so `\x<hex>` fits
+# DETAIL's cut.
+_KEY_ID_ENC, _SECRET_ENC, _DEK_REF = b"SECRET-KEY-ID-ENC", b"SECRET-SECRET-ENC", "v1:SECRET-DEK-REF"
+_TYPED = (None, True)  # `(__cause__, __suppress_context__)` of a stripped driver error
 #: A backend waiting for the chain lock while it holds the api_keys lock of an UPDATE it ran.
 _WAITER = (
     "SELECT w.pid FROM pg_locks w JOIN pg_locks r ON r.pid = w.pid "
@@ -200,6 +208,23 @@ async def test_store_borrow_touch_revoke(pg_dsn: str) -> None:
         rec = await store.get(key_id, "demo")
         assert rec is not None and rec["revoked"] is True
         assert key_id not in await store.ids_at_kek_version(1, 100, "demo")
+    finally:
+        await rel.dispose()
+
+
+async def test_an_insert_with_a_short_nonce_leaves_without_the_ciphertexts(pg_dsn: str) -> None:
+    rel, store = _store(pg_dsn)
+    row = CredentialRow(
+        id=uuid4(), exchange_account_id=_account(pg_dsn), env="demo", label="k0",
+        key_id_enc=_KEY_ID_ENC, key_id_last4="ABCD", secret_enc=_SECRET_ENC,
+        enc_nonce=bytes(11), dek_ref=_DEK_REF, kek_version=1, permission_snapshot=dict(_SNAP),
+    )  # fmt: skip
+    try:
+        with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
+            await store.insert(row.to_record())
+        assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "ak_nonce_len")
+        assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
+        assert_no_row_values(err.value, seen, _KEY_ID_ENC, _SECRET_ENC, _DEK_REF)
     finally:
         await rel.dispose()
 

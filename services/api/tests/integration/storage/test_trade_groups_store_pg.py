@@ -84,6 +84,7 @@ from candleviewer.storage.repositories.trade_groups_sqlalchemy import (
     scoped_legs_statement,
     unprotected_legs_statement,
 )
+from tests.integration._refused import assert_no_row_values, server_text
 
 pytestmark = pytest.mark.integration
 
@@ -97,6 +98,8 @@ _T0 = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 _POSTGRES: Dialect = make_url("postgresql+psycopg://").get_dialect()()
 #: A run of 18+ letters alone, which the message rule replaces (synthetic, SR-145).
 _LETTER_RUN = "error sign! origin_string[" + "Qwerty" * 4 + "]"
+# P1 columns of a refused group row, planted by name (#2748, C-12.6); money on a digit run.
+_NOTE, _PARAM, _STOP = "planted intent note", "planted-algo-param", Decimal("61234.5678")
 
 
 def _login(dsn: str, role: str) -> str:
@@ -787,6 +790,21 @@ async def test_a_leg_outside_the_group_environment_is_refused_by_trg_tgl_env(
         await store.create_group(group, legs)
     assert ei.value.rule == "trg_tgl_env"
     assert _rows_of(pg_dsn, group, legs) == (0, 0)
+
+
+async def test_a_refused_group_leaves_without_its_note_or_prices(
+    rel: SqlAlchemyRelationalRepository, store: SqlAlchemyTradeGroupStore, pg_dsn: str
+) -> None:
+    group = _new_group(
+        _user(pg_dsn), entry_type="Limit", entry_price=Decimal(0), intent_note=_NOTE,
+        algo_params={"n": _PARAM}, sl_price_hint=_STOP,
+    )  # fmt: skip
+    legs = [_new_leg(pg_dsn, _account(pg_dsn))]
+    with server_text(rel) as seen, pytest.raises(TradeGroupStoreRuleError) as err:
+        await store.create_group(group, legs)
+    assert err.value.rule == "tg_limit_px" and _rows_of(pg_dsn, group, legs) == (0, 0)
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert_no_row_values(err.value, seen, _NOTE, _PARAM, str(_STOP))
 
 
 async def test_a_failing_write_ahead_hook_leaves_nothing(

@@ -72,6 +72,7 @@ from candleviewer.storage.repositories.positions_sqlalchemy import (
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from tests.integration._refused import assert_no_row_values, server_text
 from tests.unit.oms.write_ahead_contract import Harness, WriteAheadContract
 
 pytestmark = pytest.mark.integration
@@ -629,6 +630,69 @@ async def test_a_position_snapshot_is_appended_as_given(ledger: Ledger, pg_dsn: 
     assert (snap.size, snap.equity_usd, snap.reason) == (Decimal("0.010"), equity, "minute_tick")
     count = "SELECT count(*) FROM position_snapshots WHERE exchange_account_id = %s"
     assert snap.id > 0 and _sql(pg_dsn, count, account) == [(1,)]
+
+
+# -- a refused write leaves without the row's values (#2748, C-12.6) ---------------------------
+# Planted by name (a traceback prints the calling line); money on a distinctive digit run, as
+# numeric(38,18) prints 18 decimals.
+_PRICE, _STOP, _VALUE = Decimal("71234.567891"), Decimal("61234.5678"), Decimal("4321.987654")
+_NOTE, _MSG = "planted-event-note", "planted-reject-text"
+_TYPED = (None, True)  # `(__cause__, __suppress_context__)` of an error raised `from None`
+
+
+@pytest_asyncio.fixture
+async def rel(app_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepository]:
+    rel = SqlAlchemyRelationalRepository(app_dsn, "orders-refused-it")
+    try:
+        yield rel
+    finally:
+        await rel.dispose()
+
+
+async def test_a_refused_order_leaves_without_its_prices(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    new = _order(
+        _account(pg_dsn), order_type="Limit", qty=Decimal(-1), price=_PRICE, stop_loss=_STOP
+    )
+    with server_text(rel) as seen, pytest.raises(OrderConstraintError) as err:
+        await SqlAlchemyOrderStore(rel).create(new, _event())
+    assert err.value.constraint == "ord_cum"
+    assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
+    assert_no_row_values(err.value, seen, str(_PRICE), str(_STOP))
+
+
+async def test_a_refused_first_event_leaves_without_its_payload(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    event = _event(latency_ms=-1, payload={"note": _NOTE}, ret_msg=_MSG)
+    with server_text(rel) as seen, pytest.raises(OrderConstraintError) as err:
+        await SqlAlchemyOrderStore(rel).create(_order(_account(pg_dsn)), event)
+    assert err.value.constraint == "oe_latency"
+    assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
+    assert_no_row_values(err.value, seen, _NOTE, _MSG)
+
+
+async def test_a_refused_fill_leaves_without_its_prices(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    fill = _fill(_account(pg_dsn), exec_qty=Decimal(0), exec_price=_PRICE, exec_value=_VALUE)
+    with server_text(rel) as seen, pytest.raises(OrderConstraintError) as err:
+        await SqlAlchemyExecutionStore(rel).insert(fill)
+    assert err.value.constraint == "ex_qty"
+    assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
+    assert_no_row_values(err.value, seen, str(_PRICE), str(_VALUE))
+
+
+async def test_a_refused_position_leaves_without_its_prices(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    state = _state(_account(pg_dsn), "BTCUSDT", size=Decimal(-1), avg_price=_PRICE, stop_loss=_STOP)
+    with server_text(rel) as seen, pytest.raises(OrderConstraintError) as err:
+        await SqlAlchemyPositionStore(rel, clock=lambda: _T0).upsert(state)
+    assert err.value.constraint == "pos_size"
+    assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
+    assert_no_row_values(err.value, seen, str(_PRICE), str(_STOP))
 
 
 @pytest_asyncio.fixture

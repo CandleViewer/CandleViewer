@@ -20,6 +20,7 @@ from pathlib import Path
 import psycopg
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.secrets.models import CredentialRow
@@ -43,7 +44,10 @@ from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyC
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
+from tests.integration._refused import assert_no_row_values, server_text
 
 pytestmark = pytest.mark.integration
 
@@ -54,6 +58,12 @@ _SNAPSHOT: dict[str, object] = {
     "uid": "1",
     "permissions": {},
 }
+# The fake ciphertexts `_seed_key` writes (S), and values planted by name, as a traceback prints
+# the calling line (#2748). `ux_ea_label` is on lower(label), so its DETAIL prints lower case.
+_KEY_ID_ENC, _SECRET_ENC = b"\x01" * 28, b"\x02" * 28
+_LABEL, _LABEL2, _BAD_UID, _IP = "secret-label-1", "secret-label-2", "SECRET-uid", "198.51.100.23"
+# `(__cause__, __suppress_context__)` of an error raised `from None`, or of a stripped driver error
+_TYPED = (None, True)
 
 
 @pytest.fixture(scope="module")
@@ -152,7 +162,7 @@ async def _seed_key(creds: SqlAlchemyCredentialStore, acct: uuid.UUID) -> uuid.U
     kid = uuid.uuid4()
     row = CredentialRow(
         id=kid, exchange_account_id=acct, env="demo", label=f"k{kid.hex[:8]}",
-        key_id_enc=b"\x01" * 28, key_id_last4="abcd", secret_enc=b"\x02" * 28,
+        key_id_enc=_KEY_ID_ENC, key_id_last4="abcd", secret_enc=_SECRET_ENC,
         enc_nonce=b"\x03" * 12, dek_ref="v1:00", kek_version=1,
         permission_snapshot=dict(_SNAPSHOT),
     )  # fmt: skip
@@ -188,20 +198,28 @@ async def test_account_round_trip_and_soft_delete_frees_identity(
     assert (await store.create_account(owner, again)).exchange_uid == sub.exchange_uid
 
 
-async def test_constraint_mapping(store: SqlAlchemyAccountsStore, pg_dsn: str) -> None:
+async def test_constraint_mapping(
+    rel: SqlAlchemyRelationalRepository, store: SqlAlchemyAccountsStore, pg_dsn: str
+) -> None:
     exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
-    a = await store.create_account(owner, _new(exch, label="Dup"))
-    with pytest.raises(AccountsStoreConflictError) as ei:
-        await store.create_account(owner, _new(exch, label="dUP"))
+    a = await store.create_account(owner, _new(exch, label=_LABEL))
+    with server_text(rel) as seen, pytest.raises(AccountsStoreConflictError) as ei:
+        await store.create_account(owner, _new(exch, label=_LABEL.upper()))
     assert ei.value.constraint == "ux_ea_label"
+    assert (ei.value.__cause__, ei.value.__suppress_context__) == _TYPED
+    assert_no_row_values(ei.value, seen, _LABEL)  # the DETAIL's key, `lower(label)`
     same_uid = NewExchangeAccount(uuid.uuid4(), exch, "demo", "main", a.exchange_uid, "other")
-    with pytest.raises(AccountsStoreConflictError) as ei2:
+    with server_text(rel) as seen, pytest.raises(AccountsStoreConflictError) as ei2:
         await store.create_account(owner, same_uid)
     assert ei2.value.constraint == "ux_ea_uid"
-    bad_uid = NewExchangeAccount(uuid.uuid4(), exch, "demo", "main", "abc", "q1")
-    with pytest.raises(AccountsStoreRuleError) as ei3:
+    assert (ei2.value.__cause__, ei2.value.__suppress_context__) == _TYPED
+    assert_no_row_values(ei2.value, seen, a.exchange_uid)
+    bad_uid = NewExchangeAccount(uuid.uuid4(), exch, "demo", "main", _BAD_UID, _LABEL2)
+    with server_text(rel) as seen, pytest.raises(AccountsStoreRuleError) as ei3:
         await store.create_account(owner, bad_uid)
     assert ei3.value.rule == "ea_uid_fmt"
+    assert (ei3.value.__cause__, ei3.value.__suppress_context__) == _TYPED
+    assert_no_row_values(ei3.value, seen, _BAD_UID, _LABEL2)  # the failing row, whole
     sub = await store.create_account(owner, _new(exch, parent=a.id))
     deleted = await store.create_account(owner, _new(exch))
     await store.soft_delete_account(owner, deleted.id)
@@ -480,6 +498,23 @@ async def test_key_selfcheck_store_is_env_bound_and_writes_only_its_columns(
     assert (failed.last_error_code, passed.last_error_code, passed.expires_at) == (
         "key_expired", None, expiry,
     )  # fmt: skip
+
+
+async def test_a_pass_that_is_trade_and_read_only_leaves_without_the_key_row(
+    rel: SqlAlchemyRelationalRepository,
+    store: SqlAlchemyAccountsStore,
+    creds: SqlAlchemyCredentialStore,
+    pg_dsn: str,
+) -> None:
+    """`ak_readonly_excl`: its DETAIL quotes the whole `api_keys` row, ciphertexts and all."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    kid = await _seed_key(creds, (await store.create_account(owner, _new(exch))).id)
+    verified = VerifiedKey({"uid": "1", "permissions": {}}, True, True, (_IP,), None, _FROZEN_AT)
+    with server_text(rel) as seen, pytest.raises(sa.exc.IntegrityError) as err:
+        await SqlAlchemyKeySelfCheckStore(rel, env="demo").record_pass(kid, verified)
+    assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "ak_readonly_excl")
+    assert (err.value.__cause__, err.value.__suppress_context__) == _TYPED
+    assert_no_row_values(err.value, seen, _IP, _KEY_ID_ENC, _SECRET_ENC)
 
 
 async def test_a_disarm_commits_its_code_and_time_and_stays_owed_until_its_record_is_marked(
