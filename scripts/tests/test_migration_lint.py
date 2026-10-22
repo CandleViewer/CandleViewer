@@ -2399,12 +2399,12 @@ def test_a_body_that_builds_a_settings_name_is_flagged(
             _SETTING,
         ),
         (
-            "f = sa.func.set_config\n    op.execute(sa.select("
-            "f('session_replication_role', 'replica', False)))",
-            _TRIGGERS_OFF,
+            "op.execute(sa.select(sa.func.SET_CONFIG(t, 'replica', False)))",
+            _SETTING,
         ),
+        ("x = ' session_replication_role '", _TRIGGERS_OFF),
     ],
-    ids=["through-core", "through-a-name"],
+    ids=["through-core", "in-capitals", "padded"],
 )
 def test_a_setting_python_sets_past_the_sql_reader_is_flagged(
     tmp_path: Path, body: str, target: str
@@ -2413,6 +2413,13 @@ def test_a_setting_python_sets_past_the_sql_reader_is_flagged(
     tables' triggers off wherever Python passes it, as SQL would be read (#4032)."""
     hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
     assert hits and all(target in hit for hit in hits)
+
+
+def test_set_config_held_in_a_name_is_flagged_where_it_is_taken(tmp_path: Path) -> None:
+    """Called through the name later, its setting may be computed (#4032 L-1)."""
+    body = "f = sa.func.set_config\n    op.execute(sa.select(f(t, 'replica', False)))"
+    (message,) = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert message.startswith("line 6: ") and _SETTING in message
 
 
 @pytest.mark.parametrize(
@@ -2627,10 +2634,6 @@ def test_a_name_or_string_spelled_with_unicode_escapes_is_refused(
         "DO $$ DECLARE c refcursor; BEGIN OPEN c FOR DELETE FROM audit_log RETURNING *;"
         " END $$",
         "DO $$ DECLARE c CURSOR FOR DELETE FROM audit_log RETURNING *; BEGIN NULL; END $$",
-        'DO LANGUAGE plperl $$ spi_exec_query("DELETE FROM audit_log"); $$',
-        "DO LANGUAGE plperl $$ spi_exec_query(q{DELETE FROM audit_log}); $$",
-        "CREATE FUNCTION f() RETURNS void LANGUAGE plpython3u"
-        " AS $$ plpy.execute('TRUNCATE ' + 'audit_log') $$",
         "DO $$ BEGIN EXECUTE E'\\x44ELETE FROM audit_log'; END $$",
         "DO $$ BEGIN EXECUTE E'DELETE FROM audit\\137log'; END $$",
         "DO $$ BEGIN EXECUTE E'DELETE\\tFROM audit_log'; END $$",
@@ -2638,21 +2641,18 @@ def test_a_name_or_string_spelled_with_unicode_escapes_is_refused(
         "DO $$ BEGIN EXECUTE E'\\U00000044ELETE FROM audit_log'; END $$",
         "DO $$ BEGIN EXECUTE E'DELETE FROM audit_log WHERE note = ''x'''; END $$",
         "DO $$ BEGIN EXECUTE E'DELETE FROM audit_log WHERE note = \\'x\\''; END $$",
-        "DO LANGUAGE plperl 'spi_exec_query(\"DELETE FROM audit_log\")'",
         "DO $$ BEGIN PERFORM dblink_exec('DELETE FROM audit_log'); END $$",
-        'CREATE FUNCTION f() RETURNS void LANGUAGE "plperl" AS $$ return audit_log; $$',
-        "CREATE FUNCTION f() RETURNS void LANGUAGE 'plperl' AS $$ return audit_log; $$",
-        "CREATE FUNCTION f() RETURNS void LANGUAGE E'plperl' AS $$ return audit_log; $$",
-        "CREATE FUNCTION f() RETURNS void LANGUAGE /* c */ plperl"
-        " AS $$ return audit_log; $$",
-        "CREATE FUNCTION f() RETURNS void AS $$ return audit_log; $$ LANGUAGE",
-        "DO LANGUAGE plperl $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql"
+        " AS '/* c */ BEGIN DELETE FROM audit_log; END'",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql"
+        " AS '<<b>> BEGIN DELETE FROM audit_log; END'",
+        "CREATE PROCEDURE p() LANGUAGE plpgsql AS '/* c */ BEGIN DROP TABLE audit_log; END'",
     ],
 )
 def test_sql_a_literal_reader_would_miss_is_read(tmp_path: Path, sql: str) -> None:
-    """A literal `EXECUTE` or `DO` runs is read whatever it opens with; a cursor's query
-    starts a statement; a body in another language counts by its names; an `E'...'`
-    literal is read with its escapes decoded (#4032)."""
+    """A literal `EXECUTE`, `DO` or a routine's `AS` runs is read whatever it opens
+    with; a cursor's query starts a statement; an `E'...'` literal is read with its
+    escapes decoded (#4032)."""
     (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
     assert "append-only table 'audit_log'" in message
 
@@ -3409,3 +3409,307 @@ def test_a_created_table_or_a_comment_that_writes_nothing_is_not_flagged(
     tmp_path: Path, sql: str
 ) -> None:
     assert _audit_hits(tmp_path, _raw_sql_revision(sql)) == []
+
+
+_LANGUAGE = "a body in a language the rule does not read as SQL"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        'DO LANGUAGE plperl $$ spi_exec_query("DELETE FROM audit_log"); $$',
+        "DO LANGUAGE plperl $$ spi_exec_query(q{DELETE FROM audit_log}); $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plpython3u"
+        " AS $$ plpy.execute('TRUNCATE ' + 'audit_log') $$",
+        "DO LANGUAGE plperl 'spi_exec_query(\"DELETE FROM audit_log\")'",
+        'CREATE FUNCTION f() RETURNS void LANGUAGE "plperl" AS $$ return audit_log; $$',
+        "CREATE FUNCTION f() RETURNS void LANGUAGE 'plperl' AS $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE E'plperl' AS $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE /* c */ plperl"
+        " AS $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void AS $$ return audit_log; $$ LANGUAGE",
+        "DO LANGUAGE plperl $$ return audit_log; $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plperl"
+        " AS 'spi_exec_query(\"DELETE FROM audit_log\")'",
+    ],
+)
+def test_a_body_in_another_language_is_refused_and_counts_its_names(
+    tmp_path: Path, sql: str
+) -> None:
+    """The rule does not read it as SQL (#4032 F-27): refused, and the audit table it
+    names counts too."""
+    hits = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert len(hits) == 2 and _LANGUAGE in hits[1]
+    assert "append-only table 'audit_log'" in hits[0]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DO LANGUAGE plperl $$ spi_exec_query(join('', 'DROP', ' TABLE ',"
+        " reverse('gol_tidua'))) $$",
+        "CREATE FUNCTION f() RETURNS trigger LANGUAGE plperl AS $$ return; $$",
+        "CREATE FUNCTION f() RETURNS int LANGUAGE c AS 'obj_file', 'link_symbol'",
+    ],
+)
+def test_a_body_in_another_language_that_names_no_audit_table_is_refused(
+    tmp_path: Path, sql: str
+) -> None:
+    """It can build the name the rule would look for (#4032 F-27)."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert _LANGUAGE in message
+
+
+def test_a_routine_body_in_sql_after_as_is_read_and_clean_when_it_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    sql = "CREATE FUNCTION f() RETURNS int LANGUAGE sql AS 'SELECT 1'"
+    assert _audit_hits(tmp_path, _raw_sql_revision(sql)) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'op.execute(f"DO $$ BEGIN SET {t} = replica; END $$")',
+        'op.execute("DO $$ BEGIN SET {} = replica; END $$".format(t))',
+        'op.execute("DO $$ BEGIN IF true THEN SET %s = replica; END IF; END $$" % t)',
+        'op.execute(f"DO $$ BEGIN LOOP SET LOCAL {t} = replica; EXIT; END LOOP; END $$")',
+        'op.execute(f"DO $$ BEGIN SET session_{t} = replica; END $$")',
+        "op.execute(f'DO $$ BEGIN SET \"session_{t}\" = replica; END $$')",
+        'op.execute(f"DO $$ BEGIN ALTER ROLE cv_app SET {t} = replica; END $$")',
+        'op.execute(f"DO $$ BEGIN ALTER DATABASE cv SET {t} TO replica; END $$")',
+        'op.execute("DO $$ BEGIN SET session_$1 = replica; END $$")',
+        "op.execute(\"DO $$ BEGIN EXECUTE 'BEGIN SET session_' || n; END $$\")",
+    ],
+    ids=[
+        "an-f-string",
+        "format",
+        "percent-after-then",
+        "set-local-after-loop",
+        "a-prefix",
+        "quoted",
+        "a-role",
+        "a-database",
+        "a-parameter",
+        "a-name-the-text-ends-on",
+    ],
+)
+def test_a_setting_under_a_computed_name_after_a_block_opener_is_flagged(
+    tmp_path: Path, body: str
+) -> None:
+    """A clause after `BEGIN`, `THEN` or `LOOP` is read as a chunk's first is (#4032
+    N-1): its setting's name may be the one that turns the triggers off."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any(_SETTING in hit for hit in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'op.execute(f"DO $$ BEGIN SET lock_timeout = {t}; END $$")',
+        'op.execute("DO $$ BEGIN SET search_path TO public; END $$")',
+        'op.execute(f"DO $$ BEGIN UPDATE orders SET note = {t}; END $$")',
+    ],
+    ids=["a-value-placeholder", "a-literal-setting", "an-update-set"],
+)
+def test_a_setting_named_in_full_after_a_block_opener_is_not_flagged(
+    tmp_path: Path, body: str
+) -> None:
+    assert _audit_hits(tmp_path, _UNRESOLVED_OP.format(body)) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "op.execute('SET \"session_{}\" = replica'.format(t))",
+        'op.execute("SET cv.{} = 1".format(t))',
+        'op.execute("SET session_$1 = replica")',
+    ],
+    ids=["quoted", "dotted", "a-parameter"],
+)
+def test_a_setting_whose_name_runs_into_a_placeholder_is_flagged(
+    tmp_path: Path, body: str
+) -> None:
+    """A quoted or dotted name, and one that runs straight into a parameter (#4032)."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any(_SETTING in hit for hit in hits)
+
+
+_LOOP = (
+    "DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables LOOP"
+    " EXECUTE format('{}', r.tablename); END LOOP; END $$"
+)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "op.execute({!r})".format(_LOOP.format("DROP TABLE staging, %I")),
+        "op.execute({!r})".format(_LOOP.format("TRUNCATE staging *, %I")),
+        "op.execute({!r})".format(
+            _LOOP.format("GRANT DELETE ON staging, %I TO cv_app")
+        ),
+        "op.execute({!r})".format(_LOOP.format("DROP FUNCTION helper(), %I()")),
+        'op.execute(f"DROP TABLE staging, {t}")',
+        'op.execute("TRUNCATE staging, " + t)',
+    ],
+    ids=["drop", "truncate", "grant", "a-routine", "an-f-string", "a-concatenation"],
+)
+def test_a_later_member_of_a_target_list_left_to_run_time_is_refused(
+    tmp_path: Path, body: str
+) -> None:
+    """Every member of a target list is a slot (#4032 N-2)."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any("a table it names only at run time" in hit for hit in hits)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DROP TABLE staging, staging_old CASCADE",
+        "TRUNCATE ONLY staging *, staging_old",
+        "DROP FUNCTION IF EXISTS helper(int), other(text)",
+        "GRANT SELECT ON staging, staging_old TO cv_app",
+    ],
+)
+def test_a_target_list_named_in_full_is_not_flagged(tmp_path: Path, sql: str) -> None:
+    assert _audit_hits(tmp_path, _raw_sql_revision(sql)) == []
+
+
+@pytest.mark.parametrize(
+    ("body", "target"),
+    [
+        ('op.__getattribute__("drop_table")("audit_log")', "picked at run time"),
+        (
+            'op.get_context().impl.drop_table(sa.table("audit_log"))',
+            "implementation object",
+        ),
+        (
+            'ctx = op.get_context()\n    ctx.impl.drop_column("audit_log", "note")',
+            "implementation object",
+        ),
+    ],
+    ids=["a-private-method", "impl", "impl-through-a-name"],
+)
+def test_an_alembic_operation_past_ops_methods_is_refused(
+    tmp_path: Path, body: str, target: str
+) -> None:
+    """`op`'s private methods pick an operation, and Alembic's implementation object
+    runs one, past what the rule reads (#4032 F-25)."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any(target in hit for hit in hits)
+
+
+def test_ops_context_read_as_the_revisions_do_is_not_flagged(tmp_path: Path) -> None:
+    """0002 and 0034 read `as_sql` and run an autocommit block."""
+    body = (
+        "if op.get_context().as_sql:\n        return\n"
+        "    with op.get_context().autocommit_block():\n        pass"
+    )
+    assert _audit_hits(tmp_path, _UNRESOLVED_OP.format(body)) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'a, b = 1, sa.table("audit_log")\n    op.execute(b.delete())',
+        '(b,) = [*[sa.table("audit_log")]]\n    op.execute(b.delete())',
+        'b: sa.TableClause = sa.table("audit_log")\n    op.execute(sa.schema.DropTable(b))',
+        'for b in [sa.table("audit_log")]:\n        op.execute(b.delete())',
+        'op.execute([b.delete() for b in (sa.table("audit_log"),)][0])',
+        'if (b := sa.table("audit_log")) is not None:\n        op.execute(b.delete())',
+        'b = t and sa.table("audit_log")\n    op.execute(b.update())',
+        'b = sa.table("audit_log") if t else None\n    op.execute(b.update())',
+        'b = sa.table("audit_log")\n    op.execute(getattr(b, "delete")())',
+    ],
+    ids=[
+        "unpacked",
+        "unpacked-starred",
+        "annotated",
+        "a-loop",
+        "a-comprehension",
+        "a-walrus",
+        "a-bool-op",
+        "a-condition",
+        "getattr",
+    ],
+)
+def test_a_core_table_bound_however_python_binds_a_name_is_read(
+    tmp_path: Path, body: str
+) -> None:
+    """Not only a plain assignment binds the table a statement runs on (#4032 F-26)."""
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any("append-only table 'audit_log'" in hit for hit in hits)
+
+
+def test_a_core_table_bound_as_a_parameters_default_is_read(tmp_path: Path) -> None:
+    source = (
+        "from alembic import op\nimport sqlalchemy as sa\n\n\n"
+        'def upgrade(t: sa.TableClause = sa.table("audit_log")) -> None:\n'
+        "    op.execute(t.delete())\n"
+    )
+    (message,) = _audit_hits(tmp_path, source)
+    assert "append-only table 'audit_log'" in message
+
+
+_UPSERT = (
+    "from alembic import op\nimport sqlalchemy as sa\n{}\n\n\n"
+    "def upgrade() -> None:\n    op.execute({}.on_conflict_do_update("
+    'index_elements=["id"], set_={{"id": 2}}))\n'
+)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _UPSERT.format(
+            "from sqlalchemy.dialects.postgresql import insert",
+            'insert(sa.table("audit_log", sa.column("id"))).values(id=1)',
+        ),
+        _UPSERT.format(
+            "from sqlalchemy.dialects.postgresql import insert as pg_insert",
+            'pg_insert(sa.table("audit_log", sa.column("id")))',
+        ),
+        _UPSERT.format("", 'sa.table("audit_log", sa.column("id")).insert()'),
+    ],
+    ids=["an-insert", "an-aliased-insert", "the-tables-insert"],
+)
+def test_a_core_upsert_into_an_audit_table_is_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    """Its `DO UPDATE` rewrites a row, as the SQL spelling's does (#4032 F-28)."""
+    (message,) = _audit_hits(tmp_path, source)
+    assert "append-only table 'audit_log'" in message
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _UPSERT.format(
+            "from sqlalchemy.dialects.postgresql import insert",
+            'insert(sa.table("orders", sa.column("id")))',
+        ),
+        "from alembic import op\nimport sqlalchemy as sa\n"
+        "from sqlalchemy.dialects.postgresql import insert\n\n\n"
+        "def upgrade() -> None:\n"
+        '    op.execute(insert(sa.table("audit_log", sa.column("id"))).values(id=1))\n',
+    ],
+    ids=["another-table", "a-plain-insert"],
+)
+def test_an_upsert_of_another_table_or_a_plain_insert_is_not_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    assert _audit_hits(tmp_path, source) == []
+
+
+@pytest.mark.parametrize(
+    "field", ["1" * 5000, "\u00b2"], ids=["too-long", "a-superscript"]
+)
+def test_a_format_field_python_cannot_read_as_a_number_is_unresolved(
+    tmp_path: Path, field: str
+) -> None:
+    """Read as a missing argument, never a crash that loses the other findings (#4032
+    F-29)."""
+    body = 'op.execute("DELETE FROM {FIELD}".format(t))'.replace("FIELD", field)
+    hits = _audit_hits(tmp_path, _UNRESOLVED_OP.format(body))
+    assert any("dynamic table name" in hit for hit in hits)

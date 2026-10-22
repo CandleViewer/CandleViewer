@@ -348,8 +348,12 @@ def _formatted(
                 node = call.args[automatic]
             automatic += 1
         elif field.isdigit():
-            if int(field) < len(call.args):
-                node = call.args[int(field)]
+            try:
+                index = int(field)
+            except ValueError:  # a digit `int` cannot read, or past its length limit
+                index = len(call.args)  # unresolved, as a missing argument is
+            if index < len(call.args):
+                node = call.args[index]
         elif field.isidentifier():
             node = keywords.get(field)
         filled, gap = _part(node, names)
@@ -473,18 +477,19 @@ def _sql_split(sql: str) -> list[str]:
 
 
 # A `'...'` literal is SQL wherever it opens with one of `SQL_COMMANDS`, and always
-# right after these words: `EXECUTE '...'`, `DO '...'` and `format('...', ...)` run
-# it whatever it opens with (a `;`, a comment, a label).
-_RUNS_ITS_LITERAL = frozenset({"EXECUTE", "DO", "FORMAT"})
+# right after these words: `EXECUTE '...'`, `DO '...'`, `format('...', ...)` and a
+# routine's `AS '...'` body run it whatever it opens with (a `;`, a comment, a
+# label). A C function's `AS 'obj_file', 'link_symbol'` reads as harmless words.
+_RUNS_ITS_LITERAL = frozenset({"EXECUTE", "DO", "FORMAT", "AS"})
 # A literal that `||` continues is a piece of a bigger string (`'UPDATE' || ' t'`).
 _CONTINUED_RE = re.compile(r"(?:\s|--[^\n\r]*|/\*.*?\*/)*\|\|", re.DOTALL)
 
 
 def _nested_sql(statement: str) -> list[str]:
     """The SQL inside `statement`: each `$$` body; each `'...'` literal right after
-    `EXECUTE`, `DO` (`DO LANGUAGE <name>` too) or `format(`, and each other that opens
-    with one of `SQL_COMMANDS`; and each `"..."` token whose text opens with one, as a
-    body in another language writes its SQL (`spi_exec_query("DELETE ...")`). A
+    `EXECUTE`, `DO` (`DO LANGUAGE <name>` too), `format(` or `AS`, and each other that
+    opens with one of `SQL_COMMANDS`; and each `"..."` token whose text opens with one,
+    as a body in another language writes its SQL (`spi_exec_query("DELETE ...")`). A
     literal `||` continues ends in a space: what follows its last word may be that
     word's target."""
     nested: list[str] = []
@@ -605,6 +610,12 @@ _PLACEHOLDER_RE = re.compile(r"%[IsL]|\$\d+")
 # field the rule cannot resolve (`_UNRESOLVED_PLACEHOLDER`).
 _PLACEHOLDER_MARKS = frozenset({"%", "$", _UNRESOLVED_PLACEHOLDER})
 _SETS = frozenset({"SET", "RESET"})
+# The objects whose `SET` clause sets a setting (`_DYNAMIC_SETTING_RE`'s `ALTER` arm).
+_SETTING_HOLDERS = frozenset(
+    {"ROLE", "USER", "DATABASE", "SYSTEM", "FUNCTION", "PROCEDURE", "ROUTINE"}
+)
+# The characters a computed setting name runs into (`_DYNAMIC_SETTING_RE`'s tail).
+_SETTING_MARKS = frozenset({"%", "$", _UNRESOLVED_PLACEHOLDER, "{"})
 #: A setting set under a name the rule cannot read: a placeholder (`%I`, `$1`, a
 #: `str.format` field), a Python value it cannot resolve (`_UNRESOLVED_PLACEHOLDER`),
 #: or a name its fragment ends on, which the code may go on to build. The placeholder
@@ -794,6 +805,28 @@ class _Chunk:
         self.next_on, self.next_to = _next(words, "ON"), _next(words, "TO")
         self.next_grant = _next(words, "GRANT")
         self.set_after = _suffix(size, lambda i: words[i] in _SETS)
+        # From each token: whether a setting name read there is computed, as
+        # `_DYNAMIC_SETTING_RE` reads one, in one pass from the end (#4032 N-1).
+        runs_on = [False] * (size + 1)
+        for i in range(size - 1, -1, -1):
+            token = self.tokens[i]
+            if token[0] in _SETTING_MARKS or (
+                token[0] == '"' and any(mark in token for mark in _SETTING_MARKS)
+            ):
+                runs_on[i] = True  # a placeholder, or a quoted name holding one
+            elif not (token[0] in '"._' or token[0].isalnum()):
+                runs_on[i] = False  # the name has ended: `=`, `TO`'s space
+            elif "$" in token:
+                runs_on[i] = True  # `session_$1`: a word runs on into a parameter
+            elif not self.glued[i]:
+                runs_on[i] = i + 1 == size  # the text ends on the name
+            else:
+                runs_on[i] = runs_on[i + 1]
+        self.computed_set = [
+            words[i] == "SET" and self._computed_name(i + 1, runs_on)
+            for i in range(size)
+        ]
+        self.computed_set_after = _suffix(size, lambda i: self.computed_set[i])
         self.add_after = _suffix(size, lambda i: words[i] == "ADD")
         self.membership_after = _suffix(
             size, lambda i: words[i] in {"ROLE", "GROUP", *_HANDING_ATTRIBUTES}
@@ -830,6 +863,16 @@ class _Chunk:
                 words[i] in _MUTATING_GRANTS or self.granting[i + 1]
             )
         self.starts = list(_clause_starts(words))
+        self.closing = _closing(self.tokens)
+
+    def _computed_name(self, at: int, runs_on: list[bool]) -> bool:
+        """Whether the setting a `SET` names from `at` is computed, as
+        `_DYNAMIC_SETTING_RE` reads one: its name (after `SESSION` or `LOCAL`) runs
+        straight into a placeholder (`_SETTING_MARKS`), a quoted part holds one,
+        or the text ends on it or before it, so the code may go on to build it."""
+        if self.words[at : at + 1] in (["SESSION"], ["LOCAL"]):
+            at += 1
+        return at == len(self.words) or runs_on[at]
 
 
 def _mutates(chunk: _Chunk, at: int) -> bool:
@@ -972,26 +1015,61 @@ def _reach(chunk: _Chunk, at: int) -> str | None:
     return None
 
 
-def _named(chunk: _Chunk, at: int) -> bool:
-    """Whether a name starts at token `at`, after `ONLY`, `TABLE` or `IF EXISTS`:
-    one to three parts joined by `.`, each a quoted name or a word that is not a
-    number. A part glued to a placeholder (`audit_%s`), or a quoted part holding one
-    (`"audit_%s"`), is built at run time."""
+def _computed_setting(chunk: _Chunk, at: int) -> bool:
+    """Whether the clause at `at` sets a setting under a computed name: a `SET`, or the
+    `SET` clause of a role, a database, the system or a routine (#4032 N-1: a clause
+    after a block opener, as `_DYNAMIC_SETTING_RE` reads a chunk's first)."""
+    words = chunk.words
+    if words[at] == "SET":
+        return chunk.computed_set[at]
+    if (
+        words[at] == "ALTER"
+        and at + 1 < len(words)
+        and words[at + 1] in _SETTING_HOLDERS
+    ):
+        return chunk.computed_set_after[at + 2]
+    if _creates(words, at) in {"FUNCTION", "PROCEDURE"}:
+        return chunk.computed_set_after[at]
+    return False
+
+
+def _name_end(chunk: _Chunk, at: int) -> int | None:
+    """Where a name that starts at token `at` ends, after `ONLY`, `TABLE` or `IF
+    EXISTS`, or None: one to three parts joined by `.`, each a quoted name or a word
+    that is not a number. A part glued to a placeholder (`audit_%s`), or a quoted part
+    holding one (`"audit_%s"`), is built at run time."""
     tokens = chunk.tokens
     while at < len(tokens) and tokens[at].upper() in _SLOT_WORDS:
         at += 1
     for _ in range(3):
         if at >= len(tokens) or not (tokens[at][0] in '"_' or tokens[at][0].isalpha()):
-            return False
+            return None
         if chunk.glued[at] and tokens[at + 1] in _PLACEHOLDER_MARKS:
-            return False
+            return None
         if tokens[at][0] == '"' and (
             _PLACEHOLDER_RE.search(tokens[at]) or _UNRESOLVED_PLACEHOLDER in tokens[at]
         ):
-            return False
+            return None
         if tokens[at + 1 : at + 2] != ["."]:
-            return True
+            return at + 1
         at += 2
+    return None
+
+
+def _named(chunk: _Chunk, at: int, *, routine: bool = False) -> bool:
+    """Whether every member of the list that starts at token `at` is a name
+    (`_name_end`): `DROP TABLE a, b`, `TRUNCATE a, b *`, `GRANT ... ON a, b`, and
+    for a `routine` its argument list too, `DROP FUNCTION f(), g()` (#4032 N-2: a
+    later member holds a placeholder as the first can)."""
+    tokens = chunk.tokens
+    while (end := _name_end(chunk, at)) is not None:
+        if routine and tokens[end : end + 1] == ["("]:
+            end = chunk.closing.get(end, len(tokens)) + 1
+        if tokens[end : end + 1] == ["*"]:
+            end += 1  # `TRUNCATE t *`: its descendants too
+        if tokens[end : end + 1] != [","]:
+            return True
+        at = end + 1
     return False
 
 
@@ -1000,14 +1078,14 @@ def _open_target(chunk: _Chunk, at: int) -> bool:
     after its verb (`_TARGET_VERBS`, a routine's kind), or after the `ON` of a
     mutating grant or a trigger or the `TO` of a rule, holds a placeholder, a
     concatenation, an unresolved field or nothing (#4032)."""
-    words, tokens, size = chunk.words, chunk.tokens, len(chunk.words)
+    words, size = chunk.words, len(chunk.words)
     for verb in _TARGET_VERBS:
         if words[at : at + len(verb)] == verb:
             if at + len(verb) == size and len(verb) == 1 and not chunk.open_end:
                 return False  # a verb on its own is a value: `TG_OP = 'UPDATE'`
             return not _named(chunk, at + len(verb))
     if (kind := _routine_kind(words, at)) is not None:
-        return not _named(chunk, kind + 1)
+        return not _named(chunk, kind + 1, routine=True)
     if _creates(words, at) == "RULE":
         slot = chunk.next_to[at]
     elif (
@@ -1040,7 +1118,7 @@ def _opaque_execute(chunk: _Chunk) -> bool:
     neither does the privilege a grant or a revoke names (`GRANT EXECUTE ON`,
     `GRANT USAGE, EXECUTE ON`)."""
     words, size = chunk.words, len(chunk.words)
-    closing = _closing(chunk.tokens)
+    closing = chunk.closing
     for i, word in enumerate(words):
         if (
             word != "EXECUTE"
@@ -1102,7 +1180,10 @@ def _audit_mutations(
                 passed_in |= bool(inner.starts) and _mutates(inner, inner.starts[0])
         if _unicode_escaped(statement):
             hits.add("unicode")
-        if executable and _DYNAMIC_SETTING_RE.match(_code_text(statement)):
+        if executable and (
+            _DYNAMIC_SETTING_RE.match(_code_text(statement))
+            or any(_computed_setting(chunk, at) for at in chunk.starts[1:])
+        ):
             hits.add("reach:set_config")
         if _nested_comment(statement):
             hits.add("comment")
@@ -1161,6 +1242,8 @@ def _audit_mutations(
             )
             and _foreign_language(statement)
         )
+        if foreign:
+            hits.add("language")
         if mutating or passed_in or open_target or foreign or computed_verb:
             named = _sql_identifiers(statement)
             hits |= named & tables
@@ -1462,8 +1545,15 @@ def _alembic_findings(
         "in a name or a collection, or handed on)"
         for line in _untracked_op(tree)
     }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "impl":
+            hits.setdefault(
+                node.lineno,
+                "Alembic's implementation object (`.impl`), whose operations the rule "
+                "cannot follow",
+            )
     for call, method, plain in _op_calls(tree):
-        if method is None:
+        if method is None or method.startswith("_"):  # `op.__getattribute__(...)`
             hits.setdefault(call.lineno, "an Alembic operation picked at run time")
             continue
         if method not in _TABLE_ARGUMENT:
@@ -1506,19 +1596,15 @@ def _core_table_name(node: ast.Call) -> ast.expr | None:
 
 
 def _python_settings(tree: ast.AST) -> dict[int, str]:
-    """`{line: reach}` of a setting Python sets past the SQL reader (#4032): a call of
-    `set_config` (`sa.func.set_config(...)`), and a string that is the name of the
-    setting that turns the tables' triggers off, wherever Python passes it."""
+    """`{line: reach}` of a setting Python sets past the SQL reader (#4032):
+    `set_config` reached as a name, called or held (`sa.func.set_config`), and a string
+    that is the name of the setting that turns the tables' triggers off, wherever Python
+    passes it."""
     hits: dict[int, str] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            func = node.func
-            callee = (
-                func.attr
-                if isinstance(func, ast.Attribute)
-                else getattr(func, "id", "")
-            )
-            if str(callee).lower() == "set_config":
+        if isinstance(node, (ast.Attribute, ast.Name)):
+            spelled = node.attr if isinstance(node, ast.Attribute) else node.id
+            if spelled.lower() == "set_config":  # called, or held to call later
                 hits.setdefault(node.lineno, "reach:set_config")
         elif (
             isinstance(node, ast.Constant)
@@ -1533,6 +1619,52 @@ def _python_settings(tree: ast.AST) -> dict[int, str]:
 _RUN_TIME_TABLE = "\x00"
 
 
+def _bindings(node: ast.AST) -> list[tuple[ast.AST, ast.AST]]:
+    """The `(target, value)` pairs `node` binds a name with: an assignment (annotated,
+    augmented, a walrus), a loop or a comprehension over a value, a `with` item, and a
+    parameter's default (#4032 F-26)."""
+    if isinstance(node, ast.Assign):
+        return [(target, node.value) for target in node.targets]
+    if isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+        return [] if node.value is None else [(node.target, node.value)]
+    if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        return [(node.target, node.iter)]
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return [
+            (item.optional_vars, item.context_expr)
+            for item in node.items
+            if item.optional_vars is not None
+        ]
+    if isinstance(node, ast.arguments):
+        positional = [*node.posonlyargs, *node.args]
+        pairs = list(
+            zip(
+                positional[len(positional) - len(node.defaults) :],
+                node.defaults,
+                strict=True,
+            )
+        )
+        pairs += [
+            (arg, default)
+            for arg, default in zip(node.kwonlyargs, node.kw_defaults, strict=True)
+            if default is not None
+        ]
+        return [(ast.Name(id=arg.arg), default) for arg, default in pairs]
+    return []
+
+
+def _bound_names(target: ast.AST) -> Iterator[str]:
+    """The names a binding target binds: a name, or each one a tuple or a list
+    unpacks into (starred too)."""
+    if isinstance(target, ast.Name):
+        yield target.id
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for element in target.elts:
+            yield from _bound_names(element)
+    elif isinstance(target, ast.Starred):
+        yield from _bound_names(target.value)
+
+
 def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
     """`{line: target}` of each SQLAlchemy Core statement on an audit table: a
     `delete`/`update` of a `table(...)`/`Table(...)` object on one (an alias of it, or
@@ -1540,7 +1672,7 @@ def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
     through a name or not) or given to it (`sa.delete(t)`, under any import name); a
     `DropTable(...)` or a `.drop(...)` of one; and any `drop_all(...)` (#4032)."""
     names = _resolve_simple_name_constants(tree)
-    imported = {"delete", "update", "DropTable", "table", "Table"}
+    imported = {"delete", "update", "DropTable", "table", "Table", "insert"}
     canonical = {name: name for name in imported}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
@@ -1590,10 +1722,44 @@ def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
             return value if value in tables else None
         return None
 
+    def held(node: ast.AST) -> str | None:
+        """The audit table `node` is, or holds as an element (a tuple, a list, a set,
+        either side of a condition): what a name bound to it, unpacked from it or
+        iterated over it may hold (#4032 F-26)."""
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            parts: list[ast.AST] = list(node.elts)
+        elif isinstance(node, ast.Starred):
+            parts = [node.value]
+        elif isinstance(node, ast.IfExp):
+            parts = [node.body, node.orelse]
+        elif isinstance(node, ast.BoolOp):
+            parts = list(node.values)
+        else:
+            return audit_table(node)
+        return next((found for part in parts if (found := held(part))), None)
+
     for _ in range(2):  # a name bound to an alias of a bound name
         for node in ast.walk(tree):
-            if isinstance(node, ast.Assign) and (table := audit_table(node.value)):
-                bound |= {t.id: table for t in node.targets if isinstance(t, ast.Name)}
+            for target, value in _bindings(node):
+                if (table := held(value)) is not None:
+                    bound |= {name: table for name in _bound_names(target)}
+
+    def inserted(node: ast.AST | None) -> str | None:
+        """The audit table an `insert(...)` statement writes, read through the
+        methods built on it (`insert(t).values(...)`)."""
+        while isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name):
+                spelled: str | None = canonical.get(func.id, func.id)
+            else:
+                spelled = func.attr if isinstance(func, ast.Attribute) else None
+            if spelled == "insert":
+                on = func.value if isinstance(func, ast.Attribute) else None
+                return (audit_table(on) if on is not None else None) or next(
+                    (found for arg in node.args if (found := audit_table(arg))), None
+                )
+            node = func.value if isinstance(func, ast.Attribute) else None
+        return None
 
     hits: dict[int, str] = {}
     for node in ast.walk(tree):
@@ -1609,12 +1775,17 @@ def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
                 node.lineno, "every table a MetaData holds, the append-only ones too"
             )
             continue
-        if callee not in {"delete", "update", "DropTable", "drop"}:
-            continue
         on = func.value if isinstance(func, ast.Attribute) else None
-        table = (audit_table(on) if on is not None else None) or next(
-            (found for arg in node.args if (found := audit_table(arg))), None
-        )
+        if callee == "on_conflict_do_update":  # the upsert: an insert that updates
+            table = inserted(on)
+        elif callee == "getattr":  # `getattr(t, "delete")`, any name: fail-closed
+            table = audit_table(node.args[0]) if node.args else None
+        elif callee in {"delete", "update", "DropTable", "drop"}:
+            table = (audit_table(on) if on is not None else None) or next(
+                (found for arg in node.args if (found := audit_table(arg))), None
+            )
+        else:
+            continue
         if table is not None and (callee != "drop" or on is not None):
             hits.setdefault(
                 node.lineno,
@@ -1816,6 +1987,9 @@ _REACHES = {
     "cannot read: spell it plainly",
     "comment": "a block comment nested in another, which the rule cannot read: "
     "un-nest it",
+    "language": "a body in a language the rule does not read as SQL (plperl, "
+    "plpython3u, ...), which could reach the append-only tables: write it in plpgsql "
+    "or sql",
 }
 
 
