@@ -30,6 +30,7 @@ from candleviewer.admin.backups.downloads import BackupDownloads
 from candleviewer.admin.backups.links import DownloadLinks
 from candleviewer.admin.user_disable import UserDisableService
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
+from candleviewer.api.view_as_subject import view_as_subject
 from candleviewer.audit.models import AuditPage, ExportResult, VerifyResult
 from candleviewer.audit.query import VerifyPlan
 from candleviewer.audit.verify_slot import VerifySlot
@@ -51,6 +52,7 @@ from candleviewer.auth.models import (
 )
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
+from candleviewer.auth.view_as import ViewAsBinding, ViewAsState
 from candleviewer.recorder.retention import PrunePlan, RunReport
 from candleviewer.rules.manager import InMemoryRuleStore
 from candleviewer.storage.repositories.account_access import (
@@ -80,6 +82,10 @@ GRANTED = uuid.UUID("00000000-0000-4000-8000-00000000000a")  # the one account t
 FOREIGN = uuid.UUID("00000000-0000-4000-8000-00000000000b")  # an account nobody here is granted
 _USER_IDS = {a: uuid.uuid5(uuid.NAMESPACE_URL, f"cv-rbac-matrix/{a}") for a in ACTORS[:4]}
 _TOKENS = {f"tok-{a}": a for a in ACTORS[:4]}
+#: #3085 S9: the users the Owner views as, every non-Owner actor (an Owner target is refused at
+#: the start). `tok-owner-as-<target>` names the Owner's session holding a live context on it.
+VIEW_TARGETS = ("manager_with_grant", "manager_without_grant", "viewer")
+_VIEW_TOKENS = {f"tok-owner-as-{t}": t for t in VIEW_TARGETS}
 #: operations the real app serves that are intentionally outside the contract (deny_by_default).
 NON_CONTRACT = frozenset({"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json", "/metrics"})
 PUBLIC_OPERATIONAL = NON_CONTRACT | {"/healthz", "/readyz"}
@@ -117,6 +123,43 @@ def user_id_of(actor: str) -> uuid.UUID:
 
 def token_of(actor: str) -> str:
     return f"tok-{actor}"
+
+
+def session_id_of(actor: str, *, viewing: str | None = None) -> uuid.UUID:
+    """The session an actor's token names; with *viewing*, the Owner's session viewing as it."""
+    name = "session" if viewing is None else f"view-as/{viewing}"
+    return uuid.uuid5(_USER_IDS[actor], name)
+
+
+def session_record(token: str) -> SessionRecord:
+    """The session row a token names. A `tok-owner-as-<target>` session is the Owner's, holding a
+    context on <target> that started a minute ago and so is live for 29 more (#3085 S9)."""
+    target = _VIEW_TOKENS.get(token)
+    actor = "owner" if target is not None else _TOKENS.get(token)
+    if actor is None:
+        raise SessionNotFound("unknown token")
+    now = datetime.now(UTC)
+    view_as = None
+    if target is not None:
+        context_id = uuid.uuid5(_USER_IDS[target], "view-as")
+        view_as = ViewAsState.start(context_id, _USER_IDS[target], now=now - timedelta(minutes=1))
+    return SessionRecord(
+        id=session_id_of(actor, viewing=target),
+        user_id=_USER_IDS[actor],
+        refresh_token_hash="x",  # noqa: S106 - inert placeholder, not a credential
+        access_token_jti=None,
+        issued_at=now,
+        last_seen_at=now,
+        expires_at=now + timedelta(hours=1),
+        revoked_at=None,
+        revoked_reason=None,
+        ip=None,
+        user_agent=None,
+        device_label=None,
+        is_electron=False,
+        mfa_satisfied_at=now,
+        view_as=view_as,
+    )
 
 
 def seed_payload(kind: str) -> dict[str, Any]:
@@ -193,8 +236,9 @@ class _Sessions:
 
     async def require_active(self, session_id: str, *, allow_locked: bool = False) -> Any:
         """`GET /auth/session` re-reads the session it identified (#2300, #2911)."""
-        actor = next(a for a, u in _USER_IDS.items() if str(uuid.uuid5(u, "session")) == session_id)
-        return await self.authenticate_access_token(token_of(actor))
+        tokens = [*_TOKENS, *_VIEW_TOKENS]
+        token = next(t for t in tokens if str(session_record(t).id) == session_id)
+        return await self.authenticate_access_token(token)
 
     async def touch(self, session_id: str) -> Any:  # `POST /auth/session/extend` (#2300)
         return await self.require_active(session_id)
@@ -205,26 +249,7 @@ class _Sessions:
     async def authenticate_access_token(
         self, token: str, *, touch: bool = False, allow_locked: bool = False
     ) -> Any:
-        actor = _TOKENS.get(token)
-        if actor is None:
-            raise SessionNotFound("unknown token")
-        now = datetime.now(UTC)
-        return SessionRecord(
-            id=uuid.uuid5(_USER_IDS[actor], "session"),
-            user_id=_USER_IDS[actor],
-            refresh_token_hash="x",  # noqa: S106 - inert placeholder, not a credential
-            access_token_jti=None,
-            issued_at=now,
-            last_seen_at=now,
-            expires_at=now + timedelta(hours=1),
-            revoked_at=None,
-            revoked_reason=None,
-            ip=None,
-            user_agent=None,
-            device_label=None,
-            is_electron=False,
-            mfa_satisfied_at=now,
-        )
+        return session_record(token)
 
 
 class _Users:
@@ -281,9 +306,15 @@ class _Resolver:
         self.revoked: set[str] = set()
 
     def resolve(self, request: Any) -> PrincipalSnapshot | None:
+        """As the deployed resolver (`SessionSnapshotResolver`): the session's subject, the
+        target on a viewing session's live read (#3085 S8); an unstamped context raises."""
         token = request.headers.get("authorization", "").partition(" ")[2].strip()
-        actor = _TOKENS.get(token)
-        return None if actor is None else self.snapshot(actor)
+        try:
+            record = session_record(token)
+        except SessionNotFound:
+            return None
+        subject = view_as_subject(request, record)
+        return self.snapshot(next(a for a, u in _USER_IDS.items() if u == subject))
 
     def snapshot(self, actor: str) -> PrincipalSnapshot:
         perms = frozenset(Permission(p) for p in actor_permissions(actor, self._spec))
@@ -586,6 +617,17 @@ class _ScopeSource:
         return actor_permissions(self._actor(owner), self._spec)
 
 
+class _Views:
+    """`ViewAsViews` (the view-as guard's port) over the seeded contexts (#3085 S9): each is live
+    and both its users stay eligible, so a request binds what its row holds."""
+
+    async def evaluate(self, record: SessionRecord, *, now: datetime) -> ViewAsBinding | None:
+        return None if record.view_as is None else record.view_as.binding(now=now)
+
+    async def viewer_label(self, record: SessionRecord) -> str:
+        return next(a for a, u in _USER_IDS.items() if u == record.user_id)
+
+
 @dataclass
 class World:
     app: FastAPI
@@ -679,6 +721,9 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     # `tests/unit/ws/test_connect_rate.py`. Settings cap it at 20 (#415), so the hub's limiter is
     # widened here, on the built app.
     app.state.ws_hub.connect_rate = ConnectRateLimiter(600)
+    # #3085 S9: the guard runs as deployed (`build_view_as` wires it on the real backend). A
+    # session holding no context passes it untouched, so every other cell is unchanged.
+    app.state.view_as = _Views()
     _CSRF_CODEC[:] = [app.state.csrf_codec]
     ctx = app.state.app_context
     ctx.audit._writer = audit
@@ -720,11 +765,17 @@ def bearer(actor: str) -> dict[str, str]:
     """Bearer + the SR-041 header/cookie pair a browser would send for that session (#2090).
     The unauthenticated caller still sends a well-formed token so the route's own 401 is
     observed, not the CSRF refusal (that is covered by tests/security/auth/test_csrf_*)."""
-    sid = None if actor == "unauthenticated" else uuid.uuid5(_USER_IDS[actor], "session")
+    sid = None if actor == "unauthenticated" else session_id_of(actor)
     csrf = csrf_headers(_CSRF_CODEC[-1], sid) if _CSRF_CODEC else {}
     if actor == "unauthenticated":
         return csrf
     return {"Authorization": f"Bearer tok-{actor}", **csrf}
+
+
+def bearer_viewing(target: str) -> dict[str, str]:
+    """`bearer` for the Owner's session viewing as *target* (#3085 S9)."""
+    csrf = csrf_headers(_CSRF_CODEC[-1], session_id_of("owner", viewing=target))
+    return {"Authorization": f"Bearer tok-owner-as-{target}", **csrf}
 
 
 def fill_path(path: str, params: dict[str, str] | None = None) -> str:

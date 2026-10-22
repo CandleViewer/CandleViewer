@@ -489,3 +489,22 @@ def test_deployed_app_reads_a_user_through_the_real_user_admin_store(
         assert deployed.client.get("/users/invites", headers=headers).status_code == 200
     finally:
         deployed.admin.users.clear()
+
+
+#: #3085 S9 (plan section 4, item 5): the owner routes' reads, viewed as each non-Owner user.
+_OWNER_READS = tuple(key for key in OWNER_ROUTES if key.startswith("GET "))
+
+
+@pytest.mark.parametrize("target", rbac.VIEW_TARGETS)
+@pytest.mark.parametrize("key", _OWNER_READS)
+def test_deployed_app_answers_a_viewing_owners_read_as_the_viewed_user(
+    deployed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, key: str, target: str
+) -> None:
+    """The deployed `SessionSnapshotResolver` reads the subject the view-as guard stamped: the
+    Owner viewing as a user is answered as that user, so an Owner-only read is refused."""
+    monkeypatch.setattr(deployed.client.app.state, "view_as", rbac._Views())
+    codec = deployed.client.app.state.csrf_codec
+    sid = rbac.session_id_of("owner", viewing=target)
+    headers = {"Authorization": f"Bearer tok-owner-as-{target}", **csrf_headers(codec, sid)}
+    resp = deployed.client.get(rbac.fill_path(key.split(" ", 1)[1]), headers=headers)
+    _assert_matrix_cell(key, target, resp)
