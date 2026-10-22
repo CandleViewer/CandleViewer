@@ -20,6 +20,12 @@
       "artifact": "coverage-unit-engine",
       "report_format": "lcov"
     },
+    "packages/rule-graph": {
+      "floor": 85.0,
+      "baseline": 85.0,
+      "artifact": "coverage-unit-engine",
+      "report_format": "lcov"
+    },
     "packages/ui": {
       "floor": 80.0,
       "baseline": 80.0,

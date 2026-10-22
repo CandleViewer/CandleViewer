@@ -61,6 +61,7 @@ CandleViewer/
 ├─ packages/chart-engine/  # custom WebGL2 engine: core, gl, layers, text (SDF), worker, plugins, bench/
 ├─ packages/ui/            # design system: tokens, primitives, trading components (Storybook)
 ├─ packages/protocol/      # GENERATED TS types/decoders from OpenAPI + WS schema — never hand-edit src/generated
+├─ packages/rule-graph/    # pure rule IR ⇄ node-graph adapter, typed ports, analysis (no React/DOM)
 ├─ packages/fixtures/      # recorded, redacted Bybit fixtures + golden outputs (shared TS & Py)
 ├─ packages/config/        # shared eslint / tsconfig / prettier / vitest presets
 ├─ services/api/candleviewer/  # Python backend: app.py, bus/, exchange/bybit/, ingestion/, book/, bars/,
