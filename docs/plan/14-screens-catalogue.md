@@ -1587,7 +1587,7 @@ Drag preview                Drop zones
 - **Stories:** US-RULE-014, US-SET-003, US-ORD-010.
 - **Design sign-off acceptance checklist:** [ ] scope selector (this account / all accounts; per-symbol scope is not in the API — OD-7 in [E39-D01](../design/E39/E39-D01.md) §11 — and a mixed-environment account set is refused, D-3) drawn [ ] the exact effect (and non-effect on open positions) restated [ ] single blast-radius confirm with the effect in the button label; flatten opt-in changes the label and locks "also cancel working orders" on [ ] hotkey opens the dialog, never engages [ ] partial-completion state drawn [ ] unfreeze path with its own confirmation and step-up [ ] LIVE vs DEMO variants (`scope: global` covers every environment and the per-account blast-radius rows carry their environment, D-3) [ ] manager variant per D-1 (within grants, flatten disabled with reason, owner paged, release owner-only)
 - **UX research:** [E39-D01](../design/E39/E39-D01.md) §7.1 (kill-switch state inventory), §8.1 (copy deck), §12 (E39-D03 acceptance criteria); per-symbol scope is not in the API (OD-7).
-- **Design (hi-fi + handoff):** [E39-D03.md](../design/E39/E39-D03.md) · [E39-D03-handoff.md](../design/E39/E39-D03-handoff.md) (E39-D03; §4 anatomy and the 13 frames, §8 the release step-up, §11 keyboard and live regions, §12 the measured matrix; CMP-211 contract in §5).
+- **Design (hi-fi + handoff):** [E39-D03.md](../design/E39/E39-D03.md) · [E39-D03-handoff.md](../design/E39/E39-D03-handoff.md) (E39-D03; §4 anatomy and the 14 frames, §8 the release step-up, §11 keyboard and live regions, §12 the measured matrix; CMP-211 contract in §5).
 
 ### SCR-073 — Lockout notice (manager view)
 

@@ -223,9 +223,9 @@ STORIES_TABLE = """
 CMP-211 | AccountScope, GroupScope, GlobalScope, KillSwitchArmed, KillSwitchEngaged,
   HoldInProgress, DiscretePressArmed, TypedConfirmError, DisabledViewer, DisabledManagerGlobal,
   Disconnected, ReducedMotion
-SCR-072 | ConfirmAccount, ConfirmFlattenTicked, ConfirmGlobal, ConfirmManager, ConfirmDemo,
-  ConfirmDisconnected, Executing, Completed, EngagedNotDurable, EngagedBySystem, PartialFailure,
-  CancelNotVerified, Release
+SCR-072 | ConfirmAccount, ConfirmFlattenTicked, ConfirmCancelUnticked, ConfirmGlobal,
+  ConfirmManager, ConfirmDemo, ConfirmDisconnected, Executing, Completed, EngagedNotDurable,
+  EngagedBySystem, PartialFailure, CancelNotVerified, Release
 SCR-134 | Clean, NeverOwnerConfirmed, ValidationWarning, ChangeSummary, StepUpRequired,
   SaveRefusedPolicyFloor, SaveConflict
 """
@@ -476,7 +476,9 @@ def fmt(ratio: float | None) -> str:
     return f"{ratio:.2f}"
 
 
-def counts(pairs: list[PairRow], tokens: list[TokenRow], exempt: set[str]) -> dict[str, int]:
+def counts(
+    pairs: list[PairRow], tokens: list[TokenRow], exempt: set[str], caps: list[dict[str, object]]
+) -> dict[str, int]:
     gated = [p for p in pairs if p["role"] in GATED]
     distinct = {(p["fg"], p["bg"]) for p in gated}
     proposed = {(p["fg"], p["bg"]) for p in gated if not p["registered"]}
@@ -494,7 +496,8 @@ def counts(pairs: list[PairRow], tokens: list[TokenRow], exempt: set[str]) -> di
     n["pairs_rejected"] = sum(1 for p in pairs if p["role"].startswith("rejected"))
     n["tokens_bound"], n["tokens_proposed"] = len(bound), len(PROPOSED)
     n["tokens_missing"] = sum(1 for t in tokens if t["status"] == "MISSING")
-    n["tokens_exempt"], n["themes"], n["caps"] = len(bound & exempt), len(THEME_ORDER), 7
+    n["tokens_exempt"], n["themes"] = len(bound & exempt), len(THEME_ORDER)
+    n["caps"] = sum(1 for c in caps if c["column"] in words(CAP_COLUMNS))
     return n
 
 
@@ -561,7 +564,8 @@ def main(argv: list[str]) -> int:
     themes = {name: merged(files) for name, files in THEMES.items()}
     reg, exempt = registered_pairs(), exempt_tokens()
     pairs, tokens = measure(themes, reg), bindings(themes)
-    nums, caps, rep = counts(pairs, tokens, exempt), caps_from_ddl(), reproduce(pairs)
+    caps = caps_from_ddl()
+    nums, rep = counts(pairs, tokens, exempt, caps), reproduce(pairs)
     proposed = sorted(
         {(p["fg"], p["bg"]) for p in pairs if p["role"] in GATED and not p["registered"]}
     )
