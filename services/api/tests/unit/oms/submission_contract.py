@@ -128,7 +128,7 @@ class Harness:
 
 
 def link() -> str:
-    """A fresh `orderLinkId` of the OMS's own shape (24 Sec.8.3)."""
+    """A fresh `order_link_id` of the OMS's own shape (24 Sec.8.3)."""
     return f"cvd-0{uuid4().hex[:21]}-d0hb-00en"
 
 

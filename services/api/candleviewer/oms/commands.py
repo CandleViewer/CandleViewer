@@ -945,10 +945,10 @@ class OmsCommandPort:
                 resync = self._clock_halt.resync(reason=CLOCK_RESYNC_REASON)
                 self._resync = spawn(resync, name="oms-clock-resync")
         elif code == OmsErrorCode.AUTH_ERROR and ret_code is not None:
-            refused = self._credentials.refused(
-                account.account_id, error_code=code, exchange_ret_code=ret_code
-            )
-            try:
+            try:  # the call too: a port that raises before awaiting loses only the report
+                refused = self._credentials.refused(
+                    account.account_id, error_code=code, exchange_ret_code=ret_code
+                )
                 await self._bounded(refused, by=by)
             except Exception as exc:  # the rejection is lost, never the order's answer
                 _log().critical("oms_auth_rejection_lost", failure=type(exc).__name__)

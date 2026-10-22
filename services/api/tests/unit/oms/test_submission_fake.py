@@ -94,8 +94,9 @@ class TestInMemorySubmissionStores(SubmissionContract):
     async def test_a_leg_on_an_account_never_seeded_passes_the_environment_trigger(
         self, fake: Fake
     ) -> None:
-        """`trg_tgl_env` passes a leg whose account's environment Postgres reads as NULL; here,
-        one no `AccountRef` seeded."""
+        """The fake holds no account rows, so a leg on an account no `AccountRef` seeded passes
+        `trg_tgl_env` here; Postgres never reaches the trigger for such an account, as
+        `require_live` refuses it first (D-2B1-02). A rig that persists groups seeds them."""
         first, order = entry(uuid4(), *accounts(), group={"env": "live"})
         await fake.submissions.create_first(first, order, EVENT)
         assert held(fake, first, order) == (1, 1, 1, 1, 1)

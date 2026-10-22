@@ -366,14 +366,14 @@ class InMemoryOrderStore:
         await self._turn()
         port.require_exchange_record(first_event)
         row, event = self._new_order(order, first_event)
-        self._commit(row, event)
+        self._commit_rows(row, event)
         return row
 
     async def transition(self, step: port.OrderTransition) -> Step:
         await self._turn()
         port.require_no_fill(step.event, step.to_state)
         row, event = self._moved(step)
-        self._commit(row, event, *self._entry_stops(step, row))
+        self._commit_rows(row, event, *self._entry_stops(step, row))
         return Step(row, event.fresh())
 
     async def get(self, account_id: UUID, order_id: UUID) -> Row | None:
@@ -397,7 +397,7 @@ class InMemoryOrderStore:
         await self._turn()
         port.require_no_fill(event)
         stored = self._event(self._owned(account_id, order_id), event, (None, None))
-        self._commit(stored)
+        self._commit_rows(stored)
         return stored.fresh()
 
     async def list_for_order(
@@ -421,7 +421,7 @@ class InMemoryOrderStore:
         if _EXACT.add(order.cum_exec_qty, execution.exec_qty) != fill.totals.cum_exec_qty:
             raise port.StaleOrderState(step.order_id, step.from_state)
         row, event = self._moved(step, asdict(fill.totals))
-        self._commit(row, event, stored, *self._entry_stops(step, row))
+        self._commit_rows(row, event, stored, *self._entry_stops(step, row))
         return Step(row, event.fresh())
 
     def _insert(self, execution: NewExecution) -> bool:
@@ -430,7 +430,7 @@ class InMemoryOrderStore:
             return False
         if execution.order_id is not None:
             self._owned(execution.exchange_account_id, execution.order_id)
-        self._commit(stored)
+        self._commit_rows(stored)
         return True
 
     def _find(self, account_id: UUID, order_id: UUID) -> Row | None:
@@ -518,7 +518,7 @@ class InMemoryOrderStore:
             finally:
                 self._held = None
                 held.set()
-        self._commit(*rows)
+        self._commit_rows(*rows)
 
     def _new_order(self, order: port.NewOrder, first_event: NewEvent) -> tuple[Row, _StoredEvent]:
         """An order's insert with its first event, refused as Postgres refuses it, uncommitted."""
@@ -629,8 +629,10 @@ class InMemoryOrderStore:
         """The legs' insert (`insert_legs_statement`) into a group of `environment`: the rejection
         texts redacted and bound, then for each leg its row trigger `trg_tgl_env` (C-2.11: a leg
         on a seeded account of another environment, SEC-2B1-03), its CHECKs by name, its key and
-        `ux_tgl_group_account`. An account never seeded passes the trigger, as one whose
-        environment Postgres reads as NULL does."""
+        `ux_tgl_group_account`. An account never seeded passes the trigger here, as the fake
+        holds no account rows; Postgres never reaches it for such an account (`env` is NOT NULL,
+        and `require_live` refuses an unknown account first), so a rig that persists groups
+        seeds every `AccountRef`."""
         texts = [
             {
                 "rejection_code": xp.redact_exchange_text(
@@ -741,7 +743,7 @@ class InMemoryOrderStore:
 
         return tuple(sorted(filter(waits, self._stops.values()), key=_age))
 
-    def _commit(self, *rows: _Stored) -> None:
+    def _commit_rows(self, *rows: _Stored) -> None:
         """A write's rows, all at once after its checks; an injected fault before them, or after
         them when it was `committed`."""
         fault, self._fault = self._fault, None
@@ -805,7 +807,8 @@ class InMemorySubmissionStore:
     def seed_account(self, account: AccountRef) -> None:
         """`account`'s environment as its `exchange_accounts` row holds it, read off the trading
         port's `AccountRef`, for `trg_tgl_env` (SEC-2B1-03). A leg on an account never seeded
-        passes the trigger, as one whose environment Postgres reads as NULL does."""
+        passes the trigger here, as the fake holds no account rows; Postgres refuses such an
+        account before the leg insert (`require_live`)."""
         self._db._environments[account.account_id] = account.environment
 
     def refuse(self, account_id: UUID, reason: SubmissionRefusal) -> None:
@@ -854,7 +857,7 @@ class InMemoryIdempotencyAnchorStore:
         held = self._db._anchors.get(anchor_id)
         if held is None or held.outcome is not None:
             return False
-        self._db._commit(held._replace(outcome=outcome))
+        self._db._commit_rows(held._replace(outcome=outcome))
         return True
 
 
