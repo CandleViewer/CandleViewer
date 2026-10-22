@@ -1706,6 +1706,7 @@ Drag preview                Drop zones
 - **Performance:** Fills stream on `executions`; the list is virtualised and coalesced to 5 Hz; a 1,000-fill session renders without exceeding 4 ms scripting per frame.
 - **Analytics/audit:** `execution.detail_viewed`, `execution.exported` (analytics); the fills themselves are immutable exchange records stored server-side and referenced from the audit trail.
 - **UX research:** [E29-D01.md](../design/E29/E29-D01.md) (E29-D01; heuristic, pending owner approval; fills typed by execution type and grouped by order, with millisecond UTC times and provisional fees, D14; proposes amendment AM-4, a Type column).
+- **Hi-fi (E29-D03):** [E29-D03.md](../design/E29/E29-D03.md) §3 (the drawer in every state: order, trade-group and closed-position scopes, per-fill rows, the average with the maker/taker split, slippage where an intent exists, fan-out by account, CSV export, the empty states), §10.1 (this checklist item by item); boards 01–07 on Penpot page `E29-D03` (pending).
 - **Design sign-off acceptance checklist:** [ ] per-fill rows (time, price, qty, fee, fee currency, liquidity flag, order id, exec id) drawn [ ] aggregation to an average price with the maker/taker split [ ] slippage vs intended price shown where an intent exists [ ] fan-out grouping by account [ ] CSV export [ ] empty state
 
 ### SCR-079 — Account detail drawer (trading-side)
@@ -2897,6 +2898,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Analytics/audit:** `ws.disconnected` `{reason, subscriptions}`, `ws.reconnect_attempt` `{attempt}`, `ws.reconnected` `{outageMs, gapFilled}` (analytics, and incident-log entries beyond a threshold). Orders attempted while disconnected are refused client-side and recorded as `order.blocked_offline`.
 - **Design sign-off acceptance checklist:** [ ] the global overlay and the per-panel stale shading are drawn together and are consistent [ ] last-good timestamp shown on every affected panel [ ] order entry is visibly blocked with the reason while private feeds are down [ ] the 'native stops still protect your positions' reassurance is stated where true [ ] reconnecting, gap-filling and restored states drawn [ ] the overlay never hides the positions grid entirely
 - **Design (hi-fi + handoff, motion spec):** [E17-D02.md](../design/E17/E17-D02.md) · [E17-D02-handoff.md](../design/E17/E17-D02-handoff.md) (E17-D02; three SCR-152 variants, CMP-076/077/078/092, copy deck, announcement policy, motion PROPOSED) · [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; banner content at 0 ms, dismissal fade, the PROPOSED hysteresis table and the flap collapse; `ws.banner_suppressed` proposed).
+- **Hi-fi (E29-D03, OMS account states):** [E29-D03.md](../design/E29/E29-D03.md) §4 (the per-account reconciling, desync and stale — locked variants on SCR-063, corrections that show both values, the post-reconnect summary in `recovered`), §5 (the copy deck); boards 08–11 on Penpot page `E29-D03` (pending).
 
 ### SCR-153 — Degraded-mode state
 
