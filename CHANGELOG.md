@@ -5133,3 +5133,4 @@ tracker).
 - **auth-rbac**: the journal-first audit lane is always on: auth containment and sign-out rows are journaled before the answer, and the `audit.lane_journal_first` flag is removed (#3009) (#4037)
 - **auth-rbac**: the audit record of a session revoked because its user is disabled, when it cannot be written, is counted on `auth_audit_outcome_lost_total` and so raises `AuthAuditOutcomeLost` (#3009) (#4037)
 - **auth-rbac**: a token refresh keeps a session's step-up penalty, so the read-only period after failed step-up codes can no longer be lifted by refreshing (#4051) (#4060)
+- **backend-platform**: a database error no longer carries the server's text (row values, the statement or its parameters) into the API's logs; it keeps its class, SQLSTATE and constraint name (#2748) (#4074)
