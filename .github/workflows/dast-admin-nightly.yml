@@ -18,7 +18,8 @@ name: dast-admin-nightly
 # (check_artefact_secrets.py).
 # Every credential is made here, per run, masked and never echoed: no repository secret is read,
 # and the target is loopback, never an input (admin_requests.py and mint_sessions.py refuse any
-# other). A red run comments on, or opens, the signal's issue (_nightly-issue.yml, #1849).
+# other). A red run on main comments on, or opens, the signal's issue (_nightly-issue.yml, #1849);
+# a dispatch on a branch files nothing.
 on:
   schedule:
     - cron: "27 3 * * *"
@@ -146,7 +147,7 @@ jobs:
                 --password-env "ZAP_${role^^}_PASSWORD" --totp-secret-file "$RUNNER_TEMP/cv/$role.totp" \
                 --out "$envfile" &&
               docker run --rm --network host --env-file "$envfile" -e ZAP_TARGET \
-                -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -autorun "/zap/wrk/$WORK/$role-denials.yaml" \
+                -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -silent -autorun "/zap/wrk/$WORK/$role-denials.yaml" \
                 2>&1 | tee "$WORK/$role-denials.log"; } || rc=1
           done
           exit "$rc"
@@ -175,9 +176,12 @@ jobs:
             { python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "${!user}" \
                 --password-env "ZAP_${role^^}_PASSWORD" --totp-secret-file "$RUNNER_TEMP/cv/$role.totp" \
                 --out "$envfile" &&
-              docker run --rm --network host --env-file "$envfile" -e ZAP_TARGET \
-                -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -autorun "/zap/wrk/$WORK/$role-scan.yaml" \
+              docker run --name "zap-$role-scan" --network host --env-file "$envfile" -e ZAP_TARGET \
+                -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -silent -autorun "/zap/wrk/$WORK/$role-scan.yaml" \
                 2>&1 | tee "$WORK/$role-scan.log"; } || rc=1
+            # ZAP's own log (its errors and insights), not its session: the scrub checks it too.
+            docker cp "zap-$role-scan:/home/zap/.ZAP/zap.log" "$WORK/$role-scan-zap.log" || rc=1
+            docker rm -f "zap-$role-scan" > /dev/null || true
           done
           exit "$rc"
 
@@ -187,8 +191,9 @@ jobs:
           set -uo pipefail
           rc=0
           for role in manager viewer; do # both roles are checked, then the step fails
-            # Both GET /me requestors of the scan plan ran and answered 200 (no "lost authentication").
-            python3 security/zap/check_liveness.py "$WORK/$role-scan.log" "zap-reports/admin-surface-$role.json" || rc=1
+            # The plan's three requestors ran: the refused-page probe and both GET /me, each with
+            # its planned status (no "lost authentication").
+            python3 security/zap/check_liveness.py --requestors 3 "$WORK/$role-scan.log" "zap-reports/admin-surface-$role.json" || rc=1
             python3 security/zap/baseline_gate.py "zap-reports/admin-surface-$role.json" .zap/admin-surface-baseline.json || rc=1
           done
           exit "$rc"
@@ -203,14 +208,15 @@ jobs:
         id: scrub
         if: always()
         # The session values of the env files, then each secret this run made: its passwords,
-        # pepper and keys (in $GITHUB_ENV since the first step; only their names are passed) and
-        # the TOTP seeds seed_fixture_user.py wrote.
+        # pepper and keys (in $GITHUB_ENV since the first step; only their names are passed), the
+        # TOTP seeds seed_fixture_user.py wrote and the audit lane key.
         run: |
           python3 security/zap/check_artefact_secrets.py --env-dir "$RUNNER_TEMP/cv" \
             --env ZAP_OWNER_PASSWORD --env ZAP_MANAGER_PASSWORD --env ZAP_VIEWER_PASSWORD \
             --env POSTGRES_PASSWORD --env CV_AUTH_PEPPER --env CV_AUTH_TOTP_KEY_HEX \
             --env CV_AUTH_RECOVERY_HMAC_KEY_HEX --env CV_AUTH_CSRF_KEY_HEX \
-            --secret-file "$RUNNER_TEMP/cv/*.totp" "$WORK" zap-reports
+            --secret-file "$RUNNER_TEMP/cv/*.totp" --secret-file "$RUNNER_TEMP/cv-lane/lane.key" \
+            "$WORK" zap-reports
 
       - name: Upload the plans, logs and reports (the sessions in them died with the stack)
         if: ${{ always() && steps.scrub.outcome == 'success' }}
@@ -224,11 +230,15 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
+        # A scan container `docker rm` could not remove holds ZAP's session store: it goes too.
+        run: |
+          docker rm -f zap-manager-scan zap-viewer-scan > /dev/null 2>&1 || true
+          docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
 
   report:
     needs: zap-admin
-    if: ${{ always() && needs.zap-admin.result == 'failure' }}
+    # A dispatch on a branch (an experiment) files nothing: only main's nightly is the signal.
+    if: ${{ always() && needs.zap-admin.result == 'failure' && github.ref == 'refs/heads/main' }}
     permissions:
       issues: write
     uses: ./.github/workflows/_nightly-issue.yml

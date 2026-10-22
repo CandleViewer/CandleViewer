@@ -9,8 +9,11 @@ import base64
 import functools
 import importlib.util
 import json
+import os
 import re
+import shutil
 import stat
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -187,13 +190,13 @@ def test_the_scan_plan_is_the_template_with_the_roles_report() -> None:
     assert TEMPLATE["jobs"][-1]["parameters"]["reportFile"] == "admin-surface"  # not mutated
 
 
-def test_the_passive_thresholds_are_set_before_the_first_request() -> None:
-    """A job applies from where it runs: with the config after the import, the import's responses
-    (the only admin-surface traffic the passive scan sees) met the default thresholds."""
+def test_the_passive_config_comes_before_the_first_request() -> None:
+    """A job applies from where it runs, so the config comes before any request."""
     plan = plans.scan_plan(TEMPLATE, "viewer", API_FILE)
     assert [job["type"] for job in plan["jobs"]] == [
         "script",  # the session, before any request
-        "passiveScan-config",  # the Low thresholds, before the first response is scanned
+        "passiveScan-config",  # before the first response is scanned
+        "requestor",  # admin-probe-after-config: the session reaches the surface, refused
         "requestor",  # session-live-before-scan
         "openapi",
         "passiveScan-wait",
@@ -201,9 +204,15 @@ def test_the_passive_thresholds_are_set_before_the_first_request() -> None:
         "requestor",  # session-live-after-scan
         "report",
     ]
-    config = plan["jobs"][1]
+
+
+def test_the_passive_config_sets_no_rule_threshold() -> None:
+    """ZAP 2.17.0 logs a threshold this job sets and never applies it, as run 39600018445's probe
+    showed (#3991), so the config sets none."""
+    plan = plans.scan_plan(TEMPLATE, "viewer", API_FILE)
+    (config,) = [job for job in plan["jobs"] if job["type"] == "passiveScan-config"]
     assert config["parameters"]["scanOnlyInScope"] is True
-    assert {rule["threshold"] for rule in config["rules"]} == {"Low"}
+    assert "rules" not in config
 
 
 @pytest.fixture(scope="module")
@@ -687,18 +696,19 @@ def _row(
     return {"username": "u", "request_id": request_id, "action": action, "outcome": outcome}
 
 
-def _step_up() -> dict[str, Any]:
-    return _row(None, action="auth.step_up_required")
+def _step_up(item: dict[str, Any]) -> dict[str, Any]:
+    return _row(item["correlation_id"], action="auth.step_up_required")
 
 
-def test_each_refusal_has_its_record_by_request_id_or_as_a_step_up_refusal() -> None:
+def test_planned_refusals_pass_with_their_records_and_the_rows_the_gate_ignores() -> None:
     by_id, step_up, silent = (
         _request("GET /admin/overview"),
         _request("POST /admin/recorder/purge"),
         _request("GET /admin/support-bundle/{job_id}"),
     )
     skipped = _request("PUT /admin/log-level", recorded=False)
-    rows = [_row(by_id["correlation_id"]), _step_up(), _row(str(uuid.uuid4()), outcome="success")]
+    rows = [_row(by_id["correlation_id"]), _step_up(step_up)]
+    rows.append(_row(str(uuid.uuid4()), outcome="success"))
     assert denials.audit_problems("manager", [by_id, step_up, silent, skipped], rows) == []
 
 
@@ -725,17 +735,19 @@ def test_a_csrf_refusal_that_names_the_request_does_not_answer_for_it_either() -
     assert len(problems) == 2
 
 
-def test_a_nameless_rbac_denial_answers_for_one_refusal_until_3990_names_its_request() -> None:
-    first, second = _request("POST /users"), _request("GET /users/invites")
-    problems = denials.audit_problems("viewer", [first, second], [_row(None, action="rbac.denied")])
-    assert problems == ["viewer: GET /users/invites was refused with no audit record"]
-
-
-def test_a_nameless_record_of_any_other_action_answers_for_no_request() -> None:
+@pytest.mark.parametrize(
+    "action", ["auth.step_up_required", "rbac.denied", "admin.area_entered", "auth.login_failed"]
+)
+def test_a_denied_record_without_its_request_id_answers_for_none_and_fails_the_gate(
+    action: str,
+) -> None:
+    """Since #3990 every refusal record names its request (the step-up and invites stand-ins are
+    gone), so a nameless one is a regression, whatever its action."""
     item = _request("POST /admin/a")
-    rows = [_row(None), _row(None, action="auth.login_failed")]
-    assert denials.audit_problems("viewer", [item], rows) == [
-        "viewer: POST /admin/a was refused with no audit record"
+    assert denials.audit_problems("viewer", [item], [_row(None, action=action)]) == [
+        "viewer: 1 denied record(s) carry no request id: a refusal record lost its request's id "
+        "(#3990)",
+        "viewer: POST /admin/a was refused with no audit record",
     ]
 
 
@@ -757,26 +769,6 @@ def test_a_silent_refusal_fails_and_a_known_silent_one_that_is_recorded_now_fail
     assert denials.audit_problems("viewer", [silent], [_row(silent["correlation_id"])]) == [
         "viewer: GET /admin/support-bundle/{job_id} is recorded now: drop it from KNOWN_SILENT"
     ]
-
-
-def test_one_unnamed_record_answers_for_one_refusal_only() -> None:
-    first, second = _request("POST /admin/recorder/purge"), _request(
-        "PUT /admin/feature-flags/{flagKey}"
-    )
-    assert denials.audit_problems("manager", [first, second], [_step_up()]) == [
-        "manager: PUT /admin/feature-flags/{flagKey} was refused with no audit record"
-    ]
-
-
-def test_a_nameless_record_no_planned_request_needed_fails_the_gate() -> None:
-    """A nameless record proves one refusal by count, not by identity, so the count must be tight:
-    a spare one would let an unrecorded refusal hide behind it."""
-    named, step_up = _request("GET /admin/overview"), _request("POST /admin/recorder/purge")
-    rows = [_row(named["correlation_id"]), _step_up(), _step_up(), _row(None, action="rbac.denied")]
-    assert denials.audit_problems("manager", [named, step_up], rows) == [
-        "manager: 2 nameless denial record(s) answer for no planned request"
-    ]
-    assert denials.audit_problems("manager", [named, step_up], rows[:2]) == []  # the tight count
 
 
 def _denial_dir(tmp_path: Path, log: str, rows: list[dict[str, Any]]) -> list[str]:
@@ -834,6 +826,26 @@ def test_the_scan_gate_reads_zap_2_17s_wrong_status_once_though_zap_repeats_it()
     after = f"Job requestor started\n{lost}\nJob requestor finished, time taken: 00:00:00\n"
     log = f"{_REQUESTOR}Job activeScan finished\n{after}Automation plan warnings:\n\t{lost}\n"
     assert liveness.check(log, _REPORT) == [f"requestor failure: {lost}"]
+
+
+def test_the_scan_gate_counts_every_requestor_of_the_plan(tmp_path: Path) -> None:
+    """The refused-page probe is a third requestor. The gate counts the plan's own, so the probe and
+    the first /me cannot stand in for a /me after the scan that never ran."""
+    count = sum(job["type"] == "requestor" for job in TEMPLATE["jobs"])
+    gate = next(
+        step["run"] for name, step in _steps().items() if name.startswith("The scans stayed")
+    )
+    assert f"check_liveness.py --requestors {count} " in gate
+    assert liveness.check(_REQUESTOR * count, _REPORT, count) == []
+    ran = count - 1
+    assert liveness.check(_REQUESTOR * ran, _REPORT, count) == [
+        f"requestors (the /v1/auth/me liveness checks among them) ran {ran}/{count}, finished {ran}"
+    ]
+    log, report = tmp_path / "scan.log", tmp_path / "zap.json"
+    log.write_text(_REQUESTOR * ran, encoding="utf-8")
+    report.write_text(_REPORT, encoding="utf-8")
+    assert liveness.main(["check_liveness.py", "--requestors", str(count), str(log), str(report)])
+    assert liveness.main(["check_liveness.py", str(log), str(report)]) == 0  # the /me pair
 
 
 # --- check_artefact_secrets.py ------------------------------------------------------------------
@@ -1062,6 +1074,7 @@ def test_the_artefact_check_searches_every_secret_the_run_makes_and_the_totp_see
     }
     assert set(re.findall(r"--env (\w+)", scrub)) == generated  # none left out, none misspelt
     assert '--secret-file "$RUNNER_TEMP/cv/*.totp"' in scrub  # where seed_fixture_user.py writes
+    assert '--secret-file "$RUNNER_TEMP/cv-lane/lane.key"' in scrub  # the audit lane key
     assert not re.search(r"\$\{?(" + "|".join(generated) + r")\b", scrub)  # names, never values
 
 
@@ -1099,3 +1112,128 @@ def test_the_workflow_pins_every_action_and_image_and_uses_no_repository_secret(
     assert re.search(r"zaproxy:[\d.]+@sha256:[0-9a-f]{64}", text)
     assert re.findall(r"\bsecrets\.\w+", text) == []  # synthetic credentials only, made per run
     assert re.search(r"ZAP_TARGET: http://127\.0\.0\.1:\d+\n", text)
+
+
+_FAKE_DOCKER = """\
+import os
+import re
+import sys
+from pathlib import Path
+
+role = re.search(r"zap-(\\w+)-scan", " ".join(sys.argv[2:]))
+with open(os.environ["DOCKER_CALLS"], "a", encoding="utf-8") as calls:
+    calls.write(f"{sys.argv[1]} {role.group(1) if role else '?'}\\n")
+if sys.argv[1] in os.environ["DOCKER_FAILS"].split():
+    sys.exit(1)
+if sys.argv[1] == "cp":
+    Path(sys.argv[3]).write_text("zap.log\\n", encoding="utf-8")
+"""
+_FAKE_MINT = """\
+import os
+import sys
+from pathlib import Path
+
+if os.environ["MINT_FAILS"]:
+    sys.exit(1)
+Path(sys.argv[sys.argv.index("--out") + 1]).write_text("ZAP_AUTH_TOKEN=t\\n", encoding="utf-8")
+"""
+_BOTH = ["run manager", "cp manager", "rm manager", "run viewer", "cp viewer", "rm viewer"]
+
+
+def _phase_b(tmp_path: Path, docker_fails: str, mint_fails: str) -> tuple[int, list[str]]:
+    """Run Phase B's script as the runner does (`bash -e`) in tmp_path, with a stand-in `docker`
+    and mint script and no network: its exit code and the docker calls, `<command> <role>` each."""
+    if not shutil.which("bash"):  # CI must run these proofs
+        (pytest.fail if os.environ.get("CI") else pytest.skip)("bash runs the step")
+    bin_dir, zap = tmp_path / "bin", tmp_path / "security/zap"
+    for folder in (bin_dir, zap, tmp_path / "zap-work", tmp_path / "cv"):
+        folder.mkdir(parents=True)
+    (bin_dir / "docker").write_text(f"#!{sys.executable}\n{_FAKE_DOCKER}", encoding="utf-8")
+    (bin_dir / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+    for tool in ("docker", "python3"):
+        (bin_dir / tool).chmod(0o755)
+    (zap / "mint_sessions.py").write_text(_FAKE_MINT, encoding="utf-8")
+    calls = tmp_path / "calls"
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "HOME": str(tmp_path),
+        "RUNNER_TEMP": str(tmp_path),
+        "WORK": "zap-work",
+        "ZAP_TARGET": TARGET,
+        "ZAP_IMAGE": "zap",
+        "ZAP_MANAGER_USER": "manager-user",
+        "ZAP_VIEWER_USER": "viewer-user",
+        "DOCKER_CALLS": str(calls),
+        "DOCKER_FAILS": docker_fails,
+        "MINT_FAILS": mint_fails,
+    }
+    run = _steps()["Phase B, the passive and active scan, as each role"]["run"]
+    proc = subprocess.run(
+        ["bash", "-e", "-c", run],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    return proc.returncode, calls.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.parametrize(
+    ("docker_fails", "mint_fails", "code", "calls"),
+    [
+        ("", "", 0, _BOTH),
+        ("run", "", 1, _BOTH),  # a failed scan's log is still copied and its container removed
+        ("cp", "", 1, _BOTH),  # a log that cannot be copied fails the step; the container goes
+        ("rm", "", 0, _BOTH),  # a removal that fails is not the scan's failure
+        ("", "1", 1, [call for call in _BOTH if not call.startswith("run")]),  # no session, no scan
+    ],
+)
+def test_the_scan_copies_zaps_log_out_then_removes_its_container_for_both_roles(
+    tmp_path: Path, docker_fails: str, mint_fails: str, code: int, calls: list[str]
+) -> None:
+    """ZAP's `zap.log` (its errors and insights, #3996's R2-S5) is copied out of the container
+    before it is removed, into the work directory the scrub reads, whatever the scan did; both
+    roles run before the step fails."""
+    assert "--rm" not in _steps()["Phase B, the passive and active scan, as each role"]["run"]
+    assert _phase_b(tmp_path, docker_fails, mint_fails) == (code, calls)
+    copied = sorted(path.name for path in (tmp_path / "zap-work").glob("*-zap.log"))
+    assert copied == (
+        [] if docker_fails == "cp" else ["manager-scan-zap.log", "viewer-scan-zap.log"]
+    )
+
+
+def test_zap_makes_no_unsolicited_request_and_no_scan_container_outlives_the_job() -> None:
+    """`-silent`: no update check or call-home leaves the runner. A scan container that
+    `docker rm` could not remove, with ZAP's session store in it, goes at tear-down."""
+    runs = re.findall(r"zap\.sh -cmd[^\n]*", WORKFLOW.read_text(encoding="utf-8"))
+    assert len(runs) == 2 and all(" -silent " in run for run in runs)
+    teardown = _steps()["Tear down"]
+    assert teardown["if"] == "always()"
+    assert "docker rm -f zap-manager-scan zap-viewer-scan" in teardown["run"]
+
+
+def test_the_scrub_reads_every_path_the_upload_sends() -> None:
+    """Both phases write into $WORK and ZAP's reports into zap-reports: the scrub reads exactly the
+    paths the upload sends, so nothing reaches the artefact unread."""
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = _steps()
+    scrub = next(step["run"] for name, step in steps.items() if name.startswith("No session value"))
+    upload = next(step for name, step in steps.items() if name.startswith("Upload the plans"))
+    assert scrub.split()[-2:] == ['"$WORK"', "zap-reports"]
+    work = workflow["jobs"]["zap-admin"]["env"]["WORK"]
+    assert upload["with"]["path"].split() == [f"{work}/", "zap-reports/"]
+
+
+def test_the_session_reaches_the_admin_surface_and_is_refused_before_the_scan() -> None:
+    """403, not 401: the role's session is live on the admin surface and RBAC refuses it."""
+    jobs = TEMPLATE["jobs"]
+    kinds = [job["type"] for job in jobs]
+    (probe,) = [job for job in jobs if job.get("name") == "admin-probe-after-config"]
+    assert kinds.index("passiveScan-config") < jobs.index(probe) < kinds.index("openapi")
+    assert probe["requests"] == [
+        {"url": "${ZAP_TARGET}/admin/overview", "method": "GET", "responseCode": 403}
+    ]
+    row = MATRIX["operations"]["GET /admin/overview"]["outcomes"]
+    assert {row["viewer"], row["manager_without_grant"]} == {"403"}

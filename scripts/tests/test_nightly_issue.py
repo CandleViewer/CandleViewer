@@ -79,7 +79,8 @@ SIGNALS = {
     # E42-X03: the ZAP admin profile; any failed step of its one job is the verdict.
     ("dast-admin-nightly.yml", "report"): (
         "zap-admin",
-        "${{ always() && needs.zap-admin.result == 'failure' }}",
+        # #3991: a dispatch on a branch (an experiment) files nothing; main's runs are the signal.
+        "${{ always() && needs.zap-admin.result == 'failure' && github.ref == 'refs/heads/main' }}",
         "dast-admin",
         "security: dast-admin-nightly failed",
         "security,area/accounts-admin",
