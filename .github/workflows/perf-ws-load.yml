@@ -87,8 +87,9 @@ jobs:
           for soak in perf-ingestion-nightly.yml:perf-pack-full perf-bars-memdiag.yml:leg; do
             wf=${soak%%:*} job=${soak#*:} n=0
             for status in in_progress queued; do
-              if ! ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=${status}&per_page=50" --jq '.workflow_runs[].id' 2>"$err"); then
-                # the memory legs' workflow is not on main until its PR merges: only its 404 means none runs
+              if ! ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=${status}&per_page=50" --paginate --jq '.workflow_runs[].id' 2>"$err"); then
+                # the memory legs' workflow is not on main until its PR merges: only its 404 means none runs.
+                # Remove this allowance once perf-bars-memdiag.yml is on main: a 404 then fails closed too.
                 if [ "$wf" = perf-bars-memdiag.yml ] && grep -qxF 'gh: Not Found (HTTP 404)' "$err"; then
                   echo "${wf}: not on this repository yet (HTTP 404), so no run of it holds the runner"
                   break
@@ -97,7 +98,7 @@ jobs:
                 exit 1
               fi
               for id in $ids; do
-                c=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs" --jq "[.jobs[] | select(.name == \"${job}\" and (.status == \"in_progress\" or .status == \"queued\"))] | length")
+                c=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs?per_page=100" --jq "[.jobs[] | select(.name == \"${job}\" and (.status == \"in_progress\" or .status == \"queued\"))] | length")
                 n=$((n + c))
               done
             done
