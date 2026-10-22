@@ -95,8 +95,10 @@ Unfixable High: §16.2 exception in `04-security-program.md` AND `security/accep
 ## 5. postinstall review (SR-138)
 
 CI installs with `--ignore-scripts`. Exceptions are the two in
-`tools/ci/allowed-postinstall.json`: `electron` (pinned binary download) and `esbuild`
-(pinned platform binary). Any addition needs Security review.
+`tools/ci/allowed-postinstall.json`, which `tools/ci/run-allowed-postinstall.mjs` runs: `esbuild`
+(its postinstall, a pinned platform binary) and `electron` (the package's own `install-electron`
+bin, a pinned binary download; Electron 42 and later have no postinstall). Any addition needs
+Security review.
 
 ## 6. Container hardening
 
@@ -202,7 +204,7 @@ this change. #1819 stays open for the other majors it sequences.
 
 Update 2026-10-22 (#1819, electron): the desktop shell now runs Electron 45, a supported major,
 so the accepted-risk entry for electron 41.10.7 is out of `security/accepted-risks.yaml`, and
-`pnpm audit` no longer lists electron. Since Electron 42 the `electron` package fetches its
-binary on first use instead of in a `postinstall` script, so its `allowBuilds` and
-`tools/ci/allowed-postinstall.json` entries (§5) now run nothing. #1819 stays open for the
-other majors it sequences.
+`pnpm audit` no longer lists electron. Since Electron 42 the `electron` package has no
+`postinstall` script: its `allowBuilds` entry runs nothing, and the SR-138 runner fetches the
+binary through the package's own `install-electron` bin (§5). #1819 stays open for the other
+majors it sequences.
