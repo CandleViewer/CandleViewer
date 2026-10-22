@@ -12,7 +12,11 @@ The fixture set lands with its own PRs and is described in section 1.
   - `E42-Snn` is the story's Gherkin in `docs/plan/backlog/E42.json`;
   - `US-ADMIN-nnn` is `docs/plan/11-user-stories.md` §26;
   - `SCR-nnn` is `docs/plan/14-screens-catalogue.md` §10;
-  - `22` is `docs/plan/22-api-openapi.yaml`, and `23` is `docs/plan/23-ws-protocol.md`.
+  - `22` is `docs/plan/22-api-openapi.yaml`, and `23` is `docs/plan/23-ws-protocol.md`;
+  - `D02` is the signed-off wireframe spec, `docs/design/E42/E42-D02.md` (its decisions `D1` to `D18`, the
+    destructive-action ladder's rungs, and its amendments `A-n`).
+- **Where D02 resolved a pattern differently** from a story's Gherkin or the catalogue, the case follows D02
+  and the server, and the difference is a question in section 9.
 - **Environment:** staging or demo, on the seeded fixtures only. Never live (`02-definition-of-ready-done.md`
   §8). No fixture or step holds a real credential, a real Bybit key or real user data.
 - **Case ids:**
@@ -57,14 +61,18 @@ The handles below are fixed here. The fixture slices define each one as an idemp
 
 ### S01: the admin shell, the re-auth gate and SCR-120 (US-ADMIN-001, 002, 004, 010, 011)
 
-**AD-S01-01 A stale token meets the gate [R]** (`e2e`; E42-S01 "Owner enters the admin area with a stale
-token"; SCR-149)
+**AD-S01-01 Entry without a fresh step-up meets the gate [R]** (`e2e`, `contract`; E42-S01 "Owner enters the
+admin area with a stale token"; SCR-149; D02 D2 and A-14)
 
-- Pre: OWNER, whose admin token is 20 minutes old (the test clock moves it).
+- Pre: OWNER, whose last step-up is older than the web router's freshness window (the test clock moves it).
 - Steps: open `/admin`; enter the correct password and TOTP.
-- Expected: the SCR-149 gate, as `role="alertdialog"`, says why re-authentication is needed and that the
-  token lasts 15 minutes. After the correct answer the admin area renders.
-- Audit: `auth.step_up_granted` for OWNER, then `admin.area_entered` (allowed). See Q-1.
+- Expected: the gate, as `role="alertdialog"` with a focus trap, says why it is shown and how long the
+  result lasts. After the correct answer the admin area renders. `Esc` cancels to the previous non-admin
+  route.
+- Server: the entry itself is a read, which the server records but never refuses. Every dangerous action
+  is still challenged server-side (AD-S01-N01).
+- Audit: `auth.step_up_granted` for OWNER, then `admin.area_entered` (allowed, with its `reauth_age_s`). See
+  Q-1.
 
 **AD-S01-02 A non-owner cannot reach the admin area [R]** (`e2e`, `contract`; E42-S01 "Non-owner cannot
 reach the admin area"; SCR §10 preamble)
@@ -84,12 +92,13 @@ independently"; SCR-120)
   value within 800 ms (SCR-120).
 - Audit: `admin.area_entered` (allowed).
 
-**AD-S01-04 Re-auth expires mid-edit** (`e2e`; E42-S01 "Re-auth expires mid-edit"; SCR-149 checklist)
+**AD-S01-04 Re-auth expires mid-edit** (`e2e`; E42-S01 "Re-auth expires mid-edit"; D02 D2)
 
-- Pre: OWNER on the SCR-122 limits form, with 10 seconds left on the token.
-- Steps: change two fields; move the test clock past the expiry; press Save; re-authenticate.
-- Expected: the save is held and the gate shows. After re-authentication the save goes ahead once, with the
-  form content unchanged.
+- Pre: OWNER on SCR-122, with 10 seconds left on the `users` class's grace.
+- Steps: change two fields; move the test clock past the grace; press Save; re-authenticate.
+- Expected: the server answers the save with a step-up challenge. The gate overlays the page, with the form
+  content still under the scrim. After re-authentication the held save is sent once, unchanged (method,
+  path, body and `Idempotency-Key`), and the page says "Saved".
 - Audit: `auth.step_up_required`, then `auth.step_up_granted`, then the save's own record, once.
 
 **AD-S01-05 The backend is degraded** (`e2e`; E42-S01 "Backend degraded")
@@ -101,32 +110,44 @@ independently"; SCR-120)
 
 **Negative and boundary cases**
 
-- **AD-S01-N01 The token's boundary** (`contract`; SCR-149 "≤15 min old"): a token 14 min 59 s old passes;
-  one 15 min old meets the gate. The TTL is the server's, so a client clock set back changes nothing.
-- **AD-S01-N02 Cancel leaves the admin area** (`e2e`; SCR-149 checklist): cancelling the gate returns to the
-  non-admin app, not to a dead end, and the back button does not show admin data.
-- **AD-S01-N03 A failed re-auth** (`e2e`, `a11y`; SCR-149 "failure and lockout states"): a wrong TOTP is
+- **AD-S01-N01 The grace's boundary** (`contract`; D02 A-14; SR-025):
+  - a second `users`-class action 4 min 59 s after a step-up passes with no challenge
+    (`auth.step_up_grace_used`); at 5 min it is challenged (`auth.step_up_required`);
+  - an action of another class is challenged whatever the `users` grace;
+  - a `backups`, `killswitch` or `live_enablement` action always needs a fresh code;
+  - the grace is the server's, so a client clock set back changes nothing.
+- **AD-S01-N02 Cancel leaves the draft** (`e2e`; D02 D2): cancelling the entry gate returns to the previous
+  non-admin route, not a dead end. Cancelling a held save's gate says "Not saved", keeps the page and its
+  draft, and sends nothing.
+- **AD-S01-N03 A held save is never re-sent on its own** (`e2e`; D02 D2): if the re-sent save meets a
+  network error, the page says the outcome is pending and re-reads; it does not send the save again.
+- **AD-S01-N04 A failed re-auth** (`e2e`, `a11y`; SCR-149 "failure and lockout states"): a wrong TOTP is
   announced assertively and audited `auth.step_up_failed`. Repeated failures reach the lockout state.
-- **AD-S01-N04 The countdown is visible** (`e2e`; SCR-149 Performance): the admin chrome shows the token's
-  remaining validity throughout.
-- **AD-S01-N05 Token issue time** (`perf`; SCR-149): the token is issued in ≤400 ms.
+- **AD-S01-N05 Step-up time** (`perf`; SCR-149): the step-up answers in ≤400 ms.
 
 ### S02: the users list, invites and the lifecycle (US-ADMIN-001, 014; SCR-121, SCR-123)
 
-**AD-S02-01 Invite and assign a role [R]** (`e2e`, `contract`; E42-S02 "Create and assign role")
+**AD-S02-01 Invite, then grant the role [R]** (`e2e`, `contract`; E42-S02 "Create and assign role"; D02 D9)
 
 - Pre: OWNER, elevated, on `/admin/users`.
-- Steps: invite a user with role `manager`; copy the link; reload the page.
-- Expected: the row shows "Invited" until the invite is redeemed. The one-time link is shown once, with a
-  copy control and a statement that it will not be shown again. After the reload, no link is shown.
-- Audit: `users.invited`, naming the actor, the target and the assigned roles. See Q-2.
+- Steps: invite a user; copy the link; reload the page; once the invite is redeemed, make the user a
+  manager on SCR-122.
+- Expected:
+  - the invite dialog has no role picker and says that the manager grant is a second step;
+  - the row shows "Invited" until the invite is redeemed;
+  - the one-time link is shown once, as a secret, with a copy control and a statement that it will not be
+    shown again; after the reload no link is shown;
+  - the pending list offers revoke and re-issue.
+- Audit: `users.invited`, naming the actor and the target; on the second step, `roles.grant`. See Q-2.
 
 **AD-S02-02 Disabling revokes access within 5 s [R]** (`e2e`, `integration`; E42-S02 "Disable revokes
 access quickly"; US-ADMIN-001)
 
 - Pre: MGR-M with an active session and one armed rule.
-- Steps: disable MGR-M and confirm.
+- Steps: disable MGR-M through its rung-2 dialog and confirm.
 - Expected:
+  - the dialog lists the consequences, with the counts loaded before Confirm enables, and Cancel takes the
+    first focus (D02 D3, D18);
   - every session of MGR-M is revoked within 5 s, measured from the `users.disable` record to the last
     `auth.session_revoked` record for MGR-M's sessions;
   - MGR-M's rules show as disarmed (`rules.disarm`);
@@ -136,8 +157,9 @@ access quickly"; US-ADMIN-001)
 
 **AD-S02-03 Delete keeps the history [R]** (`e2e`, `integration`; E42-S02 "Delete with history")
 
-- Steps: delete MGR-M, typing MGR-M's username to confirm.
-- Expected: MGR-M's audit and journal history remain, attributed to an anonymised reference. MGR-M leaves
+- Steps: delete MGR-M through its rung-3 dialog, typing MGR-M's username to confirm.
+- Expected: the confirm control stays disabled until the counts load and the typed name matches, and Enter
+  in the name field never confirms (D02 D3, D18). MGR-M's audit and journal history remain, attributed to an anonymised reference. MGR-M leaves
   the default list and appears under the "Disabled/Deleted" filter.
 - Audit: `users.delete`, then `users.anonymise`.
 
@@ -210,9 +232,14 @@ during an open position")
 **AD-S03-05 View-as is unmistakably read-only [R]** (`e2e`, `security`; E42-S03 "View-as is unmistakably
 read-only"; 22 "View-as session")
 
-- Steps: start "view as" for MGR-M; try each state-changing control; exit.
-- Expected: a persistent banner names MGR-M and says the session is read-only. Every state-changing control
-  is disabled, with a reason. A write sent anyway is refused `403 view_as_read_only` (AC-ADM-22).
+- Steps: start "view as" for MGR-M, giving the entry dialog's mandatory reason; try each state-changing
+  control; exit.
+- Expected:
+  - the banner is the document's first element and names MGR-M and the read-only state; its Exit is the
+    first tab stop, in every window, and `Esc` never exits (D02 D10, D18);
+  - the countdown runs to the server's `expires_at`;
+  - every state-changing control is disabled, with a reason;
+  - a write sent anyway is refused `403 view_as_read_only` (AC-ADM-22).
 - Audit: `admin.view_as_started` (severity high); `admin.view_as_refused` per refused write;
   `admin.view_as_ended` on exit.
 
@@ -292,10 +319,10 @@ Each charter is timeboxed. A charter ends with notes, the defects filed and the 
 
 | Story   | Gherkin scenario                                      | Cases                                         |
 | ------- | ----------------------------------------------------- | --------------------------------------------- |
-| E42-S01 | Owner enters the admin area with a stale token        | AD-S01-01, AD-S01-N01                         |
+| E42-S01 | Owner enters the admin area with a stale token        | AD-S01-01, AD-S01-N01, AD-S01-N02             |
 | E42-S01 | Non-owner cannot reach the admin area                 | AD-S01-02                                     |
 | E42-S01 | Overview tiles resolve independently                  | AD-S01-03, CH-AD-5                            |
-| E42-S01 | (failure) Re-auth expires mid-edit                    | AD-S01-04, CH-AD-4                            |
+| E42-S01 | (failure) Re-auth expires mid-edit                    | AD-S01-04, AD-S01-N02, AD-S01-N03, CH-AD-4    |
 | E42-S01 | (edge) Backend degraded                               | AD-S01-05                                     |
 | E42-S02 | Create and assign role                                | AD-S02-01, AD-S02-N01, AD-S02-N02             |
 | E42-S02 | Disable revokes access quickly                        | AD-S02-02, AD-X-01                            |
@@ -319,11 +346,16 @@ S05's, in part 2.
 
 Each is a question for the implementing story, not a guess.
 
-- **Q-1:** E42-S01 expects `admin.session_elevated`, which `audit/actions.py` does not register. The step-up
-  writes `auth.step_up_granted`, and the admin-area guard writes `admin.area_entered`. AD-S01-01 expects
-  those two.
-- **Q-2:** E42-S02 expects `users.create` for an invite. The registry has both `users.create` and
-  `users.invited`. AD-S02-01 expects `users.invited`.
+- **Q-1:** E42-S01 and SCR-149 describe a 15-minute admin token. The server has per-action step-up instead,
+  with a 5-minute grace per action class, and records an entry without refusing it. The web router gates
+  `/admin/**` on its own freshness window (D02 A-14 and addendum A2). Whether an admin window gets a server
+  half is D8's open question (OQ-14). AD-S01-01 asserts the gate on a stale step-up without fixing the
+  threshold, and AD-S01-N01 tests the server's grace. E42-S01 also expects `admin.session_elevated`, which
+  `audit/actions.py` does not register: the step-up writes `auth.step_up_granted`, and the admin-area guard
+  writes `admin.area_entered`.
+- **Q-2:** E42-S02 invites "with role manager" and expects `users.create` with the assigned roles. D02 D9
+  invites with no role picker, the manager grant being a second step. The registry has both `users.create`
+  and `users.invited`. AD-S02-01 follows D9 and expects `users.invited`, then `roles.grant`.
 - **Q-3:** E42-S02 expects `409 conflict` for the only owner's own Disable or Delete. The server refuses a
   self-target first, `403 self_target` (SR-055); the `409` is the last _active_ owner's refusal from another
   owner (D6). AD-S02-04 asserts a refusal with nothing changed, and both statuses need a case once this is
