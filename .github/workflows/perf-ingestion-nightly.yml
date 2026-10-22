@@ -99,6 +99,12 @@ jobs:
     # environment); dispatch-only until that runner is registered.
     if: github.event_name == 'workflow_dispatch' && inputs.profile == 'full'
     runs-on: [self-hosted, bench]
+    # shared with perf-bars-memdiag.yml's leg: one soak at a time on cv-bench-01 (#399); a pack
+    # dispatched while a leg is queued replaces that leg (one pending run per group); a run that
+    # skips this job may too (unverified)
+    concurrency:
+      group: cv-bench-01
+      cancel-in-progress: false
     timeout-minutes: 2100 # 24 h soak + 6 h soak_bars + 1 h aggregate + 30 m latency + rest/burst
     env:
       CV_ENV: test
