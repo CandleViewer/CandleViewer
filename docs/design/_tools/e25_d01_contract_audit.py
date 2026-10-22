@@ -108,18 +108,18 @@ class Codes(TypedDict):
     zone_codes_missing: list[str]
 
 
-def text(rel: str) -> str:
+def read_text(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
 def grab(rel: str, pattern: str, group: int = 1) -> str | None:
-    m = re.search(pattern, text(rel), re.DOTALL)
+    m = re.search(pattern, read_text(rel), re.DOTALL)
     return re.sub(r"\s+", " ", m.group(group)).strip() if m else None
 
 
 def block(rel: str, start: str, end: str) -> str:
     """Text between the first `start` heading and the next `end`; '' when `start` moved."""
-    t = text(rel)
+    t = read_text(rel)
     try:
         i = t.index(start)
     except ValueError:
@@ -279,7 +279,7 @@ def metric_codes() -> Codes:
     indicator series (7-tuples — metric, indicator, output, title, tape flag, …) of `metrics.py`."""
     enum = block(PLAN + "22-api-openapi.yaml", "    MetricCode:\n", "\n    # ===")
     contract = re.findall(r"^\s+- ([a-z_]+)\s*$", enum, re.MULTILINE)
-    src = text(SHIPPED)
+    src = read_text(SHIPPED)
     row = r'^\s*\("([a-z0-9_]+)", "[^"]*", "[^"]*", '  # name, title, unit — then the input field
     metric = re.findall(row + r'(?:_[A-Z]|"[a-z]+"), "[^"]*", \d+, ', src, re.MULTILINE)
     series = re.findall(row + r'"[^"]*", _(?:NO_)?TAPE, ', src, re.MULTILINE)
