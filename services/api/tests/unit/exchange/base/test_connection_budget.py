@@ -15,7 +15,12 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from candleviewer.exchange.base.reconnect import ConnectionBudget, ConnectionGuard
+from candleviewer.exchange.base.reconnect import (
+    ConnectionBudget,
+    ConnectionGuard,
+    ws_conn_budget_refused_total,
+    ws_conn_budget_remaining,
+)
 from candleviewer.ingestion.reconnect import ConnectionRateGuard, ReconnectPolicy
 
 LIMIT, WINDOW_S, RESERVE, PROBES = 480, 300.0, 60, 10
@@ -116,6 +121,21 @@ def test_the_probe_is_refused_at_once_past_its_cap_or_inside_the_reserve() -> No
         crowded.lane("public").reserve()
     assert (crowded.admit_probe(), crowded.remaining("probe")) == (False, 0)
     assert crowded.lane("private").remaining() == RESERVE
+
+
+def test_the_budget_publishes_what_is_left_and_counts_a_refused_probe() -> None:
+    """24 §14.2 rule 9: `ws_conn_budget_remaining{scope}` after each open, and a refused probe
+    counted in `ws_conn_budget_refused_total{scope="probe"}` (no account or key label)."""
+    refused = ws_conn_budget_refused_total.labels(scope="probe")
+    before = refused._value.get()
+    budget = ConnectionBudget(Clock())
+    budget.lane("private").reserve()
+    left = {s: ws_conn_budget_remaining.labels(scope=s)._value.get() for s in ("public", "private")}
+    assert left == {"public": PUBLIC - 1, "private": LIMIT - 1}
+    for _ in range(PROBES + 1):
+        budget.admit_probe()
+    assert refused._value.get() == before + 1
+    assert ws_conn_budget_remaining.labels(scope="probe")._value.get() == 0
 
 
 @pytest.mark.parametrize(

@@ -55,3 +55,47 @@ cv_bybit_unknown_fields_total = Counter(
     "Reply fields the adapter's strict models do not know, by model (silent drift).",
     ["model"],
 )
+
+# G-8b (#3963): the private stream's series (24 §14.2 rule 13). `topic` is a closed set of topic
+# names (`order`, `execution`, `execution.fast`, `position`, `wallet`; a subscribe op's topics
+# joined by `+`), never a symbol, an id or an account (ruling 7).
+bybit_private_rows_refused_total = Counter(
+    "bybit_private_rows_refused_total",
+    "Private-stream rows dropped, by topic and reason (other env or account, category, symbol, "
+    "account type, no settle coin, no fill, unmapped type).",
+    ["topic", "reason"],
+)
+
+bybit_private_frames_rejected_total = Counter(
+    "bybit_private_frames_rejected_total",
+    "Private-stream frames rejected whole, by reason (a resync follows; oversize recycles).",
+    ["reason"],
+)
+
+bybit_private_ws_auth_total = Counter(
+    "bybit_private_ws_auth_total",
+    "Private-stream auth attempts, by result.",
+    ["result"],
+)
+
+bybit_private_ws_disconnects_total = Counter(
+    "bybit_private_ws_disconnects_total",
+    "Private-stream sockets lost or streams closed, by the down or closed status reason.",
+    ["reason"],
+)
+
+bybit_private_subscribe_refused_total = Counter(
+    "bybit_private_subscribe_refused_total",
+    "Private-stream subscribe ops refused or unanswered, by the op's topics.",
+    ["topic"],
+)
+
+bybit_private_reconnect_waited_total = Counter(
+    "bybit_private_reconnect_waited_total",
+    "Private-stream dials that waited for the consumer to read the last down status.",
+)
+
+bybit_private_ws_streams = Gauge(
+    "bybit_private_ws_streams",
+    "Private streams open now (no account label).",
+)

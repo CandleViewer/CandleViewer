@@ -24,7 +24,16 @@ from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
-__all__ = ["BudgetLane", "ConnectionBudget", "ConnectionGuard", "ReconnectPolicy"]
+from candleviewer.observability.metrics import Counter, Gauge
+
+__all__ = [
+    "BudgetLane",
+    "ConnectionBudget",
+    "ConnectionGuard",
+    "ReconnectPolicy",
+    "ws_conn_budget_refused_total",
+    "ws_conn_budget_remaining",
+]
 
 type BudgetLane = Literal["public", "private"]
 
@@ -35,6 +44,19 @@ WINDOW_S: Final = 300.0
 PRIVATE_RESERVE: Final = 60
 #: `testApiKey`'s key probes per window (SR-E27-05).
 PROBE_CAP: Final = 10
+
+# Declared in the ingestion registry (`owner="exchange.base"`), built here: M3 may not import it.
+ws_conn_budget_remaining = Gauge(
+    "ws_conn_budget_remaining",
+    "WebSocket opens a connection-budget scope could make now (public, private, probe).",
+    ["scope"],
+)
+
+ws_conn_budget_refused_total = Counter(
+    "ws_conn_budget_refused_total",
+    "WebSocket opens the connection budget refused, by scope (probe; streams: the cap).",
+    ["scope"],
+)
 
 
 class ReconnectPolicy:
@@ -122,15 +144,26 @@ class ConnectionBudget:
             return max(0, min(self._probe_cap - len(self._probes), left))
         return self._lanes[scope].remaining()
 
+    def _publish(self) -> None:
+        """`ws_conn_budget_remaining{scope}` as the budget stands now (after a prune)."""
+        used = self._used()
+        ws_conn_budget_remaining.labels(scope="public").set(max(0, self._public_cap - used))
+        ws_conn_budget_remaining.labels(scope="private").set(max(0, self._limit - used))
+        probes = max(0, min(self._probe_cap - len(self._probes), self._public_cap - used))
+        ws_conn_budget_remaining.labels(scope="probe").set(probes)
+
     def admit_probe(self) -> bool:
         """One probe open now, or `False` at once with nothing taken: never queued. Refused past
         `probe_cap` in the window, or when only the private reserve is left."""
         now = self._clock()
         self._prune(now)
         if len(self._probes) >= self._probe_cap or self._used() >= self._public_cap:
+            ws_conn_budget_refused_total.labels(scope="probe").inc()
+            self._publish()
             return False
         bisect.insort(self._opens, now)
         self._probes.append(now)
+        self._publish()
         return True
 
     def _reserve(self, cap: int) -> float:
@@ -143,6 +176,7 @@ class ConnectionBudget:
         if len(self._opens) >= cap:
             start = max(now, self._opens[-cap] + self._window)
         bisect.insort(self._opens, start)
+        self._publish()
         return start - now
 
     def _remaining(self, cap: int) -> int:
