@@ -47,6 +47,7 @@ def _step(sid: str) -> dict[str, Any]:
 def test_unbuffered_output_and_the_scenario_input_through_env() -> None:
     doc = _doc()
     assert doc["env"]["PYTHONUNBUFFERED"] == "1"
+    assert all("PYTHONUNBUFFERED" not in job.get("env", {}) for job in doc["jobs"].values())
     # YAML 1.1 reads the `on` key as True
     scenario = doc[True]["workflow_dispatch"]["inputs"]["scenario"]
     assert scenario["type"] == "string" and scenario["default"] == "all"
