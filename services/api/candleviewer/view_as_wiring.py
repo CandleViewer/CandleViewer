@@ -28,6 +28,7 @@ from candleviewer.admin.view_as import (
 )
 from candleviewer.admin.view_as_sweeper import ViewAsSweeper
 from candleviewer.api.users import PermissionChangeNotifier
+from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder, Viewer
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -101,6 +102,35 @@ class HubSocketCloser:
         for member in await self._store.walk_rotation_family(session_id):
             if member != session_id:  # the walk includes the session itself
                 await self._hub.close_context(member, str(context_id), reason)
+
+
+class SessionViewAsRefusals:
+    """The gateway's `ViewAsFrameRefusals` over S6's recorder, which `ws` may not import: the record
+    names the viewer by username and the viewer's session. `recorder` is read per call, since the
+    router is built before it; `None` (the fake backend) records nothing, and so does a viewer
+    whose user is gone (no label to name the actor)."""
+
+    def __init__(
+        self, recorder: Callable[[], ViewAsRefusalRecorder | None], labels: IdentityLabels
+    ) -> None:
+        self._recorder, self._labels = recorder, labels
+
+    async def refuse_frame(
+        self,
+        *,
+        viewer_user_id: UUID,
+        viewer_session_id: str,
+        frame_type: str,
+        ip: str | None,
+    ) -> bool:
+        recorder = self._recorder()
+        if recorder is None:
+            return False
+        label = (await self._labels.usernames([viewer_user_id])).get(viewer_user_id)
+        if label is None:
+            return False
+        viewer = Viewer(viewer_user_id, UUID(viewer_session_id), label)
+        return await recorder.refuse_frame(viewer, frame_type, ip=ip)
 
 
 class SessionViewAs:

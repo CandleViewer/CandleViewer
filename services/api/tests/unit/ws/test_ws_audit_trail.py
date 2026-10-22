@@ -148,6 +148,7 @@ async def test_a_sub_frame_writes_one_granted_row_for_its_new_private_subscripti
         "action": GRANTED,
         "actor_label": "ws",
         "actor_user_id": MGR,
+        "session_id": authz.session_id,  # #3085 (Q17): the socket's session, as every WS row
         "object_kind": "ws_connection",
         "object_id": authz.connection_id,
         "outcome": AuditOutcome.SUCCESS,
@@ -156,6 +157,15 @@ async def test_a_sub_frame_writes_one_granted_row_for_its_new_private_subscripti
         "request_id": None,  # the upgrade's E04 id on a socket; none outside a request
     }
     assert sink.sent_before == {DENIED: [], GRANTED: ["sub_ok"]}  # after the reply is queued
+
+
+async def test_a_viewing_sockets_granted_row_names_the_viewer() -> None:
+    """§9.6: the viewer acts; the scope is the target's, the row's actor the viewer."""
+    authz, sent, sink = _connection()
+    authz.viewer_user_id = viewer = uuid.uuid4()
+    await _sub(authz, sent, _acc("orders", A))
+    (row,) = sink.rows
+    assert row["actor_user_id"] == viewer
 
 
 @pytest.mark.parametrize(

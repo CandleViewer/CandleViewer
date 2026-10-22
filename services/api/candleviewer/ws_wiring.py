@@ -420,9 +420,10 @@ class MachineRevocationAudit:
             self._task.add_done_callback(self._ended)
 
     def _abandon(self, batches: int, cause: str) -> None:
-        """Drop the `batches` oldest removals: counted `abandoned`, logged with their users' ids."""
+        """Drop the `batches` oldest removals: counted `abandoned`, logged with their actors'
+        ids (a viewing socket's viewer, §9.6)."""
         frames = [frame for _ in range(batches) for frame in self._pending.popleft()]
-        users = list(dict.fromkeys(authz.principal.user_id for authz, _ in frames))
+        users = list(dict.fromkeys(authz.actor_user_id for authz, _ in frames))
         self._waiting -= len(frames)
         count_audit_failure(len(frames), "abandoned")
         logger().warning(

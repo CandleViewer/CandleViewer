@@ -44,7 +44,8 @@ class _Socket:
 
     def __init__(self, user_id: uuid.UUID, frames: list[dict[str, Any]]) -> None:
         self.user_id, self.push_system = user_id, frames.append
-        self.authz = SimpleNamespace(principal=SimpleNamespace(roles=frozenset({"owner"})))
+        principal = SimpleNamespace(user_id=user_id, roles=frozenset({"owner"}))
+        self.authz = SimpleNamespace(principal=principal)
         self.lifecycle = SimpleNamespace(authenticated=True)
 
 

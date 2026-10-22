@@ -27,6 +27,7 @@ from candleviewer.view_as_wiring import (
     IdentityLabels,
     RoleChangeNotifier,
     SessionViewAs,
+    SessionViewAsRefusals,
     build_view_as,
 )
 from candleviewer.ws import gateway
@@ -228,7 +229,35 @@ def test_create_app_gives_the_socket_no_view_as_read_on_the_fake_backend(
     assert kwargs["view_as"] is None
 
 
-def test_the_sockets_read_fails_when_the_app_has_no_service(
+def test_create_app_gives_the_socket_the_apps_refusal_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§9.6: a viewing socket's refused action frame is recorded by the app's one recorder,
+    labelled through the identity provider."""
+    seen = _spy_on_the_ws_router(monkeypatch)
+    app = create_app(_real())
+    (kwargs,) = seen
+    refusals = kwargs["view_as_refusals"]
+    assert isinstance(refusals, SessionViewAsRefusals)
+    assert refusals._recorder() is app.state.view_as_refusals
+
+
+async def test_the_sockets_refusal_record_fails_when_the_app_has_no_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read as S7's guard reads it: a missing recorder fails the record, which the gateway
+    counts (SR-E17-04), never records nothing in silence."""
+    seen = _spy_on_the_ws_router(monkeypatch)
+    app = create_app(_real())
+    (kwargs,) = seen
+    del app.state.view_as_refusals
+    with pytest.raises(AttributeError):
+        await kwargs["view_as_refusals"].refuse_frame(
+            viewer_user_id=uuid4(), viewer_session_id=str(uuid4()), frame_type="act", ip=None
+        )
+
+
+async def test_the_sockets_read_fails_when_the_app_has_no_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Read as S7's guard reads it: a missing service fails the `auth`, never binds nothing."""
@@ -237,7 +266,7 @@ def test_the_sockets_read_fails_when_the_app_has_no_service(
     (kwargs,) = seen
     del app.state.view_as
     with pytest.raises(AttributeError):
-        kwargs["view_as"]._views()
+        await kwargs["view_as"]("s1")
 
 
 class _Family:
@@ -303,6 +332,19 @@ class _Evaluates:
     async def evaluate(self, record: Any, *, now: datetime) -> str:
         self.asked.append((record, now))
         return "binding"
+
+
+class _Down(_Family):
+    async def find_by_id(self, session_id: str) -> Any:
+        raise ConnectionError("the session store is down")
+
+
+async def test_the_socket_read_lets_a_store_fault_through() -> None:
+    """A store fault fails the `auth`, which the gateway counts as a strike; it is never
+    read as no context."""
+    read = SessionViewAs(lambda: cast(Any, _Evaluates()), cast(Any, _Down(())), clock=_Clock())
+    with pytest.raises(ConnectionError):
+        await read("s1")
 
 
 async def test_the_socket_read_is_the_services_evaluation_of_the_sessions_row() -> None:

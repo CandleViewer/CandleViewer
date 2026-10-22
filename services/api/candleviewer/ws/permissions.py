@@ -62,6 +62,7 @@ from candleviewer.orderflow.errors import (
 from candleviewer.orderflow.indicators.engine import Requested, resolve_instances
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.errors import WsError, build_ws_error
+from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import (
     DENIAL_AUDIT_WINDOW_S,
     DENIAL_AUDITS_PER_WINDOW,
@@ -456,6 +457,17 @@ class ConnectionAuthz:
     holding each symbol, kept with `by_id` (`_record`, `_drop`), so the 40-symbol test costs
     O(the entry's symbols) and the 200-subscription test one bounded lookup of its name."""
 
+    @property
+    def actor_user_id(self) -> uuid.UUID:
+        """§9.6 (#3085): who acts on the socket: the viewer while it views as another user, else
+        its principal's user. Its audit rows name the actor, and the per-user quotas key by it,
+        so a viewer cannot spend the target's."""
+        return self.principal.user_id if self.viewer_user_id is None else self.viewer_user_id
+
+    @property
+    def viewing(self) -> bool:
+        return self.viewer_user_id is not None
+
     def __init__(
         self,
         principal: PrincipalSnapshot,
@@ -464,8 +476,12 @@ class ConnectionAuthz:
         connection_id: str | None = None,
         version: int = 0,
         clock: Callable[[], float] | None = None,
+        viewer_user_id: uuid.UUID | None = None,
     ) -> None:
         self.principal = principal
+        #: §9.6 (#3085): the viewer while the socket views as another user, whose principal it
+        #: holds; `None` otherwise (`actor_user_id`).
+        self.viewer_user_id = viewer_user_id
         self.version = version  # SR-189: the applied snapshot's; 0 = not from the registry
         #: The session the socket is authenticated on (`do_auth` sets it at each accepted `auth`):
         #: the revocation and denial rows carry it in their `session_id` column (#415, E17-R-16).
@@ -479,7 +495,7 @@ class ConnectionAuthz:
         self._ids = itertools.count(1)
         #: SR-193 (§7.5): the connection's rebuild budget, on its clock (`do_auth` passes it),
         #: and its user's, which all of the user's connections share (#3476).
-        user = (self.services.user_rebuilds, principal.user_id)
+        user = (self.services.user_rebuilds, self.actor_user_id)
         self.rebuilds = RebuildBudget(self.services.clock if clock is None else clock, user=user)
         #: §6.4: the internal reason (`role`, `unknown`, `foreign` or `unscoped`) of the last
         #: `admit` that refused a `machines` entity, else `None`. `handle_sub` reads it right
@@ -841,7 +857,7 @@ class ConnectionAuthz:
                 return refused
         if sub.replay_session_id is not None or sub.topic.family.private:
             return None
-        consumer, user, symbol = self._consumer(sub), str(self.principal.user_id), sub.topic.symbol
+        consumer, user, symbol = self._consumer(sub), str(self.actor_user_id), sub.topic.symbol
         engine = self.services.indicators if requested else None  # `indicators.*` alone has any
         history = _indicator_history(sub) if engine is not None else 0
         try:
@@ -1076,7 +1092,7 @@ class ConnectionAuthz:
             raise TopicError("invalid_options", str(exc), "instances") from None
         engine = self.services.indicators
         if engine is not None and sub.replay_session_id is None:
-            user, consumer = str(self.principal.user_id), self._consumer(sub)
+            user, consumer = str(self.actor_user_id), self._consumer(sub)
             try:
                 engine.check(
                     sub.topic.symbol or "",
@@ -1103,7 +1119,7 @@ class ConnectionAuthz:
             return
         engine.admit(
             sub.topic.symbol or "", spec, requested, self._consumer(sub),
-            str(self.principal.user_id), history=_indicator_history(sub),
+            str(self.actor_user_id), history=_indicator_history(sub),
             replacing=sub.indicator_keys, reason="param_change",
         )  # fmt: skip
         sub.indicator_keys = tuple(r.key for r in requested)
@@ -1125,7 +1141,12 @@ class ConnectionAuthz:
             return None
         self.principal, self.version = new.principal, new.version
         frames: list[dict[str, Any]] = [
-            {"t": "permission_change", "ts": now_ms, "p": auth_ok_payload(new.principal)}
+            {
+                "t": "permission_change",
+                "ts": now_ms,
+                # §9.5: the identity `auth_ok` gave, the session's own user when viewing.
+                "p": auth_ok_payload(new.principal, user_id=str(self.actor_user_id)),
+            }
         ]
         affected: list[Subscription] = []
         for sub in sorted(self.by_id.values(), key=lambda s: (s.ch, s.sub_id)):
@@ -1396,7 +1417,11 @@ class ConnectionRegistry:
     ) -> list[dict[str, Any]]:
         """`authz.apply_snapshot`. An older snapshot is refused, counted and audited (best
         effort, like every WS audit write) and yields no frames (SR-189). A snapshot of another
-        user raises `SnapshotUserMismatch` first, with no count and no row (#415)."""
+        user raises `SnapshotUserMismatch` first, with no count and no row (#415). A viewing
+        socket never takes an Owner's snapshot: its view ends instead (§9.6, `_end_views`)."""
+        if authz.viewing and snap.principal.is_owner:  # §9.6: never an Owner's snapshot
+            await self._end_views([(authz, None, None)])
+            return []
         frames, refused = self._swap(authz, snap, now_ms, event)
         await self._write_rows(refused)
         return frames
@@ -1414,7 +1439,8 @@ class ConnectionRegistry:
         versions = {"applied_version": authz.version, "refused_version": snap.version}
         fields = {
             "actor_label": "ws",
-            "actor_user_id": authz.principal.user_id,
+            "actor_user_id": authz.actor_user_id,
+            "session_id": authz.session_id,
             "object_kind": "ws_connection",
             "object_id": authz.connection_id,
             "outcome": AuditOutcome.DENIED,
@@ -1430,7 +1456,7 @@ class ConnectionRegistry:
         if authz.version >= self._changed_at:
             return
         snap = await self.resolve(authz.principal.user_id)
-        await self.apply(authz, snap, self._clock_ms(), event="handshake")
+        await self.apply(authz, snap, self._clock_ms(), event="handshake")  # ends an Owner's view
 
     async def roles_changed(self, user_id: uuid.UUID) -> None:
         """Role / permission / account-grant change: push `permission_change` and the `revoked`
@@ -1452,6 +1478,8 @@ class ConnectionRegistry:
         if not entries:
             return
         snap = VersionedSnapshot(await self._resolve(user_id), version)
+        if snap.principal.is_owner:  # §9.6: a target is never an Owner, so the views end
+            entries = await self._end_views(entries)
         # Every socket's subscriptions are dropped/narrowed synchronously here, before any I/O.
         swapped = [self._swap_or_evict(e[0], snap, rows) for e in entries]
         for (_authz, _send, close), frames in zip(entries, swapped, strict=True):
@@ -1470,6 +1498,27 @@ class ConnectionRegistry:
                 await self._close_evicted(close)
             else:
                 await self.settle(authz, close)  # the snapshots that follow them (§9.5)
+
+    async def _end_views(self, entries: list[Any]) -> list[Any]:
+        """§9.6 (#3085): a socket viewing as a user who became an Owner never applies the Owner's
+        snapshot: it is unregistered and released, then closed `view_as_expired` (4403, sealed),
+        each bounded, a failure ignored as an eviction's is. The service ends the context itself
+        (the target is no longer eligible). Returns the entries that are not viewing."""
+        kept: list[Any] = []
+        for entry in entries:
+            authz = entry[0]
+            if not authz.viewing:
+                kept.append(entry)
+                continue
+            closer = self._closers.get(id(authz))
+            self.unregister(authz)  # released there
+            if closer is not None:
+                with contextlib.suppress(Exception):
+                    async with asyncio.timeout(self.send_timeout_s):
+                        await closer(
+                            lifecycle_bye("view_as_expired", now_ms=self._clock_ms()), 4403
+                        )
+        return kept
 
     async def settle(self, authz: ConnectionAuthz, close: Any) -> None:
         """Once a change's frames are queued: `authz.on_settle` with what it re-pended (§9.5).
@@ -1622,11 +1671,15 @@ class ConnectionRegistry:
             for authz, _send, close in entries:
                 closer = self._closers.pop(id(authz), None)
                 authz.release_all()
-                ws_revoked_total.labels(reason="user_disabled").inc()
                 try:
+                    if authz.viewing:  # §9.6: the viewed target is gone, the viewer is not
+                        bye = lifecycle_bye("view_as_expired", now_ms=self._clock_ms())
+                    else:
+                        ws_revoked_total.labels(reason="user_disabled").inc()
+                        bye = user_disabled_bye(self._clock_ms())
                     async with asyncio.timeout(self.send_timeout_s):
                         if closer is not None:
-                            await closer(user_disabled_bye(self._clock_ms()), 4403)
+                            await closer(bye, 4403)
                         elif close is not None:
                             await close()
                 except Exception:
@@ -1932,7 +1985,7 @@ def _kept_back(authz: ConnectionAuthz) -> None:
         _log().warning(
             "ws subscribe-denied audit over budget",
             connection_id=authz.connection_id,
-            actor_user_id=authz.principal.user_id,
+            actor_user_id=authz.actor_user_id,
             limit=DENIAL_AUDITS_PER_WINDOW,
             window_s=DENIAL_AUDIT_WINDOW_S,
         )
@@ -1976,7 +2029,7 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
             audit,
             "ws.subscribe.denied",
             actor_label="ws",
-            actor_user_id=authz.principal.user_id,
+            actor_user_id=authz.actor_user_id,
             session_id=authz.session_id,
             object_kind="ws_topic",
             object_id=object_id,
@@ -1990,7 +2043,7 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
         _log().warning(
             "ws subscribe-denied audit not confirmed",
             connection_id=authz.connection_id,
-            actor_user_id=authz.principal.user_id,
+            actor_user_id=authz.actor_user_id,
             exc_info=True,
         )
     except asyncio.CancelledError:
@@ -2018,7 +2071,7 @@ async def audit_rebuild_refusal(authz: ConnectionAuthz) -> None:
             audit,
             "ws.rebuild.refused",
             actor_label="ws",
-            actor_user_id=authz.principal.user_id,
+            actor_user_id=authz.actor_user_id,
             session_id=authz.session_id,
             object_kind="ws_topic",
             object_id=object_id,
@@ -2034,7 +2087,7 @@ async def audit_rebuild_refusal(authz: ConnectionAuthz) -> None:
                 "ws audit not confirmed",
                 action="ws.rebuild.refused",
                 object_id=object_id,
-                actor_user_id=authz.principal.user_id,
+                actor_user_id=authz.actor_user_id,
                 exc_info=True,
             )
     except asyncio.CancelledError:
@@ -2073,7 +2126,7 @@ def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> li
                 "ws.subscription.revoked",
                 {
                     "actor_label": "ws",
-                    "actor_user_id": authz.principal.user_id,
+                    "actor_user_id": authz.actor_user_id,
                     "session_id": authz.session_id,
                     "object_kind": "ws_topic",
                     "object_id": ch if machines else ch[:40],
@@ -2123,7 +2176,8 @@ async def _audit_grants(authz: ConnectionAuthz, subs: list[Subscription]) -> Non
             audit,
             "ws.subscribe.granted",
             actor_label="ws",
-            actor_user_id=authz.principal.user_id,
+            actor_user_id=authz.actor_user_id,
+            session_id=authz.session_id,
             object_kind="ws_connection",
             object_id=authz.connection_id,
             outcome=AuditOutcome.SUCCESS,

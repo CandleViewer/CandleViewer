@@ -385,9 +385,18 @@ async def test_the_user_directory_asks_the_role_store_and_knows_no_one_without_i
 
 
 class _Sock:
-    def __init__(self, signed_in: bool, pushed: list[dict[str, Any]]) -> None:
+    """A hub socket of `user_id` whose principal is `subject`'s: the same user, unless the socket
+    views as another (#3085 S11)."""
+
+    def __init__(
+        self,
+        signed_in: bool,
+        pushed: list[dict[str, Any]],
+        *,
+        subject: uuid.UUID = _OWNER.user_id,
+    ) -> None:
         self.user_id, self.push_system = _OWNER.user_id, pushed.append
-        self.authz = SimpleNamespace(principal=SimpleNamespace(roles=_ROLES))
+        self.authz = SimpleNamespace(principal=SimpleNamespace(user_id=subject, roles=_ROLES))
         self.lifecycle = SimpleNamespace(authenticated=signed_in)
 
 
@@ -402,6 +411,16 @@ def test_the_sessions_are_the_hubs_authenticated_sockets() -> None:
         _ROLES,
         [{"kind": "notice"}],
     )
+
+
+def test_a_viewing_sockets_session_is_its_subjects() -> None:
+    """A socket viewing as another user is that user's session for the flag push (#3085 S11):
+    its principal's, not the token's user."""
+    hub, target = GatewayHub(), uuid.uuid4()
+    live: set[Any] = hub._live
+    live.add(_Sock(True, [], subject=target))
+    [session] = wiring.HubSessions(hub).authenticated()
+    assert session.user_id == target
 
 
 _CHANGE = FlagWrite("a.b", False, {}, _T0, _OWNER.user_id)
