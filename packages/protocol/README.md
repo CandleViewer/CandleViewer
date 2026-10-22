@@ -18,7 +18,7 @@ decoders and sequence/resync helpers.
 - `src/generated/ruleIr/` — the rule IR types (`RuleIr` and its node interfaces) and the
   published JSON Schema (`RULE_IR_SCHEMA`, deeply frozen, and `RULE_IR_SCHEMA_ID`), compiled
   from the committed `services/api/candleviewer/rules/ir/rule-ir.json`. Not in the barrel: it
-  is exposed as `@candleviewer/protocol/rule-ir`, so the schema stays out of the main bundle.
+  is published as `@candleviewer/protocol/rule-ir`, so the schema stays out of the main bundle.
   `generated.rest`'s `components["schemas"]["RuleIr"]` is the OpenAPI projection, not this
   type. **Never hand-edit.**
 - All of `src/generated/` is marked `linguist-generated` in `.gitattributes`;
