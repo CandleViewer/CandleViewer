@@ -162,7 +162,8 @@ def obs_from_summary(
 @dataclass(frozen=True, slots=True)
 class Phase:
     """One run of the W5 plan: what it subscribed, how the cohort's `pong` was delayed, what k6
-    and the scrapes measured over its steady window, and its run's verdict status."""
+    and the scrapes measured over its steady window, and its run's status: `INVALID` when it
+    tripped any validity guard, else its verdict."""
 
     name: str
     families: tuple[str, ...]
@@ -171,6 +172,7 @@ class Phase:
     delta: Scrape
     steady_s: float
     status: str
+    delta_s: float | None = None  # the real seconds `delta` spans (t0 to t1); None: `steady_s`
 
 
 def intended_class(rtt_delay_ms: int) -> str:
@@ -179,9 +181,10 @@ def intended_class(rtt_delay_ms: int) -> str:
     return "healthy" if rtt_delay_ms < 150 else "lagging" if rtt_delay_ms <= 500 else "saturated"
 
 
-def analyze(phases: Sequence[Phase]) -> dict[str, Any]:
+def analyze(phases: Sequence[Phase], left_out: Sequence[str] = ()) -> dict[str, Any]:
     """The answer from the whole plan: `decide` over the mixed phases, the CPU a family costs from
-    the single-family phases, and a note for every phase that did not run as intended."""
+    the single-family phases, and a note for every phase that did not run as intended. `left_out`
+    names the phases the caller did not read (a lost scrape) and noted itself: skipped, no more."""
     notes: list[str] = []
     skipped: list[str] = []
     obs: dict[str, dict[str, Obs]] = {}
@@ -207,13 +210,14 @@ def analyze(phases: Sequence[Phase]) -> dict[str, Any]:
                 notes.append(f"phase {ph.name}: {fam} frames arrived but no staleness sample")
     for name in MIXED:  # a plan without one of the three classes is not a whole answer
         if name not in {ph.name for ph in phases}:
-            notes.append(f"phase {name} is not in the plan")
+            if name not in left_out:
+                notes.append(f"phase {name} is not in the plan")
             skipped.append(name)
     answer = decide(obs)
     for fam in sorted(set(obs) - {r["family"] for r in answer.rows}):
         notes.append(f"{fam}: no observation in both the healthy and the saturated phase, left out")
     cpu = {
-        p.name: total(p.delta, "process_cpu_seconds_total") / p.steady_s
+        p.name: total(p.delta, "process_cpu_seconds_total") / (p.delta_s or p.steady_s)
         for p in phases
         if p.steady_s > 0
     }

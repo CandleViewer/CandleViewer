@@ -14,9 +14,13 @@ A run: the backend (`fixture_app`) boots on 127.0.0.1 with its tokens; the runne
 timeline (warm-up ends and the run ends at the same instant on every k6 VU), scrapes `/metrics` at
 steady-start (t0), every 60 s and at the end (t1), and runs k6 from `K6_BIN`, the absolute path of
 the pinned version, never taken from PATH. The verdict (`budgets.evaluate`) reads the k6 summary
-and the t1 - t0 deltas. Exit 0 pass, 1 a budget missed (named), 2 INVALID (a validity guard
-tripped, named). `duration_s` is the steady window; warm-up comes before it. A single run only
-warns about a regression against its baseline: the gate fails on the median of 3 runs (`gate`).
+and the t1 - t0 deltas. A scrape the backend leaves unanswered for 15 s is a finding, not a crash:
+it is counted (`run.json` `scrapes`), the run goes on and the verdict FAILs on
+`scrape.metrics_timeout`, even when a guard trips too (one unanswered 15 s window explains both;
+the guard stays listed); a lost t0 or t1 is retried once, and the deltas are not judged if it
+stays lost. Exit 0 pass, 1 a budget missed (named), 2 INVALID (a validity guard tripped, named).
+`duration_s` is the steady window; warm-up comes before it. A single run only warns about a
+regression against its baseline: the gate fails on the median of 3 runs (`gate`).
 
 `--staging` reproduces the VPS-class profile on a larger machine: the backend in a systemd user
 scope (`CPUQuota=400%`, `MemoryMax=8G`, no swap) on cpuset 0-7, k6 on 8-15, so they never share
@@ -40,7 +44,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -50,7 +54,7 @@ from bench.ingestion.budgets import Verdict
 from bench.ingestion.config import machine_profile
 from bench.ingestion.report import redact
 from bench.ws import HARNESS_VERSION, LOOP, READY, budgets, profiles, w5
-from bench.ws.budgets import Facts, Result, Scrape
+from bench.ws.budgets import Facts, Result, Scrape, ScrapeTally
 
 K6_VERSION = "v2.3.0"
 HERE = Path(__file__).resolve().parent
@@ -64,6 +68,8 @@ MEM_MAX = 8 << 30
 #: What k6 needs to start before its first VU connects, plus this much per VU.
 SLACK_S, SLACK_PER_VU_S = 8.0, 0.05
 SCRAPE_EVERY_S = 60.0
+SCRAPE_TIMEOUT_S = 15.0  # how long a scrape waits for the backend before it counts as a timeout
+BOUNDARY_RETRY_S = 5.0  # the wait before a boundary scrape (`t0`, `t1`) is tried once more
 MAX_SCRAPE_BYTES = 8 << 20  # a scrape is about 60 KB; this is a cap, not a size
 TOLERANCE = (
     0.05  # C-13.9, 06 7.4: over 5 % on the median of 3 runs fails (--tolerance 0.10: the ticket's)
@@ -93,7 +99,7 @@ OVERRIDES = (
 
 def get(port: int, path: str) -> str:
     """One GET on the loopback backend (the only host a run talks to)."""
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=SCRAPE_TIMEOUT_S)
     try:
         conn.request("GET", path)
         return conn.getresponse().read(MAX_SCRAPE_BYTES).decode()
@@ -301,6 +307,41 @@ def _sample(text: str) -> dict[str, float]:
     }
 
 
+def _ask(port: int) -> tuple[str | None, int]:
+    """One `/metrics` request: its text, or `None` and the ms it waited when it timed out."""
+    began = time.monotonic()
+    try:
+        return get(port, "/metrics"), 0
+    except TimeoutError:  # `socket.timeout` is the same class since Python 3.10
+        return None, round((time.monotonic() - began) * 1000)
+
+
+def scrape(port: int, tally: ScrapeTally, boundary: str | None = None) -> str | None:
+    """One steady-state scrape, counted once in `tally`: `None` when it timed out, and how long it
+    waited is kept. A boundary scrape (`boundary` is `t0` or `t1`: the counter deltas read both) is
+    tried once more after `BOUNDARY_RETRY_S`: named in `tally.missing` if that times out too (its
+    wait is added), in `tally.retried` if it answers. It still counts as a timeout when the retry
+    answers: the silence is the finding, the retry only saves the data. Only a timeout is caught. A
+    reset or refused connection is no 15 s silence (a closed socket, a dead listener) and would make
+    the budget's message false, so it still ends the run as before."""
+    tally.attempted += 1
+    text, waited = _ask(port)
+    if text is None:
+        if boundary:
+            time.sleep(BOUNDARY_RETRY_S)
+            text, again = _ask(port)
+            waited += again  # a retry that timed out waited too: the silence is both
+            (tally.retried if text is not None else tally.missing).append(boundary)
+        tally.timed_out_ms.append(waited)
+    return text
+
+
+def scrape_sample(port: int, tally: ScrapeTally) -> dict[str, float]:
+    """A periodic scrape as a series sample: the backend's numbers, or how long it waited."""
+    text = scrape(port, tally)
+    return _sample(text) if text is not None else {"scrape_timeout_ms": tally.timed_out_ms[-1]}
+
+
 def _busy_s(stat: str) -> float:
     """CPU seconds the whole machine has spent busy, from the first line of `/proc/stat` (user,
     nice, system, irq, softirq and steal: not idle, not iowait; guest time is inside user)."""
@@ -341,6 +382,7 @@ def execute(p: Plan, k6: str) -> Path:
     kproc: subprocess.Popen[bytes] | None = None
     t0 = t1 = None
     series: list[dict[str, float]] = []
+    scrapes = ScrapeTally(SCRAPE_TIMEOUT_S)
     k6cpu: dict[str, tuple[float, float]] = {}  # (cpu seconds, when), the run's first and last
     stat: dict[str, tuple[float, float]] = {}  # (machine busy seconds, when) at t0 and at t1
     try:
@@ -362,16 +404,18 @@ def execute(p: Plan, k6: str) -> Path:
         while True:
             now = time.time()
             if t0 is None and now >= steady_at and kproc.poll() is None:
-                t0, k6cpu["0"] = get(port, "/metrics"), (_proc_cpu_s(kproc.pid), now)
+                t0 = scrape(port, scrapes, "t0") or ""
+                now = time.time()  # a scrape that waited has ended: both CPU samples are of now
+                k6cpu["0"] = (_proc_cpu_s(kproc.pid), now)
                 stat["0"] = (_busy_s(Path("/proc/stat").read_text()), now)
             if t0 is not None and t1 is None and now >= next_periodic:
-                series.append({"t": now - steady_at} | _sample(get(port, "/metrics")))
+                series.append({"t": now - steady_at} | scrape_sample(port, scrapes))
                 next_periodic += SCRAPE_EVERY_S
             if "1" not in k6cpu and t0 is not None and now >= end_at - 1.5 and kproc.poll() is None:
                 k6cpu["1"] = (_proc_cpu_s(kproc.pid), now)  # k6 is gone by t1: read it just before
             if t1 is None and t0 is not None and now >= end_at + 1.0:
-                t1 = get(port, "/metrics")
-                stat["1"] = (_busy_s(Path("/proc/stat").read_text()), now)
+                t1 = scrape(port, scrapes, "t1") or ""
+                stat["1"] = (_busy_s(Path("/proc/stat").read_text()), time.time())  # after the wait
             if kproc.poll() is not None and (t1 is not None or t0 is None):
                 break
             time.sleep(0.25)
@@ -386,8 +430,11 @@ def execute(p: Plan, k6: str) -> Path:
         "".join(json.dumps(x) + "\n" for x in series), encoding="utf-8"
     )
     cpus = _cpus(p.k6_cpus) if p.k6_cpus else os.cpu_count() or 1
-    other = 0.0
-    if len(stat) == len(k6cpu) == 2:  # the machine's busy CPU over the window, less backend and k6
+    other: float | None = None  # null when not read (a lost boundary): never 0.0
+    actual: float | None = None  # t0 to t1 as answered; none when a boundary was lost
+    if len(stat) == 2 and not scrapes.missing:
+        actual = stat["1"][1] - stat["0"][1]
+    if len(stat) == len(k6cpu) == 2 and not scrapes.missing:  # busy CPU less backend and k6
         (busy0, w0), (busy1, w1) = stat["0"], stat["1"]
         (c0, u0), (c1, u1) = k6cpu["0"], k6cpu["1"]
         if w1 > w0 and u1 > u0:
@@ -400,6 +447,7 @@ def execute(p: Plan, k6: str) -> Path:
         "resolved": p.prof,
         "flag": "on" if p.flag else "off",
         "steady_s": p.duration_s,
+        "steady_actual_s": actual,
         "warmup_s": float(p.prof["warmup_s"]),
         "profile_duration_s": p.nominal_duration_s,
         "profile_warmup_s": p.nominal_warmup_s,
@@ -409,8 +457,11 @@ def execute(p: Plan, k6: str) -> Path:
         "cpus": [p.backend_cpus, p.k6_cpus],
         "cgroup": STAGING["label"] if p.staging else "none",
         "loop": LOOP,
+        # true by construction: the runner starts both, and ws_load.js refuses non-loopback
+        "same_host": True,
+        "scrapes": asdict(scrapes),
         "k6_cpu_frac": _cpu_frac(k6cpu, cpus),
-        "rss_bytes": int(max((x["rss"] for x in series), default=0)) or None,
+        "rss_bytes": int(max((x["rss"] for x in series if "rss" in x), default=0)) or None,
         "mem_max_bytes": MEM_MAX if p.staging else None,
         "oom_events": _cgroup_count(cg, "memory.events", "oom_kill"),
         "commit": _commit(),
@@ -446,6 +497,7 @@ def load_run(out: Path) -> tuple[dict[str, Any], dict[str, Any], Scrape, Scrape]
 def judge(out: Path) -> tuple[Result, dict[str, Any]]:
     """The verdict of a saved run: artefacts only, no clock and no process."""
     facts, summ, t0, t1 = load_run(out)
+    scrapes = ScrapeTally(**facts["scrapes"]) if "scrapes" in facts else None
     cpu_s = budgets.total(budgets.delta(t0, t1), "process_cpu_seconds_total") or None
     run = Facts(
         facts["steady_s"],
@@ -454,6 +506,8 @@ def judge(out: Path) -> tuple[Result, dict[str, Any]]:
         facts["mem_max_bytes"],
         facts["oom_events"],
         cpu_s,
+        scrapes,
+        facts.get("steady_actual_s"),
     )
     res = budgets.evaluate(facts["resolved"] | {"flag": facts["flag"]}, summ, t0, t1, run)
     if not summ:
@@ -533,7 +587,7 @@ def variance_sources(a: Mapping[str, Any], b: Mapping[str, Any]) -> list[str]:
     out = []
     if any(f["variance"]["nr_throttled"] > 0 for f in (a, b)):
         out.append("cpu throttling (cpu.stat nr_throttled rose)")
-    if any(f["variance"].get("other_cores", 0.0) > VARIANCE_OTHER_CORES for f in (a, b)):
+    if any((f["variance"].get("other_cores") or 0.0) > VARIANCE_OTHER_CORES for f in (a, b)):
         out.append(f"co-tenant load (over {VARIANCE_OTHER_CORES:g} core busy outside the run)")
     if a["cpu_model"] != b["cpu_model"]:
         out.append(f"cpu model changed ({a['cpu_model']} / {b['cpu_model']})")
@@ -549,6 +603,10 @@ APPROXIMATIONS = (
     f"fixture runs on the {LOOP} loop where production's uvicorn picks uvloop, so fan-out, loop "
     "lag and CPU err on the pessimistic side and compare with this harness's own runs only"
 )
+
+
+def _missed(res: Result) -> str:
+    return f"; missed: {', '.join(res.failed())}" if res.failed() else ""
 
 
 def render(res: Result, facts: Mapping[str, Any], g: gate.GateResult) -> str:
@@ -569,6 +627,10 @@ def render(res: Result, facts: Mapping[str, Any], g: gate.GateResult) -> str:
     lines.append(f"- CPU sets: backend {backend_cpus or 'any'}, k6 {k6_cpus or 'any'}")
     if not facts["staging"]:
         lines.append("- Not staged: no systemd scope, so no CPU quota and no memory cap")
+    if res.clock_skew is not None:  # why the validity guard let the run through, or stopped it
+        host = facts.get("same_host")
+        same = "not recorded" if host is None else str(bool(host)).lower()
+        lines.append(f"- Clock skew at the hello (same_host {same}): {res.clock_skew.text}")
     lines += [
         "",
         "| check | budget | measured | limit | unit | result |",
@@ -583,9 +645,14 @@ def render(res: Result, facts: Mapping[str, Any], g: gate.GateResult) -> str:
     for k, m in sorted(res.verdict.metrics.items()):
         cells = " | ".join(f"{m[x]:.4g}" if x in m else "" for x in ("p50", "p95", "p99", "max"))
         lines.append(f"| {k} | {cells} | {m['count']:.0f} |")
+    if res.not_judged:
+        lines += ["", "Not judged:", *(f"- {x}" for x in res.not_judged)]
     if res.invalid:
-        lines += ["", "**INVALID** (a validity guard tripped, so no budget is judged):"]
-        lines += [f"- {x}" for x in res.invalid]
+        if res.status == "INVALID":
+            head = f"**INVALID** (a validity guard tripped, so no budget is judged{_missed(res)}):"
+        else:  # the scrape line outranks it
+            head = f"Also invalid (a validity guard tripped; {budgets.SCRAPE_LINE} decides FAIL):"
+        lines += ["", head, *(f"- {x}" for x in res.invalid)]
     lines += ["", "Not measurable here:", *(f"- {x}" for x in budgets.NOT_MEASURABLE)]
     lines += ["", f"Baseline gate: **{g.status}**" + (f" ({g.reason})" if g.reason else "")]
     lines += [*(f"- WARN {w}" for w in g.warnings), *(f"- FAIL {f}" for f in g.failures)]
@@ -604,8 +671,9 @@ def finish(out: Path, tolerance: float, *, record: bool = False) -> int:
         f"{facts['profile']} flag {facts['flag']}: {res.status}"
         + (f", failed: {', '.join(res.failed())}" if res.failed() else "")
     )
+    lead = "INVALID" if res.status == "INVALID" else "also invalid:"
     for text in res.invalid:
-        print(f"  INVALID {text}")
+        print(f"  {lead} {text}")
     for w in g.warnings:
         print(f"::warning::{facts['profile']}: {w}")
     for f in g.failures:
@@ -645,7 +713,7 @@ def comparable(runs: Sequence[tuple[Result, dict[str, Any]]], names: Sequence[st
     of another profile, flag, machine, length or event loop are not samples of one thing. Empty
     when they can."""
     why = [
-        f"{name} is INVALID ({'; '.join(res.invalid)})"
+        f"{name} is {res.status} ({'; '.join(res.invalid)}{_missed(res)})"
         for name, (res, _) in zip(names, runs, strict=True)
         if res.invalid
     ]
@@ -688,11 +756,22 @@ def cmd_w5(a: argparse.Namespace) -> int:
             "w5: every phase sets its own pong delay, which is its class: no --rtt-delay-ms"
         )
     table, k6, phases = profiles.load(), k6_binary(), []
+    left_out: list[str] = []  # phases that lost a boundary scrape: no steady window to read
+    kept: dict[str, str] = {}  # phases read as they are after a scrape timed out
     for ph in table["w5"]["phases"]:
         out = a.out_dir / ph["name"]
         p = plan(table, a, table["w5"]["base"], out, **{k: v for k, v in ph.items() if k != "name"})
         execute(p, k6)
         res, facts = judge(out)
+        tally = facts.get("scrapes", {})
+        if tally.get("missing"):
+            left_out.append(ph["name"])
+            continue
+        if tally.get("timed_out_ms"):  # a retried boundary's CPU rate spans the real interval
+            n, again = len(tally["timed_out_ms"]), " and ".join(tally.get("retried", []))
+            note = f"{n} of {tally['attempted']} scrapes timed out"
+            note += f" ({again} retried)" if again else ""
+            kept[ph["name"]] = f"phase {ph['name']}: {note}, kept"
         _, summ, t0, t1 = load_run(out)
         rtt = int(p.prof["rtt_delay_ms"])
         phases.append(
@@ -703,17 +782,20 @@ def cmd_w5(a: argparse.Namespace) -> int:
                 summ,
                 budgets.delta(t0, t1),
                 facts["steady_s"],
-                res.status,
+                "INVALID" if res.invalid else res.status,  # W5 leaves out on validity alone
+                facts.get("steady_actual_s"),
             )
         )
-    answer = w5.analyze(phases)
+    answer = w5.analyze(phases, left_out)
+    answer["notes"] += [n for name, n in kept.items() if name not in answer["skipped"]]
+    answer["notes"] += [f"phase {n}: a boundary scrape timed out, left out" for n in left_out]
     (a.out_dir / "w5.json").write_text(
         json.dumps(answer, indent=2, default=str) + "\n", encoding="utf-8"
     )
     print(w5.headline(answer))
     for note in answer["notes"]:
         print(f"  {note}")
-    return w5.exit_code(answer)
+    return 1 if left_out else w5.exit_code(answer)
 
 
 def cmd_record(a: argparse.Namespace) -> int:
@@ -763,19 +845,24 @@ def cmd_repro(a: argparse.Namespace) -> int:
         print(f"reproducibility refused: {'; '.join(why)}")
         return 2
     off = budgets.repro_diff(ra.verdict.metrics, rb.verdict.metrics)
+    only_one = ra.verdict.metrics.keys() ^ rb.verdict.metrics.keys()  # a lost boundary, say
+    skipped = [name for name in budgets.HEADLINES if name in only_one]
     named = variance_sources(fa, fb) + list(a.variance_source or [])
     for name, rel in off.items():
         print(f"  {name}: {rel:+.1%} between the two runs")
+    if skipped:
+        print(f"  not compared (no reading in one run): {', '.join(skipped)}")
     if off and not named:
         tol = f"{budgets.REPRO_TOLERANCE:.0%}"
         print(f"reproducibility FAIL: {len(off)} headline(s) differ by more than {tol}, no source")
         return 1
+    every = "every compared headline" if skipped else "every headline"
     print(
         "reproducibility OK"
         + (
             f", differences explained by: {'; '.join(named)}"
             if off
-            else f": every headline within {budgets.REPRO_TOLERANCE:.0%}"
+            else f": {every} within {budgets.REPRO_TOLERANCE:.0%}"
         )
     )
     return 0

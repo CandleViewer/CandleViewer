@@ -9,6 +9,7 @@ self-check).
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ import pytest
 from bench.ingestion import HARNESS_VERSION as E08_HARNESS_VERSION
 from bench.ingestion import gate
 from bench.ingestion.budgets import Check, Verdict
-from bench.ws import HARNESS_VERSION, budgets, w5
+from bench.ws import HARNESS_VERSION, budgets, profiles, w5
 from bench.ws.budgets import Facts, Scrape
 
 PROFILE: dict[str, Any] = {
@@ -222,6 +223,197 @@ def test_a_run_with_fewer_connections_than_planned_is_invalid_never_a_pass(
     res = evaluate(summ, t0=t0)
     assert res.status == "INVALID" and any("connections_short" in x for x in res.invalid)
     assert evaluate(summary()).status == "PASS"  # 5 users x 1 connection and the probe, all up
+
+
+# -- the clock-skew guard judges the skew corrected for the hello's own transit ------------------
+
+
+def hello_skew(raw: float, corrected: float, rtt_p50: float, rtt_max: float) -> dict[str, Any]:
+    """The three trends the k6 client records at each welcome (`tests/load/ws/lib/skew.js`)."""
+    rtt = {"count": 6, "p50": rtt_p50, "p95": rtt_max, "p99": rtt_max, "max": rtt_max}
+    return {
+        "cv_clock_skew_ms": trend(raw, n=6),
+        "cv_clock_skew_corrected_ms": trend(corrected, n=6),
+        "cv_hello_rtt_ms": rtt,
+    }
+
+
+def test_a_same_host_skew_that_is_only_the_hellos_transit_passes_the_guard() -> None:
+    """One host clock, so no drift: 10 of the 13 ms reported are half the 20 ms round trip."""
+    res = evaluate(summary(**hello_skew(raw=13.0, corrected=3.0, rtt_p50=20.0, rtt_max=26.0)))
+    assert (res.status, res.invalid) == ("PASS", [])
+
+
+def test_a_real_drift_is_still_invalid_and_the_message_names_corrected_raw_and_rtt() -> None:
+    """8 ms of drift on top of a 10 ms transit reads 18 ms raw and 8 ms corrected."""
+    res = evaluate(summary(**hello_skew(raw=18.0, corrected=8.0, rtt_p50=20.0, rtt_max=22.0)))
+    assert (res.status, res.exit_code) == ("INVALID", 2)
+    assert res.invalid == [
+        "clock_skew: corrected max 8.0 ms against 5 ms (max over 6 hellos of |raw - RTT/2|; "
+        "raw max 18.0 ms; hello RTT p50 20.0 ms / max 22.0 ms)"
+    ]
+
+
+def test_a_corrected_skew_above_the_raw_one_is_what_the_guard_judges() -> None:
+    """The server's clock 8 ms behind on a 20 ms round trip reads 2 ms raw and 8 ms corrected."""
+    res = evaluate(summary(**hello_skew(raw=2.0, corrected=8.0, rtt_p50=20.0, rtt_max=22.0)))
+    assert res.status == "INVALID" and res.invalid[0].startswith("clock_skew: corrected max 8.0 ms")
+
+
+@pytest.mark.parametrize(("corrected", "status"), [(5.0, "PASS"), (5.1, "INVALID")])
+def test_the_corrected_skew_is_held_to_the_same_5_ms_as_the_raw_one_was(
+    corrected: float, status: str
+) -> None:
+    assert budgets.MAX_CLOCK_SKEW_MS == 5.0
+    skew = hello_skew(raw=corrected + 10.0, corrected=corrected, rtt_p50=20.0, rtt_max=22.0)
+    assert evaluate(summary(**skew)).status == status
+
+
+@pytest.mark.parametrize(("raw", "status"), [(5.0, "PASS"), (6.0, "INVALID")])
+def test_a_summary_without_the_corrected_trend_is_judged_on_its_raw_skew_as_before(
+    raw: float, status: str
+) -> None:
+    assert evaluate(summary(cv_clock_skew_ms=trend(raw))).status == status
+
+
+def test_a_raw_only_skew_says_in_its_message_that_it_was_not_corrected() -> None:
+    res = evaluate(summary(cv_clock_skew_ms=trend(6.0, n=6)))
+    assert res.invalid == [
+        "clock_skew: raw max 6.0 ms against 5 ms (max over 6 hellos of |raw|; "
+        "not RTT-corrected: the summary has no cv_clock_skew_corrected_ms)"
+    ]
+
+
+def test_the_selfcheck_profile_fails_budget_6_on_a_rig_whose_hello_transit_is_13_ms() -> None:
+    """On cv-bench-01 the raw hello transit is 10 to 33 ms (run A) and the 25 ms send delay holds
+    the welcome after the server's stamp: raw 13 ms on a 45 ms round trip. Not judged: budget 6 is
+    the server's own histogram, which no clock skew touches."""
+    prof = profiles.resolve(profiles.load(), "selfcheck") | {"name": "selfcheck"}
+    slow = scrape({0.01: 100, 0.02: 400, 0.03: 900, 0.05: 3200})
+    skew = hello_skew(raw=13.0, corrected=9.5, rtt_p50=45.0, rtt_max=47.0)
+    res = evaluate(summary(**skew), slow, prof)
+    ok, text = budgets.expect_failure(res, prof["expect_fail"])
+    assert (res.status, res.invalid, ok) == ("FAIL", [], True), text
+
+
+def test_the_selfcheck_is_not_ok_when_a_guard_tripped_under_a_scrape_timeout() -> None:
+    prof = profiles.resolve(profiles.load(), "selfcheck") | {"name": "selfcheck"}
+    slow = scrape({0.01: 100, 0.02: 400, 0.03: 900, 0.05: 3200})  # budget 6 fails, as inflated
+    res = evaluate(summary(cv_unplanned_closes=2), slow, prof, scraped(15003.0))
+    assert res.status == "FAIL" and prof["expect_fail"] in res.failed()  # the scrape line wins
+    ok, text = budgets.expect_failure(res, prof["expect_fail"])
+    assert not ok and "cv_unplanned_closes" in text
+
+
+def test_a_send_delay_run_reports_its_skew_and_is_never_invalid_for_it() -> None:
+    skew = hello_skew(raw=6.0, corrected=8.5, rtt_p50=27.0, rtt_max=29.0)
+    res = evaluate(summary(**skew), prof=PROFILE | {"send_delay_ms": 25})
+    assert (res.status, res.invalid) == ("PASS", [])
+    assert res.clock_skew is not None and res.clock_skew.text == (
+        "raw max 6.0 ms (max over 6 hellos of |raw|; send delay 25 ms injected: reported, not "
+        "judged; hello RTT p50 27.0 ms / max 29.0 ms)"
+    )
+    assert res.as_dict()["clock_skew"]["judged"] is False  # result.json says so too
+
+
+def test_a_send_delay_under_a_millisecond_injects_none_so_the_skew_is_still_judged() -> None:
+    skew = hello_skew(raw=18.0, corrected=8.0, rtt_p50=20.0, rtt_max=22.0)  # `int(0.5)`: no delay
+    res = evaluate(summary(**skew), prof=PROFILE | {"send_delay_ms": 0.5})
+    assert res.status == "INVALID" and res.invalid[0].startswith("clock_skew: corrected max 8.0 ms")
+
+
+def test_a_single_hello_is_not_pluralised_in_the_skew_line() -> None:
+    res = evaluate(summary(cv_clock_skew_ms=trend(6.0, n=1)))
+    assert "(max over 1 hello of |raw|;" in res.invalid[0]
+
+
+# -- a /metrics scrape that times out is a budget line ---------------------------------------
+
+
+def scraped(*timed_out_ms: float, attempted: int = 8, missing: tuple[str, ...] = ()) -> Facts:
+    """`FACTS` with a steady state of `attempted` scrapes, those of `timed_out_ms` timed out."""
+    tally = budgets.ScrapeTally(15.0, attempted, list(timed_out_ms), list(missing))
+    return replace(FACTS, scrapes=tally)
+
+
+def test_a_run_whose_scrapes_all_answered_passes_the_scrape_line() -> None:
+    res = evaluate(summary(), facts=scraped())
+    row = next(c for c in res.verdict.checks if c.name == "scrape.metrics_timeout")
+    assert (res.status, row.passed) == ("PASS", True)
+    assert row.note == "all 8 scrapes answered within 15 s"
+
+
+def test_one_scrape_in_eight_that_timed_out_fails_the_run_with_the_cause_not_invalid() -> None:
+    res = evaluate(summary(), facts=scraped(15002.0))
+    assert (res.status, res.failed(), res.invalid) == ("FAIL", ["scrape.metrics_timeout"], [])
+    row = next(c for c in res.verdict.checks if c.name == "scrape.metrics_timeout")
+    assert row.note == "backend did not answer /metrics within 15 s, 1 of 8 scrapes"
+
+
+@pytest.mark.parametrize(
+    ("summ", "t1", "cause"),
+    [
+        # 15 s without answers skipped 2.5 % of 600 s
+        (summary(), scrape(fed=(1000, 975)), "feeder_behind"),
+        (summary(cv_unplanned_closes=2), None, "cv_unplanned_closes"),  # and the server closed two
+    ],
+)
+def test_a_scrape_timeout_outranks_the_guard_it_trips(summ: Any, t1: Any, cause: str) -> None:
+    res = evaluate(summ, t1, facts=scraped(15003.0))  # FAIL on the scrape; the guard stays listed
+    assert (res.status, res.exit_code, res.failed()) == ("FAIL", 1, ["scrape.metrics_timeout"])
+    assert [x.split(":")[0] for x in res.invalid] == [cause]
+
+
+@pytest.mark.parametrize("boundary", ["t0", "t1"])
+def test_a_lost_boundary_scrape_fails_the_scrape_line_and_leaves_the_deltas_unjudged(
+    boundary: str,
+) -> None:
+    gone: Scrape = {}  # the scrape that never answered leaves an empty file
+    drop = 'cv_ws_overflow_total{env="demo",reason="drop"} 2'  # a FAIL, were it read as a delta
+    t0, t1 = (gone, scrape(extra=drop)) if boundary == "t0" else (None, gone)
+    res = evaluate(summary(), t1, t0=t0, facts=scraped(15002.0, attempted=2, missing=(boundary,)))
+    assert (res.status, res.failed(), res.invalid) == ("FAIL", ["scrape.metrics_timeout"], [])
+    held = [budgets.HELD_BUDGET] if boundary == "t0" else []  # a lost t1 leaves t0's count to read
+    said = f"not judged ({boundary} scrape timed out)"
+    assert res.not_judged == [f"{b}: {said}" for b in (*budgets.SCRAPE_BUDGETS, *held)]
+    assert not any(c.name.startswith("budget6") for c in res.verdict.checks)
+    assert "backend_cpu_s_per_s" not in res.verdict.metrics  # `FACTS` has the cpu: no delta to rate
+
+
+def test_a_lost_t1_still_judges_the_connections_held_at_steady_start() -> None:
+    t0 = budgets.parse_scrape("cv_ws_connections_in_use 5")
+    res = evaluate(summary(), {}, t0=t0, facts=scraped(15002.0, attempted=2, missing=("t1",)))
+    assert "5 held at steady start, 6 planned" in res.invalid[0]
+
+
+def test_a_lost_t0_says_the_held_count_was_not_measured_rather_than_zero() -> None:
+    lost = scraped(15002.0, attempted=2, missing=("t0",))
+    res = evaluate(summary(cv_connections_up=4), t0={}, facts=lost)
+    assert "held at steady start not measured (t0 scrape timed out)" in res.invalid[0]
+
+
+def test_the_backend_cpu_rate_is_over_the_seconds_the_two_scrapes_span_when_recorded() -> None:
+    facts = replace(FACTS, cpu_s=100.0, steady_s=100.0)  # 100 CPU seconds in a 100 s window
+    got = [evaluate(summary(), facts=replace(facts, steady_actual_s=x)) for x in (50.0, None)]
+    assert [r.verdict.metrics["backend_cpu_s_per_s"]["p95"] for r in got] == [2.0, 1.0]
+
+
+@pytest.mark.parametrize("facts", [scraped(attempted=2), FACTS], ids=["none made", "older run"])
+def test_an_rss_cap_in_a_run_with_no_periodic_scrape_due_says_none_was_due(facts: Facts) -> None:
+    res = evaluate(summary(), facts=replace(facts, rss_bytes=None))
+    said = "backend_memory rss: not judged (no periodic scrape was due)"
+    assert (res.status, res.not_judged) == ("PASS", [said])
+
+
+def test_an_rss_cap_with_no_periodic_reading_is_not_judged_rather_than_skipped_silently() -> None:
+    res = evaluate(summary(), facts=replace(scraped(15000.0, 15000.0), rss_bytes=None))
+    assert res.not_judged == ["backend_memory rss: not judged (no periodic scrape was answered)"]
+
+
+def test_a_run_saved_before_the_scrape_counts_keeps_its_verdict_and_has_no_scrape_line() -> None:
+    res = evaluate(summary())
+    assert "scrape.metrics_timeout" not in {c.name for c in res.verdict.checks}
+    assert (res.status, res.not_judged) == ("PASS", [])
 
 
 RELEASE, TICK = "cv_release_decode_ms_trades", "cv_tick_decode_ms_trades"

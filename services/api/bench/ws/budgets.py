@@ -5,7 +5,8 @@ of the backend (steady-start t0, end t1; every server number is `t1 - t0`, a ser
 counting as 0, because most series are bound lazily). What it gives: a `Verdict` of named `Check`s
 (`bench.ingestion.budgets`), the headline `metrics` the baseline gate compares, and the run's
 validity. A budget miss fails the run with its check named; a run that trips a validity guard is
-INVALID, never a pass or a fail of a budget.
+INVALID, never a pass or a fail of a budget. The one exception: a failed `scrape.metrics_timeout`
+line outranks INVALID, as the unanswered scrape that trips a guard is the finding.
 
 Budget #6 is read exactly at its bucket edge (`cv_ws_fanout_seconds_bucket{le="0.02"}`), with no
 interpolation: the pass rule is that at least 95 % of the weighted samples are at or under 20 ms.
@@ -43,6 +44,25 @@ MIN_FANOUT_SAMPLES: Final = 40
 SAMPLE_EVERY: Final = 32
 MIN_FEED_RATIO: Final = 0.99
 MAX_CLOCK_SKEW_MS: Final = 5.0
+#: k6's trends of the hello's clock skew, absolute ms (`tests/load/ws/lib/skew.js`). The raw one is
+#: the server's `clock_skew_ms` as it came: with k6 and the backend on one clock it is the hello's
+#: transit and queueing, not drift. The guard judges the corrected one, which takes half the hello's
+#: round trip off first. Raw is judged instead for a summary from before the correction (raw trend
+#: only). A run that injects a send delay (the self-check) only reports the skew: the delay holds
+#: the welcome after the server's stamp, so no reading of it means anything, and budget #6, which
+#: the self-check is about, is the server's own histogram.
+SKEW_RAW: Final = "cv_clock_skew_ms"
+SKEW_CORRECTED: Final = "cv_clock_skew_corrected_ms"
+HELLO_RTT: Final = "cv_hello_rtt_ms"
+SCRAPE_LINE: Final = "scrape.metrics_timeout"
+#: What reads the server's counter deltas, so is not judged when a boundary scrape never answered.
+SCRAPE_BUDGETS: Final = (
+    "budget6.cv_ws_fanout_seconds.p95",
+    "backpressure and sequence series",
+    "event-loop lag",
+    "feeder ratio",
+)
+HELD_BUDGET: Final = "connections held at steady start"  # reads the t0 scrape alone
 MAX_K6_CPU_FRAC: Final = 0.8
 REPRO_TOLERANCE: Final = 0.15
 #: k6 times in whole milliseconds: a latency it reports moving by that much has not changed.
@@ -129,6 +149,20 @@ def fraction_le(d: Scrape, name: str, edge: float) -> tuple[float, float]:
     return (at / count if count else 0.0), count
 
 
+@dataclass(slots=True)
+class ScrapeTally:
+    """The steady state's `/metrics` scrapes as the runner tallies them (`run.json`: `scrapes`):
+    `attempted` counts the periodic ones and the two boundary ones (`t0`, `t1`), `timed_out_ms` how
+    long each scrape that timed out waited (a retry's wait included), `missing` the boundary scrapes
+    that never answered (the counter deltas are then unread), `retried` those a retry answered."""
+
+    timeout_s: float
+    attempted: int = 0
+    timed_out_ms: list[float] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    retried: list[str] = field(default_factory=list)
+
+
 @dataclass(frozen=True, slots=True)
 class Facts:
     """What the runner measured around k6 and the backend (all optional: a unit test omits them)."""
@@ -139,6 +173,49 @@ class Facts:
     mem_max_bytes: int | None = None
     oom_events: int = 0
     cpu_s: float | None = None  # backend CPU seconds over the steady window
+    scrapes: ScrapeTally | None = None  # None: a run saved before the counts
+    steady_actual_s: float | None = None  # real seconds t0 to t1; None: a run saved before it
+
+
+def _ms(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.1f} ms"
+
+
+@dataclass(frozen=True, slots=True)
+class ClockSkew:
+    """The hello's clock skew k6 measured, in absolute ms: the figure the guard reads, and why."""
+
+    max_ms: float  # the max over the hellos; compared with `MAX_CLOCK_SKEW_MS` when `judged`
+    raw: float | None  # the max of the server's own `clock_skew_ms`
+    rtt_p50: float | None  # the hello-to-welcome round trip
+    rtt_max: float | None
+    hellos: int  # the samples behind `max_ms`
+    rtt_corrected: bool  # `max_ms` is RTT-corrected; False: it is the raw max (see `clock_skew`)
+    send_delay_ms: float = 0.0  # the run's injected send delay: the skew is reported, not judged
+
+    @property
+    def judged(self) -> bool:
+        return self.send_delay_ms <= 0
+
+    @property
+    def text(self) -> str:
+        """What the guard read, for the INVALID line and the report: `corrected max 3.0 ms against
+        5 ms (max over 6 hellos of |raw - RTT/2|; raw max 13.0 ms; hello RTT p50 20.0 ms / ...)`."""
+        if self.rtt_corrected:
+            kind, of, note = "corrected", "|raw - RTT/2|", f"raw max {_ms(self.raw)}"
+        else:
+            kind, of = "raw", "|raw|"
+            note = f"not RTT-corrected: the summary has no {SKEW_CORRECTED}"
+            if not self.judged:
+                note = f"send delay {self.send_delay_ms:g} ms injected: reported, not judged"
+        hellos = f"{self.hellos} hello{'s' if self.hellos > 1 else ''}"
+        parts = [f"max over {hellos} of {of}", note]
+        if self.rtt_max is not None:
+            parts.append(f"hello RTT p50 {_ms(self.rtt_p50)} / max {_ms(self.rtt_max)}")
+        head = f"{kind} max {self.max_ms:.1f} ms"
+        if self.judged:
+            head += f" against {MAX_CLOCK_SKEW_MS:g} ms"
+        return f"{head} ({'; '.join(parts)})"
 
 
 @dataclass(slots=True)
@@ -146,9 +223,13 @@ class Result:
     verdict: Verdict
     invalid: list[str] = field(default_factory=list)
     informational: list[Check] = field(default_factory=list)
+    clock_skew: ClockSkew | None = None  # what the clock-skew guard read, reported beside it
+    not_judged: list[str] = field(default_factory=list)  # budgets a lost boundary scrape left out
 
     @property
     def status(self) -> str:
+        if SCRAPE_LINE in self.failed():  # outranks INVALID; the guards it trips stay listed
+            return "FAIL"
         return "INVALID" if self.invalid else "PASS" if self.verdict.passed else "FAIL"
 
     @property
@@ -163,6 +244,8 @@ class Result:
             "status": self.status,
             "invalid": self.invalid,
             "informational": [asdict(c) for c in self.informational],
+            "clock_skew": {**asdict(cs), "judged": cs.judged} if (cs := self.clock_skew) else None,
+            "not_judged": self.not_judged,
             "not_measurable": list(NOT_MEASURABLE),
         }
 
@@ -194,11 +277,28 @@ def _scalar(value: float, n: float = 1.0) -> dict[str, float]:
     return {"p50": value, "p95": value, "max": value, "count": n}
 
 
+def clock_skew(summ: Mapping[str, Any], send_delay_ms: float = 0.0) -> ClockSkew | None:
+    """The hello's clock skew from the k6 summary: the corrected trend is read. The raw one is read
+    instead when the run injects a send delay (it holds the welcome after the server's stamp, which
+    breaks the correction's even split of the round trip) and for a summary from before the
+    correction. `None` when no welcome was timed."""
+    raw, corrected = _stat(summ, SKEW_RAW, "max"), _stat(summ, SKEW_CORRECTED, "max")
+    rtt_corrected = corrected is not None and send_delay_ms <= 0
+    read = corrected if rtt_corrected else raw
+    if read is None:
+        return None
+    hellos = int(_stat(summ, SKEW_CORRECTED if rtt_corrected else SKEW_RAW, "count") or 0)
+    rtt_p50, rtt_max = _stat(summ, HELLO_RTT, "p50"), _stat(summ, HELLO_RTT, "max")
+    return ClockSkew(read, raw, rtt_p50, rtt_max, hellos, rtt_corrected, send_delay_ms)
+
+
 def evaluate(
     prof: Mapping[str, Any], summ: Mapping[str, Any], t0: Scrape, t1: Scrape, facts: Facts
 ) -> Result:
     """The run's verdict. `prof` is the resolved profile (`flag`, `gate_on`, `probe`, `name`)."""
-    d = delta(t0, t1)
+    sc = facts.scrapes
+    lost = sc.missing if sc else []  # the boundary scrapes that never answered
+    d = {} if lost else delta(t0, t1)
     v = Verdict(str(prof["name"]))
     res = Result(v)
     counters: Mapping[str, float] = summ.get("counters", {})
@@ -206,10 +306,21 @@ def evaluate(
     hours = facts.steady_s / 3600.0
     m = v.metrics
 
+    if sc and sc.attempted:  # a run saved before the counts has none
+        n, within = len(sc.timed_out_ms), f"within {sc.timeout_s:g} s"
+        note = f"all {sc.attempted} scrapes answered {within}"
+        if n:
+            note = f"backend did not answer /metrics {within}, {n} of {sc.attempted} scrapes"
+        v.add(Check(SCRAPE_LINE, "ticket", n, 0.0, "scrapes", n == 0, True, note))
+
     # budget #6, from the server's own histogram
     share, count = fraction_le(d, "cv_ws_fanout_seconds", B6_FANOUT_S)
     p95s = quantile(d, "cv_ws_fanout_seconds", B6_QUANTILE)
-    if count < MIN_FANOUT_SAMPLES * SAMPLE_EVERY:
+    if lost:  # the budgets that read the scrape deltas have no window to read
+        gone = f"{' and '.join(lost)} scrape timed out"
+        names = [*SCRAPE_BUDGETS, *([HELD_BUDGET] if "t0" in lost else [])]
+        res.not_judged = [f"{b}: not judged ({gone})" for b in names]
+    elif count < MIN_FANOUT_SAMPLES * SAMPLE_EVERY:
         res.invalid.append(
             f"fanout_samples: {count / SAMPLE_EVERY:.0f} sampled frames, need {MIN_FANOUT_SAMPLES}"
         )
@@ -379,9 +490,11 @@ def evaluate(
     )
     if sched and pub / sched < MIN_FEED_RATIO:
         res.invalid.append(f"feeder_behind: published {pub:.0f} of {sched:.0f} scheduled slots")
-    skew = _stat(summ, "cv_clock_skew_ms", "max")
-    if skew is not None and skew > MAX_CLOCK_SKEW_MS:
-        res.invalid.append(f"clock_skew: {skew:.1f} ms against {MAX_CLOCK_SKEW_MS:g}")
+    # the runner hands the backend `int(send_delay_ms)`: 0.5 injects no delay, so it is judged
+    skew = clock_skew(summ, float(int(prof.get("send_delay_ms") or 0)))
+    res.clock_skew = skew
+    if skew is not None and skew.judged and skew.max_ms > MAX_CLOCK_SKEW_MS:
+        res.invalid.append(f"clock_skew: {skew.text}")
     lag95 = _stat(summ, "cv_client_lag_ms", "p95")
     if lag95 is not None and lag95 >= CLIENT_LAG_P95_MS:
         res.invalid.append(f"cv_client_lag_ms: p95 {lag95:.1f} ms, the k6 client is the bottleneck")
@@ -392,27 +505,35 @@ def evaluate(
             res.invalid.append(f"{name}: {counters[name]:.0f}")
     planned = int(prof["users"]) * int(prof["connections"]) + int(bool(prof.get("probe")))
     up, held = counters.get("cv_connections_up", 0.0), total(t0, "cv_ws_connections_in_use")
-    if up < planned or held < planned:  # a lighter load than the profile names proves nothing
+    unread = "t0" in lost  # no t0 scrape: the count is not measured, not 0
+    if up < planned or (held < planned and not unread):  # a lighter load proves nothing
+        at_start = f"{held:.0f} held at steady start"
+        if unread:
+            at_start = "held at steady start not measured (t0 scrape timed out)"
         res.invalid.append(
-            f"connections_short: {up:.0f} authenticated and {held:.0f} held at steady start, "
-            f"{planned} planned"
+            f"connections_short: {up:.0f} authenticated and {at_start}, {planned} planned"
         )
     if facts.oom_events or (
         facts.rss_bytes and facts.mem_max_bytes and facts.rss_bytes >= facts.mem_max_bytes
     ):
         res.invalid.append(f"backend_memory: rss {facts.rss_bytes}, oom events {facts.oom_events}")
+    if facts.mem_max_bytes and not facts.rss_bytes:  # a cap, but no periodic reading
+        tried = bool(sc and len(sc.timed_out_ms) - len(sc.retried) - len(sc.missing) > 0)
+        was = "answered" if tried else "due"  # all periodic scrapes timed out, or none was due
+        res.not_judged.append(f"backend_memory rss: not judged (no periodic scrape was {was})")
     if facts.steady_s <= 0:
         res.invalid.append("no_steady_window")
-    if facts.cpu_s is not None and facts.steady_s > 0:
-        m["backend_cpu_s_per_s"] = _scalar(facts.cpu_s / facts.steady_s)
+    if facts.cpu_s is not None and facts.steady_s > 0 and not lost:  # a lost boundary: no delta
+        m["backend_cpu_s_per_s"] = _scalar(facts.cpu_s / (facts.steady_actual_s or facts.steady_s))
     if facts.rss_bytes:
         m["backend_rss_mb"] = _scalar(facts.rss_bytes / 2**20)
     return res
 
 
 def expect_failure(res: Result, name: str) -> tuple[bool, str]:
-    """The self-check: the run must FAIL and name `name` (the deliberately inflated metric)."""
-    ok = res.status == "FAIL" and name in res.failed()
+    """The self-check: the run must FAIL, with no guard tripped, and name `name` (the
+    deliberately inflated metric)."""
+    ok = res.status == "FAIL" and name in res.failed() and not res.invalid
     failed, invalid = ", ".join(res.failed()) or "none", "; ".join(res.invalid) or "none"
     return ok, f"{res.status}; failed: {failed}; invalid: {invalid}"
 
