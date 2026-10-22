@@ -203,6 +203,11 @@ class _Identity:
             "status": "active",
         }
 
+    async def names(self, user_id: str) -> tuple[str, str | None]:
+        """`SqlAlchemyIdentityProvider.names` (#3085 S12's view-as read): the actor's username
+        and no display name."""
+        return self._actor(user_id), None
+
     async def session_info(self, user_id: str) -> dict[str, Any]:
         a = self._actor(user_id)
         return {
@@ -626,6 +631,11 @@ class _Views:
 
     async def viewer_label(self, record: SessionRecord) -> str:
         return next(a for a, u in _USER_IDS.items() if u == record.user_id)
+
+    async def leave(self, record: SessionRecord, *, now: datetime) -> SessionRecord | None:
+        """`DELETE /auth/session/view-as` (#3085 S12): the seeded contexts are never ended
+        here, so nothing applies."""
+        return None
 
 
 @dataclass
