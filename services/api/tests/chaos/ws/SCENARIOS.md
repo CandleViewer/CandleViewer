@@ -46,7 +46,11 @@ stays, on the virtual clock. Production keeps both: a reader stalled for 60 real
 `1011`, which this harness leaves out. The server's per-connection frame budget (#2176) is kept
 there but refilled on the virtual clock (`_server._frames_on`), like the gateway's own inbound
 limiter; the flag-off stack keeps the loop clock, as production does.
-`trades_step` publishes the recorded BTCUSDT tape (production
+`flag_on(nodelay=True)` (scenario 3's wall-clock tests) also sets `TCP_NODELAY` on the
+listening socket, which every accepted socket inherits: asyncio sets it only on the sockets it
+makes by host and port, so otherwise an update can wait about 40 ms on Nagle and the client's
+delayed ACK (the stall scenario 1 prints); the default is unchanged, so the other users of
+`Stack` are untouched. `trades_step` publishes the recorded BTCUSDT tape (production
 parser) as §14.2 batches, replayed in rounds with unique ids. Client opt-ins, set before `start()`:
 the §9.1 client `ping` (`heartbeat_s`), no permessage-deflate (`deflate`), and `on_data`, which
 takes the data frames of a stream too large to keep. The flag-off scenarios use none of these.
@@ -61,7 +65,7 @@ a `Client.on_data` for a channel too long to keep (a `Replica` and the disclosur
 | --- | ------------------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Upstream kill (G3)                                                  | **runs** (gateway half): `test_s1_upstream_kill.py`           | Producer half: nothing calls `SequencingHub.upstream_desync` or `upstream_reconnect` nor publishes a book `d`: the book publisher E21-T01 #604. End to end then runs over the E08 Rig's recorded upstream (recorded here, not filed)                     |
 | 2   | Slow consumer, 60 s (G4, P6; AC-12)                                 | **runs**: `test_s2_slow_consumer.py`                          | — (flag on: `_server.flag_on`. The sleeper holds `book.BTCUSDT.50` and the tape; no bar builder is wired into this harness for `bars` or `footprint`. Step 3's redrop needs a snapshot near the budget, and none is: `test_pipeline_ladder.py` pins it.) |
-| 3   | Burst 5 000 msg/s (§8)                                              | **runs** (the burst): `test_s3_burst.py`                      | — (flag on: `_server.flag_on`. The gateway has no book publisher, #604: `_book.Loop` plays it. Not run yet: the other symbols during the burst, and budget #6)                                                                                           |
+| 3   | Burst 5 000 msg/s (§8)                                              | **runs**: `test_s3_burst.py`                                  | — (flag on: `_server.flag_on`. The gateway has no book publisher, #604: `_book.Loop` plays it. Budget #6 in wall time runs nightly only (`harness`); its negative control in the PR lane too)                                                            |
 | 4   | Restart, `shutdown_notice` (§9.4)                                   | **runs**: `test_s4_restart_shutdown_notice.py`                | —                                                                                                                                                                                                                                                        |
 | 5   | Token expiry during an outage (§4.3, §9.2)                          | **runs**: `test_s5_token_expiry_outage.py`                    | —                                                                                                                                                                                                                                                        |
 | 6   | Grant revoked mid-reconnect (E17-X02)                               | **runs**: `test_s6_revocation_reconnect_race.py`              | — (SR-189 half: #2318 merged)                                                                                                                                                                                                                            |
@@ -165,11 +169,13 @@ first, the socket never closed. The tick outlasts the slowest window the book ca
 50 ms throttle x4, `saturated`): a class follows RTT samples read on the virtual clock, a `pong`
 that crosses ticks can raise it (scenario 1 met that at 125 ms), and a window longer than its tick
 waits for a clock the waiting tick never moves. The run is 50 000 updates in 41 frames (x1 220) in
-the PR lane; 300 000 in 241 (x1 245), marked `harness`, is meant for the nightly job (wired in the
-next #410 PR), so the PR lane's `-m` leaves it out and `-m chaos` (above) includes it (`-m "chaos
-and not harness"` does not). After every tick the `Replica` equals the server's `Book.top(50)` (23
-§16.4, unit: the coalescer equals applying every source update), and the pacer's series agree with
-the frames: `cv_ws_conflated_total{topic="book"}` moves by the updates less the frames,
+the PR lane; 300 000 in 241 (x1 245), marked `harness`, runs nightly (`chaos-ws-nightly`): the PR
+lane's `-m` leaves it out, and `-m chaos` (above) includes it (`-m "chaos and not harness"` does
+not). The frames are `windows(1 250, ticks)` and the series `merged(updates, frames)`, the two
+helpers the isolation tests assert the burst by too. After every tick the `Replica` equals the
+server's `Book.top(50)` (23 §16.4, unit: the coalescer equals applying every source update), and
+the pacer's series agree with the frames: `cv_ws_conflated_total{topic="book"}` moves by the
+updates less the frames,
 `cv_ws_coalesced_updates` by one count a frame but the first and the updates less one in its sum,
 and nothing moves in `cv_ws_overflow_total`, `cv_ws_closes_total` or `cv_ws_resync_total`: absorbed,
 not lost. A window holds at most 181 distinct levels here, against a bound of 4 096 merge keys. Wall
@@ -179,8 +185,99 @@ two laps of a `Loop`, from the
 opening of the recording and from one lap in (where a clone symbol would start), through a flag-off
 emitter. At every update the replica equals the server's book, so a snapshot built then would equal
 what a client following the deltas holds, and at the end of each lap window and book are back where
-they began (the bridge has something to take back). Not run yet: the other symbols during the burst
-(their frames unchanged, their fan-out inside budget #6), the second half of #410's scenario 3.
+they began (the bridge has something to take back).
+
+**Scenario 3, the other nine symbols** (#410's second half: 06 §9's isolation clause, budget #6).
+Beside the burst, nine more symbols (`ETHUSDT` to `LTCUSDT`, 06 §3.2's ten), each a clone of the
+recorded book from its own place in it (500 x (n + 1) deltas in, a lap of 40 updates and its bridge)
+and each held structured by its own user and client, get 8 updates a second (ruling R3). That is one
+per 125 ms, below the slowest window a book can get (200 ms, `saturated`: a saturated book lane
+leaves five frames a second), so the tick's guard cannot cover it and the tick stays the burst
+test's grid. The isolation tests cut each tick in two (`HALF_S`, guarded at import: two make a tick,
+and the healthy window, 50 ms, closes inside one) and hold every connection `healthy`: before the
+clock moves, every RTT probe a client got has been answered and read (`Ten.answered`, on
+`cv_ws_rtt_seconds`' count; the writer queues a probe ahead of the frame its stop waits for), so no
+RTT sample spans a move, which is what raised scenario 1's class at 125 ms; no queue nears
+`lagging`'s 25 %, and no `connection_quality` notice reaches any client (asserted). At a tick's
+start and at mid-tick the nine get one update each and the burst symbol 625, 25 at a time with one
+of the nine ahead of each of the first nine slices, so all but the first of the nine publish while
+the burst's window is open (it opens in the first slice). The burst's frames are the burst test's at
+half the lump (`windows(625, n)`): the tick's own grid cannot carry them, as a stop at mid-tick
+closes the 50 ms window off the grid and leaves the next lump a leading edge. `same_frames` (ruling
+R4; 10 s in the PR lane, 60 s `harness`): on the virtual clock the nine's clients get, byte for
+byte, the frames of a control run on a second `flag_on()` stack in which the burst symbol gets one
+update a half tick; each of the nine's updates is its own `d` (no `coalesced_count`) and arrives at
+the virtual instant of its publish (zero lateness, by construction: the clock cannot move until all
+nine have arrived), schema-valid (`BookTap`), `s` contiguous after the one `initial` snapshot, the
+`Replica` equal to the server's book; no client sees a gap, a close or a reconnect; and the pacer's
+series move for the burst's windows alone (`merged`), and for nothing in the control. 10 s: 9 x 80
+updates beside 50 000 in 81 frames, 93 to 100 probes, 13 to 16.5 s of wall time for both runs (31 to
+38 s under the `py` lane's `--cov`); 60 s: 9 x 480 beside 300 000 in 481 frames, 593 to 600 probes,
+71 to 82 s (the last grid's probes may queue after the final move, so the runner printed 93 and 593).
+Not covered: each of the nine has its own user and connection, so this proves isolation across
+connections, not per-lane isolation on one socket, the multi-pane workspace of 06 §3.2, where the
+burst symbol and the others share a writer, an outbound budget and a class. That is a follow-up, not
+filed (the filing freeze).
+
+**Scenario 3, budget #6 in wall time.** `fanout_p95` (`harness`: nightly only) and its negative
+control `p95_measure_fails` (marker `chaos` alone, so the PR lane runs it, in 7 to 9 s under
+`--cov`, and the nightly again) run on fresh stacks with `TCP_NODELAY` (`flag_on(nodelay=True)`),
+the collector off, the clients checking nothing (a schema check costs about 2 ms a frame, the
+client's, not the gateway's), and the burst's updates 5 a slice (`TIMED_SLICE`; the isolation tests
+keep 25) with a yield after each. `fanout_p95` drops a 1 s warm-up run, then runs the control and
+the burst ABBA, 30 s each, pooling each kind's two, so neither warm caches nor drift favour either.
+Every client still ends clean, and the nine's publish-to-arrival p95 must be within budget #6's 20
+ms; their median within 8 ms of the control's; at most 9 of their 4 320 updates over 100 ms and none
+over 1 s; and the burst's window within 20 ms (p95) of its release; figures printed. The arrival
+is the client's, through the proxy: a frame of the nine waits out six slices of burst updates, its
+publish's own and one in each of the five loop turns that carry it (the writer's send, the proxy's
+read and its pipe's write, the client's socket read and its task's; counted: 5 or 6 for every
+update, 6 at the median). So the burst adds about 30 updates' publish time to their median, 1.5 to
+1.8 ms at the 50 to 60 us an update that the burst test prints, where 25 a slice would add 7.5 to 9
+ms against the 8 ms bound (a 2 s run on this shared host, at a load of 8, added 9.9 ms at 25 a
+slice, 4.2 at 10 and 1.8 at 5). The 8 ms is 40 % of the budget and about five times that model: a
+burst that moves the typical update this much is a regression even where the p95 holds.
+test_flood_isolation has the same 8 ms, there about three times its flood's cost (2 to 2.7 ms): its
+calibration, not this test's. 100 ms is 5 x the budget, a stall, not a latency: one stall holds
+every update then in flight, and a half tick's nine are in flight together (published in its first
+nine slices, all delivered before the clock moves, the next half tick's only after), so 9 over it is
+one stall, which a run may have; a few stalls, or anything periodic, fail it, where a p99.9 would
+let only 4 of the 4 320 pass. That cap counts the updates a stall holds, not for how long, so none
+may take over 1 s (10 x 100 ms): one freeze of 1 to 4.9 s would hold only nine and pass every other
+check, and a longer one ends at a wait's 5 s bound only if it lands inside a wait; one in the
+slices, where no wait runs, only this ceiling catches. The burst's window is timed from the move
+(`released`, stamped just before `advance`), as budget #6's span for a paced frame starts at its
+release from the window (23 §8.6, D7); the writer's real poll (at most 5 ms, the rig's `tick_s`) and
+the move's settling stay inside it, so it is an upper bound, and a loud run's window that left
+before its release fails at once (no span below 0). The negative control holds the loop 25 ms in
+each slice that carries one of the nine and again between the stamp and each move, for 1 s: each of
+their updates and each of the burst's windows waits at least that long, so both budget #6 checks and
+the median fail by construction, as asserted, and load can only widen the margin. The stall count
+fails there too, and the ceiling holds (the nine's slowest crosses six holds: 165 to 305 ms in 17
+saved runs here); neither is asserted. A test here that fails intermittently on the nightly's
+runners is quarantined within 24 hours per C-9.3: `@pytest.mark.flaky` and a P1 ticket, the
+quarantine expiring after 10 working days, when the test is fixed or deleted with the owner's
+approval (`docs/ci-runbook.md` §2 and §9). Only the 20 ms is the standard's (06 §2), and it is never
+loosened, nor any check turned into a print. The derived tolerances (the 8 ms added to the median,
+the 9 updates over 100 ms, the 1 s ceiling) were reviewed once against the first dispatched figures
+(run 39723275319, below) and change only by a reviewed PR that carries the figures (06 §7.4's
+baseline rule). `Stack`'s users other than these tests keep its default, no `TCP_NODELAY`.
+
+**Scenario 3, budget #6: the first calibration.** `chaos-ws-nightly` run 39723275319, dispatched on
+this branch at `f9c90eb8` (`ubuntu-latest`: Ubuntu 24.04, Python 3.12.3), passed all 21 tests in
+99.53 s and printed, under PASSES: the nine beside the burst p50 1.95, p95 3.24, max 4.36 ms, 0 over
+100 ms; without it p50 1.05, p95 1.91, max 3.08 ms; the burst's window from its release p50 2.25,
+p95 6.77, max 7.09 ms; and the negative control's nine at p95 154.38 ms and window at p95 33.94 ms,
+failing as designed. `fanout_p95`'s call took 15.96 s, `same_frames[60s]` 30.37 s and
+`same_frames[10s]` 5.41 s. The median added, 0.90 ms, sits by the cost model at that runner's
+per-update cost (the burst test printed 22.0 us there: 6 x 5 x 22 us, 0.66 ms). The window's p95
+used a third of its 20 ms. A miss there is read first as calibration of the harness's own span (the
+writer's poll, the move's settling and the hops, all inside it), and whatever that changes follows
+the rule above: a reviewed PR that carries the figures, the 20 ms itself never loosened. A second
+sample, run 39727981409 dispatched at `9551bd6f`, passed all 21 tests in 88.99 s: the nine p50 1.47,
+p95 2.29, max 4.00 ms; without the burst p50 0.83, p95 1.52, max 2.70 ms; the window from its
+release p50 2.81, p95 6.45, max 6.89 ms; the negative control failing as designed (the nine's p95
+153.02 ms, the window's 32.74 ms).
 
 **Scenario 4.** Three workspaces are connected and `server.should_exit` is set (what SIGTERM sets):
 `PlannedShutdownServer` runs `WsRuntime.stop()` before uvicorn's own shutdown. Each client gets the
@@ -268,9 +365,44 @@ broadcast skips the parked socket, whose `auth_ok.kill_switch` (§4.3; `welcome`
   loop itself (the server's book not taking the raw levels, a bridge that leaves the book or the
   window where it is, the raw levels of a skipped delta dropped) fail the burst and both runs of the
   loop's test.
+- **Scenario 3 isolation mutation** (in memory, no file written): `same_frames[10s]` fails on each
+  of 6 mutants of `ws/permissions.py`, `ws/pacing.py` and `ws/sequencing.py`: a connection's book
+  subscription found by family (every book update reaches every book client: the publish counts
+  10); one throttle for the hub (a lane's window starts at any lane's last emit, so the nine are
+  held); one coalescing queue per family shared by every lane (the nine's leading edges carry the
+  open burst window); a leading edge held while any lane anywhere has a window open; the hub
+  re-snapshotting the other books every 625 burst updates; a book `d`'s `s` from one counter for
+  the family. With the nine published ahead of the burst's lump the shared queue survived, so they
+  publish inside its slices, while its window is open. One survives: one class for every
+  connection (the worst any pacer holds), since no class moves here; scenario 2's mutants kill it.
+  `p95_measure_fails` is the wall-clock half's own check, in every lane: a loop held 25 ms in each
+  slice that carries one of the nine and before each move fails both budget #6 checks and the
+  median.
+- **Scenario 3 wall-clock sensitivity** (by the cost model, its method stated; the probes are
+  uncommitted scratch): count the loop turns between a nine update's publish and its arrival (each
+  crossed 5 or 6 slices, 6 at the median), and measure the per-update publish cost (the burst test
+  prints it: 50 to 60 us here, 22 us on the dispatched runner); the burst then adds 6 x 5 x that to
+  their median. One in-memory mutant was measured: about 300 us of busy work in each burst
+  `hub.publish` (the model's +9 ms), on 2 s timed runs here (a dropped warm-up, then ABBA, at a load
+  of 10). The median added went from 2.21 ms unmutated, passing, to 13.89 ms: the 8 ms check
+  tripped, and so did the nine's p95 (33.66 ms).
 - **SR-189 flip:** #2318 merged (`549d9032`), and `s6b` reported `XPASS(strict)` on the rebased
   branch, as planned, so its `xfail` marker is removed and it runs as a plain test.
 - **Flake budget:** 3 consecutive gate runs plus 20 more after the flip, all green (`7 passed`).
   With scenario 2: three runs in three seeded shuffled orders and one with `-W error` (`9 passed`),
   and two runs of `s2` and `s2b` under the `py` lane's flags (`--cov`) with the 128 KiB lane buffer
-  (three more at the earlier 32 KiB lane buffer), all green.
+  (three more at the earlier 32 KiB lane buffer), all green. Scenario 3's isolation, before the
+  review fold: five consecutive runs of `test_s3_burst.py`'s PR-lane tests and one with their order
+  reversed (`4 passed` each; no `pytest-randomly` here), and the 60 s `same_frames` twice and the
+  burst once, all green. After it (the timed slice of 5, the negative control in the PR lane), each
+  run its own pytest process under the `py` lane's `-m` and `--cov` flags, on a shared host at a
+  load of 8 to 13.5: `same_frames[10s]` 11 times (31 to 38 s each) and `p95_measure_fails` 10 times
+  (7 to 9 s each; the nine's p95 172 to 226 ms, its check failing every time, as it must), all
+  green. With the hold before each move added, `p95_measure_fails` 3 more times at a load of 7 to 9
+  (7 to 8 s each; the nine's p95 174 to 195 ms and the window's 55 to 58 ms, both checks failing
+  every time), all green. With the median asserted too, `p95_measure_fails` 3 more times at a load
+  of 9 to 11 (7 to 8 s each; the nine's p95 176 to 212 ms, the window's 46 to 63 ms and the median
+  added 136 to 137 ms, all three failing every time), all green; and `same_frames[60s]` once more
+  after the third fold, green in 71.4 s for both runs (78.5 s for the process). The 60 s burst and
+  `fanout_p95` were not run here. Budget #6's first figures, from a clean runner, are the
+  calibration above (run 39723275319).

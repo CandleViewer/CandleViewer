@@ -18,7 +18,9 @@ default `BackpressureConfig` (8 MiB / 2 000 frames), every socket it accepts has
 reader's backlog reaches that budget once well under 1 MB is in flight (the sockets', the
 transport's and the proxy's buffers), not after the megabytes loopback autotuning holds. Its
 transport keepalive is off (`_boot`): it runs on wall time. Its per-connection frame budget
-(#2176) runs on the virtual clock (`_frames_on`). `trades_step` replays the recorded tape.
+(#2176) runs on the virtual clock (`_frames_on`). `flag_on(nodelay=True)`, for a wall-clock test,
+also sets `TCP_NODELAY` on the listening socket, which every accepted socket inherits; the default
+stack keeps Nagle there. `trades_step` replays the recorded tape.
 """
 
 from __future__ import annotations
@@ -124,8 +126,10 @@ class Stack:
         clock: VirtualClock,
         *accounts: uuid.UUID,
         backpressure: BackpressureConfig | None = None,
+        nodelay: bool = False,
     ) -> None:
         self.clock = clock
+        self.nodelay = nodelay  # `TCP_NODELAY` on every socket the server accepts (`_boot`)
         self.sessions = SessionService(FakeSessionRepository(), Hasher(), clock=self.now)
         self.granted = set(accounts)  # the grant store the principal loader reads
         self.read_held = asyncio.Event()
@@ -192,6 +196,9 @@ class Stack:
         self._sock = socket.create_server((HOST, 0))
         if self.backpressure is not None:
             self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SEND_BUFFER)
+        if self.nodelay:  # the accepted sockets inherit it; asyncio sets it only on the sockets
+            # it makes itself, by host and port (proto 6), and this one is the rig's own (proto 0)
+            self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.port: int = self._sock.getsockname()[1]
 
     def client(self, minted: MintedSession, seed: int = SEED, via: Proxy | None = None) -> Client:
@@ -303,6 +310,7 @@ class Stack:
         await self.until_stopped()
 
 
-def flag_on() -> Stack:
-    """A stack with E17-T03's flag on (module docstring), accounts A and B granted."""
-    return Stack(VirtualClock(), ACC_A, ACC_B, backpressure=BackpressureConfig())
+def flag_on(*, nodelay: bool = False) -> Stack:
+    """A stack with E17-T03's flag on (module docstring), accounts A and B granted. `nodelay`: a
+    wall-clock test's, so no update waits on Nagle and the client's delayed ACK (about 40 ms)."""
+    return Stack(VirtualClock(), ACC_A, ACC_B, backpressure=BackpressureConfig(), nodelay=nodelay)
