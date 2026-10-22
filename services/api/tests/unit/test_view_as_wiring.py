@@ -255,7 +255,7 @@ def test_the_sockets_refusal_record_fails_when_the_app_has_no_recorder(
         kwargs["view_as_refusals"]._recorder()
 
 
-def test_the_sockets_read_fails_when_the_app_has_no_service(
+async def test_the_sockets_read_fails_when_the_app_has_no_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Read as S7's guard reads it: a missing service fails the `auth`, never binds nothing."""
@@ -264,7 +264,7 @@ def test_the_sockets_read_fails_when_the_app_has_no_service(
     (kwargs,) = seen
     del app.state.view_as
     with pytest.raises(AttributeError):
-        kwargs["view_as"]._views()
+        await kwargs["view_as"]("s1")
 
 
 class _Family:
@@ -330,6 +330,19 @@ class _Evaluates:
     async def evaluate(self, record: Any, *, now: datetime) -> str:
         self.asked.append((record, now))
         return "binding"
+
+
+class _Down(_Family):
+    async def find_by_id(self, session_id: str) -> Any:
+        raise ConnectionError("the session store is down")
+
+
+async def test_the_socket_read_lets_a_store_fault_through() -> None:
+    """A store fault fails the `auth`, which the gateway counts as a strike; it is never
+    read as no context."""
+    read = SessionViewAs(lambda: cast(Any, _Evaluates()), cast(Any, _Down(())), clock=_Clock())
+    with pytest.raises(ConnectionError):
+        await read("s1")
 
 
 async def test_the_socket_read_is_the_services_evaluation_of_the_sessions_row() -> None:
