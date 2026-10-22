@@ -536,7 +536,7 @@ owner and the trigger that brings it back.
 ## Amendment 2 (2026-10-22, #2914's PR C: the login routes on the façade; Q2 answered)
 
 **Built.** `api/auth.py` hands its outcome and refusal rows to `AuditService.lane` through one helper,
-`_outcome`, with the `LaneNotWired` guard and the one warning per router of `api/sessions.py`
+`_audit_outcome`, with the `LaneNotWired` guard and the one warning per router of `api/sessions.py`
 (`auth.login_audit.lane_unavailable`): `/auth/login`'s `auth.login_failed`, `auth.account_locked` and the
 password step's `auth.login` (no session exists yet), `/auth/mfa/verify`'s `auth.mfa_failed`, a refused mint's
 `auth.login_failed` (`_audit_refusal`, at the sign-in, the MFA step and the confirm), `/auth/mfa/recovery`'s
@@ -580,7 +580,7 @@ step spent.
 a session, but only past a recovery code the same request spent (one use each, ten per user) and only for a
 session minted while that recovery ran, so they add no flood source beside Q3's.
 
-**Q2's answers.** PR C calls the façade itself, per call site (`_outcome`). F1 stays as S3 shipped it
+**Q2's answers.** PR C calls the façade itself, per call site (`_audit_outcome`). F1 stays as S3 shipped it
 (`api/sessions.py`). `cv_audit_writer_refused_total{domain}` is the write-ahead refusal signal asked for: a
 refused write-ahead record of the login routes counts on `domain="auth"`, and its route answers `503` or `401`,
 so no per-action counter is added.

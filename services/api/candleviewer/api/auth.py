@@ -15,7 +15,7 @@ the audit calls live in this router.
 **Audit lane (ADR-0037 Q2, #2914):** a row written after its decision (a refused
 or locked sign-in, the password step that passed, a failed second factor, a refused
 mint, the recovery's and the confirm's refusal rows, the recovery's `unplanned`
-revocations) goes to `AuditService.lane`, the writer its fallback (`_outcome`); one
+revocations) goes to `AuditService.lane`, the writer its fallback (`_audit_outcome`); one
 both refuse, or whose write times out or is cancelled, or that has no sink, is
 counted lost (`auth_audit_outcome_lost_total`) and the answer stands. Every
 write-ahead record stays on the writer, a mint's in particular, so a mint fails
@@ -351,7 +351,7 @@ def make_auth_router(
         auth_audit_outcome_lost_total.labels(action=normalise_outcome_action(action)).inc()
         _log().error("auth.login_audit.outcome_lost", action=action, error=error)
 
-    async def _outcome(action: str, **row: Any) -> None:
+    async def _audit_outcome(action: str, **row: Any) -> None:
         """An outcome or refusal row (04-security-program.md §8.3 rule 1: written after its
         decision), through the lane's façade (ADR-0037 Q2): the lane first, the writer its
         fallback, the two together bounded by the audit timeout. The answer is decided already, so
@@ -437,10 +437,10 @@ def make_auth_router(
         after_state: dict[str, Any] | None = None,
     ) -> None:
         """#2911: record a disabled user's refused mint. Not write-ahead (the refusal is
-        already decided and nothing was minted): an outcome row through the lane (`_outcome`),
+        already decided and nothing was minted): an outcome row through the lane (`_audit_outcome`),
         and the caller's refusal (403 at sign-in, 401 at the MFA step or the confirm) stands.
         *session_id* and *after_state* void a session a write-ahead record announced (#2295)."""
-        await _outcome(
+        await _audit_outcome(
             "auth.login_failed",
             actor_label=str(user_id),
             actor_user_id=user_id,
@@ -581,7 +581,7 @@ def make_auth_router(
             result = await auth_service.login.login(body, source_ip=audit_ip or "unknown")
         except InvalidCredentials as exc:
             auth_login_failures_total.labels(method="password").inc()  # SR-125
-            await _outcome(
+            await _audit_outcome(
                 "auth.login_failed",
                 actor_label=_redact_identifier(body.identifier),
                 actor_ip=audit_ip,
@@ -590,7 +590,7 @@ def make_auth_router(
             return _problem(401, "Invalid credentials", str(exc))
         except AccountDisabled as exc:
             auth_login_failures_total.labels(method="password").inc()
-            await _outcome(
+            await _audit_outcome(
                 "auth.login_failed",
                 actor_label=_redact_identifier(body.identifier),
                 actor_ip=audit_ip,
@@ -598,7 +598,7 @@ def make_auth_router(
             )
             return _problem(403, "Account disabled", str(exc))
         except AccountLocked as exc:
-            await _outcome(
+            await _audit_outcome(
                 "auth.account_locked",
                 actor_label=_redact_identifier(body.identifier),
                 actor_ip=audit_ip,
@@ -620,7 +620,7 @@ def make_auth_router(
         if isinstance(result, EnrolmentOnlyLogin):
             return await _enrolment_only_sign_in(request, body.identifier, result.user_id)
         # The password step's outcome: no session exists yet (the mint's records are MFA's).
-        await _outcome(
+        await _audit_outcome(
             "auth.login",
             actor_label=body.identifier,
             actor_ip=audit_ip,
@@ -647,7 +647,7 @@ def make_auth_router(
             result = await auth_service.mfa.verify(body)
         except (MfaChallengeInvalid, MfaChallengeLocked, MfaCodeInvalid, MfaCodeReused):
             auth_login_failures_total.labels(method=body.method.value).inc()
-            await _outcome(
+            await _audit_outcome(
                 "auth.mfa_failed",
                 actor_label="(mfa_token)",
                 actor_ip=_client_ip(request),
@@ -732,7 +732,7 @@ def make_auth_router(
                 new_session_id=str(session_id),
                 error=type(exc).__name__,
             )
-            await _outcome(
+            await _audit_outcome(
                 "auth.mfa_failed",
                 actor_label=str(result.user_id),
                 actor_user_id=result.user_id,
@@ -789,9 +789,9 @@ def make_auth_router(
 
         async def failed(action: str, outcome: AuditOutcome, **row: Any) -> JSONResponse:
             """A refusal's row, counted once (SR-125). It follows the refusal, never ahead of it:
-            an outcome row through the lane (`_outcome`), and the answer stands either way."""
+            an outcome row through the lane (`_audit_outcome`), and the answer stands either way."""
             auth_login_failures_total.labels(method=MfaMethodKind.RECOVERY_CODE.value).inc()
-            await _outcome(action, actor_ip=ip, outcome=outcome, **row)
+            await _audit_outcome(action, actor_ip=ip, outcome=outcome, **row)
             return refused
 
         try:
@@ -892,7 +892,7 @@ def make_auth_router(
             revoked = await sessions.revoke_all(str(uid), reason=RECOVERED_REASON)
             unplanned = [row.id for row in revoked if row.id not in ending]
             for sid in unplanned:  # outcome rows: each revocation has happened
-                await _outcome(
+                await _audit_outcome(
                     "auth.session_revoked",
                     actor_ip=ip,
                     session_id=sid,
@@ -1013,7 +1013,7 @@ def make_auth_router(
             return _problem(503, "Service unavailable", "audit sink not active")
         except (MfaEnrollmentNotFound, MfaCodeInvalid):  # wrong code, no such pending method
             auth_enrolments_total.labels(result="refused").inc()
-            await _outcome("auth.mfa_failed", actor_label=uid, actor_ip=ip, outcome=_FAILED)
+            await _audit_outcome("auth.mfa_failed", actor_label=uid, actor_ip=ip, outcome=_FAILED)
             return invalid
 
         void: dict[str, Any] = {"voids_session_created": str(new_id)}
@@ -1030,7 +1030,7 @@ def make_auth_router(
             if reason == "user_disabled":  # the row of a disabled user's refused mint
                 await _audit_refusal(request, user.id, session_id=new_id, after_state=void)
                 return
-            await _outcome(
+            await _audit_outcome(
                 "auth.mfa_failed",
                 actor_label=uid,
                 actor_user_id=user.id,
