@@ -20,7 +20,7 @@ from testcontainers.postgres import PostgresContainer
 pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
-_PREV, _TEMPLATE = "0046_audit_signing_keys", "system_events_recipient_head_template"
+_PREV, _TEMPLATE = "0043_order_submission", "system_events_recipient_head_template"
 _FK, _INDEX = "system_events_recipient_user_id_fkey", "ix_se_recipient"
 _COLUMNS_SQL = (
     "SELECT attname, format_type(atttypid, atttypmod), attnotnull FROM pg_attribute "

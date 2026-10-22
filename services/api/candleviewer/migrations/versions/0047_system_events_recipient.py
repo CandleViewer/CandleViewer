@@ -1,7 +1,7 @@
 """system_events: a row addressed to one user, the view-as start's notice (#3085 S13a)
 
 Revision ID: 0047_system_events_recipient
-Revises: 0046_audit_signing_keys
+Revises: 0043_order_submission
 Create Date: 2026-10-21
 
 `system_events.recipient_user_id`, nullable: the user a row is addressed to. #3085's start writes
@@ -33,7 +33,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "0047_system_events_recipient"
-down_revision: str | None = "0046_audit_signing_keys"
+down_revision: str | None = "0043_order_submission"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

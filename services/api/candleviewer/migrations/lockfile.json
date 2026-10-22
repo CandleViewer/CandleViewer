@@ -229,8 +229,8 @@
     },
     "0047_system_events_recipient": {
       "path": "services/api/candleviewer/migrations/versions/0047_system_events_recipient.py",
-      "sha256": "28f94dd5057d3d1a393e7b81ed86487f52d74a544300894642ea34c67834a4d4",
-      "down_revision": "0046_audit_signing_keys"
+      "sha256": "4fd040d3d281963f40abd73fcef63502ddebe484a2dd73fe172c6b0786c9b73d",
+      "down_revision": "0043_order_submission"
     }
   }
 }

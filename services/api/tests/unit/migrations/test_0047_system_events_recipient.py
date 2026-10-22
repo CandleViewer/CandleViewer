@@ -17,7 +17,7 @@ from candleviewer.db import models
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
-_REV, _PREV = "0047_system_events_recipient", "0046_audit_signing_keys"
+_REV, _PREV = "0047_system_events_recipient", "0043_order_submission"
 _LOCK, _RESET = "SET LOCAL lock_timeout = '5s';", "SET LOCAL lock_timeout = DEFAULT;"
 _ADD = (
     "ALTER TABLE system_events ADD COLUMN recipient_user_id uuid "
