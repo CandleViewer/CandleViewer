@@ -35,7 +35,10 @@ from candleviewer.storage.repositories.audit_sqlalchemy import (
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    sqlstate_of,
 )
+from tests.integration._refused import assert_no_row_values, server_text
 
 pytestmark = pytest.mark.integration
 
@@ -349,4 +352,20 @@ async def test_wal_path_and_in_transaction_inserts_interleave_into_one_verified_
         assert result.verified and result.entries_checked == 40
     finally:
         query.close()
+        await relational.dispose()
+
+
+# What a record `au_action_fmt` refuses carries (P1/P2 values, planted by name: #2748, C-12.6).
+_ACTION, _ACTOR, _IP, _NOTE = "Bad Action", "secret-actor-label", "198.51.100.23", "SECRET-NOTE"
+
+
+async def test_a_refused_audit_insert_leaves_without_the_records_values(pg_dsn: str) -> None:
+    relational = SqlAlchemyRelationalRepository(pg_dsn)
+    refused = _record(_ACTOR) | {"action": _ACTION, "actor_ip": _IP, "before_state": {"n": _NOTE}}
+    try:
+        with server_text(relational) as seen, pytest.raises(sa.exc.IntegrityError) as err:
+            await SqlAlchemyAuditRepository(relational).insert(refused)
+        assert (sqlstate_of(err.value), constraint_of(err.value)) == ("23514", "au_action_fmt")
+        assert_no_row_values(err.value, seen, _ACTION, _ACTOR, _IP, _NOTE)
+    finally:
         await relational.dispose()

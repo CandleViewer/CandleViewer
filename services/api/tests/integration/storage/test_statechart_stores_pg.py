@@ -66,7 +66,7 @@ from candleviewer.statechart_wiring import (
     SnapshotAdapter,
     SnapshotKeyMismatchError,
 )
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.repositories.statechart_sqlalchemy import (
     STORE_TIMEOUT_S,
@@ -77,6 +77,7 @@ from candleviewer.storage.repositories.statechart_sqlalchemy import (
     SqlAlchemyJournalStore,
     SqlAlchemySnapshotStore,
 )
+from tests.integration._refused import assert_no_row_values, server_text
 from tests.xstate_contract.persist_fixtures import (
     binding_persist,  # noqa: F401 -- registers the persist_min bindings (#3793)
 )
@@ -95,6 +96,9 @@ _PROBE = {"i": 7, "big": 2**63, "f": 0.1, "g": -2.25, "e16": 1e16, "negz": -0.0,
 EPOCH = "e0" * 16
 #: Scenario 7's DSN password: a value that must never reach an error message.
 _UNREACHABLE_PW = "scenario7-not-a-secret"
+# A refused snapshot's values, planted by name (#2748, C-12.6): the P1 snapshot, and an HMAC tag
+# of 31 bytes (`ms_tag_len` wants 32), whose `\x<hex>` is 64 characters, DETAIL's cut.
+_NOTE, _TAG = "planted-snapshot-note", b"SECRET-HMAC-TAG".ljust(31, b".")
 
 
 class FixedKeys:
@@ -435,6 +439,27 @@ def _calls() -> dict[str, Callable[[SqlAlchemyRelationalRepository], Awaitable[o
         "events.head": lambda r: SqlAlchemyEventStore(r).head(*key),
         "events.read_chain": lambda r: SqlAlchemyEventStore(r).read_chain(*key),
     }
+
+
+@pytest_asyncio.fixture
+async def rel(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepository]:
+    rel = SqlAlchemyRelationalRepository(_login(pg_dsn, "cv_app"), "statechart-refused-it")
+    try:
+        yield rel
+    finally:
+        await rel.dispose()
+
+
+async def test_a_snapshot_with_a_short_tag_leaves_without_its_row(
+    rel: SqlAlchemyRelationalRepository,
+) -> None:
+    key = ("order", str(uuid.uuid4()), "demo")
+    row = SnapshotRecord(*key, 2, 3, "a" * 64, {"n": _NOTE}, "k1", _TAG, (), 0, datetime.now(UTC))
+    with server_text(rel) as seen, pytest.raises(StorageQueryFailed) as err:
+        await SqlAlchemySnapshotStore(rel).upsert(row)
+    assert err.value.sqlstate == "23514"  # `ms_tag_len`: a typed refusal names only the state
+    assert (err.value.__cause__, err.value.__context__) == (None, None)  # raised outside its except
+    assert_no_row_values(err.value, seen, _NOTE, _TAG)
 
 
 @pytest_asyncio.fixture
