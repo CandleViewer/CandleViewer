@@ -26,7 +26,7 @@ from tests.integration._refused import (
     server_text,
 )
 
-_PLANTED, _BYTEA = "SECRET-LEAF", b"SECRET-URL-ENC"
+_PLANTED, _BYTEA = "SECRET-LEAF", b"SECRET-\x01\xff"  # its hex, repr and text all differ
 Rel = SqlAlchemyRelationalRepository
 Build = Callable[[], BaseException]
 

@@ -162,8 +162,8 @@ class _Records(logging.Handler):
 
 
 def _event_text(event: EventDict) -> str:
-    """An event as a renderer writes it: an exception value as its `str`, as production's
-    redaction does (`_exception_text`); `repr` shows only its class and `args`."""
+    """An event as a renderer writes it: a top-level exception value as its `str`, as production's
+    redaction does (`_exception_text`). One in a container keeps its `repr`: class and `args`."""
     return repr({key: str(v) if isinstance(v, BaseException) else v for key, v in event.items()})
 
 
@@ -201,7 +201,7 @@ def server_text(rel: SqlAlchemyRelationalRepository) -> Iterator[Seen]:
     engine, root = rel.engine.sync_engine, logging.getLogger()
     level, handler = root.level, _Records(seen.logs)
     event.listen(engine, "handle_error", keep)
-    root.addHandler(handler)
+    root.handlers.insert(0, handler)  # before pytest's capture formats or re-raises a record
     root.setLevel(logging.DEBUG)
     try:
         with _structlog_events() as events:
