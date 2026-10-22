@@ -376,7 +376,8 @@ info:
     **Order of the checks on an order submit or amend (E29-T04).** On `placeOrder`, after
     authentication, CSRF, the session state and RBAC, the checks run in this order: account
     scope, the arm token, the idempotency lookup, live trading enabled, the kill switch, the
-    order-entry gate, then validation, sizing, risk, the write-ahead persist and the send
+    order-entry gate, then validation (where a `profile_id` that is not one of the account's
+    own profiles is `404 not_found`), sizing, risk, the write-ahead persist and the send
     (24-internal-schemas.md section 8.4). `amendOrder` takes the same order (its scope is the
     order id's `404`); the carve-out under `Forbidden` exempts the amends it names from the arm
     token and the `trading_disabled` checks. The lookup comes after authorisation, so a caller
@@ -5089,7 +5090,8 @@ paths:
         reduces joins no trade group (`OrderAcceptance`).
 
         **Invariants enforced server-side:**
-        * The account's active profile must be enabled and trading-enabled and allow the symbol,
+        * The account's bound profile, its default (`is_default`), must be enabled and
+          trading-enabled and allow the symbol,
           otherwise `risk_limit_breached` (24-internal-schemas.md section 9.3 step 1; the profile
           an account is created with is not trading-enabled, `21-database-schema.md` section
           3.2.4).
@@ -5306,6 +5308,7 @@ paths:
                       environment: live
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >
             `idempotency_key_reuse` or `idempotency_in_flight` (see the description), or
@@ -5725,9 +5728,37 @@ paths:
         account, each sized and bracketed by **that account's** profile, with optional per-leg
         overrides.
 
-        **Resolution order per leg** (later wins): account profile → request-level defaults →
-        `legs[].overrides`. The server returns the fully resolved parameters per leg in the
-        response so the UI can show exactly what will be sent *before* fills arrive.
+        **Resolution per leg: later narrows** (SR-E28-03, SR-E28-04; E28 threat model F-01).
+        The leg's account's bound profile, its default profile (`is_default`), is the
+        ceiling (E28 threat model D7): request-level
+        `defaults` and the leg's `overrides`, an alternate `overrides.profile_id` included, only
+        narrow it, field by field, judged on the resulting leg after the sizer and its clamps
+        run again: quantity, notional, leverage, margin and risk at the stop may not rise, and
+        the stop may not move further from entry. A request whose submitted values would widen
+        any leg is refused whole, never clamped and never a partial group (C-12.5, D6):
+        `403 risk_limit_breached` with one `errors[]` entry per offending leg, audited, before
+        any leg is sent, whatever `atomicity` says; it is never a per-leg failure. An
+        account-state cap the request does not move (the daily loss, open positions, available
+        margin) still rejects that leg alone when it is sent, a per-leg `risk_limit_breached`
+        under `atomicity`, as the `202` example shows: only submitted values that widen the
+        bound profile refuse the whole request. Every cap the guard reads (open positions,
+        concurrent orders, order rate, daily loss) and the allowed symbols are the bound
+        profile's, or an alternate's stricter value; an alternate profile never relaxes one.
+        The sizer's own policy clamp is no refusal;
+        `sizing_explanation` names it. An `overrides.profile_id` may name any of the leg's
+        account's own profiles, the bound one included; any other refuses the whole request
+        with `404 not_found`, decided at validation, after the account-scope check and before
+        any leg is sized, with one title and `detail` shape whether that profile is missing,
+        deleted or another account's, so the answer never tells whether it exists. The server
+        returns the fully resolved parameters per leg in the response so the UI can show
+        exactly what will be sent *before* fills arrive.
+
+        **Client values are inputs, never authority** (SR-E28-05). The server sizes each leg
+        from the profile snapshot it takes itself. The body refuses any member it does not
+        declare (`422 validation_failed`), so a client cannot supply a snapshot, an ATR or an
+        "already checked" flag, and it has no `rule_id`: a group's rule origin
+        (`TradeGroup.rule_id`) is set only on the rule engine's internal path (M15), never by
+        this operation.
 
         **Execution semantics**
         * `atomicity: best_effort` (default) — every leg is attempted; failures are reported
@@ -5870,7 +5901,7 @@ paths:
                     legs:
                       - id: "0b000000-0000-4000-8000-000000000001"
                         exchange_account_id: "a1000000-0000-4000-8000-000000000001"
-                        profile_id: "b1000000-0000-4000-8000-0000000000a1"
+                        account_profile_id: "b1000000-0000-4000-8000-0000000000a1"
                         status: submitted
                         resolved:
                           qty: "0.396"
@@ -5884,7 +5915,7 @@ paths:
                         error: null
                       - id: "0b000000-0000-4000-8000-000000000002"
                         exchange_account_id: "a1000000-0000-4000-8000-000000000002"
-                        profile_id: "b1000000-0000-4000-8000-0000000000a2"
+                        account_profile_id: "b1000000-0000-4000-8000-0000000000a2"
                         status: submitted
                         resolved:
                           {
@@ -5900,7 +5931,7 @@ paths:
                         error: null
                       - id: "0b000000-0000-4000-8000-000000000003"
                         exchange_account_id: "a1000000-0000-4000-8000-000000000003"
-                        profile_id: "b1000000-0000-4000-8000-0000000000a3"
+                        account_profile_id: "b1000000-0000-4000-8000-0000000000a3"
                         status: rejected
                         resolved: null
                         orders: []
@@ -5919,6 +5950,7 @@ paths:
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -5947,7 +5979,34 @@ paths:
       tags: [trading]
       operationId: amendTradeGroup
       summary: Amend every live order in a trade group (optionally per leg)
-      description: "Applies the same amendment to all non-terminal orders of the group, or per-leg values when `legs` is supplied. Reports per-leg outcome; a leg whose order is already terminal is reported `ok: true, affected: 0`."
+      description: |
+        Applies the same amendment to all non-terminal orders of the group, or per-leg values
+        when `legs` is supplied. Reports per-leg outcome; a leg whose order is already terminal
+        is reported `ok: true, affected: 0`.
+
+        **An amend keeps the admission rules** (SR-E28-33; E28 threat model PF-T20, F-29).
+        Before any leg is amended, each targeted leg goes through the resolver, the sizer and
+        the guard again under `createTradeGroup`'s later-narrows rule. A refusal is the whole
+        request's, as on `createTradeGroup`: nothing is amended, `errors[]` names every
+        offending leg, and the refusal is audited with a result per leg. On an amend an
+        account-state cap refuses the whole request too, unlike on `createTradeGroup`, where it
+        rejects only its leg.
+        * `stop_loss: null`, at the top level or in `legs`, on a leg whose order is an entry
+          (classified by its effect, never by its `intent`: SR-E29-01) is refused as
+          `amendOrder` refuses a cleared stop: `400 validation_failed` / `native_stop_required`
+          (C-2.6). An entry leg's stop-loss, attached or under `tpsl_mode: Partial` a separate
+          order, can move but is never removed, and no request clears the stop of an open
+          position (24-internal-schemas.md section 8.8 rule 6, as `setPositionTpSl` refuses).
+        * A stop moved to loosen is refused with `403 risk_limit_breached`: compared with the
+          stop it replaces, a long leg's stop may only rise and a short leg's only fall, before
+          entry and past it (a ratchet).
+        * A `qty` or other value that would raise a leg's quantity, notional, margin or risk at
+          the stop above what its bound profile allows is refused with
+          `403 risk_limit_breached`, never clamped (C-12.5, D6).
+        * A reduction or a tightening is never refused by these checks: a smaller `qty`, or a
+          stop moved the ratchet's way (a long leg's up, a short leg's down), passes (C-2.6;
+          24-internal-schemas.md section 8.10).
+          When one request holds both a `400` and a `403` offender, the `400` answers.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -5969,6 +6028,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BulkLegResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
@@ -5979,8 +6039,18 @@ paths:
     post:
       tags: [trading]
       operationId: cancelTradeGroup
-      summary: Cancel every live order in a trade group
-      description: 'Optionally also flattens whatever already filled (`flatten_filled: true`), which issues reduce-only market closes per leg — used by the "abort" button in the ticket.'
+      summary: Cancel a trade group's working orders, never an open leg's stop
+      description: |
+        Cancels the working orders of the group, or of the legs in `legs`. While a leg's
+        position is open its exits stay: its stop-loss, attached or under `tpsl_mode: Partial`
+        a separate order, is never cancelled (C-2.6; SR-E28-33, E28 threat model PF-T20), and
+        its take-profits stay as well, as `cancelAllOrders` keeps reduce-only exits by default.
+        `flatten_filled: true` (the ticket's "abort" button) instead unwinds each leg that holds
+        a position in the order of 24-internal-schemas.md section 9.5.1: its take-profits and
+        working orders are cancelled, the position is closed reduce-only at market, and its
+        stop-loss goes only once the leg is verified flat. E34-S03's unwind never cancels the
+        stop before the leg is flat (section 9.5.1). Audited as one action with a result per
+        leg that names each stop kept, or gone with its flat position.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -5999,6 +6069,7 @@ paths:
                 flatten_filled: { type: boolean, default: false }
                 legs:
                   type: array
+                  maxItems: 20
                   description: Restrict to these leg ids; omit for all legs.
                   items: { type: string, format: uuid }
       responses:
@@ -6009,6 +6080,7 @@ paths:
               schema: { $ref: "#/components/schemas/BulkLegResult" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /trading/kill-switch:
@@ -12039,6 +12111,19 @@ paths:
         `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat
         model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller
         who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
+        It takes `createTradeGroup`'s body under the same rules and answers as that submit
+        would. A `legs[].exchange_account_id` outside the caller's grants, or one that does not
+        exist, refuses the whole request alike with `403 account_scope_denied` (SR-E28-21,
+        SR-E29-13), so the answer never tells whether the account exists. A request whose
+        submitted values would widen a leg past its bound profile is refused whole with
+        `403 risk_limit_breached` and one `errors[]` entry per offending leg (C-12.5, E28
+        threat model D6), never a leg returned with `would_submit: false`; an account-state
+        cap the request does not move still marks that leg alone (`would_submit: false`,
+        `rejection.code: cap_breached`). An `overrides.profile_id` that is not one of its leg's
+        account's own profiles is `404 not_found`, decided at validation, after the
+        account-scope check and before any leg is sized, as on the submit; a body the submit
+        refuses whole with `400` (`intent_mismatch`, with any `native_stop_required` it lists)
+        answers `400` here too.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
@@ -12052,7 +12137,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TradeGroupPreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -13889,7 +13976,8 @@ components:
         that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail`
         shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these
         routes refuses the caller's capability (permission, session state, the order-entry
-        gate, the arm token) or fails CSRF; it is never a scope answer.
+        gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is
+        never a scope answer.
       schema: { type: string, format: uuid }
     TradeGroupDefinitionId:
       name: definitionId
@@ -14083,7 +14171,7 @@ components:
                   idle_locked_at: "2026-09-14T10:46:02Z",
                 }
     Forbidden:
-      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1)."
+      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1)."
       content:
         application/problem+json:
           schema:
@@ -14241,7 +14329,7 @@ components:
                   code: csrf_token_invalid,
                 }
     AccountScopeDenied:
-      description: "The targeted exchange account is outside the caller's granted scope. On the order routes that name an account in their body (`placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions`; see `Forbidden`), an account that does not exist is answered with the same status, code and `detail` shape (SR-E29-13), so the answer never tells whether the account exists. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`)."
+      description: "The targeted exchange account is outside the caller's granted scope. On the order and trade-group routes that name an account in their body (`placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition`; see `Forbidden`), an account that does not exist is answered with the same status, code and `detail` shape (SR-E29-13), so the answer never tells whether the account exists. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`)."
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -17230,6 +17318,7 @@ components:
               maxItems: 10
               items:
                 type: object
+                additionalProperties: false
                 properties:
                   offset: { $ref: "#/components/schemas/Offset" }
                   pct_of_position: { $ref: "#/components/schemas/Decimal" }
@@ -17269,7 +17358,7 @@ components:
           {
             type: ["string", "null"],
             format: uuid,
-            description: "Override the account's active profile for this order.",
+            description: "An alternate profile of this order's account; it only narrows the account's bound profile, its default profile (`is_default`, D7; later narrows, as on `createTradeGroup`; SR-E28-03): every cap the guard reads and the allowed symbols stay the bound profile's or stricter. Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each.",
           }
         note: { type: string, maxLength: 280 }
     AmendOrderRequest:
@@ -17461,9 +17550,19 @@ components:
         overrides:
           type: object
           additionalProperties: false
-          description: Per-leg overrides layered on top of the account profile and request defaults.
+          description: >
+            Per-leg values that only narrow the account's bound profile, after the request's
+            `defaults` (later narrows; see `createTradeGroup`, SR-E28-03).
           properties:
-            profile_id: { type: string, format: uuid }
+            profile_id:
+              type: string
+              format: uuid
+              description: >
+                An alternate profile of this leg's account; it only narrows the bound profile.
+                Any other id, a profile of another account (granted or not), a deleted one or one
+                that does not exist, refuses the whole request with `404 not_found`, decided at
+                validation, after the account-scope check and before any leg is sized, the same
+                answer for each (SR-E28-03).
             sizing: { $ref: "#/components/schemas/Sizing" }
             price: { $ref: "#/components/schemas/Decimal" }
             leverage: { $ref: "#/components/schemas/Decimal" }
@@ -17523,12 +17622,6 @@ components:
             account is resolved, so it says nothing about any account.
           items: { $ref: "#/components/schemas/TradeGroupLegInput" }
         note: { type: string, maxLength: 280 }
-        rule_id:
-          {
-            type: ["string", "null"],
-            format: uuid,
-            description: "Set when the group originates from the rule engine.",
-          }
     ResolvedLegParams:
       type: object
       description: >
@@ -17579,7 +17672,9 @@ components:
         account_profile_id:
           type: ["string", "null"]
           format: uuid
-          description: The profile that produced `resolved`. Null when the ticket overrode the profile entirely.
+          description: >
+            The profile the leg was sized from (24-internal-schemas.md section 9.1). Null only
+            once that profile row is gone; the leg's snapshot keeps the id.
         status: { $ref: "#/components/schemas/LegStatus" }
         sequence_no:
           type: integer
@@ -17688,6 +17783,11 @@ components:
     AmendTradeGroupRequest:
       type: object
       additionalProperties: false
+      description: >
+        Checked against each targeted leg's bound profile before any leg is amended
+        (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit` or `trailing_stop`;
+        `stop_loss: null` is refused on an entry leg, or on any leg whose position is open
+        (`native_stop_required`).
       properties:
         price: { $ref: "#/components/schemas/Decimal" }
         stop_loss: { oneOf: [{ $ref: "#/components/schemas/Offset" }, { type: "null" }] }
@@ -17695,6 +17795,7 @@ components:
         trailing_stop: { oneOf: [{ $ref: "#/components/schemas/Offset" }, { type: "null" }] }
         legs:
           type: array
+          maxItems: 20
           description: Per-leg amendments; when present, the top-level fields are ignored for those legs.
           items:
             type: object

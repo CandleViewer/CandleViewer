@@ -535,9 +535,10 @@ def test_a_profile_that_is_off_or_does_not_allow_the_symbol_is_a_risk_refusal() 
     assert breached["title"] == title + "or a risk cap (daily loss, max position) would be exceeded"
     assert ERROR_META[ErrorCode("risk_limit_breached")].title == breached["title"]
     assert (
-        "The account's active profile must be enabled and trading-enabled and allow the symbol, "
-        "otherwise `risk_limit_breached` (24-internal-schemas.md section 9.3 step 1; the profile "
-        "an account is created with is not trading-enabled" in _words(_PLACE["description"])
+        "The account's bound profile, its default (`is_default`), must be enabled and "
+        "trading-enabled and allow the symbol, otherwise `risk_limit_breached` "
+        "(24-internal-schemas.md section 9.3 step 1; the profile an account is created with is "
+        "not trading-enabled" in _words(_PLACE["description"])
     )
     gate = _INTERNAL_DOC.split("### 9.3 Sizing algorithm", 1)[1].split("# 2. Reference price")[0]
     assert not _missing(

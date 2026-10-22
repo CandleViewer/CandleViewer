@@ -3621,7 +3621,8 @@ export interface paths {
      *     reduces joins no trade group (`OrderAcceptance`).
      *
      *     **Invariants enforced server-side:**
-     *     * The account's active profile must be enabled and trading-enabled and allow the symbol,
+     *     * The account's bound profile, its default (`is_default`), must be enabled and
+     *       trading-enabled and allow the symbol,
      *       otherwise `risk_limit_breached` (24-internal-schemas.md section 9.3 step 1; the profile
      *       an account is created with is not trading-enabled, `21-database-schema.md` section
      *       3.2.4).
@@ -5027,9 +5028,37 @@ export interface paths {
      *     account, each sized and bracketed by **that account's** profile, with optional per-leg
      *     overrides.
      *
-     *     **Resolution order per leg** (later wins): account profile → request-level defaults →
-     *     `legs[].overrides`. The server returns the fully resolved parameters per leg in the
-     *     response so the UI can show exactly what will be sent *before* fills arrive.
+     *     **Resolution per leg: later narrows** (SR-E28-03, SR-E28-04; E28 threat model F-01).
+     *     The leg's account's bound profile, its default profile (`is_default`), is the
+     *     ceiling (E28 threat model D7): request-level
+     *     `defaults` and the leg's `overrides`, an alternate `overrides.profile_id` included, only
+     *     narrow it, field by field, judged on the resulting leg after the sizer and its clamps
+     *     run again: quantity, notional, leverage, margin and risk at the stop may not rise, and
+     *     the stop may not move further from entry. A request whose submitted values would widen
+     *     any leg is refused whole, never clamped and never a partial group (C-12.5, D6):
+     *     `403 risk_limit_breached` with one `errors[]` entry per offending leg, audited, before
+     *     any leg is sent, whatever `atomicity` says; it is never a per-leg failure. An
+     *     account-state cap the request does not move (the daily loss, open positions, available
+     *     margin) still rejects that leg alone when it is sent, a per-leg `risk_limit_breached`
+     *     under `atomicity`, as the `202` example shows: only submitted values that widen the
+     *     bound profile refuse the whole request. Every cap the guard reads (open positions,
+     *     concurrent orders, order rate, daily loss) and the allowed symbols are the bound
+     *     profile's, or an alternate's stricter value; an alternate profile never relaxes one.
+     *     The sizer's own policy clamp is no refusal;
+     *     `sizing_explanation` names it. An `overrides.profile_id` may name any of the leg's
+     *     account's own profiles, the bound one included; any other refuses the whole request
+     *     with `404 not_found`, decided at validation, after the account-scope check and before
+     *     any leg is sized, with one title and `detail` shape whether that profile is missing,
+     *     deleted or another account's, so the answer never tells whether it exists. The server
+     *     returns the fully resolved parameters per leg in the response so the UI can show
+     *     exactly what will be sent *before* fills arrive.
+     *
+     *     **Client values are inputs, never authority** (SR-E28-05). The server sizes each leg
+     *     from the profile snapshot it takes itself. The body refuses any member it does not
+     *     declare (`422 validation_failed`), so a client cannot supply a snapshot, an ATR or an
+     *     "already checked" flag, and it has no `rule_id`: a group's rule origin
+     *     (`TradeGroup.rule_id`) is set only on the rule engine's internal path (M15), never by
+     *     this operation.
      *
      *     **Execution semantics**
      *     * `atomicity: best_effort` (default) — every leg is attempted; failures are reported
@@ -5080,7 +5109,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -5100,7 +5129,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -5109,7 +5138,33 @@ export interface paths {
     put?: never;
     /**
      * Amend every live order in a trade group (optionally per leg)
-     * @description Applies the same amendment to all non-terminal orders of the group, or per-leg values when `legs` is supplied. Reports per-leg outcome; a leg whose order is already terminal is reported `ok: true, affected: 0`.
+     * @description Applies the same amendment to all non-terminal orders of the group, or per-leg values
+     *     when `legs` is supplied. Reports per-leg outcome; a leg whose order is already terminal
+     *     is reported `ok: true, affected: 0`.
+     *
+     *     **An amend keeps the admission rules** (SR-E28-33; E28 threat model PF-T20, F-29).
+     *     Before any leg is amended, each targeted leg goes through the resolver, the sizer and
+     *     the guard again under `createTradeGroup`'s later-narrows rule. A refusal is the whole
+     *     request's, as on `createTradeGroup`: nothing is amended, `errors[]` names every
+     *     offending leg, and the refusal is audited with a result per leg. On an amend an
+     *     account-state cap refuses the whole request too, unlike on `createTradeGroup`, where it
+     *     rejects only its leg.
+     *     * `stop_loss: null`, at the top level or in `legs`, on a leg whose order is an entry
+     *       (classified by its effect, never by its `intent`: SR-E29-01) is refused as
+     *       `amendOrder` refuses a cleared stop: `400 validation_failed` / `native_stop_required`
+     *       (C-2.6). An entry leg's stop-loss, attached or under `tpsl_mode: Partial` a separate
+     *       order, can move but is never removed, and no request clears the stop of an open
+     *       position (24-internal-schemas.md section 8.8 rule 6, as `setPositionTpSl` refuses).
+     *     * A stop moved to loosen is refused with `403 risk_limit_breached`: compared with the
+     *       stop it replaces, a long leg's stop may only rise and a short leg's only fall, before
+     *       entry and past it (a ratchet).
+     *     * A `qty` or other value that would raise a leg's quantity, notional, margin or risk at
+     *       the stop above what its bound profile allows is refused with
+     *       `403 risk_limit_breached`, never clamped (C-12.5, D6).
+     *     * A reduction or a tightening is never refused by these checks: a smaller `qty`, or a
+     *       stop moved the ratchet's way (a long leg's up, a short leg's down), passes (C-2.6;
+     *       24-internal-schemas.md section 8.10).
+     *       When one request holds both a `400` and a `403` offender, the `400` answers.
      */
     post: operations["amendTradeGroup"];
     delete?: never;
@@ -5123,7 +5178,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -5131,8 +5186,17 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Cancel every live order in a trade group
-     * @description Optionally also flattens whatever already filled (`flatten_filled: true`), which issues reduce-only market closes per leg — used by the "abort" button in the ticket.
+     * Cancel a trade group's working orders, never an open leg's stop
+     * @description Cancels the working orders of the group, or of the legs in `legs`. While a leg's
+     *     position is open its exits stay: its stop-loss, attached or under `tpsl_mode: Partial`
+     *     a separate order, is never cancelled (C-2.6; SR-E28-33, E28 threat model PF-T20), and
+     *     its take-profits stay as well, as `cancelAllOrders` keeps reduce-only exits by default.
+     *     `flatten_filled: true` (the ticket's "abort" button) instead unwinds each leg that holds
+     *     a position in the order of 24-internal-schemas.md section 9.5.1: its take-profits and
+     *     working orders are cancelled, the position is closed reduce-only at market, and its
+     *     stop-loss goes only once the leg is verified flat. E34-S03's unwind never cancels the
+     *     stop before the leg is flat (section 9.5.1). Audited as one action with a result per
+     *     leg that names each stop kept, or gone with its flat position.
      */
     post: operations["cancelTradeGroup"];
     delete?: never;
@@ -5152,7 +5216,7 @@ export interface paths {
     put?: never;
     /**
      * Dry-run a fan-out - resolved per-account sizing, risk and rejections
-     * @description Runs the full fan-out pipeline (24-internal-schemas.md section 9.3 sizing, 9.4 fan-out) **without submitting anything**, returning exactly what each leg would send. Legs that would be rejected (cap breach, symbol not allowed, insufficient margin, rate budget exhausted) are returned with their reason so the ticket can show them before the user commits. Never mutates state and is therefore safe to call on every keystroke; it is rate-limited rather than idempotency-keyed. It takes `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
+     * @description Runs the full fan-out pipeline (24-internal-schemas.md section 9.3 sizing, 9.4 fan-out) **without submitting anything**, returning exactly what each leg would send. Legs that would be rejected (cap breach, symbol not allowed, insufficient margin, rate budget exhausted) are returned with their reason so the ticket can show them before the user commits. Never mutates state and is therefore safe to call on every keystroke; it is rate-limited rather than idempotency-keyed. It takes `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token. It takes `createTradeGroup`'s body under the same rules and answers as that submit would. A `legs[].exchange_account_id` outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied` (SR-E28-21, SR-E29-13), so the answer never tells whether the account exists. A request whose submitted values would widen a leg past its bound profile is refused whole with `403 risk_limit_breached` and one `errors[]` entry per offending leg (C-12.5, E28 threat model D6), never a leg returned with `would_submit: false`; an account-state cap the request does not move still marks that leg alone (`would_submit: false`, `rejection.code: cap_breached`). An `overrides.profile_id` that is not one of its leg's account's own profiles is `404 not_found`, decided at validation, after the account-scope check and before any leg is sized, as on the submit; a body the submit refuses whole with `400` (`intent_mismatch`, with any `native_stop_required` it lists) answers `400` here too.
      */
     post: operations["previewTradeGroup"];
     delete?: never;
@@ -6051,6 +6115,7 @@ export interface components {
       take_profit?: components["schemas"]["Offset"] | null;
       trigger_price?: components["schemas"]["Decimal"];
     };
+    /** @description Checked against each targeted leg's bound profile before any leg is amended (`amendTradeGroup`, SR-E28-33). `null` clears `take_profit` or `trailing_stop`; `stop_loss: null` is refused on an entry leg, or on any leg whose position is open (`native_stop_required`). */
     AmendTradeGroupRequest: {
       /** @description Per-leg amendments; when present, the top-level fields are ignored for those legs. */
       legs?: {
@@ -6602,11 +6667,6 @@ export interface components {
       order_type: components["schemas"]["OrderType"];
       /** @default false */
       reduce_only: boolean;
-      /**
-       * Format: uuid
-       * @description Set when the group originates from the rule engine.
-       */
-      rule_id?: string | null;
       side: components["schemas"]["OrderSide"];
       symbol: components["schemas"]["Symbol"];
     };
@@ -8563,7 +8623,7 @@ export interface components {
       price?: components["schemas"]["Decimal"];
       /**
        * Format: uuid
-       * @description Override the account's active profile for this order.
+       * @description An alternate profile of this order's account; it only narrows the account's bound profile, its default profile (`is_default`, D7; later narrows, as on `createTradeGroup`; SR-E28-03): every cap the guard reads and the allowed symbols stay the bound profile's or stricter. Any other id, another account's, a deleted one or one that does not exist, is `404 not_found`, decided at validation, after the account-scope check and before the order is sized, the same answer for each.
        */
       profile_id?: string | null;
       /** @default false */
@@ -10187,7 +10247,7 @@ export interface components {
     TradeGroupLeg: {
       /**
        * Format: uuid
-       * @description The profile that produced `resolved`. Null when the ticket overrode the profile entirely.
+       * @description The profile the leg was sized from (24-internal-schemas.md section 9.1). Null only once that profile row is gone; the leg's snapshot keeps the id.
        */
       account_profile_id?: string | null;
       avg_entry_price?: components["schemas"]["Decimal"] | null;
@@ -10230,13 +10290,16 @@ export interface components {
        * @description A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any exchange call; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13).
        */
       exchange_account_id: string;
-      /** @description Per-leg overrides layered on top of the account profile and request defaults. */
+      /** @description Per-leg values that only narrow the account's bound profile, after the request's `defaults` (later narrows; see `createTradeGroup`, SR-E28-03). */
       overrides?: {
         leverage?: components["schemas"]["Decimal"];
         /** @enum {integer} */
         position_idx?: 0 | 1 | 2;
         price?: components["schemas"]["Decimal"];
-        /** Format: uuid */
+        /**
+         * Format: uuid
+         * @description An alternate profile of this leg's account; it only narrows the bound profile. Any other id, a profile of another account (granted or not), a deleted one or one that does not exist, refuses the whole request with `404 not_found`, decided at validation, after the account-scope check and before any leg is sized, the same answer for each (SR-E28-03).
+         */
         profile_id?: string;
         sizing?: components["schemas"]["Sizing"];
         /**
@@ -10531,7 +10594,7 @@ export interface components {
     };
   };
   responses: {
-    /** @description The targeted exchange account is outside the caller's granted scope. On the order routes that name an account in their body (`placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions`; see `Forbidden`), an account that does not exist is answered with the same status, code and `detail` shape (SR-E29-13), so the answer never tells whether the account exists. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`). */
+    /** @description The targeted exchange account is outside the caller's granted scope. On the order and trade-group routes that name an account in their body (`placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition`; see `Forbidden`), an account that does not exist is answered with the same status, code and `detail` shape (SR-E29-13), so the answer never tells whether the account exists. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`). */
     AccountScopeDenied: {
       headers: {
         [name: string]: unknown;
@@ -10654,7 +10717,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
     Forbidden: {
       headers: {
         [name: string]: unknown;
@@ -11001,7 +11064,7 @@ export interface components {
     To: string;
     /** @description A definition with any member outside the caller's grants is answered as one that does not exist (SR-E28-21), and so is a soft-deleted one: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes is never a scope answer for the definition: it refuses the caller's capability (permission, session state, step-up) or fails CSRF, or, on `updateTradeGroupDefinition`, a member account the body names. */
     TradeGroupDefinitionId: string;
-    /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+    /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
     TradeGroupId: string;
     UserId: string;
     VersionId: string;
@@ -16704,6 +16767,7 @@ export interface operations {
       };
       400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description), or `stop_request_in_flight`: an entry whose stop request collided with one still in flight on the same position, past the server's bounded retry. Nothing was recorded or sent for it and the key is not bound. `idempotency_in_flight` and `stop_request_in_flight` carry `Retry-After`, with `retry_after_seconds`; after a `stop_request_in_flight` the same key and body are a first submission. */
       409: {
         headers: {
@@ -19328,6 +19392,7 @@ export interface operations {
       };
       400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
@@ -19339,7 +19404,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -19403,7 +19468,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -19423,6 +19488,7 @@ export interface operations {
           "application/json": components["schemas"]["BulkLegResult"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
@@ -19445,7 +19511,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token), fails CSRF, or is a risk refusal (`risk_limit_breached`); it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -19472,6 +19538,7 @@ export interface operations {
       };
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -19506,7 +19573,9 @@ export interface operations {
           "application/json": components["schemas"]["TradeGroupPreview"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
