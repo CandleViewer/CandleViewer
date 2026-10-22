@@ -16,6 +16,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.errors import AccountConflictError, AccountsError
@@ -404,17 +405,37 @@ async def test_a_store_outage_or_hang_is_store_unavailable_and_never_its_text(
     assert failed.value.code == "store_unavailable" and "DETAIL" not in repr(logs)
 
 
-async def test_a_typed_store_refusal_is_logged_by_its_own_sqlstate() -> None:
-    """#2748: the store raises a refused write typed (`StorageQueryFailed`), chaining no driver
-    error, so the store-failure log reads the SQLSTATE from the typed error itself."""
+def _raw_integrity(sqlstate: str) -> Exception:
+    orig: Any = Exception("refused")  # a driver-shaped fake
+    orig.sqlstate = sqlstate
+    return IntegrityError("INSERT INTO api_keys ...", None, orig)
+
+
+@pytest.mark.parametrize(
+    ("error", "logged"),
+    [
+        (
+            StorageConstraintViolated("23503", "api_keys_exchange_account_id_fkey"),
+            ("StorageConstraintViolated", "23503"),
+        ),
+        (_raw_integrity("23503"), ("IntegrityError", "23503")),
+        (OSError("refused"), ("OSError", None)),
+    ],
+    ids=["typed", "raw-driver", "no-sqlstate"],
+)
+async def test_a_store_failure_is_logged_by_its_sqlstate(
+    error: Exception, logged: tuple[str, str | None]
+) -> None:
+    """#2748: a typed refusal (`StorageQueryFailed`) names its SQLSTATE itself; a raw driver
+    error names it on its `orig`, as before; anything else has none."""
     w = World()
-    w.transition_error = StorageConstraintViolated("23503", "api_keys_exchange_account_id_fkey")
+    w.transition_error = error
     reset_logging()
     with capture_logs() as logs, pytest.raises(KeyImportFailed) as failed:
         await w.run()
     store = [(e["error"], e["sqlstate"]) for e in logs if e["event"] == "key_import_store_failed"]
     assert failed.value.code == "store_unavailable"
-    assert store == [("StorageConstraintViolated", "23503")]
+    assert store == [logged]
 
 
 async def test_a_refusal_of_m2_is_recorded_and_stores_nothing() -> None:

@@ -129,8 +129,8 @@ def query_failure(state: str | None, constraint: str | None) -> StorageQueryFail
     class 23 is `StorageConstraintViolated`, any other `StorageQueryFailed`. Raise it `from None`;
     pass `sqlstate_of(exc)` and `constraint_of(exc)`, never the error. A fact that is not a
     SQLSTATE or an identifier is dropped, so no text reaches the typed error's message."""
-    state = state if state is not None and _SQLSTATE.fullmatch(state) else None
-    name = constraint if constraint is not None and _IDENTIFIER.fullmatch(constraint) else None
+    state = state if isinstance(state, str) and _SQLSTATE.fullmatch(state) else None
+    name = constraint if isinstance(constraint, str) and _IDENTIFIER.fullmatch(constraint) else None
     if state is not None and state.startswith("23"):
         return StorageConstraintViolated(state, name)
     return StorageQueryFailed(state)

@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError, IntegrityError
+from structlog.testing import capture_logs
 
 from candleviewer.storage.errors import (
     StorageConstraintViolated,
@@ -229,6 +230,7 @@ async def test_a_second_deadlock_is_a_store_outage(call: str) -> None:
     with pytest.raises(StorageTierUnavailable) as err:
         await _write(rel, call)
     assert rel.opened == 2 and rel.commits == 0 and _unchained(err.value)
+    assert str(err.value) == "drawings write deadlocked twice"  # not the outage arm's message
 
 
 async def test_a_refusal_on_the_rerun_is_typed_as_on_the_first_run() -> None:
@@ -253,6 +255,15 @@ async def test_other_database_errors_are_not_retried(
         await _write(rel, "create")
     assert type(err.value) is refusal and getattr(err.value, "sqlstate", None) == sqlstate
     assert rel.opened == 1 and _unchained(err.value)
+
+
+async def test_an_outage_is_logged_by_its_sqlstate_alone() -> None:
+    rel = _Rel(DBAPIError("stmt", {}, _Driver("57014")))
+    with capture_logs() as logs, pytest.raises(StorageTierUnavailable):
+        await _write(rel, "create")
+    assert logs == [
+        {"event": "drawings_store_unavailable", "sqlstate": "57014", "log_level": "warning"}
+    ]
 
 
 def test_a_deadlock_is_read_from_the_wrapper_or_the_driver_cause() -> None:

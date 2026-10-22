@@ -34,6 +34,7 @@ from datetime import datetime
 from typing import Any, TypeVar, assert_never
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -357,7 +358,10 @@ def _refusal(
         return DrawingIdUnavailableError(drawing_id)
     if isinstance(exc, IntegrityError) and _is_layout_fk(exc):
         return DrawingLayoutNotFoundError(layout_fields)
-    if is_outage(exc):
+    if is_outage(exc):  # which outage it was, by its facts alone (C-12.6)
+        structlog.get_logger(__name__).warning(
+            "drawings_store_unavailable", sqlstate=sqlstate_of(exc)
+        )
         return StorageTierUnavailable("the drawings store cannot serve the write")
     return query_failure(sqlstate_of(exc), constraint_of(exc))
 
