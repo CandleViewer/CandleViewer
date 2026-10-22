@@ -843,15 +843,17 @@ async def test_user_disabled_first_closer_raises_second_socket_closed_and_one_fa
     assert close_failures() == before + 1
 
 
+@pytest.mark.parametrize("viewer", [None, uuid.uuid4()], ids=["own", "viewing"])
 async def test_user_disabled_whose_bye_cannot_be_built_still_closes_the_other_sockets(
-    close_failures: Callable[[], float], monkeypatch: pytest.MonkeyPatch
+    close_failures: Callable[[], float], monkeypatch: pytest.MonkeyPatch, viewer: uuid.UUID | None
 ) -> None:
     """Each socket's `bye` is built inside its own guard (#3635): a fault there is that
-    close's failure, counted, and the user's next socket is still closed. The first is a
-    socket viewing as the user, whose `bye` is built on its own branch (#3085 S11)."""
+    close's failure, counted, and the user's next socket is still closed. The first is the
+    user's own socket, or one viewing as the user, whose `bye` is built on its own branch
+    (#3085 S11; the S11 re-check's R2-L1 pins both)."""
     first, survivor = _Socket(), _Socket()
     registry = _user_registry(_Clock())
-    _connect(registry, first.close, viewer=uuid.uuid4())
+    _connect(registry, first.close, viewer=viewer)
     _connect(registry, survivor.close)
     reads = iter([_NOW_MS, None, _NOW_MS])  # the memory's instant, then one per socket
 
