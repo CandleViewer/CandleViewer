@@ -1,0 +1,3420 @@
+{
+ "board": {
+  "name": "E33-D01-01-three-cases",
+  "w": 1600,
+  "x": 0,
+  "y": 0,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "radius": "radius.card",
+   "pad": "space.inset.lg",
+   "gap": "space.stack.md",
+   "vs": "auto"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "header",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "The three disconnect cases and their binding copy",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "subtitle",
+      "chars": "E33-D01 · report §4 · research board — heuristic findings, no participants",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "context",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "system-answer",
+      "w": 778,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "The system's answer",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "on_disconnect=\"freeze\" (24 §10.1 rule 2, quoted under \"Locked\").",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-2",
+        "chars": "The plan has three different \"away\" events and one sentence for all of them.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "note-1",
+        "chars": "Screens: SCR-070 (banner, rows), SCR-152 (overlay, case 1), SCR-153 (degraded banner, case 2), SCR-066–069 (running and waiting states), SCR-063 Algos tab, SCR-143 (algo engine tile).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 754
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "binding-copy",
+      "w": 778,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Proposed binding disconnect copy — owner approves by exception; confirmed by the restatement test (C-d)",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "During case 3 this window shows the case 1 text (it cannot tell them apart), so C-d tests two window texts, lost the server (cases 1 and 3) and Bybit-link-off (case 2); the case 3 column appears after reconnect and is tested with the resume messages (C-e).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-2",
+        "chars": "Candidate A is the plan's wording; candidate B is proposed. Copy that rests on a default names its OQ and fallback text.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "cases-title",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "RQ3 — what traders expect on disconnect, and the binding disconnect copy (heuristic)",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "sub",
+      "chars": "One card per case: what runs, what the plan says and what this window can know (§4's first table), then the case's column of the proposed binding disconnect copy: what the trader sees, the banner add-ons, the stop-claim rule, the time basis, and after reconnect.",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "cases",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": []
+   }
+  },
+  {
+   "into": "cases",
+   "node": {
+    "t": "board",
+    "name": "case-1",
+    "w": 440,
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.raised",
+     "radius": "radius.card",
+     "pad": "space.inset.md",
+     "gap": "space.stack.sm",
+     "vs": "auto"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Case 1 (app-off) — this window loses the server, or is closed",
+      "typo": "type.ui.body-strong",
+      "color": "color.text.primary",
+      "w": 416
+     },
+     {
+      "t": "board",
+      "name": "facts",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "what-runs",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "What runs",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 416
+         },
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "everything, on the server",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 416
+         }
+        ],
+        "w": 416
+       },
+       {
+        "t": "board",
+        "name": "plan-says",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "What the plan says",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 416
+         },
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "\"the backend continues executing\" (13 §9; US-ALGO-006 NFR); SCR-152 \"Trading is disabled while offline\"",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 416
+         }
+        ],
+        "w": 416
+       },
+       {
+        "t": "board",
+        "name": "window-knows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "What this window can know",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 416
+         },
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "only that the server is unreachable: cases 1 and 3 look alike from here",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 416
+         }
+        ],
+        "w": 416
+       }
+      ],
+      "w": 416
+     },
+     {
+      "t": "board",
+      "name": "sees",
+      "w": 416,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "What the trader sees",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "a-label",
+        "chars": "Candidate A — the plan's wording",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "a-overlay",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Disconnected - reconnecting (attempt 3, next in 4 s)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         },
+         {
+          "t": "text",
+          "name": "copy-2",
+          "chars": "Last data 00:12 ago. Trading is disabled while offline.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         },
+         {
+          "t": "text",
+          "name": "copy-3",
+          "chars": "Your exchange-side stop-losses are unaffected.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         },
+         {
+          "t": "text",
+          "name": "spec-1",
+          "chars": "SCR-152's three-line overlay",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 376
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "a-row",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "algos pause if backend down",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         },
+         {
+          "t": "text",
+          "name": "spec-1",
+          "chars": "SCR-070",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 376
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "b-label",
+        "chars": "Banner, candidate B (proposed) — an SCR-152 line; the bold lead is what is announced",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "b-banner",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "lead",
+          "chars": "Can't reach CandleViewer's server, where your algos run.",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 376
+         },
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "No contact for 3 min 12 s. If the server is up, they are still running; orders already at Bybit can still fill, and your stop-losses at Bybit keep working.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "row-label",
+        "chars": "Row (SCR-070; CMP-118)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "row",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Not visible for 3 min 12 s",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         },
+         {
+          "t": "text",
+          "name": "spec-1",
+          "chars": "as text with the stale shading, last-known values (14 §0.5 item 4); controls disabled but focusable, reason \"Can't send — reconnecting\"",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 376
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "announced-label",
+        "chars": "Announced (§5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "announced",
+        "chars": "SCR-152's role=\"alert\" once (05 §6.2), which includes the algo line's bold lead, no separate algo announcement; after reconnect, the \"Back online…\" clauses join the app's one post-reconnect summary (E29-D01 Announcements), assertive, once, in place of \"Reconnected\"",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "details-label",
+        "chars": "Details and CMP-158",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "details",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Stop-losses at Bybit are held by Bybit and work whether or not CandleViewer is running.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "addons",
+      "w": 416,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "Banner add-ons",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "when-1",
+        "chars": "While an entry algo's symbol is not yet protected (B8), it adds:",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "addon-1",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "If the server is down, Bybit is unreachable, or Bybit refuses the stop, a part that fills now has no stop-loss until CandleViewer can place it, and you are alerted.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "stop-claim",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Stop-claim rule",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 416
+       },
+       {
+        "t": "text",
+        "name": "rule",
+        "chars": "A stop-loss claim about a run or a symbol appears only once B8 reports protected for it (§3); a banner's \"your stop-losses at Bybit keep working\" speaks only of stops that exist.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 416
+       }
+      ],
+      "w": 416
+     },
+     {
+      "t": "board",
+      "name": "time-basis",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Time basis",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 416
+       },
+       {
+        "t": "text",
+        "name": "rule",
+        "chars": "Client-observed moments are relative (\"no contact for 3 min 12 s\"; an age such as M1's counts from a record's arrival); server-stamped moments are absolute in the session's display zone (US-SET-006), the zone shown once per banner, note or row.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 416
+       },
+       {
+        "t": "text",
+        "name": "here",
+        "chars": "In this case's copy: \"No contact for 3 min 12 s\" (banner) · \"Not visible for 3 min 12 s\" (row) · \"Back online after 3 min 51 s\" (resume).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 416
+       }
+      ],
+      "w": 416
+     },
+     {
+      "t": "board",
+      "name": "after",
+      "w": 416,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "After reconnect",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "b-label",
+        "chars": "Resume, candidate B — proposed binding copy (C-e)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "b-when",
+        "chars": "after the REST re-hydration (E33-S06), one clause per run that changed:",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "b-copy",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Back online after 3 min 51 s. While you were away: TWAP a_12 sent 1 slice (0.20 BTC); chase a_13 filled at 64,004.0; iceberg a_14 waited 0:21 for Bybit and is running again.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "a-label",
+        "chars": "Resume, candidate A — the plan's wording (C-e)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "a-copy",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "While you were offline: 1 order filled, 1 stop moved by a rule",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         },
+         {
+          "t": "text",
+          "name": "spec-1",
+          "chars": "SCR-152 — filled in for the run",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 376
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "oco-label",
+        "chars": "OCO after an outage (SCR-069, SCR-070; role=\"note\", kept until acknowledged)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "oco",
+        "chars": "none: the server still settles the legs, so SCR-069's \"app offline\" note belongs to cases 2 and 3 (SC-1)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "cases",
+   "node": {
+    "t": "board",
+    "name": "case-2",
+    "w": 664,
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.raised",
+     "radius": "radius.card",
+     "pad": "space.inset.md",
+     "gap": "space.stack.sm",
+     "vs": "auto"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Case 2 (Bybit-link-off) — the server loses Bybit",
+      "typo": "type.ui.body-strong",
+      "color": "color.text.primary",
+      "w": 640
+     },
+     {
+      "t": "board",
+      "name": "tags",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "wrap": "wrap"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "tag-proposed-oq-4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.status.warning.subtle",
+         "radius": "radius.badge",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "PROPOSED · OQ-4",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "tag-proposed-sc-18",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.status.warning.subtle",
+         "radius": "radius.badge",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "PROPOSED · SC-18",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "facts",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "what-runs",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "What runs",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 640
+         },
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "nothing new; orders at Bybit stay",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 640
+         }
+        ],
+        "w": 640
+       },
+       {
+        "t": "board",
+        "name": "plan-says",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "What the plan says",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 640
+         },
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "SCR-153 \"Backend up but a dependency is impaired (exchange WS down → REST polling; …)\", role=\"status\"; B5–B7 WS_DISCONNECT → paused; B4 OCO has no such arm; after 30 s with no WS or REST the account is \"down\" and its dead-man's switch runs (SC-4)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 640
+         }
+        ],
+        "w": 640
+       },
+       {
+        "t": "board",
+        "name": "window-knows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "What this window can know",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 640
+         },
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "the system frame's exchange.private_ws — one value, not per account (23 §15.9); per account, the wallet topic's health entries (healthy / degraded / down, 23 §15.4) and the system frame's account_notice oms.account_resyncing until oms.account_synced (23 §15.9, SR-E29-10; a Manager gets it cut to their accounts)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 640
+         }
+        ],
+        "w": 640
+       }
+      ],
+      "w": 640
+     },
+     {
+      "t": "board",
+      "name": "sees",
+      "w": 640,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "What the trader sees",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "text",
+        "name": "a-label",
+        "chars": "Candidate A — the plan's wording",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "board",
+        "name": "a-copy",
+        "w": 616,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "algo pauses if the backend disconnects; native stops still protect",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 600
+         },
+         {
+          "t": "text",
+          "name": "spec-1",
+          "chars": "SCR-066 checklist",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 600
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "b-label",
+        "chars": "Banner, candidate B (proposed) — the SCR-153 and SCR-070 role=\"status\" banner; the bold lead is what is announced",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "board",
+        "name": "b-banner",
+        "w": 616,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "lead",
+          "chars": "No new algo orders: CandleViewer's live link to Bybit is down.",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 600
+         },
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "On Main since 14:02:11 UTC. Orders already at Bybit stay there and can still fill, and your stop-losses at Bybit keep working. You can still cancel the algos: [Cancel algos on Main]. Algos continue once the connection is back and checked.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 600
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "b-proposed",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-proposed",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "PROPOSED",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "tag-oq-4",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "OQ-4",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "note",
+          "chars": "\"Algos continue once the connection is back and checked.\" — the contract today is \"press Resume\".",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ],
+        "w": 616
+       },
+       {
+        "t": "text",
+        "name": "row-label",
+        "chars": "Row (SCR-070; CMP-118)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "board",
+        "name": "row",
+        "w": 616,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Waiting for Bybit · 0:21 · 1 order at Bybit (0.07 BTC)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 600
+         },
+         {
+          "t": "text",
+          "name": "spec-1",
+          "chars": "no countdown; Cancel stays enabled and stops the run at once (M8)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 600
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "announced-label",
+        "chars": "Announced (§5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "text",
+        "name": "announced",
+        "chars": "the bold lead, politely, once per episode (E33-S06); \"Running again…\" polite, once per run; an account-down outcome line, assertive, once per account",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "text",
+        "name": "details-label",
+        "chars": "Details and CMP-158",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "board",
+        "name": "details",
+        "w": 616,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Stop-losses at Bybit are held by Bybit and work whether or not CandleViewer is running.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 600
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "addons",
+      "w": 640,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "Banner add-ons",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "text",
+        "name": "when-1",
+        "chars": "While an entry algo's symbol on Main is not yet protected (B8), it adds after the stop clause:",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "board",
+        "name": "addon-1",
+        "w": 616,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "A part that fills now has no stop-loss until CandleViewer reaches Bybit again and Bybit accepts the stop, and you are alerted.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 600
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "when-2",
+        "chars": "While exchange.rest is down (23 §15.9) or the account is down (SC-4), the cancel sentence reads:",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "board",
+        "name": "addon-2",
+        "w": 616,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Cancel stops the algos now; their orders at Bybit are cancelled when Bybit answers and can fill until then",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 600
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "addon-2-proposed",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-proposed",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "PROPOSED",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "tag-sc-18",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "SC-18",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "note",
+          "chars": "today: \"Cancel stops the algos now. Bybit can't be reached, so their orders at Bybit stay and can fill; cancel them in Working orders once Bybit answers.\"",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ],
+        "w": 616
+       },
+       {
+        "t": "text",
+        "name": "when-3",
+        "chars": "Once the account is down, the last sentence reads:",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "board",
+        "name": "addon-3",
+        "w": 616,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Over 30 s without Bybit: Main's safety rule acts when Bybit answers, then the algos it does not cancel wait for you (Resume or Cancel).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 600
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "when-4",
+        "chars": "While only the live link is down, until E33-T03's auto-resume lands or if OQ-4 is overridden, the last sentence reads:",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 616
+       },
+       {
+        "t": "board",
+        "name": "addon-4",
+        "w": 616,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Algos stay paused when the connection is back: press Resume",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 600
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "stop-claim",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Stop-claim rule",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 640
+       },
+       {
+        "t": "text",
+        "name": "rule",
+        "chars": "A stop-loss claim about a run or a symbol appears only once B8 reports protected for it (§3); a banner's \"your stop-losses at Bybit keep working\" speaks only of stops that exist.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 640
+       },
+       {
+        "t": "text",
+        "name": "here",
+        "chars": "F12: an entry child placed without a stop gets one \"on the first fill, within a 2 s deadline\", which the OMS … does late in case 2 (row F3, \"Fills discovered late\").",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 640
+       }
+      ],
+      "w": 640
+     },
+     {
+      "t": "board",
+      "name": "time-basis",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Time basis",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 640
+       },
+       {
+        "t": "text",
+        "name": "rule",
+        "chars": "Client-observed moments are relative (\"no contact for 3 min 12 s\"; an age such as M1's counts from a record's arrival); server-stamped moments are absolute in the session's display zone (US-SET-006), the zone shown once per banner, note or row.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 640
+       },
+       {
+        "t": "text",
+        "name": "here",
+        "chars": "In this case's copy: \"On Main since 14:02:11 UTC\" (banner) · \"Waiting for Bybit · 0:21\" (row) · \"Running again at 14:02:32 UTC after 0:21 without Bybit\" (resume).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 640
+       }
+      ],
+      "w": 640
+     }
+    ]
+   }
+  },
+  {
+   "into": "cases/case-2",
+   "node": {
+    "t": "board",
+    "name": "after",
+    "w": 640,
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "radius": "radius.card",
+     "pad": "space.inset.md",
+     "gap": "space.stack.sm",
+     "vs": "auto"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "frame-title",
+      "chars": "After reconnect",
+      "typo": "type.ui.label",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "text",
+      "name": "b-label",
+      "chars": "Resume, candidate B — proposed binding copy (C-e)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "text",
+      "name": "b-when",
+      "chars": "on the row and once in the banner:",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "board",
+      "name": "b-copy",
+      "w": 616,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "copy-1",
+        "chars": "Running again at 14:02:32 UTC after 0:21 without Bybit — checked first. 1 slice missed, re-planned over the 19 min left.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 600
+       },
+       {
+        "t": "text",
+        "name": "spec-1",
+        "chars": "(US-ALGO-006; OQ-4, OQ-8; if OQ-8 is overridden: \"The missed slice is added to the next slice\")",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 600
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "down-label",
+      "chars": "Account down (SC-4), by the safety rule's outcome — the three account-down lines, which the protocol does not test; the owner approves under OQ-6",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "text",
+      "name": "flatten-when",
+      "chars": "flatten:",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "board",
+      "name": "flatten",
+      "w": 616,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "copy-1",
+        "chars": "Main lost Bybit for over 30 s, so its safety rule closed your positions and cancelled TWAP a_12 (0.80 BTC not sent).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 600
+       },
+       {
+        "t": "text",
+        "name": "spec-1",
+        "chars": "(no Resume; the row reads \"Cancelled — position closed by the safety rule\"; OQ-6, OQ-11; until E33-T03 adds the arm, SC-19: \"… closed your positions; TWAP a_12 is paused and would buy again if resumed: [Cancel TWAP a_12]\")",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 600
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "cancel-when",
+      "chars": "cancel working orders:",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "board",
+      "name": "cancel",
+      "w": 616,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "copy-1",
+        "chars": "… its safety rule cancelled 4 orders at Bybit. Resume places new orders: TWAP a_12 has 0.80 BTC left over 12 min.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 600
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "notify-when",
+      "chars": "notify only:",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "board",
+      "name": "notify",
+      "w": 616,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "copy-1",
+        "chars": "… nothing at Bybit was changed. Press Resume to continue.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 600
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "a-label",
+      "chars": "Resume, candidate A — the plan's wording (C-e)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "text",
+      "name": "a",
+      "chars": "none: candidate B is held to the bar alone (protocol §5)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "text",
+      "name": "oco-label",
+      "chars": "OCO after an outage (SCR-069, SCR-070; role=\"note\", kept until acknowledged)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "text",
+      "name": "entry-when",
+      "chars": "entry pair:",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "board",
+      "name": "entry",
+      "w": 616,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "copy-1",
+        "chars": "While CandleViewer could not manage OCO a_15, both entries filled: you hold 1.000 BTC, not 0.500. CandleViewer sent a reduce-only order for the extra 0.500 BTC at 14:05:44 UTC — filled at 64,001.0.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 600
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "failed-when",
+      "chars": "If that order failed:",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "board",
+      "name": "failed",
+      "w": 616,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "copy-1",
+        "chars": "… it did not fill: [Close 0.500 BTC]",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 600
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "exit-when",
+      "chars": "Exit pair (US-ALGO-002 \"reporting the delay\"):",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "board",
+      "name": "exit",
+      "w": 616,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "copy-1",
+        "chars": "The take-profit of OCO a_16 filled at 14:03:10 UTC while CandleViewer could not manage it; the other exit was cancelled at 14:05:44, 2 min 34 s later.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 600
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "cases",
+   "node": {
+    "t": "board",
+    "name": "case-3",
+    "w": 440,
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.raised",
+     "radius": "radius.card",
+     "pad": "space.inset.md",
+     "gap": "space.stack.sm",
+     "vs": "auto"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Case 3 (backend-off) — the server stops, sleeps or restarts",
+      "typo": "type.ui.body-strong",
+      "color": "color.text.primary",
+      "w": 416
+     },
+     {
+      "t": "board",
+      "name": "tags",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.xs",
+       "wrap": "wrap"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "tag-proposed-sc-14",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.status.warning.subtle",
+         "radius": "radius.badge",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "PROPOSED · SC-14",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "facts",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "what-runs",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "What runs",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 416
+         },
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "nothing",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 416
+         }
+        ],
+        "w": 416
+       },
+       {
+        "t": "board",
+        "name": "plan-says",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "What the plan says",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 416
+         },
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "orders and native stops stay at Bybit; on restart \"self-check → reconcile → resume\", and algos \"pause; supervisor resumes or cancels per algo policy\" (20 §11.1 row F7), resuming within 5 s (US-ALGO-002, US-ALGO-005; epic E33 AC3); a chase only after the adopted state is confirmed (US-ALGO-007)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 416
+         }
+        ],
+        "w": 416
+       },
+       {
+        "t": "board",
+        "name": "window-knows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "What this window can know",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 416
+         },
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "after reconnecting, only if the server reports the restart",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 416
+         }
+        ],
+        "w": 416
+       }
+      ],
+      "w": 416
+     },
+     {
+      "t": "board",
+      "name": "sees",
+      "w": 416,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "What the trader sees",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "while-label",
+        "chars": "While it lasts",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "while",
+        "chars": "During case 3 this window shows the case 1 text (it cannot tell them apart); candidate A is \"as case 1 while it lasts\".",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "b-label",
+        "chars": "Banner, candidate B (proposed) — after reconnect; the bold lead is what is announced",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "b-banner",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "lead",
+          "chars": "CandleViewer's server restarted at 14:05:40 UTC.",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 376
+         },
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Your algos were stopped for 3 min 12 s. Checked with Bybit at 14:05:44 — what changed is listed below.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "b-proposed",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-proposed",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "PROPOSED",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "tag-sc-14",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "SC-14",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "note",
+          "chars": "the times need SC-14's PROPOSED resumed_at",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 392
+         }
+        ],
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "row-label",
+        "chars": "Row (SCR-070; CMP-118)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "row",
+        "chars": "the run's outcome line (Resume, candidate B)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "announced-label",
+        "chars": "Announced (§5)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "announced",
+        "chars": "the same single post-reconnect summary, its first line the bold lead",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "details-label",
+        "chars": "Details and CMP-158",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "details",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Stop-losses at Bybit are held by Bybit and work whether or not CandleViewer is running.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "addons",
+      "w": 416,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "Banner add-ons",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "none",
+        "chars": "No add-on in §4 for the restart banner.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "while",
+        "chars": "While case 3 lasts, this window shows the case 1 text (see case 1).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "stop-claim",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Stop-claim rule",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 416
+       },
+       {
+        "t": "text",
+        "name": "rule",
+        "chars": "A stop-loss claim about a run or a symbol appears only once B8 reports protected for it (§3); a banner's \"your stop-losses at Bybit keep working\" speaks only of stops that exist.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 416
+       },
+       {
+        "t": "text",
+        "name": "here",
+        "chars": "F12: an entry child placed without a stop gets one \"on the first fill, within a 2 s deadline\", which the OMS can't do in case 3 (20 §11.1 row F7).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 416
+       }
+      ],
+      "w": 416
+     },
+     {
+      "t": "board",
+      "name": "time-basis",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Time basis",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 416
+       },
+       {
+        "t": "text",
+        "name": "rule",
+        "chars": "Client-observed moments are relative (\"no contact for 3 min 12 s\"; an age such as M1's counts from a record's arrival); server-stamped moments are absolute in the session's display zone (US-SET-006), the zone shown once per banner, note or row.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 416
+       },
+       {
+        "t": "text",
+        "name": "here",
+        "chars": "In this case's copy: \"restarted at 14:05:40 UTC\" and \"Checked with Bybit at 14:05:44\" (banner; the times need SC-14's PROPOSED resumed_at) · \"checked with Bybit at 14:05:44 UTC\" (resume). While case 3 lasts, this window shows the case 1 text.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 416
+       }
+      ],
+      "w": 416
+     },
+     {
+      "t": "board",
+      "name": "after",
+      "w": 416,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "After reconnect",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "b-label",
+        "chars": "Resume, candidate B — proposed binding copy (C-e)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "b-copy",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "TWAP a_12 resumed after the server restart, checked with Bybit at 14:05:44 UTC: slice 5 filled while the server was down (0.20 BTC at 64,004.0); 1 slice missed, re-planned over the 14 min left.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         },
+         {
+          "t": "text",
+          "name": "spec-1",
+          "chars": "(OQ-4, OQ-8; if OQ-8 is overridden: \"The missed slice is added to the next slice\")",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 376
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "or",
+        "chars": "or",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "board",
+        "name": "b-cancelled",
+        "w": 392,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy-1",
+          "chars": "Cancelled after the server restart: {reason}.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 376
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "a-label",
+        "chars": "Resume, candidate A — the plan's wording (C-e)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "a",
+        "chars": "as case 1",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "oco-label",
+        "chars": "OCO after an outage (SCR-069, SCR-070; role=\"note\", kept until acknowledged)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       },
+       {
+        "t": "text",
+        "name": "oco",
+        "chars": "same as case 2",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 392
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "in-cases-2-3",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "In cases 2 and 3 (Med, a reading of plan text)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "cards",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "twap",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "TWAP",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "no new slices, a resting slice can fill, missed slices are caught up on return (INV-B6-b)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "iceberg",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Iceberg",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "one slice at most rests and can fill, nothing refills (24 §10.1 rule 2; INV-B5-b keeps one slice live; SC-1's gap)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "chase",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Chase",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the order rests at its last price",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "oco",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "OCO",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "both legs rest: an exit pair is reduce-only, so a second fill is rejected (110017, 24 §10.2), but nothing stops both legs of an entry pair filling",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "native-stops",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Native stops",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "work in all three cases, except the first fill of an entry child placed without one (SC-5)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "findings",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Findings F10–F14",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "cards",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "f10",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "F10 (heuristic, High — plan text, Pri 0)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the copy keys suspension to \"the backend\", but this window sees only case 1 directly, where algos keep running; case 2 is reported by the server; case 3 looks like case 1 until reconnect. As binding copy it would be false in a common case (DJ), a closed laptop or dropped tunnel (P2 is \"remote, connected over Tailscale\", 10 §3). H2, H1, A2.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "f11",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "F11 (heuristic, Med; High for the word clash, Pri 0)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "\"pauses\" reads as \"nothing can happen at Bybit\", yet orders stay working there, after the trader's own Pause too (B5–B7 USER_PAUSE pulls nothing, M8); and \"freeze\" is the kill switch's word (typed FREEZE, SCR-072). H2, H4.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "f12",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "F12 (heuristic, High — C-2.6 vs 24 §8.8, Pri 0)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "an entry child placed without a stop gets one \"on the first fill, within a 2 s deadline\", which the OMS can't do in case 3 (20 §11.1 row F7) and does late in case 2 (row F3, \"Fills discovered late\"); §3's interim stop sentence says so. H1, H5.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "f13",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "F13 (heuristic, Med; High for the misplaced note, Pri 0)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "24 §10.2 gives the entry pair as its example of what emulated OCO is for (\"e.g. two entry orders at different prices where only one should fill\"); in cases 2 and 3 both can fill, doubling the size, yet the plan keys OCO's residual risk to the app being offline (SCR-069; US-ALGO-002), case 1, where the server still settles the legs (SC-1). H5.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "f14",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "F14 (heuristic, High — plan text, Pri 1)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-1",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 1",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "freeze and the account dead-man's switch act on the same orders with no stated precedence or shared threshold (SC-4); the reconnect message must say which acted. H1.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "predicted",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Predicted expectations (Probe A measures)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "cards",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "continue",
+        "w": 383,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "\"Continue\"",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 359
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "users of exchange-run strategy orders (Low; where Bybit's run is a lead only, §7).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 359
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "stops-on-close",
+        "w": 383,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "\"It stops when I close the app\"",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 359
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "users of tools that run strategies in the app — the most dangerous mismatch (Med; F6).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 359
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "cancel-everything",
+        "w": 383,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "\"Cancel everything\"",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 359
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "P1's fear of an automation bug (Low).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 359
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "freeze",
+        "w": 383,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Freeze",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 359
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Freeze is predicted to match once both halves are said together: \"no new orders\" and \"what is at Bybit stays\" (Med).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 359
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "resume-and-neighbours",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Reconnect and resume, risk halt, SCR-152's body",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "cards",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "resume-approval",
+        "w": 514,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Reconnect and resume, candidate B",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 490
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Proposed binding copy — owner approves by exception, confirmed by the restatement test (C-e), except the three account-down lines, which the protocol does not test (its Bybit-link-off situation is Probe A-b's 20 s outage, under the 30 s rule) and the owner approves under OQ-6; it extends SCR-152's \"While you were offline\" report.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 490
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "risk-halt",
+        "w": 514,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Risk halt (SC-8)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 490
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "\"Halted by risk control — FREEZE by Owner at 14:02:30 UTC. Restart with remaining 0.80 BTC…\" (who and when, as 10 §3 scenario 5 asks of a freeze banner).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 490
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "scr-152-body",
+        "w": 514,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "SCR-152's body (E17-D01)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 490
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "E17-D01 (merged, #3905) gives SCR-152 a body ending \"Exchange-side stops still protect open positions; app-managed rules are paused.\"; in case 1 the server still runs rules and algos (20 §3.5, §3.6), so its last clause is false there, in the word SC-6 retires.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 490
+         },
+         {
+          "t": "text",
+          "name": "line-2",
+          "chars": "Recommended default: the case-1 algo line, true either way, replaces it; E17-D02 (#325) and E33-D03 settle one body, its rules wording included (OQ-1).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 490
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "Source: docs/design/research/e33-emulated-algo-trust.md §4 at 07c8b5be8. Illustrative content; labels such as (heuristic), DJ, PROPOSED as in the report.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  }
+ ],
+ "export": "docs/design/E33/img/E33-D01-01-three-cases",
+ "notes": {
+  "source": "docs/design/research/e33-emulated-algo-trust.md §4 (lines 276-344) at 07c8b5be8",
+  "worktree": "<#857 worktree>",
+  "brief": "§4 three cases as three side-by-side cards: what the trader sees, banner add-ons, stop-claim rule, time basis; ids and PROPOSED tags as in §4",
+  "texts": 206,
+  "missing_ids": []
+ }
+}

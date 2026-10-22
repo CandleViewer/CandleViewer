@@ -1,0 +1,1061 @@
+{
+ "board": {
+  "name": "E33-D01-07-source-conflicts",
+  "w": 1600,
+  "x": 12000,
+  "y": 0,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "radius": "radius.card",
+   "pad": "space.inset.lg",
+   "gap": "space.stack.md",
+   "vs": "auto"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "header",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Source conflicts the research cannot settle",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "subtitle",
+      "chars": "E33-D01 · report §1 · research board — heuristic findings, no participants",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "table",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "radius": "radius.card",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.sunken",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "#",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Conflict",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Sources",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Why it matters here",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 268
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "table",
+   "node": {
+    "t": "board",
+    "name": "rows-1",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r01",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Which \"disconnect\" freezes algos",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "freeze is keyed to the server's private link to Bybit (24 §10.1 \"WS disconnect (freeze)\"; B5–B7 WS_DISCONNECT; E33-Q04 scenario 5 \"sever the private execution stream\") and algos keep running when this window goes away (US-ALGO-006 NFR; 13 §9) vs copy keyed to \"the backend\": \"algo pauses if the backend disconnects\" (SCR-066 checklist), \"algos pause if backend down\" (SCR-070 mock), \"backend reconnecting\" (SCR-070 States), \"Given the backend websocket disconnects … algos are suspended while the backend reconnects\" (E33-S06 AC), and E17-D01's SCR-152 body for a lost connection to this window (merged, #3905): \"… Exchange-side stops still protect open positions; app-managed rules are paused.\"; server death (20 §11.1 row F7) has no copy; OCO's residual risk is keyed to the app being offline (SCR-069 Type and checklist; E33-S05; E33-D03 \"Residual risk is explicit\"; US-ALGO-002 \"Given the app is offline when the target fills\"), when the server still settles the legs; the freeze arm exists only on B5 working, B6 armed and B7 working, so under the root's \"onUnhandled\": \"defer\" a loss of Bybit while an iceberg waits to refill or cools down is held until its next slice has been sent (a reading of the contract)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "the binding disconnect copy; SCR-066–070, SCR-152, SCR-153 (F10, F13)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r02",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-2",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Is the disconnect policy a user choice",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "(1) on_disconnect ∈ cancel_children, freeze, cancel_all_and_alert (24 §10.1), SCR-066 Type \"pause/resume behaviour on disconnect\", E33-S05 and E33-D02 \"disconnect behaviour\" vs (2) no such field in 22 AlgoSpec vs (3) B5–B7 with the freeze arm only vs (4) 20 §14 \"opt-in disconnect-flatten\" vs (5) 30 §7.2 \"cancelled-on-disconnect-aware via Bybit's DCP\" vs (6) 22 setKillSwitch \"the OMS arms no exchange-side dead-man's switch\" and 04 OQ-04 (DCP \"currently inverse-only\")",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "a drawn control with no backing field is a defect (E33-D02 Test plan)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r03",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-3",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "What resumes a paused run",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "one paused for \"user pause, WS disconnect (freeze), or rate budget exhausted\" (24 §10.1) with three rules: user → RESUME; budget → \"automatic when tokens return\" (E33-T01); freeze → unstated (\"resume, reconciled\"); B7 paused + RESUME → working with no reconcile vs US-ALGO-007 \"chasing resumes only after the adopted state is confirmed\"; 23 §6.4 sends no context_summary for B4–B7; E33-T02's AlgoRun has halt_reason only; only B7 has a RATE_BUDGET_EXHAUSTED arm (B5, B6 none, against E33-T01's framework rule), and B4 and B6 price_blocked take no USER_PAUSE; B6 paused takes only RESUME and USER_CANCEL, so a DURATION_END while paused is deferred and, after Resume, can send the rest at market through final_sweep (a reading of B6.3); US-ALGO-006 recalculates the time left on resume \"with the option to extend or compress\", which no TwapParams field holds",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "a paused row cannot say why, or whether it resumes (F15)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r04",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-4",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Freeze vs the account dead-man's switch",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "the run's freeze keeps orders working (24 §10.1) vs the account going \"down\" after 30 s, \"dead-man's switch called\" (20 §7.2 CV_ACCOUNT_DOWN_S) or \"the dead-man's-switch policy is invoked\" (US-ACCT-010), whose policy \"(cancel working orders, flatten, or notify only) executes as soon as connectivity returns\" (US-RULE-013); threshold \"configurable 10–120 s\" (US-RULE-013 NFR) vs \"≤ 30\" (20 §7.2)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "what the reconnect message reports (F14)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r05",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-5",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Native stop on algo children",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "C-2.6 \"Every position-opening order … must carry a native exchange-side stop-loss\" and 30 §7.2 E32 \"the OMS refuses to acknowledge any position-opening order that does not carry a native exchange-side SL\" vs 24 §8.8 rule 2 \"If an entry must be placed without an attached SL (e.g. an algo child that would over-attach), the OMS places the position-level SL … immediately on the first fill, within a 2 s deadline\"; 14 §12.3 \"Native-SL invariant\" omits SCR-066–068; a reading (24 gives no reason): in full TP/SL mode (24 §8.1's default tpsl_mode) an attached stop is the whole position's (R02 §2.2 \"Entire Position\"; 24 §8.5: \"In Full mode a position has one exchange-side stop\"), and 24 §8.8 rule 6 records every stop the OMS requests, an entry's attached one included, as the position's stop, so each slice, refill or replace would rewrite it and could loosen a stop the user tightened (24 §8.8 rules 5 and 6; B1 notes); E32-T01 (#931) allow-lists algo_child_over_attach for PASS_DEFERRED (a trading-stop write with a 2 s deadline, its pending_native_sl row written before the adapter call), and E32-K01 (#856) restructures such children \"rather than accepting a trading-stop window\" if the trading-stop path's p99 exceeds 1.5 s",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"native stops still protect\" fails for a first fill in case 2 or 3 (F12)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r06",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-6",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Names for the emulation",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"(app-managed)\" (US-ALGO-005 NFR; US-ALGO-008; E33-S02), \"emulated client-side — Bybit's API has no native iceberg field\" (SCR-067), \"emulated — Bybit's API has no OCO\" (SCR-069), \"(emulated)\" (CMP-103, CMP-118), \"emulated, not exchange-native\" (30 §7.2; RSK-017), \"emulated by CandleViewer, not by Bybit\" (epic E33 AC1), \"client-of-exchange-side\" (22 AlgoSpec), \"client-side\" (21 §14; CMP-118 data contract); shorthands \"Bybit has no native iceberg\", \"Bybit has no OCO\" (SCR-067/069 checklists) vs Bybit's own app listing Iceberg, TWAP, Scaled and Chase Limit orders and a spot-only OCO (R02 §2.1; R09 §6)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "the binding caveat (F6, F7)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r07",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-7",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Which component says \"emulated\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "epic E33 \"'emulated — not exchange-native' badge (CMP-227 EstimatedBadge + CMP-158 SafetyInvariantNotice)\", E33-D04, E33-D07 and the SCR-067/069/070 component lists vs CMP-227 = \"the mandatory (estimated) chip on every heuristic-derived view\", its accessible name holding \"the literal word 'estimated'\" (15; C-2.13) vs CMP-158 \"inside both rule editors\", static, props none (15); \"iceberg\" also names an estimated detector (24 §7.2)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "D04's design-system contribution (F9)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r08",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-8",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "State words and the kill switch",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "(1) AlgoState pending … failed (24 §10.1) vs CMP-118 error vs SCR-066 configured, \"auto-paused on disconnect\" vs SCR-070 degraded vs 13 §9 PENDING/ARMED/PARTIAL vs B4–B7 ids (price_blocked, bound_exceeded, parked, overshoot); (2) kill switch: B4–B7 root KILL → failed vs \"halted by risk control\" (epic E33 AC4; US-ALGO-005/006; E33-T01; E33-S06; 10 §5 scenario 10); (3) \"explicit re-arm\" has no E33-T02 verb (pause, resume, cancel, cancel_and_flatten); (4) \"arm\" already names E30's one-click arm, B4/B7 arming and B6 armed; (5) FREEZE is the kill switch's typed word (SCR-072); the E33 threat model (Draft) settles (2) and (3) for E33-T01: a terminal halted with halt_reason, distinct from failed (CX-10, SR-E33-19; its §11.3 note 3 amends 24 §10.1), \"re-arm\" meaning a new run or a resume that passes SR-E33-02, and an authority_revoked halt when the creator loses access (§4.1; E33-X02 case 4)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "SCR-070 rows, SCR-072 (F11, F16)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r09",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-9",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Builder submit and the E30 arm/lock",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "E33-S05 \"a disarmed user cannot submit from a builder\" and its AC \"with chart trading armed\" vs US-ORD-005 \"one-click is locked and every order requires confirmation\" (locked confirms, it does not block; E30-D01 §1a SC-3)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "every builder's submit path (F27)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r10",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-10",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Parameter models",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "22 AlgoSpec vs 24 §10, the parameter owner (each §10.x says so): iceberg jitter 0 vs 0.2 (E33-S02 \"jitter is on by default\"); TWAP jitter 0 vs time 0.25 / size 0.20; TWAP duration ≥10 s vs SCR-066 ≥1 min; slices ≤500 (SCR-066; 22; E33-S03 Security notes \"bounded by slices ≤ 500\", and its 500-slice perf schedule) vs max_children 450 (24 §10.1; E33-T01); chase repricings 20 vs 200; interval 250 ms (min 50) vs 200 ms (floor, E33-S04); distance \"from the arrival price\" (SCR-068) vs \"from the arm price\" (24) vs max_slippage_ticks (22); no 22 field for on_disconnect, OCO mode, chase timeout and peg, TWAP catch-up, participation, price limit, window end; 450 slices in SCR-066's 1 min minimum is a 133 ms interval vs E33-S03 oms.algo.twap.min_slice_interval_ms=1000; no lower bound on iceberg visible size against max_slices 450 (24 §10.3), where E33-T01's child cap ends a run \"completed\" with quantity left",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "every drawn control must map to a field (E33-D02 Test plan)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r11",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-11",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "TWAP catch-up and window end",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "US-ALGO-006 \"re-plans the remaining quantity over the remaining window, caps any single catch-up slice at the configured maximum participation\" vs catch_up=\"next_slice\", max_participation_pct=None (24 §10.4); window end: three policies \"shown on the panel before the window ends\" (US-ALGO-006) vs final_market_sweep in 24 prose, not in TwapParams (E33-S03 config) vs B6 sweep-or-complete",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "SCR-066 defaults, resume copy (F4)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r12",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-12",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Chase bounds and peg",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "at the distance cap B7 routes by the timeout guards, so on_timeout=\"market\" goes to market after the price has passed the cap (B7.3), vs 24 §10.5 \"never chase beyond max_chase_ticks … the anti-runaway guard\" and US-ALGO-007 \"cancelled or left resting per policy\"; peg \"mid\" (SCR-068; E33-D02) has no mode (24: maker, taker, offset); taker \"crossing\" vs US-ALGO-007 \"without crossing\" and post_only=True; amend (24) vs \"repeated cancel/replace\" (22 /trade-groups)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "SCR-068 bounds (F5)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "table",
+   "node": {
+    "t": "board",
+    "name": "rows-2",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r13",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-13",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "What OCO is for; the double fill",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "(1) use: US-ALGO-002 \"hitting a target cancels the stop and vice versa\" and SCR-069's standalone OCO on a position vs 24 §10.2 \"for the plain 'TP + SL on a position' case, use Bybit's native attached TP/SL\" and E33-S01 \"is refused\"; (2) speed: \"within 1 second\" (US-ALGO-002) vs \"<=300 ms … to opposing-leg cancel request\" (SCR-069) vs cancel_timeout_ms 2000 (22); (3) double fill: automatic reduce-only market for the excess + warning (24 §10.2; B4 overshoot) vs \"P1-severity incident … one-click 'flatten to intended net position'\" (13 §9; M-028) vs \"Critical\", blocking modal (17 §6); (4) on a fill: reduce_other (24 default) vs \"the stop is cancelled\" (US-ALGO-002)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "SCR-069, M-028 (F13, F28)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r14",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-14",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Monitor data and controls",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "(1) SCR-070 \"Algo state arrives on orders, coalesced to 2 Hz\" and E33-T02's algo_run record vs 23 §6.2 \"orders and executions are never throttled or coalesced\"; (2) CMP-118 progress \"sourced from the client-side … local state machine\" vs US-ALGO-010 NFR \"server state, not client memory\"; (3) CMP-118 has no oco and no flatten; (4) CMP-123 calls Bybit cancel-all directly, and 22 cancel-all \"Protects TP/SL exits\" by skipping reduce-only orders (protective OCO legs are reduce-only); (5) \"last reconciled\" (E33-D03, E33-S06) has no AlgoRun field; (6) E33-T02's /algos paths vs 24 §19.2, which maps doc 14's /algos to /orders with an algo block; (7) \"pause all\" (SCR-070, E33-S06) has no endpoint (E33-T02 has POST /algos/cancel-all only) and E33-S06 forbids looping per row; (8) no field carries a restart time or downtime (23 §15.9 has only a planned shutdown_notice)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "SCR-070, SCR-063 Algos tab (F17, F20)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r15",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-15",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Who sees controls; who adopts",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "viewer controls \"absent rather than disabled-with-tooltip\" (E33-D03; E33-S06 \"controls absent\") vs \"disabled with a reason tooltip, not hidden\" (14 §0.5 item 5), P3 \"present-but-disabled with an explanatory tooltip ('Read-only role')\" (10 §4), \"Disabled controls always say why\" (16 §1); adopt \"owner/manager-only\" (E33-D03; E33-S06) vs RSK-077 \"adoption under management Owner-only, step-up, re-running the validator and attaching a stop or refusing\"; untracked orders: B1 consumes CANCEL and AMEND there and audits them, and ADOPT passes only adoption_allowed, which \"denies every adoption until E45-S01 records the Owner's decision D6\" (B1.5 adoption_allowed; INV-B1-l; E29's D6, which the E33 threat model's D7 extends); RSK-077's trigger includes an untracked row \"cancelled by a rule, algo or group cancel\"; E29-D01 D2 draws both disabled; a key revoke names the algos it would orphan (10 §5 scenario 9); E33-D05: \"a viewer's monitor row names must not include controls they lack\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "SCR-070 (F21)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r16",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-16",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Kill switch, maintenance and algos",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"every emulated algorithm is stopped\" (US-RULE-014) vs 22 setKillSwitch and KillSwitchResult, silent on algos; cancel_open_orders default true (22; 24 §8.11) vs SCR-072 checkboxes \"both default off\"; 30 §7.2 E39 \"stops new risk, does not force-close\"; maintenance: SCR-148 Type \"algos paused\" vs its A11y line \"Running algos are cancelled\" and 22 \"cancels only running emulated algos\" (open follow-up #3380); the E33 threat model (Draft) settles that every blocking source, maintenance included, halts runs (CX-09, SR-E33-06; algo.halted, its §8.1)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "SCR-070, SCR-072, SCR-148 (F23)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r17",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-17",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Ticket and catalogue hygiene",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "front-matter deviations (2)–(5); flags algo.* (21 §10.7; E33-T02) vs trading.algos.* (24 §16.2) vs twap_algo (SCR-145 mock); \"ADR-0016 emulated-algo supervisor\" (epic E33) vs ADR-0030-emulated-algo-supervisor.md (E33-T03 Scope; its title and AC say ADR-0016), ADR-0016 being the statechart runtime and ADR-0030 the defect burn-down ADR; the rate reserve (SC-18); SCR-069 promises the OCO resolution time \"in SCR-078\", which has no such field; 17 §5 cites an algo state diagram 17 §4 lacks; E33-T02's /algos vs 24 §19.2's canonical /orders with an algo block",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "citations; E33-T03 reconciles",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r18",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-18",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Which rate model governs algo traffic",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "24 §8.7: per-UID endpoint classes (order.amend 10/s; normal soft-throttled at 80 %; reserve_fraction 0.10 + 2 tokens) vs 20 §4.3: a per-account AccountRateBudget, critical 40 % (\"default 4 req/s of 10\": SL attachment, reduce-only closes, cancel-all / kill-switch), entry 40 % (\"New entries and fan-out children, amends\"), poll 20 %, which E34-T02 (#859) implements \"verbatim\" vs C-12.7: a reserve \"(default 30%) for risk-critical actions (stop placement, cancel, flatten)\"; RSK-078: \"the reserve value is written three ways\"; GET /me/limits reports per account orders_per_minute_limit, orders_per_minute_used and rate_budget_pct_used, not per-class headroom; for algo children the E29 threat model's SR-E29-01 (its clause from E33-X01) and the E33 threat model (Draft; CX-08, SR-E33-08) put a child's create or amend in entry whatever its reduce_only, never in the reserve, and a halt's cancels in critical, so OCO's settle amend draws entry; no text names its settle cancel (a single cancel has no 20 §4.3 bucket)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "how many chases an account can run beside its own entries; what the builder's rate figure means (F2)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r19",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-19",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Closing a position while algos run",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 192
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "cancel_on_position_flat=True on every AlgoSpec and \"running --> cancelled: user cancel / position flat / max_duration exceeded\" (24 §10.1) vs a POSITION_FLAT arm only on B4 racing and B5 working, none on B6, B7 or any paused state (a flatten while paused is deferred, a reading); the paths that close: CMP-123 (Bybit cancel-all + a market close per position), SCR-063 close (Ctrl+W, which 05 §3.3 item 4 blocklists, and Ctrl+Shift+W; E29-D01 AM-2 proposes Ctrl+Delete for both), E29-D01 D7 Flatten account (Ctrl+Shift+F), a lockout's flatten (10 §3 scenario 4); SCR-063's \"Close 25%\" and \"Close 50%\" leave the position open; after CMP-123's Bybit cancel-all an iceberg goes waiting_refill, defers the POSITION_FLAT and sends one more slice before it cancels (a reading of B5.3); \"cancel and flatten\" (SCR-066 checklist) \"additionally submits a reduce-only close\" (E33-T02) of no stated quantity; a lockout's flatten can reach B5 as POSITION_FLAT before its halt, ending the run \"cancelled\" (a reading of B5)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1000
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "a TWAP or chase re-opens a position the trader closed (F29)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 268
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "Source: docs/design/research/e33-emulated-algo-trust.md §1 at 07c8b5be8. Illustrative content; labels such as (heuristic), DJ, PROPOSED as in the report.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  }
+ ],
+ "export": "E33/img/E33-D01-07-source-conflicts",
+ "notes": {
+  "source": "docs/design/research/e33-emulated-algo-trust.md ## 1. table 1",
+  "columns": [
+   "#",
+   "Conflict",
+   "Sources",
+   "Why it matters here"
+  ],
+  "widths": [
+   56,
+   192,
+   1000,
+   268
+  ],
+  "rows": 19
+ }
+}

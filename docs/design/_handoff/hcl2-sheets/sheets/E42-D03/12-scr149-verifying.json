@@ -1,0 +1,2093 @@
+{
+ "board": {
+  "name": "E42-D03 / 12 SCR-149 / verifying · 1280×800+2560×1440 · dark",
+  "w": 4304,
+  "h": 1736,
+  "x": 4600,
+  "y": 3600,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.app",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-1280",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 48,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); named 'Admin'"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704,
+        "vs": "fill",
+        "note": "64 px (collapsed, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-209 RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 704,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 1040,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.app",
+         "clip": true,
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · WorkspaceCanvas (E10)",
+          "w": 944,
+          "h": 672,
+          "o": {
+           "radius": "radius.card",
+           "fill": "color.surface.canvas"
+          },
+          "note": "the Owner's SCR-010 workspace, the previous non-admin route under the gate (D6 L119; RA-1 L223): E10-D02's canvas as one placeholder, unmasked under the scrim (§5 L213)"
+         }
+        ],
+        "w": 976,
+        "h": 704,
+        "vs": "fill",
+        "note": "<main> of SCR-010 (E10-D02): the previous non-admin route under the gate (D6 L119; SCR-010 itself on a deep link, L223); nothing under the scrim is masked (L213)"
+       }
+      ],
+      "w": 1280,
+      "h": 704,
+      "vs": "fill"
+     },
+     {
+      "t": "board",
+      "name": "CMP-208 StatusBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · connection chip",
+        "w": 120,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       },
+       {
+        "t": "board",
+        "name": "CMP-012 Badge (composition) · LIVE",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.xs",
+         "radius": "radius.badge",
+         "stroke": "color.env.live",
+         "strokeWidth": "border.hairline"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "LIVE",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 16
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "overlay",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "scrim",
+        "w": 1280,
+        "h": 800,
+        "o": {
+         "opacity": "opacity.scrim",
+         "fill": "color.surface.sunken"
+        },
+        "x": 0,
+        "y": 0,
+        "note": "flat 60 % scrim, no blur; the content under it is not masked"
+       },
+       {
+        "t": "board",
+        "name": "CMP-043 Dialog (composition) · SCR-149 gate",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.overlay",
+         "radius": "radius.dialog",
+         "shadow": "elevation.dialog",
+         "pad": "space.dialog.padding",
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Unlock admin",
+          "typo": "type.ui.heading-md",
+          "color": "color.text.primary",
+          "w": 432,
+          "note": "h2; the dialog's name"
+         },
+         {
+          "t": "text",
+          "name": "body",
+          "chars": "Admin screens need a fresh confirmation. It stays unlocked until 14:17 UTC.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 432,
+          "note": "the dialog's description, both sentences: its aria-describedby (L237; D02:271); 'until 14:17 UTC' (D6 L119); RA-1 announced it once on open (L223)"
+         },
+         {
+          "t": "board",
+          "name": "form (aria-busy)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-201 PasswordField (composition)",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Password",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "board",
+              "name": "input",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "fill": "color.surface.sunken",
+               "height": "size.control.comfortable",
+               "stroke": "color.text.tertiary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "••••••••",
+                "typo": "type.ui.body",
+                "color": "color.text.tertiary"
+               }
+              ],
+              "w": 432,
+              "h": 32,
+              "note": "locked while verifying (L224): read-only, the typed password kept, masked; type=password, autocomplete=\"current-password\" (15:2346); paste is never blocked (L238)"
+             }
+            ],
+            "w": 432,
+            "note": "Tab stop 1 (L236); <label for> (CMP-040); no reveal toggle (see the deviations)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-204 OtpInput (composition)",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Authenticator code",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "board",
+              "name": "input",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "fill": "color.surface.sunken",
+               "height": "size.control.comfortable",
+               "stroke": "color.text.tertiary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "w": 432,
+              "h": 32,
+              "note": "one input (D7 L120): inputmode=\"numeric\", autocomplete=\"one-time-code\", paste fills it (L237-238); named by its label, the hint its aria-describedby (D7); locked while verifying (L224): read-only, the code kept",
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · the 6-digit code as typed (kept; no source gives one)",
+                "w": 48,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                },
+                "note": "the code that was sent, kept while locked (L224); six digits (Y:11345)"
+               }
+              ]
+             },
+             {
+              "t": "text",
+              "name": "hint",
+              "chars": "6 digits",
+              "typo": "type.ui.caption",
+              "color": "color.text.tertiary",
+              "note": "aria-describedby"
+             }
+            ],
+            "w": 432,
+            "note": "Tab stop 2 (L236)"
+           }
+          ],
+          "w": 432,
+          "note": "aria-busy=\"true\" while POST /auth/step-up {password, code} is in flight (RA-2 L224; E09-D04:90 'on the form'); both fields locked, their values kept"
+         },
+         {
+          "t": "text",
+          "name": "status · gate.verifying",
+          "chars": "Verifying code…",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 432,
+          "note": "role=\"status\" (aria-live polite): an empty region in the gate from its mount, its text set as the request is sent (05:150), so announced once (L224; §13 L582; E09-D04:91); the slot under the code where RA-3's error and RA-10/RA-11's lines go (L213, L225, L232-233); outside the aria-busy form"
+         },
+         {
+          "t": "text",
+          "name": "cancel note",
+          "chars": "Cancel discards nothing; you return to your workspace.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 432,
+          "note": "gate.cancel_note: the entry gate's line, kept while verifying (§14 L601 'RA-1 only': the entry gate, never RA-5's held-save gate); plain text, not in the description (L237)"
+         },
+         {
+          "t": "board",
+          "name": "actions",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm",
+           "justify": "end",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-001 Button (composition) · Cancel",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "height": "size.control.comfortable",
+             "justify": "center",
+             "fill": "color.action.secondary.default"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Cancel",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 69,
+            "h": 32,
+            "note": "Tab stop 3 (L236); enabled while verifying (DJ, see the deviations): Cancel = Esc, back to the previous non-admin route (RA-1 L223; D6 L119; D06:52)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-001 Button (composition) · Unlock admin (loading)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "height": "size.control.comfortable",
+             "justify": "center",
+             "fill": "color.action.primary.default"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "spinner",
+              "icon": "refresh",
+              "color": "color.text.on-action",
+              "size": "size.icon",
+              "note": "CMP-014 Spinner stand-in (registry 'refresh'), aria-hidden inside the busy button (15:173)"
+             }
+            ],
+            "w": 111,
+            "h": 32,
+            "note": "CMP-001 primary, loading (15:51, :53): the spinner replaces the label at the label's width (no reflow); the name 'Unlock admin' stays in the DOM (E09-D04:91); aria-busy (15:54); focusable while busy (D09:231); activation and Enter inert while verifying (L236-237)"
+           }
+          ],
+          "w": 432,
+          "note": "Cancel first, Unlock admin last (L213; D02:265)"
+         }
+        ],
+        "w": 480,
+        "note": "role=\"alertdialog\" aria-modal=\"true\" (D06:24-25; 15:442), named by the h2, aria-describedby = the body (L237); its form aria-busy while the request is in flight (L224); focus trapped; Esc = Cancel (L236-237); CMP-043 size Default, centred at both sizes, never stretched (L211; D1 L114)",
+        "x": 400,
+        "y": 224
+       }
+      ],
+      "w": 1280,
+      "h": 800,
+      "x": 0,
+      "y": 0,
+      "abs": true,
+      "note": "the modal layer (no layout): the E09-D06 chassis, a flat 60 % scrim with no blur over the whole frame and the gate centred on it (§1 L96; §5 L211)"
+     }
+    ],
+    "w": 1280,
+    "h": 800
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-2560",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2560,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 2560,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Admin",
+            "typo": "type.ui.body",
+            "color": "color.text.secondary",
+            "note": "15:696: CMP-071 NavRail's item 'Admin' (an anatomy string, no §14 key); unselected: the route under the gate is SCR-010 (D6 L119)"
+           }
+          ],
+          "w": 224,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02)"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 239,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px (expanded, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-209 RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 2320,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.app",
+         "clip": true,
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · WorkspaceCanvas (E10)",
+          "w": 2048,
+          "h": 1312,
+          "o": {
+           "radius": "radius.card",
+           "fill": "color.surface.canvas"
+          },
+          "note": "the Owner's SCR-010 workspace, the previous non-admin route under the gate (D6 L119; RA-1 L223): E10-D02's canvas as one placeholder, unmasked under the scrim (§5 L213)"
+         }
+        ],
+        "w": 2080,
+        "h": 1344,
+        "vs": "fill",
+        "note": "<main> of SCR-010 (E10-D02): the previous non-admin route under the gate (D6 L119; SCR-010 itself on a deep link, L223); nothing under the scrim is masked (L213)"
+       }
+      ],
+      "w": 2560,
+      "h": 1344,
+      "vs": "fill"
+     },
+     {
+      "t": "board",
+      "name": "CMP-208 StatusBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · connection chip",
+        "w": 120,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       },
+       {
+        "t": "board",
+        "name": "CMP-012 Badge (composition) · LIVE",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.xs",
+         "radius": "radius.badge",
+         "stroke": "color.env.live",
+         "strokeWidth": "border.hairline"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "LIVE",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 16
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2560,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 2560,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "overlay",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "scrim",
+        "w": 2560,
+        "h": 1440,
+        "o": {
+         "opacity": "opacity.scrim",
+         "fill": "color.surface.sunken"
+        },
+        "x": 0,
+        "y": 0,
+        "note": "flat 60 % scrim, no blur; the content under it is not masked"
+       },
+       {
+        "t": "board",
+        "name": "CMP-043 Dialog (composition) · SCR-149 gate",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.overlay",
+         "radius": "radius.dialog",
+         "shadow": "elevation.dialog",
+         "pad": "space.dialog.padding",
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Unlock admin",
+          "typo": "type.ui.heading-md",
+          "color": "color.text.primary",
+          "w": 432,
+          "note": "h2; the dialog's name"
+         },
+         {
+          "t": "text",
+          "name": "body",
+          "chars": "Admin screens need a fresh confirmation. It stays unlocked until 14:17 UTC.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 432,
+          "note": "the dialog's description, both sentences: its aria-describedby (L237; D02:271); 'until 14:17 UTC' (D6 L119); RA-1 announced it once on open (L223)"
+         },
+         {
+          "t": "board",
+          "name": "form (aria-busy)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-201 PasswordField (composition)",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Password",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "board",
+              "name": "input",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "fill": "color.surface.sunken",
+               "height": "size.control.comfortable",
+               "stroke": "color.text.tertiary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "••••••••",
+                "typo": "type.ui.body",
+                "color": "color.text.tertiary"
+               }
+              ],
+              "w": 432,
+              "h": 32,
+              "note": "locked while verifying (L224): read-only, the typed password kept, masked; type=password, autocomplete=\"current-password\" (15:2346); paste is never blocked (L238)"
+             }
+            ],
+            "w": 432,
+            "note": "Tab stop 1 (L236); <label for> (CMP-040); no reveal toggle (see the deviations)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-204 OtpInput (composition)",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Authenticator code",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "board",
+              "name": "input",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "fill": "color.surface.sunken",
+               "height": "size.control.comfortable",
+               "stroke": "color.text.tertiary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "w": 432,
+              "h": 32,
+              "note": "one input (D7 L120): inputmode=\"numeric\", autocomplete=\"one-time-code\", paste fills it (L237-238); named by its label, the hint its aria-describedby (D7); locked while verifying (L224): read-only, the code kept",
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · the 6-digit code as typed (kept; no source gives one)",
+                "w": 48,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                },
+                "note": "the code that was sent, kept while locked (L224); six digits (Y:11345)"
+               }
+              ]
+             },
+             {
+              "t": "text",
+              "name": "hint",
+              "chars": "6 digits",
+              "typo": "type.ui.caption",
+              "color": "color.text.tertiary",
+              "note": "aria-describedby"
+             }
+            ],
+            "w": 432,
+            "note": "Tab stop 2 (L236)"
+           }
+          ],
+          "w": 432,
+          "note": "aria-busy=\"true\" while POST /auth/step-up {password, code} is in flight (RA-2 L224; E09-D04:90 'on the form'); both fields locked, their values kept"
+         },
+         {
+          "t": "text",
+          "name": "status · gate.verifying",
+          "chars": "Verifying code…",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 432,
+          "note": "role=\"status\" (aria-live polite): an empty region in the gate from its mount, its text set as the request is sent (05:150), so announced once (L224; §13 L582; E09-D04:91); the slot under the code where RA-3's error and RA-10/RA-11's lines go (L213, L225, L232-233); outside the aria-busy form"
+         },
+         {
+          "t": "text",
+          "name": "cancel note",
+          "chars": "Cancel discards nothing; you return to your workspace.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 432,
+          "note": "gate.cancel_note: the entry gate's line, kept while verifying (§14 L601 'RA-1 only': the entry gate, never RA-5's held-save gate); plain text, not in the description (L237)"
+         },
+         {
+          "t": "board",
+          "name": "actions",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm",
+           "justify": "end",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-001 Button (composition) · Cancel",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "height": "size.control.comfortable",
+             "justify": "center",
+             "fill": "color.action.secondary.default"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Cancel",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 69,
+            "h": 32,
+            "note": "Tab stop 3 (L236); enabled while verifying (DJ, see the deviations): Cancel = Esc, back to the previous non-admin route (RA-1 L223; D6 L119; D06:52)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-001 Button (composition) · Unlock admin (loading)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "height": "size.control.comfortable",
+             "justify": "center",
+             "fill": "color.action.primary.default"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "spinner",
+              "icon": "refresh",
+              "color": "color.text.on-action",
+              "size": "size.icon",
+              "note": "CMP-014 Spinner stand-in (registry 'refresh'), aria-hidden inside the busy button (15:173)"
+             }
+            ],
+            "w": 111,
+            "h": 32,
+            "note": "CMP-001 primary, loading (15:51, :53): the spinner replaces the label at the label's width (no reflow); the name 'Unlock admin' stays in the DOM (E09-D04:91); aria-busy (15:54); focusable while busy (D09:231); activation and Enter inert while verifying (L236-237)"
+           }
+          ],
+          "w": 432,
+          "note": "Cancel first, Unlock admin last (L213; D02:265)"
+         }
+        ],
+        "w": 480,
+        "note": "role=\"alertdialog\" aria-modal=\"true\" (D06:24-25; 15:442), named by the h2, aria-describedby = the body (L237); its form aria-busy while the request is in flight (L224); focus trapped; Esc = Cancel (L236-237); CMP-043 size Default, centred at both sizes, never stretched (L211; D1 L114)",
+        "x": 1040,
+        "y": 544
+       }
+      ],
+      "w": 2560,
+      "h": 1440,
+      "x": 0,
+      "y": 0,
+      "abs": true,
+      "note": "the modal layer (no layout): the E09-D06 chassis, a flat 60 % scrim with no blur over the whole frame and the gate centred on it (§1 L96; §5 L211)"
+     }
+    ],
+    "w": 2560,
+    "h": 1440
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "12 SCR-149 · RA-2 verifying (a) · pending #1085",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Source",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "spec §5 L224 RA-2 · board 12 scr149-verifying (§0 L61) · anatomy L211-213 · data L214-219 · keys L236-238 · spec 782eb0e4d",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "RA-2 (a), pending #1085 (CG-1, L795): POST /auth/step-up {password, code} is in flight (L216-217, L224), sent from RA-1's entry gate (L223) over the Owner's SCR-010, unmasked (D6 L119; L213).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Drawn: fields locked with the values sent; 'Verifying code…' under the code; Unlock admin busy (CMP-001 loading, 15:53); Cancel enabled (DJ).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Next (L225-234): 200 → the admin route (D6) · 401 → RA-3 (13) · 403 read-only → RA-4 (14) · 503 auth_unavailable or 429 → RA-10 (93) · 503 audit or store, 422 → RA-11 (101) · 400 challenge → RA-12 (102) · idle → RA-9 (19).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "D7 (L120) 'Verifying code…' while waiting · D6 (L119) the previous route, 'until 14:17 UTC' · D1 (L114) CMP-043 Default, centred · D02 D2 (L89) the E09-D06 chassis · D06 (L96) flat scrim, focus trap, the idle lock wins · D02 D16-D18 (L94) · D27 (L140) · Q1 #1085 (L146): (a) drawn, (b) retires the gate",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Roles",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Owner only: a non-owner meets SCR-155 first (L239; D02:273). The rail's Admin entry is the Owner's, unselected; its placement is open (Q5 L150; board 08).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Keyboard path and focus",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Tab, trapped: Password → code → Cancel → Unlock admin (L236; §13 L582). Focus stays where the request was sent: the field Enter was pressed in, or the busy Unlock admin, still focusable (D09:231); no ring drawn (DJ). RA-3 returns it to Password (L225). Enter inert, repeats ignored; Esc = Cancel (L236-237). 32 px targets (§13 L591).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "'Verifying code…' (gate.verifying): polite, once, as the request is sent (L224; §13 L582), from a role=status line outside the aria-busy form, an empty region from the gate's mount (05:150); the spinner is aria-hidden (15:173). Nothing per tick (L94).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys used",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "gate.title, gate.body (14:17, D6), gate.code_label, gate.code_hint, gate.verifying, gate.cancel_note (the entry gate's, as on board 11) (§14 L601). Not §14: 'Password' (L236), 'Cancel' (L213), 'Admin' (15:696); §1: basiltt, LIVE; input: the mask dots, the code a placeholder bar (no source gives one).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-08",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Tokens",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "colour: action.primary.default, action.secondary.default, border.subtle, env.live, surface.app, surface.canvas, surface.hover, surface.overlay, surface.sunken, text.on-action, text.primary, text.secondary, text.tertiary; type: ui.body, ui.body-strong, ui.caption, ui.heading-md, ui.label; space: button.paddingX, dialog.padding, inset.lg, inset.md, inset.sm, inset.xs, stack.md, stack.xs; size: control.comfortable, icon; radius: badge, card, control, dialog; other: border.hairline, elevation.dialog, opacity.scrim",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Contrast, dark (§15): on overlay 13.27 title and body, 8.14 labels, status and note, 5.20 hint and field edge, 10.17 Cancel (L648, L650); the locked dots and the field edge 6.83 on sunken (L650); the spinner 4.76 (L639)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Fallbacks: color.border.input pending DS-3 → color.text.tertiary (§15 L626); size.control.comfortable, a Tier-1 primitive (§4 L176); ◆ for icon/admin (L628); 'refresh' for the CMP-014 spinner (15:174); the 60 % scrim → color.surface.sunken at opacity.scrim (§1 L96; D02:824)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-09",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Analytics and audit events",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "With the answer (§5 L239-242): auth.step_up_granted (200; (a) adds admin.session_elevated, CG-1), auth.step_up_failed (401), auth.session_readonly_downgrade (third failure); never auth.session_unlocked (L242; D27). admin.area_entered: the admin route's reads after the unlock (§4 L201-202). Analytics: none.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-10",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Budget and data",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "≤400 ms for the answer (L219; 14:2785). POST /auth/step-up · self, executed (M:423-427) → 200 {elevated_until, …} (L217); (a)'s admin class and window: not built (CG-1, L214).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-11",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Deviations",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Busy look (DJ): CMP-001 loading, 'refresh' for the CMP-014 spinner at the label's width, the status in the slot under the code (15:53; E09-D04:90-91); not T2: E09-D09's loading row (D09:231). Cancel and Esc stay live (L224, L237; D02:270 disabled them). No focus ring, no reveal toggle.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E42-D03 · board 12 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E42/img/E42-D03-12-scr149-verifying.png",
+ "notes": {
+  "sources": [
+   "spec §5 L206-242 (SCR-149: purpose, anatomy, data, RA-1..RA-12, keys and a11y, RBAC and audit); RA-2 L224",
+   "spec §0 L61; §1 L89, L94, L96, L99-102; §2 D1 L114, D6 L119, D7 L120, D27 L140; §3 L146 (Q1), L150 (Q5); §4 L164-165, L201-202",
+   "spec §13 L582, L590-591; §14 L597, L601 (gate.*); §15 L628, L639, L648, L650; §20 L795; Appendix A L903",
+   "E42-D02 (docs/design/E42/E42-D02.md) L120 (type.num.base for every count and clock), L262, L265 (the SCR-149 frame), L270 (verifying: inline spinner text, controls disabled), L271 (keys; aria-describedby = both body sentences), L273 (roles), L705 (the cancel note), L824 (the gate scrim: color.surface.sunken)",
+   "E09-D06 (docs/design/E09/E09-D06.md) L24-25 (the chassis), L52 (Esc cancels SCR-149 to a safe no-op); E09-D04 (docs/design/E09/E09-D04.md) L90-91 (verifying: aria-busy on the form, the spinner replaces the label, a polite region announces 'Verifying code…'); E09-D09 (docs/design/E09/E09-D09.md) §9.1 L224-231 (the two T2 rows L228-229; loading L231: aria-busy, focusable, CMP-001)",
+   "05-accessibility-standard.md L97 (modal dialogs return focus to the triggering element on close), L150 (region hygiene: live regions are pre-rendered empty containers, only their text swapped)",
+   "15-component-catalogue.md L48-54 (CMP-001: loading, aria-busy), L169-174 (CMP-014), L389-393 (CMP-038), L415 (CMP-040), L442 (CMP-043), L690-708 (CMP-070, -071, -072), L2343-2348 (CMP-201), L2370-2374 (CMP-204), L2406-2421 (CMP-208, -209)",
+   "14-screens-catalogue.md L2784-2786 (SCR-149: a11y, token issue ≤400 ms, components); 22-api-openapi.yaml Y:11345 (the step-up code: six digits); RBAC matrix services/api/tests/contract/rbac/matrix.yaml M:423-427 (POST /auth/step-up executed); E10-D02 (docs/design/E10/E10-D02.md) L64-65 (the Admin entry)",
+   "spec §14 L593-613 (copy deck)",
+   "spec §15 L615-667 (tokens, contrast, colour vision)",
+   "spec §4 L162-204 (CMP-087 anatomy, SH-1..SH-8, focus, audit)",
+   "spec §2 D1 L114 (layout at both sizes)",
+   "spec §0 L42-82 (boards, names, footer, build order)"
+  ],
+  "copy_keys": [
+   "gate.body",
+   "gate.cancel_note",
+   "gate.title",
+   "gate.code_label",
+   "gate.code_hint",
+   "gate.verifying"
+  ],
+  "copy_gaps": [
+   "'Unlock admin' on the busy button is not drawn: in CMP-001's loading state the spinner replaces the label (15:53), which stays in the DOM as the button's name (E09-D04:91); the kit records the name's line (L213) and the h2 shows gate.title 'Unlock admin'.",
+   "The kept values are input, not copy: '••••••••' (e42kit PASSWORD_MASK; no source gives a password or its length); the kept code is a placeholder bar, since no source gives a code (as on boards 93 and 101).",
+   "'Cancel': an anatomy string, not a §14 key (spec L213)",
+   "'Password': the CMP-201 field's visible label: §5 names the field 'Password' (L225, L236; §13 L582) and D02:262's frame labels it so; §14 L601 keys the code's label (gate.code_label) but not this one: spec gap for #886, shared with board 11 (a gate.password_label key would replace this line and the LOCAL string); an anatomy string, not a §14 key (spec L236)",
+   "'Unlock admin': an anatomy string, not a §14 key (spec L213)",
+   "'Admin': an anatomy string, not a §14 key (15:696: CMP-071 NavRail's items '… / Replay / Admin'; §4 L164-165, the Admin entry, Owner only; E10-D02:64-65; spec L188 names the CMP-061 menu's 'Admin')"
+  ],
+  "live_checks": [
+   "dialog: 'CMP-043 Dialog (composition) · SCR-149 gate' estimated 480 x 352 px, placed at (400, 224) in frame-1280 and (1040, 544) in frame-2560: after relayout re-centre it in both (§5 L211 'centred at both sizes'); it hugs its content (no fixed h)",
+   "dialog text: gate.body wraps to about 2 lines at 432 px; 'Verifying code…' sits on one line under the hint '6 digits', in the slot under the code, and the cancel note on one line under it (neither truncated); the title reads 'Unlock admin' on one line",
+   "busy button: 'CMP-001 Button (composition) · Unlock admin (loading)' keeps RA-1's width (111 px, k.button's estimate for 'Unlock admin'; match board 11's live width if it differs) at 32 px; the 'refresh' glyph (16 px, color.text.on-action) sits centred with no label; if the library's CMP-001 {Variant primary, Size md, State loading} draws its spinner in an on-action colour at 32 px, report it (the composition stays until the kit adopts instances)",
+   "actions: [Cancel] [Unlock admin] right-aligned on the dialog's last row, Cancel first, both 32 px high; no focus ring anywhere in the gate (see the deviations)",
+   "fields: both wells 432 px; the mask dots in color.text.tertiary; the code's 48 px placeholder bar at the start of its well, vertically centred",
+   "scrim: covers the whole frame (TopBar, NavRail, RightRail, StatusBar) at opacity.scrim with no blur; the LIVE badges and basiltt stay visible, unmasked, under it (§5 L213)",
+   "annotations: estimated 1650 px, the tallest child; the root is 1736 px (clip on): after touchTexts + relayout the footer 'page E42-D03 · board 12 · r1' must end inside the root; if not, raise the root height (pitch limit 1760) and report it so the sheet is regenerated",
+   "glyph ◆ (U+25C6): confirm Inter draws it; else Penpot substitutes a fallback font",
+   "root name: after the first section call the root must read back exactly as the sheet's board.name, or later calls create a duplicate root"
+  ],
+  "deviations": [
+   "Context (DJ): RA-2's row (§5 L224) names no page, so the board draws the entry gate of RA-1 (L223): SCR-149 over the Owner's SCR-010 workspace, the previous non-admin route, with gate.body 'until 14:17 UTC' (D6 L119), as boards 11 and 13 do: boards 11-13 run entry → verifying → wrong. The held-save gate (gate.body_held over SCR-122, RA-5 L227) shows the same RA-2 changes; boards 15-18 draw that gate. The workspace is E10's WorkspaceCanvas as one neutral placeholder (kit app_shell), unmasked under the scrim: the gate is not a lock (L213). No CMP-087 band, rule, strip or PageHeader is drawn: under D6 no admin data renders before the unlock (as board 11 records).",
+   "Cancel and Esc stay live while verifying (DJ): RA-2 locks the fields only (L224), and §5 L236-237 makes Enter inert while verifying but keeps Esc = Cancel, so Cancel (T1, secondary) returns to the workspace as in RA-1 (D6 L119; D06:52); D02:270 had 'controls disabled'. Spec question for #886: confirm, or name Cancel in RA-2's row; either way say what the client does with the answer that still arrives (a 200 still elevates the session, L217; a 401 still counts toward the three strikes, L219; the third still makes the session read-only, RA-4 L226, which the owner sees only if the client handles that late 403) and where focus goes after Cancel (the gate's opener, 05:97).",
+   "gate.cancel_note ('Cancel discards nothing; you return to your workspace.') stays under the status line: §14 L601's 'RA-1 only' is read as the entry gate, never RA-5's held-save gate, where Cancel keeps the page (RA-6, L228); boards 11 and 13 draw the same gate. Spec edit for #886 (settles boards 12 and 13): in §14 L601, 'RA-1 only' → 'the entry gate only, never the held-save gate (RA-5)'.",
+   "gate.body's '14:17' stays in the sentence's type.ui.body, as boards 11 and 13 set the same body: a time inside a sentence keeps the sentence's type, as board 93's NUM_DEV words it (D02:120's type.num.base goes to clocks and counts shown as values, such as band.unlocked's '12:40' on board 01; none is drawn here).",
+   "No focus ring in the gate (DJ, as boards 93 and 101): RA-2 moves no focus (L224; RA-3 returns it to Password, L225), so focus stays on the control that sent the request: the field where Enter was pressed, or Unlock admin, busy and still focusable (D09:231), after a click, Enter or Space; drawing either would choose one.",
+   "Buttons, chips, badges, banners, fields, tiles, tables, menus and dialogs are compositions from tokens: admin controls are 32 px (size.control.comfortable, §4 L176) while the library CMP-001 binds size.control.height (24 px in the file's compact density), and cvsheet v1 cannot set an instance's glyph, fill or border.",
+   "aria-busy=\"true\" is noted on the form that holds the two fields (E09-D04:90: 'on the form') and on Unlock admin (15:54); the status line sits outside the busy form, so its polite announcement is not held back while the form is busy (DJ: RA-2, L224, names aria-busy without its element).",
+   "CMP-201's reveal toggle ('Show password'; showReveal defaults to true, 15:2346-2347) is not drawn: §5 L236's Tab order Password → code → Cancel → Unlock admin (and §13 L582) has no stop for it. Spec gap for #886 (shared with board 11): either the gate sets showReveal false or its Tab order gains the toggle; if it is kept, RA-2's row (L224) must also say whether it stays live while the form is aria-busy or locks with the fields.",
+   "Gate fields: the CMP-040 label above the well (the kit's field()); both wells span the dialog's inner 432 px (no source gives the field widths; D02:262-263 is a wireframe), as boards 93 and 101 draw them.",
+   "The fields keep the values that were sent (L224 'fields locked'), as boards 93 and 101 draw kept values: the password as eight mask dots (e42kit PASSWORD_MASK; no source gives a password or its length) in the kit's locked look, color.text.tertiary on sunken (6.83, §15 L650's pair), and the code as a neutral placeholder bar (color.surface.hover, radius.control, 48 px, about six type.num.base digits): no source gives a code. The words 'Verifying code…' and the busy button carry the locked state, never the dimming alone.",
+   "CMP-204 is drawn as one well, as D7 words it ('one input', L120) and as boards 11 and 13 draw it; CMP-204's six visually segmented cells (15:2374 'navigation between cells'; D02:263 '[_ _ _ _ _ _]') are the component's own look, and no source gives their geometry.",
+   "Busy look (DJ): RA-2 (L224) gives the words, not their place. Unlock admin takes CMP-001's loading state: the spinner in place of the label at the label's width, so nothing reflows (15:51, :53), aria-busy (15:54), still focusable (D09:231), its name 'Unlock admin' kept in the DOM (E09-D04:91). 'Verifying code…' (gate.verifying) is a role=status line in the slot under the code, where RA-3's error and RA-10/RA-11's lines go (L213, L225, L232-233): D02:270's 'inline spinner text' and E09-D04:91's polite region, its spinner the button's (one spinner, not a second one from CMP-038, 15:389-393). The line is type.ui.caption in color.text.secondary (8.14 on overlay, §15 L648), as board 11 sets its cancel note (kit choice). Busy is not disabled: D7 (L120) keeps Unlock admin enabled; while busy its activation is inert, like Enter (L236-237). Not T2 (G-T2): E09-D09 §9.1 gives loading its own row, aria-busy and focusable (D09:231), apart from both T2 rows (D09:228-229); nothing here is role- or state-gated: Cancel is T1, and the Admin entry is the Owner's, absent for other roles (E10-D02:64).",
+   "CMP-043 'size' Default and Large are drawn 480 and 640 px wide (kit choice): §5 L211, §9 L415 and §12 L530 name the sizes, and no source gives their widths.",
+   "The kit's dialog() note says 'the first sentence is the description'; the gate's description is the whole body, both sentences (L237; D02:271), so this board replaces the dialog's note.",
+   "TopBar, NavRail, RightRail and StatusBar content other than the Admin entry, the env badges and the owner's name, and the SCR-010 workspace under the gate, are drawn as neutral placeholders (E10-D02 owns them; §1 L97 gives only the sizes). Chrome surface (kit-level, board 06 review r1 finding 5, correcting e42kit's 'no source names a chrome surface'): `15` names one per part, color.surface.raised for CMP-071 NavRail, CMP-072 TopBar and CMP-209 RightRail (15:699, :708, :2421) and color.surface.sunken for CMP-208 StatusBar (15:2411); the kit draws all four on color.surface.app, CMP-070 AppShell's surface (15:690), with color.border.subtle dividers, as boards 01-10 do; binding `15`'s surfaces is a kit change routed to the kit owner. Here all of it sits under the scrim.",
+   "Kit-level (board 06 review r1 finding 6), applied to this board only: the RightRail takes the build notes' name 'CMP-209 RightRail (composition)' (kit: 'RightRail (composition)'; 15:2416).",
+   "The annotation column prints the kit's fallback lines (DS-3, size.control.comfortable, DS-5 ◆, the spinner, the scrim) as one short line (the sheet notes keep every line in full), so the column fits the root the page pitch allows.",
+   "Board names carry Penpot's normalised ' / ' form (E42-D03 / 31 SCR-121 / populated · …) so cvsheet's find-or-create root matches on every section call; §0 L46-47 writes 'SCR-121/populated'."
+  ],
+  "fallbacks": [
+   "token: size.control.comfortable (32 px, §4 L176) is the Tier-1 primitive the spec names (validator WARN)",
+   "fallback: color.border.input pending DS-3: field boundaries bind color.text.tertiary (§15 L626, F1 L653)",
+   "fallback: CMP-014 Spinner (15:169-174) inside the CMP-001 loading button is drawn as the registry glyph 'refresh' in color.text.on-action (4.76 on the primary fill, §15 L639): cvsheet v1 cannot recolour a library instance, and CMP-014 binds color.action.primary (15:174), the button's own fill; it turns while busy (motion.spin) and stays still under reduced motion (§13 L590-591: no pulse)",
+   "fallback: no scrim colour token: the flat 60 % scrim (§1 L96, D06:24-25) binds color.surface.sunken at opacity.scrim (#000000 at 60 % in dark; light resolves sunken to a light grey, so a light export of a dialog board needs the coordinator's [THEME-WINDOW] check)",
+   "fallback: icon/admin (◆) pending DS-5: drawn as the text glyph ◆ of band.label (L597)"
+  ],
+  "tokens": [
+   "type.ui.body",
+   "color.text.primary",
+   "type.ui.caption",
+   "color.text.secondary",
+   "type.ui.body-strong",
+   "space.inset.xs",
+   "space.button.paddingX",
+   "radius.control",
+   "size.control.comfortable",
+   "color.action.secondary.default",
+   "color.text.tertiary",
+   "space.inset.sm",
+   "color.surface.sunken",
+   "border.hairline",
+   "type.ui.label",
+   "space.stack.xs",
+   "color.surface.hover",
+   "space.stack.md",
+   "color.text.on-action",
+   "color.action.primary.default",
+   "size.icon",
+   "type.ui.heading-md",
+   "color.surface.overlay",
+   "radius.dialog",
+   "elevation.dialog",
+   "space.dialog.padding",
+   "opacity.scrim",
+   "radius.badge",
+   "color.env.live",
+   "space.inset.md",
+   "color.border.subtle",
+   "space.inset.lg",
+   "color.surface.app",
+   "radius.card",
+   "color.surface.canvas",
+   "type.ui.heading-sm",
+   "space.stack.sm"
+  ]
+ }
+}

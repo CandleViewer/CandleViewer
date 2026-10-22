@@ -1,0 +1,4068 @@
+{
+ "board": {
+  "name": "E35-D01-01-arming-journey",
+  "w": 1600,
+  "x": 0,
+  "y": 0,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "radius": "radius.card",
+   "pad": "space.inset.lg",
+   "gap": "space.stack.md",
+   "vs": "auto"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "header",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "The arming decision journey",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "subtitle",
+      "chars": "E35-D01 · report §6 (and docs/plan/17-ux-diagrams.md §1.5) · research board — heuristic findings, no participants",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "opening",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Wants, fears and the predicted evidence order (Med)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "sub",
+        "chars": "Report §6, opening paragraph (citing 10 §2 and 10 §6)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1568
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "quotes",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "owner",
+        "w": 512,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "The owner · 10 §2",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 488
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "wants to \"Codify recurring discretionary habits … as rules that execute without him\"",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 488
+         },
+         {
+          "t": "text",
+          "name": "line-2",
+          "chars": "yet fears \"an automation bug places or cancels the wrong thing\"",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 488
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "author",
+        "w": 512,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "The author · 10 §6",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 488
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "wants to \"see it prove itself on recorded data before it touches a live position\"",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 488
+         },
+         {
+          "t": "text",
+          "name": "line-2",
+          "chars": "and to know \"what happens on disconnect\"",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 488
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "scr-085",
+        "w": 512,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "SCR-085",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 488
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "SCR-085's mock shows no evidence (F21); its environment-first order stays, since \"Will act on\" depends on it (an account's environment never changes, 22 action_summary).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 488
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "order-label",
+      "chars": "Predicted evidence order (Med)",
+      "typo": "type.ui.body-strong",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "board",
+      "name": "order",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "e1",
+        "w": 200,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "what it will do",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 176
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "e2",
+        "w": 200,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "on what",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 176
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "e3",
+        "w": 200,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "proof (history and live simulation)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 176
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c3",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "e4",
+        "w": 200,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "what could go wrong",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 176
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c4",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "e5",
+        "w": 200,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "what still protects me (§3)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 176
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c5",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "e6",
+        "w": 200,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "commit",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 176
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "steps",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "The journey, step by step · report §6 table (heuristic)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "sub",
+        "chars": "Each frame: What the trader wants to know · Abandons when (good = the evidence worked; bad = friction or confusion) · The screen must show. GATE and STEP-UP mark the rows that name the gate or the step-up; the caption is 17 §1.5's Report finding for the row (17 merges 5–5a and 6–7 and has no row 8).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1568
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "row-a",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "s1",
+        "w": 244,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "1 Template, build",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "want-label",
+          "chars": "What the trader wants to know",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "want",
+          "chars": "does it say what I mean? (US-RULE-004 summary)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "abandons-label",
+          "chars": "Abandons when",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "abandons",
+          "chars": "good: the summary differs from the intent",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "screen-label",
+          "chars": "The screen must show",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "screen",
+          "chars": "the plain-language summary; CMP-158 (CA-26); estimated banner (CA-25); asks first / dry run (CA-36, CA-37)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "finding",
+          "chars": "17 §1.5 row 1 · Report finding: F8, F13",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "s2",
+        "w": 244,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "2 Simulate on history",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "want-label",
+          "chars": "What the trader wants to know",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "want",
+          "chars": "what would it have done, on which days?",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "abandons-label",
+          "chars": "Abandons when",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "abandons",
+          "chars": "bad: no history (the no-history CTA), a run past 60 s, a missing day left unnamed; good: a misfire shows",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "screen-label",
+          "chars": "The screen must show",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "screen",
+          "chars": "CA-2, CA-1, CA-3; per-firing context (F1, F2)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "finding",
+          "chars": "17 §1.5 row 2 · Report finding: F1–F3",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "s3",
+        "w": 244,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "3 Simulate live",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-gate",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "GATE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "want-label",
+          "chars": "What the trader wants to know",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "want",
+          "chars": "is it behaving now? when can I arm?",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "abandons-label",
+          "chars": "Abandons when",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "abandons",
+          "chars": "bad: the gate is unmet with no progress or time shown",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "screen-label",
+          "chars": "The screen must show",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "screen",
+          "chars": "CA-16 with each server check and its progress (F22)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "finding",
+          "chars": "17 §1.5 row 3 · Report finding: F22",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c3",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "s4",
+        "w": 244,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "4 Resolve a clash",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "want-label",
+          "chars": "What the trader wants to know",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "want",
+          "chars": "which rule wins, and what happens to my stop?",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "abandons-label",
+          "chars": "Abandons when",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "abandons",
+          "chars": "bad: raw priority numbers; good: narrows the scope",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "screen-label",
+          "chars": "The screen must show",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "screen",
+          "chars": "the ordered list, the risk band, one consequence line per option (F17–F20)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "finding",
+          "chars": "17 §1.5 row 4 · Report finding: F17–F20",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c4",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "s5",
+        "w": 244,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "5 Review in SCR-085",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "want-label",
+          "chars": "What the trader wants to know",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "want",
+          "chars": "what, on what, proven how, what if it stops",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "abandons-label",
+          "chars": "Abandons when",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "abandons",
+          "chars": "bad: no evidence, or \"the backend\" read as \"the app\"; good: \"Will act on\" shows an unexpected account",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "screen-label",
+          "chars": "The screen must show",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "screen",
+          "chars": "environment first (DEMO preselected), then restatement, CA-14, CA-15, CA-12, CA-13, CA-38 (first check), CA-8–CA-11 (F21)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 220
+         },
+         {
+          "t": "text",
+          "name": "finding",
+          "chars": "17 §1.5 row 5–5a · Report finding: F6–F10, F13, F21; SC-22",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 220
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "steps",
+   "node": {
+    "t": "board",
+    "name": "row-b",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "c0",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "→",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "s5a",
+      "w": 244,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "5a Choose how much it may do by itself",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-gate",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "GATE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "want-label",
+        "chars": "What the trader wants to know",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "want",
+        "chars": "must it ask me first? which actions only record?",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "abandons-label",
+        "chars": "Abandons when",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "abandons",
+        "chars": "good: picks Asks first or a dry run instead of quitting; bad: a change now is a new version and the gate again (SC-9)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "screen-label",
+        "chars": "The screen must show",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "screen",
+        "chars": "CA-36, CA-37 as set at step 1, restated here as the re-check (SC-22)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "finding",
+        "chars": "17 §1.5 row 5–5a · Report finding: F6–F10, F13, F21; SC-22",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c1",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "→",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "s6",
+      "w": 244,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "6 Commit",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-step-up-live",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "STEP-UP · LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "want-label",
+        "chars": "What the trader wants to know",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "want",
+        "chars": "am I sure, and where is it going?",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "abandons-label",
+        "chars": "Abandons when",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "abandons",
+        "chars": "bad: at the step-up, or a screen lock drops the arm (the ticket's named signal)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "screen-label",
+        "chars": "The screen must show",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "screen",
+        "chars": "DEMO preselected; LIVE: one live_enablement step-up bound to the arm, password + TOTP + a typed \"LIVE\" (SCR-006 no-grace-live-enable, E09's frame unchanged; SC-12); CA-17, CA-35 (F25, F29)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "finding",
+        "chars": "17 §1.5 row 6–7 · Report finding: F25, F26, F29",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c2",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "→",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "s7",
+      "w": 244,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "7 Pending",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "want-label",
+        "chars": "What the trader wants to know",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "want",
+        "chars": "did it take?",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "abandons-label",
+        "chars": "Abandons when",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "abandons",
+        "chars": "bad: a slow rules confirmation, the user retries",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "screen-label",
+        "chars": "The screen must show",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "screen",
+        "chars": "CA-18 until the armed state arrives on rules (SCR-085 Performance)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "finding",
+        "chars": "17 §1.5 row 6–7 · Report finding: F25, F26, F29",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c3",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "→",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "s8",
+      "w": 244,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "8 Armed",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "want-label",
+        "chars": "What the trader wants to know",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "want",
+        "chars": "is it acting, and how do I stop it?",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "abandons-label",
+        "chars": "Abandons when",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "abandons",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "screen-label",
+        "chars": "The screen must show",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "screen",
+        "chars": "\"Armed · DEMO\" as text + icon; fires on SCR-087; Disarm (CA-31)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c4",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "→",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "s9",
+      "w": 244,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "9 Something goes wrong",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-step-up",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "STEP-UP",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "want-label",
+        "chars": "What the trader wants to know",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "want",
+        "chars": "what stopped it, does it come back by itself?",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "abandons-label",
+        "chars": "Abandons when",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "abandons",
+        "chars": "bad: the state hides what stopped it or whether it comes back, so the trader disarms or quits rules",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "screen-label",
+        "chars": "The screen must show",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "screen",
+        "chars": "§3 per event; error stop and permission revoked (E35 threat model RE-E1) with cause, who, when; a kill or error stop needs a step-up to arm again (SC-21) (CA-20, CA-22–CA-24)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 220
+       },
+       {
+        "t": "text",
+        "name": "finding",
+        "chars": "17 §1.5 row 9 · Report finding: F7–F9, F24",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 220
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "gates",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "The gates and the step-up",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "sub",
+        "chars": "From report §6 rows 5, 5a, 6, 7, 8 and 9 and 17 §1.5 (journey lines; rows 3, 5–5a, 6–7 and 9), drawn as grey-box frames left to right (gate, environment, DEMO or LIVE, pending, armed, arm again); each element names its source. Warning-tone boxes are abandonment points and say so in words.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1568
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "gates-a",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "gate",
+        "w": 400,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.app",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "frame-title",
+          "chars": "Arming gate · steps 3 and 5a",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 376
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-gate",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "GATE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "e1",
+          "w": 376,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "gap": "space.stack.xs",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "Waits for the arming gate - 5 simulated fires or 24 h",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 360
+           },
+           {
+            "t": "text",
+            "name": "src",
+            "chars": "17 §1.5 journey (Simulate) · score 2 (DJ) · Owner, Manager",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary",
+            "w": 360
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "e2",
+          "w": 376,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "gap": "space.stack.xs",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "Each server check with its progress or the time it passes (CA-16)",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 360
+           },
+           {
+            "t": "text",
+            "name": "src",
+            "chars": "17 §1.5 row 3 · What the screen must show · F22",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary",
+            "w": 360
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "e3",
+          "w": 376,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "gap": "space.stack.xs",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "Arming is refused with no word on which check is missing or when it will pass",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 360
+           },
+           {
+            "t": "text",
+            "name": "src",
+            "chars": "17 §1.5 row 3 · Why a trader abandons",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary",
+            "w": 360
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "e4",
+          "w": 376,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "gap": "space.stack.xs",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "bad: a change now is a new version and the gate again (SC-9)",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 360
+           },
+           {
+            "t": "text",
+            "name": "src",
+            "chars": "report §6 row 5a · Abandons when",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary",
+            "w": 360
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "environment",
+        "w": 320,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.app",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "frame-title",
+          "chars": "SCR-085 · environment first · steps 5–6",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 296
+         },
+         {
+          "t": "board",
+          "name": "radio-demo",
+          "w": 296,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.sunken",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "DEMO preselected",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 280
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "radio-live",
+          "w": 296,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.sunken",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "LIVE, disabled with a reason for a Manager",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 280
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "enter",
+          "chars": "Enter on SCR-085's radios never arms",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 296
+         },
+         {
+          "t": "text",
+          "name": "src",
+          "chars": "17 §1.5 rows 5–5a (Environment first, DEMO preselected) and 6–7; report §6 rows 5 and 6 (DEMO preselected)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 296
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "branches",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "demo-path",
+          "hs": "fill",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "c1",
+            "alignSelf": "center",
+            "o": {
+             "dir": "column",
+             "align": "center",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "DEMO",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "rect",
+              "name": "line",
+              "w": 48,
+              "h": 2,
+              "o": {
+               "fill": "color.border.default"
+              }
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "demo",
+            "w": 704,
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.app",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "radius": "radius.card",
+             "pad": "space.inset.md",
+             "gap": "space.stack.sm",
+             "vs": "auto"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "frame-title",
+              "chars": "DEMO · step 6",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 680
+             },
+             {
+              "t": "board",
+              "name": "e1",
+              "w": 680,
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "fill": "color.surface.raised",
+               "radius": "radius.control",
+               "pad": "space.inset.sm",
+               "gap": "space.stack.xs",
+               "vs": "auto"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "copy",
+                "chars": "Arms on DEMO - one confirm, no typed word, no step-up",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 664
+               },
+               {
+                "t": "text",
+                "name": "src",
+                "chars": "17 §1.5 journey (Arm) · score 4 (DJ) · Owner, Manager",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary",
+                "w": 664
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "live-path",
+          "hs": "fill",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "c1",
+            "alignSelf": "center",
+            "o": {
+             "dir": "column",
+             "align": "center",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "LIVE",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "rect",
+              "name": "line",
+              "w": 48,
+              "h": 2,
+              "o": {
+               "fill": "color.border.default"
+              }
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "live",
+            "w": 704,
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.app",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "radius": "radius.card",
+             "pad": "space.inset.md",
+             "gap": "space.stack.sm",
+             "vs": "auto"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "frame-title",
+              "chars": "LIVE · the step-up · step 6",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary",
+              "w": 680
+             },
+             {
+              "t": "board",
+              "name": "tags",
+              "o": {
+               "dir": "row",
+               "align": "center",
+               "gap": "space.inset.xs",
+               "wrap": "wrap"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "tag-step-up",
+                "o": {
+                 "dir": "row",
+                 "align": "center",
+                 "fill": "color.status.warning.subtle",
+                 "radius": "radius.badge",
+                 "padX": "space.inset.sm",
+                 "padY": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "word",
+                  "chars": "STEP-UP",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary"
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "t": "board",
+              "name": "e1",
+              "w": 680,
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "fill": "color.surface.raised",
+               "radius": "radius.control",
+               "pad": "space.inset.sm",
+               "gap": "space.stack.xs",
+               "vs": "auto"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "copy",
+                "chars": "Arms on LIVE from R4 - one no-grace step-up bound to the arm, password, TOTP and a typed LIVE (SCR-006)",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 664
+               },
+               {
+                "t": "text",
+                "name": "src",
+                "chars": "17 §1.5 journey (Arm) · score 3 (DJ) · Owner",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary",
+                "w": 664
+               }
+              ]
+             },
+             {
+              "t": "board",
+              "name": "scr-006",
+              "w": 680,
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "fill": "color.surface.app",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "radius": "radius.card",
+               "pad": "space.inset.md",
+               "gap": "space.stack.sm",
+               "vs": "auto"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "frame-title",
+                "chars": "SCR-006 frame no-grace-live-enable",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary",
+                "w": 656
+               },
+               {
+                "t": "text",
+                "name": "class",
+                "chars": "live_enablement, a no-grace step-up bound to the arm request",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 656
+               },
+               {
+                "t": "board",
+                "name": "fields",
+                "o": {
+                 "dir": "row",
+                 "align": "start",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "f1",
+                  "w": 213,
+                  "o": {
+                   "dir": "column",
+                   "align": "start",
+                   "fill": "color.surface.sunken",
+                   "radius": "radius.control",
+                   "pad": "space.inset.sm",
+                   "vs": "auto"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "copy",
+                    "chars": "password",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary",
+                    "w": 197
+                   }
+                  ]
+                 },
+                 {
+                  "t": "board",
+                  "name": "f2",
+                  "w": 213,
+                  "o": {
+                   "dir": "column",
+                   "align": "start",
+                   "fill": "color.surface.sunken",
+                   "radius": "radius.control",
+                   "pad": "space.inset.sm",
+                   "vs": "auto"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "copy",
+                    "chars": "TOTP",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary",
+                    "w": 197
+                   }
+                  ]
+                 },
+                 {
+                  "t": "board",
+                  "name": "f3",
+                  "w": 213,
+                  "o": {
+                   "dir": "column",
+                   "align": "start",
+                   "fill": "color.surface.sunken",
+                   "radius": "radius.control",
+                   "pad": "space.inset.sm",
+                   "vs": "auto"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "copy",
+                    "chars": "a typed \"LIVE\"",
+                    "typo": "type.ui.body",
+                    "color": "color.text.primary",
+                    "w": 197
+                   }
+                  ]
+                 }
+                ]
+               },
+               {
+                "t": "text",
+                "name": "timing",
+                "chars": "challenge 5 min, grant 60 s",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 656
+               },
+               {
+                "t": "text",
+                "name": "one-open",
+                "chars": "at most one open challenge per session (a newer one supersedes it)",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 656
+               },
+               {
+                "t": "text",
+                "name": "src-17",
+                "chars": "17 §1.5 row 6–7: as E09-D06 draws it for live enablement",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary",
+                "w": 656
+               },
+               {
+                "t": "text",
+                "name": "src-6",
+                "chars": "report §6 row 6: password + TOTP + a typed \"LIVE\" (SCR-006 no-grace-live-enable, E09's frame unchanged; SC-12)",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary",
+                "w": 656
+               }
+              ]
+             },
+             {
+              "t": "board",
+              "name": "e2",
+              "w": 680,
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "fill": "color.status.warning.subtle",
+               "radius": "radius.control",
+               "pad": "space.inset.sm",
+               "gap": "space.stack.xs",
+               "vs": "auto"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "copy",
+                "chars": "bad: at the step-up, or a screen lock drops the arm (the ticket's named signal)",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 664
+               },
+               {
+                "t": "text",
+                "name": "src",
+                "chars": "report §6 row 6 · Abandons when · F25, F29",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary",
+                "w": 664
+               }
+              ]
+             },
+             {
+              "t": "board",
+              "name": "e3",
+              "w": 680,
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "fill": "color.surface.raised",
+               "radius": "radius.control",
+               "pad": "space.inset.sm",
+               "gap": "space.stack.xs",
+               "vs": "auto"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "copy",
+                "chars": "any drop of the held arm says nothing was sent",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 664
+               },
+               {
+                "t": "text",
+                "name": "src",
+                "chars": "17 §1.5 row 6–7 · report §6 row 6 (CA-17, CA-35)",
+                "typo": "type.ui.caption",
+                "color": "color.text.secondary",
+                "w": 664
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "hs": "fill"
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "gates",
+   "node": {
+    "t": "board",
+    "name": "gates-b",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "c0",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "→",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "pending",
+      "w": 420,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "Pending · step 7",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 396
+       },
+       {
+        "t": "board",
+        "name": "e1",
+        "w": 396,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy",
+          "chars": "\"Arming…\" until rules confirms",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 380
+         },
+         {
+          "t": "text",
+          "name": "src",
+          "chars": "17 §1.5 row 6–7 · report §6 row 7 (CA-18)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 380
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "e2",
+        "w": 396,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.status.warning.subtle",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy",
+          "chars": "bad: a slow rules confirmation, the user retries",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 380
+         },
+         {
+          "t": "text",
+          "name": "src",
+          "chars": "report §6 row 7 · Abandons when",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 380
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c1",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "→",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "armed",
+      "w": 420,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "Armed · step 8",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 396
+       },
+       {
+        "t": "board",
+        "name": "e1",
+        "w": 396,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy",
+          "chars": "\"Armed · DEMO\" as text + icon; fires on SCR-087; Disarm (CA-31)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 380
+         },
+         {
+          "t": "text",
+          "name": "src",
+          "chars": "report §6 row 8 · The screen must show",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 380
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c2",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "a kill or error stop",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "re-arm",
+      "w": 420,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "Arm again after a kill or an error stop · step 9",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 396
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-step-up",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "STEP-UP",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "e1",
+        "w": 396,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy",
+          "chars": "after a kill or an error stop, \"needs a step-up to arm again\" (SC-21)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 380
+         },
+         {
+          "t": "text",
+          "name": "src",
+          "chars": "17 §1.5 row 9 · report §6 row 9: a kill or error stop needs a step-up to arm again (SC-21)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 380
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "ux-journey",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "17 §1.5 · Decision journey — arming a rule (E35-D01, heuristic)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "sub",
+        "chars": "This journey comes from E35-D01's heuristic evaluation (docs/design/research/e35-rule-arming-trust.md §6) and assumes that report's recommended defaults (§1a). Its scores are designer judgement (DJ: a journey needs one), not measurements; the owner-run sessions of docs/design/research/e35-d01-session-protocol.md will replace them.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1568
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "journey-title",
+      "chars": "Owner and Manager: deciding to arm a rule (predicted scores)",
+      "typo": "type.ui.body-strong",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "board",
+      "name": "row-1",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "j-decide-to-automate",
+        "w": 338,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Decide to automate",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "task-1",
+          "chars": "Wants BE after 1R to run by itself, fears a wrong order",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "score-1",
+          "chars": "score 3 (DJ) · Owner",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 314
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "j-build",
+        "w": 338,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Build",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "task-1",
+          "chars": "Starts from a template, reads its plain-language summary",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "score-1",
+          "chars": "score 4 (DJ) · Owner, Manager",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 314
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "j-simulate",
+        "w": 338,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Simulate",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "task-1",
+          "chars": "Runs it on recorded history, sees behaviour, not profit",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "score-1",
+          "chars": "score 3 (DJ) · Owner, Manager",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "task-2",
+          "chars": "Waits for the arming gate - 5 simulated fires or 24 h",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "score-2",
+          "chars": "score 2 (DJ) · Owner, Manager",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 314
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c3",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "→",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "j-review-the-evidence",
+        "w": 338,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Review the evidence",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "task-1",
+          "chars": "Orders two rules that move the same stop (SCR-086)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "score-1",
+          "chars": "score 2 (DJ) · Owner, Manager",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "task-2",
+          "chars": "Reads in SCR-085 what it will do, on what, and its evidence",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "score-2",
+          "chars": "score 4 (DJ) · Owner, Manager",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "task-3",
+          "chars": "Reads what stops the rule and what still protects the position",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 314
+         },
+         {
+          "t": "text",
+          "name": "score-3",
+          "chars": "score 3 (DJ) · Owner, Manager",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 314
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "ux-journey",
+   "node": {
+    "t": "board",
+    "name": "row-2",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "c0",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "→",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "j-arm",
+      "w": 430,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Arm",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 406
+       },
+       {
+        "t": "text",
+        "name": "task-1",
+        "chars": "Chooses how much it may do by itself - asks first or dry run",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 406
+       },
+       {
+        "t": "text",
+        "name": "score-1",
+        "chars": "score 3 (DJ) · Owner, Manager",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 406
+       },
+       {
+        "t": "text",
+        "name": "task-2",
+        "chars": "Arms on DEMO - one confirm, no typed word, no step-up",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 406
+       },
+       {
+        "t": "text",
+        "name": "score-2",
+        "chars": "score 4 (DJ) · Owner, Manager",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 406
+       },
+       {
+        "t": "text",
+        "name": "task-3",
+        "chars": "Arms on LIVE from R4 - one no-grace step-up bound to the arm, password, TOTP and a typed LIVE (SCR-006)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 406
+       },
+       {
+        "t": "text",
+        "name": "score-3",
+        "chars": "score 3 (DJ) · Owner",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 406
+       },
+       {
+        "t": "text",
+        "name": "task-4",
+        "chars": "Waits - Arming… until the server confirms",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 406
+       },
+       {
+        "t": "text",
+        "name": "score-4",
+        "chars": "score 3 (DJ) · Owner, Manager",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 406
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c1",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "→",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "j-live",
+      "w": 330,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Live",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 306
+       },
+       {
+        "t": "text",
+        "name": "task-1",
+        "chars": "Rule fires and tightens the stop - Armed · DEMO and Disarm in view",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 306
+       },
+       {
+        "t": "text",
+        "name": "score-1",
+        "chars": "score 5 (DJ) · Owner, Manager",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 306
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c2",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "→",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "j-something-goes-wrong",
+      "w": 592,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Something goes wrong",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "task-1",
+        "chars": "Window closed - the rule keeps running on the server",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "score-1",
+        "chars": "score 3 (DJ) · Owner, Manager",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "task-2",
+        "chars": "Bybit link lost - rules paused, resume by themselves",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "score-2",
+        "chars": "score 2 (DJ) · Owner, Manager",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "task-3",
+        "chars": "Feed stale - still armed, skips each check and says why",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "score-3",
+        "chars": "score 3 (DJ) · Owner, Manager",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "task-4",
+        "chars": "Engine down - not evaluating, stop-loss at Bybit unaffected",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "score-4",
+        "chars": "score 2 (DJ) · Owner, Manager",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "task-5",
+        "chars": "Server down or its host PC asleep - rules do nothing, stop-loss at Bybit stays",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "score-5",
+        "chars": "score 1 (DJ) · Owner, Manager",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "task-6",
+        "chars": "Server back - rules start again once positions are checked with Bybit",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 568
+       },
+       {
+        "t": "text",
+        "name": "score-6",
+        "chars": "score 3 (DJ) · Owner, Manager",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 568
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "ux-table-head",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "17 §1.5 · Abandonment points and the evidence that prevents them",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "sub",
+      "chars": "(steps as numbered in the report's §6)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "ux-table",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "radius": "radius.card",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.sunken",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "Step",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Why a trader abandons",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 360
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "What the screen must show",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 846
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Report finding",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 160
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "ux-table",
+   "node": {
+    "t": "board",
+    "name": "rows-1",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r01",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "1 Template, build",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "The plain-language summary shows the rule does not do what was meant (good: the evidence worked)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 360
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "The plain-language summary (US-RULE-004); what persists (CA-26); the estimate banner (CA-25); asks first / dry run (CA-36, CA-37)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 846
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "F8, F13",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r02",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "2 Simulate on history",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "No history to test, a run past 60 s, or a missing day left unnamed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 360
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Who can record the symbol (CA-6); progress and partial results; each untested window by date (CA-3); behaviour, not profit (CA-2, then CA-1)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 846
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "F1–F3",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r03",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "3 Simulate live",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Arming is refused with no word on which check is missing or when it will pass",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 360
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Each server check with its progress or the time it passes (CA-16)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 846
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "F22",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r04",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "4 Resolve a clash",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Raw priority numbers, with no outcome stated for the stop",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 360
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "An ordered list under the risk band, a consequence per option; of two tightening moves of one stop, the tighter applies (SC-10)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 846
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "F17–F20",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r05",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "5–5a Review in SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "No evidence in the dialog, or \"the backend\" read as \"the app\", so the rule seems to need the app open; changing how much it may do by itself is a new version (SC-9)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 360
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Environment first, DEMO preselected; then restatement, Will act on (CA-14), evidence (CA-15), the estimate and order lines (CA-12, CA-13), the first check (CA-38), asking first and dry runs (CA-36, CA-37), what stops it (CA-8–CA-11)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 846
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "F6–F10, F13, F21; SC-22",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r06",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "6–7 Commit, pending",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "The step-up, a screen lock that drops the arm, or a slow server confirmation that invites a retry",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 360
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "DEMO preselected; LIVE, disabled with a reason for a Manager: live_enablement, a no-grace step-up bound to the arm request (SCR-006 frame no-grace-live-enable, as E09-D06 draws it for live enablement: password + TOTP + a typed \"LIVE\"; challenge 5 min, grant 60 s), at most one open challenge per session (a newer one supersedes it); Enter on SCR-085's radios never arms; \"Arming…\" until rules confirms; any drop of the held arm says nothing was sent (CA-17, CA-18, CA-35)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 846
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "F25, F26, F29",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r07",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "9 Something goes wrong",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "The state does not say what stopped the rule or whether it comes back, so the trader disarms it or stops using rules",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 360
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "The cause and \"resumes by itself\" in the state (CA-20); after a kill or an error stop, \"needs a step-up to arm again\" (SC-21); a text per event (CA-19, CA-22–CA-24); what persists (CA-26)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 846
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "F7–F9, F24",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "Source: docs/design/research/e35-rule-arming-trust.md §6 and docs/plan/17-ux-diagrams.md §1.5 at 6c2a6f4a8. Illustrative content; labels such as (heuristic), DJ, PROPOSED as in the report.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  }
+ ],
+ "export": "docs/design/E35/img/E35-D01-01-arming-journey",
+ "notes": {
+  "generator": "<hcl-worker-2 scratch>/sheets/research/gen/E35-D01-01.py",
+  "notes": "<hcl-worker-2 scratch>/sheets/E35-D01/01-arming-journey.md",
+  "worktree": "<#860 worktree>",
+  "sha": "6c2a6f4a8",
+  "sources": [
+   "docs/design/research/e35-rule-arming-trust.md §6 L283–304",
+   "docs/plan/17-ux-diagrams.md §1.5 L99–148"
+  ],
+  "brief": "§6 arming journey (and 17 §1.5, agreeing row by row) as frames left to right with the steps, the gates and the step-up"
+ }
+}

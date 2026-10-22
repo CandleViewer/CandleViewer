@@ -1,0 +1,3828 @@
+{
+ "board": {
+  "name": "E42-D03 / 24 SCR-120 / mixed · 1280×800+2560×1440 · dark",
+  "w": 4304,
+  "h": 1760,
+  "x": 13800,
+  "y": 7200,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.app",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-1280",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "vs": "fill",
+      "note": "NavRail | main | RightRail (the rail is absolute at x = NavRail + main)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "fill": "color.surface.selected",
+           "justify": "center",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 48,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); aria-current=page; named 'Admin'; DS-2 edge (D02:1003): color.text.tertiary at border.thick, inner; 6.29 / 6.81 / 12.54 against the rail, 3.98 / 4.86 / 7.94 against its fill (§15 L635, L638, L656)"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704,
+        "vs": "fill",
+        "note": "64 px (collapsed, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-209 RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 704,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 1040,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 976,
+        "h": 704,
+        "vs": "fill",
+        "note": "<main>: band → rule → strip → PageHeader → route content → footer marker (§4 L165-171)",
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-087 band (composition)",
+          "o": {
+           "dir": "row",
+           "pad": "space.inset.lg",
+           "justify": "space-between",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "◆ Admin area · Overview",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 944,
+          "h": 56,
+          "note": "role=\"region\" aria-label=\"Admin area\"; never focusable; the fill is not a carrier (§2 D2); (b) per action, no grace (SH-6, L186): the band label only"
+         },
+         {
+          "t": "rect",
+          "name": "CMP-087 rule (4 px)",
+          "w": 944,
+          "h": 4,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "note": "6.29 / 6.81 / 12.54 against the page (§15 L635)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-087 strip (composition)",
+          "o": {
+           "dir": "row",
+           "wrap": "wrap",
+           "gap": "space.inset.sm",
+           "padY": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "none",
+            "chars": "Nothing needs your action",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 944,
+          "note": "role=\"region\" \"Needs your action\"; a list; not live (the shell announces once)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-088 PageHeader (composition)",
+          "o": {
+           "dir": "row",
+           "padY": "space.inset.lg",
+           "justify": "space-between",
+           "align": "end"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "titles",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h1",
+              "chars": "Overview",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "note": "the h1: the skip-link target (CMP-085)"
+             },
+             {
+              "t": "text",
+              "name": "meta",
+              "chars": "All times UTC · as of 14:02:11",
+              "typo": "type.ui.caption",
+              "color": "color.text.tertiary"
+             }
+            ]
+           }
+          ],
+          "w": 944
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frame-1280/body/main",
+   "node": {
+    "t": "board",
+    "name": "SCR-120 bands",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "band · RIGHT NOW",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "h2",
+        "chars": "RIGHT NOW",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "board",
+        "name": "tiles",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.md",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Trading safety",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Trading safety",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             },
+             {
+              "t": "board",
+              "name": "CMP-012 Badge (composition) · LIVE",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.xs",
+               "radius": "radius.badge",
+               "stroke": "color.env.live",
+               "strokeWidth": "border.hairline"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "word",
+                "chars": "LIVE",
+                "typo": "type.ui.caption",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 16
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "live",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Live trading:",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "on",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "kill",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Kill switch:",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "off",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "open",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Open positions:",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "2",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "maintenance",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Maintenance:",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "off (flags read)",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "note": "the maintenance.mode flag from GET /admin/feature-flags (L262), the Flags tile's read: the value stays, marked stale since 14:00:02 with its read (D02:181)"
+           },
+           {
+            "t": "board",
+            "name": "maintenance stale · CMP-239 FreshnessMarker (composition)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "clock",
+              "icon": "pending",
+              "color": "color.data-confidence.stale.indicator",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "stale since 14:00:02",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             }
+            ],
+            "note": "the line's own read, GET /admin/feature-flags (L262), answered 14:00:02: the value stays, marked old (D02:181; D8 L121); age text, never live (L878)"
+           },
+           {
+            "t": "text",
+            "name": "as of",
+            "chars": "as of 14:02:11",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 307,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; the trading slice fresh (OV-4 'the rest fresh', L277; OV-2's lines, L275): GET /admin/overview, never cached (L260), dated by the tile's 'as of'; the Maintenance line is the flags read's, old (L262; D02:181); heading → SCR-071/137/148 (L253); a target (today's main reads OV-6)",
+          "h": 201
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Health",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Health",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "status",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "triangle",
+              "icon": "warning",
+              "color": "color.status.warning.strong",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Degraded — bybit_private_ws reconnected 3× in the last hour",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 250
+             }
+            ],
+            "note": "tone warning: the triangle + the state word 'Degraded' (D02:130; L878); the accessible name starts 'Attention:' (L286); entering degraded is announced assertive once by the shell, recovery polite once (L277; §13 L583)"
+           },
+           {
+            "t": "text",
+            "name": "last good",
+            "chars": "last good 14:01:40",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary",
+            "note": "the component's last_good_at (HealthReport.components[], L267); age text, never live (L878)"
+           },
+           {
+            "t": "text",
+            "name": "what stops working",
+            "chars": "order and position updates may lag",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 274,
+            "note": "CMP-178 stopsWorking (L877); OV-4's sentence (L277), not a §14 key"
+           },
+           {
+            "t": "text",
+            "name": "stop-losses",
+            "chars": "Exchange-side stop-losses stay active.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 274,
+            "note": "the C-2.6 line (§14 L603): bybit_private_ws is trading-affecting (D02:182; D4 built on, L17, L91)"
+           },
+           {
+            "t": "text",
+            "name": "as of",
+            "chars": "as of 14:02:11",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 306,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; degraded: bybit_private_ws's ComponentState, not a slice status (§17 L688; §20 L784), from GET /admin/health and WS system health (L267); the read is fresh, so its own 'as of' (CG-9 L803); heading → SCR-143/144 (L253)",
+          "h": 201
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Recorder and storage",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Recorder and storage",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "inst",
+            "name": "CMP-015 Skeleton · text ×3",
+            "set": "CMP-015 · Skeleton",
+            "props": {
+             "State": "default",
+             "Shape": "text",
+             "Count": "3"
+            },
+            "w": 275
+           }
+          ],
+          "w": 307,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; loading: its reads (the recorder and storage slices, L266) not yet answered; aria-busy, the CMP-015 skeleton aria-hidden (`15`:181), static under reduced motion (L591); heading → SCR-140/142 (L253)",
+          "h": 201
+         }
+        ]
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "band · PEOPLE AND ACCESS",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "h2",
+        "chars": "PEOPLE AND ACCESS",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "board",
+        "name": "tiles",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.md",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Users",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Users",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "status",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "octagon",
+              "icon": "danger",
+              "color": "color.status.danger.strong",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Error — timed out after 300 ms",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 251
+             }
+            ],
+            "note": "tone danger: the octagon + the state word 'Error' (D02:130; L878); entering down is announced by the shell, assertive once (§13 L583)"
+           },
+           {
+            "t": "text",
+            "name": "last good",
+            "chars": "last good 14:01:40",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           },
+           {
+            "t": "board",
+            "name": "controls",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Retry",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.button.paddingX",
+               "radius": "radius.control",
+               "height": "size.control.comfortable",
+               "justify": "center",
+               "fill": "color.action.secondary.default"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Retry",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 59,
+              "h": 32
+             }
+            ],
+            "note": "Retry (CMP-027 + Retry, L254): a tile control in Tab order after the nine links (L285)"
+           }
+          ],
+          "w": 307,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; error: the users slice of GET /admin/overview timed out after 300 ms (L260, L263): no count drawn (D02 D4); heading → SCR-121 (L253)",
+          "h": 159
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Accounts and keys",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Accounts and keys",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "capacity line · used_unavailable",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Regular tier allows 5 · sub-accounts in use: unavailable right now",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 274
+             }
+            ],
+            "w": 274,
+            "note": "D11's capacity line (L124) in its used-unread state (§7 L313): GET /admin/capacity answered the tier, not used (Y:20713); no meter (§7 L315-316), no action"
+           },
+           {
+            "t": "text",
+            "name": "withdrawal line",
+            "chars": "Withdrawal permission: off on every key · checked 14:00 UTC",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 274,
+            "note": "fresh (OV-2 L275): GET /admin/security/summary, its own read (D8); a target (not mounted, CG-7)"
+           },
+           {
+            "t": "text",
+            "name": "as of",
+            "chars": "as of 14:02:11",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 306,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; one tile, two reads, two states (D8 L121): the capacity line down, the withdrawal line fresh; heading → SCR-125 (L253)",
+          "h": 159
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Profiles and limits",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Profiles and limits",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "status",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "octagon",
+              "icon": "danger",
+              "color": "color.status.danger.strong",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Unavailable — not built yet",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 251
+             }
+            ],
+            "note": "tone danger: the octagon + the state word 'Unavailable' (D02:130; L878)"
+           }
+          ],
+          "w": 307,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; unavailable: no slice (L265; CG-6 L800), the down treatment with a fixed reason and no number (D8 L121); heading → SCR-130/134 (L253)",
+          "h": 159
+         }
+        ]
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "band · EVIDENCE AND CONTROLS",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "h2",
+        "chars": "EVIDENCE AND CONTROLS",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "board",
+        "name": "tiles",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.md",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Audit",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Audit",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "tamper line",
+            "o": {
+             "dir": "row"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Run tamper check",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.button.paddingX",
+               "radius": "radius.control",
+               "height": "size.control.comfortable",
+               "justify": "center",
+               "fill": "color.action.secondary.default"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Run tamper check",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 138,
+              "h": 32
+             }
+            ],
+            "note": "the CG-8 fallback (L802): POST /admin/audit/verify, admin.audit_verify (L290)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-173 compact rows (placeholders)",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-173 AuditRow (composition) · compact placeholder 1",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "height": "space.row.height.comfortable"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · entry",
+                "w": 259,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 275,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "CMP-173 AuditRow (composition) · compact placeholder 2",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "height": "space.row.height.comfortable"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · entry",
+                "w": 259,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 275,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "CMP-173 AuditRow (composition) · compact placeholder 3",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "height": "space.row.height.comfortable"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · entry",
+                "w": 259,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 275,
+              "h": 32
+             }
+            ],
+            "w": 275,
+            "note": "three CMP-173 compact rows, a list, at the comfortable 32 px (D9 L122); entry data not in the spec; GET /admin/audit?limit=3 writes admin.audit_read on a filter set's first read (L268)"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · audited-read marker (admin.audit_read; §14 has no label)",
+            "w": 275,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "text",
+            "name": "as of",
+            "chars": "as of 14:02:11",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 307,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; fresh (OV-4 'the rest fresh', L277; OV-2's content, L275; D9 L122); heading → SCR-135 (L253)",
+          "h": 234
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Security and backups",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Security and backups",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "backup line",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "check",
+              "icon": "check",
+              "color": "color.status.success.strong",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Last backup 04:00 UTC · ok",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "note": "the state word 'ok' with the check glyph (Appendix A L878; D02:180); OV-2's line (L275), not a §14 key; GET /admin/backups (a target: 501 until catalogued, CG-10)"
+           },
+           {
+            "t": "text",
+            "name": "as of",
+            "chars": "as of 14:02:11",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 306,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; fresh (OV-4 'the rest fresh', L277; OV-2, L275); heading → SCR-137/146 (L253)",
+          "h": 234
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Flags",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Flags",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "status",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "clock",
+              "icon": "pending",
+              "color": "color.data-confidence.stale.indicator",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "stale since 14:00:02",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 251
+             }
+            ],
+            "note": "tone stale: the clock (color.data-confidence.stale.indicator; CMP-239's stale marker, L254) + 'stale since 14:00:02' in the place of 'as of' (D02:130); age text, never live (L878; §13 L583 'as of' never)"
+           }
+          ],
+          "w": 307,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; stale ('old', D02 D4): GET /admin/feature-flags (L270) last answered at 14:00:02, the read Trading safety's Maintenance line shares (L262); nothing dimmed, never green (D02:130); no value line (the spec gives none for Flags); heading → SCR-145 (L253)",
+          "h": 234
+         }
+        ]
+       }
+      ],
+      "w": 944
+     }
+    ],
+    "w": 944,
+    "note": "three bands, each an h2, a band per row, space.3 gaps (§2 D1 L114; §6 L250-256); every tile on its own read: no tile waits on another (D8 L121)"
+   }
+  },
+  {
+   "into": "frame-1280/body/main",
+   "node": {
+    "t": "board",
+    "name": "CMP-093 AuditActionTrigger (composition) · footer marker",
+    "o": {
+     "dir": "row",
+     "padT": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "text",
+      "chars": "Entering this area was recorded — Area entered (admin.area_entered)",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary"
+     }
+    ],
+    "w": 944,
+    "note": "footer.area_entered (D27, L140): on SCR-120 the page's own GET /admin/overview is an /admin/* API route, which writes admin.area_entered {route, reauth_age_s}, allowed or denied (§4 L201-202; not /admin/audit, Appendix A L903)"
+   }
+  },
+  {
+   "into": "frame-1280",
+   "node": {
+    "t": "board",
+    "name": "CMP-208 StatusBar (composition)",
+    "o": {
+     "dir": "row",
+     "padX": "space.inset.lg",
+     "justify": "space-between",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "board",
+      "name": "CMP-012 Badge (composition) · LIVE",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.xs",
+       "radius": "radius.badge",
+       "stroke": "color.env.live",
+       "strokeWidth": "border.hairline"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "word",
+        "chars": "LIVE",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 16
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48,
+    "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-2560",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 2560,
+    "h": 1440,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2560,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 2560,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 2560,
+      "h": 1344,
+      "vs": "fill",
+      "note": "NavRail | main | RightRail (the rail is absolute at x = NavRail + main)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "fill": "color.surface.selected",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.md",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Admin",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "note": "`15:696`: CMP-071 NavRail's item 'Admin' (an anatomy string, no §14 key; §4 L188 names CMP-061's)"
+           }
+          ],
+          "w": 224,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); aria-current=page; DS-2 edge (D02:1003): color.text.tertiary at border.thick, inner; 6.29 / 6.81 / 12.54 against the rail, 3.98 / 4.86 / 7.94 against its fill (§15 L635, L638, L656)"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 239,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px (expanded, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-209 RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 2320,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 2080,
+        "h": 1344,
+        "vs": "fill",
+        "note": "<main>: band → rule → strip → PageHeader → route content → footer marker (§4 L165-171)",
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-087 band (composition)",
+          "o": {
+           "dir": "row",
+           "pad": "space.inset.lg",
+           "justify": "space-between",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "◆ Admin area · Overview",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 2048,
+          "h": 56,
+          "note": "role=\"region\" aria-label=\"Admin area\"; never focusable; the fill is not a carrier (§2 D2); (b) per action, no grace (SH-6, L186): the band label only"
+         },
+         {
+          "t": "rect",
+          "name": "CMP-087 rule (4 px)",
+          "w": 2048,
+          "h": 4,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "note": "6.29 / 6.81 / 12.54 against the page (§15 L635)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-087 strip (composition)",
+          "o": {
+           "dir": "row",
+           "wrap": "wrap",
+           "gap": "space.inset.sm",
+           "padY": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "none",
+            "chars": "Nothing needs your action",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 2048,
+          "note": "role=\"region\" \"Needs your action\"; a list; not live (the shell announces once)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-088 PageHeader (composition)",
+          "o": {
+           "dir": "row",
+           "padY": "space.inset.lg",
+           "justify": "space-between",
+           "align": "end"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "titles",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h1",
+              "chars": "Overview",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "note": "the h1: the skip-link target (CMP-085)"
+             },
+             {
+              "t": "text",
+              "name": "meta",
+              "chars": "All times UTC · as of 14:02:11",
+              "typo": "type.ui.caption",
+              "color": "color.text.tertiary"
+             }
+            ]
+           }
+          ],
+          "w": 2048
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frame-2560/body/main",
+   "node": {
+    "t": "board",
+    "name": "SCR-120 bands",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "band · RIGHT NOW",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "h2",
+        "chars": "RIGHT NOW",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "board",
+        "name": "tiles",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.md",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Trading safety",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Trading safety",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             },
+             {
+              "t": "board",
+              "name": "CMP-012 Badge (composition) · LIVE",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.xs",
+               "radius": "radius.badge",
+               "stroke": "color.env.live",
+               "strokeWidth": "border.hairline"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "word",
+                "chars": "LIVE",
+                "typo": "type.ui.caption",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 16
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "live",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Live trading:",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "on",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "kill",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Kill switch:",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "off",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "open",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Open positions:",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "2",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "maintenance",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Maintenance:",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "off (flags read)",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "note": "the maintenance.mode flag from GET /admin/feature-flags (L262), the Flags tile's read: the value stays, marked stale since 14:00:02 with its read (D02:181)"
+           },
+           {
+            "t": "board",
+            "name": "maintenance stale · CMP-239 FreshnessMarker (composition)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "clock",
+              "icon": "pending",
+              "color": "color.data-confidence.stale.indicator",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "stale since 14:00:02",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             }
+            ],
+            "note": "the line's own read, GET /admin/feature-flags (L262), answered 14:00:02: the value stays, marked old (D02:181; D8 L121); age text, never live (L878)"
+           },
+           {
+            "t": "text",
+            "name": "as of",
+            "chars": "as of 14:02:11",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 675,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; the trading slice fresh (OV-4 'the rest fresh', L277; OV-2's lines, L275): GET /admin/overview, never cached (L260), dated by the tile's 'as of'; the Maintenance line is the flags read's, old (L262; D02:181); heading → SCR-071/137/148 (L253); a target (today's main reads OV-6)",
+          "h": 210
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Health",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Health",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "status",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "triangle",
+              "icon": "warning",
+              "color": "color.status.warning.strong",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Degraded — bybit_private_ws reconnected 3× in the last hour",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 618
+             }
+            ],
+            "note": "tone warning: the triangle + the state word 'Degraded' (D02:130; L878); the accessible name starts 'Attention:' (L286); entering degraded is announced assertive once by the shell, recovery polite once (L277; §13 L583)"
+           },
+           {
+            "t": "text",
+            "name": "last good",
+            "chars": "last good 14:01:40",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary",
+            "note": "the component's last_good_at (HealthReport.components[], L267); age text, never live (L878)"
+           },
+           {
+            "t": "text",
+            "name": "what stops working",
+            "chars": "order and position updates may lag",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 642,
+            "note": "CMP-178 stopsWorking (L877); OV-4's sentence (L277), not a §14 key"
+           },
+           {
+            "t": "text",
+            "name": "stop-losses",
+            "chars": "Exchange-side stop-losses stay active.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 642,
+            "note": "the C-2.6 line (§14 L603): bybit_private_ws is trading-affecting (D02:182; D4 built on, L17, L91)"
+           },
+           {
+            "t": "board",
+            "name": "components (two columns)",
+            "o": {
+             "dir": "row",
+             "gap": "space.stack.md",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "column 1",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.sm"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · components[] row 1 (name, state, latency_ms; not in the spec)",
+                "w": 240,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               },
+               {
+                "t": "rect",
+                "name": "placeholder · components[] row 2 (name, state, latency_ms; not in the spec)",
+                "w": 240,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 315
+             },
+             {
+              "t": "board",
+              "name": "column 2",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.sm"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · components[] row 3 (name, state, latency_ms; not in the spec)",
+                "w": 240,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               },
+               {
+                "t": "rect",
+                "name": "placeholder · components[] row 4 (name, state, latency_ms; not in the spec)",
+                "w": 240,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 315
+             }
+            ],
+            "w": 642,
+            "note": "§6 L255-256: at 2560 Health lists its components in two columns; one row is bybit_private_ws, degraded (L277)"
+           },
+           {
+            "t": "text",
+            "name": "as of",
+            "chars": "as of 14:02:11",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 674,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; degraded: bybit_private_ws's ComponentState, not a slice status (§17 L688; §20 L784), from GET /admin/health and WS system health (L267); the read is fresh, so its own 'as of' (CG-9 L803); heading → SCR-143/144 (L253)",
+          "h": 210
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Recorder and storage",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Recorder and storage",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "inst",
+            "name": "CMP-015 Skeleton · text ×3",
+            "set": "CMP-015 · Skeleton",
+            "props": {
+             "State": "default",
+             "Shape": "text",
+             "Count": "3"
+            },
+            "w": 643
+           }
+          ],
+          "w": 675,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; loading: its reads (the recorder and storage slices, L266) not yet answered; aria-busy, the CMP-015 skeleton aria-hidden (`15`:181), static under reduced motion (L591); heading → SCR-140/142 (L253)",
+          "h": 210
+         }
+        ]
+       }
+      ],
+      "w": 2048
+     },
+     {
+      "t": "board",
+      "name": "band · PEOPLE AND ACCESS",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "h2",
+        "chars": "PEOPLE AND ACCESS",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "board",
+        "name": "tiles",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.md",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Users",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Users",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "status",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "octagon",
+              "icon": "danger",
+              "color": "color.status.danger.strong",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Error — timed out after 300 ms",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 619
+             }
+            ],
+            "note": "tone danger: the octagon + the state word 'Error' (D02:130; L878); entering down is announced by the shell, assertive once (§13 L583)"
+           },
+           {
+            "t": "text",
+            "name": "last good",
+            "chars": "last good 14:01:40",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           },
+           {
+            "t": "board",
+            "name": "controls",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Retry",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.button.paddingX",
+               "radius": "radius.control",
+               "height": "size.control.comfortable",
+               "justify": "center",
+               "fill": "color.action.secondary.default"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Retry",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 59,
+              "h": 32
+             }
+            ],
+            "note": "Retry (CMP-027 + Retry, L254): a tile control in Tab order after the nine links (L285)"
+           }
+          ],
+          "w": 675,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; error: the users slice of GET /admin/overview timed out after 300 ms (L260, L263): no count drawn (D02 D4); heading → SCR-121 (L253)",
+          "h": 137
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Accounts and keys",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Accounts and keys",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "capacity line · used_unavailable",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Regular tier allows 5 · sub-accounts in use: unavailable right now",
+              "typo": "type.ui.body",
+              "color": "color.text.primary",
+              "w": 642
+             }
+            ],
+            "w": 642,
+            "note": "D11's capacity line (L124) in its used-unread state (§7 L313): GET /admin/capacity answered the tier, not used (Y:20713); no meter (§7 L315-316), no action"
+           },
+           {
+            "t": "text",
+            "name": "withdrawal line",
+            "chars": "Withdrawal permission: off on every key · checked 14:00 UTC",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 642,
+            "note": "fresh (OV-2 L275): GET /admin/security/summary, its own read (D8); a target (not mounted, CG-7)"
+           },
+           {
+            "t": "text",
+            "name": "as of",
+            "chars": "as of 14:02:11",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 674,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; one tile, two reads, two states (D8 L121): the capacity line down, the withdrawal line fresh; heading → SCR-125 (L253)",
+          "h": 137
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Profiles and limits",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Profiles and limits",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "status",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "octagon",
+              "icon": "danger",
+              "color": "color.status.danger.strong",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Unavailable — not built yet",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 619
+             }
+            ],
+            "note": "tone danger: the octagon + the state word 'Unavailable' (D02:130; L878)"
+           }
+          ],
+          "w": 675,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; unavailable: no slice (L265; CG-6 L800), the down treatment with a fixed reason and no number (D8 L121); heading → SCR-130/134 (L253)",
+          "h": 137
+         }
+        ]
+       }
+      ],
+      "w": 2048
+     },
+     {
+      "t": "board",
+      "name": "band · EVIDENCE AND CONTROLS",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "h2",
+        "chars": "EVIDENCE AND CONTROLS",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "board",
+        "name": "tiles",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.md",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Audit",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Audit",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "tamper line",
+            "o": {
+             "dir": "row"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Run tamper check",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.button.paddingX",
+               "radius": "radius.control",
+               "height": "size.control.comfortable",
+               "justify": "center",
+               "fill": "color.action.secondary.default"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Run tamper check",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 138,
+              "h": 32
+             }
+            ],
+            "note": "the CG-8 fallback (L802): POST /admin/audit/verify, admin.audit_verify (L290)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-173 compact rows (placeholders)",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-173 AuditRow (composition) · compact placeholder 1",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "height": "space.row.height.comfortable"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · entry",
+                "w": 627,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 643,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "CMP-173 AuditRow (composition) · compact placeholder 2",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "height": "space.row.height.comfortable"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · entry",
+                "w": 627,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 643,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "CMP-173 AuditRow (composition) · compact placeholder 3",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "height": "space.row.height.comfortable"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · entry",
+                "w": 627,
+                "h": 12,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 643,
+              "h": 32
+             }
+            ],
+            "w": 643,
+            "note": "three CMP-173 compact rows, a list, at the comfortable 32 px (D9 L122); entry data not in the spec; GET /admin/audit?limit=3 writes admin.audit_read on a filter set's first read (L268)"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · audited-read marker (admin.audit_read; §14 has no label)",
+            "w": 280,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "text",
+            "name": "as of",
+            "chars": "as of 14:02:11",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 675,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; fresh (OV-4 'the rest fresh', L277; OV-2's content, L275; D9 L122); heading → SCR-135 (L253)",
+          "h": 234
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Security and backups",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Security and backups",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "backup line",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "check",
+              "icon": "check",
+              "color": "color.status.success.strong",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Last backup 04:00 UTC · ok",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "note": "the state word 'ok' with the check glyph (Appendix A L878; D02:180); OV-2's line (L275), not a §14 key; GET /admin/backups (a target: 501 until catalogued, CG-10)"
+           },
+           {
+            "t": "text",
+            "name": "as of",
+            "chars": "as of 14:02:11",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 674,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; fresh (OV-4 'the rest fresh', L277; OV-2, L275); heading → SCR-137/146 (L253)",
+          "h": 234
+         },
+         {
+          "t": "board",
+          "name": "CMP-178 SystemHealthTile (composition) · Flags",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "header",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "heading",
+              "chars": "Flags",
+              "typo": "type.ui.heading-sm",
+              "color": "color.text.link"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "status",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "clock",
+              "icon": "pending",
+              "color": "color.data-confidence.stale.indicator",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "stale since 14:00:02",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary",
+              "w": 619
+             }
+            ],
+            "note": "tone stale: the clock (color.data-confidence.stale.indicator; CMP-239's stale marker, L254) + 'stale since 14:00:02' in the place of 'as of' (D02:130); age text, never live (L878; §13 L583 'as of' never)"
+           }
+          ],
+          "w": 675,
+          "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; stale ('old', D02 D4): GET /admin/feature-flags (L270) last answered at 14:00:02, the read Trading safety's Maintenance line shares (L262); nothing dimmed, never green (D02:130); no value line (the spec gives none for Flags); heading → SCR-145 (L253)",
+          "h": 234
+         }
+        ]
+       }
+      ],
+      "w": 2048
+     }
+    ],
+    "w": 2048,
+    "note": "three bands, each an h2, a band per row, space.3 gaps (§2 D1 L114; §6 L250-256); every tile on its own read: no tile waits on another (D8 L121)"
+   }
+  },
+  {
+   "into": "frame-2560/body/main",
+   "node": {
+    "t": "board",
+    "name": "CMP-093 AuditActionTrigger (composition) · footer marker",
+    "o": {
+     "dir": "row",
+     "padT": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "text",
+      "chars": "Entering this area was recorded — Area entered (admin.area_entered)",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary"
+     }
+    ],
+    "w": 2048,
+    "note": "footer.area_entered (D27, L140): on SCR-120 the page's own GET /admin/overview is an /admin/* API route, which writes admin.area_entered {route, reauth_age_s}, allowed or denied (§4 L201-202; not /admin/audit, Appendix A L903)"
+   }
+  },
+  {
+   "into": "frame-2560",
+   "node": {
+    "t": "board",
+    "name": "CMP-208 StatusBar (composition)",
+    "o": {
+     "dir": "row",
+     "padX": "space.inset.lg",
+     "justify": "space-between",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "board",
+      "name": "CMP-012 Badge (composition) · LIVE",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.xs",
+       "radius": "radius.badge",
+       "stroke": "color.env.live",
+       "strokeWidth": "border.hairline"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "word",
+        "chars": "LIVE",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 16
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 2560,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 2560,
+    "h": 48,
+    "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "24 SCR-120/mixed · OV-4 per-tile mixed: every tile on its own read",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Source",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "spec §6 L277 OV-4 · board 24 (§0 L62) · SCR-120 §6 L244-290 · shell §4 L164-204, SH-6 L186 · D8 L121 · 14:2318 item 2 (§17 L688) · renders §0 L72-73 · spec 782eb0e4d",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "OV-4: the same instant, independent reads (L277). Recorder and storage loading (CMP-015) · Users error, last good 14:01:40, Retry · Profiles unavailable, no slice (L265) · Accounts cap.used_unavailable, no meter (§7 L316) · Flags stale since 14:00:02, as is Trading safety's Maintenance line (one read, L262) · Health degraded (ComponentState, §17 L688) · the rest fresh: OV-2's lines (L275), own 'as of'. Shell: SH-6 (L186), as board 09.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "D8 one read per tile line, no tile waits on another (L121) · D02 D4 old and down only (L91): octagon error, unavailable; triangle degraded; clock stale; no number unread (D02:130) · D9 (L122) · D10-D11 (L123-124) · D1 (L114) · D2 (L115) · D27 (L140) · Q1 (b) (L146)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Roles",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Owner only: without admin:read CMP-087 never mounts; /admin is SCR-155 (§4 L201). A manager's 'right now' is SCR-071's (§6 L288).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Keyboard path and focus",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Skip link → TopBar → NavRail → strip (no item) → nine tile links, band order → Retry (Users) → Run tamper check → RightRail → StatusBar (§6 L285; §13 L583); nine stops, no roving. 'Attention:' leads the Health warning's accessible name (L286).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Health entering degraded, Users entering error (down): assertive once each; recovery polite once (L277; §13 L583; L878), via the shell's announcer; stale: none (L878). §14 keys no text (D02:690). Route announcer on entry, polite: 'Admin · Overview · LIVE' (§4 L199).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys used",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "OV-4 (L277): tile.degraded, tile.last_good, tile.error, tile.unavailable (= tile.not_built), tile.stale, cap.used_unavailable (proposed), the C-2.6 line (L603) · fresh: tile.asof, tile.maintenance_off, tile.withdrawal_ok (proposed) · shell: band.label, strip.none, meta.asof (proposed), footer.area_entered, announce.route. Not §14: OV-2's lines (L275), 'may lag' (L277), headings (L250-252).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-08",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Tokens",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "colour: action.secondary.default, border.subtle, data-confidence.stale.indicator, env.live, status.danger.strong, status.success.strong, status.warning.strong, surface.app, surface.hover, surface.raised, surface.selected, text.link, text.primary, text.secondary, text.tertiary; type: num.base, ui.body, ui.body-strong, ui.caption, ui.heading-md, ui.heading-sm, ui.label; space: button.paddingX, inset.lg, inset.md, inset.sm, inset.xs, row.height.comfortable, stack.md, stack.sm; size: control.comfortable, icon; radius: badge, card, control; other: border.hairline, border.thick",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "fallback: DS-5 icon/triangle, icon/octagon, icon/clock pending (§15 L626-628): the registry glyphs 'warning', 'danger', 'pending'; icon/admin (◆): the text ◆ of band.label (L597)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "token: §2 D1's space.3 gaps bind the semantic alias space.stack.md (12 px)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "fallback: color.surface.admin-tint pending DS-1: the band binds color.surface.raised (§2 D2, §15 L624)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "fallback: color.border.admin pending DS-2: the 4 px rule and the current Admin entry's edge bind color.text.tertiary (§2 D2, §15 L625; D02:1003)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-09",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Analytics and audit events",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "admin.area_entered (GET /admin/overview, an /admin/* route: §4 L201-204; D27) · admin.audit_read (the rows) · admin.audit_verify (Run tamper check) · admin.overview_viewed: analytics, no transport (CG-25) (§6 L289-290). Retry: none named.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-10",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Budget",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "≤800 ms · each tile its own state · 30 s re-read (§6 L248-249); board 24 draws the independence (D8).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-11",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board notes",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Grey bars: Audit rows and marker, Health's components at 2560 (no data or §14 label). At 1280 the fold cuts the third band. Renders (§0 L72-73): clock and triangle share one hex (§15 L665): shape and words carry each state.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Spec questions (sheet notes): Recorder loading beside Users error, one overview call (D8, L260); the strip's down item (D02:182); no [Change] in cap.used_unavailable (L605).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E42-D03 · board 24 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E42/img/E42-D03-24-scr120-mixed.png",
+ "notes": {
+  "sources": [
+   "spec §6 L277 (the OV-4 row), L244-256 (purpose, budget, anatomy), L260-270 (data: slices, reads, mount state), L275 (OV-2's fresh lines), L281 (OV-8: Record tier from the Accounts tile), L285-290 (keys, RBAC, events)",
+   "spec L17-18, L28-40 (built on; deviation (7)); §0 L62 (boards 21-29), L72-73 (board 24 has renders); §1 L91, L94, L99-103; §2 D1 L114, D2 L115, D8 L121, D9 L122, D10-D11 L123-124, D27 L140; §3 Q1 L146",
+   "spec §4 L164-177 (CMP-087 anatomy), L186 (SH-6), L198-204 (focus, RBAC, audit); §7 L313-317 (the capacity line's used-unread state, the meter rule, Regular's cap)",
+   "spec §13 L583, L590-591; §14 L597-605 (L599, L603, L605: the proposed meta.asof, tile.withdrawal_ok and cap.used_unavailable; L603: the C-2.6 line), L609; §15 L620, L628, L635, L641-642, L655-656, L662, L665; §17 L688; §18 H1 L749; §20 L784, CG-6..CG-9 L800-803; Appendix A L675, L876-880, L903",
+   "D02:130 (D4: old and down), :180 (fresh: the ok glyph with the word 'ok'), :181 (old: the value stays, the CMP-239 stale chip replaces the 'as of'), :182 (down: the C-2.6 sentence, the strip's down item), :278 ('Admin area · Overview'), :690 (the degraded announcement), :707 (the admin.audit_read marker), :715 (bybit_private_ws degraded), :773 (the stale word's contrast), :1003 (DS-2: the rule and the current nav entry's edge) (docs/design/E42/E42-D02.md)",
+   "E10-D02:64 (the Admin entry, owner only) (docs/design/E10/E10-D02.md); 15:181 (CMP-015 A11y), :690 (CMP-070), :696, :699, :708 (CMP-071, CMP-072), :893 (CMP-093), :2043 (CMP-178), :2411 (CMP-208), :2416, :2421 (CMP-209), :2693 (CMP-239) (docs/plan/15-component-catalogue.md)",
+   "spec §14 L593-613 (copy deck)",
+   "spec §6 L244-290 (SCR-120 tiles)",
+   "spec §15 L615-667 (tokens, contrast, colour vision)",
+   "spec §4 L162-204 (CMP-087 anatomy, SH-1..SH-8, focus, audit)",
+   "spec §2 D1 L114 (layout at both sizes)",
+   "spec §0 L42-82 (boards, names, footer, build order)"
+  ],
+  "copy_keys": [
+   "tile.maintenance_off",
+   "tile.stale",
+   "tile.asof",
+   "tile.last_good",
+   "tile.c26",
+   "tile.degraded",
+   "tile.error",
+   "cap.used_unavailable",
+   "tile.withdrawal_ok",
+   "tile.unavailable",
+   "band.label",
+   "strip.none",
+   "meta.asof",
+   "footer.area_entered",
+   "announce.route"
+  ],
+  "copy_gaps": [
+   "OV-2's fresh lines (L275), not §14 keys: 'Live trading: on', 'Kill switch: off', 'Open positions: 2' (label/value pairs) and 'Last backup 04:00 UTC · ok'; OV-2's 'Maintenance: off' is drawn as §14's tile.maintenance_off 'Maintenance: off (flags read)' (L603), as board 09 does.",
+   "'order and position updates may lag' (L277): Health's what-stops-working sentence (CMP-178 stopsWorking, L877), not a §14 key; 'REST reconcile runs.' (D02:715) has no D03 source.",
+   "The C-2.6 line 'Exchange-side stop-losses stay active.' (§14 L603) has no key name in §14; the kit calls it tile.c26. Health draws it because bybit_private_ws is trading-affecting (D02:182; D4 built on, L17, L91).",
+   "Fills: tile.degraded {detail} 'bybit_private_ws reconnected 3× in the last hour', tile.last_good 14:01:40 and tile.stale 14:00:02 (L277); tile.unavailable {detail} 'not built yet' (L265; equal to tile.not_built, L603); cap.used_unavailable {Tier} Regular (§1 L103) and {cap} 5 (§7 L317; L609); tile.withdrawal_ok 14:00 (OV-2 L275); tile.asof and meta.asof 14:02:11 (§1 L103).",
+   "The band's {route} for /admin is 'Overview', SCR-120's PageHeader (§6 L250; D02:278 'Admin area · Overview'); §4 L166 fills it only for Users.",
+   "The Audit tile's audited-read marker (D9 L122): §14 keys no string for it; D02:707 gives 'Viewing this log is recorded — Audit log viewed (admin.audit_read)' (inherited, L17-18): a placeholder marks its place until §14 keys it (a §14 gap).",
+   "The announcement: §14 has no announce.* key for a tile or component entering degraded or recovering (L600); D02:690 gives 'Health: bybit_private_ws degraded.' / 'Health: bybit_private_ws healthy again.' (inherited, L17-18): annotated, not drawn (a §14 gap).",
+   "Spec question (D8): OV-4 shows Recorder and storage loading beside Users in error, but both are slices of the one GET /admin/overview call ('the AdminOverview slices are one call', D8 L121; L260, L263, L266), which cannot be pending and answered at once; drawn as the row says. Proposed spec fix (review 24 item 6a): in L277, make the loading tile one with its own read that OV-4 otherwise leaves fresh, Audit (GET /admin/audit?limit=3, L268); Recorder and storage then reads fresh and the board moves its CMP-015 to Audit.",
+   "Spec question (strip): D02 D4's 'the \"Needs your action\" strip repeats a down item' (D02:182) has no strip.* key (§14 L598), and deviation (7) (L28-40) does not supersede it, so the strip reads strip.none beside three down tiles. Proposed spec fix (review 24 item 6b): key the item in §14's strip.* row, or add D02:182's strip clause to deviation (7); the board keeps strip.none until then.",
+   "Spec question (G-T2): cap.recorded ends '[Change]' (L605), which opens Record tier 'from the strip or the Accounts tile' (OV-8, L281), and Record tier needs neither used nor the meter (dlg.tier, L609); cap.used_unavailable (L605) names no action, so the control vanishes with the state (G-T2 makes a state-gated control E09-D09's T2, which has no hidden-by-state form). Drawn as §14 keys it. Proposed spec fix (review 24 item 7): append ' [Change]' to cap.used_unavailable, or draw the T2 form (lock glyph, full label 'Change', an admin.* reason). The same question applies to cap.tier_unavailable (board 33).",
+   "'Attention:' (L286) leads the Health warning's accessible name only: OV-4's visible string has none, so it is a note on the status line, not drawn text.",
+   "'Overview': an anatomy string, not a §14 key (spec L250)",
+   "'Trading safety': an anatomy string, not a §14 key (spec L250)",
+   "'Health': an anatomy string, not a §14 key (spec L251)",
+   "'Recorder and storage': an anatomy string, not a §14 key (spec L251)",
+   "'Users': an anatomy string, not a §14 key (spec L251)",
+   "'Accounts and keys': an anatomy string, not a §14 key (spec L251)",
+   "'Profiles and limits': an anatomy string, not a §14 key (spec L251)",
+   "'Run tamper check': an anatomy string, not a §14 key (spec L275)",
+   "'Audit': an anatomy string, not a §14 key (spec L252)",
+   "'Security and backups': an anatomy string, not a §14 key (spec L252)",
+   "'Flags': an anatomy string, not a §14 key (spec L252)",
+   "'RIGHT NOW': an anatomy string, not a §14 key (spec L250)",
+   "'PEOPLE AND ACCESS': an anatomy string, not a §14 key (spec L251)",
+   "'EVIDENCE AND CONTROLS': an anatomy string, not a §14 key (spec L251)",
+   "'Admin': an anatomy string, not a §14 key (`15:696`: CMP-071 NavRail's items '… / Replay / Admin'; E10-D02:64 'Admin entry'; spec L188 names the CMP-061 menu's 'Admin'); drawn at 2560 only (the expanded rail, D1 L114)"
+  ],
+  "live_checks": [
+   "inst 'CMP-015 Skeleton · text ×3' (Recorder and storage, both frames): the only inst node; after relayout it fills the tile's inner width (275 / 643 px) under the heading, inside the band's shared height; static two-tone under reduced motion (§13 L591).",
+   "band heights (L256): after touchTexts + relayout each band's three tiles share one height; set them to the tallest tile's measured height if the text metrics moved it (estimates: frame-1280: RIGHT NOW 201 px, PEOPLE AND ACCESS 159 px, EVIDENCE AND CONTROLS 234 px; frame-2560: RIGHT NOW 210 px, PEOPLE AND ACCESS 137 px, EVIDENCE AND CONTROLS 234 px).",
+   "fit frame-1280 (kit estimates; <main> clips at its 704 px box, content est. 916 px): in view — CMP-087 band (composition), CMP-087 rule (4 px), CMP-087 strip (composition), CMP-088 PageHeader (composition), band · RIGHT NOW, band · PEOPLE AND ACCESS; cut — band · EVIDENCE AND CONTROLS; below — CMP-093 AuditActionTrigger (composition) · footer marker (a page scroll). Every tile's heading and every OV-4 state part (the status lines, the skeleton, the Maintenance line's stale marker, the C-2.6 line, the capacity line, the backup line's check) is in view; past the fold only Audit: tamper line; Audit: CMP-173 compact rows (placeholders); Audit: placeholder · audited-read marker (admin.audit_read; §14 has no label); Audit: as of; Security and backups: as of. In the export every OV-4 state must read at 1280 too (Audit, fresh, shows its heading in view; its lines are the page scroll).",
+   "fit frame-2560: main column est. 903 of 1344 px: after relayout the band, rule, strip, PageHeader, all three bands (nine tiles) and the footer marker must be in view",
+   "Health's status wraps to about 2 lines at 1280 and 1 at 2560; 'bybit_private_ws' stays one word (no break inside it).",
+   "renders (§0 L72-73): docs/design/_tools/cvd_sim.py on the export gives -greyscale.png and -deuteranopia.png; in both, each tile state must read by its glyph shape and words: the clock 'stale since' (Flags; Trading safety's Maintenance line) against the triangle 'Degraded' (Health), one hex (§15 L665); the octagons (Users, Profiles) against the triangle (L662); the check 'ok' (Security and backups) by its shape; the skeleton as loading; LIVE by its word.",
+   "glyphs: the registry 'warning', 'danger' and 'pending' stand in for DS-5's icon/triangle, icon/octagon and icon/clock (fallback lines), beside the registry 'check': at 16 px the four must read as four different shapes (one shape per tone, Appendix A L878).",
+   "Health: under 'order and position updates may lag' the C-2.6 line 'Exchange-side stop-losses stay active.' (§14 L603; D02:182) whole inside the tile at both sizes; at 2560 the two component columns (four grey bars) under it, above the 'as of'.",
+   "Trading safety: the Maintenance line's stale marker (clock + 'stale since 14:00:02') directly under 'Maintenance: off (flags read)', above the tile's 'as of 14:02:11' (the trading slice's).",
+   "Retry: a 32 px CMP-001 secondary under 'last good 14:01:40' in the Users tile, whole inside the tile.",
+   "annotations: estimated 1689 px, the tallest child; the root is 1760 px (clip on), 39 px of headroom: after touchTexts + relayout the footer 'page E42-D03 · board 24 · r1' must end inside the root (it is at the 1760 px pitch cap: if the footer does not fit, shorten the Board notes block, never the root past 1760).",
+   "inst 'CMP-015 Skeleton · text ×3': set 'CMP-015 · Skeleton', props {\"State\": \"default\", \"Shape\": \"text\", \"Count\": \"3\"}, text layers []: verify the set, the variant and the layer names live before rendering",
+   "fit: frame-1280 main column content is about 916 px for 704 px: it is clipped at the bottom (a page scroll), check the export",
+   "glyph ◆ (U+25C6): confirm Inter draws it; else Penpot substitutes a fallback font",
+   "root name: after the first section call the root must read back exactly as the sheet's board.name, or later calls create a duplicate root"
+  ],
+  "deviations": [
+   "The CMP-087 shell is (b) per action with no grace and nothing needing action (SH-6, L186): the band label '◆ Admin area · Overview' only, no badge or grace line, the strip strip.none. OV-4 (L277) names no shell state; (b) is what the server does (Q1 L146) and board 09 draws SCR-120 the same way; boards 01-07 own the badge and grace states.",
+   "The strip reads strip.none: §1's worked example raises no strip item (OV-2 L275 draws strip.none on the same data) and OV-4 names none. D02 D4's 'the \"Needs your action\" strip repeats a down item' (D02:182) has no strip.* key in §14 (L598), so no item is drawn for the error, unavailable or degraded tiles (a copy gap).",
+   "'The rest fresh' (L277) is drawn with OV-2's lines (L275), the only fresh content the spec gives: Trading safety [LIVE] 'Live trading: on · Kill switch: off · Open positions: 2' and tile.maintenance_off (L603) for its 'Maintenance: off' (the line is always the flags read's, L262; it carries that read's stale marker, 'stale since 14:00:02' (D02:181; D8), so the tile's 'as of 14:02:11' dates the trading slice's three lines); the Accounts withdrawal line tile.withdrawal_ok '… checked 14:00 UTC'; Audit 'Run tamper check' + three rows; Security and backups 'Last backup 04:00 UTC · ok' with the check (D02:180). Each fresh tile carries its own 'as of 14:02:11' (H1 L749; §1 L103), as board 09 draws OV-2 (board 22 adds field bars; the SCR-120 family's one base is the coordinator's pick, review 24 item 5). These are targets where OV-6 (board 26) is today's main.",
+   "Health draws OV-4's string in its order (L277): the status line 'Degraded — bybit_private_ws reconnected 3× in the last hour' (triangle, D02:130), then 'last good 14:01:40' (type.ui.caption, tertiary, as the kit sets ages), then what stops working 'order and position updates may lag' (type.ui.body, primary; CMP-178 stopsWorking, L877), then the C-2.6 line 'Exchange-side stop-losses stay active.' (§14 L603: bybit_private_ws is trading-affecting, D02:182; D4 built on, L17, L91), then at 2560 its components in two columns (L255-256; four grey bars, the count board 22's: the spec names only bybit_private_ws; at 1280 none, as board 09's OV-2 draws no field bars), then its own 'as of 14:02:11': the health read itself is fresh, and Health shows 'as of' only (CG-9 L803; L267).",
+   "Users in error shows no number (D02 D4, L91; Appendix A L878): the octagon status 'Error — timed out after 300 ms' (tile.error's words), 'last good 14:01:40' (tile.last_good) as the tile's age line in place of 'as of', and tile.error's [Retry] as a CMP-001 secondary button (e42kit action(); CMP-027 + Retry, L254), in OV-4's order (L277).",
+   "Profiles and limits draws tile.unavailable (OV-4's key, L277) with {detail} 'not built yet': the tile has no slice (L265, 'no slice: \"Unavailable — not built yet\" (D8, CG-6)'), so the filled string equals tile.not_built (L603) verbatim; the octagon (down, D02:130); no 'as of' (no read).",
+   "Accounts and keys' capacity line is cap.used_unavailable (L277; §7 L313) at the tile's inner width: no CMP-023 meter (no meter bar unless used and cap were both read, §7 L315-316), no action (the key names none: a spec question in Copy gaps, G-T2), no glyph (as e42kit capacity_line() draws the state on SCR-121; its own words carry 'unavailable'). {Tier} = Regular (§1 L103), {cap} = 5 (§7 L317; L609).",
+   "Flags draws tile.stale with the clock (color.data-confidence.stale.indicator; D02:130 'the CMP-239 stale chip \"stale since HH:MM:SS\" (clock glyph + words)') in the place of its 'as of' line; the value would stay (D02 D4), but the spec gives no Flags value line (OV-2 gives none either), so the stale line is the tile's only content. The words are type.ui.body-strong in color.text.primary (D02:773, 14.35 on raised), as the kit sets every tile state. The same read feeds Trading safety's Maintenance line (L262), which carries the same marker under its value (D02:181; D8 L121).",
+   "Recorder and storage loading is e42kit's loading tile: the heading link (static, so it renders before its reads) over one CMP-015 Skeleton instance (Shape text, Count 3) at the tile's inner width; the tile is aria-busy and the skeleton aria-hidden (`15`:181), static under reduced motion (L591).",
+   "The Audit tile's three CMP-173 compact rows (OV-2 L275; D9 L122) and its audited-read marker (D9), and at 2560 Health's four component rows (two columns, L255-256), are neutral placeholders (color.surface.hover bars, radius.control): the spec gives no entry data and no component list (it names only bybit_private_ws, L277; the count of four is board 22's) and §14 no label for admin.audit_read (D02:707 has one), so nothing is invented.",
+   "A band's tiles share one height (L256): each band takes its tallest tile's estimate, so Users, Profiles and Flags (one status line) sit in tiles as tall as their band's longest.",
+   "SCR-120 is taller than 1280 x 800: frame-1280 shows the page top and the rest is a page scroll (the fold line under Live checks); frame-2560 shows all nine tiles and the footer marker.",
+   "Local helper kit_fixups() (kit-level, board 06 review finding 6, as boards 06, 11 and 22 do): the kit's 'RightRail (composition)', 'footer marker (CMP-093)' and 'CMP-178 tile (composition) · …' take the build notes' '<CMP id> <Name> (composition)' names 'CMP-209 RightRail (composition)' (`15`:2416), 'CMP-093 AuditActionTrigger (composition) · footer marker' (`15`:893) and 'CMP-178 SystemHealthTile (composition) · …' (`15`:2043); tile line nodes keep their own names (the kit's tile() renames them line-N).",
+   "Links: the nine tile headings (CMP-021, the CMP-178 region's heading, §6 L252-253) are colour + position as the kit draws them: §15 F3 (L655) underlines headings in hc only, and each sits alone at its tile's top. This board has no inline link (cap.used_unavailable names no action), so none needs a drawn underline (board 22's 'Change' does).",
+   "Buttons, chips, badges, banners, fields, tiles, tables, menus and dialogs are compositions from tokens: admin controls are 32 px (size.control.comfortable, §4 L176) while the library CMP-001 binds size.control.height (24 px in the file's compact density), and cvsheet v1 cannot set an instance's glyph, fill or border.",
+   "TopBar, NavRail, RightRail and StatusBar content other than the Admin entry, the env badges and the owner's name is drawn as neutral placeholders (E10-D02 owns it; §1 L97 gives only the sizes). Chrome surface (kit-level, board 06 review finding 5, correcting e42kit's 'no source names a chrome surface'): `15` names color.surface.raised for CMP-071 NavRail, CMP-072 TopBar and CMP-209 RightRail (15:699, :708, :2421) and color.surface.sunken for CMP-208 StatusBar (15:2411); the boards draw all four on color.surface.app, CMP-070 AppShell's surface (15:690), with color.border.subtle dividers, so every kit board keeps one chrome; binding `15`'s surfaces is a kit change for every board (routed to the kit owner).",
+   "Local helper (kit-level, board 06 review finding 1): e42kit's _admin_entry marks the current Admin entry by its color.surface.selected fill alone, 1.58 / 1.40 against the rail (color.surface.app, dark / light; measured from token-sync.json), under AC-5's UI bar of 3.0 (§15 L620). DS-2 binds color.border.admin to 'the 4 px rule and the current nav entry's edge' (D02:1003), handed over unchanged (spec L17-18; D02:1169), so this board draws it, as boards 06 and 22 do: color.text.tertiary (DS-2's fallback) at border.thick, inner; 6.29 / 6.81 / 12.54 against the rail (§15 L635) and 3.98 / 4.86 / 7.94 against the fill (§15 L656; an edge is UI, bar 3.0).",
+   "The annotation column keeps some kit lines off its Tokens block so its footer ends inside the 1760 px root: the 'token: size.control.comfortable …' line (the validator's Tier-1 WARN on every 32 px control; the column's tokens line still lists the token, as boards 07 and 11 do), and the four DS-5 glyph lines and the two DS-2 lines, which it prints merged (DS5_LINE, DS2_LINE); every kit line stays in the sheet notes and the .md.",
+   "Board names carry Penpot's normalised ' / ' form (E42-D03 / 31 SCR-121 / populated · …) so cvsheet's find-or-create root matches on every section call; §0 L46-47 writes 'SCR-121/populated'."
+  ],
+  "fallbacks": [
+   "fallback: icon/clock pending DS-5: drawn with the registry glyph 'pending'",
+   "fallback: icon/triangle pending DS-5: drawn with the registry glyph 'warning'",
+   "fallback: icon/octagon pending DS-5: drawn with the registry glyph 'danger'",
+   "token: size.control.comfortable (32 px, §4 L176) is the Tier-1 primitive the spec names (validator WARN)",
+   "token: §2 D1's space.3 gaps bind the semantic alias space.stack.md (12 px)",
+   "fallback: color.surface.admin-tint pending DS-1: the band binds color.surface.raised (§2 D2, §15 L624)",
+   "fallback: color.border.admin pending DS-2: the 4 px rule binds color.text.tertiary (§2 D2, §15 L625)",
+   "fallback: icon/admin (◆) pending DS-5: drawn as the text glyph ◆ of band.label (L597)",
+   "fallback: color.border.admin pending DS-2: the current Admin entry's edge binds color.text.tertiary (D02:1003)"
+  ],
+  "tokens": [
+   "type.ui.body",
+   "color.text.primary",
+   "color.text.secondary",
+   "space.inset.xs",
+   "type.num.base",
+   "color.data-confidence.stale.indicator",
+   "size.icon",
+   "type.ui.body-strong",
+   "type.ui.heading-sm",
+   "color.text.link",
+   "type.ui.caption",
+   "radius.badge",
+   "color.env.live",
+   "border.hairline",
+   "space.inset.sm",
+   "color.text.tertiary",
+   "color.surface.raised",
+   "radius.card",
+   "space.inset.lg",
+   "space.stack.sm",
+   "color.status.warning.strong",
+   "color.status.danger.strong",
+   "space.button.paddingX",
+   "radius.control",
+   "size.control.comfortable",
+   "color.action.secondary.default",
+   "color.surface.hover",
+   "space.row.height.comfortable",
+   "color.status.success.strong",
+   "space.stack.md",
+   "space.inset.md",
+   "color.border.subtle",
+   "color.surface.app",
+   "type.ui.label",
+   "type.ui.heading-md",
+   "color.surface.selected",
+   "border.thick",
+   "space.stack.xs"
+  ]
+ }
+}

@@ -1,0 +1,1257 @@
+{
+ "board": {
+  "name": "E35-D01-06-source-conflicts",
+  "w": 1600,
+  "x": 10000,
+  "y": 0,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "radius": "radius.card",
+   "pad": "space.inset.lg",
+   "gap": "space.stack.md",
+   "vs": "auto"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "header",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Source conflicts the research cannot settle",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "subtitle",
+      "chars": "E35-D01 · report §1 · research board — heuristic findings, no participants",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     },
+     {
+      "t": "text",
+      "name": "intro",
+      "chars": "Plan-vs-plan conflicts that change a drawing or a probe's answer; 28 beats prose where they differ (C-2.19).",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "table",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "radius": "radius.card",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.sunken",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "#",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Conflict",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Sources",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Why it matters",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 184
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "table",
+   "node": {
+    "t": "board",
+    "name": "rows-1",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r01",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Behaviour preview or profit backtest",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "for: \"hypothetical PnL (using the paper matcher's fill model, §12)\" (24 §11.9); hypothetical_pnl_delta_usd: \"412.80\" (22 simulateRule example); CMP-167 JournalEquityCurveChart in SCR-084's components; \"(+0.4R locked)\" and the title \"Rule simulation / backtest panel\" (SCR-084); \"estimated R impact\" (US-RULE-009); \"average R impact\" (10 §6 M1); CMP-154 \"backtest-style result\"; against: SCR-084 checklist \"'simulation is not a backtest of PnL' caveat stated\"; E35-S05 \"never present it as a backtest result\" and \"a rule-behaviour preview, not a backtester\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Probe 1 (F1)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r02",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-2",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "What unlocks arming",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "24 §11.7 New-rule gate: simulate for 5 fires or 24 h, \"whichever comes first\"; 22 setRuleMode: \"at least one completed simulation run on that exact ir_hash\", coupled with the gate by E35-S01 and E35-S08; none: 13 §10 arms from \"Save as Draft\" with the backtest \"Optional\", 17 §4.3 Draft --> ArmingPending: user clicks Arm; warnings: \"warnings … do block arming\" (22 validateRule) vs \"no open validation warnings of class safety\" (setRuleMode; blocks_arming)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "blocked state (F22)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r03",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-3",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "After a server restart",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"rules re-armed only after reconciliation completes\" (20 §11.1 row F7) vs \"Armed --> Disarmed: engine offline / heartbeat lost (auto, shown to user)\" and \"re-armed after step-up\" (17 §4.3) vs \"this rule stops\" (SCR-085); B9 has no restart arm; a rule migrated on load \"remains disarmed until reviewed\" (US-RULE-001); the dead man's policy \"executes as soon as connectivity returns\" (US-RULE-013), and 20 §6.2 names E39 its owner, while the E35 and E39 epics each place US-RULE-013 in the other; after a restart 20 §6.2 calls the switch only for an episode already open or an account \"still down after the restart\", and 13 §16's switch \"does NOT auto-cancel orders\" against US-RULE-013's \"cancel working orders\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Probe 2 (F9)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r04",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-4",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Which event \"the backend stops\" names",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "window closed: rules \"continue running server-side\" (US-ONB \"Revoke all\"; SCR-152 \"1 stop moved by a rule\") vs SCR-152 \"Trading is disabled while offline\" and E17-D01's proposed \"app-managed rules are paused\" (§5, §6); Bybit link lost: paused (24 §11.7 Disconnect guard; 20 row F3); feed stale: skipped (24 E7); engine down (SCR-080, SCR-153); server down (20 row F7); one SCR-085 sentence for all",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Probe 2 (F6, F7)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r05",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-5",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "A rate-limit breach",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"breaching auto-disarms the rule with a critical notification\" (ADR-0007 binding rule 8) and \"auto-disarm with alert on breach\" (20 row F13) vs \"at either limit the evaluator skips the fire\" (24 §11.2 SR-104) and B9 record_skip_limit; the order budget \"trips the circuit breaker\" (24 §11.7); a rule armed above a hard cap before the caps existed \"is disarmed, audited with the reason limits_above_cap\" (22 setRuleMode)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "list state (F24)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r06",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-6",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "The disconnect guard: limit or setting",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "listed under \"Safety limits and kill switches\" (24 §11.7) vs RuleEngineConfig.pause_on_feed_degraded: bool = True, editable with RULES_EDIT (24 §16.1, §16.3); C-4.14's unflaggable list names native SL, RBAC, audit and the withdrawal check",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Probe 2 (F12)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r07",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-7",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "What B9 allows in each state",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "B9.8 \"a partial dispatch … lands the instance in paused_degraded\" vs B9.1 acting onError → cooling_down; E35-S01 \"disabled <-> simulate -> armed -> disabled\" and 22 createRule \"version 1 in mode: \"disabled\"\" vs B9 draft SAVE → simulating, no simulating → disarmed, no disarmed → simulating; under the root's \"onUnhandled\": \"defer\", DISARM is held in simulating, pending_confirmation, kill_switched and spent, and FEED_DEGRADED outside armed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "disarm path (F11, F28)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r08",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-8",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "State words, and what the client can see",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "IR mode plus enabled: bool (24 §11.2); B9's 11 states; DRAFT/ARMED-DEMO/ARMED-LIVE/PAUSED/ERROR (SCR-080); disarmed/simulate-only/live-armed (CMP-145, CMP-155); simulate|armed (CMP-233); \"auto-disabled\" (24 §11.7), \"force-disarmed\" (US-RULE-001); on the wire RuleUpdate carries mode, last_run_status and next_eligible_fire_at_ms, not the B9 state, and B9 has \"no public id yet\" (23 §6.4, §15.6, §16.6 W9), while E35-S06 reads state \"directly from the B9 … machine's published enum\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "SCR-080 rows (F24)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r09",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-9",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Editing an armed rule",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Editing an armed rule creates a new version\" (24 §11.1 R5); the armed rule runs its active version until active-version changes, and \"Activating a different version of an armed rule returns it to simulate\" (22 updateRule); B9 armed EDIT → simulating; \"requires disarming first, or creates a new version with an explicit 'Apply to armed rule' step-up\" (SCR-081 States); \"edit as a new draft version\" (US-RULE-006)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "protection gap (F27)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r10",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-10",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Which priority wins",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "priority … DEFAULT 100, -- lower runs first (21 §3.4.1) vs \"highest priority wins; ties are rejected and logged\" (SCR-086); E35-S07's test pits a \"discretionary rule at priority 0 versus risk control at 1000\"; outcome stated only \"in the same evaluation tick\" (US-RULE-011); detection \"at save time\" (CMP-159) vs \"at arm time and on rule save\" (SCR-086) vs \"at arming time\" (US-RULE-011)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Probe 4 (F17–F19)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r11",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-11",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Who may arm live",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Manager \"◑ own accounts, ⓢ\" (10 §7) and \"Step-up TOTP required, scoped to own accounts only\" (13 §10) vs Manager \"✖\" (04 §7.2.2 row 23a), \"owner-only\" (21 §10.1; 24 §19.7) and \"Managers reach only demo and testnet scopes\" (E35 threat model §9); demo: \"✔(demo/simulate only)\" (row 23) vs \"order-placing actions are available only in simulate mode\" (US-RULE-003); rules:author (10, 13, SCR-080) is not one of 24 §19.7's 38 strings",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "LIVE option (F26)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r12",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-12",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Arming confirmation",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Type ARM to confirm\" plus an inline 2FA (SCR-085 mock) vs \"must type the rule name\" (CMP-145) and \"typed confirmation for LIVE arming plus step-up\" (SCR-085 checklist) vs SCR-006, the step-up modal for \"arming a live rule\", with its own \"Type the account name to confirm\" field (E09-D06 draws password + code in every frame, and its no-grace-live-enable frame, drawn for live enablement and kill-switch disable, adds \"Type LIVE to confirm (case-sensitive)\"), vs \"the established pattern from SCR-005\" (E35-D02); 22 binds a live arm to a one-shot live_enablement step-up (authStepUp \"Binding\": challenge 5 min, grant 60 s, both ended by an idle lock); step-up on every arm (17 §4.3; 13 §10 draws no non-live branch) vs only when the scope includes live (22 setRuleMode; 04 rows 23–23a); \"(o) LIVE\" in the mock vs \"DEMO preselected\" (SCR-085 A11y); Esc dismisses a modal confirm (05 §3.4 item 4) vs the dialog closing only once the armed state is confirmed (SCR-085 Performance; E35-S08 \"Armed state is never optimistic\")",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "confirm block (F25, F29)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r13",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-13",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Where the environment lives",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "the Demo/Live choice in SCR-085 and scope.environments in the IR (24 §11.2, E12) vs no environment on the wire: RuleIr is \"executable core only\", RuleBindings has none and setRuleMode takes mode and reason (22); no column in 21 rules; none in RuleUpdate (23 §15.6); rule arming \"reflect[s] the current environment\" (US-PAPER-003)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "ARMED-DEMO/LIVE (F23)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r14",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-14",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Kill switch and rules",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Settled by E39-D01 (#3920), read at main: SetKillSwitchRequest defaults cancel_open_orders: true, flatten_positions: false, disarm_rules: true (22; 24 §8.11); \"their armed rules are disarmed\" and \"rules stay disarmed until explicitly re-armed\" (US-RULE-014); SCR-072: \"No typed word, no hold, no step-up to engage\", \"also cancel working orders\" on and \"also flatten positions\" off by default (14); 13 §20: the switch \"disarms armed rules in scope\", and \"rules stay disarmed until re-armed by hand\"; the dialog sends disarm_rules fixed true and states \"Disarms n armed rules\" (E39-D01 §3.4, D2), and CMP-211 is confirmMode: \"single\" (E39-D01 §10), so E39's \"does not force-close\" (30 §7.2) holds; left: 24 §11.7 does not name CMP-211 for its \"Panic\" control",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "what stops a rule (F31)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "table",
+   "node": {
+    "t": "board",
+    "name": "rows-2",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r15",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-15",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Which stops are \"emulated\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Emulated stops die with the backend; native stops live in Bybit's matching engine\" (24 §8.8); R09 §8 lists ATR trails and break-even as \"Emulated (client-side)\" vs 24 §8.8 rules 5–6 (\"rule-engine trails and breakeven … always write through\" the recorded stop) and §10.7: a stop a rule moved is the native stop; entries placed without an attached stop get one \"within a 2 s deadline\" (rule 2; reachable from rule actions that start algos), against C-2.6 (E33-D01 SC-5)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Probe 2 (F8)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r16",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-16",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Required copy: verbatim or revisable",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"recommends revised copy if the majority did not\" (ticket AC2) vs \"they ship verbatim\" (E35-S08 Context), \"the two required verbatim sentences\" (E35-D02), \"must not drift\" (E35-D05) and \"Verify the required verbatim copy is present and unaltered\" (E35-D06); SCR-084 marks its sentence \"(required)\", SCR-085's sentence is only in the mock",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Probes 1–2 (F3, F6)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r17",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-17",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "\"Estimated\": spelling and meaning",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"(estimated)\" (14 §0.5 item 2; CMP-227; C-2.13; 16 §1) vs \"Est.\" \"(or the full word 'Estimated' where space allows)\" (25 §1) vs \"(est.)\" (SCR-050 mock); \"estimated\" meaning modelled: SimulatedAction.estimated_price (24 §11.9), \"estimated R impact\" (US-RULE-009); RuleVocabulary carries estimated and confidence (22); CMP-227 confidence?: \"low\"|\"medium\"|\"high\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Probe 3 (F14)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r18",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-18",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Simulation results and coverage",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "results from GET /api/v1/admin/jobs/{jobId} (SCR-084 Data) vs GET /rules/{ruleId}/runs (22; E35-S08); \"202 with a job_id\" vs the schema's run_id (22); RuleSimulationResult has no covered-range or gap field while SCR-084's partial state and E35-S05 (\"name the missing windows explicitly\") need them; coverage exists at GET /market/data-coverage (25 §4)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Probe 1 (F2)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r19",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-19",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Built-in system rules",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"non-deletable, individually toggleable\" vs two \"cannot disable\" (24 §11.8); sys.daily_loss_lockout → halt_new_orders (24 §11.8) vs flatten, cancel and disable (US-RULE-012) vs E35-D03's register \"Daily-loss lockout will move the stop\"; \"sys.* vetoes are native code, not user rules\" (E35 threat model RE-D5) vs \"ordinary IR documents\" (E35-T05); unrealised_r (sys.time_stop) is not a 24 §7.2 name",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Probe 4 (F20)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r20",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-20",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Names and citations",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "the risk ids (front matter (4)); rules:arm_live (22, 24, 21 §10.1) vs rules.arm.live (21 §3.4.1; E35-S01) vs rules.arm_live (E35-S04; the flag, 24 §16.2); rules.loosen_stop is not among the 38 strings; rules_global_enabled vs the flag rules.enabled; 24 §11.5's box says \"E1–E13\", its table ends at E12; SCR-089 cites US-RULE-018 (RULE has 14 stories); SCR-085's Stories name US-RULE-013/014",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "citations only",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r21",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-21",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Re-arming after a kill or an error stop",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "B9 leaves kill_switched only by HUMAN_REARM guarded by rearm_permitted_and_elevated (B9.3; INV-B9-d), and the kill switch and the error budget (\"requires human re-arm\", 24 §11.7) both land there, DEMO rules included, vs 22 setRuleMode, for which \"the re-arm after a kill\" is an arm like any other (its action-budget note) and the step-up belongs to a live scope, and SC-12's DEMO default; re-enabling trading after a kill is Owner-only with step-up (04 §7.2.2 row 34) vs B9's \"permitted\" for a Manager re-arming their own DEMO rule",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Arm again… (F25, F28)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r22",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-22",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Asking first, and dry runs",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "RuleLimits.require_confirmation (\"armed rules may require a human click\", 24 §11.2; 22) queues a fire \"for human confirmation, TTL 60s\" (24 §11.5; B9 pending_confirmation: CONFIRMED, REJECTED, CONFIRM_TIMEOUT → record_skip_unconfirmed), \"surfaced to the UI\" (E35-S03), and every action has dry_run_only (24 §11.2; 22 RuleIr), vs no control for either in CMP-145, CMP-233 or SCR-085, no /rules* route or screen to confirm on (F11), and SC-9's shadow mode proposed as a new backend change",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "arming choice (F11)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r23",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "SC-23",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "The global rules switch",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 230
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "24 §11.7's \"Global\" row (\"rules_global_enabled feature flag; a single Panic control\") and the flag rules.enabled, \"Rule engine master switch\", \"Engine on/off\" under RULES_EDIT (24 §16.2, §16.3), vs no state for armed rules while it is off (B9 has no event for it), no chrome element that shows it and no copy apart from engine down (SCR-080; CA-19), though the owner \"wants … a visible arm/lock state at all times\" (10 §2)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1046
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "what stops a rule (F24)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 184
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "Source: docs/design/research/e35-rule-arming-trust.md §1 at 6c2a6f4a8. Illustrative content; labels such as (heuristic), DJ, PROPOSED as in the report.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  }
+ ],
+ "export": "E35/img/E35-D01-06-source-conflicts",
+ "notes": {
+  "source": "docs/design/research/e35-rule-arming-trust.md ## 1. table 1",
+  "columns": [
+   "#",
+   "Conflict",
+   "Sources",
+   "Why it matters"
+  ],
+  "widths": [
+   56,
+   230,
+   1046,
+   184
+  ],
+  "rows": 23
+ }
+}

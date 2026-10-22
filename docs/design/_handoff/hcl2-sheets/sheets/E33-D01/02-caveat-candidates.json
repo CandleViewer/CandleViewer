@@ -1,0 +1,2303 @@
+{
+ "board": {
+  "name": "E33-D01-02-caveat-candidates",
+  "w": 1600,
+  "x": 2000,
+  "y": 0,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "radius": "radius.card",
+   "pad": "space.inset.lg",
+   "gap": "space.stack.md",
+   "vs": "auto"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "header",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "What \"emulated\" tells a trader, and the binding caveat",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "subtitle",
+      "chars": "E33-D01 · report §3 and protocol §4 (Probe C) · research board — heuristic findings, no participants",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "s1-findings",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "findings-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "RQ2 findings F6–F9 (heuristic)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "sub",
+        "chars": "Screens: SCR-066–069 (caveat paragraph), SCR-076 (confirmation), SCR-070 and SCR-063 tabs (tags), CMP-103, 118.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1568
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "findings",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "card-f6",
+        "w": 383,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "F6 (heuristic, Med, Pri 0)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 359
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "\"app-managed\" and \"client-side\" name the wrong host: the algo runs on the server and outlives the app (13 §9), so a reader may close the app to stop a run that keeps trading — P2's exact pain, \"Not knowing whether a stop is exchange-native or app-managed (and therefore whether it survives the app dying)\". H2.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 359
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "card-f7",
+        "w": 383,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "F7 (heuristic, High — R02, R09, Pri 1)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 359
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "\"Bybit has no native iceberg\" (SCR-067 checklist) is false of Bybit's own app, which also lists TWAP and Chase Limit orders; \"Bybit has no OCO\" (SCR-069 checklist) is true of perpetuals only, its OCO being spot-only (R02 §2.1; R09 §6); the gap is in its API (24 §10). H2.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 359
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "card-f8",
+        "w": 383,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "F8 (heuristic, Med, Pri 1)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 359
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "\"emulated\" names a mechanism, not a consequence: a fair tag (H6), a poor explanation (H10); the caveat must say who runs it, what happens if that stops and what still protects.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 359
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "card-f9",
+        "w": 383,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "F9 (heuristic, High — 15, C-2.13, Pri 1)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 359
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "CMP-227 as the emulation badge would announce an order as \"estimated\", and \"iceberg\" already names an estimated detector; keep the claims apart (SC-7). H4, A1.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 359
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "s2-candidates",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "candidates-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Caveat candidates per strategy",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "sub",
+        "chars": "Proposed binding copy — owner approves by exception; confirmed by the restatement test (C-b).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1568
+       },
+       {
+        "t": "text",
+        "name": "body",
+        "chars": "A paragraph in every builder state and on the confirmation; \"no new slices\" or \"nothing refills\" holds once SC-1's gap closes (meanwhile: \"at most one more slice may already be on its way\").",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1568
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "s2-candidates",
+   "node": {
+    "t": "board",
+    "name": "candidates",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "radius": "radius.card",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.sunken",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "Strategy",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "A — the plan's wording",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 330
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "B — label",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 170
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "C — consequence first (proposed binding copy)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 866
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "s2-candidates/candidates",
+   "node": {
+    "t": "board",
+    "name": "rows-1",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r01",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "TWAP",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "\"algo pauses if the backend disconnects; native stops still protect\" (SCR-066 checklist)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 330
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"TWAP (app-managed)\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 170
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "CandleViewer runs this TWAP, not Bybit. It keeps running if you close this window. If CandleViewer's server stops or loses its connection to Bybit, no new slices are sent; a slice already at Bybit can still fill. Your stop-loss at Bybit keeps working.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 866
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r02",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "Iceberg",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "\"emulated client-side — Bybit's API has no native iceberg field\" (SCR-067 Type)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 330
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Iceberg (app-managed)\" (US-ALGO-005 NFR)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 170
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "CandleViewer runs this iceberg, not Bybit: Bybit only sees one small order at a time. It keeps running if you close this window. If CandleViewer's server stops or loses its connection to Bybit, nothing refills; the order already at Bybit can still fill. Your stop-loss at Bybit keeps working.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 866
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r03",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "Chase",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "\"(emulated)\" (CMP-103; SCR-068 has no caveat text)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 330
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Chase limit (app-managed)\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 170
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "CandleViewer moves this order, not Bybit. It keeps chasing if you close this window. If CandleViewer's server stops or loses its connection to Bybit, the order stays at its last price at Bybit and can still fill there. Your stop-loss at Bybit keeps working.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 866
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r04",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "OCO, entry pair (the binding OCO caveat, the builder's default use per SC-13)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "\"emulated — Bybit's API has no OCO\" (SCR-069 Type)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 330
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"OCO (app-managed)\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 170
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "CandleViewer links these two orders, not Bybit: as one fills, it shrinks or cancels the other. It keeps working if you close this window. If CandleViewer's server is down or has lost Bybit when one fills, the other stays live and can fill too, so you could hold both. Your position keeps its stop-loss at Bybit.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 866
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "s2-candidates",
+   "node": {
+    "t": "text",
+    "name": "stop-note",
+    "chars": "The last sentence of every C text is the unconditional stop sentence; until B8 reports protected for that symbol, the interim stop sentence replaces it (below).",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "s3-stop-sentence",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "stop-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "The stop sentence in each C text: the interim one until B8 reports protected, then the unconditional one",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "stop-sentences",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "card-interim",
+        "w": 760,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Interim stop sentence",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 736
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-until-b8-reports-protected",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "until B8 reports protected",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Until B8 reports protected, on a symbol whose position has no exchange-confirmed stop (a flat one included), the interim stop sentence replaces the unconditional one:",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 736
+         },
+         {
+          "t": "board",
+          "name": "copy-1",
+          "w": 736,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.sunken",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "CandleViewer places a stop-loss at Bybit as soon as the first part fills (its deadline is 2 s). If it cannot — the server is down, Bybit is unreachable, or Bybit refuses the stop — the filled part has no stop-loss until it can, and you are alerted.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 720
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "(24 §8.8 rules 2 and 3, §10.1 rule 3; B8 naked; 20 §11.1 rows F3 and F7)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 736
+         },
+         {
+          "t": "text",
+          "name": "note-2",
+          "chars": "The interim one is not restated in C-b: protocol A-d checks the belief it corrects (that a stop at Bybit already protects the first fill).",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 736
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "to-unconditional",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "once B8 reports protected",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "card-unconditional",
+        "w": 600,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Unconditional stop sentence",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 576
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-once-b8-reports-protected",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "once B8 reports protected",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Appears only once B8 reports protected for that symbol (or once SC-5's default lands and each child carries its stop)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 576
+         },
+         {
+          "t": "board",
+          "name": "copy-1",
+          "w": 576,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.sunken",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "Your stop-loss at Bybit keeps working.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 560
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "copy-label-2",
+          "chars": "OCO entry pair:",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 576
+         },
+         {
+          "t": "board",
+          "name": "copy-2",
+          "w": 576,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.sunken",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "Your position keeps its stop-loss at Bybit.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 560
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "C-b tests the unconditional sentence.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 576
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "s3-stop-sentence",
+   "node": {
+    "t": "board",
+    "name": "first-fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "first-fill-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "The interim sentence step by step: the stop's 2 s deadline and the three cases where it cannot be placed",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "first-fill-steps",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "ff-1-first-part-fills",
+        "w": 300,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "As soon as the first part fills",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 276
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "to-places-stop",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "its deadline is 2 s",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "ff-2-places-stop",
+        "w": 300,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "CandleViewer places a stop-loss at Bybit",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 276
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "to-cannot",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "ff-3-if-it-cannot",
+        "w": 300,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "If it cannot",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 276
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the server is down,",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 276
+         },
+         {
+          "t": "text",
+          "name": "line-2",
+          "chars": "Bybit is unreachable,",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 276
+         },
+         {
+          "t": "text",
+          "name": "line-3",
+          "chars": "or Bybit refuses the stop",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 276
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "to-no-stop",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "ff-4-no-stop-alerted",
+        "w": 300,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "The filled part has no stop-loss until it can, and you are alerted.",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 276
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "s4-other-copy",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "other-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "The OCO exit-pair variant, the tag and the help text",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "other",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "card-oco-exit",
+        "w": 760,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "OCO, exit pair",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 736
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-not-scored",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "not scored",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "(a variant for the exception path, only where native TP/SL cannot express it; outside the AC2 count, read aloud in protocol C-c, not scored)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 736
+         },
+         {
+          "t": "board",
+          "name": "copy-1",
+          "w": 736,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.sunken",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "CandleViewer links these two exits, not Bybit: as one fills, it shrinks or cancels the other. It keeps working if you close this window. If CandleViewer's server is down at that moment, the other exit stays at Bybit until it is back; it is reduce-only, so it cannot add to your position.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 720
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "tag-help",
+        "w": 796,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.app",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "frame-title",
+          "chars": "Tag on dense surfaces",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary",
+          "w": 772
+         },
+         {
+          "t": "board",
+          "name": "tag-row",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-emulated",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Emulated",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "text",
+            "name": "a11y-name",
+            "chars": "visible \"Emulated\", accessible name \"Emulated — run by CandleViewer, not Bybit\"",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary",
+            "w": 660
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "help-label",
+          "chars": "Help text:",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "help-copy",
+          "w": 772,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "Bybit's API has no TWAP, iceberg, chase or OCO order type, so CandleViewer's server places and manages the individual orders for you.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 756
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "where",
+          "chars": "SCR-070 and SCR-063 tabs (tags)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "s5-probe-c",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "probe-c-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Probe C — caveat, restatement test, disconnect and resume messages (RQ2, RQ3, 15 min)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "sub",
+        "chars": "C-b, C-d and C-e are scored per §5.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1568
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "s5-probe-c",
+   "node": {
+    "t": "board",
+    "name": "probe-c-caveat",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "c-a",
+      "w": 448,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "C-a (2 min): term cards one at a time",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 424
+       },
+       {
+        "t": "board",
+        "name": "term-card",
+        "w": 424,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy",
+          "chars": "term card",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 408
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "ask",
+        "chars": "\"This word appears next to an order type: 'TWAP (…)'. What does it tell you about that order?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 424
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "to-c-b",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "then",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c-b",
+      "w": 448,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "C-b (6 min): per strategy, its ST1 builder layout with one caveat card in place",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 424
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-scored-per-protocol-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "scored per protocol §5",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "builder-layout",
+        "w": 424,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy",
+          "chars": "ST1 builder layout",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 408
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "caveat-card",
+        "w": 424,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy",
+          "chars": "one caveat card in place",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 408
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "ask",
+        "chars": "\"Read this as you would on the builder. Now, in your own words: what does it mean for you — what could go wrong, and what still protects you?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 424
+       },
+       {
+        "t": "text",
+        "name": "then",
+        "chars": "One neutral prompt is allowed (\"Anything else?\"); then the second candidate, same question.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 424
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "to-c-c",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "then",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c-c",
+      "w": 448,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "C-c (1 min)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 424
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-preference",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "preference",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "ask",
+        "chars": "\"Which wording would you want on the builder, and why?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 424
+       },
+       {
+        "t": "text",
+        "name": "kept-apart",
+        "chars": "a preference, kept apart from the score.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 424
+       },
+       {
+        "t": "text",
+        "name": "oco-exit",
+        "chars": "OCO, exit pair (report §3): read aloud in C-c, not scored.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 424
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "s5-probe-c",
+   "node": {
+    "t": "board",
+    "name": "probe-c-messages",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "from-c-c",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "after C-c",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c-d",
+      "w": 448,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "C-d (3 min): one ST5 candidate per window text",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 424
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-scored-per-protocol-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "scored per protocol §5",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "st5-candidate",
+        "w": 424,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy",
+          "chars": "ST5 candidate",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 408
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "ask",
+        "chars": "\"In your own words: what is happening to your TWAP and your position, and what can you do?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 424
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "to-c-e",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "then",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c-e",
+      "w": 448,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "C-e (2 min): the ST5b card of each situation, after the C-d card of its window text",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 424
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-scored-per-protocol-5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "scored per protocol §5",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "st5b-card",
+        "w": 424,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "copy",
+          "chars": "ST5b card",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 408
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "ask",
+        "chars": "\"What happened while you were away, and is anything still waiting on you?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 424
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "to-c-f",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "then",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "c-f",
+      "w": 448,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "C-f (1 min, RQ1): the policy card",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 424
+       },
+       {
+        "t": "board",
+        "name": "policy-card",
+        "w": 424,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "opt-1",
+          "chars": "cancel this algo's working orders",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 408
+         },
+         {
+          "t": "text",
+          "name": "opt-2",
+          "chars": "freeze: send nothing new, leave what is working",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 408
+         },
+         {
+          "t": "text",
+          "name": "opt-3",
+          "chars": "cancel everything and alert me",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 408
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "ask",
+        "chars": "\"Choose per algo, or one setting? Which?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 424
+       },
+       {
+        "t": "text",
+        "name": "disagree",
+        "chars": "(the plan disagrees on whether this is a user choice)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 424
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "s6-restatement",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "restatement-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Restatement test (protocol §5 owns it and the choice rule; pass bar DJ, owner to confirm)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "sub",
+        "chars": "Pass and binding are decided by protocol §5 (at least half pass; no FB1, FB5 or FB6 fail; tie to fewer words; cold passes reported beside totals).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1568
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "k-cards",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "card-k1",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "K1 who runs it",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "CandleViewer, not Bybit.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "card-k2",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "K2 what stops it",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "It acts only while CandleViewer's backend runs and reaches Bybit.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "card-k3",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "K3 what still protects",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "The stop-loss held by Bybit.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "card-k4",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "K4 the strategy's consequence",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "(for a disconnect message, what its window text means).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "card-k5",
+        "w": 304,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "K5 for a resume message",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 280
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "What happened while away and what waits on you.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 280
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "Source: docs/design/research/e33-emulated-algo-trust.md §3 and docs/design/research/e33-d01-session-protocol.md §4 (Probe C) at 07c8b5be8. Illustrative content; labels such as (heuristic), DJ, PROPOSED as in the report.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  }
+ ],
+ "export": "docs/design/E33/img/E33-D01-02-caveat-candidates",
+ "notes": {
+  "sources": [
+   "docs/design/research/e33-emulated-algo-trust.md §3 (L213–274)",
+   "docs/design/research/e33-d01-session-protocol.md §4 Probe C (L156–166)"
+  ],
+  "sha": "07c8b5be8",
+  "worktree": "<#857 worktree>",
+  "must": "interim first-fill stop sentence beside the unconditional one (interim only until B8 reports protected); refused/delayed case and its copy as §3 words it: s3-stop-sentence/stop-sentences + first-fill",
+  "x": "2000 is nominal (board 02 of 8, 400 px apart); the renderer places it right of the existing root shapes",
+  "notes_md": "<hcl-worker-2 scratch>/sheets/E33-D01/02-caveat-candidates.md"
+ }
+}

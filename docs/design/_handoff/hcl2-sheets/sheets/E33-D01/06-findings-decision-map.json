@@ -1,0 +1,7081 @@
+{
+ "board": {
+  "name": "E33-D01-06-findings-decision-map",
+  "w": 1600,
+  "x": 10000,
+  "y": 0,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "radius": "radius.card",
+   "pad": "space.inset.lg",
+   "gap": "space.stack.md",
+   "vs": "auto"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "header",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Findings mapped to the decision map, defaults and transparency controls",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "subtitle",
+      "chars": "E33-D01 · report §8 and §9 · research board — heuristic findings, no participants",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "s8",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "s8-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "8. Findings register (all (heuristic)), prioritised",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "priority-label",
+      "chars": "Priority rule (DJ)",
+      "typo": "type.ui.label",
+      "color": "color.text.secondary"
+     },
+     {
+      "t": "board",
+      "name": "priority",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "pri-0",
+        "w": 760,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Pri 0",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 736
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "a misread or omission could leave an unintended, unprotected or unseen order at Bybit, or make a trader stop or trust an algo wrongly",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 736
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "pri-1",
+        "w": 390,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Pri 1",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 366
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "misleads setup, pre-submit or recovery",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 366
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "pri-2",
+        "w": 390,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Pri 2",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 366
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "clarity",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 366
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "map-legend",
+      "chars": "The two right-hand columns map each finding to §9: the §9a decision rows whose Basis cites it (named by a short phrase from their Decision, as in the decision map below) and the §9b scope or §9c control that cites it; — means nothing in that column's part of §9 cites it.",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "s8",
+   "node": {
+    "t": "board",
+    "name": "findings",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "radius": "radius.card",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.sunken",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "#",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Pri",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Finding (short)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Heuristic",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "Screens",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Confidence (basis)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "→ §9a decision rows citing it",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "→ §9b · §9c citing it",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 160
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "s8/findings",
+   "node": {
+    "t": "board",
+    "name": "rows-1",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r01",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F10",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Disconnect copy keyed to \"the backend\" is false in case 1, where algos keep running",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H2, H1, A2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–070, SCR-152",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Disconnect states",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r02",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F11",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Pauses\" hides orders still at Bybit; \"freeze\" is the kill switch's word",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H2, H4",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–070, SCR-072",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Med; High (word clash)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Disconnect states",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r03",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F12",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Native stops still protect\" fails for an entry child placed without a stop (SC-5)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H1, H5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–069",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — C-2.6 vs 24 §8.8",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Every builder",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T9",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r04",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F13",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Entry OCO: both legs can fill while CandleViewer is down; the plan's note names the app instead",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-069, SCR-070",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Med; High (misplaced note)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "SCR-069: entry pair first",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r05",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F5",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "A chase with market fallback goes to market past its own max distance (B7.3)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-068",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "SCR-068 bounds",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r06",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F6",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"App-managed\" and \"client-side\" invite \"closing the app stops it\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–070, CMP-103, CMP-118",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Med",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Every builder; \"N algos running on CandleViewer's server\" count",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T1, T11",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r07",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F15",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "One paused, three causes, three resume rules, no cause on the wire",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-070, CMP-118",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "SCR-070 rows",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r08",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F16",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Kill switch → failed; \"re-arm\" has no verb; \"arm\" means four things",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H4, H3",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-070, SCR-072",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "SCR-070 rows",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T6",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r09",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F17",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "The monitor lacks each run's orders at Bybit, the part that outlives CandleViewer",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-070, SCR-063",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Med",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "SCR-070 rows; \"N algos running on CandleViewer's server\" count",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T3",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r10",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F18",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "An iceberg slice cancelled outside the algo is refilled (B5.3)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H3, H5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-063 Working orders, SCR-070",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Algo child in Working orders",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "§9b Iceberg (E33-S02)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r11",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F29",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Closing a position leaves a running TWAP or chase sending orders (SC-19)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H5, H3",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-063, SCR-070, CMP-123",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Close and flatten",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T12",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r12",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F30",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "0",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "No builder keyboard path; the 20 s auto-cancel; \"Cancel\" beside \"Cancel TWAP\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "A3, H5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–069, SCR-076",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — 05, SCR-076",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Builder and confirmation keyboard path",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r13",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F2",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "A 200 ms chase takes half 24's amend budget, more than 20 §4.3's entry bucket",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-068",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — 24 §8.7, 20 §4.3",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Builder fields per §2; Pre-submit block per §6",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r14",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F3",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Iceberg visible size is a ±20 % range; the jitter equals our detector's tolerance",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H1, H2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-067",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Builder fields per §2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "s8/findings",
+   "node": {
+    "t": "board",
+    "name": "rows-2",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r15",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F7",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Bybit has no iceberg\" is false of Bybit's app; its OCO is spot-only",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-067, SCR-069",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — R02, R09",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Every builder",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r16",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F8",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Emulated\" names a mechanism; the caveat must carry K1–K4",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H6, H10",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–069",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Med",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Every builder",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r17",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F9",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "CMP-227 means \"estimated\"; \"iceberg\" also names a detector",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H4, A1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-067, SCR-069, SCR-070",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — 15, C-2.13",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Every builder",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r18",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F14",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Freeze vs dead-man's switch: no precedence, two thresholds",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-070",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r19",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F19",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "A countdown runs while nothing will happen",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-070",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Med",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r20",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F20",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Three \"cancel all\" meanings; CMP-123 would not stop a run",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H5, A3",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-070, CMP-123",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Bulk actions with per-item results",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r21",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F21",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Viewer controls absent vs disabled; who may adopt",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H1, H4",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-070",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Bulk actions with per-item results",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "T7",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r22",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F22",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Announcements have no grain; algo child fills and rejections would be assertive",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "A8, A10, A11",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–070",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — 05, E33-D05",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "A11y",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r23",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F23",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Kill switch, maintenance, account down and loss of Bybit do different things",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H4, H1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-070, SCR-072, SCR-148",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r24",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F25",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "A preview of exact slice times vs the default jitter",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H1, H2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Pre-submit block per §6",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r25",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F26",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "CMP-130 cannot price a schedule or a post-only iceberg; a chase's bound is exact",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–068",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — 15",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Pre-submit block per §6",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r26",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F27",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "A builder that requires one-click arm contradicts US-ORD-005",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H4, H5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–069, SCR-076",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — plan text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Pre-submit block per §6",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r27",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F28",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "A plain TP + SL belongs on the native path",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H5, H10",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-069",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — 24 §10.2, R02",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "SCR-069: entry pair first",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r28",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Intent is set, mechanics defaulted: one input plus read-outs",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H2, H7, H8",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–069",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Med",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Builder fields per §2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r29",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F4",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "A default participation cap plus the market sweep piles shortfall into one market order",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "H5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Med",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Builder fields per §2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "s8/findings",
+   "node": {
+    "t": "board",
+    "name": "rows-3",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r30",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "F24",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 40
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 32
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Algo screens missing from 14 §12.3's Demo/Live row",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 440
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "A6, A7",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 92
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "SCR-066–070",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 214
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "High — 14",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 186
+       },
+       {
+        "t": "text",
+        "name": "c7",
+        "chars": "Every builder",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 304
+       },
+       {
+        "t": "text",
+        "name": "c8",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 160
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "s9a",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "s9a-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "9. Implications (heuristic) — 9a, the decision map for E33-D02 (#934) and E33-D03 (#935)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "sub",
+        "chars": "Each §9a row, left to right: Basis (F-n = a §8 finding) → Pri, Decision and Consumer → Violates if.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1568
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "lanes-head",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "h-basis",
+        "chars": "Basis",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 280
+       },
+       {
+        "t": "text",
+        "name": "h-decision",
+        "chars": "Pri · Decision · Consumer",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 700
+       },
+       {
+        "t": "text",
+        "name": "h-violates",
+        "chars": "Violates if",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 560
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "s9a",
+   "node": {
+    "t": "board",
+    "name": "lanes-1",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "lane-01",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f6-f9",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F6–F9",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-f12",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F12",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-f24",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F24",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-5-sc-7",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-5–SC-7",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Every builder",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Every builder: the §3 paragraph in every state, the CMP-158 line, the \"Emulated\" tag, the DEMO/LIVE text badge",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D02, D03",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the caveat is a tooltip or says \"app-managed\", \"client-side\" or \"Bybit has no X\", the environment is colour-only, the builder shows §3's unconditional stop sentence (OCO's wording included) for a symbol B8 does not report protected, or the interim sentence presents the 2 s as guaranteed",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "lane-02",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f10",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F10",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-f11",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F11",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-1",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-8",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-8",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Disconnect states",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Disconnect states: three cases, §4 copy (case 2 on SCR-153, Cancel kept), \"freeze\" never naming the disconnect; auto-continue PROPOSED (OQ-4)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D02, D03",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "any surface says \"pauses if the backend disconnects\", a waiting state omits that orders at Bybit can fill, case 2 hides that the algos can still be cancelled, a builder can start an algo while the link is down, the empty state shows before the first server answer, a banner mixes a client clock with a server stamp, or a banner says the algos continue by themselves before E33-T03's arm lands (today: \"press Resume\")",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "lane-03",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F5",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-12",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-12",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "SCR-068 bounds",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "SCR-068 bounds: max distance required with its price; at-cap policy cancel or leave; market only at timeout, opt-in",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D02",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "market is reachable at the distance cap, or the distance can be empty",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "lane-04",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f13",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F13",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-f28",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F28",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-13",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-13",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "SCR-069: entry pair first",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "SCR-069: entry pair first; refusal with a route to native TP/SL; the entry-pair worst case",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D03",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "a plain TP + SL can be submitted as an emulated OCO, or \"both could fill\" is missing",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "s9a",
+   "node": {
+    "t": "board",
+    "name": "lanes-2",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "lane-05",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f15-f17",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F15–F17",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-3",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-8",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-8",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-18",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-18",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "SCR-070 rows",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "SCR-070 rows: state with cause (causes PROPOSED, SC-3, SC-14), At Bybit now, halt with who and when, \"Restart with remaining…\"",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D03",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "a paused row lacks its cause or omits that its order at Bybit can fill, a halt shows \"Failed\" or \"Resume\", a row hides its orders at Bybit, a Cancel or Pause can be pressed in a state that defers it, or, until E33-T03's B6 arms land, Resume on a TWAP paused past its window end hides that it sends the rest at market at once",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "lane-06",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f18",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F18",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Algo child in Working orders",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Algo child in Working orders: run link; Cancel asks at run level",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D03 (with E29-D02)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "a slice can be cancelled without saying the algo refills it (until OQ-8)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "lane-07",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f29",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F29",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-19",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-19",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Close and flatten",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Close and flatten: a flatten, or a close that leaves the position flat, by any path (CMP-123, SCR-063, E29-D01 D7, a lockout, an account's safety rule) cancels the running algos on that account and symbol, and its confirmation lists them (\"This also cancels TWAP a_12, which would otherwise keep buying\"); a partial close says \"TWAP a_12 keeps buying\"; cancel-and-flatten closes what the run filled, naming quantity, account and environment",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D03 (with E29-D02)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "a flatten or full close leaves an algo running on that symbol, or a confirmation omits the algos it cancels or keeps running",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "lane-08",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f30",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F30",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-9",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-9",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-a3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "A3",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-a5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "A5",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Builder and confirmation keyboard path",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-0",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.status.warning.subtle",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 0",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Builder and confirmation keyboard path: title → caveat → fields → Advanced (a disclosure whose collapsed summary states its values) → §6 block → CMP-158 → Submit, whose accessible name restates the run (\"Start TWAP: buy 2 BTC over 30 min, Main, DEMO\") and is described by the caveat; validation errors in a summary that takes focus; in the running modal the dismiss button reads \"Close\" (Esc only closes) and \"Cancel TWAP a_12…\" has its own confirm; the confirmation per SC-9 (focus on Cancel; Confirm ignores activation for 400 ms); SCR-070 row actions in the row menu (Shift+F10) plus Ctrl+Delete (E29-D01 AM-2 and E29-D01's OQ-3); a single-run Cancel confirms (SCR-066 checklist, where E29-D01 D7 cancels an order unasked); a halted row is acknowledged with Enter on \"Acknowledge\", focus then moving to the next row, else the panel header (DJ; the E29-D01 D9 grid); the TWAP Resume choice opens with focus on \"Keep the end time\", and Esc leaves the run paused",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D02, D03, D05",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "a builder field or row action needs a pointer, the confirmation times out while read, or one \"Cancel\" both dismisses and stops a run",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "s9a",
+   "node": {
+    "t": "board",
+    "name": "lanes-3",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "lane-09",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f1-f4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F1–F4",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-10",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-10",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-11",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-11",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Builder fields per §2",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-1",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 1",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Builder fields per §2: set vs default, an Advanced group stating its values",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D02, D03",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "a drawn control has no backing field, or a default's value is hidden",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "lane-10",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F2",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-f25-f27",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F25–F27",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-9",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-9",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-18",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-18",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Pre-submit block per §6",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-1",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 1",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Pre-submit block per §6; submit through SCR-076 (on live, D8), locked never blocking",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D02, D03",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the request figure is only a typical estimate or ignores the account's running algos, slippage is shown for a schedule, or a builder needs one-click arm",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "lane-11",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f20",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F20",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-f21",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F21",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-14",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-14",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sc-15",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SC-15",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-c-12-4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "C-12.4",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-sr-e33-13",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SR-E33-13",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-22-view-as",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "22 view-as",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Bulk actions with per-item results",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-1",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 1",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "Bulk actions with per-item results, naming the accounts in scope; a Manager acts only on their own runs on assigned accounts (SR-E33-13) and cannot resume or restart a run the Owner paused, its account's outage paused or risk control halted (M7, M9); viewer disabled with reason; under view-as every algo control disabled but a kill switch the viewed user may engage (SC-15); adopt per the E33 threat model's D7 (recommended: Owner-only)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D03",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the monitor uses CMP-123 or loops per row, a viewer sees enabled controls, a view-as session shows any algo control enabled but a kill switch the viewed user may engage, or a Manager's bulk action reaches an unassigned account or another user's run",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "lane-12",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F6",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-f17",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F17",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-scr-074",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "SCR-074",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "\"N algos running on CandleViewer's server\" count",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-1",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 1",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "While any run is active, the app chrome shows a persistent \"N algos running on CandleViewer's server\" count; sign-out restates it (\"3 algos keep running on CandleViewer's server after you sign out; 4 of their orders are at Bybit.\" [Sign out and keep them running] [Cancel all algos…]), and SCR-074's block says \"Cancel these 3 algos or let them finish before switching\", a paused algo still having orders at Bybit and blocking the switch (DJ); a browser close cannot be intercepted reliably, so the count, not a dialog, is the control",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D03, E33-S06",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the app can be closed or signed out of with nothing on screen saying that algos keep running",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "s9a",
+   "node": {
+    "t": "board",
+    "name": "lanes-4",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "lane-13",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "basis",
+        "o": {
+         "dir": "row",
+         "align": "start",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-f22",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "F22",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-a3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "A3",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-a5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "A5",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-a8-a11",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "A8–A11",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ],
+        "w": 220
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "decision",
+        "w": 640,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "A11y",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-pri-1",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.sunken",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Pri 1",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "A11y: §4 and §5 announcements, E29-D01 D9 keys and D13(a)–(e), the 300 px core, reduced motion; every state label checked in light, dark, greyscale and the three colour-vision simulations (E33-D05) and in the high-contrast theme (05 §5 item 6)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 616
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "Consumer: D03, D05",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 616
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "violates",
+        "w": 560,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "Violates if",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 536
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "a countdown is announced per tick, an update moves focus, an algo child's fill or rejection is announced, a state is told by colour alone, or the 300 px core drops State",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 536
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "s9b",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "s9b-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "9b. Config defaults for E33-T01 (#993) and E33-S01–S04 (E33-T03 writes them into 24 and 22)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "s9b",
+   "node": {
+    "t": "board",
+    "name": "defaults",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "radius": "radius.card",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.sunken",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "Scope",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Recommended values (R3-soak where §2 says so)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 1390
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "s9b/defaults",
+   "node": {
+    "t": "board",
+    "name": "rows-1",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r01",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "Framework (E33-T01)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "keep oms.algo.max_children=450, max_failures=3, resume_deadline_ms=5000, reconcile_interval_s=30, default_on_disconnect=freeze (no builder override in R3); AlgoRun and algo_run carry its working orders at Bybit (24 AlgoState.active_child_ids) and gain, PROPOSED (absent from 24 and 22 today), chart_state, paused_by, park, market-conversion and cancel causes, a resumes-by-itself flag, last_reconciled_at (re-sent at each reconcile), resumed_at and, for a TWAP, shortfall_qty and end_at_us (S5); a disconnect pause resumes after reconciliation (PROPOSED) unless the account went down or a bound no longer holds",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1390
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r02",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "TWAP (E33-S03)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "builder interval 60 s, slices derived, at most min(450, duration ÷ 1 s); randomize_time_pct=0.25, randomize_qty_pct=0.20; catch_up=\"proportional\"; max_participation_pct=None; order_type=\"limit\", limit_offset_ticks=0; abort_on_price_limit=False; window end as a TwapParams field (PROPOSED): a market sweep within price_limit or max_participation_pct (else the rest stays unfilled), and leave as limit when neither is set, the default (SR-E33-03); oms.algo.twap.min_slice_interval_ms=1000; oms.algo.twap.max_spread_ticks unset; a resume keeps the end time (default) or extends it through end_at (PROPOSED) within 24 h of the start, paused time included (SC-3; SR-E33-04)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1390
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r03",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "Iceberg (E33-S02)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "randomize_pct=0.2 (22's randomize_display_pct default becomes 20), refill_delay_ms=250, refill_jitter_ms=250, price_mode=\"fixed\", post_only=True, max_slices=450, so display_qty ≥ total ÷ 360; an outside cancel pauses the run (F18; PROPOSED, a B5 change)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1390
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r04",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "Chase (E33-S04)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "reprice_interval_ms=500 over the oms.algo.chase.min_reprice_interval_ms=200 floor; max_repricings = timeout_ms ÷ reprice_interval_ms (120) under oms.algo.chase.max_repricings_cap=500; timeout_ms=60000; on_timeout=\"cancel\"; a new at-max-distance policy (PROPOSED; cancel or leave, default cancel); mode=\"maker\", offset_ticks=0, reprice_threshold_ticks=1, post_only=True (off for taker); max_chase_ticks required",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1390
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r05",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "OCO (E33-S01)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 150
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "mode=\"reduce_other\"; reduce_only=True for exit pairs; cancel_on_position_flat=True; cancel_timeout_ms=2000 as the failure bound, the ≤300 ms p95 target unchanged",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 1390
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "s9c",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "s9c-title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "9c. Transparency controls for E33-X01 (#995)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       }
+      ]
+     },
+     {
+      "t": "text",
+      "name": "intro",
+      "chars": "The E33 threat model (E33-X01, Draft) names \"emulated algos stop when the backend stops\" as residual AS-D05 (§4.2, §11.2), beside AS-S02 (a stolen session starting a demo run): the Owner's acceptances are queued on #2701, and only the model's approval PR records them, not this memo. Its mitigation set is SR-E33-20, whose visibility item (§4.2 item 3) rests on this research (open input O-1); these UI controls spell that item out, each testable in E33-S05/S06 and E33-D07:",
+      "typo": "type.ui.body",
+      "color": "color.text.primary",
+      "w": 1568
+     },
+     {
+      "t": "board",
+      "name": "controls",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md",
+       "wrap": "wrap"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "t1",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T1",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-f6-f9",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.selected",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "F6–F9",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the §3 caveat in every builder state and the tag's accessible name (F6–F9)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t2",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T2",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-f10",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.selected",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "F10",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "tag-f11",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.selected",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "F11",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the §4 three-case copy and reconnect report (F10, F11)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t3",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T3",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-f17",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.selected",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "F17",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "orders at Bybit per run and in total (F17)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t4",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T4",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "\"Checked with Bybit\" age (M1)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t5",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T5",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-f15",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.selected",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "F15",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the pause cause and whether it resumes by itself (F15)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t6",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T6",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-f16",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.selected",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "F16",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "a halt with its cause, who and when (SC-8; SR-E33-19), restart only as a new confirmed run (F16)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t7",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T7",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-f21",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.selected",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "F21",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "orphans, adopt per D7 (F21)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t8",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T8",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "per-item bulk results",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t9",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T9",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-f12",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.selected",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "F12",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "each run's stop at Bybit (F12)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t10",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T10",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the §6 \"if\" lines before submit",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t11",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T11",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-f6",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.selected",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "F6",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "the running-algo count, restated at sign-out and on SCR-074's block (F6)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "t12",
+        "w": 380,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "T12",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 356
+         },
+         {
+          "t": "board",
+          "name": "tags",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.xs",
+           "wrap": "wrap"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "tag-f29",
+            "o": {
+             "dir": "row",
+             "align": "center",
+             "fill": "color.surface.selected",
+             "radius": "radius.badge",
+             "padX": "space.inset.sm",
+             "padY": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "F29",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "a close or flatten names the algos it cancels (F29)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 356
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "Source: docs/design/research/e33-emulated-algo-trust.md §8 and §9 at 07c8b5be8. Illustrative content; labels such as (heuristic), DJ, PROPOSED as in the report.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  }
+ ],
+ "export": "docs/design/E33/img/E33-D01-06-findings-decision-map",
+ "notes": {
+  "source": "docs/design/research/e33-emulated-algo-trust.md §8 (L474–L510) and §9 (L512–L552) at 07c8b5be8",
+  "generator": "<hcl-worker-2 scratch>/sheets/research/gen/E33-D01-06.py",
+  "notes": "<hcl-worker-2 scratch>/sheets/E33-D01/06-findings-decision-map.md",
+  "rows": {
+   "findings": 30,
+   "9a": 13,
+   "9b": 5,
+   "9c": 12
+  },
+  "uncited_findings": [
+   "F14",
+   "F19",
+   "F23"
+  ],
+  "chips": "rkit.tag local compositions, as on the other research boards (rkit is not edited here). The conventions prefer the DS tag where it exists: CMP-011 · Tag is in the offline inventory components.offline.json (source \"offline from d02/specs (approximate)\"; not checked against the live library in this offline round). Moving the chips to inst CMP-011 nodes is a kit-level decision, taken once for every research board (review finding 4), not on this board alone."
+ }
+}

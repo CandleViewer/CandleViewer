@@ -1,0 +1,2914 @@
+{
+ "board": {
+  "name": "E42-D03 / 21 SCR-120 / loading · 1280×800+2560×1440 · dark",
+  "w": 4304,
+  "h": 1760,
+  "x": 0,
+  "y": 7200,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.app",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-1280",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "vs": "fill",
+      "note": "NavRail | main | RightRail (the rail is absolute at x = NavRail + main)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "fill": "color.surface.selected",
+           "justify": "center",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 48,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); aria-current=page; named 'Admin'; DS-2 edge (D02:1003): color.text.tertiary at border.thick, inner; 6.29 / 6.81 / 12.54 against the rail, 3.98 / 4.86 / 7.94 against its fill (§15 L635, L638, L656)"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704,
+        "vs": "fill",
+        "note": "64 px (collapsed, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-209 RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 704,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 1040,
+        "y": 0,
+        "abs": true
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frame-1280/body",
+   "node": {
+    "t": "board",
+    "name": "main",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-087 band (composition)",
+      "o": {
+       "dir": "row",
+       "pad": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "◆ Admin area · Overview",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 944,
+      "h": 56,
+      "note": "role=\"region\" aria-label=\"Admin area\"; never focusable; the fill is not a carrier (§2 D2)"
+     },
+     {
+      "t": "rect",
+      "name": "CMP-087 rule (composition)",
+      "w": 944,
+      "h": 4,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "note": "6.29 / 6.81 / 12.54 against the page (§15 L635)"
+     },
+     {
+      "t": "board",
+      "name": "CMP-087 strip (composition)",
+      "o": {
+       "dir": "row",
+       "wrap": "wrap",
+       "gap": "space.inset.sm",
+       "padY": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "inst",
+        "name": "CMP-015 Skeleton · text ×1",
+        "set": "CMP-015 · Skeleton",
+        "props": {
+         "Shape": "text",
+         "Count": "1"
+        },
+        "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+       }
+      ],
+      "w": 944,
+      "note": "role=\"region\" aria-label=\"Needs your action\" (§4 L167), aria-busy=\"true\" until its reads answer (`15`:182); not live; OV-1: one CMP-015 text line and no visible title, as strip.title needs {n} and no read has returned it (L274 copy '—')"
+     },
+     {
+      "t": "board",
+      "name": "CMP-088 PageHeader (composition)",
+      "o": {
+       "dir": "row",
+       "padY": "space.inset.lg",
+       "justify": "space-between",
+       "align": "end"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "titles",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h1",
+          "chars": "Overview",
+          "typo": "type.ui.heading-md",
+          "color": "color.text.primary",
+          "note": "the h1: the skip-link target (CMP-085)"
+         },
+         {
+          "t": "text",
+          "name": "meta",
+          "chars": "All times UTC · as of 14:02:11",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary"
+         }
+        ]
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "SCR-120 bands",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "band · RIGHT NOW",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "RIGHT NOW",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "tiles",
+          "o": {
+           "dir": "row",
+           "gap": "space.stack.md",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Trading safety",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Trading safety",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-071/137/148 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               },
+               {
+                "t": "board",
+                "name": "CMP-012 Badge (composition) · LIVE",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.xs",
+                 "radius": "radius.badge",
+                 "stroke": "color.env.live",
+                 "strokeWidth": "border.hairline"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "word",
+                  "chars": "LIVE",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 16,
+                "note": "the serving environment (§1 L102), not a slice value: §6 L250 names 'Trading safety [env]', and D02 keeps [LIVE] over an unavailable trading slice (D02:282-283); part of the heading row"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 275,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 307,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/overview's trading slice (one call with the users, accounts, recorder and storage slices, D8 L121) and, for its Maintenance line, GET /admin/feature-flags (L261-262)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Health",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Health",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-143/144 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 274,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 306,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/health and WS system health (L267)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Recorder and storage",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Recorder and storage",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-140/142 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 275,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 307,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/overview's recorder and storage slices (one call, D8 L121; L266)",
+            "h": 109
+           }
+          ]
+         }
+        ],
+        "w": 944
+       },
+       {
+        "t": "board",
+        "name": "band · PEOPLE AND ACCESS",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "PEOPLE AND ACCESS",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "tiles",
+          "o": {
+           "dir": "row",
+           "gap": "space.stack.md",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Users",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Users",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-121 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 275,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 307,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/overview's users slice (one call, D8 L121) and GET /users/invites (L263)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Accounts and keys",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Accounts and keys",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-125 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 274,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 306,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/overview's accounts slice (one call, D8 L121), GET /admin/capacity and GET /admin/security/summary (L264)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Profiles and limits",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Profiles and limits",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-130/134 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 275,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 307,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); no read today (§6 L265: no slice, D8, CG-6): on today's main this tile shows tile.not_built at once (OV-6, board 26); drawn loading as L274's nine skeleton tiles; reads: no read yet (L265, CG-6)",
+            "h": 109
+           }
+          ]
+         }
+        ],
+        "w": 944
+       },
+       {
+        "t": "board",
+        "name": "band · EVIDENCE AND CONTROLS",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "EVIDENCE AND CONTROLS",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "tiles",
+          "o": {
+           "dir": "row",
+           "gap": "space.stack.md",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Audit",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Audit",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-135 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 275,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 307,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/audit?limit=3 (L268)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Security and backups",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Security and backups",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-137/146 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 274,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 306,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/security/summary and GET /admin/backups (L269)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Flags",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Flags",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-145 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 275,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 307,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/feature-flags (L270)",
+            "h": 109
+           }
+          ]
+         }
+        ],
+        "w": 944
+       }
+      ],
+      "w": 944,
+      "note": "three bands, each an h2, a band per row, space.3 gaps (§2 D1 L114, §6 L250-256); in band order the nine tile links are the page's Tab stops while loading (L285)"
+     },
+     {
+      "t": "board",
+      "name": "CMP-093 AuditActionTrigger (composition) · footer marker",
+      "o": {
+       "dir": "row",
+       "padT": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "text",
+        "chars": "Entering this area was recorded — Area entered (admin.area_entered)",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary"
+       }
+      ],
+      "w": 944,
+      "note": "footer.area_entered (D27): on SCR-120 the page's own /admin/* reads (GET /admin/overview, /admin/capacity, /admin/health, /admin/feature-flags, /admin/security/summary, /admin/backups) write admin.area_entered {route, reauth_age_s}; GET /admin/audit and GET /users/invites write none (§4 L201-204; §6 L260-270)"
+     }
+    ],
+    "w": 976,
+    "h": 704,
+    "vs": "fill",
+    "note": "<main>: band → rule → strip → PageHeader → route content → footer marker (§4 L165-171)"
+   }
+  },
+  {
+   "into": "frame-1280",
+   "node": {
+    "t": "board",
+    "name": "CMP-208 StatusBar (composition)",
+    "o": {
+     "dir": "row",
+     "padX": "space.inset.lg",
+     "justify": "space-between",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "board",
+      "name": "CMP-012 Badge (composition) · LIVE",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.xs",
+       "radius": "radius.badge",
+       "stroke": "color.env.live",
+       "strokeWidth": "border.hairline"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "word",
+        "chars": "LIVE",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 16
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48,
+    "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-2560",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 2560,
+    "h": 1440,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2560,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 2560,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 2560,
+      "h": 1344,
+      "vs": "fill",
+      "note": "NavRail | main | RightRail (the rail is absolute at x = NavRail + main)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "fill": "color.surface.selected",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.md",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Admin",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "note": "`15:696`: CMP-071 NavRail's item 'Admin' (an anatomy string, no §14 key; §4 L164-165 and E10:64 name the Owner's Admin entry; §4 L188 names CMP-061's menu item)"
+           }
+          ],
+          "w": 224,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); aria-current=page; DS-2 edge (D02:1003): color.text.tertiary at border.thick, inner; 6.29 / 6.81 / 12.54 against the rail, 3.98 / 4.86 / 7.94 against its fill (§15 L635, L638, L656)"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 239,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px (expanded, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-209 RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 2320,
+        "y": 0,
+        "abs": true
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frame-2560/body",
+   "node": {
+    "t": "board",
+    "name": "main",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-087 band (composition)",
+      "o": {
+       "dir": "row",
+       "pad": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "◆ Admin area · Overview",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 2048,
+      "h": 56,
+      "note": "role=\"region\" aria-label=\"Admin area\"; never focusable; the fill is not a carrier (§2 D2)"
+     },
+     {
+      "t": "rect",
+      "name": "CMP-087 rule (composition)",
+      "w": 2048,
+      "h": 4,
+      "o": {
+       "fill": "color.text.tertiary"
+      },
+      "note": "6.29 / 6.81 / 12.54 against the page (§15 L635)"
+     },
+     {
+      "t": "board",
+      "name": "CMP-087 strip (composition)",
+      "o": {
+       "dir": "row",
+       "wrap": "wrap",
+       "gap": "space.inset.sm",
+       "padY": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "inst",
+        "name": "CMP-015 Skeleton · text ×1",
+        "set": "CMP-015 · Skeleton",
+        "props": {
+         "Shape": "text",
+         "Count": "1"
+        },
+        "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+       }
+      ],
+      "w": 2048,
+      "note": "role=\"region\" aria-label=\"Needs your action\" (§4 L167), aria-busy=\"true\" until its reads answer (`15`:182); not live; OV-1: one CMP-015 text line and no visible title, as strip.title needs {n} and no read has returned it (L274 copy '—')"
+     },
+     {
+      "t": "board",
+      "name": "CMP-088 PageHeader (composition)",
+      "o": {
+       "dir": "row",
+       "padY": "space.inset.lg",
+       "justify": "space-between",
+       "align": "end"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "titles",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h1",
+          "chars": "Overview",
+          "typo": "type.ui.heading-md",
+          "color": "color.text.primary",
+          "note": "the h1: the skip-link target (CMP-085)"
+         },
+         {
+          "t": "text",
+          "name": "meta",
+          "chars": "All times UTC · as of 14:02:11",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary"
+         }
+        ]
+       }
+      ],
+      "w": 2048
+     },
+     {
+      "t": "board",
+      "name": "SCR-120 bands",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "band · RIGHT NOW",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "RIGHT NOW",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "tiles",
+          "o": {
+           "dir": "row",
+           "gap": "space.stack.md",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Trading safety",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Trading safety",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-071/137/148 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               },
+               {
+                "t": "board",
+                "name": "CMP-012 Badge (composition) · LIVE",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.xs",
+                 "radius": "radius.badge",
+                 "stroke": "color.env.live",
+                 "strokeWidth": "border.hairline"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "word",
+                  "chars": "LIVE",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 16,
+                "note": "the serving environment (§1 L102), not a slice value: §6 L250 names 'Trading safety [env]', and D02 keeps [LIVE] over an unavailable trading slice (D02:282-283); part of the heading row"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 643,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 675,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/overview's trading slice (one call with the users, accounts, recorder and storage slices, D8 L121) and, for its Maintenance line, GET /admin/feature-flags (L261-262)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Health",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Health",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-143/144 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 642,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 674,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/health and WS system health (L267)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Recorder and storage",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Recorder and storage",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-140/142 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 643,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 675,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/overview's recorder and storage slices (one call, D8 L121; L266)",
+            "h": 109
+           }
+          ]
+         }
+        ],
+        "w": 2048
+       },
+       {
+        "t": "board",
+        "name": "band · PEOPLE AND ACCESS",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "PEOPLE AND ACCESS",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "tiles",
+          "o": {
+           "dir": "row",
+           "gap": "space.stack.md",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Users",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Users",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-121 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 643,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 675,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/overview's users slice (one call, D8 L121) and GET /users/invites (L263)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Accounts and keys",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Accounts and keys",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-125 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 642,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 674,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/overview's accounts slice (one call, D8 L121), GET /admin/capacity and GET /admin/security/summary (L264)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Profiles and limits",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Profiles and limits",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-130/134 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 643,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 675,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); no read today (§6 L265: no slice, D8, CG-6): on today's main this tile shows tile.not_built at once (OV-6, board 26); drawn loading as L274's nine skeleton tiles; reads: no read yet (L265, CG-6)",
+            "h": 109
+           }
+          ]
+         }
+        ],
+        "w": 2048
+       },
+       {
+        "t": "board",
+        "name": "band · EVIDENCE AND CONTROLS",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "h2",
+          "chars": "EVIDENCE AND CONTROLS",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "tiles",
+          "o": {
+           "dir": "row",
+           "gap": "space.stack.md",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Audit",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Audit",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-135 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 643,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 675,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/audit?limit=3 (L268)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Security and backups",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Security and backups",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-137/146 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 642,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 674,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/security/summary and GET /admin/backups (L269)",
+            "h": 109
+           },
+           {
+            "t": "board",
+            "name": "CMP-178 SystemHealthTile (composition) · Flags",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "header",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "CMP-021 Link (composition) · heading",
+                "chars": "Flags",
+                "typo": "type.ui.heading-sm",
+                "color": "color.text.link",
+                "note": "the tile's heading, a CMP-021 link to SCR-145 (§6 L252-254); the region's aria-labelledby target; a Tab stop while loading (L285)"
+               }
+              ]
+             },
+             {
+              "t": "inst",
+              "name": "CMP-015 Skeleton · text ×3",
+              "set": "CMP-015 · Skeleton",
+              "props": {
+               "Shape": "text",
+               "Count": "3"
+              },
+              "w": 643,
+              "h": 52,
+              "note": "aria-hidden=\"true\" (CMP-015, `15`:182); static two-tone under reduced motion, no shimmer (§6 L274, §13 L590-591, `15`:183, D02:697)"
+             }
+            ],
+            "w": 675,
+            "note": "role=\"region\" aria-labelledby its heading, the CMP-021 link, kept while loading (§6 L252-253; Appendix A L878); aria-busy=\"true\" until its reads answer, each line on its own (D8; `15`:182); CMP-178 state \"loading\" (L877): no value, \"as of\", chip or Retry yet (D02 D4, §1 L91); it resolves on its own (D8, L121); reads: GET /admin/feature-flags (L270)",
+            "h": 109
+           }
+          ]
+         }
+        ],
+        "w": 2048
+       }
+      ],
+      "w": 2048,
+      "note": "three bands, each an h2, a band per row, space.3 gaps (§2 D1 L114, §6 L250-256); in band order the nine tile links are the page's Tab stops while loading (L285)"
+     },
+     {
+      "t": "board",
+      "name": "CMP-093 AuditActionTrigger (composition) · footer marker",
+      "o": {
+       "dir": "row",
+       "padT": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "text",
+        "chars": "Entering this area was recorded — Area entered (admin.area_entered)",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary"
+       }
+      ],
+      "w": 2048,
+      "note": "footer.area_entered (D27): on SCR-120 the page's own /admin/* reads (GET /admin/overview, /admin/capacity, /admin/health, /admin/feature-flags, /admin/security/summary, /admin/backups) write admin.area_entered {route, reauth_age_s}; GET /admin/audit and GET /users/invites write none (§4 L201-204; §6 L260-270)"
+     }
+    ],
+    "w": 2080,
+    "h": 1344,
+    "vs": "fill",
+    "note": "<main>: band → rule → strip → PageHeader → route content → footer marker (§4 L165-171)"
+   }
+  },
+  {
+   "into": "frame-2560",
+   "node": {
+    "t": "board",
+    "name": "CMP-208 StatusBar (composition)",
+    "o": {
+     "dir": "row",
+     "padX": "space.inset.lg",
+     "justify": "space-between",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "board",
+      "name": "CMP-012 Badge (composition) · LIVE",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.xs",
+       "radius": "radius.badge",
+       "stroke": "color.env.live",
+       "strokeWidth": "border.hairline"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "word",
+        "chars": "LIVE",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 16
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 2560,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 2560,
+    "h": 48,
+    "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "21 SCR-120 · OV-1 loading (the first read)",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Source",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "spec 782eb0e4d §6 L274 OV-1 · board 21 scr120-loading (§0 L62) · anatomy §6 L250-256 · keys L285-287 · events L288-290 · `14` SCR-120 item 2, per-tile loading (§17 L688).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "OV-1 loading, the first read (L274): every SCR-120 read is in flight; each tile resolves on its own (D8, L121). Shell: (b), no grace (SH-6, L186): the band label only.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Nine CMP-178 tiles keep their heading links (Trading safety its LIVE badge) over a CMP-015 text skeleton; the strip is a one-line skeleton; static two-tone under reduced motion. No tile value, 'as of', chip or Retry yet; the header keeps §1's meta.asof (L103, L105), open before the first answer (copy gap).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Reads (L260-270): GET /admin/{overview (slices), capacity, health, audit?limit=3, feature-flags, security/summary, backups}, WS system, GET /users/invites. Profiles has none yet (L265, CG-6): drawn loading as the target; today tile.not_built at once (D8; OV-6, board 26).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "D8 (L121) · D1 (L114): 3 × 3, a band per row, space.3 gaps · D2 (L115), Q4 (L149): DS-1 band, DS-2 rule and nav edge (D02:1003) · Q1 (L146) · D27 (L140) · D02 D4, D7, D16-D18 (§1 L91-94).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Roles",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Owner only (§6 L288): without admin:read /admin is SCR-155 (§4 L201). The Admin entry's placement is pending Q5 (L150, board 08).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Keyboard path and focus",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Skip link (to the h1, §4 L171) → TopBar → NavRail → the nine tile links in band order → RightRail → StatusBar (§4 L198-199; L285): no strip item or tile control yet, so no stop for them. Focus never moves on a route change (§4 L200): no ring.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "None (L274): skeletons aria-hidden; the tiles and the strip aria-busy until their reads answer (`15`:182). Route announcer: 'Admin · Overview · LIVE', polite, once (§4 L199). 'as of' never (§13 L583).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys used",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "band.label (route Overview), meta.asof (proposed), footer.area_entered; announce.route. OV-1 adds none (L274 '—'). Anatomy: Overview, the band h2s and tile headings (L250-252), Admin (`15`:696). §1 data: basiltt, LIVE, 14:02:11.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-08",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Tokens",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "colour: border.subtle, env.live, surface.app, surface.hover, surface.raised, surface.selected, text.link, text.primary, text.secondary, text.tertiary; type: ui.body, ui.body-strong, ui.caption, ui.heading-md, ui.heading-sm; space: inset.lg, inset.md, inset.sm, inset.xs, stack.md, stack.sm; size: icon; radius: badge, card, control; other: border.hairline, border.thick",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Dark (§15): band 14.35 · rule 6.29 · h1 16.06 · meta, footer 6.29 · h2 9.85 (L634-638) · heading link 6.66 (L641) · LIVE border on raised 4.42 (L637) · Admin edge 3.98 vs its fill (L656, UI 3.0) · skeletons decorative (D02:802).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "fallback: color.surface.skeleton and motion.shimmer (`15`:183) pending a token request (no D03 DS row routes them): the CMP-015 bones keep the library's fill",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "token: §2 D1's space.3 gaps bind the semantic alias space.stack.md (12 px)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "fallback: color.surface.admin-tint pending DS-1: the band binds color.surface.raised (§2 D2, §15 L624)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "fallback: color.border.admin pending DS-2: the 4 px rule binds color.text.tertiary (§2 D2, §15 L625)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-7",
+        "chars": "fallback: icon/admin (◆) pending DS-5: drawn as the text glyph ◆ of band.label (L597)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-8",
+        "chars": "fallback: color.border.admin pending DS-2: the current Admin entry's edge binds color.text.tertiary (D02:1003)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-09",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Analytics and audit events",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "admin.area_entered {route, reauth_age_s}: each /admin/* read, allowed; none from /admin/audit or /users/* (§4 L201-203); the footer names it (D27). admin.audit_read: the first read of /admin/audit?limit=3 (L268). Analytics: admin.overview_viewed, no transport yet (CG-25).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-10",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Budget",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "≤800 ms · each tile its own state · 30 s re-read (§6 L248-249); never block on the slowest subsystem (`14:2316`). Server: 300 ms per slice, concurrent, 5 s cache, trading never cached; partial = 200 (L260).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E42-D03 · board 21 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E42/img/E42-D03-21-scr120-loading.png",
+ "notes": {
+  "sources": [
+   "spec §6 L274 (OV-1: board 21 scr120-loading; when 'the first read'; renders 'nine CMP-015 tiles and a one-line strip skeleton (static two-tone under reduced motion); each tile resolves on its own'; copy '—'; announcement none)",
+   "spec §6 L246-249 (purpose and budget; 'Boards 21–28 carry \"≤800 ms · each tile its own state · 30 s re-read\"'), L250-256 (anatomy, tile widths, one height per band), L258-270 (the reads per tile), L285-287 (keys), L288-290 (RBAC, events)",
+   "spec §0 L46-49 (board name, footer), L62 (SCR-120 boards), L72-73 (the render list); §1 L91-94 (D02 D4, D7, D16-D18), L99-108 (worked example; clocks)",
+   "spec §2 D1 L114, D2 L115, D8 L121, D27 L140; §3 Q1 L146, Q4 L149, Q5 L150",
+   "spec §4 L164-177 (anatomy, carriers), L186 (SH-6), L196 (strip items from the tile reads), L198-204 (focus, RBAC, audit)",
+   "spec §13 L583 (SCR-120 keys and live regions), L590-591 (reduced motion: static skeletons); §14 L597, L599-600 (band.label, meta.asof (proposed), footer.area_entered, announce.route); §15 L620, L628, L634-638, L641, L655-656",
+   "spec §17 L688 (SCR-120 item 2: per-tile loading, OV-1, board 21); §20 L800 (CG-6), L819 (CG-25); Appendix A L877-880 (CMP-178 state 'loading', A11y, Storybook Loading)",
+   "D02:119 (clocks: the UTC suffix shown once in the page header), :121 (color.surface.selected the current nav entry), :130 (D4: never a zero, a blank or a green state for a value not received), :133 (D7: each tile its own skeleton), :278 (band 'Admin area · Overview'), :282-283 (Trading safety [LIVE] over Unavailable), :311 (board 04's loading frame), :697 (the skeleton a static two-tone fill), :802 (skeleton blocks decorative, not gated), :1003 (DS-2: the rule and the current nav entry's edge), :1169 (DS-1..DS-5 handed to D03)",
+   "`15` at e69a9200c: :178-183 (CMP-015 Skeleton: shapes and count, aria-hidden under the parent's aria-busy, color.surface.skeleton and motion.shimmer), :232 (CMP-021), :501-506 (CMP-050), :690 (CMP-070 color.surface.app), :696 (CMP-071's items, Admin), :699, :708 (chrome surfaces), :893 (CMP-093), :2043 (CMP-178 SystemHealthTile), :2411, :2416, :2421",
+   "E10:20-21 (E10-D02 greyscale, no bespoke colour), :64 (the Admin entry, owner role only)",
+   "E05-D02 CMP-015 build record (scratch, (the lane's d02 scratch)/builds-1545.json): variant properties Shape and Count; text/1 240 x 12.01, text/3 240 x 52.03; bones color.surface.selected, radius.badge (live checks only)",
+   "boards 06 and 11 (gen_06.py, gen_11.py): the local fixups this board repeats; board 09 (gen_09.py): SCR-120 in the (b) shell; boards 26 and 27 (gen_26.py, gen_27.py): the SCR-120 footer note; reviews r1 of boards 01-10 and 21 (review/*.md)",
+   "spec §6 L244-290 (SCR-120 tiles)",
+   "spec §15 L615-667 (tokens, contrast, colour vision)",
+   "spec §4 L162-204 (CMP-087 anatomy, SH-1..SH-8, focus, audit)",
+   "spec §14 L593-613 (copy deck)",
+   "spec §2 D1 L114 (layout at both sizes)",
+   "spec §0 L42-82 (boards, names, footer, build order)"
+  ],
+  "copy_keys": [
+   "band.label",
+   "meta.asof",
+   "footer.area_entered",
+   "announce.route"
+  ],
+  "copy_gaps": [
+   "The band's {route} for /admin is 'Overview', SCR-120's PageHeader (§6 L250; D02:278 draws 'Admin area · Overview'); §4 L166 fills it only for Users.",
+   "The PageHeader meta draws meta.asof with §1's 14:02:11, as every frame does (§1 L99-103; L105-106: 'as of' once in the page header meta). OV-1 (L274) changes only the tiles and the strip, and no source says what the page's 'as of' reads before the first answer: open for the spec owner (D02 D4, §1 L91, D02:130: 'Never a zero, a blank or a green state for a value not received'). Proposed to the spec owner: until the first answer the meta reads 'All times UTC' alone (a new §14 key, e.g. meta.utc, proposed; D02:119 puts only the UTC suffix in the page header: 'the suffix shown once in the page header'), then meta.asof.",
+   "The strip draws no visible title while loading (see Deviations): §14 has no count-less 'Needs your action' key; the region's name is §4 L167's anatomy string.",
+   "'Overview': an anatomy string, not a §14 key (spec L250)",
+   "'Trading safety': an anatomy string, not a §14 key (spec L250)",
+   "'Health': an anatomy string, not a §14 key (spec L251)",
+   "'Recorder and storage': an anatomy string, not a §14 key (spec L251)",
+   "'RIGHT NOW': an anatomy string, not a §14 key (spec L250)",
+   "'Users': an anatomy string, not a §14 key (spec L251)",
+   "'Accounts and keys': an anatomy string, not a §14 key (spec L251)",
+   "'Profiles and limits': an anatomy string, not a §14 key (spec L251)",
+   "'PEOPLE AND ACCESS': an anatomy string, not a §14 key (spec L251)",
+   "'Audit': an anatomy string, not a §14 key (spec L252)",
+   "'Security and backups': an anatomy string, not a §14 key (spec L252)",
+   "'Flags': an anatomy string, not a §14 key (spec L252)",
+   "'EVIDENCE AND CONTROLS': an anatomy string, not a §14 key (spec L251)",
+   "'Admin': an anatomy string, not a §14 key (`15:696`: CMP-071 NavRail's items '… / Replay / Admin'; the Owner's Admin entry §4 L164-165, E10:64; spec L188 names the CMP-061 menu's 'Admin'); drawn at 2560 only (the expanded rail, D1 L114)"
+  ],
+  "live_checks": [
+   "CMP-015 instances: 20 in all (per frame nine 'CMP-015 Skeleton · text ×3', one per tile, and one 'CMP-015 Skeleton · text ×1' in the strip). Set 'CMP-015 · Skeleton', props {Shape: text, Count: 3 | 1}, no text layers. The E05-D02 build record ((the lane's d02 scratch)/builds-1545.json, CMP-015) gives the set's variant properties as Shape and Count only (State is not a property); if the live set has more properties the subset still resolves. Confirm both variants resolve before rendering.",
+   "CMP-015 geometry: the record measures text/3 at 240 x 52.03 (lines 240 / 240 / 144 at a 20.01 px pitch, root fixed 240, hug height, align stretch) and text/1 at 240 x 12.01. The tile skeletons are resized to 275 x 52 (1280) and 643 x 52 (2560): the first two lines must fill the width and the third keep its short length; if an instance stays 240 wide, set its root's horizontal sizing to fix and resize it again. The strip skeleton keeps its library size (no resize).",
+   "CMP-015 bones: color.surface.skeleton and motion.shimmer (`15`:183) are not in token-sync.json; read back the token the bones bind (the E05-D02 build bound color.surface.selected: 1.41 on the tiles' raised and 1.58 on the page in dark, measured from token-sync.json; decorative and aria-hidden, D02:802), never a raw value; if they read back another token, name it in the skeleton fallback line.",
+   "Tiles: each band's three tiles share one height, 109 / 109 / 109 px (space.inset.lg + the 16.8 px heading row + space.stack.sm + 52 + space.inset.lg, kit estimates); after touchTexts + relayout the skeleton must end inside its card (the tile is fixed height and does not clip).",
+   "Fit: <main> content est. 651 of 704 px at 1280 and 651 of 1344 px at 2560: after relayout the footer marker must end inside both frames (no page scroll in OV-1).",
+   "Strip: the 'CMP-087 strip (composition)' region holds only its CMP-015 text x1 instance (no title text) at both sizes; the strip box stays 944 / 2048 px wide.",
+   "Admin entry: in both frames the current entry shows the 2 px color.text.tertiary inner edge (DS-2, D02:1003) around its color.surface.selected fill, inside its 48 x 32 / 224 x 32 px box, and the ◆ mark and the 'Admin' label keep their places.",
+   "Height: the board is 1760 px, set by the annotation column (est. 1626 px) plus the root padding and 102 px of slack for text-metric error (H_SLACK 96, capped at the page pitch less 40, 1760); the 1440 px frame needs 1472; after touchTexts + relayout the column's footer 'page E42-D03 · board 21 · r1' must end inside it (if it does not, drop the Budget block's 'Server: …' sentence, which repeats L260; review r1).",
+   "◆ (U+25C6) also leads band.label's text: confirm Inter draws it there, as for the Admin entry mark.",
+   "inst 'CMP-015 Skeleton · text ×3': set 'CMP-015 · Skeleton', props {\"Shape\": \"text\", \"Count\": \"3\"}, text layers []: verify the set, the variant and the layer names live before rendering",
+   "glyph ◆ (U+25C6): confirm Inter draws it; else Penpot substitutes a fallback font",
+   "inst 'CMP-015 Skeleton · text ×1': set 'CMP-015 · Skeleton', props {\"Shape\": \"text\", \"Count\": \"1\"}, text layers []: verify the set, the variant and the layer names live before rendering",
+   "root name: after the first section call the root must read back exactly as the sheet's board.name, or later calls create a duplicate root"
+  ],
+  "deviations": [
+   "Reading of L274 'nine CMP-015 tiles': each tile keeps its CMP-178 card on CMP-050 (color.surface.raised, radius.card, space.inset.lg), its heading link (the region's label) and, on Trading safety, its LIVE badge, and shows CMP-015 as its body: §6 L252-254 make each tile 'CMP-178 on CMP-050 … with CMP-015 … by state', Appendix A gives CMP-178 a 'loading' state and a Loading story (L877, L880) and labels the region by its heading (L878). The heading is the tile's label, not data, so the nine regions stay named and the nine tile links stay the page's Tab stops (L285). D02's low-fi frame drew nine bars without headings (D02:311, D02 board 04).",
+   "Each tile body is one CMP-015 Shape=text Count=3 instance at the tile's inner width (275 / 643 px) and the library's 52 px height, as e42kit.tile() draws a loading tile (kit choice: no source gives the skeleton's shape or count per tile); a band's three tiles share one height (L256), 109 px by the kit's estimate.",
+   "The strip (L274 'a one-line strip skeleton'): the CMP-087 strip region keeps its 944 / 2048 px box (§4 L173-174, D1) and holds one CMP-015 Shape=text Count=1 instance at its library size (240 x 12; kit choice: no source gives its width) and no visible title: strip.title 'Needs your action ({n})' needs {n}, which no read has returned, and OV-1's copy is '—' (L274); the region keeps its name 'Needs your action' (§4 L167) as its aria-label.",
+   "The Trading-safety tile's LIVE badge is drawn while loading: it is the serving environment (§1 L102), not a slice value; §6 L250 names 'Trading safety [env]' and D02 keeps [LIVE] over an unavailable trading slice (D02:282-283).",
+   "Profiles and limits has no read today (L265: no slice, D8, CG-6), so on today's main it would show tile.not_built at once (OV-6, board 26); it is drawn loading because L274 draws nine skeleton tiles (the target, where every tile has a read). Spec gap for the owner: OV-1 could say so.",
+   "Shell: the band's right end is empty, the (b) shell with no grace (SH-6, L186; Q1 L146: '(b) is what the server does'), as board 09 draws SCR-120; the (a) badge and the (b) grace line are boards 01-05's. The PageHeader has no primary action: §6 L250 names none for SCR-120.",
+   "No focus ring is drawn: OV-1 has no focus moment (focus never moves on a route change, §4 L200).",
+   "No greyscale or deuteranopia render: board 21 is not in §0's render list (L72-73).",
+   "Links: the nine tile headings (CMP-021, the CMP-178 region's heading, §6 L252-253) are colour + position: each sits alone at its tile's top, and §15 F3 (L655) underlines headings in high contrast only; OV-1 draws no inline link (cvsheet v1 texts take no textDecoration; boards 01 and 22 draw a 1 px rect where an underline is needed).",
+   "Local helper skeleton(): every CMP-015 instance sets the props Shape and Count only. e42kit.skeleton() also sets State=default, but the E05-D02 build of 'CMP-015 · Skeleton' has Shape and Count as its only variant properties (State does not vary, so it is no property; build record d02/builds-1545.json), and cvsheet resolves a variant by every prop it is given, so a State prop would fail the live lookup; the subset still matches the offline inventory's variants (validator) and the live set either way. Board E08-D07 05 does the same.",
+   "Local helper (kit-level, review r1 of board 06 finding 6, of board 02 finding 5 and of board 21 finding 5): kit compositions take the build notes' '<CMP id> <Name> (composition)' names: 'CMP-209 RightRail (composition)' (kit: 'RightRail (composition)'; 15:2416), 'CMP-093 AuditActionTrigger (composition) · footer marker' (kit: 'footer marker (CMP-093)'; 15:893), 'CMP-087 rule (composition)' (kit: 'CMP-087 rule (4 px)'; the 4 px stays in its h and note), 'CMP-178 SystemHealthTile (composition) · <tile>' (kit: 'CMP-178 tile (composition) · <tile>'; 15:2043, as boards 22-27 and 94 name it) and, in every tile, 'CMP-021 Link (composition) · heading' (kit: 'heading'; 15:232, §6 L253). The other kit boards keep the kit's names until e42kit renames them.",
+   "TopBar, NavRail, RightRail and StatusBar content other than the Admin entry, the env badges and the owner's name is drawn as neutral placeholders (E10-D02 owns it; §1 L97 gives only the sizes). Chrome surface (kit-level, review r1 finding 5, correcting e42kit's 'no source names a chrome surface'): `15` names color.surface.raised for CMP-071 NavRail and CMP-072 TopBar (15:699, :708) and CMP-209 RightRail (15:2421) and color.surface.sunken for CMP-208 StatusBar (15:2411). The boards draw all four on color.surface.app, CMP-070 AppShell's surface (15:690), with color.border.subtle dividers, as boards 01-11 do: D03 takes only E10's sizes (§1 L97), E10-D02 is greyscale with no bespoke colour (E10:20-21), §15 measures no chrome pair, and one chrome keeps the 103 boards comparable. Binding `15`'s surfaces is a kit change for every board (routed to the kit owner).",
+   "Buttons, chips, badges, banners, fields, tiles, tables, menus and dialogs are compositions from tokens: admin controls are 32 px (size.control.comfortable, §4 L176) while the library CMP-001 binds size.control.height (24 px in the file's compact density), and cvsheet v1 cannot set an instance's glyph, fill or border.",
+   "Local helper strip_skeleton(): e42kit.shell() has no loading strip, so it is built with items=() (the kit draws strip.none) and its 'CMP-087 strip (composition)' node is replaced by the OV-1 strip region holding the one-line skeleton; drop_strip_none() then removes the strip.none key the kit recorded and sync_tokens() the tokens only that line bound (type.ui.label in the frames), as nothing draws them; the column's labels bind type.ui.label again.",
+   "Local helper (kit-level, review r1 finding 1, as on boards 06 and 11): e42kit's _admin_entry marks the current Admin entry by its color.surface.selected fill alone, 1.58 / 1.40 against the rail (color.surface.app; measured from token-sync.json), under AC-5's UI bar of 3.0 (§15 L620). DS-2 binds color.border.admin to 'the 4 px rule and the current nav entry's edge' (D02:1003), taken over unchanged (spec L17-18; D02:1169), so this board draws the edge: color.text.tertiary (DS-2's fallback) at border.thick (D02 gives no width), inner; 6.29 / 6.81 / 12.54 against the rail (§15 L635, L638), 3.98 / 4.86 / 7.94 against the fill (§15 L656: F4's FAIL is the 4.5 text bar; an edge is UI, bar 3.0). The kit owner carries it into e42kit and regenerates the boards that draw the fill alone.",
+   "Local helper kit_fixups() (kit-level, review r1 of board 21 finding 6a): the footer marker's note names SCR-120's own /admin/* reads (board 26's wording with the two further reads this board's tiles wait on, GET /admin/security/summary and /admin/backups, §6 L264, L269, as board 27 lists them), where e42kit's footer_marker() note names SCR-121-123's strip reads (§4 L201-204: only /admin/* API routes write admin.area_entered; /users/* and /admin/audit write none).",
+   "Board names carry Penpot's normalised ' / ' form (E42-D03 / 31 SCR-121 / populated · …) so cvsheet's find-or-create root matches on every section call; §0 L46-47 writes 'SCR-121/populated'."
+  ],
+  "fallbacks": [
+   "fallback: color.surface.skeleton and motion.shimmer (`15`:183) pending a token request (no D03 DS row routes them): the CMP-015 bones keep the library's fill",
+   "token: §2 D1's space.3 gaps bind the semantic alias space.stack.md (12 px)",
+   "fallback: color.surface.admin-tint pending DS-1: the band binds color.surface.raised (§2 D2, §15 L624)",
+   "fallback: color.border.admin pending DS-2: the 4 px rule binds color.text.tertiary (§2 D2, §15 L625)",
+   "fallback: icon/admin (◆) pending DS-5: drawn as the text glyph ◆ of band.label (L597)",
+   "fallback: color.border.admin pending DS-2: the current Admin entry's edge binds color.text.tertiary (D02:1003)"
+  ],
+  "tokens": [
+   "type.ui.heading-sm",
+   "color.text.link",
+   "type.ui.caption",
+   "color.text.primary",
+   "space.inset.xs",
+   "radius.badge",
+   "color.env.live",
+   "border.hairline",
+   "space.inset.sm",
+   "color.surface.raised",
+   "radius.card",
+   "space.inset.lg",
+   "space.stack.sm",
+   "space.stack.md",
+   "color.text.secondary",
+   "radius.control",
+   "color.surface.hover",
+   "space.inset.md",
+   "type.ui.body",
+   "size.icon",
+   "color.border.subtle",
+   "color.surface.app",
+   "type.ui.body-strong",
+   "color.text.tertiary",
+   "type.ui.heading-md",
+   "color.surface.selected",
+   "border.thick",
+   "type.ui.label",
+   "space.stack.xs"
+  ]
+ }
+}

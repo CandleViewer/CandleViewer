@@ -1,0 +1,5 @@
+# Made on each machine (run/compact_all.sh, BRIEF-render.md); compact/ holds that machine's absolute paths.
+compact/
+scratch/
+STOP
+shapes-since-reload

@@ -1,0 +1,4044 @@
+{
+ "board": {
+  "name": "E42-D03 / 18 SCR-149 / outcome-pending · 1280×800+2560×1440 · dark",
+  "w": 4304,
+  "h": 1760,
+  "x": 9200,
+  "y": 5400,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.app",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-1280",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "vs": "fill",
+      "note": "NavRail | main | RightRail (the rail is absolute at x = NavRail + main)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "fill": "color.surface.selected",
+           "justify": "center",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 48,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); aria-current=page; named 'Admin'; DS-2's 2 px edge (D02:1003) marks it beyond its fill"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704,
+        "vs": "fill",
+        "note": "64 px (collapsed, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 704,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 1040,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.app",
+         "clip": true,
+         "justify": "end"
+        },
+        "w": 976,
+        "h": 704,
+        "vs": "fill",
+        "note": "<main>: band → rule → strip → PageHeader → route content → footer marker (§4 L165-171), scrolled to the page's end: the column is justified to <main>'s end and clipped at the top",
+        "kids": [
+         {
+          "t": "board",
+          "name": "page (scrolled to its end)",
+          "o": {
+           "dir": "column",
+           "align": "start"
+          },
+          "w": 944,
+          "note": "the route content in DOM order; scrolled to its end: its top is above <main>'s clip edge",
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-087 band (composition)",
+            "o": {
+             "dir": "row",
+             "pad": "space.inset.lg",
+             "justify": "space-between",
+             "fill": "color.surface.raised"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "◆ Admin area · Users",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "re-auth badge (CMP-035 text pattern)",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.badge",
+               "fill": "color.surface.hover"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "text",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "seg-1",
+                  "chars": "Admin unlocked ·",
+                  "typo": "type.ui.body",
+                  "color": "color.text.secondary"
+                 },
+                 {
+                  "t": "text",
+                  "name": "seg-2",
+                  "chars": "12:40",
+                  "typo": "type.num.base",
+                  "color": "color.text.secondary"
+                 },
+                 {
+                  "t": "text",
+                  "name": "seg-3",
+                  "chars": "left",
+                  "typo": "type.ui.body",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "note": "copy: \"Admin unlocked · 12:40 left\""
+               }
+              ],
+              "h": 24,
+              "note": "non-interactive, never focusable, not live; SH-1: no announcement"
+             }
+            ],
+            "w": 944,
+            "h": 56,
+            "note": "role=\"region\" aria-label=\"Admin area\"; never focusable; the fill is not a carrier (§2 D2)"
+           },
+           {
+            "t": "rect",
+            "name": "CMP-087 rule (4 px)",
+            "w": 944,
+            "h": 4,
+            "o": {
+             "fill": "color.text.tertiary"
+            },
+            "note": "6.29 / 6.81 / 12.54 against the page (§15 L635)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-087 strip (composition)",
+            "o": {
+             "dir": "row",
+             "wrap": "wrap",
+             "gap": "space.inset.sm",
+             "padY": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "none",
+              "chars": "Nothing needs your action",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 944,
+            "note": "role=\"region\" \"Needs your action\"; a list; not live (the shell announces once)"
+           },
+           {
+            "t": "board",
+            "name": "CMP-088 PageHeader (composition)",
+            "o": {
+             "dir": "row",
+             "padY": "space.inset.lg",
+             "justify": "space-between",
+             "align": "end"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "titles",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "h1",
+                "chars": "alex",
+                "typo": "type.ui.heading-md",
+                "color": "color.text.primary",
+                "note": "the h1: the skip-link target (CMP-085)"
+               },
+               {
+                "t": "text",
+                "name": "meta",
+                "chars": "manager · Active · All times UTC · as of 14:02:11",
+                "typo": "type.ui.caption",
+                "color": "color.text.tertiary"
+               }
+              ]
+             }
+            ],
+            "w": 944
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frame-1280/body/main/page (scrolled to its end)",
+   "node": {
+    "t": "board",
+    "name": "SCR-122 content (composition)",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-065 FormSection (composition) · Identity",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Identity",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-036 KeyValueRow (composition) · Username",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.sm",
+         "height": "space.row.height.comfortable"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Username",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 120
+         },
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "alex",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "CMP-036 KeyValueRow (composition) · E-mail",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.sm",
+         "height": "space.row.height.comfortable"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "E-mail",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 120
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · alex's e-mail (User.email)",
+          "w": 200,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "CMP-036 KeyValueRow (composition) · Display name",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.sm",
+         "height": "space.row.height.comfortable"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Display name",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 120
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · alex's display name (User.display_name)",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "CMP-036 KeyValueRow (composition) · Last sign-in",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.sm",
+         "height": "space.row.height.comfortable"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Last sign-in",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 120
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · alex's last sign-in (User.last_login_at, UTC)",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "h": 32
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "CMP-065 FormSection (composition) · Role",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Role",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-040 FormField (composition) · role",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-009 Select (composition) · role",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "fill": "color.surface.sunken",
+           "height": "size.control.comfortable",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "justify": "space-between"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "trigger-value",
+            "chars": "viewer",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 200,
+          "h": 32,
+          "note": "the draft value, kept (D5): whether the re-sent PATCH applied it is what the re-read tells (saved before: manager); options owner, manager, viewer from RoleName until GET /roles mounts (§8 L373)"
+         },
+         {
+          "t": "text",
+          "name": "description",
+          "chars": "alex becomes a viewer: trading and rule arming stop on their next request; grants stay for a later re-promote.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 912,
+          "note": "the select's aria-describedby while the change is in the draft (UD-3 L386; D02:711)"
+         }
+        ]
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "CMP-065 FormSection (composition) · Accounts",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Accounts",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-105 AccountMultiSelect (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "grant · sub_001",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.lg",
+           "height": "space.row.height.comfortable"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "account",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-005 Checkbox (composition) · sub_001",
+              "o": {
+               "dir": "row",
+               "justify": "center",
+               "radius": "radius.control",
+               "fill": "color.action.primary.default"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "check",
+                "icon": "check",
+                "color": "color.text.on-action",
+                "size": "size.icon"
+               }
+              ],
+              "w": 16,
+              "h": 16,
+              "note": "checked: the grant is held; the account name is its label, so the 32 px row is the target"
+             },
+             {
+              "t": "text",
+              "name": "name",
+              "chars": "sub_001",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "CMP-012 Badge (composition) · LIVE",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.xs",
+               "radius": "radius.badge",
+               "stroke": "color.env.live",
+               "strokeWidth": "border.hairline"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "word",
+                "chars": "LIVE",
+                "typo": "type.ui.caption",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 16
+             }
+            ],
+            "w": 200
+           },
+           {
+            "t": "board",
+            "name": "CMP-009 Select (composition) · level sub_001",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "fill": "color.surface.sunken",
+             "height": "size.control.comfortable",
+             "stroke": "color.text.tertiary",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner",
+             "justify": "space-between"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "trigger-value",
+              "chars": "trade",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "chevron",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "w": 120,
+            "h": 32,
+            "note": "AccountAccessGrant.level: read or trade"
+           },
+           {
+            "t": "board",
+            "name": "CMP-021 Link (composition) · profile BTC scalp",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "BTC scalp",
+              "typo": "type.ui.body",
+              "color": "color.text.link"
+             },
+             {
+              "t": "rect",
+              "name": "underline",
+              "w": 61,
+              "h": 1,
+              "o": {
+               "fill": "color.text.link"
+              }
+             }
+            ],
+            "note": "the account's default profile → SCR-131; underlined, not colour-only"
+           }
+          ],
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "grant · sub_002",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.lg",
+           "height": "space.row.height.comfortable"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "account",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-005 Checkbox (composition) · sub_002",
+              "o": {
+               "dir": "row",
+               "justify": "center",
+               "radius": "radius.control",
+               "fill": "color.action.primary.default"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "check",
+                "icon": "check",
+                "color": "color.text.on-action",
+                "size": "size.icon"
+               }
+              ],
+              "w": 16,
+              "h": 16,
+              "note": "checked: the grant is held; the account name is its label, so the 32 px row is the target"
+             },
+             {
+              "t": "text",
+              "name": "name",
+              "chars": "sub_002",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · sub_002 env badge (environment not in §1 or UD-2)",
+              "w": 34,
+              "h": 16,
+              "o": {
+               "radius": "radius.badge",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 200
+           },
+           {
+            "t": "board",
+            "name": "CMP-009 Select (composition) · level sub_002",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "fill": "color.surface.sunken",
+             "height": "size.control.comfortable",
+             "stroke": "color.text.tertiary",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner",
+             "justify": "space-between"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "trigger-value",
+              "chars": "trade",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "chevron",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "w": 120,
+            "h": 32,
+            "note": "AccountAccessGrant.level: read or trade"
+           },
+           {
+            "t": "board",
+            "name": "CMP-021 Link (composition) · profile Default",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "text",
+              "chars": "Default",
+              "typo": "type.ui.body",
+              "color": "color.text.link"
+             },
+             {
+              "t": "rect",
+              "name": "underline",
+              "w": 43,
+              "h": 1,
+              "o": {
+               "fill": "color.text.link"
+              }
+             }
+            ],
+            "note": "the account's default profile → SCR-131; underlined, not colour-only"
+           }
+          ],
+          "h": 32
+         }
+        ],
+        "note": "a labelled multi-select with a reviewable summary list (§8 L407); one row per grant"
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "CMP-065 FormSection (composition) · Effective permissions",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Effective permissions",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "per account · sub_001",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "account · sub_001",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "sub_001",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-012 Badge (composition) · LIVE",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.env.live",
+             "strokeWidth": "border.hairline"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "LIVE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16
+           }
+          ]
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · sub_001 five inputs with source and mount state (boards 43, 97, 100)",
+          "w": 912,
+          "h": 64,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "per account · sub_002",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "account · sub_002",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "sub_002",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · sub_002 env badge (environment not in §1 or UD-2)",
+            "w": 34,
+            "h": 16,
+            "o": {
+             "radius": "radius.badge",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · sub_002 five inputs with source and mount state (boards 43, 97, 100)",
+          "w": 912,
+          "h": 64,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "CMP-065 FormSection (composition) · Limits",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Limits",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "rect",
+        "name": "placeholder · limits: CMP-138 meters and plain caps (boards 43, 55)",
+        "w": 912,
+        "h": 96,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "CMP-065 FormSection (composition) · Sessions",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Sessions",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "session row",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.lg",
+         "justify": "space-between",
+         "height": "space.row.height.comfortable"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · session: device, IP, since, last seen (board 56)",
+          "w": 360,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Sign out this session",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.button.paddingX",
+           "radius": "radius.control",
+           "height": "size.control.comfortable",
+           "justify": "center",
+           "fill": "color.action.secondary.default"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Sign out this session",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 154,
+          "h": 32
+         }
+        ],
+        "w": 912,
+        "h": 32
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "CMP-065 FormSection (composition) · Two-factor",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Two-factor",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "state",
+        "chars": "Two-factor: on",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "CMP-065 FormSection (composition) · Recent changes",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Recent changes",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-173 rows",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.lg"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-173 compact row 1 (the audit read, board 43)",
+          "w": 912,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-173 compact row 2 (the audit read, board 43)",
+          "w": 912,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-173 compact row 3 (the audit read, board 43)",
+          "w": 912,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "placeholder · audited-read marker (admin.audit_read; §14 has no label)",
+        "w": 280,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "CMP-065 FormSection (composition) · Danger zone",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Danger zone",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "actions",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Reset two-factor",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.button.paddingX",
+           "radius": "radius.control",
+           "height": "size.control.comfortable",
+           "justify": "center",
+           "fill": "color.status.danger.subtle",
+           "stroke": "color.status.danger.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Reset two-factor",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 130,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Disable",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.button.paddingX",
+           "radius": "radius.control",
+           "height": "size.control.comfortable",
+           "justify": "center",
+           "fill": "color.status.danger.subtle",
+           "stroke": "color.status.danger.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Disable",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Delete",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.button.paddingX",
+           "radius": "radius.control",
+           "height": "size.control.comfortable",
+           "justify": "center",
+           "fill": "color.status.danger.subtle",
+           "stroke": "color.status.danger.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Delete",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 66,
+          "h": 32
+         }
+        ]
+       }
+      ],
+      "w": 944
+     },
+     {
+      "t": "board",
+      "name": "Save bar (composition)",
+      "o": {
+       "dir": "row",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "justify": "space-between"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "status",
+        "chars": "Checking whether alex's change was saved…",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "the change summary's role=\"status\" (polite), §8 L407, §13 L585: save.checking, announced once when the re-send gets no answer and the re-read starts (RA-8 L230); never 'Not saved'"
+       },
+       {
+        "t": "board",
+        "name": "focus-ring",
+        "o": {
+         "dir": "row",
+         "pad": "space.inset.xs",
+         "radius": "radius.card",
+         "stroke": "color.focus.ring",
+         "strokeWidth": "border.focus",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Save",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.button.paddingX",
+           "radius": "radius.control",
+           "height": "size.control.comfortable",
+           "justify": "center",
+           "fill": "color.action.primary.default"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Save",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.on-action"
+           }
+          ],
+          "w": 57,
+          "h": 32
+         }
+        ],
+        "note": "focus-visible (CMP-039) on Save: the gate returned focus to the control that opened it (§13 L586); nothing is re-sent on the client's own (Y:11304-11307)"
+       }
+      ],
+      "w": 944,
+      "note": "RA-8: the status reads save.checking while GET /users/{userId} runs (§8 L371); the draft stays"
+     }
+    ],
+    "w": 944,
+    "note": "one column of fieldsets (D1); scrolled to its end (scrolled_to_end())"
+   }
+  },
+  {
+   "into": "frame-1280/body/main/page (scrolled to its end)",
+   "node": {
+    "t": "board",
+    "name": "footer marker (CMP-093)",
+    "o": {
+     "dir": "row",
+     "padT": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "text",
+      "chars": "Entering this area was recorded — Area entered (admin.area_entered)",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary"
+     }
+    ],
+    "w": 944,
+    "note": "admin.area_entered comes from the strip's /admin/* reads on SCR-121-123 (§4 L201-204)"
+   }
+  },
+  {
+   "into": "frame-1280",
+   "node": {
+    "t": "board",
+    "name": "CMP-208 StatusBar (composition)",
+    "o": {
+     "dir": "row",
+     "padX": "space.inset.lg",
+     "justify": "space-between",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "board",
+      "name": "CMP-012 Badge (composition) · LIVE",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.xs",
+       "radius": "radius.badge",
+       "stroke": "color.env.live",
+       "strokeWidth": "border.hairline"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "word",
+        "chars": "LIVE",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 16
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48,
+    "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-2560",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 2560,
+    "h": 1440,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2560,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 2560,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 2560,
+      "h": 1344,
+      "vs": "fill",
+      "note": "NavRail | main | RightRail (the rail is absolute at x = NavRail + main)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "fill": "color.surface.selected",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.md",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Admin",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 224,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); aria-current=page; DS-2's 2 px edge (D02:1003) marks it beyond its fill"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 239,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px (expanded, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 2320,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 2080,
+        "h": 1344,
+        "vs": "fill",
+        "note": "<main>: band → rule → strip → PageHeader → route content → footer marker (§4 L165-171)",
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-087 band (composition)",
+          "o": {
+           "dir": "row",
+           "pad": "space.inset.lg",
+           "justify": "space-between",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "◆ Admin area · Users",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "re-auth badge (CMP-035 text pattern)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.badge",
+             "fill": "color.surface.hover"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "text",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "seg-1",
+                "chars": "Admin unlocked ·",
+                "typo": "type.ui.body",
+                "color": "color.text.secondary"
+               },
+               {
+                "t": "text",
+                "name": "seg-2",
+                "chars": "12:40",
+                "typo": "type.num.base",
+                "color": "color.text.secondary"
+               },
+               {
+                "t": "text",
+                "name": "seg-3",
+                "chars": "left",
+                "typo": "type.ui.body",
+                "color": "color.text.secondary"
+               }
+              ],
+              "note": "copy: \"Admin unlocked · 12:40 left\""
+             }
+            ],
+            "h": 24,
+            "note": "non-interactive, never focusable, not live; SH-1: no announcement"
+           }
+          ],
+          "w": 2048,
+          "h": 56,
+          "note": "role=\"region\" aria-label=\"Admin area\"; never focusable; the fill is not a carrier (§2 D2)"
+         },
+         {
+          "t": "rect",
+          "name": "CMP-087 rule (4 px)",
+          "w": 2048,
+          "h": 4,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "note": "6.29 / 6.81 / 12.54 against the page (§15 L635)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-087 strip (composition)",
+          "o": {
+           "dir": "row",
+           "wrap": "wrap",
+           "gap": "space.inset.sm",
+           "padY": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "none",
+            "chars": "Nothing needs your action",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 2048,
+          "note": "role=\"region\" \"Needs your action\"; a list; not live (the shell announces once)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-088 PageHeader (composition)",
+          "o": {
+           "dir": "row",
+           "padY": "space.inset.lg",
+           "justify": "space-between",
+           "align": "end"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "titles",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h1",
+              "chars": "alex",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "note": "the h1: the skip-link target (CMP-085)"
+             },
+             {
+              "t": "text",
+              "name": "meta",
+              "chars": "manager · Active · All times UTC · as of 14:02:11",
+              "typo": "type.ui.caption",
+              "color": "color.text.tertiary"
+             }
+            ]
+           }
+          ],
+          "w": 2048
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frame-2560/body/main",
+   "node": {
+    "t": "board",
+    "name": "SCR-122 content (composition)",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "columns",
+      "o": {
+       "dir": "row",
+       "gap": "space.stack.md",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left column",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-065 FormSection (composition) · Identity",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "legend",
+            "chars": "Identity",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-036 KeyValueRow (composition) · Username",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "height": "space.row.height.comfortable"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Username",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary",
+              "w": 120
+             },
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "alex",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "CMP-036 KeyValueRow (composition) · E-mail",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "height": "space.row.height.comfortable"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "E-mail",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary",
+              "w": 120
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · alex's e-mail (User.email)",
+              "w": 200,
+              "h": 12,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "CMP-036 KeyValueRow (composition) · Display name",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "height": "space.row.height.comfortable"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Display name",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary",
+              "w": 120
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · alex's display name (User.display_name)",
+              "w": 160,
+              "h": 12,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "CMP-036 KeyValueRow (composition) · Last sign-in",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "height": "space.row.height.comfortable"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Last sign-in",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary",
+              "w": 120
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · alex's last sign-in (User.last_login_at, UTC)",
+              "w": 120,
+              "h": 12,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "h": 32
+           }
+          ],
+          "w": 1018
+         },
+         {
+          "t": "board",
+          "name": "CMP-065 FormSection (composition) · Role",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "legend",
+            "chars": "Role",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-040 FormField (composition) · role",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-009 Select (composition) · role",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "fill": "color.surface.sunken",
+               "height": "size.control.comfortable",
+               "stroke": "color.text.tertiary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "justify": "space-between"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "trigger-value",
+                "chars": "viewer",
+                "typo": "type.ui.body",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "icon",
+                "name": "chevron",
+                "icon": "chevron-down",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 200,
+              "h": 32,
+              "note": "the draft value, kept (D5): whether the re-sent PATCH applied it is what the re-read tells (saved before: manager); options owner, manager, viewer from RoleName until GET /roles mounts (§8 L373)"
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "alex becomes a viewer: trading and rule arming stop on their next request; grants stay for a later re-promote.",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary",
+              "w": 986,
+              "note": "the select's aria-describedby while the change is in the draft (UD-3 L386; D02:711)"
+             }
+            ]
+           }
+          ],
+          "w": 1018
+         },
+         {
+          "t": "board",
+          "name": "CMP-065 FormSection (composition) · Accounts",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "legend",
+            "chars": "Accounts",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-105 AccountMultiSelect (composition)",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "grant · sub_001",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.lg",
+               "height": "space.row.height.comfortable"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "account",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "CMP-005 Checkbox (composition) · sub_001",
+                  "o": {
+                   "dir": "row",
+                   "justify": "center",
+                   "radius": "radius.control",
+                   "fill": "color.action.primary.default"
+                  },
+                  "kids": [
+                   {
+                    "t": "icon",
+                    "name": "check",
+                    "icon": "check",
+                    "color": "color.text.on-action",
+                    "size": "size.icon"
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16,
+                  "note": "checked: the grant is held; the account name is its label, so the 32 px row is the target"
+                 },
+                 {
+                  "t": "text",
+                  "name": "name",
+                  "chars": "sub_001",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "board",
+                  "name": "CMP-012 Badge (composition) · LIVE",
+                  "o": {
+                   "dir": "row",
+                   "padX": "space.inset.xs",
+                   "radius": "radius.badge",
+                   "stroke": "color.env.live",
+                   "strokeWidth": "border.hairline"
+                  },
+                  "kids": [
+                   {
+                    "t": "text",
+                    "name": "word",
+                    "chars": "LIVE",
+                    "typo": "type.ui.caption",
+                    "color": "color.text.primary"
+                   }
+                  ],
+                  "h": 16
+                 }
+                ],
+                "w": 200
+               },
+               {
+                "t": "board",
+                "name": "CMP-009 Select (composition) · level sub_001",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.inset.sm",
+                 "radius": "radius.control",
+                 "fill": "color.surface.sunken",
+                 "height": "size.control.comfortable",
+                 "stroke": "color.text.tertiary",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "justify": "space-between"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "trigger-value",
+                  "chars": "trade",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.secondary",
+                  "size": "size.icon"
+                 }
+                ],
+                "w": 120,
+                "h": 32,
+                "note": "AccountAccessGrant.level: read or trade"
+               },
+               {
+                "t": "board",
+                "name": "CMP-021 Link (composition) · profile BTC scalp",
+                "o": {
+                 "dir": "column",
+                 "align": "start"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "text",
+                  "chars": "BTC scalp",
+                  "typo": "type.ui.body",
+                  "color": "color.text.link"
+                 },
+                 {
+                  "t": "rect",
+                  "name": "underline",
+                  "w": 61,
+                  "h": 1,
+                  "o": {
+                   "fill": "color.text.link"
+                  }
+                 }
+                ],
+                "note": "the account's default profile → SCR-131; underlined, not colour-only"
+               }
+              ],
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "grant · sub_002",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.lg",
+               "height": "space.row.height.comfortable"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "account",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "board",
+                  "name": "CMP-005 Checkbox (composition) · sub_002",
+                  "o": {
+                   "dir": "row",
+                   "justify": "center",
+                   "radius": "radius.control",
+                   "fill": "color.action.primary.default"
+                  },
+                  "kids": [
+                   {
+                    "t": "icon",
+                    "name": "check",
+                    "icon": "check",
+                    "color": "color.text.on-action",
+                    "size": "size.icon"
+                   }
+                  ],
+                  "w": 16,
+                  "h": 16,
+                  "note": "checked: the grant is held; the account name is its label, so the 32 px row is the target"
+                 },
+                 {
+                  "t": "text",
+                  "name": "name",
+                  "chars": "sub_002",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "rect",
+                  "name": "placeholder · sub_002 env badge (environment not in §1 or UD-2)",
+                  "w": 34,
+                  "h": 16,
+                  "o": {
+                   "radius": "radius.badge",
+                   "fill": "color.surface.hover"
+                  }
+                 }
+                ],
+                "w": 200
+               },
+               {
+                "t": "board",
+                "name": "CMP-009 Select (composition) · level sub_002",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.inset.sm",
+                 "radius": "radius.control",
+                 "fill": "color.surface.sunken",
+                 "height": "size.control.comfortable",
+                 "stroke": "color.text.tertiary",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "justify": "space-between"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "trigger-value",
+                  "chars": "trade",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.secondary",
+                  "size": "size.icon"
+                 }
+                ],
+                "w": 120,
+                "h": 32,
+                "note": "AccountAccessGrant.level: read or trade"
+               },
+               {
+                "t": "board",
+                "name": "CMP-021 Link (composition) · profile Default",
+                "o": {
+                 "dir": "column",
+                 "align": "start"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "text",
+                  "chars": "Default",
+                  "typo": "type.ui.body",
+                  "color": "color.text.link"
+                 },
+                 {
+                  "t": "rect",
+                  "name": "underline",
+                  "w": 43,
+                  "h": 1,
+                  "o": {
+                   "fill": "color.text.link"
+                  }
+                 }
+                ],
+                "note": "the account's default profile → SCR-131; underlined, not colour-only"
+               }
+              ],
+              "h": 32
+             }
+            ],
+            "note": "a labelled multi-select with a reviewable summary list (§8 L407); one row per grant"
+           }
+          ],
+          "w": 1018
+         },
+         {
+          "t": "board",
+          "name": "CMP-065 FormSection (composition) · Effective permissions",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "legend",
+            "chars": "Effective permissions",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "per account · sub_001",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "account · sub_001",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "name",
+                "chars": "sub_001",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "board",
+                "name": "CMP-012 Badge (composition) · LIVE",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.xs",
+                 "radius": "radius.badge",
+                 "stroke": "color.env.live",
+                 "strokeWidth": "border.hairline"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "word",
+                  "chars": "LIVE",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 16
+               }
+              ]
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · sub_001 five inputs with source and mount state (boards 43, 97, 100)",
+              "w": 986,
+              "h": 64,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "per account · sub_002",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "account · sub_002",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "name",
+                "chars": "sub_002",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "rect",
+                "name": "placeholder · sub_002 env badge (environment not in §1 or UD-2)",
+                "w": 34,
+                "h": 16,
+                "o": {
+                 "radius": "radius.badge",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ]
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · sub_002 five inputs with source and mount state (boards 43, 97, 100)",
+              "w": 986,
+              "h": 64,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ]
+           }
+          ],
+          "w": 1018
+         }
+        ],
+        "w": 1018
+       },
+       {
+        "t": "board",
+        "name": "right column",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.md"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-065 FormSection (composition) · Limits",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "legend",
+            "chars": "Limits",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · limits: CMP-138 meters and plain caps (boards 43, 55)",
+            "w": 986,
+            "h": 96,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 1018
+         },
+         {
+          "t": "board",
+          "name": "CMP-065 FormSection (composition) · Sessions",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "legend",
+            "chars": "Sessions",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "session row",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.lg",
+             "justify": "space-between",
+             "height": "space.row.height.comfortable"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · session: device, IP, since, last seen (board 56)",
+              "w": 360,
+              "h": 12,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Sign out this session",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.button.paddingX",
+               "radius": "radius.control",
+               "height": "size.control.comfortable",
+               "justify": "center",
+               "fill": "color.action.secondary.default"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Sign out this session",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 154,
+              "h": 32
+             }
+            ],
+            "w": 986,
+            "h": 32
+           }
+          ],
+          "w": 1018
+         },
+         {
+          "t": "board",
+          "name": "CMP-065 FormSection (composition) · Two-factor",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "legend",
+            "chars": "Two-factor",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "state",
+            "chars": "Two-factor: on",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 1018
+         },
+         {
+          "t": "board",
+          "name": "CMP-065 FormSection (composition) · Recent changes",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.card",
+           "pad": "space.inset.lg",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "legend",
+            "chars": "Recent changes",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-173 rows",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.lg"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · CMP-173 compact row 1 (the audit read, board 43)",
+              "w": 986,
+              "h": 12,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · CMP-173 compact row 2 (the audit read, board 43)",
+              "w": 986,
+              "h": 12,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · CMP-173 compact row 3 (the audit read, board 43)",
+              "w": 986,
+              "h": 12,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ]
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · audited-read marker (admin.audit_read; §14 has no label)",
+            "w": 280,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ],
+          "w": 1018
+         }
+        ],
+        "w": 1018
+       }
+      ],
+      "w": 2048
+     },
+     {
+      "t": "board",
+      "name": "CMP-065 FormSection (composition) · Danger zone",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "legend",
+        "chars": "Danger zone",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "actions",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Reset two-factor",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.button.paddingX",
+           "radius": "radius.control",
+           "height": "size.control.comfortable",
+           "justify": "center",
+           "fill": "color.status.danger.subtle",
+           "stroke": "color.status.danger.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Reset two-factor",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 130,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Disable",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.button.paddingX",
+           "radius": "radius.control",
+           "height": "size.control.comfortable",
+           "justify": "center",
+           "fill": "color.status.danger.subtle",
+           "stroke": "color.status.danger.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Disable",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Delete",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.button.paddingX",
+           "radius": "radius.control",
+           "height": "size.control.comfortable",
+           "justify": "center",
+           "fill": "color.status.danger.subtle",
+           "stroke": "color.status.danger.strong",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Delete",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 66,
+          "h": 32
+         }
+        ]
+       }
+      ],
+      "w": 2048
+     },
+     {
+      "t": "board",
+      "name": "Save bar (composition)",
+      "o": {
+       "dir": "row",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.lg",
+       "justify": "space-between"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "status",
+        "chars": "Checking whether alex's change was saved…",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "the change summary's role=\"status\" (polite), §8 L407, §13 L585: save.checking, announced once when the re-send gets no answer and the re-read starts (RA-8 L230); never 'Not saved'"
+       },
+       {
+        "t": "board",
+        "name": "focus-ring",
+        "o": {
+         "dir": "row",
+         "pad": "space.inset.xs",
+         "radius": "radius.card",
+         "stroke": "color.focus.ring",
+         "strokeWidth": "border.focus",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Save",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.button.paddingX",
+           "radius": "radius.control",
+           "height": "size.control.comfortable",
+           "justify": "center",
+           "fill": "color.action.primary.default"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Save",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.on-action"
+           }
+          ],
+          "w": 57,
+          "h": 32
+         }
+        ],
+        "note": "focus-visible (CMP-039) on Save: the gate returned focus to the control that opened it (§13 L586); nothing is re-sent on the client's own (Y:11304-11307)"
+       }
+      ],
+      "w": 2048,
+      "note": "RA-8: the status reads save.checking while GET /users/{userId} runs (§8 L371); the draft stays"
+     }
+    ],
+    "w": 2048,
+    "note": "two columns, DOM order kept (D1)"
+   }
+  },
+  {
+   "into": "frame-2560/body/main",
+   "node": {
+    "t": "board",
+    "name": "footer marker (CMP-093)",
+    "o": {
+     "dir": "row",
+     "padT": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "text",
+      "chars": "Entering this area was recorded — Area entered (admin.area_entered)",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary"
+     }
+    ],
+    "w": 2048,
+    "note": "admin.area_entered comes from the strip's /admin/* reads on SCR-121-123 (§4 L201-204)"
+   }
+  },
+  {
+   "into": "frame-2560",
+   "node": {
+    "t": "board",
+    "name": "CMP-208 StatusBar (composition)",
+    "o": {
+     "dir": "row",
+     "padX": "space.inset.lg",
+     "justify": "space-between",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "board",
+      "name": "CMP-012 Badge (composition) · LIVE",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.xs",
+       "radius": "radius.badge",
+       "stroke": "color.env.live",
+       "strokeWidth": "border.hairline"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "word",
+        "chars": "LIVE",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 16
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 2560,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 2560,
+    "h": 48,
+    "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "18 SCR-149/outcome-pending · RA-8 (a) over SCR-122 · pending #1085",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Source",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "spec §5 L230 · RA-8, board 18 (§0 L61), dark, both sizes at 1:1. Flow: RA-5 L227 → unlock → re-sent once → RA-7 L229 on an answer, RA-8 on none (§8 L403; §12 L572-575) · spec 782eb0e4d",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "RA-8 (a), pending #1085 (CG-1). Trigger: the held PATCH /users/{userId} (role manager → viewer, If-Match, its Idempotency-Key, L227), re-sent once after the unlock, got no answer (Y:11304-11307, §12 L572).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Drawn: the gate closed; the Save bar's status reads save.checking, never 'Not saved'; the draft stays (D5); GET /users/{userId} re-reads the user; no re-send on the client's own. Band SH-1 (L181).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "1280: scrolled to Save (Sessions to the footer marker in view, Limits cut; band and header above); 2560: the whole page. Grey bars: placeholders.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "D5 nothing lost (L118) · D02 D2: a lost answer is outcome pending and a re-read, never a re-send (D02:204, §1 L89) · D1 · D2 · D3 · D17 · D18 (L131): the role in the PATCH, If-Match · D19 · D27 · D02 D16-D18 (L94) · Q1 #1085: (a) drawn, (b) via SCR-006 (§12 L572-575) · Q4 the neutral band (L149)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Roles",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Owner only (§5 L239; §4 L201). The PATCH needs users:write and the users step-up; the re-read users:read (§8 L371-372). The NavRail Admin entry is the Owner's (placement pending OQ-16, board 08).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Keyboard path and focus",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Focus on Save: the closing gate returned it to the control that opened it (§13 L586; `05` §3.4 item 4; RA-5 L227). Tab: Role → account rows → caps → sessions → Reset two-factor → Disable → Delete → Save (§8 L405-406); the shell's order §4 L198.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "'Checking whether alex's change was saved…' (save.checking): polite, once, in the Save bar's role=\"status\" summary (§8 L407; §13 L585), when the re-send gets no answer (L230). Nothing per tick.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys used",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "band.label · band.unlocked (SH-1) · strip.none · meta.asof · chip.active (meta) · ud.demotion · save.checking (RA-8) · footer.area_entered; not drawn: save.not_saved* (L230) and, while the outcome is unknown, ud.summary (DJ)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-08",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Tokens",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "colour: action.primary.default, action.secondary.default, border.subtle, env.live, focus.ring, status.danger.strong, status.danger.subtle, surface.app, surface.hover, surface.raised, surface.selected, surface.sunken, text.link, text.on-action, text.primary, text.secondary, text.tertiary; type: num.base, ui.body, ui.body-strong, ui.caption, ui.heading-md, ui.heading-sm, ui.label; space: button.paddingX, inset.lg, inset.md, inset.sm, inset.xs, row.height.comfortable, stack.lg, stack.md, stack.sm, stack.xs; size: control.comfortable, icon; radius: badge, card, control; other: border.focus, border.hairline, border.thick",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Pairs (§15, dark): status on raised 14.35 (L634) · Save 4.76 (L639) · ring on raised 6.66 (L640) · badge 7.50 (L636) · rule 6.29 (L635)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Fallbacks (full lines in the sheet notes): DS-1 band → color.surface.raised · DS-2 rule, the Admin entry's 2 px edge (D02:1003) and DS-3 field edge → color.text.tertiary · DS-5 icon/admin as the text ◆ · space.3 → space.stack.md · size.control.comfortable, Tier-1 (validator WARN)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-09",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Analytics and audit events",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "The unlock: auth.step_up_granted, plus admin.session_elevated under (a) once registered (CG-1) (§5 L239-241). The PATCH, if it ran: roles.grant / roles.revoke (§8 L409). The re-read writes none (§4 L203). Recent changes' read: admin.audit_read (§8 L380); footer: admin.area_entered (D27). Analytics: none.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-10",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Budget",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Unlock ≤400 ms (§5 L219); changes reach alex's session within 2 s, confirmed only on the server's answer (§8 L365-366); no re-send timeout is given (spec gap).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-11",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Data and mount state",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "PATCH /users/{userId} (M:1560), GET /users/{userId} with User.* and its ETag (M:1548), POST /auth/step-up (M:423): executed; the (a) window: no field (CG-1). The read settles the outcome: no row for it (spec gap).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E42-D03 · board 18 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E42/img/E42-D03-18-scr149-outcome-pending.png",
+ "notes": {
+  "sources": [
+   "spec §0 L42-82 (board 18 in the SCR-149 row L61: 11-19 RA-1..RA-9; board names L46-49, footer, build order)",
+   "spec §5 L230 (RA-8 row), L227 (RA-5), L229 (RA-7), L208-219 (SCR-149 purpose, anatomy, data, budget L219), L239-242 (RBAC and audit)",
+   "spec §12 L572-575 (step-up mid-edit: a lost answer → outcome pending and a re-read; Y:11299-11307)",
+   "spec §4 L164-204 (CMP-087 anatomy, SH-1 L181, data L190-196, focus L198-200, RBAC and audit L201-204)",
+   "spec §2 D1 L114, D2 L115, D3 L116, D5 L118, D17 L130, D19 L132, D27 L140; §3 Q1 L146, Q4 L149",
+   "spec §1 L84-108 (D02 D2 L89, D02 D16-D18 L94; the worked example L99-104; clocks L105-108)",
+   "spec §8 L355-366 (SCR-122 anatomy, budget), L371-373 (identity read, PATCH, role options), L384 (UD-1), L386 (UD-3), L398 (UD-15), L403 (save held by a gate), L405-411 (keys, RBAC, audit)",
+   "spec §13 L581 (shell), L585 (SCR-122), L586 (dialogs: focus returns to the control that opened it)",
+   "spec §14 L597-607 (band.*, strip.none, meta.asof, footer.area_entered, save.checking L602, chip.active, ud.demotion)",
+   "spec §15 L620-656 (AC-5 bars L620; DS-1..DS-3 fallbacks; band, badge, page, button, focus and field contrast pairs; F4 L656: tertiary on surface.selected 3.98)",
+   "spec §20 CG-1 L795, CG-21 L815; §17 L724 (AC: RA-5..RA-8, boards 15-18); §21 L835 (owner walkthrough)",
+   "via the spec: D02:204 (cited at §1 L89: the held request is never re-sent on its own after a network error), Y:11304-11307 (inside §12 L572's Y:11299-11307: the client never reports it as not sent, never re-sends it on its own and 'reads the affected state back to learn the outcome'), `05` §3.4 item 4 (cited at §13 L586)",
+   "spec L17-18 (built on D02's DS-1..DS-5, D02:1169); D02:121 (color.surface.selected: the current nav entry), D02:1003 (DS-2: 'the 4 px rule and the current nav entry's edge'): the Admin entry's edge (DEV_EDGE); spec §3 Q5 L150 (OQ-16, board 08)",
+   "`15` (docs/plan/15-component-catalogue.md) :699 CMP-071, :708 CMP-072, :2411 CMP-208, :2421 CMP-209 token lines (DEV_CHROME); D16 L129, D18 L131, §12 L534, §14 L607 (Save during the check, copy gaps)"
+  ],
+  "copy_keys": [
+   "chip.active",
+   "meta.asof",
+   "band.unlocked",
+   "ud.demotion",
+   "save.checking",
+   "band.label",
+   "strip.none",
+   "footer.area_entered"
+  ],
+  "copy_gaps": [
+   "Spec gap: what follows the re-read (the PATCH found applied, or not) has no §5 row: §14's save.saved and save.not_saved (L602) exist, but no row says which follows the read; RA-8 (L230) stops at the check, and so does the board (RA-7's save.saved, L229, is the answered re-send).",
+   "Spec gap: no timeout for the re-send: 'a network error or a timeout' (Y:11304-11307) names no value.",
+   "Spec gap: RA-8 names no Save state while the re-read runs: drawn enabled with focus on it, as before the expiry (DEV_FOCUS); locking it until the read answers would need a rule. Pressed during the check, Save runs the demotion's rung 1 again and sends a new PATCH with the last read's If-Match (D18 L131; §12 L534); if the lost PATCH did apply, that answers 412 and D16's ud.conflict_412 'This user changed while you were editing.' (L129, §14 L607) blames another editor for the owner's own change (review 18, finding 3).",
+   "The band's '12:40 left' is SH-1's literal (§4 L181): after an unlock the real value is reauth_expires_at minus the server's now (§1 L107), a field no contract carries (CG-1, §4 L195), and §5 gives no window length (its 15-minute promise is superseded, L208-210).",
+   "sub_002's environment: §1 (L99) and UD-2 (L385) give none, so its env badge is a placeholder pill (C-2.11 wants every account's env word), as on board 01.",
+   "Spec ambiguity kept from board 01: §8 L405 starts SCR-122's Tab order at Role while D18 (L131) and L372 send display_name in the PATCH: Identity stays read-only, as the Tab order says.",
+   "Spec ambiguity kept from board 01: the band's route on a user-detail page: §4 L166 draws '◆ Admin area · Users'; the board uses 'Users' for SCR-122 (/admin/users/:userId), as the route announcer's 'Admin · Users · LIVE' (L199-200).",
+   "The audited-read marker under Recent changes (D17): §14 has no label for admin.audit_read, so a placeholder marks its place (board 01's).",
+   "'manager': an anatomy string, not a §14 key (spec L373)",
+   "'manager · Active · All times UTC · as of 14:02:11': the PageHeader meta: the role (§8 L373) and the status (chip.active, §14 L604) as text (§8 L355) before meta.asof (§14 L599) on CMP-088's one meta line (Appendix A L867); the order and the ' · ' joins are board 01's reading, kept; it shows the last read until the re-read answers",
+   "'Users': the band's route, as §4's anatomy draws '◆ Admin area · Users'; an anatomy or worked-example string, not a §14 key (spec L166)",
+   "'Username': SCR-123's field label for User.username, reused for SCR-122's Identity; an anatomy or worked-example string, not a §14 key (spec L415)",
+   "'E-mail': SCR-123's field label for User.email, reused for SCR-122's Identity; an anatomy or worked-example string, not a §14 key (spec L416)",
+   "'Display name': SCR-123's field label for User.display_name, reused for SCR-122's Identity; an anatomy or worked-example string, not a §14 key (spec L416)",
+   "'Last sign-in': SCR-121's column for User.last_login_at, reused for SCR-122's Identity; an anatomy or worked-example string, not a §14 key (spec L301)",
+   "'Identity': SCR-122 fieldset legend (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L356)",
+   "'viewer': an anatomy string, not a §14 key (spec L373)",
+   "'Role': SCR-122 fieldset legend (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L356)",
+   "'sub_001': §1 worked example: alex's first grant; an anatomy or worked-example string, not a §14 key (spec L99)",
+   "'trade': §1 worked example: both grants are trade; an anatomy or worked-example string, not a §14 key (spec L99)",
+   "'BTC scalp': UD-2: sub_001's default profile; an anatomy or worked-example string, not a §14 key (spec L385)",
+   "'sub_002': §1 worked example: alex's second grant; an anatomy or worked-example string, not a §14 key (spec L99)",
+   "'Default': UD-2: sub_002's bootstrap profile; an anatomy or worked-example string, not a §14 key (spec L385)",
+   "'Accounts': SCR-122 fieldset legend (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L356)",
+   "'Effective permissions': SCR-122 fieldset legend (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L356)",
+   "'Limits': SCR-122 fieldset legend (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L359)",
+   "'Sign out this session': an anatomy string, not a §14 key (spec L398)",
+   "'Sessions': SCR-122 fieldset legend (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L360)",
+   "'Two-factor: on': CG-21's treatment (no enrolment date); UD-2 L385 'two-factor on'; an anatomy or worked-example string, not a §14 key (spec L815)",
+   "'Two-factor': SCR-122 fieldset legend (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L361)",
+   "'Recent changes': SCR-122 fieldset legend (§8 anatomy, D17); an anatomy or worked-example string, not a §14 key (spec L361)",
+   "'Reset two-factor': SCR-122 Danger zone button (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L361)",
+   "'Disable': SCR-122 Danger zone button (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L361)",
+   "'Delete': SCR-122 Danger zone button (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L361)",
+   "'Danger zone': SCR-122 fieldset legend (§8 anatomy); an anatomy or worked-example string, not a §14 key (spec L361)",
+   "'Save': an anatomy string, not a §14 key (spec L361)",
+   "'Admin': the NavRail Admin entry's label at 2560, an anatomy string, not a §14 key (§4 L164-165 'NavRail CMP-071 (Admin entry, Owner only)'; the kit's LABELS cites L188, where 'Admin' sits only inside the CMP-061 menu string)"
+  ],
+  "live_checks": [
+   "inst nodes: none on this board (every part is a token composition): no library set, variant or text layer to verify",
+   "status: after touchTexts + relayout 'Checking whether alex's change was saved…' reads on one line at the Save bar's start, Save at its end, in both frames; no 'Not saved' anywhere on the board",
+   "focus: Save's ring (2 px color.focus.ring, 2 px off the button) shows whole inside the Save bar at both sizes",
+   "badge (frame-2560; frame-1280 scrolls it out of view): the pill reads 'Admin unlocked · 12:40 left' on one line ('12:40' in type.num.base) on color.surface.hover at the band's right end, centred in the 56 px band",
+   "links (frame-2560; frame-1280 scrolls them out of view): each 'CMP-021 Link (composition) · profile …' shows its 1 px 'underline' rect directly under the text and as wide as it (the kit's text_w estimate: set it to the measured width if they differ)",
+   "glyphs: the registry 'chevron-down' and 'check' render at 16 px in their colour tokens (select chevrons, the grant ticks)",
+   "Admin entry: the 2 px color.text.tertiary inner edge shows on the selected fill at both sizes (64 px collapsed at 1280, 240 px expanded at 2560; 3.98 against the fill, 6.29 against the rail; a non-text boundary, so §15 F4's text verdict, L656, does not apply)",
+   "fit 1280: <main> is justified to its end (the page scrolled to its end, DEV_SCROLL): the page est. 1599 px for the 688 px above <main>'s bottom padding, so its top 911 px are clipped above the frame; in view: Sessions, Two-factor, Recent changes, Danger zone, Save bar, footer marker; cut at the top: Limits. After relayout the footer marker must end 16 px above <main>'s bottom edge with the Save bar, its status and Save's focus ring whole. If Penpot packs the overflowing column from the top instead (the band shows at <main>'s top), make 'page (scrolled to its end)' absolute at x 16, y = 688 − its height.",
+   "fit 2560: the page est. 1090 px of 1312 px: the whole page from the band to the footer marker, the Save bar included, must be in view after relayout",
+   "height: the root is 1760 px: root_size()'s 1688 px (frames 1440, annotation column est. 1649 px) plus 72 px slack for text-width error (cap 1760 px, the pitch guard); after touchTexts + relayout the annotation column, its footer 'page E42-D03 · board 18 · r1' included, must end inside it",
+   "glyph ◆ (U+25C6): confirm Inter draws it; else Penpot substitutes a fallback font",
+   "root name: after the first section call the root must read back exactly as the sheet's board.name, or later calls create a duplicate root"
+  ],
+  "deviations": [
+   "Identity is read-only text rows (Username, E-mail, Display name, Last sign-in), as on board 01: §8 L405 starts SCR-122's Tab order at Role; the labels are SCR-123's (L415-416) and SCR-121's (L301), as §8 names the fieldset, not its fields.",
+   "The Danger zone's buttons follow the Tab order (§8 L405-406; §13 L585): Reset two-factor, Disable, Delete; §8 L361 lists them 'Disable, Delete, Reset two-factor'. Each takes the kit's destructive look (D02:129), as on board 01.",
+   "The env badge follows the account name, as unbind.lead's '{account} [{ENV}]' (§14 L610) and board 01 draw it; UD-2's prose (L385) puts [LIVE] after sub_001's profile.",
+   "Grant rows (CMP-105 composition), selects, the tick and the FormSection cards are token compositions, as on board 01 (the kit's 'compose' deviation); no column labels (the spec gives none).",
+   "ud.demotion sits under the role select in type.ui.caption, color.text.secondary (the kit's description style), as on board 01; no source gives its type.",
+   "Root height: root_size() plus 96 px (capped at 1760, the pitch guard), so an annotation column that wraps longer live keeps its footer inside the clipped root.",
+   "The annotation column prints the seven fallback lines (the kit's six and EDGE_FALLBACK) as one condensed line under Tokens (FALLBACK_SHORT), so the column stays under the root cap; the full lines are in notes.fallbacks and the .md.",
+   "RA-8's row (§5 L230) names the page through RA-5 (L227: 'the gate over SCR-122'): the board draws board 01's SCR-122 (gen_01.py as read at 20:34) with the same strings, sources and sizes, the draft UD-3's role change manager → viewer (L386) without its cap error (ud.cap_max's {n} is not in §1); the gate has closed and the window is live again, so every write is enabled as on board 01 (DJ).",
+   "frame-1280 is drawn scrolled to the page's end, so RA-8's status shows at both sizes: at 1280 the page is one column (D1) and the Save bar ends it, not sticky (§8 names no sticky bar); Save was pressed there (RA-5 L227) and focus returned there, so the band, rule, strip and PageHeader sit above the fold (§4 makes none sticky). <main>'s route content is one column ('page (scrolled to its end)') justified to <main>'s end, its top clipped; frame-2560 shows the whole page from its top (DJ).",
+   "The Save bar's status slot (the change summary, role=\"status\", §8 L407) reads save.checking alone while the outcome is unknown: board 01's '1 change pending: role manager → viewer' would call the change unsaved, which RA-8 forbids ('never \"not saved\"', L230), so it is not drawn until the re-read answers (DJ). Same style as board 01's summary: type.ui.body, color.text.primary on color.surface.raised.",
+   "Focus is drawn on Save: Save opened the gate (RA-5 L227) and a dialog returns focus to the control that opened it on close (§13 L586; `05` §3.4 item 4); SCR-149's own row (§13 L582) names no return target. Save is drawn enabled, as before the expiry: RA-8 names no Save state while the re-read runs, and the contract forbids only a re-send on the client's own (Y:11304-11307, §12 L572) (DJ; see the copy gaps).",
+   "SCR-122's PageHeader has no primary action: §8 names none (§4's anatomy has the slot); the band's route is 'Users', as §4 L166 draws it and the route announcer says it (L199-200), as on board 01.",
+   "The strip reads strip.none: §1's data raise no owner action (OV-2 draws strip.none for the same data), and strip.locked left with the expiry once the unlock succeeded (SH-4's item, L184).",
+   "The current Admin entry (NavRail, Owner only) carries DS-2's edge: a 2 px (border.thick) inner color.border.admin stroke drawn as its fallback color.text.tertiary (D02:1003: DS-2 is 'the 4 px rule and the current nav entry's edge'; D03 builds on DS-1..DS-5, L18). e42kit draws only the color.surface.selected fill, a colour-only state (1.58:1 on the rail, token-sync dark #2E363E on #0B0E11, under AC-5's 3.0, L620; review of board 06, finding 1); the edge measures 6.29 against the rail (§15 L635) and 3.98 against the selected fill (L656), a non-text boundary over 3:1. It matters more here: frame-1280 is scrolled past the band, rule and h1, so the entry carries more of 'you are in Admin' (review of board 18, finding 1). A local fix (admin_entry_edge(), as board 16), pending in the kit.",
+   "SCR-122 content this state does not need is drawn as neutral placeholders, both values the spec does not give for alex (the e-mail, display name and last sign-in, sub_002's environment, the limit values, the session row's device, IP and times, the three audit rows) and the effective-permission inputs UD-2 (L385) and UD-18 (L401) give: color.surface.hover bars, radius.control (pills radius.badge); boards 43 (UD-2), 55, 56, 97 and 100 draw that content. They are not a loading state (UD-1 is board 42).",
+   "The profile links (CMP-021, two per frame) are underlined: a drawn 1 px color.text.link rect under the text, as wide as the estimated text (cvsheet v1 texts take no textDecoration, and e42kit's link() draws none), as on board 01. Colour alone would not carry them: color.text.link against the color.text.primary beside it is 2.16:1 (dark #6EA1F5 vs #E8EAED, token-sync), under the 3:1 a colour-only link cue needs. They are the board's only links, so the kit's 'colour + position only' link line is dropped.",
+   "A live countdown (band badge, grace line, view-as banner) sets its clock in type.num.base as its own text node (D02:120; Appendix A L865 CMP-087 Tokens); the node's note carries the full §14 string.",
+   "Buttons, chips, badges, banners, fields, tiles, tables, menus and dialogs are compositions from tokens: admin controls are 32 px (size.control.comfortable, §4 L176) while the library CMP-001 binds size.control.height (24 px in the file's compact density), and cvsheet v1 cannot set an instance's glyph, fill or border.",
+   "A focus ring is a 2 px color.focus.ring inner stroke on a wrapper with space.inset.xs (4 px) padding, so it sits 2 px off the control (CMP-039) inside the wrapper's bounds; its radius is the next step (radius.card around radius.control); the wrapper adds 4 px on each side to the layout.",
+   "TopBar, NavRail, RightRail and StatusBar content other than the Admin entry, the env badges and the owner's name is drawn as neutral placeholders (E10-D02 owns it; §1 L97 gives only the sizes); the chrome binds the kit's color.surface.app with color.border.subtle dividers, as boards 01-10, although `15` names color.surface.raised for CMP-071, CMP-072 and CMP-209 and color.surface.sunken for CMP-208 (15:699, :708, :2421, :2411): a kit-level change (review of board 06, finding 5). This line replaces the kit's 'chrome' line, whose 'no source names a chrome surface' does not hold.",
+   "Board names carry Penpot's normalised ' / ' form (E42-D03 / 31 SCR-121 / populated · …) so cvsheet's find-or-create root matches on every section call; §0 L46-47 writes 'SCR-121/populated'."
+  ],
+  "fallbacks": [
+   "token: §2 D1's space.3 gaps bind the semantic alias space.stack.md (12 px)",
+   "fallback: color.border.input pending DS-3: field boundaries bind color.text.tertiary (§15 L626, F1 L653)",
+   "token: size.control.comfortable (32 px, §4 L176) is the Tier-1 primitive the spec names (validator WARN)",
+   "fallback: color.surface.admin-tint pending DS-1: the band binds color.surface.raised (§2 D2, §15 L624)",
+   "fallback: color.border.admin pending DS-2: the 4 px rule binds color.text.tertiary (§2 D2, §15 L625)",
+   "fallback: icon/admin (◆) pending DS-5: drawn as the text glyph ◆ of band.label (L597)",
+   "fallback: color.border.admin pending DS-2: the current Admin entry's 2 px edge (border.thick) binds color.text.tertiary (D02:1003)"
+  ],
+  "tokens": [
+   "type.ui.body",
+   "color.text.secondary",
+   "type.num.base",
+   "space.inset.xs",
+   "space.inset.sm",
+   "radius.badge",
+   "color.surface.hover",
+   "color.text.primary",
+   "space.row.height.comfortable",
+   "radius.control",
+   "type.ui.heading-sm",
+   "color.surface.raised",
+   "radius.card",
+   "space.inset.lg",
+   "space.stack.sm",
+   "size.icon",
+   "color.surface.sunken",
+   "size.control.comfortable",
+   "color.text.tertiary",
+   "border.hairline",
+   "type.ui.caption",
+   "space.stack.xs",
+   "color.env.live",
+   "color.text.on-action",
+   "color.action.primary.default",
+   "color.text.link",
+   "type.ui.body-strong",
+   "space.button.paddingX",
+   "color.action.secondary.default",
+   "space.stack.lg",
+   "color.status.danger.subtle",
+   "color.status.danger.strong",
+   "color.focus.ring",
+   "border.focus",
+   "space.stack.md",
+   "space.inset.md",
+   "color.border.subtle",
+   "color.surface.app",
+   "type.ui.label",
+   "type.ui.heading-md",
+   "color.surface.selected",
+   "border.thick"
+  ]
+ }
+}

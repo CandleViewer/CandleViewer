@@ -1,0 +1,4253 @@
+{
+ "board": {
+  "name": "E33-D01-03-parameter-defaults",
+  "w": 1600,
+  "x": 4000,
+  "y": 0,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "radius": "radius.card",
+   "pad": "space.inset.lg",
+   "gap": "space.stack.md",
+   "vs": "auto"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "header",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Parameter defaults: what traders set and what they expect defaulted",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "subtitle",
+      "chars": "E33-D01 · report §2 and §9b PROPOSED labels (and protocol §3 ST1–ST2, §4 Probe B, §5 Defaults) · research board — heuristic findings, no participants",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "rq1",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "rq1-screens",
+      "w": 778,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "RQ1 — what traders set and what they expect defaulted (heuristic)",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "Screens: SCR-066–069 (fields, read-outs; their CMP-043 dialogs and CMP-008, 100 and 101 inputs as 15 specifies them, E30-D01 covering CMP-101 sizing; no algo-specific input finding) and SCR-070; SCR-069's CMP-119 BracketEditor is bracket UX (E32). Side, size and prices are the trader's; Probe B tests the rest.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "f1",
+      "w": 778,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "F1 (heuristic, Med, Pri 1)",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "traders set their intent and expect defaults for mechanics (H2, H7, H8; P1 G2 \"Execute in under a second\", persona statement): duration set, slice count derived; visible size set, show-ratio a read-out; max chase distance set, peg offset left at 0 — one input plus read-outs, as E30-D01 §5b recommends for sizing; mechanics sit in a collapsed \"Advanced\" group that states its values.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "probe-b",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "title",
+      "hs": "fill",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Probe B — parameter sort (RQ1, 10 min)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "text",
+        "name": "sub",
+        "chars": "Protocol §4, in session order; B-a sorts the ST1 cards drawn below.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1568
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "steps",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "b-a",
+        "w": 320,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "B-a (5 min)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 296
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "per strategy, rotated, sort ST1 into \"I set this myself\", \"a default is fine\", \"unclear\".",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 296
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "No sort needs dragging: the participant names the card and the pile, and the note-taker moves it (05-accessibility-standard.md §3.1 rule 6).",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 296
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "to-b-b",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "per RQ1 pair",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "b-b",
+        "w": 320,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "B-b (2 min)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 296
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "per RQ1 pair (slice count vs duration; visible size vs show-ratio; peg offset vs maximum chase distance): \"Which do you set, and which may follow or default? What would you set for 2 BTC on BTCUSDT?\"",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 296
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "to-b-c",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "reveal card",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "b-c",
+        "w": 320,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "B-c (2 min)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 296
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "for each \"a default is fine\" card, its reveal card: \"Keep it, higher, lower, or would you always set it?\" Record any value given.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 296
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "to-b-d",
+        "alignSelf": "center",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "ST2",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "rect",
+          "name": "line",
+          "w": 48,
+          "h": 2,
+          "o": {
+           "fill": "color.border.default"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "b-d",
+        "w": 320,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "title",
+          "chars": "B-d (1 min)",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary",
+          "w": 296
+         },
+         {
+          "t": "text",
+          "name": "line-1",
+          "chars": "ST2 for one strategy they use: \"Does this ask for anything ours does not, or the reverse? Would you move a card?\" Record moves as \"after competitor\", apart from B-a.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 296
+         },
+         {
+          "t": "text",
+          "name": "note-1",
+          "chars": "ST2 — competitor builders (B-d): the owner captures the lead pages listed in the report's §7, with no account data, cropped to the parameter form, so Probe C stays cold; kept with the session materials, never in the repository.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 296
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "st1",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "ST1 — paper prototype of the SCR-066..069 parameter sets (B)",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 1568
+     },
+     {
+      "t": "board",
+      "name": "st1-text",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "what",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "body",
+          "chars": "One card per parameter of 24 §10.2–§10.5, the owner of the parameter model (22 AlgoSpec differs), with the report's default on a separate reveal card; plus † cards for wanted fields with no backing field (TWAP spread guard, US-ALGO-006; TWAP start time, CMP-047 on SCR-066; iceberg show-ratio, SCR-067), which probe demand and are never drawn as controls (E33-D02 Test plan). Neutral names; no \"emulated\" label, caveat, CMP-158 notice or disconnect field, so Probe C's reading stays cold.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 778
+         }
+        ],
+        "w": 778
+       },
+       {
+        "t": "board",
+        "name": "how",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "build",
+          "chars": "Build each stimulus from the report's recommended defaults and proposed copy at the version the owner approved (protocol §6), noting it on every session sheet; rebuild after any override. Every frame shows the DEMO badge (SCR-075) and only synthetic positions.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 778
+         },
+         {
+          "t": "text",
+          "name": "instrument",
+          "chars": "BTCUSDT tick 0.10, lot step 0.001, minimum order 0.001 and minimum notional 5 USDT come from packages/fixtures/bybit/2026-10-05/rest/instruments_before.json; prices from kline_BTCUSDT_1_page0.json there, and the copy's example prices are re-set to that range when the stimuli are built.",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 778
+         },
+         {
+          "t": "text",
+          "name": "key",
+          "chars": "Each card in the frames below is one row of the report §2 table, in its order (the TWAP start time † card excepted): the Parameter as the card's title; Set or default and R3-soak as chips; the Recommended default on the card's reveal card; then the Basis and divergence (\"disagreement\", AC3). Chips \"B-b pair\" mark the RQ1 pairs of step B-b; \"†\" marks ST1's wanted fields with no backing field. The iceberg's show-ratio † card shares its §2 row's card. Chips \"PROPOSED\" mark defaults the report's §9b says need a contract change, with its route. The chips, the Basis and divergence line and the §9b line are notes for the reader, not ST1 copy (ST1: neutral names; the default on a separate reveal card, shown at B-c).",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 778
+         }
+        ],
+        "w": 778
+       }
+      ]
+     }
+    ],
+    "hs": "fill"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frames",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "scr-066-twap",
+      "w": 383,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "SCR-066 · TWAP",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 359
+       },
+       {
+        "t": "board",
+        "name": "chrome",
+        "w": 359,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-demo",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "DEMO",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "ref",
+          "chars": "(SCR-075)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "scr-067-iceberg",
+      "w": 383,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "SCR-067 · Iceberg",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 359
+       },
+       {
+        "t": "board",
+        "name": "chrome",
+        "w": 359,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-demo",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "DEMO",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "ref",
+          "chars": "(SCR-075)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "scr-068-chase",
+      "w": 383,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "SCR-068 · Chase",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 359
+       },
+       {
+        "t": "board",
+        "name": "chrome",
+        "w": 359,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-demo",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "DEMO",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "ref",
+          "chars": "(SCR-075)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "scr-069-oco",
+      "w": 383,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "frame-title",
+        "chars": "SCR-069 · OCO",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 359
+       },
+       {
+        "t": "board",
+        "name": "chrome",
+        "w": 359,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-demo",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "DEMO",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "text",
+          "name": "ref",
+          "chars": "(SCR-075)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "bracket-note",
+        "chars": "SCR-069's CMP-119 BracketEditor is bracket UX (E32).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 359
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frames/scr-066-twap",
+   "node": {
+    "t": "board",
+    "name": "fields-1",
+    "w": 359,
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "vs": "auto"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "p01-duration",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Duration",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-trader",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: trader",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-b-b-pair",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "B-b pair",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "none; 1 min–24 h",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: SCR-066 (1 min) over 22 (10 s), SC-10; CMP-047 has no stated use on SCR-066",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p02-slice-count-interval",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Slice count ↔ interval",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default-editable-as-either",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default, editable as either",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak-yes-r4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: yes; R4",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-b-b-pair",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "B-b pair",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "interval 60 s: slices = duration ÷ 60 s, kept within 2 and min(450, duration ÷ 1 s), reduced until each slice is at least the minimum lot and notional",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: no default in 24 or 22; US-ALGO-006's example is 180 s (30 min, 10 slices); 60 s keeps slices small at one create a minute against 10/s (24 §8.7); DJ",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p03-slice-type",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Slice type",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "limit at the same-side best, offset 0 ticks; market slices opt-in, and only with a price limit or a participation cap (E33 threat model SR-E33-03)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 §10.4; SR-E33-03",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p04-randomisation",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Randomisation",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak-yes",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: yes",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "time ±25 %, size ±20 %, shown as ranges (F25)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 (0.25, 0.20) over 22 (0): a regular pattern is easy to spot (by analogy with 24 §10.3 (c), iceberg refills)",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p05-price-limit",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Price limit",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-trader-optional",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: trader, optional",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "none (\"No limit\"); a breach pauses until the price returns, the time recorded as shortfall",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 §10.4; INV-B6-d",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frames/scr-066-twap",
+   "node": {
+    "t": "board",
+    "name": "fields-2",
+    "w": 359,
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "vs": "auto"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "p06-participation-cap",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Participation cap",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-trader-optional",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: trader, optional",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak-yes-r4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: yes; R4",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "off; hint \"use on thin markets\"",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 None; F4",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p07-catch-up-after-a-wait-or-s",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Catch-up after a wait or skip",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak-yes",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: yes",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-proposed",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "PROPOSED",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "proportional: re-plan over the time left, never back-to-back; after your pause, Resume keeps the end time or extends it (SC-3)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: US-ALGO-006 over 24's next_slice (SC-11)",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       },
+       {
+        "t": "text",
+        "name": "proposed",
+        "chars": "§9b: a resume keeps the end time (default) or extends it through end_at (PROPOSED); E33-T03 writes them into 24 and 22",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p08-window-end",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Window end",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default-changeable",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default, changeable",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak-yes",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: yes",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-proposed",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "PROPOSED",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "with a price limit or a participation cap set, the rest at market within it, else left unfilled; with neither (the default), leave as limit; cancel the rest offered",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 and E33-S03 final_market_sweep=true; US-ALGO-006's three policies; SR-E33-03 (AS-D06 names \"a final market sweep into a thin book\")",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       },
+       {
+        "t": "text",
+        "name": "proposed",
+        "chars": "§9b: window end as a TwapParams field (PROPOSED); E33-T03 writes them into 24 and 22",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p09-spread-guard",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Spread guard",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak-yes-r4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: yes; R4",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-no-backing-field",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "† no backing field",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "off until live spread data exists",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: US-ALGO-006 vs E33-S03 max_spread_ticks with no value",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p10-start-time",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Start time",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-no-backing-field",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "† no backing field",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "st1",
+        "chars": "† card (ST1): a wanted field with no backing field — TWAP start time, CMP-047 on SCR-066 — which probes demand and is never drawn as a control (E33-D02 Test plan). The report §2 table has no row for it, so no reveal card.",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frames/scr-067-iceberg",
+   "node": {
+    "t": "board",
+    "name": "fields-1",
+    "w": 359,
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "vs": "auto"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "p01-visible-size-show-ratio",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Visible size; show-ratio",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-trader-required-ratio-is-a-read-out",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: trader, required; ratio is a read-out",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-b-b-pair",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "B-b pair",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-show-ratio-no-backing-field",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "† show-ratio: no backing field",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "none; ≥ max(minimum lot, total ÷ 360), so no more than 450 slices at −20 % jitter (for 5 BTC: \"Visible size must be at least 0.014 BTC so this iceberg needs no more than 450 orders\"), ≤ 50 % of total; read-out \"5 % shown · about 20 slices\"",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: SCR-067 validation (≤ 50 % of total, \"(configurable)\") and its \"max show-ratio\" field; US-ALGO-005 example 0.25 of 5 BTC; 24 max_slices 450 and E33-T01's child cap (SC-10)",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p02-size-jitter",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Size jitter",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak-yes",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: yes",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "±20 %, shown as a range (\"0.20–0.30 BTC at a time\")",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 0.2 and E33-S02 vs 22 0 vs US-ALGO-005 \"only 0.25 rests\" (F3)",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p03-refill",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Refill",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak-yes-r4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: yes; R4",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "after the visible slice fills, wait 250 ms plus up to 250 ms",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 §10.3; 22 refresh_on_fill_pct 100 agrees",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p04-price",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Price",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "fixed post-only limit; \"peg to best\" opt-in, re-pegged per slice",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 fixed, post_only; \"continuous repricing is what chase is for\"",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p05-rejected-slice",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Rejected slice",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-system",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: system",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "pause and offer a smaller slice, one order for the rest, or abandon",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: US-ALGO-005 vs B5 retrying until failed (OQ-8)",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frames/scr-068-chase",
+   "node": {
+    "t": "board",
+    "name": "fields-1",
+    "w": 359,
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "vs": "auto"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "p01-peg",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Peg",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "join the same-side best (maker); \"Cross the spread\" opt-in, post-only off",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 maker; US-ALGO-007 \"without crossing\"; \"mid\" has no mode (SC-12)",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p02-offset-re-peg-threshold",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Offset; re-peg threshold",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-b-b-pair",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "B-b pair",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "0 ticks; reprice on 1 tick of drift",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 §10.5; 22",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p03-max-distance-from-the-star",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Max distance from the start price",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-trader-required",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.selected",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: trader, required",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-b-b-pair",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "B-b pair",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "none; shown as price and % (\"20 ticks = 64,012.0\")",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: no default in 24; E33-D02 \"no 'unlimited' affordance\"; a prefilled bound is accepted unread (H5)",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p04-reprice-interval",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Reprice interval",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak-yes-r4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: yes; R4",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "500 ms; the 200 ms floor stays selectable",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24: 200 ms vs 22: 250 ms vs E33-S04 floor 200 ms (F2); in 20 §4.3, half its account's entry bucket (SC-18)",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p05-timeout-max-repricings",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Timeout; max repricings",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default-derived",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default; derived",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak-yes",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.status.warning.subtle",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: yes",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "60 s; timeout ÷ interval = 120, capped at 500",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 60 s; repricings 24: 200 vs 22: 20 vs SCR-068: 1–500: a count that binds before the timeout stops the chase for a reason the trader did not set",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p06-at-timeout-at-max-distance",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "At timeout; at max distance",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-proposed",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "PROPOSED",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "at timeout cancel, with \"leave resting\" or \"market\" opt-in and its slippage stated; at max distance cancel or leave resting, never market",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 on_timeout=\"cancel\"; SCR-068 checklist; SC-12 (F5)",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       },
+       {
+        "t": "text",
+        "name": "proposed",
+        "chars": "§9b: a new at-max-distance policy (PROPOSED; cancel or leave, default cancel); E33-T03 writes them into 24 and 22",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frames/scr-069-oco",
+   "node": {
+    "t": "board",
+    "name": "fields-1",
+    "w": 359,
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "vs": "auto"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "p01-use",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Use",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "entry pair; a plain TP + SL goes to native TP/SL",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 §10.2; E33-S01 (F28)",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p02-on-a-fill",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "On a fill",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "shrink the other by the filled size; cancel it when fully filled",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 reduce_other",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "p03-reduce-only-position-close",
+      "w": 359,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.control",
+       "pad": "space.inset.sm",
+       "gap": "space.stack.xs",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "parameter",
+        "chars": "Reduce-only; position closed",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 343
+       },
+       {
+        "t": "board",
+        "name": "chips",
+        "w": 343,
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-set-or-default-default",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "Set or default: default",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-r3-soak",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "R3-soak: —",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "reveal-card",
+        "w": 343,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.sunken",
+         "radius": "radius.control",
+         "pad": "space.inset.sm",
+         "gap": "space.stack.xs",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reveal card · recommended default",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "w": 327
+         },
+         {
+          "t": "text",
+          "name": "default",
+          "chars": "exit pair reduce-only, entry legs carrying a stop at Bybit (mode: OQ-2); cancel both when the position closes",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 327
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "basis",
+        "chars": "Basis and divergence: 24 §10.2 reduce_only; §10.1 cancel_on_position_flat; C-2.6",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 343
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "all-and-ac3",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "all-strategies",
+      "w": 383,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "All — Losing Bybit; limits",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "Set or default: fixed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "line-2",
+        "chars": "Recommended default: freeze, stated as text, not a control; 24 h and 450 orders per run",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "line-3",
+        "chars": "Basis and divergence: 24 §10.1; SC-2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "line-4",
+        "chars": "R3-soak: —",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "note-1",
+        "chars": "Not an ST1 card: ST1 covers 24 §10.2–§10.5 (this row is 24 §10.1) and has no disconnect field, so Probe C's reading stays cold (protocol §3).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 359
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "disagreement",
+      "w": 383,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Disagreement, stated (AC3)",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "Until the owner run, the edge scenario's \"disagreement between participants\" is the divergence between the sources named in each row; R3-soak rows keep their flag, as does any default Probe B splits.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "line-2",
+        "chars": "R4 marks a default that may behave differently on live (DJ): RSK-014 (Critical) records that demo orders go by REST only, which may change a chase's amend latency, and that \"Any behaviour that exists only on live is untested\"; revisit it at R4's minimum-size live ramp and add it to RSK-014's parity matrix.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 359
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "protocol-defaults",
+      "w": 778,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Defaults (AC3) — protocol §5",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "A recommended default is contested when at least two participants (or a third, if more) want another value, or the values given differ by more than a factor of two (DJ). The read-out states the disagreement, recommends a default with its rationale and flags the parameter \"revisit after the R3 soak\" (30-release-roadmap.md §7: demo, 7-day soak), naming what to read then: the value in the algo.*_created audit payload (SCR-066–069 Audit lines); a parameter those payloads lack (for example TWAP catch-up or end-of-window policy) is named for E33-T02. No default crosses a plan bound (chase reprice floor 200 ms, E33-S04; 450 children, 24 §10.1; TWAP slices ≥ 1 s apart, E33-S03; iceberg visible size ≥ total ÷ 360, report SC-10; market slices only with a price limit or a participation cap, the E33 threat model's SR-E33-03, Draft).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "findings",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "f2",
+      "w": 383,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "F2 (heuristic, High — 24 §8.7 and 20 §4.3 arithmetic, Pri 1)",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "at 200 ms one chase may send 5 amends a second: half 24 §8.7's per-UID order.amend bucket (10/s, normal work soft-throttled at 80 %) and more than 20 §4.3's whole 4 req/s entry bucket, which, on a reading of 20 §4.3's \"New entries and fan-out children, amends\", also carries the account's entries and every TWAP and iceberg child; two 500 ms chases fill it (SC-18). E33-S05's formula (60 000 ÷ interval) gives 300 a minute, capped to 200 by max_repricings, not SCR-068's illustrative \"≈ 12 requests/min\"; a per-run /me/limits check sees the last minute's use, not what running algos may send. H5.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 359
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "f3",
+      "w": 383,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "F3 (heuristic, High — plan text, Pri 1)",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "jitter makes the visible size a range, not US-ALGO-005's fixed 0.25, and 0.2 equals our own detector's size_tolerance_pct (24 §7.2): its hiding value is untested (E33-S02). H1, H2.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 359
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "f4",
+      "w": 383,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "F4 (heuristic, Med, Pri 1)",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "a default participation cap plus 24's default market sweep would pile a thin book's shortfall into one market order at window end, the push the cap exists to prevent. H5.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 359
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "f5",
+      "w": 383,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "F5 (heuristic, High — B7.3, Pri 0)",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 359
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "B7 routes bound_exceeded through the on_timeout guards: with market fallback a chase trades at market past the trader's own maximum distance, the anti-runaway bound turned trigger. H5.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 359
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "Source: docs/design/research/e33-emulated-algo-trust.md §2 (§9b L530–537 for the PROPOSED labels) and docs/design/research/e33-d01-session-protocol.md §3 (stimuli: ST1, ST2, moderator rules), §4 (Probe B), §5 (Defaults (AC3)) at 07c8b5be8. Illustrative content; labels such as (heuristic), DJ, PROPOSED as in the report.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  }
+ ],
+ "export": "docs/design/E33/img/E33-D01-03-parameter-defaults",
+ "notes": {
+  "sources": [
+   "docs/design/research/e33-emulated-algo-trust.md §2 L156–211 and §9b L530–538 (only its PROPOSED labels on three §2 defaults, L535 and L537, and its route, L530) at 07c8b5be8",
+   "docs/design/research/e33-d01-session-protocol.md §3 L75–89 (preface, ST1, ST2) and L118–120 (moderator rules); §4 Probe B L149–154; §5 Defaults (AC3) L252–259 at 07c8b5be8"
+  ],
+  "notes_md": "<hcl-worker-2 scratch>/sheets/E33-D01/03-parameter-defaults.md",
+  "live_checks": [
+   "no inst nodes: chips are rkit local tags (CMP-011 Tag exists in the library; swap only on request)",
+   "x = 4000 is the slot for NN 03 (boards 2000 apart: 1600 wide + 400 gap); re-check the page's right-most extent before placing",
+   "frames hug content: the TWAP frame is the tallest; check nothing clips after touchTexts + relayout"
+  ]
+ }
+}

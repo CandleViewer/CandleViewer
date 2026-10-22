@@ -1,0 +1,2667 @@
+{
+ "board": {
+  "name": "E35-D01-03-copy-annex",
+  "w": 1600,
+  "x": 4000,
+  "y": 0,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "radius": "radius.card",
+   "pad": "space.inset.lg",
+   "gap": "space.stack.md",
+   "vs": "auto"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "header",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Copy recommendations annex",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "subtitle",
+      "chars": "E35-D01 · report §9b · research board — heuristic findings, no participants",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     },
+     {
+      "t": "text",
+      "name": "intro",
+      "chars": "Status: binding-pending-owner (a risk-control string, binding on the owner's approval unless the protocol's choice rule overturns it) · proposed (wording refinable, facts not) · unchanged (verbatim). {…} marks server data.",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "table",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "radius": "radius.card",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.sunken",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "Id",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Screen",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Plan copy (verbatim)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Proposed copy",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "Status",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Tested by",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 136
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "table",
+   "node": {
+    "t": "board",
+    "name": "rows-1",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r01",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-084",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Simulation replays recorded market data. Fills are modelled, not real; results are not a guarantee.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "unchanged, after CA-2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "unchanged",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r02",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-2",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-084",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (checklist: \"'simulation is not a backtest of PnL' caveat stated\")",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"What this rule would have done on recorded BTCUSDT data, 1–14 Sep: when it fired and what it did. This shows its behaviour, not its profit.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r03",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-3",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-084",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"history available: 13 of 14 days (recording started 09-01)\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Tested on 13 of 14 days. Not tested: {7 Sep, 00:00–24:00 UTC} — no recorded data ({recording was interrupted}).\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r04",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-4",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-084",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "09-03 11:20 stop 62,100 -> 62,340  (+0.4R locked)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"09-03 11:20 stop 62,100 → 62,340 (now +0.4R from entry)\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r05",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-5",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-084",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "title \"Rule simulation / backtest panel\"; \"[ Run simulation ]\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "title \"Simulate on recorded history\"; button \"Run simulation\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Terms",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r06",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-6",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-084",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (\"no-history (CTA to record the symbol)\")",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"No recorded history for {ETHUSDT}, so this rule cannot be tested on it.\" Owner: [Record {ETHUSDT}]; others: \"Ask the owner to record {ETHUSDT}.\" (14 §0.5 item 3's split)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r07",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-7",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-084 CSV",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "hypothetical_pnl_delta_usd: \"412.80\" (22 example)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "export column \"Modelled P&L change (USDT) — fills modelled, not a forecast\"; not on screen",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r08",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-8",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"If the backend stops, this rule stops. Native stops stay.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "unchanged, first line of the \"What stops this rule\" block",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "unchanged",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r09",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-9",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"The backend is CandleViewer's server: this rule runs there, not in this window, so closing the app does not stop it.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r10",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-10",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"While the server is down or has lost Bybit, the rule moves no stops and closes nothing; your stop-loss at Bybit stays at its last price. If the server loses Bybit for over {30 s}, each account's dead man's switch also runs its policy ({Main: notify only}). The rule starts again by itself once positions are checked with Bybit, without replaying what it missed.\" (last sentence per OQ-4)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r11",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-11",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (\"engine-availability note\"); the surface it extends: \"the Admin health screen warns\" (20 §8.1)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Rule engine running on CandleViewer's server since {14:02}.\" Where the server runs on the owner's PC, add: \"If that computer sleeps or restarts, armed rules stop until it is back.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r12",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-12",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Uses estimated detectors? no\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Acts on an estimate? No\" · \"Acts on an estimate? Yes — {iceberg at level} (estimated): CandleViewer infers it from trades and the order book; Bybit does not report it. It can be wrong either way. [How it is estimated]\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 3",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r13",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-13",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Can it place orders? no   Can it flatten? no",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "unchanged; a \"yes\" names where: \"Can it place orders? Yes — on {Main, sub_001}, DEMO\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r14",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-14",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Will act on: Main, sub_001  (BTCUSDT)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Will act on: {Main, sub_001} · {BTCUSDT} · {open positions}\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r15",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-15",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Evidence for this version: simulated on recorded data {1–14 Sep} ({13 of 14 days}), {48} fires, {0} errors; simulating live since {08:00}, {6} fires.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey, Probe 1",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r16",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-16",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"You can't arm this version yet. The server requires: a completed simulation on recorded data — done; 5 simulated fires or 24 hours — {3 of 5}, or at {09:12 tomorrow}; no open safety warnings — done.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "table",
+   "node": {
+    "t": "board",
+    "name": "rows-2",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r17",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-17",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Type ARM to confirm [ ____ ]  2FA [ _ _ _ _ _ _ ]",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "LIVE, above \"Arm on LIVE…\": \"Next, confirm with your password, a 2FA code and the word LIVE. Nothing is armed until you do.\" DEMO: no field and no line (SCR-006 keeps E09-D06's strings; SC-12)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "keyboard pass",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r18",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-18",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "[ Cancel ]  [ Arm live ]",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Cancel\" · \"Arm on DEMO\" / \"Arm on LIVE…\"; pending: \"Arming… waiting for the server to confirm.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "keyboard pass",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r19",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-19",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-080",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"The rule engine is not running — armed rules are not evaluating. Native stops are unaffected.\"; 13 §11: \"Rule engine offline\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"The rule engine is not running — armed rules are not evaluating since {14:02:11}. Your stop-losses at Bybit are unaffected; stops these rules already moved stay where they are.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r20",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-19b",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-080, chrome",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (rules.enabled, \"Engine on/off\", 24 §16.3)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"The owner switched the rule engine off at {t}; armed rules {resume | need arming again} when it is on\" (the answer per SC-23)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r21",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-20",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-080",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "DRAFT / ARMED-DEMO / ARMED-LIVE / PAUSED / ERROR",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Draft; Simulating — no orders; Arming… — waiting for the server (client-side, until rules confirms; CA-18); Armed · DEMO; Armed · LIVE; Paused — Bybit link down, resumes by itself; Waiting for your confirmation; Stopped — {cause}, needs a step-up to arm again; Done — ran once [Run again…]; Disarmed — {who or why, when}. evaluating, acting and cooling_down read as Armed, a cooldown adding \"next check {time}\" (next_eligible_fire_at_ms), a skipped check the sub-line \"Skipping — {reason}\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Terms",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r22",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-21",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-080",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"! 2 rules target the same position - [resolve precedence]\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"2 rules can move the same stop: {BE after 1R}, {ATR trail 2x}. [Choose which goes first]\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 4",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r23",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-22",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-080, 153",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"rules paused — feed degraded\" (24 §11.7)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Rules paused — CandleViewer's link to Bybit is down. They resume by themselves once it is back and checked.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r24",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-23",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-152",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "E17-D01's proposed \"… app-managed rules are paused.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"If CandleViewer's server is up, your armed rules are still running there.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r25",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-24",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-087",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (\"engine-restart markers\")",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"CandleViewer's server restarted at {14:05:40}. {Dead man's switch: Main notified only.} Rules started again at {14:06:31} after positions were checked with Bybit; {3} missed triggers were not replayed.\" (the switch sentence only when an episode ran, SC-3)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r26",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-25",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-081/082",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"This rule depends on an estimated detector — behaviour is heuristic.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"This rule depends on an estimate ({iceberg at level}): CandleViewer infers it from trades and the order book, because Bybit does not report it. The rule can act when it is wrong.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed (E36)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 3",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r27",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-26",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "CMP-158",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (purpose: \"emulated rule-engine stops never replace the mandatory native exchange-side SL\")",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Every position keeps its own stop-loss at Bybit, whatever this rule does. A rule can move that stop but never remove it; everything else it does needs CandleViewer's server running.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "binding-pending-owner",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r28",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-27",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-086",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"highest priority wins; ties are rejected and logged\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"When both act at the same moment, the rule higher in this list goes first and the other is skipped and logged. Risk controls always go first.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 4",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r29",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-28",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-086",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "E35-D03: \"Daily-loss lockout will move the stop; ATR trail will be skipped and logged\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"{BE after 1R} goes first: at the same moment, {ATR trail 2x} is skipped and logged. Later checks can still tighten the stop.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 4",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r30",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-29",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-086",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (\"'arm anyway' … requires an explicit acknowledgement\")",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Arm anyway — I understand both rules can move this stop; {BE after 1R} goes first.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 4",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r31",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-30",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-087",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (superseded)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Skipped: {BE after 1R} went first\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Probe 4",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r32",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-31",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-080, 085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (\"bulk disarm with confirmation\"; \"disarm path\")",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Disarm {ATR trail 2x}? It stops acting now. Stops it already moved stay at Bybit.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "table",
+   "node": {
+    "t": "board",
+    "name": "rows-3",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r33",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-32",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-081/082",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"an explicit 'Apply to armed rule' step-up\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Activating version {4} stops {ATR trail 2x} now: it simulates version {4} and acts again only after you arm it (5 simulated fires or 24 hours).\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed (E36/E37)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r34",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-33",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-006",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Arm rule 'Break-even' (live)\" (22 action_summary, provisional)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "unchanged; the bound accounts join it once #2304 decides",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "unchanged",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "keyboard pass",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r35",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-34",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "toast",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "\"Rule 'Trail by 1.5 ATR' fired on BTCUSDT: SL moved to 61,200\" (13 §11)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Rule {Trail by 1.5 ATR} fired on {BTCUSDT}: stop-loss at Bybit moved to {61,200.0}.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r36",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-35",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085, 006",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (SCR-005 expiry-during-order-entry: \"Not sent / discarded / disarmed\")",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Not armed — {you cancelled | the confirmation expired | the screen locked | three failed attempts made this session read-only for 5 minutes | your session expired}. Nothing was sent.\" (one per drop that 22 authStepUp names: cancel, challenge_expires_at, the third failure (session_read_only), idle lock and absolute session expiry)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "keyboard pass",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r37",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-36",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (require_confirmation)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Asks before acting? No\" · \"Asks before acting? Yes — you confirm each fire within 60 s; unconfirmed fires are skipped and logged\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r38",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-37",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "— (dry_run_only)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"Dry run: {place_order} is recorded, never sent\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r39",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "CA-38",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "SCR-085",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 132
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 353
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "\"First check: {at the next 1m bar close, 13:05}. Positions already open: {checked from that first check}\" (both values composed by the server, E35-S06, and shown verbatim, so the client infers nothing about the evaluator, C-2.12: a cross, for one, is false on its first evaluation, 24 §11.6; no field carries them yet, next_eligible_fire_at_ms being set only during a cooldown, 23 §15.6)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 654
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "proposed",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 161
+       },
+       {
+        "t": "text",
+        "name": "c6",
+        "chars": "Journey",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 136
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "Source: docs/design/research/e35-rule-arming-trust.md §9b at 6c2a6f4a8. Illustrative content; labels such as (heuristic), DJ, PROPOSED as in the report.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  }
+ ],
+ "export": "E35/img/E35-D01-03-copy-annex",
+ "notes": {
+  "source": "docs/design/research/e35-rule-arming-trust.md ### 9b. table 1",
+  "columns": [
+   "Id",
+   "Screen",
+   "Plan copy (verbatim)",
+   "Proposed copy",
+   "Status",
+   "Tested by"
+  ],
+  "widths": [
+   56,
+   132,
+   353,
+   654,
+   161,
+   136
+  ],
+  "rows": 39
+ }
+}

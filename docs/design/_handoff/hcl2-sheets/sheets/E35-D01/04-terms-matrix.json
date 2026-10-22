@@ -1,0 +1,549 @@
+{
+ "board": {
+  "name": "E35-D01-04-terms-matrix",
+  "w": 1600,
+  "x": 6000,
+  "y": 0,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "radius": "radius.card",
+   "pad": "space.inset.lg",
+   "gap": "space.stack.md",
+   "vs": "auto"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "header",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Terms matrix: what each word means on each surface",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "subtitle",
+      "chars": "E35-D01 · report §7 · research board — heuristic findings, no participants",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "table",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "radius": "radius.card",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "head",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.sunken",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "Term",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 75
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "Meanings inside CandleViewer",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 495
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Competing meanings recorded in docs/research",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 442
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Risk",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "Recommendation · exact label",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 436
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "table",
+   "node": {
+    "t": "board",
+    "name": "rows-1",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "r01",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "trigger",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 75
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "the event that starts an evaluation, 13 types (24 §11.2), not the condition; also alert trigger_mode (24 §19.4), an order's trigger_price (24 §8.9) and an entry \"trigger re-armed\" (24 §8.10)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 495
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Bybit: Conditional orders with triggerPrice, status Triggered, \"Close On Trigger\" (R02 §2.1; R06 §5, §10), firing on triggerBy / slTriggerBy (Last, Mark or Index price; R06 §5); TradingView: alert frequency \"Once Per Bar, Once Per Bar Close, Once Per Minute\" (R02 §7); DeepCharts: stops \"triggered\" (R04 §29)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 442
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Med",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "qualify: \"Check when\", naming the price source (\"Check when: each 1m bar closes\"; \"Check when: the last traded price changes\", since on_price_update reads trade prints while a Bybit stop may trigger on Mark or Index); trigger stays in the IR, SCR-088 and the graph node (E37-D01); a rule fired, never \"triggered\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 436
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r02",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "condition",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 75
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "the boolean tree; None is false (24 E3); \"Conditions (all of)\" (SCR-081)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 495
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "TradingView: price-alert conditions \"Crossing, Crossing Up, Crossing Down, Greater Than, Less Than\" (R02 §7); DeepCharts Pattern Builder over up to 4 inputs (R04 §18); \"Conditional\" is an order type at Bybit and in DeepDOM (R02 §2.1; R05)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 442
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Low",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "keep: \"Only if (all must be true)\"; never call a rule a \"conditional order\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 436
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r03",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "action",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 75
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "one of 25 effects run in order through the OMS; a failure stops the rest (24 §11.2, E9)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 495
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "TradingView {{strategy.order.action}} is an order side (R02 §7); none recorded for DeepCharts or Bybit",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 442
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Low",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "keep: \"Then, in order\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 436
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r04",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "scope",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 75
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "IR level, accounts, symbols, applies_to, environments (24 §11.2); also RBAC scope (C-12.4) and kill-switch scope (SCR-072); 22's scope is the level only",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 495
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Bybit TP/SL \"Entire Position\" vs \"Partial Position\", called \"scope modes\" in R02 §2.2",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 442
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "Med",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "replace in UI: \"Acts on\" (\"Acts on: Main, sub_001 · BTCUSDT · open positions\"), as SCR-085's \"Will act on\" and US-RULE-007's chip already do",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 436
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r05",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "simulate",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 75
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "the standing simulate mode, no orders (24 §11.9; US-RULE-008); a run over history or a replay (22; SCR-084); auto-backtest on save (US-RULE-009); fourth, a dry run: dry_run_only on an armed rule's action (24 §11.2), read as recorded, not sent (SC-22), while 10 §6 G3 calls simulate-only \"Dry-run\"; beside it, demo places real demo orders, paper prices fills (24 §12), replay replays",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 495
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "TradingView \"Paper Trading\" and Strategy Tester (R02 §4, §9); DeepCharts \"Automatic backtesting/simulation\", \"sim mode\", \"SIM accounts\" (R04 §18, §21; R05); Freqtrade \"Dry-run\" (R07 §6)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 442
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "High",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "qualify: mode \"Simulating — no orders\"; SCR-084 \"Simulate on recorded history\"; never \"backtest\"; DEMO always \"DEMO — real orders on Bybit's demo exchange\"; a dry-run action reads \"Dry run\" (CA-37)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 436
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r06",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.app",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "arm",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 75
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "six: (1) mode: armed, \"the only mode that can send orders\" (22); (2) \"armed in simulate-only\" (US-RULE-008; CMP-145; 10 §6); (3) one-click arm/lock (CMP-229; \"1-click ARMED\", 05 §3.1 rule 5); (4) algos (B4/B7 arming, B6 armed, arm_chase_limit); (5) alerts (B10 starts armed); (6) re-arm after a kill or error stop (B9 HUMAN_REARM) and an entry \"trigger re-armed\" (24 §8.10)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 495
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "Bybit: a trailing stop \"becomes active/armed\" at activePrice (R06 §6; R09 §6); Kryll and Hummingbot trails \"arm\" after a favourable move (R09 §3–§4); none recorded for TradingView or DeepCharts",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 442
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "High",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "qualify: always \"Arm rule\"; states \"Armed · DEMO\" / \"Armed · LIVE\" with an icon; never \"armed\" for simulate; re-arm is \"Arm again…\" through SCR-085, with a step-up on every environment (SC-21); \"1-click ARMED\" stays E30's (F32)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 436
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "r07",
+      "hs": "fill",
+      "o": {
+       "dir": "row",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "padX": "space.inset.sm",
+       "padY": "space.inset.xs",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "c1",
+        "chars": "disarm",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 75
+       },
+       {
+        "t": "text",
+        "name": "c2",
+        "chars": "B9 DISARM, sent as mode: disabled (\"Disable, simulate or arm a rule\", 22); automatic: permission drift (E35 threat model RE-E1), rate breach (ADR-0007), quarantine (US-RULE-001), kill switch (US-RULE-014); near-synonyms enabled, pause_rule, PAUSED, kill_switched, \"auto-disabled\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 495
+       },
+       {
+        "t": "text",
+        "name": "c3",
+        "chars": "one-click \"auto-disarm\" (CMP-229); none recorded for TradingView, DeepCharts or Bybit",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 442
+       },
+       {
+        "t": "text",
+        "name": "c4",
+        "chars": "High",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 56
+       },
+       {
+        "t": "text",
+        "name": "c5",
+        "chars": "keep \"Disarm\" for the user's act; the state names who or what stopped the rule and whether it comes back by itself (CA-20); never show disabled",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 436
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "Source: docs/design/research/e35-rule-arming-trust.md §7 at 6c2a6f4a8. Illustrative content; labels such as (heuristic), DJ, PROPOSED as in the report.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  }
+ ],
+ "export": "E35/img/E35-D01-04-terms-matrix",
+ "notes": {
+  "source": "docs/design/research/e35-rule-arming-trust.md ## 7. table 1",
+  "columns": [
+   "Term",
+   "Meanings inside CandleViewer",
+   "Competing meanings recorded in docs/research",
+   "Risk",
+   "Recommendation · exact label"
+  ],
+  "widths": [
+   75,
+   495,
+   442,
+   56,
+   436
+  ],
+  "rows": 7
+ }
+}

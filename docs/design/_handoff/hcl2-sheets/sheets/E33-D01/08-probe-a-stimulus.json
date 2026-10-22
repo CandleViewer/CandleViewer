@@ -1,0 +1,1391 @@
+{
+ "board": {
+  "name": "E33-D01-08-probe-a-stimulus",
+  "w": 1600,
+  "x": 14000,
+  "y": 0,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "radius": "radius.card",
+   "pad": "space.inset.lg",
+   "gap": "space.stack.md",
+   "vs": "auto"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "header",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Probe A stimulus — a running TWAP and its row, every caveat blanked",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "subtitle",
+      "chars": "E33-D01 · protocol §1, §3 ST3 and §4 Probe A (report §3, §4 F12) · research board — heuristic findings, no participants",
+      "typo": "type.ui.body",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frames-title",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "ST3 — \"the backend just died mid-TWAP\" (A)",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "sub",
+      "chars": "Frame 0 and frame 1 side by side, as protocol §3 describes them, each with the TWAP's row and the position: frame 1 goes with A-a, A-b and A-c, frame 0 with A-d (§4).",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "st3-frames",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "frame-0",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "ST3 frame 0 · A-d · the same TWAP a minute after its start",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 778
+       },
+       {
+        "t": "board",
+        "name": "st3-frame-0",
+        "w": 778,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.app",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-demo",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "DEMO",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "twap-row",
+          "hs": "fill",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.control",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.sm",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "c1",
+            "chars": "BTCUSDT",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 80
+           },
+           {
+            "t": "text",
+            "name": "c2",
+            "chars": "TWAP",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 56
+           },
+           {
+            "t": "text",
+            "name": "c3",
+            "chars": "buy 2 BTC over 30 minutes, in 10 slices",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 260
+           },
+           {
+            "t": "text",
+            "name": "c4",
+            "chars": "nothing filled",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 120
+           },
+           {
+            "t": "text",
+            "name": "c5",
+            "chars": "slice 1 resting",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 170
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "position-row",
+          "hs": "fill",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.control",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.sm",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "c1",
+            "chars": "no position open",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 240
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "as-described",
+        "chars": "Frame 0 (A-d): the same TWAP a minute after its start with no position open, slice 1 resting and nothing filled (the report's §3 interim case).",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 778
+       },
+       {
+        "t": "text",
+        "name": "interim-case",
+        "chars": "Report §3 (heuristic), the interim case of the proposed binding copy: on a symbol whose position has no exchange-confirmed stop (a flat one included), the interim stop sentence replaces the unconditional stop sentence. The interim one is not restated in C-b: protocol A-d checks the belief it corrects (that a stop at Bybit already protects the first fill).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 778
+       }
+      ],
+      "w": 778
+     },
+     {
+      "t": "board",
+      "name": "frame-1",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "ST3 frame 1 · A-a, A-b, A-c · a TWAP you started 12 minutes ago",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 778
+       },
+       {
+        "t": "board",
+        "name": "st3-frame-1",
+        "w": 778,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.app",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-demo",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "DEMO",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "twap-row",
+          "hs": "fill",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.control",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.sm",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "c1",
+            "chars": "BTCUSDT",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 80
+           },
+           {
+            "t": "text",
+            "name": "c2",
+            "chars": "TWAP",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 56
+           },
+           {
+            "t": "text",
+            "name": "c3",
+            "chars": "buy 2 BTC over 30 minutes, in 10 slices",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 260
+           },
+           {
+            "t": "text",
+            "name": "c4",
+            "chars": "4 of 10 filled",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 120
+           },
+           {
+            "t": "text",
+            "name": "c5",
+            "chars": "slice 5 resting at the bid",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 170
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "position-row",
+          "hs": "fill",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.control",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.sm",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "c1",
+            "chars": "long position",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 120
+           },
+           {
+            "t": "text",
+            "name": "c2",
+            "chars": "stop price",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 120
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "as-described",
+        "chars": "Frame 1 in plain text, no emulation label: a BTCUSDT TWAP buying 2 BTC over 30 minutes in 10 slices (the US-ALGO-006 example), 4 of 10 filled, slice 5 resting at the bid, the long position with its native stop price; then one event card per situation.",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 778
+       }
+      ],
+      "w": 778
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "st3-rules",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "card-blanked",
+      "w": 778,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Every caveat blanked",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "No emulation label: frame 1 is in plain text.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-2",
+        "chars": "No banner, state change or caveat appears.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-3",
+        "chars": "Neither the primer nor a stimulus says which part runs an algo.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-4",
+        "chars": "Nothing about emulation, disconnects or parameters has been shown.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "note-1",
+        "chars": "Report, Method note: the protocol runs the scripted scenario first, before any explanation and with every caveat blanked, once per case of §4 and once for an unprotected first fill (Probe A), so comprehension is measured, not taught.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "note-2",
+        "chars": "Later, in Probe C (caveat, restatement test, disconnect and resume messages): ST4's term cards and caveat candidates (C-a–C-c); ST5's disconnect messages, each over the ST3 frame with no event card naming the cause; and ST5b's resume messages over the same frame after the return.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 754
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "card-prepared",
+      "w": 778,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "How each stimulus is prepared (protocol §3)",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "Every frame shows the DEMO badge (SCR-075) and only synthetic positions.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-2",
+        "chars": "BTCUSDT tick 0.10, lot step 0.001, minimum order 0.001 and minimum notional 5 USDT come from packages/fixtures/bybit/2026-10-05/rest/instruments_before.json; prices from kline_BTCUSDT_1_page0.json there, and the copy's example prices are re-set to that range when the stimuli are built.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "line-3",
+        "chars": "The scenario is narrated, never staged by stopping a real process.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 754
+       },
+       {
+        "t": "text",
+        "name": "note-1",
+        "chars": "Build each stimulus from the report's recommended defaults and proposed copy at the version the owner approved (§6), noting it on every session sheet; rebuild after any override.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 754
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "events-title",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "One event card per situation, with frame 1",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "sub",
+      "chars": "Three \"away\" situations (plan reading, Med; the report's case 1 = app-off, case 2 = Bybit-link-off, case 3 = backend-off); the plan's copy (\"algo pauses if the backend disconnects\", SCR-066) covers all three, so Probe A runs one vignette each. Under each card, the situation as protocol §1 defines it; the debrief explains the three situations.",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "st3-events",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "event-backend-off",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Event card · backend-off (case 3) · A-a",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 514
+       },
+       {
+        "t": "board",
+        "name": "card",
+        "w": 514,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.app",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "event-text",
+          "w": 490,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "\"The computer that runs CandleViewer's backend has just crashed. Your screen shows nothing new.\"",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 474
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "situation",
+        "chars": "backend-off: the backend stops; orders and native stops stay at Bybit; a restart reconciles, then resumes or cancels (20 §11.1 row F7). While it lasts, the app cannot tell backend-off from app-off, so both show the same disconnect message (report §4).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 514
+       }
+      ],
+      "w": 514
+     },
+     {
+      "t": "board",
+      "name": "event-bybit-link-off",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Event card · Bybit-link-off (case 2) · A-b",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 514
+       },
+       {
+        "t": "board",
+        "name": "card",
+        "w": 514,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.app",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "event-text",
+          "w": 490,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "\"Another day, the same TWAP. CandleViewer is fine, but its connection to Bybit drops for 20 seconds.\"",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 474
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "situation",
+        "chars": "Bybit-link-off: the backend is cut off from Bybit; freeze sends nothing new and leaves orders at Bybit working (24 §10.1 rule 2; B5–B7 WS_DISCONNECT).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 514
+       }
+      ],
+      "w": 514
+     },
+     {
+      "t": "board",
+      "name": "event-app-off",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Event card · app-off (case 1) · A-c",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 514
+       },
+       {
+        "t": "board",
+        "name": "card",
+        "w": 514,
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.app",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "radius": "radius.card",
+         "pad": "space.inset.md",
+         "gap": "space.stack.sm",
+         "vs": "auto"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "event-text",
+          "w": 490,
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.raised",
+           "radius": "radius.control",
+           "pad": "space.inset.sm",
+           "vs": "auto"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "copy",
+            "chars": "\"Another day, the same TWAP. You close the CandleViewer app for 10 minutes. The backend keeps running.\"",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 474
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "situation",
+        "chars": "app-off: the app is closed or cut off; the backend keeps running the algo (13 §9; US-ALGO-006 NFR).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 514
+       }
+      ],
+      "w": 514
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "probe-a-title",
+    "hs": "fill",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "Probe A — the disconnect scenario, before any explanation (RQ3, 9 min)",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "sub",
+      "chars": "RQ3 (A, C-d, C-e): on disconnect, do they expect cancel everything, freeze or continue? The system's answer is freeze (24-internal-schemas.md §10.1). Decides the binding disconnect and resume messages. Locked, not tested: freeze stays the default, so RQ3 tests how to say it (ticket RQ3).",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 1568
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "probe-a-steps",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "step-a-a",
+      "w": 320,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "A-a · backend-off, the ticket's scenario · 4 min",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 296
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-always-first",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "always first",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "tag-st3-frame-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "ST3 frame 1",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "Show ST3 frame 1 and read: \"This is a TWAP you started 12 minutes ago: buy 2 BTC over 30 minutes, in 10 slices. Four slices have filled. The fifth is resting on the book. Your position has its stop-loss.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 296
+       },
+       {
+        "t": "text",
+        "name": "line-2",
+        "chars": "Then the backend-off event card; ask (1)–(5) verbatim.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 296
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "to-a-b",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "then",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "step-a-b",
+      "w": 320,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "A-b · Bybit-link-off · 2 min",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 296
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-st3-frame-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "ST3 frame 1",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "The same TWAP, frame 1, with the Bybit-link-off event card; ask (1)–(4).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 296
+       },
+       {
+        "t": "text",
+        "name": "note-1",
+        "chars": "Twenty seconds keeps the 30-second account-down rule and its dead-man's-switch policy out of A-b (20 §7.2 CV_ACCOUNT_DOWN_S; US-ACCT-010).",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 296
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "to-a-c",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "order alternated",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "step-a-c",
+      "w": 320,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "A-c · app-off · 2 min",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 296
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-st3-frame-1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "ST3 frame 1",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "The same TWAP, frame 1, with the app-off event card; ask (1)–(4).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 296
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "to-a-d",
+      "alignSelf": "center",
+      "o": {
+       "dir": "column",
+       "align": "center",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "then",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "rect",
+        "name": "line",
+        "w": 48,
+        "h": 2,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "step-a-d",
+      "w": 320,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "A-d · the unprotected window · 1 min",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 296
+       },
+       {
+        "t": "board",
+        "name": "tags",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "wrap": "wrap"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "tag-st3-frame-0",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "fill": "color.surface.sunken",
+           "radius": "radius.badge",
+           "padX": "space.inset.sm",
+           "padY": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "ST3 frame 0",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "\"Another day: you start the same TWAP with no position open. The backend crashes before slice 1 fills, and slice 1 fills while it is down. What protects those 0.20 BTC?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 296
+       },
+       {
+        "t": "text",
+        "name": "line-2",
+        "chars": "(report §3, F12; coded in §5)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 296
+       },
+       {
+        "t": "text",
+        "name": "note-1",
+        "chars": "F12 (heuristic, High — C-2.6 vs 24 §8.8, Pri 0) — an entry child placed without a stop gets one \"on the first fill, within a 2 s deadline\", which the OMS can't do in case 3 (20 §11.1 row F7) and does late in case 2 (row F3, \"Fills discovered late\"); §3's interim stop sentence says so. H1, H5.",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 296
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "probe-a-script",
+    "hs": "fill",
+    "o": {
+     "dir": "row",
+     "align": "start",
+     "gap": "space.inset.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "card-questions",
+      "w": 900,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Asked verbatim: (1)–(5) in A-a; (1)–(4) in A-b and A-c",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 876
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "(1) \"What do you expect is happening right now — to the TWAP, to the fifth slice, to your stop-loss?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 876
+       },
+       {
+        "t": "text",
+        "name": "line-2",
+        "chars": "(2) \"What would you do now?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 876
+       },
+       {
+        "t": "text",
+        "name": "line-3",
+        "chars": "(3) Forced choice: \"(a) everything CandleViewer placed was cancelled · (b) nothing new is sent, and what is already on the book stays · (c) the TWAP carries on as planned · (d) I don't know.\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 876
+       },
+       {
+        "t": "text",
+        "name": "line-4",
+        "chars": "(4) \"How sure are you, from 1 to 5?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 876
+       },
+       {
+        "t": "text",
+        "name": "line-5",
+        "chars": "(5) \"CandleViewer comes back four minutes later. What will the TWAP do, and what about the slices it missed?\"",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 876
+       }
+      ]
+     },
+     {
+      "t": "board",
+      "name": "card-moderator",
+      "w": 656,
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.raised",
+       "radius": "radius.card",
+       "pad": "space.inset.md",
+       "gap": "space.stack.sm",
+       "vs": "auto"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Moderator rules (protocol §3, §4)",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary",
+        "w": 632
+       },
+       {
+        "t": "text",
+        "name": "line-1",
+        "chars": "The disconnect scenario runs first, before anything explains emulation or disconnects (ticket Test plan), so neither the parameter cards nor the competitor pages can prime it; the caveat comes before the disconnect message, as in the product.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 632
+       },
+       {
+        "t": "text",
+        "name": "line-2",
+        "chars": "Questions on where an algo runs or what happens on disconnect go on a parking card, answered in the debrief.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 632
+       },
+       {
+        "t": "text",
+        "name": "line-3",
+        "chars": "Debrief (3 min): \"What surprised you today?\" Then explain the three situations and answer the parking card.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 632
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "Source: docs/design/research/e33-d01-session-protocol.md §1 (RQ3, three situations), §3 (preparation, ST3, ST4, ST5/ST5b, moderator rules) and §4 (budget note, Probe A, Probe C heading, debrief), with docs/design/research/e33-emulated-algo-trust.md (AC trace, Research boards, Method note, §3, §4 F12) at 07c8b5be8. Illustrative content; labels such as (heuristic), DJ, PROPOSED as in the report.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 1568
+   }
+  }
+ ],
+ "export": "docs/design/E33/img/E33-D01-08-probe-a-stimulus",
+ "notes": {
+  "brief": "Probe A stimulus: a running TWAP and its monitor row with every caveat blanked; ST3 frame 0 and frame 1 side by side, as the protocol describes them.",
+  "source": "docs/design/research/e33-d01-session-protocol.md §1, §3, §4 and docs/design/research/e33-emulated-algo-trust.md AC trace, Research boards, Method note, §3, §4 (F12) at 07c8b5be8",
+  "notes_md": "<hcl-worker-2 scratch>/sheets/E33-D01/08-probe-a-stimulus.md",
+  "generator": "<hcl-worker-2 scratch>/sheets/research/gen/E33-D01-08.py"
+ }
+}

@@ -1,0 +1,1987 @@
+{
+ "board": {
+  "name": "E42-D03 / 08 CMP-087 / entry · 1280×800 · dark",
+  "w": 3024,
+  "h": 1696,
+  "x": 9200,
+  "y": 1800,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.app",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "placement A",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "source label",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "placement",
+        "chars": "A · NavRail entry (E10-D02, as merged)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary",
+        "w": 1280
+       },
+       {
+        "t": "text",
+        "name": "source",
+        "chars": "The Admin entry at the NavRail's foot, Owner only, structurally absent for Manager and Viewer (E10:63-65, :91-94); 10-personas.md §5 also puts Admin in the left rail (L179) · spec §4 L188 SH-8 · Q5 L150 · D02:117",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1280
+       }
+      ],
+      "w": 1280,
+      "note": "board label A, not product copy (§4 L188, Q5 L150)"
+     },
+     {
+      "t": "board",
+      "name": "frame-1280 · A · NavRail entry",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-072 TopBar (composition)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.lg",
+         "justify": "space-between",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "left",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · wordmark",
+            "w": 88,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "board",
+            "name": "CMP-012 Badge (composition) · LIVE",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.env.live",
+             "strokeWidth": "border.hairline"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "LIVE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · workspace switcher",
+            "w": 136,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "right",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · CMP-210 HealthChips",
+            "w": 160,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "board",
+            "name": "CMP-002 IconButton (composition) · search",
+            "o": {
+             "dir": "row",
+             "justify": "center",
+             "radius": "radius.control"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "icon",
+              "icon": "search",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "w": 32,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "CMP-061 UserMenu (composition)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "name",
+              "chars": "basiltt",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "chevron",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 32,
+            "note": "the CMP-061 trigger, closed: E10-D02 lists no items for it (E10:62), so none are drawn here"
+           }
+          ]
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1280,
+          "h": 1,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 47,
+          "abs": true
+         }
+        ],
+        "w": 1280,
+        "h": 48,
+        "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+       },
+       {
+        "t": "board",
+        "name": "body",
+        "o": {
+         "dir": "row",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-071 NavRail (composition)",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "justify": "space-between",
+           "padY": "space.inset.sm",
+           "fill": "color.surface.app"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entries",
+            "o": {
+             "dir": "column",
+             "align": "center",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "entry-1",
+              "o": {
+               "dir": "row",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · glyph",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 48,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "entry-2",
+              "o": {
+               "dir": "row",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · glyph",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 48,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "entry-3",
+              "o": {
+               "dir": "row",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · glyph",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 48,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "entry-4",
+              "o": {
+               "dir": "row",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · glyph",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 48,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "entry-5",
+              "o": {
+               "dir": "row",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · glyph",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 48,
+              "h": 32
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "focus-ring",
+            "o": {
+             "dir": "row",
+             "pad": "space.inset.xs",
+             "radius": "radius.card",
+             "stroke": "color.focus.ring",
+             "strokeWidth": "border.focus",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "Admin entry",
+              "o": {
+               "dir": "row",
+               "radius": "radius.control",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "mark",
+                "chars": "◆",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 48,
+              "h": 32,
+              "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); named 'Admin'; keyboard-focused (focus-visible), its tooltip shows the name; Enter opens /admin (SCR-120)"
+             }
+            ],
+            "note": "focus-visible (CMP-039): 2 px ring at a 2 px offset"
+           },
+           {
+            "t": "rect",
+            "name": "divider",
+            "w": 1,
+            "h": 704,
+            "o": {
+             "fill": "color.border.subtle"
+            },
+            "x": 63,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 64,
+          "h": 704,
+          "vs": "fill",
+          "note": "64 px (collapsed, §2 D1)"
+         },
+         {
+          "t": "board",
+          "name": "RightRail (composition)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.inset.md",
+           "pad": "space.inset.md",
+           "fill": "color.surface.app"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-211 PanicButtons (placeholder)",
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            },
+            "w": 216,
+            "h": 40,
+            "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · row-1",
+            "w": 216,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · row-2",
+            "w": 216,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · row-3",
+            "w": 216,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "rect",
+            "name": "divider",
+            "w": 1,
+            "h": 704,
+            "o": {
+             "fill": "color.border.subtle"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 240,
+          "h": 704,
+          "vs": "fill",
+          "note": "240 px at both sizes (§2 D1)",
+          "x": 1040,
+          "y": 0,
+          "abs": true
+         },
+         {
+          "t": "board",
+          "name": "main",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "pad": "space.inset.lg",
+           "fill": "color.surface.app",
+           "clip": true,
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · WorkspaceCanvas (E10)",
+            "w": 944,
+            "h": 672,
+            "o": {
+             "radius": "radius.card",
+             "fill": "color.surface.canvas"
+            },
+            "note": "E10-D02's workspace canvas; its panels are other epics' (not drawn)"
+           }
+          ],
+          "w": 976,
+          "h": 704,
+          "vs": "fill",
+          "note": "<main> of SCR-010 (E10-D02)"
+         }
+        ],
+        "w": 1280,
+        "h": 704,
+        "vs": "fill"
+       },
+       {
+        "t": "board",
+        "name": "CMP-208 StatusBar (composition)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.lg",
+         "justify": "space-between",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · connection chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1280,
+          "h": 1,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 1280,
+        "h": 48,
+        "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+       },
+       {
+        "t": "board",
+        "name": "overlay",
+        "kids": [
+         {
+          "t": "inst",
+          "name": "CMP-016 Tooltip",
+          "set": "CMP-016 · Tooltip",
+          "props": {
+           "State": "default"
+          },
+          "texts": {
+           "content": "Admin"
+          },
+          "x": 68,
+          "y": 710,
+          "note": "the icon-only entry's visible label, shown on hover and on focus (15:698; CMP-016 triggerOnFocus, 15:190-191); side right, vertically centred on the entry; role=tooltip"
+         }
+        ],
+        "w": 1280,
+        "h": 800,
+        "x": 0,
+        "y": 0,
+        "abs": true,
+        "note": "the tooltip layer (no layout)"
+       }
+      ],
+      "w": 1280,
+      "h": 800
+     }
+    ],
+    "w": 1280
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "placement B",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "source label",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "placement",
+        "chars": "B · user menu + Ctrl+K command (E42-D01 R-D8)",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary",
+        "w": 1280
+       },
+       {
+        "t": "text",
+        "name": "source",
+        "chars": "R-D8 takes 12-sitemap.md §1's placement (L31): 'Admin' in the CMP-061 user menu plus the CMP-059 command 'Admin area'; no Admin entry in the rail, so the rail stays for trading (D01:401-407) · spec §4 L188 SH-8 · Q5 L150 · D02:117",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 1280
+       }
+      ],
+      "w": 1280,
+      "note": "board label B, not product copy (§4 L188, Q5 L150)"
+     },
+     {
+      "t": "board",
+      "name": "frame-1280 · B · user menu + Ctrl+K",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-072 TopBar (composition)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.lg",
+         "justify": "space-between",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "left",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · wordmark",
+            "w": 88,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "board",
+            "name": "CMP-012 Badge (composition) · LIVE",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.env.live",
+             "strokeWidth": "border.hairline"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "LIVE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · workspace switcher",
+            "w": 136,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "right",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · CMP-210 HealthChips",
+            "w": 160,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "board",
+            "name": "CMP-002 IconButton (composition) · search",
+            "o": {
+             "dir": "row",
+             "justify": "center",
+             "radius": "radius.control"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "icon",
+              "icon": "search",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "w": 32,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "CMP-061 UserMenu (composition)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "name",
+              "chars": "basiltt",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "chevron",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 32,
+            "note": "the CMP-061 trigger, open: aria-haspopup=menu, aria-expanded=true; its menu is drawn below (§4 L188)"
+           }
+          ]
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1280,
+          "h": 1,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 47,
+          "abs": true
+         }
+        ],
+        "w": 1280,
+        "h": 48,
+        "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+       },
+       {
+        "t": "board",
+        "name": "body",
+        "o": {
+         "dir": "row",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-071 NavRail (composition)",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "justify": "space-between",
+           "padY": "space.inset.sm",
+           "fill": "color.surface.app"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entries",
+            "o": {
+             "dir": "column",
+             "align": "center",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "entry-1",
+              "o": {
+               "dir": "row",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · glyph",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 48,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "entry-2",
+              "o": {
+               "dir": "row",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · glyph",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 48,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "entry-3",
+              "o": {
+               "dir": "row",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · glyph",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 48,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "entry-4",
+              "o": {
+               "dir": "row",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · glyph",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 48,
+              "h": 32
+             },
+             {
+              "t": "board",
+              "name": "entry-5",
+              "o": {
+               "dir": "row",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "rect",
+                "name": "placeholder · glyph",
+                "w": 16,
+                "h": 16,
+                "o": {
+                 "radius": "radius.control",
+                 "fill": "color.surface.hover"
+                }
+               }
+              ],
+              "w": 48,
+              "h": 32
+             }
+            ]
+           },
+           {
+            "t": "rect",
+            "name": "divider",
+            "w": 1,
+            "h": 704,
+            "o": {
+             "fill": "color.border.subtle"
+            },
+            "x": 63,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 64,
+          "h": 704,
+          "vs": "fill",
+          "note": "64 px (collapsed, §2 D1); R-D8: no Admin entry, so the rail stays for trading (D01:401-404)"
+         },
+         {
+          "t": "board",
+          "name": "RightRail (composition)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.inset.md",
+           "pad": "space.inset.md",
+           "fill": "color.surface.app"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-211 PanicButtons (placeholder)",
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            },
+            "w": 216,
+            "h": 40,
+            "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · row-1",
+            "w": 216,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · row-2",
+            "w": 216,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · row-3",
+            "w": 216,
+            "h": 12,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           },
+           {
+            "t": "rect",
+            "name": "divider",
+            "w": 1,
+            "h": 704,
+            "o": {
+             "fill": "color.border.subtle"
+            },
+            "x": 0,
+            "y": 0,
+            "abs": true
+           }
+          ],
+          "w": 240,
+          "h": 704,
+          "vs": "fill",
+          "note": "240 px at both sizes (§2 D1)",
+          "x": 1040,
+          "y": 0,
+          "abs": true
+         },
+         {
+          "t": "board",
+          "name": "main",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "pad": "space.inset.lg",
+           "fill": "color.surface.app",
+           "clip": true,
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "placeholder · WorkspaceCanvas (E10)",
+            "w": 944,
+            "h": 672,
+            "o": {
+             "radius": "radius.card",
+             "fill": "color.surface.canvas"
+            },
+            "note": "E10-D02's workspace canvas; its panels are other epics' (not drawn)"
+           }
+          ],
+          "w": 976,
+          "h": 704,
+          "vs": "fill",
+          "note": "<main> of SCR-010 (E10-D02)"
+         }
+        ],
+        "w": 1280,
+        "h": 704,
+        "vs": "fill"
+       },
+       {
+        "t": "board",
+        "name": "CMP-208 StatusBar (composition)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.lg",
+         "justify": "space-between",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · connection chip",
+          "w": 120,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1280,
+          "h": 1,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 1280,
+        "h": 48,
+        "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+       },
+       {
+        "t": "board",
+        "name": "overlay",
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition) · open",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.overlay",
+           "shadow": "elevation.popover",
+           "radius": "radius.card",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "pad": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "item-01",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "height": "size.control.comfortable"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Profile",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 232,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "item-02",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "height": "size.control.comfortable"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Settings",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 232,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "item-03",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "height": "size.control.comfortable"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Admin",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 232,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "item-04",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "height": "size.control.comfortable"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Sign out",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 232,
+            "h": 32
+           }
+          ],
+          "w": 240,
+          "x": 1024,
+          "y": 52,
+          "note": "role=\"menu\" under its trigger (CMP-041 Menu Button pattern, 15:424); Admin opens /admin (SCR-120); no item focused: frame B's focus is in the palette"
+         },
+         {
+          "t": "board",
+          "name": "CMP-059 CommandPalette (composition)",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "fill": "color.surface.overlay",
+           "radius": "radius.dialog",
+           "shadow": "elevation.dialog",
+           "pad": "space.inset.sm",
+           "gap": "space.stack.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "focus-ring",
+            "o": {
+             "dir": "row",
+             "pad": "space.inset.xs",
+             "radius": "radius.card",
+             "stroke": "color.focus.ring",
+             "strokeWidth": "border.focus",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "input",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "fill": "color.surface.sunken",
+               "height": "size.control.comfortable",
+               "stroke": "color.text.tertiary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "search",
+                "icon": "search",
+                "color": "color.text.tertiary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 456,
+              "h": 32,
+              "note": "role=\"combobox\" aria-expanded=\"true\" aria-controls the listbox, aria-activedescendant the \"Admin area\" option; focused on open; the query is empty (no source gives a query or a placeholder)"
+             }
+            ],
+            "note": "focus-visible (CMP-039): 2 px ring at a 2 px offset"
+           },
+           {
+            "t": "rect",
+            "name": "divider",
+            "w": 464,
+            "h": 1,
+            "o": {
+             "fill": "color.border.subtle"
+            }
+           },
+           {
+            "t": "board",
+            "name": "listbox",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "group-1",
+              "o": {
+               "dir": "column",
+               "align": "start"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "group label",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "rect",
+                  "name": "placeholder · group 1 label",
+                  "w": 72,
+                  "h": 8,
+                  "o": {
+                   "radius": "radius.control",
+                   "fill": "color.surface.hover"
+                  }
+                 }
+                ],
+                "w": 464,
+                "h": 24,
+                "note": "the group's label is E10-D02's (E10:105-106), not this board's (placeholder)"
+               },
+               {
+                "t": "board",
+                "name": "option · Admin area",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm",
+                 "radius": "radius.control",
+                 "fill": "color.surface.selected",
+                 "height": "space.row.height.comfortable",
+                 "stroke": "color.focus.ring",
+                 "strokeWidth": "border.focus",
+                 "strokeAlign": "inner"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Admin area",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "w": 464,
+                "h": 32,
+                "note": "role=\"option\" aria-selected=\"true\": the active option (aria-activedescendant), its visual focus the inner 2 px ring on the selected fill (as e42kit.table_row's focused cell); Enter runs it and opens /admin (SCR-120, §6 L244)"
+               },
+               {
+                "t": "board",
+                "name": "option-1",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm",
+                 "height": "space.row.height.comfortable"
+                },
+                "kids": [
+                 {
+                  "t": "rect",
+                  "name": "placeholder · command 1",
+                  "w": 176,
+                  "h": 8,
+                  "o": {
+                   "radius": "radius.control",
+                   "fill": "color.surface.hover"
+                  }
+                 }
+                ],
+                "w": 464,
+                "h": 32,
+                "note": "role=\"option\": an E10-D02 command (placeholder)"
+               },
+               {
+                "t": "board",
+                "name": "option-2",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm",
+                 "height": "space.row.height.comfortable"
+                },
+                "kids": [
+                 {
+                  "t": "rect",
+                  "name": "placeholder · command 2",
+                  "w": 136,
+                  "h": 8,
+                  "o": {
+                   "radius": "radius.control",
+                   "fill": "color.surface.hover"
+                  }
+                 }
+                ],
+                "w": 464,
+                "h": 32,
+                "note": "role=\"option\": an E10-D02 command (placeholder)"
+               }
+              ],
+              "w": 464,
+              "note": "role=\"group\" labelled by its label"
+             },
+             {
+              "t": "board",
+              "name": "group-2",
+              "o": {
+               "dir": "column",
+               "align": "start"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "group label",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "rect",
+                  "name": "placeholder · group 2 label",
+                  "w": 72,
+                  "h": 8,
+                  "o": {
+                   "radius": "radius.control",
+                   "fill": "color.surface.hover"
+                  }
+                 }
+                ],
+                "w": 464,
+                "h": 24,
+                "note": "the group's label is E10-D02's (E10:105-106), not this board's (placeholder)"
+               },
+               {
+                "t": "board",
+                "name": "option-3",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm",
+                 "height": "space.row.height.comfortable"
+                },
+                "kids": [
+                 {
+                  "t": "rect",
+                  "name": "placeholder · command 3",
+                  "w": 152,
+                  "h": 8,
+                  "o": {
+                   "radius": "radius.control",
+                   "fill": "color.surface.hover"
+                  }
+                 }
+                ],
+                "w": 464,
+                "h": 32,
+                "note": "role=\"option\": an E10-D02 command (placeholder)"
+               },
+               {
+                "t": "board",
+                "name": "option-4",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm",
+                 "height": "space.row.height.comfortable"
+                },
+                "kids": [
+                 {
+                  "t": "rect",
+                  "name": "placeholder · command 4",
+                  "w": 112,
+                  "h": 8,
+                  "o": {
+                   "radius": "radius.control",
+                   "fill": "color.surface.hover"
+                  }
+                 }
+                ],
+                "w": 464,
+                "h": 32,
+                "note": "role=\"option\": an E10-D02 command (placeholder)"
+               }
+              ],
+              "w": 464,
+              "note": "role=\"group\" labelled by its label"
+             }
+            ],
+            "w": 464,
+            "note": "role=\"listbox\": CMP-213 FuzzyList inside CMP-059 (15:2455)"
+           }
+          ],
+          "w": 480,
+          "note": "Ctrl+K (15:584): a modal dialog holding a combobox and its listbox (15:586); elevation.dialog = elevation.4 and color.surface.overlay (15:587); its live region announces the result count (not drawn)",
+          "x": 400,
+          "y": 256
+         }
+        ],
+        "w": 1280,
+        "h": 800,
+        "x": 0,
+        "y": 0,
+        "abs": true,
+        "note": "the overlay layer (no layout): the open menu and the open palette, drawn together"
+       }
+      ],
+      "w": 1280,
+      "h": 800
+     }
+    ],
+    "w": 1280
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "08 CMP-087 · SH-8 entry placements (OQ-16): two 1280 frames",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Source",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "spec §4 L188 · SH-8 · board 08 shell-entry, 1280 × 800 only, two frames (§0 L48, L60, L70-71) · Q5 L150 · spec 782eb0e4d",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "SH-8, the Owner's way in before any admin route renders (§4 L188); either entry opens /admin (SCR-120, §6 L244); under (a) the SCR-149 gate overlays this route first (D6 L119, RA-1 L223).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "A: E10-D02's NavRail Admin entry (◆), keyboard-focused, with its CMP-016 tooltip 'Admin' (15:698).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "B: R-D8 (12-sitemap.md §1): no rail entry; the CMP-061 menu open; CMP-059 (Ctrl+K) with 'Admin area' active.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Q5 (OQ-16, owner): both drawn, default by exception (L150; D01:1248-1251) · D1 L114: NavRail 64 px, RightRail 240 px with CMP-211 · D6 L119 · D02:117: the shell and every screen identical under either; CMP-211 where E10-D02 put it, in both (in B it sits under the open menu)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Roles",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Owner only, in either placement. A: Manager and Viewer get no rail entry, absent from the tree, never a disabled ghost (E10:91-94). B: the menu's Admin item and the 'Admin area' command are absent too, not E10-D02's dimmed 'Owner only' palette entry (E10:110-111), which would disclose the admin area (N-6 L522; §17 L733; D02:117). A typed /admin/** renders SCR-155 like any unknown route (§4 L201; board 88).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Keyboard path and focus",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "A: skip link → TopBar → NavRail (§4 L198): Tab to the Admin entry (aria-label 'Admin'; tooltip on focus, 15:191); Enter opens /admin.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "B: the CMP-061 trigger: Enter, Space or ↓ opens, arrows move, Enter on Admin, Esc returns focus (15:424). Ctrl+K: focus in the combobox, arrows move the active option, Enter runs it, Esc closes (E10:254).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Focus ring 2 px off (§13 L590); 32 px targets (L591); no new key binding (§1 L94).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "None (§4 L188: —); CMP-059's live region announces the result count (15:586); the route announcer speaks on arrival (§4 L199).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys used",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "None: SH-8 has no §14 key (§4 L188: —). Strings: §4 L188's 'Admin', 'Profile · Settings · Admin · Sign out', 'Admin area'; §1's basiltt, LIVE (L99, L102); the captions are board labels.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-08",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Tokens",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "colour: border.default, border.subtle, env.live, focus.ring, surface.app, surface.canvas, surface.hover, surface.overlay, surface.selected, surface.sunken, text.primary, text.secondary, text.tertiary; type: ui.body, ui.body-strong, ui.caption, ui.heading-sm; space: inset.lg, inset.md, inset.sm, inset.xs, row.height.comfortable, stack.md, stack.sm, stack.xs; size: control.comfortable, icon; radius: badge, card, control, dialog; other: border.focus, border.hairline, elevation.dialog, elevation.popover",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Contrast, dark (§15): ring 7.45 on app, 6.15 on overlay, 4.72 on selected (L640); menu text 13.27 on overlay (L648); 'Admin area' 10.17 on selected (L643); DS-3 edge and search glyph 5.20 / 6.83 (L650)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "fallback: icon/admin (◆) pending DS-5: drawn as the text glyph ◆ of band.label (L597)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "fallback: color.border.input pending DS-3: field boundaries bind color.text.tertiary (§15 L626, F1 L653)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "token: size.control.comfortable (32 px, §4 L176) is the Tier-1 primitive the spec names (validator WARN)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-09",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Analytics and audit events",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "None for SH-8 (§4 L188: —); once SCR-120 loads, its /admin/* reads write admin.area_entered {route, reauth_age_s} (§4 L201-204, D27).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-10",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Deviations",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "B shows the open menu and the open palette together, one at a time in the product (CMP-059 is modal, 15:586); its group labels and other commands are E10-D02's, as placeholders (E10:105-106); no scrim under CMP-059 (it would hide the menu); CMP-061's role display (15:604) is not drawn: no D03 string or format gives it.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E42-D03 · board 08 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E42/img/E42-D03-08-shell-entry.png",
+ "notes": {
+  "sources": [
+   "spec §4 L188 (SH-8 row), L164-165 (Admin entry, Owner only), L198-204 (focus, keys, RBAC, audit)",
+   "spec §0 L48, L60, L70-71 (board 08: 1280 × 800 only, two frames); §3 Q5 L150 (OQ-16: both drawn, board 08)",
+   "spec §2 D1 L114, D6 L119; §5 RA-1 L223; §6 L244 (SCR-120 at /admin); §1 L94, L99, L102",
+   "spec §13 L581, L590-591; §15 L638, L640, L643, L648, L650 (contrast pairs)",
+   "D02:117 (E42-D02: both placements, each labelled with its source; the shell identical; CMP-211 in both)",
+   "D01:359 (F-D8), :401-407 (R-D8), :1248-1251 (OQ-16) (E42-D01, docs/design/research/e42-admin.md)",
+   "E10:61-65 (TopBar, NavRail, the Admin entry), :91-94 (role variants), :98 (collapsed rail tooltip), :104-106 (SCR-012 palette), :254 (Ctrl/Cmd+K) (docs/design/E10/E10-D02.md)",
+   "E10:110-111 (SCR-012 RBAC-disabled entries); spec §11 L522 (N-6), §17 L733",
+   "15:187-194 (CMP-016), :420-427 (CMP-041), :582-588 (CMP-059), :600-606 (CMP-061), :694-700 (CMP-071; its tokens :699), :2455-2458 (CMP-213; its tokens :2458) (docs/plan/15-component-catalogue.md)",
+   "12-sitemap.md L31 (the 'Admin' entry in the account/user menu), L99 (R-300 /admin); 10-personas.md L179 (an 'Admin' section in the left rail)",
+   "docs/design/E10/img/scr-012-empty-query.png (480 × 360: E10-D02's palette frame width)",
+   "spec §4 L162-204 (CMP-087 anatomy, SH-1..SH-8, focus, audit)",
+   "spec §2 D1 L114 (layout at both sizes)",
+   "spec §15 L615-667 (tokens, contrast, colour vision)",
+   "spec §0 L42-82 (boards, names, footer, build order)"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [
+   "SH-8 has no §14 key (§4 L188, copy key —): the product strings are §4 L188's anatomy ('Admin', 'Profile · Settings · Admin · Sign out', 'Admin area') and §1's basiltt and LIVE.",
+   "The rail entry's name 'Admin' shows in its CMP-016 tooltip (frame A) from the kit label nav_admin (L188); the rail item is 'Admin' in CMP-071's list (15:696) and 10-personas.md L179.",
+   "CMP-061's role display ('role is always shown as visible text', 15:602-604) has no D03 string or format: no role line is drawn; the trigger shows the Owner's name as on every board.",
+   "CMP-059's query, placeholder text, group labels ('Recent' / 'Suggested'; 'Navigate' / 'Panel' / …, E10:105-106) and other commands are not D03 strings: the query is empty and the rest are placeholders.",
+   "No keycap hint shows Ctrl+K inside the frames (no source places one); caption B and the annotation column name the key.",
+   "'Admin': an anatomy string, not a §14 key (spec L188)",
+   "'Profile · Settings · Admin · Sign out': an anatomy string, not a §14 key (spec L188)",
+   "'Admin area': an anatomy string, not a §14 key (spec L188)"
+  ],
+  "live_checks": [
+   "tooltip (frame A): the CMP-016 instance in 'overlay' at x 68, y 710: after relayout it sits right of the focused Admin entry (entry x 8-56, y 708-740), vertically centred on it (centre y 724; set y = 724 - h/2 if the instance is not 28 px tall), clear of the rail's divider at x 63; if the library tooltip carries an arrow on another side, report it (CMP-016 has a side prop, 15:190)",
+   "focus ring (frame A): the 'focus-ring' wrapper (56 x 40) stays inside the 64 px rail, at its foot (y 704-744 in the frame); the ring is 2 px color.focus.ring 2 px off the entry",
+   "menu (frame B): 'CMP-061 UserMenu (composition) · open' at x 1024, y 52 (estimated 240 x 136 px): its right edge on the trigger's (x 1264), its top 4 px under the TopBar; it must not overlap the palette",
+   "palette (frame B): 'CMP-059 CommandPalette (composition)' at x 400, y 256 (estimated 480 x 289 px): re-centre it in the frame after relayout; the 'focus-ring' around its input must not be clipped",
+   "captions: each 'source label' wraps inside its 1280 px column (estimated A 1 + 1 lines, B 1 + 1 lines); its frame starts 8 px under it; the columns are estimated 842 px. Frames A and B must start at the same y: caption B's source line is estimated at 1176 of 1280 px (A's at 1062); if it wraps, frame B sits 13 px lower than frame A: shorten that line (CAPTIONS['B'] in gen_08.py, then regenerate, so the sheet stays equal to the board)",
+   "annotations fit: the column is estimated at 1566 px in a 1696 px root (1664 inside its padding; k.root_size() plus 96 px of slack): after touchTexts and relayout the footer must lie inside the root (clip on); if not, raise the root height (pitch limit 1760) and report the new height so the sheet is regenerated with it",
+   "inst 'CMP-016 Tooltip': set 'CMP-016 · Tooltip', props {\"State\": \"default\"}, text layers ['content']: verify the set, the variant and the layer names live before rendering",
+   "glyph ◆ (U+25C6): confirm Inter draws it; else Penpot substitutes a fallback font",
+   "root name: after the first section call the root must read back exactly as the sheet's board.name, or later calls create a duplicate root"
+  ],
+  "deviations": [
+   "Board 08's frames are the Owner's SCR-010 (e42kit.app_shell), not the CMP-087 shell: SH-8 is the way in, before any admin route renders (§4 L188), and the shell is identical under either placement (D02:117).",
+   "Each frame sits under a caption naming its placement and source (Q5, 'each labelled with its source', §4 L188): the root row holds 'placement A' and 'placement B' (caption over frame) and the annotations, so the frames are not the root's direct children as the build notes list them.",
+   "Frame B draws the open CMP-061 menu and the open CMP-059 palette together so one frame shows both of R-D8's ways in; the product shows one at a time (CMP-059 is a modal dialog, 15:586).",
+   "No scrim under CMP-059: 15:586 names a modal dialog but no backdrop, and a scrim would hide frame B's open menu.",
+   "CMP-059 is a composition (no library set): 480 px wide (E10-D02's SCR-012 frames are 480 px), color.surface.overlay and elevation.dialog (= elevation.4, 15:587), radius.dialog, space.inset.sm padding and gaps (kit choice); the combobox well is the DS-3 text field with its search glyph in color.text.tertiary (§15 L650's pair); the active option binds color.surface.selected (the selected-row pair, 10.17, §15 L643) with an inner 2 px color.focus.ring, its visual focus under aria-activedescendant (as e42kit.table_row draws a focused cell; 4.72 on selected, §15 L640), so the state is never the fill alone.",
+   "CMP-059's group labels and every command but 'Admin area' are neutral placeholders: E10-D02's SCR-012 owns them (E10:104-106).",
+   "Focus is the board's choice, to show each way in: frame A focuses the Admin entry so its CMP-016 tooltip shows the name at 1280 (CMP-071, 15:698; E10:98); frame B's focus is in the palette's combobox, so no CMP-061 item is focused.",
+   "The CMP-061 menu is 240 px wide (e42kit.menu's width; no source gives CMP-061's) and sits 4 px under the TopBar, right-aligned with its trigger.",
+   "CMP-071 (15:699) and CMP-213 (15:2458) name color.surface.raised; the rail keeps the kit's color.surface.app chrome and the list CMP-059's overlay, so the focus ring reads 7.45 on app (§15 L640), not 6.66 on raised.",
+   "TopBar, NavRail, RightRail and StatusBar content other than the Admin entry, the env badges and the owner's name is drawn as neutral placeholders (E10-D02 owns it; §1 L97 gives only the sizes); the chrome binds color.surface.app with color.border.subtle dividers (no source names a chrome surface).",
+   "Buttons, chips, badges, banners, fields, tiles, tables, menus and dialogs are compositions from tokens: admin controls are 32 px (size.control.comfortable, §4 L176) while the library CMP-001 binds size.control.height (24 px in the file's compact density), and cvsheet v1 cannot set an instance's glyph, fill or border.",
+   "A focus ring is a 2 px color.focus.ring inner stroke on a wrapper with space.inset.xs (4 px) padding, so it sits 2 px off the control (CMP-039) inside the wrapper's bounds; its radius is the next step (radius.card around radius.control); the wrapper adds 4 px on each side to the layout.",
+   "Board names carry Penpot's normalised ' / ' form (E42-D03 / 31 SCR-121 / populated · …) so cvsheet's find-or-create root matches on every section call; §0 L46-47 writes 'SCR-121/populated'."
+  ],
+  "fallbacks": [
+   "fallback: icon/admin (◆) pending DS-5: drawn as the text glyph ◆ of band.label (L597)",
+   "fallback: color.border.input pending DS-3: field boundaries bind color.text.tertiary (§15 L626, F1 L653)",
+   "token: size.control.comfortable (32 px, §4 L176) is the Tier-1 primitive the spec names (validator WARN)"
+  ],
+  "tokens": [
+   "radius.control",
+   "color.surface.hover",
+   "type.ui.caption",
+   "color.text.primary",
+   "space.inset.xs",
+   "radius.badge",
+   "color.env.live",
+   "border.hairline",
+   "space.inset.md",
+   "type.ui.body",
+   "color.text.secondary",
+   "size.icon",
+   "space.inset.sm",
+   "color.border.subtle",
+   "space.inset.lg",
+   "color.surface.app",
+   "radius.card",
+   "color.surface.canvas",
+   "space.stack.md",
+   "type.ui.body-strong",
+   "color.focus.ring",
+   "border.focus",
+   "type.ui.heading-sm",
+   "space.stack.xs",
+   "space.stack.sm",
+   "size.control.comfortable",
+   "color.surface.overlay",
+   "elevation.popover",
+   "color.border.default",
+   "color.text.tertiary",
+   "color.surface.sunken",
+   "color.surface.selected",
+   "space.row.height.comfortable",
+   "radius.dialog",
+   "elevation.dialog",
+   "type.ui.label"
+  ]
+ }
+}

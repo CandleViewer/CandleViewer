@@ -1,0 +1,2702 @@
+{
+ "source": "offline from d02/specs (approximate); CMP-022/026/027 removed 2026-10-22 (not in the live library)",
+ "sets": {
+  "CMP-001 \u00b7 Button": {
+   "variants": [
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "default"
+    },
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "hover"
+    },
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "focus-visible"
+    },
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "active"
+    },
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "disabled"
+    },
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "disabled-with-reason"
+    },
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "loading"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "default"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "hover"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "focus-visible"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "active"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "disabled"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "disabled-with-reason"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "loading"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "default"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "hover"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "focus-visible"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "active"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "disabled"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "disabled-with-reason"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "loading"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "default"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "hover"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "focus-visible"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "active"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "disabled"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "disabled-with-reason"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "loading"
+    },
+    {
+     "Variant": "buy",
+     "Size": "md",
+     "State": "default"
+    },
+    {
+     "Variant": "buy",
+     "Size": "md",
+     "State": "hover"
+    },
+    {
+     "Variant": "buy",
+     "Size": "md",
+     "State": "focus-visible"
+    },
+    {
+     "Variant": "buy",
+     "Size": "md",
+     "State": "active"
+    },
+    {
+     "Variant": "buy",
+     "Size": "md",
+     "State": "disabled"
+    },
+    {
+     "Variant": "buy",
+     "Size": "md",
+     "State": "disabled-with-reason"
+    },
+    {
+     "Variant": "buy",
+     "Size": "md",
+     "State": "loading"
+    },
+    {
+     "Variant": "sell",
+     "Size": "md",
+     "State": "default"
+    },
+    {
+     "Variant": "sell",
+     "Size": "md",
+     "State": "hover"
+    },
+    {
+     "Variant": "sell",
+     "Size": "md",
+     "State": "focus-visible"
+    },
+    {
+     "Variant": "sell",
+     "Size": "md",
+     "State": "active"
+    },
+    {
+     "Variant": "sell",
+     "Size": "md",
+     "State": "disabled"
+    },
+    {
+     "Variant": "sell",
+     "Size": "md",
+     "State": "disabled-with-reason"
+    },
+    {
+     "Variant": "sell",
+     "Size": "md",
+     "State": "loading"
+    },
+    {
+     "Variant": "primary",
+     "Size": "sm",
+     "State": "default"
+    },
+    {
+     "Variant": "primary",
+     "Size": "lg",
+     "State": "default"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "sm",
+     "State": "default"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "lg",
+     "State": "default"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "sm",
+     "State": "default"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "lg",
+     "State": "default"
+    },
+    {
+     "Variant": "danger",
+     "Size": "sm",
+     "State": "default"
+    },
+    {
+     "Variant": "danger",
+     "Size": "lg",
+     "State": "default"
+    },
+    {
+     "Variant": "buy",
+     "Size": "sm",
+     "State": "default"
+    },
+    {
+     "Variant": "buy",
+     "Size": "lg",
+     "State": "default"
+    },
+    {
+     "Variant": "sell",
+     "Size": "sm",
+     "State": "default"
+    },
+    {
+     "Variant": "sell",
+     "Size": "lg",
+     "State": "default"
+    }
+   ],
+   "texts": [
+    "label"
+   ],
+   "axes": [
+    {
+     "name": "Variant",
+     "values": [
+      "primary",
+      "secondary",
+      "ghost",
+      "danger",
+      "buy",
+      "sell"
+     ],
+     "default": "secondary"
+    },
+    {
+     "name": "Size",
+     "values": [
+      "sm",
+      "md",
+      "lg"
+     ],
+     "default": "md"
+    },
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "active",
+      "disabled",
+      "disabled-with-reason",
+      "loading"
+     ],
+     "default": "default"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-002 \u00b7 IconButton": {
+   "variants": [
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "hover",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "focus-visible",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "disabled",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "primary",
+     "Size": "md",
+     "State": "disabled-with-reason",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "hover",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "focus-visible",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "disabled",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "disabled-with-reason",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "hover",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "focus-visible",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "disabled",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "disabled-with-reason",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "hover",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "focus-visible",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "disabled",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "danger",
+     "Size": "md",
+     "State": "disabled-with-reason",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "primary",
+     "Size": "sm",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "primary",
+     "Size": "lg",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "sm",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "lg",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "sm",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "lg",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "danger",
+     "Size": "sm",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "danger",
+     "Size": "lg",
+     "State": "default",
+     "Pressed": "false"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "default",
+     "Pressed": "true"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "hover",
+     "Pressed": "true"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "focus-visible",
+     "Pressed": "true"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "disabled",
+     "Pressed": "true"
+    },
+    {
+     "Variant": "secondary",
+     "Size": "md",
+     "State": "disabled-with-reason",
+     "Pressed": "true"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "default",
+     "Pressed": "true"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "hover",
+     "Pressed": "true"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "focus-visible",
+     "Pressed": "true"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "disabled",
+     "Pressed": "true"
+    },
+    {
+     "Variant": "ghost",
+     "Size": "md",
+     "State": "disabled-with-reason",
+     "Pressed": "true"
+    }
+   ],
+   "texts": [],
+   "axes": [
+    {
+     "name": "Variant",
+     "values": [
+      "primary",
+      "secondary",
+      "ghost",
+      "danger"
+     ],
+     "default": "secondary"
+    },
+    {
+     "name": "Size",
+     "values": [
+      "sm",
+      "md",
+      "lg"
+     ],
+     "default": "md"
+    },
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Pressed",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-003 \u00b7 SegmentedControl": {
+   "variants": [
+    {
+     "Size": "md",
+     "State": "default",
+     "Content": "text",
+     "Options": "3"
+    },
+    {
+     "Size": "md",
+     "State": "hover",
+     "Content": "text",
+     "Options": "3"
+    },
+    {
+     "Size": "md",
+     "State": "focus-visible",
+     "Content": "text",
+     "Options": "3"
+    },
+    {
+     "Size": "md",
+     "State": "disabled",
+     "Content": "text",
+     "Options": "3"
+    },
+    {
+     "Size": "md",
+     "State": "disabled-with-reason",
+     "Content": "text",
+     "Options": "3"
+    },
+    {
+     "Size": "sm",
+     "State": "default",
+     "Content": "text",
+     "Options": "3"
+    },
+    {
+     "Size": "md",
+     "State": "default",
+     "Content": "icon-only",
+     "Options": "3"
+    },
+    {
+     "Size": "md",
+     "State": "default",
+     "Content": "text",
+     "Options": "2"
+    },
+    {
+     "Size": "md",
+     "State": "default",
+     "Content": "text",
+     "Options": "6"
+    }
+   ],
+   "texts": [
+    "segment-1/label",
+    "segment-n/label"
+   ],
+   "axes": [
+    {
+     "name": "Size",
+     "values": [
+      "sm",
+      "md"
+     ],
+     "default": "md"
+    },
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Content",
+     "values": [
+      "text",
+      "icon-only"
+     ],
+     "default": "text"
+    },
+    {
+     "name": "Options",
+     "values": [
+      "2",
+      "3",
+      "6"
+     ],
+     "default": "3"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-004 \u00b7 Toggle": {
+   "variants": [
+    {
+     "State": "default",
+     "Checked": "false",
+     "Critical": "false",
+     "Label Position": "right"
+    },
+    {
+     "State": "hover",
+     "Checked": "false",
+     "Critical": "false",
+     "Label Position": "right"
+    },
+    {
+     "State": "focus-visible",
+     "Checked": "false",
+     "Critical": "false",
+     "Label Position": "right"
+    },
+    {
+     "State": "disabled",
+     "Checked": "false",
+     "Critical": "false",
+     "Label Position": "right"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Checked": "false",
+     "Critical": "false",
+     "Label Position": "right"
+    },
+    {
+     "State": "default",
+     "Checked": "true",
+     "Critical": "false",
+     "Label Position": "right"
+    },
+    {
+     "State": "hover",
+     "Checked": "true",
+     "Critical": "false",
+     "Label Position": "right"
+    },
+    {
+     "State": "default",
+     "Checked": "false",
+     "Critical": "true",
+     "Label Position": "right"
+    },
+    {
+     "State": "default",
+     "Checked": "true",
+     "Critical": "true",
+     "Label Position": "right"
+    },
+    {
+     "State": "default",
+     "Checked": "false",
+     "Critical": "false",
+     "Label Position": "left"
+    },
+    {
+     "State": "default",
+     "Checked": "false",
+     "Critical": "false",
+     "Label Position": "hidden"
+    }
+   ],
+   "texts": [
+    "label"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Checked",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    },
+    {
+     "name": "Critical",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    },
+    {
+     "name": "Label Position",
+     "values": [
+      "right",
+      "left",
+      "hidden"
+     ],
+     "default": "right"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-005 \u00b7 Checkbox": {
+   "variants": [
+    {
+     "State": "default",
+     "Checked": "false"
+    },
+    {
+     "State": "hover",
+     "Checked": "false"
+    },
+    {
+     "State": "focus-visible",
+     "Checked": "false"
+    },
+    {
+     "State": "disabled",
+     "Checked": "false"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Checked": "true"
+    },
+    {
+     "State": "default",
+     "Checked": "true"
+    },
+    {
+     "State": "hover",
+     "Checked": "true"
+    },
+    {
+     "State": "default",
+     "Checked": "indeterminate"
+    }
+   ],
+   "texts": [
+    "label"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Checked",
+     "values": [
+      "false",
+      "true",
+      "indeterminate"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-006 \u00b7 RadioGroup": {
+   "variants": [
+    {
+     "State": "default",
+     "Orientation": "vertical"
+    },
+    {
+     "State": "hover",
+     "Orientation": "vertical"
+    },
+    {
+     "State": "focus-visible",
+     "Orientation": "vertical"
+    },
+    {
+     "State": "disabled",
+     "Orientation": "vertical"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Orientation": "vertical"
+    },
+    {
+     "State": "default",
+     "Orientation": "horizontal"
+    }
+   ],
+   "texts": [
+    "label"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Orientation",
+     "values": [
+      "vertical",
+      "horizontal"
+     ],
+     "default": "vertical"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-007 \u00b7 TextInput": {
+   "variants": [
+    {
+     "State": "default",
+     "Input Mode": "text"
+    },
+    {
+     "State": "hover",
+     "Input Mode": "text"
+    },
+    {
+     "State": "focus-visible",
+     "Input Mode": "text"
+    },
+    {
+     "State": "invalid",
+     "Input Mode": "text"
+    },
+    {
+     "State": "disabled",
+     "Input Mode": "text"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Input Mode": "text"
+    },
+    {
+     "State": "readonly",
+     "Input Mode": "text"
+    },
+    {
+     "State": "default",
+     "Input Mode": "numeric"
+    },
+    {
+     "State": "hover",
+     "Input Mode": "numeric"
+    },
+    {
+     "State": "focus-visible",
+     "Input Mode": "numeric"
+    },
+    {
+     "State": "invalid",
+     "Input Mode": "numeric"
+    },
+    {
+     "State": "disabled",
+     "Input Mode": "numeric"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Input Mode": "numeric"
+    },
+    {
+     "State": "readonly",
+     "Input Mode": "numeric"
+    }
+   ],
+   "texts": [
+    "message-text",
+    "placeholder",
+    "value"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "invalid",
+      "disabled",
+      "disabled-with-reason",
+      "readonly"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Input Mode",
+     "values": [
+      "text",
+      "numeric"
+     ],
+     "default": "text"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-008 \u00b7 NumericStepperInput": {
+   "variants": [
+    {
+     "State": "default",
+     "Clamp": "none"
+    },
+    {
+     "State": "hover",
+     "Clamp": "none"
+    },
+    {
+     "State": "focus-visible",
+     "Clamp": "none"
+    },
+    {
+     "State": "disabled",
+     "Clamp": "none"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Clamp": "none"
+    },
+    {
+     "State": "default",
+     "Clamp": "min"
+    },
+    {
+     "State": "default",
+     "Clamp": "max"
+    }
+   ],
+   "texts": [
+    "live-output",
+    "value"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Clamp",
+     "values": [
+      "none",
+      "min",
+      "max"
+     ],
+     "default": "none"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-009 \u00b7 Select": {
+   "variants": [
+    {
+     "State": "default",
+     "Open": "false",
+     "Searchable": "false"
+    },
+    {
+     "State": "hover",
+     "Open": "false",
+     "Searchable": "false"
+    },
+    {
+     "State": "focus-visible",
+     "Open": "false",
+     "Searchable": "false"
+    },
+    {
+     "State": "disabled",
+     "Open": "false",
+     "Searchable": "false"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Open": "false",
+     "Searchable": "false"
+    },
+    {
+     "State": "default",
+     "Open": "true",
+     "Searchable": "false"
+    },
+    {
+     "State": "default",
+     "Open": "false",
+     "Searchable": "true"
+    }
+   ],
+   "texts": [
+    "option-label",
+    "trigger-value"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Open",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    },
+    {
+     "name": "Searchable",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-010 \u00b7 Slider": {
+   "variants": [
+    {
+     "State": "default",
+     "Marks": "false"
+    },
+    {
+     "State": "hover",
+     "Marks": "false"
+    },
+    {
+     "State": "focus-visible",
+     "Marks": "false"
+    },
+    {
+     "State": "disabled",
+     "Marks": "false"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Marks": "false"
+    },
+    {
+     "State": "default",
+     "Marks": "true"
+    }
+   ],
+   "texts": [
+    "mark-label"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Marks",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-011 \u00b7 Tag": {
+   "variants": [
+    {
+     "Variant": "neutral",
+     "State": "default",
+     "Removable": "false",
+     "Icon": "false"
+    },
+    {
+     "Variant": "neutral",
+     "State": "default",
+     "Removable": "false",
+     "Icon": "true"
+    },
+    {
+     "Variant": "info",
+     "State": "default",
+     "Removable": "false",
+     "Icon": "true"
+    },
+    {
+     "Variant": "warning",
+     "State": "default",
+     "Removable": "false",
+     "Icon": "true"
+    },
+    {
+     "Variant": "danger",
+     "State": "default",
+     "Removable": "false",
+     "Icon": "true"
+    },
+    {
+     "Variant": "estimated",
+     "State": "default",
+     "Removable": "false",
+     "Icon": "false"
+    },
+    {
+     "Variant": "estimated",
+     "State": "hover",
+     "Removable": "false",
+     "Icon": "false"
+    },
+    {
+     "Variant": "estimated",
+     "State": "focus-visible",
+     "Removable": "false",
+     "Icon": "false"
+    },
+    {
+     "Variant": "estimated",
+     "State": "disabled",
+     "Removable": "false",
+     "Icon": "false"
+    },
+    {
+     "Variant": "neutral",
+     "State": "default",
+     "Removable": "true",
+     "Icon": "false"
+    },
+    {
+     "Variant": "neutral",
+     "State": "hover",
+     "Removable": "true",
+     "Icon": "false"
+    },
+    {
+     "Variant": "neutral",
+     "State": "focus-visible",
+     "Removable": "true",
+     "Icon": "false"
+    },
+    {
+     "Variant": "neutral",
+     "State": "disabled",
+     "Removable": "true",
+     "Icon": "false"
+    }
+   ],
+   "texts": [
+    "label"
+   ],
+   "axes": [
+    {
+     "name": "Variant",
+     "values": [
+      "neutral",
+      "info",
+      "warning",
+      "danger",
+      "estimated"
+     ],
+     "default": "neutral"
+    },
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Removable",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    },
+    {
+     "name": "Icon",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-012 \u00b7 Badge": {
+   "variants": [
+    {
+     "Variant": "count",
+     "State": "default",
+     "Tone": "neutral"
+    },
+    {
+     "Variant": "count",
+     "State": "default",
+     "Tone": "info"
+    },
+    {
+     "Variant": "count",
+     "State": "default",
+     "Tone": "success"
+    },
+    {
+     "Variant": "count",
+     "State": "default",
+     "Tone": "warning"
+    },
+    {
+     "Variant": "count",
+     "State": "default",
+     "Tone": "danger"
+    },
+    {
+     "Variant": "dot",
+     "State": "default",
+     "Tone": "neutral"
+    },
+    {
+     "Variant": "dot",
+     "State": "default",
+     "Tone": "info"
+    },
+    {
+     "Variant": "dot",
+     "State": "default",
+     "Tone": "success"
+    },
+    {
+     "Variant": "dot",
+     "State": "default",
+     "Tone": "warning"
+    },
+    {
+     "Variant": "dot",
+     "State": "default",
+     "Tone": "danger"
+    }
+   ],
+   "texts": [
+    "value"
+   ],
+   "axes": [
+    {
+     "name": "Variant",
+     "values": [
+      "count",
+      "dot"
+     ],
+     "default": "count"
+    },
+    {
+     "name": "State",
+     "values": [
+      "default"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Tone",
+     "values": [
+      "neutral",
+      "info",
+      "success",
+      "warning",
+      "danger"
+     ],
+     "default": "neutral"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-013 \u00b7 Avatar": {
+   "variants": [
+    {
+     "Size": "md",
+     "State": "default"
+    },
+    {
+     "Size": "sm",
+     "State": "default"
+    }
+   ],
+   "texts": [
+    "initials"
+   ],
+   "axes": [
+    {
+     "name": "Size",
+     "values": [
+      "sm",
+      "md"
+     ],
+     "default": "md"
+    },
+    {
+     "name": "State",
+     "values": [
+      "default"
+     ],
+     "default": "default"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-014 \u00b7 Spinner": {
+   "variants": [
+    {
+     "Size": "md",
+     "State": "default"
+    },
+    {
+     "Size": "sm",
+     "State": "default"
+    }
+   ],
+   "texts": [],
+   "axes": [
+    {
+     "name": "Size",
+     "values": [
+      "sm",
+      "md"
+     ],
+     "default": "md"
+    },
+    {
+     "name": "State",
+     "values": [
+      "default"
+     ],
+     "default": "default"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-015 \u00b7 Skeleton": {
+   "variants": [
+    {
+     "State": "default",
+     "Shape": "text",
+     "Count": "1"
+    },
+    {
+     "State": "default",
+     "Shape": "row",
+     "Count": "1"
+    },
+    {
+     "State": "default",
+     "Shape": "card",
+     "Count": "1"
+    },
+    {
+     "State": "default",
+     "Shape": "chart",
+     "Count": "1"
+    },
+    {
+     "State": "default",
+     "Shape": "text",
+     "Count": "3"
+    }
+   ],
+   "texts": [],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Shape",
+     "values": [
+      "text",
+      "row",
+      "card",
+      "chart"
+     ],
+     "default": "text"
+    },
+    {
+     "name": "Count",
+     "values": [
+      "1",
+      "3"
+     ],
+     "default": "1"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-016 \u00b7 Tooltip": {
+   "variants": [
+    {
+     "State": "default"
+    }
+   ],
+   "texts": [
+    "content"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default"
+     ],
+     "default": "default"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-017 \u00b7 Popover": {
+   "variants": [
+    {
+     "State": "default",
+     "Modal": "false"
+    },
+    {
+     "State": "default",
+     "Modal": "true"
+    },
+    {
+     "State": "focus-visible",
+     "Modal": "false"
+    },
+    {
+     "State": "focus-visible",
+     "Modal": "true"
+    }
+   ],
+   "texts": [
+    "body",
+    "title"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "focus-visible"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Modal",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-018 \u00b7 Divider": {
+   "variants": [
+    {
+     "Orientation": "horizontal",
+     "Inset": "false"
+    },
+    {
+     "Orientation": "vertical",
+     "Inset": "false"
+    },
+    {
+     "Orientation": "horizontal",
+     "Inset": "true"
+    },
+    {
+     "Orientation": "vertical",
+     "Inset": "true"
+    }
+   ],
+   "texts": [],
+   "axes": [
+    {
+     "name": "Orientation",
+     "values": [
+      "horizontal",
+      "vertical"
+     ],
+     "default": "horizontal"
+    },
+    {
+     "name": "Inset",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-019 \u00b7 Icon": {
+   "variants": [
+    {
+     "Size": "md"
+    },
+    {
+     "Size": "sm"
+    },
+    {
+     "Size": "lg"
+    }
+   ],
+   "texts": [],
+   "axes": [
+    {
+     "name": "Size",
+     "values": [
+      "sm",
+      "md",
+      "lg"
+     ],
+     "default": "md"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-020 \u00b7 Typography primitives": {
+   "variants": [
+    {
+     "Variant": "text",
+     "Style": "body"
+    },
+    {
+     "Variant": "text",
+     "Style": "caption"
+    },
+    {
+     "Variant": "text",
+     "Style": "body-strong"
+    },
+    {
+     "Variant": "text",
+     "Style": "label"
+    },
+    {
+     "Variant": "heading",
+     "Style": "heading-md"
+    },
+    {
+     "Variant": "heading",
+     "Style": "heading-sm"
+    },
+    {
+     "Variant": "heading",
+     "Style": "heading-lg"
+    },
+    {
+     "Variant": "heading",
+     "Style": "display"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-base",
+     "Format": "price",
+     "SignDisplay": "auto",
+     "ColorBySign": "false",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-xs",
+     "Format": "price",
+     "SignDisplay": "auto",
+     "ColorBySign": "false",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-sm",
+     "Format": "price",
+     "SignDisplay": "auto",
+     "ColorBySign": "false",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-md",
+     "Format": "price",
+     "SignDisplay": "auto",
+     "ColorBySign": "false",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-lg",
+     "Format": "price",
+     "SignDisplay": "auto",
+     "ColorBySign": "false",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-xl",
+     "Format": "price",
+     "SignDisplay": "auto",
+     "ColorBySign": "false",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-base",
+     "Format": "qty",
+     "SignDisplay": "auto",
+     "ColorBySign": "false",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-base",
+     "Format": "pct",
+     "SignDisplay": "auto",
+     "ColorBySign": "false",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-base",
+     "Format": "pnl",
+     "SignDisplay": "always",
+     "ColorBySign": "false",
+     "Sign": "negative"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-base",
+     "Format": "notional",
+     "SignDisplay": "auto",
+     "ColorBySign": "false",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-base",
+     "Format": "pnl",
+     "SignDisplay": "always",
+     "ColorBySign": "false",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-base",
+     "Format": "qty",
+     "SignDisplay": "never",
+     "ColorBySign": "false",
+     "Sign": "negative"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-base",
+     "Format": "pnl",
+     "SignDisplay": "always",
+     "ColorBySign": "true",
+     "Sign": "positive"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-base",
+     "Format": "pnl",
+     "SignDisplay": "always",
+     "ColorBySign": "true",
+     "Sign": "negative"
+    },
+    {
+     "Variant": "numeric-text",
+     "Style": "num-base",
+     "Format": "pnl",
+     "SignDisplay": "always",
+     "ColorBySign": "true",
+     "Sign": "zero"
+    },
+    {
+     "Variant": "mono-text",
+     "Style": "num-base"
+    },
+    {
+     "Variant": "mono-text",
+     "Style": "num-xs"
+    },
+    {
+     "Variant": "mono-text",
+     "Style": "num-sm"
+    },
+    {
+     "Variant": "mono-text",
+     "Style": "num-md"
+    },
+    {
+     "Variant": "mono-text",
+     "Style": "num-lg"
+    },
+    {
+     "Variant": "mono-text",
+     "Style": "num-xl"
+    }
+   ],
+   "texts": [
+    "text"
+   ],
+   "axes": [
+    {
+     "name": "Variant",
+     "values": [
+      "text",
+      "heading",
+      "numeric-text",
+      "mono-text"
+     ],
+     "default": "text"
+    },
+    {
+     "name": "Style",
+     "values": [
+      "caption",
+      "body",
+      "body-strong",
+      "label",
+      "heading-sm",
+      "heading-md",
+      "heading-lg",
+      "display",
+      "num-xs",
+      "num-sm",
+      "num-base",
+      "num-md",
+      "num-lg",
+      "num-xl"
+     ],
+     "default": "body"
+    },
+    {
+     "name": "Format",
+     "values": [
+      "price",
+      "qty",
+      "pct",
+      "pnl",
+      "notional"
+     ],
+     "default": "price"
+    },
+    {
+     "name": "SignDisplay",
+     "values": [
+      "auto",
+      "always",
+      "never"
+     ],
+     "default": "auto"
+    },
+    {
+     "name": "ColorBySign",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    },
+    {
+     "name": "Sign",
+     "values": [
+      "positive",
+      "negative",
+      "zero"
+     ],
+     "default": "positive"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-021 \u00b7 Link": {
+   "variants": [
+    {
+     "State": "default",
+     "External": "false"
+    },
+    {
+     "State": "hover",
+     "External": "false"
+    },
+    {
+     "State": "focus-visible",
+     "External": "false"
+    },
+    {
+     "State": "disabled",
+     "External": "false"
+    },
+    {
+     "State": "disabled-with-reason",
+     "External": "false"
+    },
+    {
+     "State": "default",
+     "External": "true"
+    },
+    {
+     "State": "focus-visible",
+     "External": "true"
+    },
+    {
+     "State": "disabled",
+     "External": "true"
+    }
+   ],
+   "texts": [
+    "label",
+    "sr-text"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "External",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-023 \u00b7 Progress Bar": {
+   "variants": [
+    {
+     "State": "default",
+     "Tone": "primary",
+     "Label": "false"
+    },
+    {
+     "State": "default",
+     "Tone": "primary",
+     "Label": "true"
+    },
+    {
+     "State": "default",
+     "Tone": "success",
+     "Label": "true"
+    },
+    {
+     "State": "default",
+     "Tone": "warning",
+     "Label": "true"
+    },
+    {
+     "State": "default",
+     "Tone": "danger",
+     "Label": "true"
+    }
+   ],
+   "texts": [
+    "label",
+    "value"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Tone",
+     "values": [
+      "primary",
+      "success",
+      "warning",
+      "danger"
+     ],
+     "default": "primary"
+    },
+    {
+     "name": "Label",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-024 \u00b7 Sparkline": {
+   "variants": [
+    {
+     "Trend": "up",
+     "ColorBySign": "false"
+    },
+    {
+     "Trend": "down",
+     "ColorBySign": "false"
+    },
+    {
+     "Trend": "flat",
+     "ColorBySign": "false"
+    },
+    {
+     "Trend": "up",
+     "ColorBySign": "true"
+    },
+    {
+     "Trend": "down",
+     "ColorBySign": "true"
+    },
+    {
+     "Trend": "flat",
+     "ColorBySign": "true"
+    }
+   ],
+   "texts": [],
+   "axes": [
+    {
+     "name": "Trend",
+     "values": [
+      "up",
+      "down",
+      "flat"
+     ],
+     "default": "up"
+    },
+    {
+     "name": "ColorBySign",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-025 \u00b7 Avatar Group": {
+   "variants": [
+    {
+     "State": "default",
+     "Overflow": "false"
+    },
+    {
+     "State": "default",
+     "Overflow": "true"
+    }
+   ],
+   "texts": [
+    "overflow-count"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Overflow",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-028 \u00b7 Callout": {
+   "variants": [
+    {
+     "State": "default",
+     "Tone": "info",
+     "Dismissible": "false",
+     "Retry": "false"
+    },
+    {
+     "State": "default",
+     "Tone": "success",
+     "Dismissible": "false",
+     "Retry": "false"
+    },
+    {
+     "State": "default",
+     "Tone": "warning",
+     "Dismissible": "false",
+     "Retry": "false"
+    },
+    {
+     "State": "default",
+     "Tone": "danger",
+     "Dismissible": "false",
+     "Retry": "false"
+    },
+    {
+     "State": "default",
+     "Tone": "connection-reconnecting",
+     "Dismissible": "false",
+     "Retry": "false"
+    },
+    {
+     "State": "default",
+     "Tone": "connection-reconnecting",
+     "Dismissible": "false",
+     "Retry": "true"
+    },
+    {
+     "State": "default",
+     "Tone": "connection-disconnected",
+     "Dismissible": "false",
+     "Retry": "true"
+    },
+    {
+     "State": "default",
+     "Tone": "success",
+     "Dismissible": "true",
+     "Retry": "false"
+    },
+    {
+     "State": "focus-visible",
+     "Tone": "connection-disconnected",
+     "Dismissible": "false",
+     "Retry": "true"
+    }
+   ],
+   "texts": [
+    "body",
+    "details",
+    "slow-note",
+    "title",
+    "tone-prefix"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "focus-visible"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Tone",
+     "values": [
+      "info",
+      "success",
+      "warning",
+      "danger",
+      "connection-reconnecting",
+      "connection-disconnected"
+     ],
+     "default": "info"
+    },
+    {
+     "name": "Dismissible",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    },
+    {
+     "name": "Retry",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-029 \u00b7 Skeleton-Chart placeholder": {
+   "variants": [
+    {
+     "State": "default",
+     "PaneCount": "1"
+    },
+    {
+     "State": "default",
+     "PaneCount": "3"
+    }
+   ],
+   "texts": [],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "PaneCount",
+     "values": [
+      "1",
+      "3"
+     ],
+     "default": "1"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-030 \u00b7 Divider-Label": {
+   "variants": [
+    {
+     "State": "default"
+    }
+   ],
+   "texts": [],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default"
+     ],
+     "default": "default"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-031 \u00b7 ColorSwatch": {
+   "variants": [
+    {
+     "State": "default",
+     "Selected": "false"
+    },
+    {
+     "State": "hover",
+     "Selected": "false"
+    },
+    {
+     "State": "focus-visible",
+     "Selected": "false"
+    },
+    {
+     "State": "disabled",
+     "Selected": "false"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Selected": "false"
+    },
+    {
+     "State": "default",
+     "Selected": "true"
+    },
+    {
+     "State": "hover",
+     "Selected": "true"
+    },
+    {
+     "State": "focus-visible",
+     "Selected": "true"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Selected": "true"
+    }
+   ],
+   "texts": [],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Selected",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-032 \u00b7 Confidence Dots": {
+   "variants": [
+    {
+     "State": "default",
+     "Level": "low"
+    },
+    {
+     "State": "default",
+     "Level": "medium"
+    },
+    {
+     "State": "default",
+     "Level": "high"
+    }
+   ],
+   "texts": [
+    "label"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Level",
+     "values": [
+      "low",
+      "medium",
+      "high"
+     ],
+     "default": "low"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-033 \u00b7 CopyButton": {
+   "variants": [
+    {
+     "State": "default"
+    },
+    {
+     "State": "hover"
+    },
+    {
+     "State": "copied"
+    },
+    {
+     "State": "focus-visible"
+    },
+    {
+     "State": "disabled"
+    }
+   ],
+   "texts": [
+    "live-region"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "copied",
+      "focus-visible",
+      "disabled"
+     ],
+     "default": "default"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-034 \u00b7 MaskedValue": {
+   "variants": [
+    {
+     "State": "default",
+     "Reveal": "masked"
+    },
+    {
+     "State": "hover",
+     "Reveal": "masked"
+    },
+    {
+     "State": "focus-visible",
+     "Reveal": "masked"
+    },
+    {
+     "State": "disabled",
+     "Reveal": "masked"
+    },
+    {
+     "State": "disabled-with-reason",
+     "Reveal": "masked"
+    },
+    {
+     "State": "default",
+     "Reveal": "revealed"
+    },
+    {
+     "State": "default",
+     "Reveal": "autohide-countdown"
+    }
+   ],
+   "texts": [
+    "autohide-label",
+    "live-region",
+    "value"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "disabled-with-reason"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Reveal",
+     "values": [
+      "masked",
+      "revealed",
+      "autohide-countdown"
+     ],
+     "default": "masked"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-035 \u00b7 Countdown": {
+   "variants": [
+    {
+     "State": "default",
+     "Format": "mm:ss"
+    },
+    {
+     "State": "under-threshold",
+     "Format": "mm:ss"
+    },
+    {
+     "State": "expired",
+     "Format": "mm:ss"
+    },
+    {
+     "State": "default",
+     "Format": "words"
+    },
+    {
+     "State": "under-threshold",
+     "Format": "words"
+    },
+    {
+     "State": "expired",
+     "Format": "words"
+    }
+   ],
+   "texts": [
+    "live-region",
+    "time"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "under-threshold",
+      "expired"
+     ],
+     "default": "default"
+    },
+    {
+     "name": "Format",
+     "values": [
+      "mm:ss",
+      "words"
+     ],
+     "default": "mm:ss"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-036 \u00b7 KeyValueRow": {
+   "variants": [
+    {
+     "Emphasis": "false",
+     "Freshness": "none"
+    },
+    {
+     "Emphasis": "true",
+     "Freshness": "none"
+    },
+    {
+     "Emphasis": "false",
+     "Freshness": "stale"
+    },
+    {
+     "Emphasis": "false",
+     "Freshness": "reconnecting"
+    },
+    {
+     "Emphasis": "false",
+     "Freshness": "disconnected"
+    },
+    {
+     "Emphasis": "false",
+     "Freshness": "resyncing"
+    },
+    {
+     "Emphasis": "false",
+     "Freshness": "gapped"
+    },
+    {
+     "Emphasis": "false",
+     "Freshness": "backfilling"
+    },
+    {
+     "Emphasis": "false",
+     "Freshness": "delisted"
+    }
+   ],
+   "texts": [],
+   "axes": [
+    {
+     "name": "Emphasis",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    },
+    {
+     "name": "Freshness",
+     "values": [
+      "none",
+      "stale",
+      "reconnecting",
+      "disconnected",
+      "resyncing",
+      "gapped",
+      "backfilling",
+      "delisted"
+     ],
+     "default": "none"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-037 \u00b7 SwatchLegendItem": {
+   "variants": [
+    {
+     "HasValue": "true",
+     "HasGlyph": "false"
+    },
+    {
+     "HasValue": "false",
+     "HasGlyph": "false"
+    },
+    {
+     "HasValue": "true",
+     "HasGlyph": "true"
+    }
+   ],
+   "texts": [
+    "glyph"
+   ],
+   "axes": [
+    {
+     "name": "HasValue",
+     "values": [
+      "true",
+      "false"
+     ],
+     "default": "true"
+    },
+    {
+     "name": "HasGlyph",
+     "values": [
+      "false",
+      "true"
+     ],
+     "default": "false"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-038 \u00b7 InlineSpinnerText": {
+   "variants": [
+    {
+     "State": "default"
+    },
+    {
+     "State": "slow-path"
+    }
+   ],
+   "texts": [
+    "label"
+   ],
+   "axes": [
+    {
+     "name": "State",
+     "values": [
+      "default",
+      "slow-path"
+     ],
+     "default": "default"
+    }
+   ],
+   "source": "offline-spec"
+  },
+  "CMP-039 \u00b7 FocusRing (spec only)": {
+   "variants": [],
+   "texts": [
+    "caption"
+   ],
+   "axes": [],
+   "source": "offline-spec"
+  }
+ },
+ "icons": [
+  "arrow-down",
+  "arrow-up",
+  "arrow-up-down",
+  "calendar",
+  "cancelled",
+  "check",
+  "chevron-down",
+  "chevron-left",
+  "chevron-right",
+  "chevron-up",
+  "chevrons-up-down",
+  "close",
+  "copy",
+  "crosshair",
+  "danger",
+  "delete",
+  "disconnected",
+  "download",
+  "drag-handle",
+  "edit",
+  "error",
+  "external-link",
+  "filter",
+  "help",
+  "hide",
+  "info",
+  "locked",
+  "maximize",
+  "minimize",
+  "minus",
+  "more-horizontal",
+  "more-vertical",
+  "notifications",
+  "pending",
+  "pin",
+  "plus",
+  "redo",
+  "refresh",
+  "search",
+  "settings",
+  "show",
+  "success",
+  "undo",
+  "upload",
+  "warning",
+  "zoom-in",
+  "zoom-out"
+ ]
+}
