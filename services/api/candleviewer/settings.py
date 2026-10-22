@@ -167,6 +167,7 @@ def _data_directories(data: Mapping[str, Any]) -> dict[str, Path]:
         "CV_PARQUET_ROOT": lake,
         "CV_RECORDER_WAL_DIR": spill,
         "CV_BARS_STATE_ROOT": bars,
+        "the audit export directory": where and where.resolve().parent / "audit-exports",
         "the directory of CV_KEK_HANDLE": parent("kek_handle"),
         "the directory of CV_KEK_PREV_HANDLE": parent("kek_prev_handle"),
         "the directory of CV_KEK_ACK_PATH": parent("kek_ack_path"),
@@ -505,6 +506,10 @@ class Settings(BaseSettings):
     # fails `export_too_large` and leaves nothing on disk.
     audit_export_max_rows: int = Field(default=1_000_000, ge=1)
     audit_export_max_bytes: int = Field(default=1_073_741_824, ge=1)
+    # Download (#889 S9): a file is served until this long after its job succeeds (`expires_at`)
+    # and deleted once found expired; each user downloads at most this many files in an hour.
+    audit_export_ttl_s: int = Field(default=86_400, ge=1)
+    audit_download_rate_per_hour: int = Field(default=20, ge=1)
     # Structure one Owner audit page serves, as the `{`, `[` and `,` of its states'
     # renderings; past it the remaining states are withheld (`detail.elided`). The page is
     # serialized on the event loop (C-2.17): the costliest page measured, 4-byte UTF-8

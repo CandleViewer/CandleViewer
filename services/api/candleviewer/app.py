@@ -106,6 +106,7 @@ from candleviewer.api.admin_statecharts import make_statechart_router
 from candleviewer.api.alert_deliveries import make_alert_deliveries_router
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_budget import AuditBudgetFlushTask, AuditRecordBudget
+from candleviewer.api.audit_exports import AuditExports
 from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditVerifyLimiter
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.audit_verify_runner import ChainVerifyRunner
@@ -1893,6 +1894,10 @@ def create_app(
         if health_pg is not None
         else None
     )
+    admin_jobs = AdminJobStore()
+    app.state.admin_jobs = admin_jobs  # cancelled by the lifespan at shutdown
+    # #889 S9: the export files the download serves, found in the job store it shares.
+    audit_exports = AuditExports(admin_jobs, resolved.data_dir, ttl_s=resolved.audit_export_ttl_s)
     app.include_router(
         make_audit_router(
             ctx.audit,
@@ -1911,6 +1916,12 @@ def create_app(
             ),
             verify_deadline_s=resolved.audit_verify_deadline_s,
             verify_events=chain_break_events,
+            exports=audit_exports,
+            step_up=ctx.auth,
+            download_limiter=AuditVerifyLimiter(
+                rate_per_hour=resolved.audit_download_rate_per_hour,
+                tracked_users=resolved.audit_budget_tracked_users,
+            ),
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))
@@ -2217,8 +2228,6 @@ def create_app(
         )
         return summary.as_result()
 
-    admin_jobs = AdminJobStore()
-    app.state.admin_jobs = admin_jobs  # cancelled by the lifespan at shutdown
     app.include_router(
         make_recorder_admin_router(
             admin_jobs,

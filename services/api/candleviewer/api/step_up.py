@@ -586,8 +586,8 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/recording/symbols", "recorder"),
     ("PATCH", "/recording/symbols/{recordedSymbolId}", "recorder"),
     ("DELETE", "/recording/symbols/{recordedSymbolId}", "recorder"),
-    # #3083 (AD-F01). Not mounted yet either: the PR that mounts one drops it from
-    # `_PENDING_HANDLER_GATES` and adds the handler test.
+    # #3083 (AD-F01): the PR that mounts one drops it from `_PENDING_HANDLER_GATES` and adds the
+    # handler test.
     # - setFeatureFlag (E42-T03, #964): the class is chosen after request validation, under the
     #   row lock, from the key and the stored value (an unreadable row counts as its fail-closed
     #   value): releasing a kill-switch-class flag needs `killswitch`, writing `true` to
@@ -597,7 +597,8 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("PUT", "/admin/feature-flags/{flagKey}", "live_enablement"),
     # - downloadAuditExport (E42-T02, #889): `audit` within its grace window, checked by the
     #   operation after the requester check, so anyone but the requester gets `404`, never a
-    #   challenge. A GET with no path row: the guard passes it straight to the handler.
+    #   challenge. A GET with no path row: the guard passes it straight to the handler. Mounted
+    #   with its handler test (`test_audit_export_download.py`) since #889 S9.
     ("GET", "/admin/audit/exports/{jobId}", "audit"),
     # #3085 startViewAs (SR-025, 04 §7.2.2 row 40b): RBAC and the five view-as refusals come
     # before the gate, so only the handler can gate it. Not mounted yet: pending in the test.

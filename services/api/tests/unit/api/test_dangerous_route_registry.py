@@ -261,13 +261,14 @@ async def _stand_in() -> None:
 @pytest.mark.parametrize(
     ("method", "prefix", "route"),
     [
-        ("GET", "/admin/audit", "/exports/{jobId}"),  # downloadAuditExport: a GET
+        ("POST", "/admin", "/view-as"),  # startViewAs, handler-gated `users`, not mounted yet
     ],
 )
 def test_mounting_a_step_up_operation_without_its_gate_is_caught(
     method: str, prefix: str, route: str
 ) -> None:
-    """On `main` neither was registered and the write-only path sweep saw neither (#3083)."""
+    """A pending handler gate mounted with no handler behind it is caught (#3083); the export
+    download, its first case, has had its handler since #889 S9."""
     app = create_app()
     router = APIRouter(prefix=prefix)
     router.add_api_route(route, _stand_in, methods=[method])
@@ -603,14 +604,13 @@ def test_recording_writes_without_step_up_are_swept_and_allow_listed(path: str) 
 #: body- or query-aware `recorder` branch, and that the rest of the route passes; the restore
 #: ticket (`restoreBackup`) adds the test that its handler gates the request it validated.
 #: #3083: likewise the E42-T03 (#964) PR for the flag write (the class each branch demands,
-#: decided under the row lock) and the E42-T02 (#889) PR for the export download (`audit`,
-#: after the requester check).
+#: decided under the row lock). The export download (`audit`, after the requester check) is
+#: mounted with its handler test since #889 S9 (`test_audit_export_download.py`).
 _PENDING_HANDLER_GATES = {
     ("POST", "/admin/backups/{backupId}/restore"),
     ("POST", "/recording/symbols"),
     ("PATCH", "/recording/symbols/{recordedSymbolId}"),
     ("DELETE", "/recording/symbols/{recordedSymbolId}"),
-    ("GET", "/admin/audit/exports/{jobId}"),
     ("POST", "/admin/view-as"),  # #3085: its server slice mounts it and drops this row
 }
 

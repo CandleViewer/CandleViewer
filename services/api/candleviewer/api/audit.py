@@ -1,6 +1,7 @@
 """`GET /admin/audit`, `POST /admin/audit/verify`, `POST /admin/audit/export`
 (E09-T02 acceptance criteria: "Endpoints ... `GET /admin/audit` ... `POST
-/admin/audit/verify` ... `POST /admin/audit/export`").
+/admin/audit/verify` ... `POST /admin/audit/export`"), and the export's
+download, `GET /admin/audit/exports/{jobId}` (#889 S9, dark until S10).
 
 QA defect #1596 blocker 1: `candleviewer.audit.query.AuditQueryService` and
 `candleviewer.audit.access.authorize` existed but no `APIRouter` mounted
@@ -32,13 +33,14 @@ from __future__ import annotations
 import functools
 import hashlib
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Annotated, Any, Final, Protocol
 
 import structlog
-from fastapi import APIRouter, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Path, Query, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ValidationError
 
 from candleviewer.api.audit_budget import (
@@ -50,7 +52,9 @@ from candleviewer.api.audit_budget import (
     ReadReservation,
     filters_digest,
 )
+from candleviewer.api.audit_exports import AuditExports, Export, ExportFileResponse
 from candleviewer.api.audit_limiter import (
+    DOWNLOAD_RATE_PER_HOUR,
     AuditQueryLimiter,
     AuditQueryRefused,
     AuditVerifyLimiter,
@@ -65,6 +69,7 @@ from candleviewer.api.audit_verify import (
     verify_stop,
     write_verify_record,
 )
+from candleviewer.api.step_up import StepUpAuth, require_session_elevation
 from candleviewer.audit.access import (
     AuditAccessDenied,
     AuditPrincipal,
@@ -85,6 +90,7 @@ from candleviewer.audit.query import VERIFY_MAX_SPAN, VerifyPlan, VerifyRangeBey
 from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.observability.audit_query_metrics import cv_audit_query_duration_seconds
 from candleviewer.observability.health_probes import SystemEventWriter
+from candleviewer.storage.backup_artefacts import ResolvedArtefact
 from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
 
 
@@ -271,15 +277,15 @@ def _verify_unavailable(exc: Exception) -> JSONResponse:
     return _unavailable(detail)
 
 
-def _no_store[**P](
-    handler: Callable[P, Awaitable[JSONResponse]],
-) -> Callable[P, Awaitable[JSONResponse]]:
+def _no_store[**P, R: Response](
+    handler: Callable[P, Awaitable[R]],
+) -> Callable[P, Awaitable[R]]:
     """Every response the handler returns carries `_NO_STORE`, a refusal included, so no
-    browser or proxy cache keeps an audit page, a verify result or a refusal. FastAPI reads
-    the handler's own signature through `functools.wraps`."""
+    browser or proxy cache keeps an audit page, a verify result, an export file or a refusal.
+    FastAPI reads the handler's own signature through `functools.wraps`."""
 
     @functools.wraps(handler)
-    async def no_store(*args: P.args, **kwargs: P.kwargs) -> JSONResponse:
+    async def no_store(*args: P.args, **kwargs: P.kwargs) -> R:
         response = await handler(*args, **kwargs)
         response.headers.update(_NO_STORE)
         return response
@@ -303,6 +309,17 @@ def _request_fields(principal: AuditPrincipal) -> dict[str, Any]:
         "object_kind": "audit_log",
         "request_id": principal.request_id,
     }
+
+
+def _export_fields(principal: AuditPrincipal, job_id: str) -> dict[str, Any]:
+    """`_request_fields` naming the export: its job id when that is a canonical UUID, so no other
+    text from the request reaches the append-only log."""
+    try:
+        named = str(uuid.UUID(job_id)) == job_id
+    except ValueError:
+        named = False
+    object_id = job_id if named else None
+    return _request_fields(principal) | {"object_kind": "audit_export", "object_id": object_id}
 
 
 def _recorded_filters(req: AuditQueryRequest, actor_user_id: str | None) -> dict[str, Any]:
@@ -354,6 +371,9 @@ def make_audit_router(
     verify_limiter: AuditVerifyLimiter | None = None,
     verify_deadline_s: float = VERIFY_DEADLINE_S,
     verify_events: SystemEventWriter | None = None,
+    exports: AuditExports | None = None,
+    step_up: StepUpAuth | None = None,
+    download_limiter: AuditVerifyLimiter | None = None,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
 
@@ -368,6 +388,9 @@ def make_audit_router(
     refusal unchanged but for `Retry-After`; a due record that cannot be written makes
     the call `503` with nothing returned (C-2.9).
 
+    The export download serves `exports`' files with `step_up`'s `audit` class and
+    `download_limiter`'s hourly count; without `exports` or `step_up` it serves none.
+
     A Viewer holds no `audit:read` and gets `403` on every route here, as decided on
     #2083. Whether C-12.4's "Viewer (read-only, including audit)" should change that is
     the owner's decision on #2428 (design D7); nothing in this router grants it.
@@ -376,6 +399,11 @@ def make_audit_router(
     query_limiter = limiter if limiter is not None else AuditQueryLimiter()
     record_budget = budget if budget is not None else AuditRecordBudget()
     verify_limits = verify_limiter if verify_limiter is not None else AuditVerifyLimiter()
+    downloads = (
+        download_limiter
+        if download_limiter is not None
+        else AuditVerifyLimiter(rate_per_hour=DOWNLOAD_RATE_PER_HOUR)
+    )
 
     class _HttpProblem(Exception):
         def __init__(self, response: JSONResponse) -> None:
@@ -735,6 +763,93 @@ def make_audit_router(
         return _problem(
             501, "Not implemented", "Audit export is not available yet.", code="not_implemented"
         )
+
+    @router.get("/exports/{jobId}")
+    @_no_store
+    async def download_audit_export(
+        request: Request, job_id: Annotated[str, Path(alias="jobId")]
+    ) -> Response:
+        """`downloadAuditExport` (#889 S9), in the order of 22 `exportAuditLog` **Download**:
+        `401`, `403 forbidden`, the requester (`404`, as for an unknown or evicted job), the
+        `audit` step-up, the hourly limit (`429`; the place is taken at the check, and a
+        refusal frees it), expiry (`410`, the file deleted), the file (`503` when it cannot be
+        served), then its write-ahead `admin.audit_export` (`downloaded`) before any byte. The
+        `404`, `410` and that `503` are recorded as `admin.audit_denied` under the budget, and
+        the `429` counted, as on `queryAuditLog`; a step-up refusal is a challenge, which the
+        step-up service records (`auth.step_up_required`)."""
+        try:
+            service, principal, _ = await _authorize_or_raise(request, "export")
+        except _HttpProblem as problem:
+            return problem.response
+        actor, fields = _budget_actor(principal), _export_fields(principal, job_id)
+        emitter = record_budget.emitter(service.writer, actor)
+
+        async def refused(
+            reason: str, answer: JSONResponse, after: dict[str, Any] | None = None
+        ) -> JSONResponse:
+            """Recorded first, under the budget: over its cap answered with `Retry-After`."""
+            denied = {"outcome": AuditOutcome.DENIED, "severity": _WARNING, "reason": reason}
+            try:
+                await emitter.emit(DENIAL_ACTION, **fields, **denied, after_state=after)
+            except BudgetWriteFailed:
+                return _unavailable()
+            if emitter.suppressed:
+                answer.headers["Retry-After"] = str(record_budget.retry_after(actor.key))
+            return answer
+
+        found = None if exports is None else exports.find(job_id, principal)
+        if found is None or exports is None or step_up is None:  # unwired, nothing is served
+            missing = _problem(404, "Not found", "No such export.", code="not_found")
+            return await refused("export_not_found", missing)
+        challenge = await require_session_elevation(step_up, principal.session_id, "audit")
+        if challenge is not None:
+            return challenge
+        if (wait := downloads.retry_after(actor.key)) is not None:
+            record_budget.count_suppressed(actor)
+            detail = "audit download limit reached"
+            return _problem(
+                429, "Too many requests", detail, code="rate_limited", retry_after_s=wait
+            )
+        downloads.record_start(actor.key)  # taken at the check, so downloads in flight count
+        response: Response | None = None
+        try:
+            if exports.expired(found):
+                await exports.remove(found)
+                gone = _problem(410, "Gone", "The export expired and was deleted.", code="gone")
+                response = await refused("export_expired", gone)
+            elif isinstance(file := await exports.open(found), str):
+                detail = "the export file cannot be served"
+                lost = _problem(503, "Service unavailable", detail, code="store_unavailable")
+                if file == "store_unavailable":  # the reader's transient cause
+                    lost.headers["Retry-After"] = "1"
+                response = await refused("export_unservable", lost, {"artefact": file})
+            else:
+                response = await _serve(service, found, file, fields)
+            return response
+        finally:
+            if not isinstance(response, ExportFileResponse):
+                downloads.release(actor.key)  # a refusal frees its place
+
+    async def _serve(
+        service: AuditServiceLike, export: Export, file: ResolvedArtefact, fields: dict[str, Any]
+    ) -> Response:
+        """The file, once its write-ahead `admin.audit_export` (`downloaded`) is written (C-2.9),
+        straight to the writer as verify's are; unwritten (`503`), or cancelled while pending, the
+        file is closed here, never left to the collector."""
+        served = False
+        try:
+            if await write_verify_record(
+                service.writer.emit, fields, outcome=_SUCCESS, severity=_INFO,
+                reason="downloaded", action="admin.audit_export",
+                after_state={"sha256": export.manifest.sha256, "size_bytes": file.size},
+            ):  # fmt: skip
+                response = ExportFileResponse(export, file)
+                served = True  # the response owns the file from here
+                return response
+            return _unavailable()
+        finally:
+            if not served:
+                file.close()
 
     return router
 

@@ -82,14 +82,16 @@ async def write_verify_record(
     severity: Severity,
     reason: str,
     after_state: dict[str, Any],
+    action: str = VERIFY_ACTION,
 ) -> bool:
     """One `admin.audit_verify` record. False when the writer refused it or had not taken it
     within `WRITE_TIMEOUT_S`; `emit` is WAL-first and finishes an append it has started, so
-    a record counted here as unwritten may still land (it errs toward recording more)."""
+    a record counted here as unwritten may still land (it errs toward recording more). The
+    export download writes its `admin.audit_export` through it, as `action` (#889 S9)."""
     try:
         async with asyncio.timeout(WRITE_TIMEOUT_S):
             await emit(
-                VERIFY_ACTION,
+                action,
                 **fields,
                 outcome=outcome,
                 severity=severity,
