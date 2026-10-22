@@ -76,6 +76,10 @@ CVD transform: Brettel/Vienot dichromacy projection (`tools/contrast/color-math.
 | dark | compact | color.text.primary on color.status.info.subtle | 10.74 | 4.5 | PASS |
 | dark | comfortable | color.text.primary on color.status.danger.subtle | 12.06 | 4.5 | PASS |
 | dark | compact | color.text.primary on color.status.danger.subtle | 12.06 | 4.5 | PASS |
+| dark | comfortable | color.text.tertiary on color.surface.raised | 5.62 | 4.5 | PASS |
+| dark | compact | color.text.tertiary on color.surface.raised | 5.62 | 4.5 | PASS |
+| dark | comfortable | color.text.primary on color.surface.selected | 10.17 | 4.5 | PASS |
+| dark | compact | color.text.primary on color.surface.selected | 10.17 | 4.5 | PASS |
 | light | comfortable | color.text.primary on color.surface.app | 17.99 | 4.5 | PASS |
 | light | compact | color.text.primary on color.surface.app | 17.99 | 4.5 | PASS |
 | light | comfortable | color.text.primary on color.surface.canvas | 16.78 | 4.5 | PASS |
@@ -114,6 +118,10 @@ CVD transform: Brettel/Vienot dichromacy projection (`tools/contrast/color-math.
 | light | compact | color.text.primary on color.status.info.subtle | 15.44 | 4.5 | PASS |
 | light | comfortable | color.text.primary on color.status.danger.subtle | 14.64 | 4.5 | PASS |
 | light | compact | color.text.primary on color.status.danger.subtle | 14.64 | 4.5 | PASS |
+| light | comfortable | color.text.tertiary on color.surface.raised | 5.92 | 4.5 | PASS |
+| light | compact | color.text.tertiary on color.surface.raised | 5.92 | 4.5 | PASS |
+| light | comfortable | color.text.primary on color.surface.selected | 12.82 | 4.5 | PASS |
+| light | compact | color.text.primary on color.surface.selected | 12.82 | 4.5 | PASS |
 | high-contrast | comfortable | color.text.primary on color.surface.app | 18.18 | 7 | PASS |
 | high-contrast | compact | color.text.primary on color.surface.app | 18.18 | 7 | PASS |
 | high-contrast | comfortable | color.text.primary on color.surface.canvas | 17.21 | 7 | PASS |
@@ -152,6 +160,10 @@ CVD transform: Brettel/Vienot dichromacy projection (`tools/contrast/color-math.
 | high-contrast | compact | color.text.primary on color.status.info.subtle | 12.16 | 7 | PASS |
 | high-contrast | comfortable | color.text.primary on color.status.danger.subtle | 13.66 | 7 | PASS |
 | high-contrast | compact | color.text.primary on color.status.danger.subtle | 13.66 | 7 | PASS |
+| high-contrast | comfortable | color.text.tertiary on color.surface.raised | 11.21 | 7 | PASS |
+| high-contrast | compact | color.text.tertiary on color.surface.raised | 11.21 | 7 | PASS |
+| high-contrast | comfortable | color.text.primary on color.surface.selected | 11.51 | 7 | PASS |
+| high-contrast | compact | color.text.primary on color.surface.selected | 11.51 | 7 | PASS |
 
 ## CVD discriminability
 

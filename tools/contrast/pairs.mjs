@@ -203,6 +203,22 @@ export const PAIRS = [
   { fg: "color.status.warning.strong", bg: "color.surface.overlay", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.status.danger.strong", bg: "color.surface.overlay", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.status.info.strong", bg: "color.surface.overlay", threshold: THRESHOLD.NON_TEXT },
+
+  // --- Replay page chrome and marks (E26-D02 SCR-097, spec §12.2) ----
+  // Left out: CR-4 `color.replay.border` (E11-D02 §11.4). It resolves only to `palette.purple`
+  // primitives and is not in the theme maps, so its canvas and raised pairs wait for the token.
+  // Never registered, as the spec marks them: `border.strong` on `surface.raised` and
+  // `text.primary` on `neutral.default` (both under 3:1), and `text.disabled` on `surface.raised`.
+  { fg: "color.text.tertiary", bg: "color.surface.raised", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.primary", bg: "color.surface.selected", threshold: THRESHOLD.TEXT },
+  { fg: "color.env.demo", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.neutral.default", bg: "color.surface.raised", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.neutral.default", bg: "color.surface.sunken", threshold: THRESHOLD.NON_TEXT },
+  {
+    fg: "color.status.warning.strong",
+    bg: "color.status.warning.subtle",
+    threshold: THRESHOLD.NON_TEXT,
+  },
 ];
 
 /**
