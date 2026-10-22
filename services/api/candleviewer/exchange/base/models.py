@@ -337,6 +337,7 @@ class ExchangeCapabilities(BaseModel):
     supports_attached_sl_tp: bool
     supports_batch_orders: bool
     supports_reduce_only: bool
+    supports_reduce_only_tpsl: bool
     supports_post_only: bool
     supports_hedge_mode: bool
     supports_dead_mans_switch: bool

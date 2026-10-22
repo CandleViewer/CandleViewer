@@ -23,6 +23,7 @@ from candleviewer.oms.errors import (
     PROBLEMS,
     RULE_INTENT_MISMATCH,
     RULE_NATIVE_STOP_REQUIRED,
+    RULE_REDUCE_ONLY_TPSL,
     RULE_SIZING_MODE_UNSUPPORTED,
     RULE_STOP_UNIT_UNSUPPORTED,
     AccountScopeDenied,
@@ -79,6 +80,7 @@ _RULES = (
     "intent_mismatch",
     "stop_unit_unsupported",
     "sizing_mode_unsupported",
+    "reduce_only_tpsl",
 )
 
 #: An order-entry gate refusal (#3382), as the shared kernel builds one.
@@ -211,6 +213,7 @@ def test_each_rule_code_is_its_wire_value() -> None:
         RULE_INTENT_MISMATCH,
         RULE_STOP_UNIT_UNSUPPORTED,
         RULE_SIZING_MODE_UNSUPPORTED,
+        RULE_REDUCE_ONLY_TPSL,
     )
     assert constants == _RULES
 

@@ -3742,6 +3742,11 @@ export interface paths {
      *       `take_profit` in `price`, `ticks` or `percent` lands on a tick rounded toward the entry;
      *       one in `atr` or `r_multiple` is `stop_unit_unsupported` on `take_profit`, and one that is
      *       no finite price above zero on the profit side is `take_profit_side`.
+     *     * A reduce-only order carries no take-profit and no stop-loss: the exchange sets neither on
+     *       one (`ExchangeCapabilities.supports_reduce_only_tpsl`, 24-internal-schemas.md section
+     *       14.1). One that names either, or that would carry the profile's stop because it is not
+     *       shown to reduce (an entry, above), is refused with `validation_failed` /
+     *       `reduce_only_tpsl`, one `errors[]` item per side, before anything is recorded or sent.
      *     * These refusals answer with their `x-error-codes` status: `400` for `validation_failed`
      *       (each failing rule in `errors[]`), `tick_size_violation` and `lot_size_violation`, and
      *       `403` for `risk_limit_breached`.
@@ -3765,7 +3770,9 @@ export interface paths {
      *       answer (a crash, or a store failure after the send) leaves its anchor undecided: a
      *       repeat is `409 idempotency_in_flight` only within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of
      *       the anchor's creation, longer than the submission's own bounds, and later decides it,
-     *       `202` with the rows in their current state (an order still `validated` was never sent).
+     *       `202` with the rows in their reconciled state, never an assumed success: while
+     *       reconciliation has not resolved the order (still `validated`, never sent, `submitting`,
+     *       `unknown` or `quarantined`) the answer says `reconciling`.
      *     * Live trading not enabled, the B18 kill switch (engaged for the account or globally) and
      *       the order-entry gate refuse with `403 trading_disabled` before anything reaches the
      *       exchange. They come after the idempotency lookup (the order of the checks under
@@ -3779,8 +3786,9 @@ export interface paths {
      *     * An order is recorded before it is sent (24-internal-schemas.md section 8.4), so while
      *       Postgres is unavailable the request is refused with `503 store_unavailable` before any
      *       exchange call. A request whose send step's outcome is not known, its order still
-     *       `validated`, answers that `503` too: this request sends nothing, and a `submitting` row
-     *       whose commit was lost is sent by a restart's hydration. A store failure after the send
+     *       `validated`, answers that `503` too: this request sends nothing and leaves its anchor
+     *       undecided, and a `submitting` row whose commit was lost is sent by a restart's
+     *       hydration, under its persisted `orderLinkId`. A store failure after the send
      *       is never a `503`: the request answers its outcome, `202` with the order's last known
      *       state or the `502`.
      *     * An entry's stop request is recorded with its order, one stop request in flight per

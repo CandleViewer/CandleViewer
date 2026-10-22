@@ -31,8 +31,14 @@ from candleviewer.exchange.base.errors import (
     RateBudgetExceededError,
     ServiceUnavailableError,
 )
-from candleviewer.exchange.base.fakes import FakeCall, FakeReject, LandedThenAmbiguous
+from candleviewer.exchange.base.fakes import (
+    FakeCall,
+    FakeReject,
+    LandedThenAmbiguous,
+    fake_capabilities,
+)
 from candleviewer.exchange.base.models import PlaceOrderRequest, RateHeadroom
+from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.commands import SUBMIT_TIMEOUT_S
 from candleviewer.oms.errors import (
     PROBLEMS,
@@ -59,12 +65,16 @@ from candleviewer.oms.errors import (
 from candleviewer.oms.idempotency import STUCK_AFTER_S, Fresh, Replay
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_link_allocator import MAX_SEQ_INCREMENTS
+from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import KeyedRecord, RequestRecord, SizingRequest, StopOffset
 from candleviewer.oms.submit import (
     PLACE_WAIT_S,
+    READ_RETRY_AFTER_S,
+    RECONCILING,
     RESULT_WAIT_S,
     STORE_TIMEOUT_S,
     SubmitOutcome,
+    _entry_order_id,
 )
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
@@ -79,6 +89,7 @@ from tests.unit.oms.submit_rig import (
     KEY,
     QTY,
     REFERENCE,
+    REGISTRY,
     REQUEST_ID,
     SHA,
     STOP,
@@ -427,7 +438,8 @@ async def test_a_reduce_only_orders_position_read_that_fails_is_503_with_retry_a
 
             monkeypatch.setattr(rig.port.demo, "positions", hangs)
         refused = await _refused(rig, flatten())
-        assert isinstance(refused, ExchangeUnavailable) and refused.retry_after_s == 1
+        assert isinstance(refused, ExchangeUnavailable)
+        assert refused.retry_after_s == READ_RETRY_AFTER_S == 1  # one name, one second
         assert problem_for(refused).code == "exchange_unavailable"
         assert rig.written() == (0, 0, 0, 0)
         assert [c for c in rig.calls() if c != "positions"] == []
@@ -443,6 +455,7 @@ async def test_a_market_orders_reference_price_that_cannot_be_read_is_503(
         rig.prices.price = {"none": None, "zero": Decimal(0), "nan": Decimal("NaN")}[answer]
     refused = await _refused(rig, entry(order_type="market", price=None))
     assert isinstance(refused, ExchangeUnavailable)
+    assert refused.retry_after_s == READ_RETRY_AFTER_S
     _nothing_done(rig)
 
 
@@ -796,11 +809,14 @@ async def test_a_persist_whose_outcome_is_unknown_goes_on_once_the_row_says_vali
 
 async def test_a_held_key_is_answered_as_a_repeat_of_its_decided_request(rig: SubmitRig) -> None:
     """21 Sec.3.3.10: a concurrent first persist of the same key committed first and decided;
-    this one wrote nothing, sends nothing and replays that outcome."""
+    this one wrote nothing, sends nothing and replays that outcome, with the order's state now
+    (the ruling of 2026-10-22), read by the id its group's names."""
     first = await rig.submit()
+    assert first.trade_group_id is not None
+    assert first.order_id == _entry_order_id(first.trade_group_id)
     rig.port.demo.calls.clear()
     replayed = await rig.submit()
-    assert replayed == replace(first, order_id=None, lifecycle=None, replayed=True)
+    assert replayed == replace(first, order_id=None, lifecycle="submitted", replayed=True)
     assert rig.calls() == [] and len(rig.store._orders) == 1
 
 
@@ -1102,12 +1118,13 @@ async def test_a_reduce_only_order_that_reduces_has_no_group_and_takes_the_criti
     [None, "same_side", "smaller"],
     ids=["flat", "same_side", "over_sized"],
 )
-async def test_a_reduce_only_order_not_shown_to_reduce_is_an_entry_with_its_stop(
+async def test_a_reduce_only_order_not_shown_to_reduce_needs_a_stop_it_cannot_carry(
     rig: SubmitRig, position: str | None
 ) -> None:
     """SR-E29-01, C-2.6: anything not shown to reduce is an entry, so it takes a stop (the
-    profile's offset when it names none) and an opening intent; sent, it carries its stop, and
-    records no group and no stop of its own (Q-O)."""
+    profile's offset when it names none) and an opening intent. A reduce-only order carries no
+    stop on this venue (`supports_reduce_only_tpsl`, the ruling of 2026-10-22), so it is refused
+    whatever it names: nothing recorded or sent, never a late rejection at the exchange."""
     if position == "same_side":
         rig.port.demo.seed_position(_position(side="sell"))
     elif position == "smaller":
@@ -1115,12 +1132,64 @@ async def test_a_reduce_only_order_not_shown_to_reduce_is_an_entry_with_its_stop
     refused = await _refused(rig, flatten())  # the profile's offset gives it a stop
     assert isinstance(refused, OrderInvalid)
     assert [(e.field, e.rule) for e in refused.errors] == [("intent", "intent_mismatch")]
+    opening = await _refused(rig, flatten(intent="entry"))  # the profile's stop it cannot carry
+    assert [(e.field, e.rule) for e in getattr(opening, "errors", ())] == [
+        ("stop_loss", "reduce_only_tpsl")
+    ]
     stop = StopOffset(unit="price", value=Decimal(61000))
-    outcome = await rig.submit(flatten(intent="entry", stop_loss=stop))
+    named = await _refused(rig, flatten(intent="entry", stop_loss=stop))
+    assert [(e.field, e.rule) for e in getattr(named, "errors", ())] == [
+        ("stop_loss", "reduce_only_tpsl")
+    ]
+    assert [c for c in rig.calls() if c != "positions"] == []
+    assert rig.written() == (0, 0, 0, 0)
+
+
+_SL = StopOffset(unit="price", value=Decimal(61000))
+_TP = StopOffset(unit="price", value=Decimal(59000))
+
+
+@pytest.mark.parametrize(
+    ("sides", "fields"),
+    [
+        ({"stop_loss": _SL}, ["stop_loss"]),
+        ({"take_profit": _TP}, ["take_profit"]),
+        ({"stop_loss": _SL, "take_profit": _TP}, ["stop_loss", "take_profit"]),
+    ],
+    ids=["stop_loss", "take_profit", "both"],
+)
+async def test_a_reduce_only_order_naming_a_take_profit_or_a_stop_is_refused_before_any_read(
+    rig: SubmitRig, sides: dict[str, StopOffset], fields: list[str]
+) -> None:
+    """The ruling of 2026-10-22 on the venue's `reduceOnly` rule (24 Sec.14.1): one rule and one
+    sentence shape per side, refused before the position read, with nothing recorded or sent and
+    the denied record first (C-2.9). `validation_failed` answers 400, its registry status."""
+    rig.port.demo.seed_position(_position())
+    refused = await _refused(rig, flatten(**sides))
+    assert isinstance(refused, OrderInvalid)
+    assert (problem_for(refused).status, problem_for(refused).code) == (400, "validation_failed")
+    assert [(e.field, e.rule) for e in refused.errors] == [(f, "reduce_only_tpsl") for f in fields]
+    words = {"stop_loss": "stop-loss", "take_profit": "take-profit"}
+    assert [e.message for e in refused.errors] == [
+        f"A reduce-only order carries no {words[f]}." for f in fields
+    ]
+    _nothing_done(rig)
+    [record] = _denied(rig)
+    assert (record.reason, record.detail["step"], record.request_id) == (
+        "validation_failed", "classify", REQUEST_ID,
+    )  # fmt: skip
+
+
+async def test_a_venue_that_sets_them_on_a_reduce_only_order_lets_the_order_carry_them(
+    rig: SubmitRig,
+) -> None:
+    """The rule is the routed venue's capability, never a constant of the pipeline (C-2.2)."""
+    rig.port.demo.capabilities = fake_capabilities("demo", supports_reduce_only_tpsl=True)
+    rig.port.demo.seed_position(_position())
+    outcome = await rig.submit(flatten(take_profit=_TP))
     [create] = [c for c in rig.port.demo.calls if c.method == "place_order"]
-    assert (outcome.status, create.lane) == (202, "entry")
-    assert _create(create).stop_loss == Decimal(61000)
-    assert rig.store._groups == {} and rig.store._stops == {}
+    assert (outcome.status, _create(create).reduce_only) == (202, True)
+    assert _create(create).take_profit == Decimal(59000)
 
 
 # --- metrics and bounds ---------------------------------------------------------------------------
@@ -1328,6 +1397,187 @@ async def test_a_send_whose_outcome_is_unknown_is_followed_only_once_it_left_val
     await rig.quiet()
     lifecycle = "killed" if state == "validated" else "validated"
     assert [row.lifecycle_state for row in rig.store._orders.values()] == [lifecycle]
+    [anchor] = rig.store._anchors.values()
+    assert anchor.outcome is None  # the ruling of 2026-10-22: left undecided (C-2.10)
+
+
+# --- an unknown SEND and its repeats (the orchestrator's ruling of 2026-10-22, C-2.10) ----------
+
+
+def _later(seconds: float) -> int:
+    """`seconds` in the rig's microseconds."""
+    return int(seconds * 1_000_000)
+
+
+async def _lost_send(rig: SubmitRig, monkeypatch: pytest.MonkeyPatch, request: Any = None) -> Any:
+    """A request whose `SEND` committed, then lost its answer with its machine: the row stays
+    `submitting`, its create never left (held, then dropped with the machine) and the request
+    answers 503. Returns the venue's own create, the hold staying shut."""
+    land, held = rig.port.demo.place_order, asyncio.Event()
+
+    async def holding(create: Any) -> Any:
+        await held.wait()
+        return await land(create)
+
+    original = rig.machines.command
+
+    async def lost(account_id: Any, order_id: Any, *args: Any, **kwargs: Any) -> str:
+        await original(account_id, order_id, *args, **kwargs)
+        await rig.machines._close(rig.machines._orders[order_id], publish=False)
+        raise OrderStepUnknown("SEND", "StepOutcomeUnknown")
+
+    monkeypatch.setattr(rig.port.demo, "place_order", holding)
+    monkeypatch.setattr(rig.machines, "command", lost)
+    assert isinstance(await _refused(rig, request), StoreUnavailable)
+    [row] = rig.store._orders.values()
+    assert row.lifecycle_state == "submitting" and "place_order" not in rig.calls()
+    return land
+
+
+async def _restarted(rig: SubmitRig) -> tuple[OrderMachines, Any]:
+    """A crash and a restart: the facade stops, the binding's attempts go with the process's
+    memory, and a new facade runs over the same stores, with a pipeline over it."""
+    await rig.machines.stop()
+    b01._ATTEMPTS.clear()
+    machines = OrderMachines(
+        rig.machines._ports,
+        metrics=Metrics("dev"),
+        pager=rig.pager,
+        now_us=rig.port.now,
+        registry=REGISTRY,
+    )
+    return machines, rig.make(machines=machines)
+
+
+async def _settle(machines: OrderMachines) -> None:
+    for _ in range(4):
+        for _ in range(32):
+            await asyncio.sleep(0)
+        await machines.idle()
+
+
+@pytest.mark.parametrize(
+    ("kind", "after_s"),
+    [("entry", 5.0), ("reduce_only", STUCK_AFTER_S - 1)],
+    ids=["entry", "reduce_only"],
+)
+async def test_a_repeat_of_an_unknown_send_within_30_s_is_409_in_flight_and_sends_nothing(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch, kind: str, after_s: float
+) -> None:
+    """The first request answered 503 and left its anchor undecided; a repeat within
+    `CV_OMS_INFLIGHT_STUCK_S` is 409 `idempotency_in_flight` with `Retry-After`: nothing
+    recorded, nothing sent (an entry's repeat comes inside its stop request's bound, which the
+    stop-request gate reads first)."""
+    request = entry() if kind == "entry" else flatten()
+    if kind == "reduce_only":
+        rig.port.demo.seed_position(_position())
+    await _lost_send(rig, monkeypatch, request)
+    written = rig.written()
+    rig.port.now.us += _later(after_s)
+    refused = await _refused(rig, request)
+    assert isinstance(refused, IdempotencyInFlight) and refused.retry_after_s == 1
+    assert [c for c in rig.calls() if c != "positions"] == [] and rig.written() == written
+    [anchor] = rig.store._anchors.values()
+    assert anchor.outcome is None
+
+
+@pytest.mark.parametrize(
+    ("case", "state"),
+    [("abandoned", "killed"), ("lost", RECONCILING), ("unknown", RECONCILING)],
+    ids=["abandoned", "lost", "unknown"],
+)
+async def test_a_later_repeat_answers_202_with_the_reconciled_state_never_an_assumed_success(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch, case: str, state: str
+) -> None:
+    """A repeat past `CV_OMS_INFLIGHT_STUCK_S` decides the undecided anchor 202 and answers the
+    order's state as B1 resolved it: `killed` for an order abandoned unsent; `reconciling` while
+    B1 has not, a `submitting` row waiting for a restart's hydration, an `unknown` one for
+    reconciliation (here a decided 202 repeated at once). It sends nothing, under no id (C-2.10)."""
+    request: Any = entry()
+    if case == "abandoned":
+
+        async def unknown(*_args: Any, **_kwargs: Any) -> str:
+            raise OrderStepUnknown("SEND", "StepOutcomeUnknown")
+
+        monkeypatch.setattr(rig.machines, "command", unknown)
+        assert isinstance(await _refused(rig), StoreUnavailable)
+        await rig.quiet()
+        rig.port.now.us += _later(STUCK_AFTER_S + 1)
+    elif case == "lost":
+        request = flatten()
+        rig.port.demo.seed_position(_position())
+        await _lost_send(rig, monkeypatch, request)
+        rig.port.now.us += _later(STUCK_AFTER_S + 1)
+    else:
+        rig.port.demo.script("place_order", LandedThenAmbiguous())
+        first = await rig.submit()
+        assert (first.status, first.lifecycle) == (202, "unknown")
+    creates = [c for c in rig.port.demo.calls if c.method == "place_order"]
+    repeat = await rig.submit(request)
+    assert (repeat.status, repeat.replayed, repeat.lifecycle) == (202, True, state)
+    assert [c for c in rig.port.demo.calls if c.method == "place_order"] == creates
+    [anchor] = rig.store._anchors.values()
+    assert anchor.outcome is not None and anchor.outcome.status == 202
+    [row] = rig.store._orders.values()
+    assert all(_create(c).order_link_id == row.order_link_id for c in creates)
+
+
+async def test_a_repeat_whose_order_cannot_be_read_answers_reconciling(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never an assumed success: a state not read within the bound, or an anchor naming no row,
+    is answered `reconciling`, logged."""
+    await rig.submit()
+
+    async def late(*_args: Any, **_kwargs: Any) -> str:
+        raise TimeoutError
+
+    monkeypatch.setattr(rig.machines, "settled", late)
+    with capture_logs() as logs:
+        repeat = await rig.submit()
+    assert (repeat.status, repeat.replayed, repeat.lifecycle) == (202, True, RECONCILING)
+    assert any(line["event"] == "oms_replay_state_unread" for line in logs)
+    assert await rig.pipeline._reconciled(cr.ACCOUNT, None) == RECONCILING
+
+
+@pytest.mark.parametrize("venue", ["empty", "duplicate"])
+async def test_a_lost_send_goes_out_at_the_restart_under_its_id_and_a_later_repeat_answers_it(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch, venue: str
+) -> None:
+    """The `submitting` row a lost `SEND` left is sent by a restart's hydration, once, after its
+    lookup, under its persisted id and with its stop (C-2.10, C-2.6). A duplicate-id rejection
+    reads as "already accepted": B1 looks the id up and adopts the order, never re-sending it
+    under a new id. A later repeat answers the reconciled state, `submitted`."""
+    land = await _lost_send(rig, monkeypatch)
+    [row] = rig.store._orders.values()
+    machines, pipeline = await _restarted(rig)
+    try:
+        if venue == "duplicate":
+
+            async def duplicate(create: Any) -> Any:
+                await land(create)  # the venue holds the order under its id
+                raise DuplicateClientIdError("the order_link_id was already accepted")
+
+            monkeypatch.setattr(rig.port.demo, "place_order", duplicate)
+        else:
+            monkeypatch.setattr(rig.port.demo, "place_order", land)
+        assert await machines.hydrate(cr.ACCOUNT, row.id, environment="demo") == "submitting"
+        await _settle(machines)
+        assert [r.lifecycle_state for r in rig.store._orders.values()] == ["submitted"]
+        methods = rig.calls()
+        sent = methods.index("place_order")
+        assert methods.count("place_order") == 1
+        assert sent > 0 and set(methods[:sent]) <= {"open_orders", "order_history"}
+        [create] = [c for c in rig.port.demo.calls if c.method == "place_order"]
+        assert (_create(create).order_link_id, _create(create).stop_loss) == (
+            row.order_link_id, STOP,
+        )  # fmt: skip
+        rig.port.now.us += _later(STUCK_AFTER_S + 1)
+        repeat = await pipeline.submit(entry(), context())
+        assert (repeat.status, repeat.replayed, repeat.lifecycle) == (202, True, "submitted")
+        assert rig.calls().count("place_order") == 1
+    finally:
+        await machines.stop()
 
 
 async def test_a_create_that_has_not_answered_in_time_is_202_with_its_state(

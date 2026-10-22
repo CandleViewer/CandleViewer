@@ -255,7 +255,9 @@ def test_a_repeat_of_place_order_reaches_its_rows_through_a_permanent_anchor() -
         "and a key that another principal sent is answered as one never seen",
         "A repeat never sends: only the first request starts its order's send",
         "a repeat is `409 idempotency_in_flight` only within `CV_OMS_INFLIGHT_STUCK_S` (30 s)",
-        "`202` with the rows in their current state (an order still `validated` was never sent)",
+        "`202` with the rows in their reconciled state, never an assumed success: while",
+        "reconciliation has not resolved the order (still `validated`, never sent, `submitting`, "
+        "`unknown` or `quarantined`) the answer says `reconciling`",
     )
     general = _words(_SPEC["info"]["description"]).split("### Idempotency", 1)[1]
     assert "Exception (E29-T04): `placeOrder` also keeps the key in a permanent anchor" in general
@@ -797,9 +799,13 @@ def test_the_pipelines_own_rules_are_in_22_and_24() -> None:
     22 `placeOrder`, 22 Idempotency and 24 section 8.4 state them (C-6.1 inside the PR)."""
     assert not _missing(
         _words(_PLACE["description"]),
-        "this request sends nothing, and a `submitting` row whose commit was lost is sent by a "
-        "restart's hydration",
+        "this request sends nothing and leaves its anchor undecided, and a `submitting` row whose "
+        "commit was lost is sent by a restart's hydration, under its persisted `orderLinkId`",
         "one in `atr` or `r_multiple` is `stop_unit_unsupported` on `take_profit`",
+        "A reduce-only order carries no take-profit and no stop-loss: the exchange sets neither on "
+        "one (`ExchangeCapabilities.supports_reduce_only_tpsl`",
+        "is refused with `validation_failed` / `reduce_only_tpsl`, one `errors[]` item per side, "
+        "before anything is recorded or sent",
     )
     general = _words(_SPEC["info"]["description"]).split("### Idempotency", 1)[1]
     assert (
@@ -814,6 +820,11 @@ def test_the_pipelines_own_rules_are_in_22_and_24() -> None:
         "the startup kills every `validated` row before order entry opens",
         "total 17 s, under `CV_OMS_INFLIGHT_STUCK_S`",
         "carries its correlation id (`X-Correlation-Id`)",
+        "A reduce-only order carries no take-profit and no stop-loss where the venue sets neither "
+        "on one (`ExchangeCapabilities.supports_reduce_only_tpsl`, §14.1)",
+        "this request sends nothing and leaves its anchor undecided",
+        "A later repeat answers `202` with the order's reconciled state, `reconciling` while "
+        "reconciliation has not resolved it",
     )
 
 

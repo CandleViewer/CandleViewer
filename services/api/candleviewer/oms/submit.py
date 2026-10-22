@@ -18,8 +18,12 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
    price, else the market's, 24 Sec.9.3 step 2), the native stop and the intent
    (`NativeStopGuard`, C-2.6), the take-profit (S2-Q6), then the `SizedOrder`. A stop or a
    take-profit that is no finite price above zero is refused here, before anything is recorded,
-   whatever the command port and the exchange port check later (#2877 ruling 2). A read this step
-   needs that fails is 503 `exchange_unavailable` with `Retry-After` (Q-B);
+   whatever the command port and the exchange port check later (#2877 ruling 2). A reduce-only
+   order carries neither where the route's venue sets none on one
+   (`ExchangeCapabilities.supports_reduce_only_tpsl`, C-2.2): one that names either is refused
+   first, before any read, and one the profile's offset would give a stop (not shown to reduce,
+   so an entry) after the guard, both `reduce_only_tpsl`, never a late rejection at the venue.
+   A read this step needs that fails is 503 `exchange_unavailable` with `Retry-After` (Q-B);
 4. `Validator.check_order` on the sized, rounded order (SR-E29-04): 400, or 403 for the profile;
 5. the risk gate on that order (403 `risk_limit_breached`);
 6. the synchronous switches (live trading, the B18 kill switch, the order-entry gate), ruling R1's
@@ -37,17 +41,20 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
    complete read is 409 `stop_request_in_flight`, `Retry-After` 5, at once), and a stop request
    in flight is tried again twice (Q-D: after 0.1 s, then 0.25 s), then 409 with `Retry-After` 1,
    the key unbound. A taken `order_link_id` is allocated again from the same candidate (rule 5);
-   a held key is answered as a repeat (`AnchorService.after_taken`); the share-locked re-check's
-   refusals are 403; an audit that does not land is 503 `audit_unavailable`; any other refusal
-   503 `store_unavailable`; a write whose outcome is unknown goes on only when the rebuilt order
-   is `validated`;
+   a held key is answered as a repeat (`AnchorService.after_taken`), a `202` one with its order's
+   reconciled state, `reconciling` while B1 has not resolved it (never an assumed success); the
+   share-locked re-check's refusals are 403; an audit that does not land is 503
+   `audit_unavailable`; any other refusal 503 `store_unavailable`; a write whose outcome is
+   unknown goes on only when the rebuilt order is `validated`;
 10. `SEND`, once the command port holds the order (`OmsCommandPort.expect`, with the request's
    correlation id). A `SEND` that did not commit sent nothing: the order is abandoned (S2-Q5, a
    KILL from `validated`, tried twice, paged when it fails) and the request is refused, 503 (or
    the switch that refuses it now). One whose outcome is unknown is followed once the rebuilt
    order has left `validated`; an order still `validated`, or with no machine, is answered 503 as
-   one refused: this request sends nothing, and a `submitting` row whose commit was lost is sent
-   by a restart's hydration (#4006);
+   one refused: this request sends nothing and leaves its anchor undecided (C-2.10: a repeat
+   within `CV_OMS_INFLIGHT_STUCK_S` is 409 in flight, a later one the reconciled state), and a
+   `submitting` row whose commit was lost is sent by a restart's hydration (#4006), under its
+   persisted id;
 11. the answer, once B1 has the create's outcome: `submitted`, `held` and `unknown` (the venue's
    outage among them, #2863) are 202; `rejected` with `RATE_BUDGET_EXCEEDED` is 429 (rate point
    2); any other `rejected` is 502 `exchange_error` with the exchange's return code only
@@ -76,7 +83,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any, Final, Literal
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 import structlog
 from pydantic import ValidationError
@@ -141,6 +148,7 @@ from .commands import SUBMIT_TIMEOUT_S, OmsCommandPort, PlaceWatch
 from .errors import (
     INTERNAL_ERROR,
     PROBLEMS,
+    RULE_REDUCE_ONLY_TPSL,
     AnchorTaken,
     AuditNotDurable,
     DuplicateOrderLinkId,
@@ -193,9 +201,9 @@ from .validator import Validator
 
 __all__ = [
     "EXCHANGE_ERROR", "PLACE_WAIT_S", "POSITION_TIMEOUT_S", "RATE_LIMITED", "READ_RETRY_AFTER_S",
-    "RESULT_WAIT_S", "STOP_RETRIES_S", "STOP_RETRY_AFTER_S", "STORE_TIMEOUT_S", "OrderRequest",
-    "OrderSubmission", "OrderTrigger", "SubmissionDeps", "SubmitActor", "SubmitContext",
-    "SubmitOutcome",
+    "RECONCILING", "RESULT_WAIT_S", "STOP_RETRIES_S", "STOP_RETRY_AFTER_S", "STORE_TIMEOUT_S",
+    "OrderRequest", "OrderSubmission", "OrderTrigger", "SubmissionDeps", "SubmitActor",
+    "SubmitContext", "SubmitOutcome",
 ]  # fmt: skip
 
 #: The bound on each store read and write of the pipeline, in seconds: the account, the
@@ -211,7 +219,8 @@ POSITION_TIMEOUT_S: Final = 2.0
 STOP_RETRIES_S: Final = (0.1, 0.25)
 STOP_RETRY_AFTER_S: Final = 1
 #: The `Retry-After` of a read the order needed that failed (Q-B), in seconds: a position or a
-#: reference price is read again at the next request.
+#: reference price is read again at the next request. The orchestrator's ruling of 2026-10-22
+#: keeps it 1 s, under this one name, which every such refusal answers.
 READ_RETRY_AFTER_S: Final = 1
 #: How long the pipeline waits for B1's answer to the create once `SEND` committed, in seconds:
 #: the command port's one deadline on all of `place`, its reads, calls and answer
@@ -224,6 +233,25 @@ RESULT_WAIT_S: Final = CV_PERSIST_TIMEOUT + 1.0
 #: The problem code of each answer the anchor records (21 Sec.3.3.10, `AnchorOutcome.code`).
 RATE_LIMITED: Final = "exchange_rate_limited"
 EXCHANGE_ERROR: Final = "exchange_error"
+#: A `202` repeat's state while B1 has not resolved its order (the orchestrator's ruling of
+#: 2026-10-22, C-2.10): the answer says so rather than assume a success.
+RECONCILING: Final = "reconciling"
+#: The states whose create has no known outcome yet: `validated` was never sent (slice 3's
+#: startup kills it), `submitting` is in flight or lost (a restart's hydration sends it under its
+#: id), `unknown` and `quarantined` wait for reconciliation (24 Sec.8.5).
+_UNRESOLVED: Final = frozenset({"validated", "submitting", "unknown", "quarantined"})
+#: An entry's order is its one-leg group's only order, its id named from the group's under this
+#: namespace (fixed for good), so a repeat holding the group's anchor finds the order with no
+#: group read (`_entry_order_id`).
+_ENTRY_ORDERS: Final = UUID("0973ace5-8b31-4bc2-9a01-6d69961a0f75")
+#: The sides a reduce-only order may not carry where its venue sets neither on one, and their
+#: sentences (one rule, one shape).
+_REDUCE_ONLY_SIDES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "stop_loss": "A reduce-only order carries no stop-loss.",
+        "take_profit": "A reduce-only order carries no take-profit.",
+    }
+)
 _CODES: Final[Mapping[int, str | None]] = MappingProxyType(
     {202: None, 429: RATE_LIMITED, 502: EXCHANGE_ERROR}
 )
@@ -349,8 +377,10 @@ class SubmitOutcome:
     its create (`lifecycle`), 429 `exchange_rate_limited` with `Retry-After` on the first answer
     only, or 502 `exchange_error` with the exchange's return code and never its text (SR-E29-09).
     `replayed` marks the repeat of a decided anchor (`AnchorService.after_taken`), whose rows the
-    route reads in their current state. The ids name the rows the request created: the order and,
-    for an entry, its group (a replay names what its anchor names)."""
+    route reads in their current state: a `202` repeat carries its order's reconciled state in
+    `lifecycle`, or `RECONCILING` while B1 has not resolved the order (C-2.10, never an assumed
+    success). The ids name the rows the request created: the order and, for an entry, its group
+    (a replay names what its anchor names)."""
 
     status: AnchorStatus
     anchor_id: UUID
@@ -436,6 +466,29 @@ def _lane(request: OrderRequest) -> OrderLane:
     `critical` only for a reduce-only order whose intent reduces (SR-E29-01; the reserve is the
     exits', C-12.7), else `entry`."""
     return "critical" if request.reduce_only and request.intent in REDUCING_INTENTS else "entry"
+
+
+def _entry_order_id(group_id: UUID) -> UUID:
+    """An entry's order id, named from its one-leg group's (`_ENTRY_ORDERS`): the anchor names the
+    group alone (21 Sec.3.3.10 `ia_target`), and a repeat reads the order's state by this id."""
+    return uuid5(_ENTRY_ORDERS, str(group_id))
+
+
+def _reduce_only_errors(**sides: Px | StopOffset | None) -> list[FieldError]:
+    """`reduce_only_tpsl` for each side a reduce-only order would carry where its venue sets
+    neither on one (the ruling of 2026-10-22), the stop's first."""
+    return [
+        FieldError(side, RULE_REDUCE_ONLY_TPSL, message)
+        for side, message in _REDUCE_ONLY_SIDES.items()
+        if sides.get(side) is not None
+    ]
+
+
+def _invalid(errors: Sequence[FieldError]) -> OrderInvalid:
+    """`validation_failed` listing every rule that failed, its detail the one rule's sentence or
+    the count."""
+    detail = errors[0].message if len(errors) == 1 else f"{len(errors)} rules failed."
+    return OrderInvalid(detail, errors=errors)
 
 
 def _price_errors(price: Px, instrument: Instrument) -> list[FieldError]:
@@ -553,10 +606,13 @@ class OrderSubmission:
         account = await self._account(request.account_id)
         trace.environment = account.environment
         transport = self._router.transport_for(account.environment)  # C-2.11, or a page
+        # The venue's own rule, read off its capability record, never a constant here (C-2.2).
+        venue = self._router.port_for(account.environment).capabilities
         instrument = await self._instrument(request.symbol)
         profile = await self._profile(request)
         trace.step = "classify"
-        sized = await self._sized(request, account, instrument, profile)
+        bare = request.reduce_only and not venue.supports_reduce_only_tpsl
+        sized = await self._sized(request, account, instrument, profile, bare=bare)
         trace.step = "validate"
         self._validator.check_order(sized, instrument=instrument, profile=profile)
         trace.step = "risk"
@@ -621,12 +677,24 @@ class OrderSubmission:
         account: AccountRef,
         instrument: Instrument,
         profile: AccountProfile | None,
+        *,
+        bare: bool,
     ) -> SizedOrder:
-        """Step 3: the order sized, classified, priced and protected (SR-E29-04, C-2.6)."""
+        """Step 3: the order sized, classified, priced and protected (SR-E29-04, C-2.6). A `bare`
+        order (reduce-only, on a venue that sets no take-profit or stop-loss on one) that names
+        either is refused first, before any read: it could only meet a late rejection."""
+        if bare:
+            refused = _reduce_only_errors(
+                stop_loss=request.stop_loss, take_profit=request.take_profit
+            )
+            if refused:
+                raise _invalid(refused)
         qty = self._size(request, instrument)
         effect = await self._effect(request, qty)
         reference = await self._reference(request, instrument)
-        stop, take_profit = self._protection(request, effect, reference, instrument, profile)
+        stop, take_profit = self._protection(
+            request, effect, reference, instrument, profile, bare=bare
+        )
         return SizedOrder(
             account_id=request.account_id,
             environment=account.environment,
@@ -705,9 +773,13 @@ class OrderSubmission:
         reference: Px,
         instrument: Instrument,
         profile: AccountProfile | None,
+        *,
+        bare: bool,
     ) -> tuple[Px | None, Px | None]:
         """The stop (`NativeStopGuard`: an entry's is mandatory, C-2.6), the intent, then the
-        take-profit (S2-Q6): `errors[]` lists every rule that fails, the stop's first."""
+        take-profit (S2-Q6): `errors[]` lists every rule that fails, the stop's first. A `bare`
+        order names neither side (`_sized`), so a side resolved here is the profile's: one not
+        shown to reduce is an entry, whose stop it cannot carry, so it is refused all the same."""
         errors: list[FieldError] = []
         stop: Px | None = None
         try:
@@ -739,9 +811,10 @@ class OrderSubmission:
                     side=request.side, reference_price=reference, take_profit=take_profit
                 )
             )
+        if bare:
+            errors.extend(_reduce_only_errors(stop_loss=stop, take_profit=take_profit))
         if errors:
-            detail = errors[0].message if len(errors) == 1 else f"{len(errors)} rules failed."
-            raise OrderInvalid(detail, errors=errors)
+            raise _invalid(errors)
         return stop, take_profit
 
     # --- Steps 8 and 9: the id and the first persist ------------------------------------------
@@ -754,10 +827,12 @@ class OrderSubmission:
         profile: AccountProfile | None,
     ) -> _Rows:
         """The order's ids, its `order_link_id` (24 Sec.8.3: an entry's from its new group, a
-        reduce-only order's from its own id) and the rows its first persist writes."""
+        reduce-only order's from its own id) and the rows its first persist writes. An entry's
+        order id is named from its group's (`_entry_order_id`)."""
         request = trace.request
-        order_id, anchor_id = uuid4(), uuid4()
         group_id = None if request.reduce_only else GroupId(uuid4())
+        order_id = uuid4() if group_id is None else _entry_order_id(group_id)
+        anchor_id = uuid4()
         leg_id = None if group_id is None else uuid4()
         candidate = OrderLinkIdParts.generate(
             mode="exchange",
@@ -971,7 +1046,8 @@ class OrderSubmission:
 
     async def _repeat(self, trace: _Trace, taken: AnchorTaken) -> SubmitOutcome:
         """The key is held by an earlier request (21 Sec.3.3.10): its decided outcome is the
-        answer, nothing sent; a request still in flight, or another body, is refused."""
+        answer, nothing sent; a request still in flight, or another body, is refused. A `202`
+        carries the order's reconciled state (`_reconciled`), never an assumed success."""
         context = trace.context
         lookup = await self._anchors.after_taken(
             taken.constraint, context.actor.user_id, context.client_ref, context.request_sha256
@@ -982,6 +1058,12 @@ class OrderSubmission:
             raise StoreUnavailable
         anchor = lookup.anchor
         status = _STATUSES.get(anchor.outcome_status or 0)
+        lifecycle = None
+        if status == 202:
+            order_id = anchor.order_id
+            if order_id is None and anchor.trade_group_id is not None:
+                order_id = _entry_order_id(anchor.trade_group_id)
+            lifecycle = await self._reconciled(trace.request.account_id, order_id)
         try:
             if status is None:
                 raise ValueError("a decided anchor holds 202, 429 or 502")
@@ -990,6 +1072,7 @@ class OrderSubmission:
                 anchor_id=anchor.id,
                 order_id=anchor.order_id,
                 trade_group_id=anchor.trade_group_id,
+                lifecycle=lifecycle,
                 code=anchor.outcome_code,
                 ret_code=anchor.outcome_ret_code,
                 replayed=True,
@@ -997,6 +1080,24 @@ class OrderSubmission:
         except ValueError:
             _log().error("oms_anchor_outcome_unreadable", anchor_id=str(anchor.id))
             raise StoreUnavailable from None
+
+    async def _reconciled(self, account_id: AccountId, order_id: UUID | None) -> str:
+        """A `202` repeat's state (the orchestrator's ruling of 2026-10-22, C-2.10): the state B1
+        resolved the order to, else `RECONCILING`, while it is `_UNRESOLVED`, or its state cannot
+        be read within `store_timeout_s` (an in-flight create is waited for that long); never
+        an assumed success. It reads the facade's plain view, else the row, never an interpreter."""
+        if order_id is None:  # an anchor naming neither row breaks `ia_target`: nothing to read
+            return RECONCILING
+        try:
+            state = await self._machines.settled(
+                account_id, order_id, leaving="submitting", timeout_s=self._store_timeout_s
+            )
+        except Exception as exc:  # not known in time, no such order, or a store that failed
+            _log().warning(
+                "oms_replay_state_unread", order_id=str(order_id), failure=type(exc).__name__
+            )
+            return RECONCILING
+        return RECONCILING if state in _UNRESOLVED else state
 
     def _write_ahead(
         self, trace: _Trace, effect: OrderEffect

@@ -227,6 +227,10 @@ RULE_SIZING_MODE_UNSUPPORTED: Final = "sizing_mode_unsupported"
 #: S2-Q6 and #2877 ruling 2: a take-profit that is no finite price above zero on the profit side
 #: of the order's reference price.
 RULE_TAKE_PROFIT_SIDE: Final = "take_profit_side"
+#: The orchestrator's ruling of 2026-10-22: a reduce-only order carries no take-profit and no
+#: stop-loss where the venue sets neither on one (`ExchangeCapabilities.supports_reduce_only_tpsl`,
+#: 24 Sec.14.1), refused before anything is recorded or sent, one error per side.
+RULE_REDUCE_ONLY_TPSL: Final = "reduce_only_tpsl"
 
 
 @dataclass(frozen=True, slots=True)
