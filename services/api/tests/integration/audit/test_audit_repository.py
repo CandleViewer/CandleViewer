@@ -2,7 +2,9 @@
 Postgres 16 (testcontainers). Covers the DB-side AC: trigger-computed chain
 with 64-zero genesis, Python verifier agreeing byte-for-byte with the
 trigger, out-of-band tamper located, cv_app refused UPDATE/DELETE,
-round-trip upgrade/downgrade/upgrade, checkpoint idempotency.
+round-trip upgrade/downgrade/upgrade, checkpoint idempotency, and ids drawn
+under the chain lock on every insert path (`0045_audit_chain_hardening`), an
+id the caller names replaced.
 
 Not run locally (no docker); exercised by the `migrations`/integration CI jobs.
 """
@@ -107,7 +109,9 @@ def test_trigger_chain_genesis_and_python_verifier_agree(pg_dsn: str, tmp_path: 
 def test_superuser_tamper_is_located(pg_dsn: str, tmp_path: Path) -> None:
     asyncio.run(_emit_n(pg_dsn, 5, tmp_path / "b.wal"))
     with psycopg.connect(_sync(pg_dsn), autocommit=True) as conn:
-        victim = conn.execute("SELECT max(id) - 2 FROM audit_log").fetchone()
+        # The third of the five by position: ids are not consecutive (0045).
+        third = conn.execute("SELECT id FROM audit_log ORDER BY id DESC OFFSET 2 LIMIT 1")
+        victim = third.fetchone()
         assert victim is not None
         conn.execute("ALTER TABLE audit_log DISABLE TRIGGER trg_audit_append")
         conn.execute("UPDATE audit_log SET reason = 'forged' WHERE id = %s", (victim[0],))
@@ -148,9 +152,35 @@ def test_migration_round_trip_on_empty_db() -> None:
         _alembic(dsn, "upgrade", "head")
 
 
+_PREV, _REV = "0044_account_no_hard_delete", "0045_audit_chain_hardening"
+_STEPS = (("upgrade", _PREV), ("upgrade", _REV), ("downgrade", _PREV), ("upgrade", _REV))
+_FUNCTION = "SELECT prosrc FROM pg_proc WHERE proname = 'audit_chain'"
+
+
+def test_the_chain_hardening_revision_round_trips_on_a_seeded_chain(tmp_path: Path) -> None:
+    """C-5.2, C-5.5: rows go in at 0044, at 0045, back at 0044 and at 0045 again. The downgrade
+    restores 0003's `audit_chain()` body exactly and the upgrade the one that draws the id under
+    the lock; the chain across all four steps verifies (the id is not hashed). The search_path
+    each step leaves: `test_audit_chain_hardening_migration.py`."""
+    with PostgresContainer("postgres:16-alpine") as container:
+        dsn = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+asyncpg")
+        texts: list[str] = []
+        for step in _STEPS:
+            _alembic(dsn, *step)
+            asyncio.run(_emit_n(dsn, 2, tmp_path / f"{len(texts)}.wal"))
+            with psycopg.connect(_sync(dsn)) as conn:
+                [(text,)] = conn.execute(_FUNCTION).fetchall()
+            texts.append(text)
+        assert texts[0] == texts[2] != texts[1] == texts[3]
+        assert "NEW.id := nextval('audit_log_id_seq');" in texts[1]
+        result = asyncio.run(_verify(dsn))
+        assert result.verified and result.entries_checked == 8
+
+
 _T0 = datetime(2026, 10, 18, tzinfo=UTC)
 Insert = Callable[[SqlAlchemyRelationalRepository, dict[str, Any]], Awaitable[None]]
 _WAITING = "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('audit_log'))"
 _HOLDER_ROW = (
     "INSERT INTO audit_log (record_id, actor_label, action) VALUES (%s, 'h', 'auth.login')"
 )
@@ -170,11 +200,19 @@ async def _locked(relational: SqlAlchemyRelationalRepository, record: dict[str, 
 
 
 async def _unlocked(relational: SqlAlchemyRelationalRepository, record: dict[str, Any]) -> None:
-    """The negative control: an INSERT locked only by its trigger, after `nextval` drew its id."""
+    """An INSERT locked only by its trigger: the column default draws an id before the lock, which
+    `audit_chain()` replaces with one drawn under it (0045)."""
     insert = "INSERT INTO audit_log (record_id, actor_label, action) VALUES (:r, 'w', 'auth.login')"
     async with relational.unit_of_work() as uow:
         await uow.session.execute(sa.text(insert), {"r": uuid.UUID(record["record_id"])})
         await uow.commit()
+
+
+async def _until_waiting(conn: psycopg.AsyncConnection[Any]) -> None:
+    """Until an INSERT waits for the chain lock; bounded, so a missed wait fails fast."""
+    async with asyncio.timeout(30):
+        while not await (await conn.execute(_WAITING)).fetchall():
+            pass
 
 
 async def _race(dsn: str, insert: Insert) -> tuple[int, int, VerifyResult]:
@@ -185,11 +223,9 @@ async def _race(dsn: str, insert: Insert) -> tuple[int, int, VerifyResult]:
     waiter, holder = _record("waiter"), _record("holder")
     try:
         async with await psycopg.AsyncConnection.connect(_sync(dsn)) as conn:
-            await conn.execute("SELECT pg_advisory_xact_lock(hashtext('audit_log'))")
+            await conn.execute(_LOCK_SQL)
             task = asyncio.ensure_future(insert(relational, waiter))
-            async with asyncio.timeout(30):  # fails a missed wait fast
-                while not await (await conn.execute(_WAITING)).fetchall():
-                    pass
+            await _until_waiting(conn)
             await conn.execute(_HOLDER_ROW, (holder["record_id"],))
             await conn.commit()  # releases the chain lock
             await task
@@ -202,15 +238,98 @@ async def _race(dsn: str, insert: Insert) -> tuple[int, int, VerifyResult]:
         await relational.dispose()
 
 
-async def test_an_insert_without_the_explicit_lock_breaks_the_chain(pg_dsn: str) -> None:
-    """The waiter drew its id first but hashed after the holder's row; verify names it."""
+async def test_an_insert_without_the_explicit_lock_keeps_the_chain(pg_dsn: str) -> None:
+    """The waiter's default drew an id before the holder's row; before 0045 the waiter kept it and
+    hashed the later row as its predecessor, a break verify named. Its id is now drawn under the
+    lock, after the holder's."""
     waiter, holder, result = await _race(pg_dsn, _unlocked)
-    assert waiter < holder and not result.verified and result.first_bad_id == waiter
+    assert holder < waiter and result.verified and result.entries_checked == 2
 
 
 async def test_the_lock_first_helper_keeps_the_chain_under_the_same_schedule(pg_dsn: str) -> None:
     waiter, holder, result = await _race(pg_dsn, _locked)
     assert holder < waiter and result.verified and result.entries_checked == 2
+
+
+_ROUNDS = 500  # two inserts a round: AC-ADM-16's 1,000
+_RAW_ROW = "INSERT INTO audit_log (record_id, actor_label, action) VALUES (%s, 'raw', 'auth.login')"
+_ORDER = "SELECT id, record_id::text FROM audit_log WHERE record_id = ANY(%s::uuid[]) ORDER BY id"
+_CACHE = "SELECT cache_size FROM pg_sequences WHERE sequencename = 'audit_log_id_seq'"
+
+
+async def test_two_connection_inserts_link_in_id_order(pg_dsn: str) -> None:
+    """AC-ADM-16, SR-E42-10: two connections append 1,000 rows, one through the app's lock-first
+    path, one by a raw INSERT that meets the lock only in the trigger; they take turns holding the
+    chain lock while the other's INSERT waits behind it. A waiting raw INSERT's default has drawn
+    an id before the holder's row exists, the schedule that linked out of id order before 0045.
+    Ids now follow lock order, and the chain verifies in id order."""
+    relational = SqlAlchemyRelationalRepository(pg_dsn)
+    query = AuditQueryService(SqlAlchemyAuditRepository(relational))
+    order: list[str] = []  # record ids, in the order their rows took the chain lock
+    try:
+        async with (
+            await psycopg.AsyncConnection.connect(_sync(pg_dsn)) as raw,
+            await psycopg.AsyncConnection.connect(_sync(pg_dsn), autocommit=True) as watch,
+        ):
+            # A cached sequence would hand each session its own block of ids (0045).
+            assert await (await watch.execute(_CACHE)).fetchall() == [(1,)]
+            for i in range(_ROUNDS):
+                app, raw_id = _record("app"), str(uuid.uuid4())
+                if i % 2 == 0:  # the app path holds the lock; the raw INSERT waits behind it
+                    async with relational.unit_of_work() as uow:
+                        await uow.session.execute(sa.text(_LOCK_SQL))
+                        waiting = asyncio.ensure_future(raw.execute(_RAW_ROW, (raw_id,)))
+                        await _until_waiting(watch)
+                        assert await insert_audit_row_locked(uow.session, app)
+                        await uow.commit()
+                    await waiting
+                    await raw.commit()
+                    order += [app["record_id"], raw_id]
+                else:  # the raw INSERT holds the lock; the app path waits behind it
+                    await raw.execute(_RAW_ROW, (raw_id,))
+                    queued = asyncio.ensure_future(_locked(relational, app))
+                    await _until_waiting(watch)
+                    await raw.commit()
+                    await queued
+                    order += [raw_id, app["record_id"]]
+            rows = await (await watch.execute(_ORDER, (order,))).fetchall()
+        assert [record for _, record in rows] == order  # every holder's id below its waiter's
+        result = await query.verify(from_id=rows[0][0])
+        assert result.verified and result.entries_checked == 2 * _ROUNDS
+    finally:
+        query.close()
+        await relational.dispose()
+
+
+_NAMED = 2**62  # no sequence here reaches it: the INSERT names it, the trigger replaces it
+_NAMED_ROW = (
+    "INSERT INTO audit_log (id, record_id, actor_label, action) "
+    "VALUES (%s, %s, 'named', 'auth.login') RETURNING id"
+)
+
+
+async def test_the_trigger_replaces_an_id_the_caller_supplies(pg_dsn: str) -> None:
+    """SR-E42-10: an INSERT that names its own id (another tool, a migration, a manual insert)
+    cannot place its row anywhere but after the head: `audit_chain()` replaces the id with one
+    drawn under the lock. The row the app appends next links to it in id order, and verify passes;
+    before 0045 the named row kept 2**62 and the next row, drawing a lower id, linked to it out of
+    id order."""
+    relational = SqlAlchemyRelationalRepository(pg_dsn)
+    repo = SqlAlchemyAuditRepository(relational)
+    query = AuditQueryService(repo)
+    try:
+        head = await repo.read_head()
+        head_id = 0 if head is None else head[0]
+        async with await psycopg.AsyncConnection.connect(_sync(pg_dsn), autocommit=True) as conn:
+            named = await conn.execute(_NAMED_ROW, (_NAMED, str(uuid.uuid4())))
+            [(returned,)] = await named.fetchall()
+        await _locked(relational, _record("after"))
+        assert head_id < returned < _NAMED
+        result = await query.verify(from_id=head_id + 1)
+        assert result.verified and result.entries_checked == 2
+    finally:
+        query.close()
+        await relational.dispose()
 
 
 async def test_wal_path_and_in_transaction_inserts_interleave_into_one_verified_chain(

@@ -9,12 +9,12 @@ ticket it waits on; `test_abuse_catalogue.py` keeps the two in step.
 
 Held elsewhere: the RBAC cells (`test_cells_*.py`) hold AC-ADM-01, -02, -03 and -32 for every admin
 and users route. The last-owner races (AC-ADM-28, UL-AC03), the disabled invitee's old link
-(UL-AC14) and the append-only trigger case for a privileged role that is not the owner
-(AC-ADM-15) need Postgres: `tests/integration/admin/` and `tests/integration/audit/`.
+(UL-AC14), the append-only trigger case for a privileged role that is not the owner
+(AC-ADM-15) and the two-connection insert case (AC-ADM-16, #889 S3) need Postgres:
+`tests/integration/admin/` and `tests/integration/audit/`.
 
 Waiting on other tickets (recorded in the catalogue, never skipped):
 - AC-ADM-12: `POST /orders` (E29-T07).
-- AC-ADM-16: E42-T02 (#889) or #1238.
 - AC-ADM-20 past its 501, and AC-ADM-21: E42-T02 (#889), decision D1.
 - AC-ADM-22: #3085.
 - AC-ADM-23 at the route, and AC-ADM-24: #3084.

@@ -73,7 +73,9 @@ def _sync(dsn: str) -> str:
 def _tamper(dsn: str) -> int:
     """Alter the third of five entries behind the chain, as a superuser can; its id."""
     with psycopg.connect(_sync(dsn), autocommit=True) as conn:
-        victim = conn.execute("SELECT max(id) - 2 FROM audit_log").fetchone()
+        # The third of the five by position: ids are not consecutive (0045).
+        third = conn.execute("SELECT id FROM audit_log ORDER BY id DESC OFFSET 2 LIMIT 1")
+        victim = third.fetchone()
         assert victim is not None
         conn.execute("ALTER TABLE audit_log DISABLE TRIGGER trg_audit_append")
         conn.execute("UPDATE audit_log SET reason = 'forged' WHERE id = %s", (victim[0],))
