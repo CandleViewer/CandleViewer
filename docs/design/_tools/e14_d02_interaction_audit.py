@@ -117,15 +117,25 @@ V1_MAP = dict(p.split(">") for p in V1_TXT.split("|"))
 # --- 2. the state machine (spec section 4): "state: event NNk ..." with k = T transition,
 # I ignored, = alias of an arm row; "entry" = the transient state's entry action, "*" = any event.
 STATES = ("cursor", "armed", "placing", "committed")
-INTERRUPTS = ("focus_loss", "symbol_switch", "interval_switch", "tool_switch", "disconnect")
+INTERRUPTS = (
+    "focus_loss",
+    "symbol_switch",
+    "interval_switch",
+    "tool_switch",
+    "disconnect",
+    "permission_change",
+)
 EVENTS = ("arm", "place", "snapCycle", "cancel", *INTERRUPTS, "undo")
 MACHINE_TXT = """
 cursor: arm 01T 02T | place 03I | snapCycle 04I | cancel 05T 06I | focus_loss 07I
 cursor: symbol_switch 08T | interval_switch 09I | tool_switch 10= | disconnect 11I | undo 12T
+cursor: permission_change 40I
 armed: arm 13T 14T | place 15T 16T | snapCycle 17T | cancel 18T | focus_loss 19T | symbol_switch 20T
 armed: interval_switch 21I | tool_switch 22= | disconnect 23I | undo 24T
+armed: permission_change 41T 42I
 placing: place 25T 26T 27T | snapCycle 28T | cancel 29T | tool_switch 30T | arm 30T 31I
 placing: focus_loss 32T | symbol_switch 33T | interval_switch 34T | disconnect 35T | undo 36T
+placing: permission_change 43T 44I
 committed: entry 37T 38T | * 39I
 """
 MACHINE: list[tuple[str, str, str, str]] = []  # (row id, state, event, kind)
