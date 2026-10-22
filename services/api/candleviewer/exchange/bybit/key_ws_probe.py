@@ -42,7 +42,8 @@ from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
 from websockets.protocol import State
 
-from candleviewer.exchange.base.reconnect import ConnectionBudget
+from candleviewer.exchange.base.reconnect import PROBE_CAP, ConnectionBudget
+from candleviewer.exchange.base.reconnect import WINDOW_S as BUDGET_WINDOW_S
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.signer import BybitSigner
 
@@ -57,9 +58,10 @@ CLOSE_TIMEOUT_S: Final = 1.0
 _LIBRARY_CLOSE_TIMEOUT_S: Final = CLOSE_TIMEOUT_S / 2
 #: SR-E27-17: `expires` at most 10 s ahead of the exchange clock.
 EXPIRES_AHEAD_MS: Final = 10_000
-#: SR-E27-05: probes per window, per deployment (2 % of the venue's 500 per 5 minutes per IP).
-OPENS_PER_WINDOW: Final = 10
-WINDOW_S: Final = 300.0
+#: SR-E27-05: probes per window, per deployment (2 % of the venue's 500 per 5 minutes per IP):
+#: the connection budget's own cap and window, so a probe with no budget counts the same.
+OPENS_PER_WINDOW: Final = PROBE_CAP
+WINDOW_S: Final = BUDGET_WINDOW_S
 #: Every read's bound: an `auth` reply is a few dozen bytes.
 MAX_FRAME_BYTES: Final = 4096
 #: G-8b (#3963, ruling 9): the private stream's frames, at most 1 MiB, and at most this many read

@@ -23,6 +23,9 @@ Deviations from the composition root (keep in sync with SCENARIOS.md):
   no topic can be acquired; the rig attaches the catalogue as that function would.
 * Not composed: the E04-T06 stage-latency recorder (`create_app` -> `attach_latency`), so the
   WS reader never takes its 1-in-N sampled `_record_sampled` branch.
+* The connection budget is the rig's own `ConnectionBudget` on the virtual clock, whose public
+  lane the stream gets as `wire_public_ws` gives it the adapter's
+  (`ws_connection_budget.lane("public")`); no private stream or key probe draws on it here.
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ from candleviewer.bus.bus import Bus, Subscription
 from candleviewer.bus.models import QueuePolicy
 from candleviewer.domain.events import Instrument
 from candleviewer.exchange.base.models import BookDelta, BookSnapshot, TickerEvent
+from candleviewer.exchange.base.reconnect import OPENS_LIMIT, ConnectionBudget
 
 # nosemgrep: cv-adapter-isolation reason=Q03 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.config import RestClientConfig
@@ -69,7 +73,7 @@ from candleviewer.ingestion.connection import ConnectionManager
 from candleviewer.ingestion.instruments_refresh import InstrumentsRefreshScheduler
 from candleviewer.ingestion.metrics import ingest_enabled
 from candleviewer.ingestion.planner import SubscriptionPlanner
-from candleviewer.ingestion.reconnect import ConnectionRateGuard, ReconnectPolicy
+from candleviewer.ingestion.reconnect import ReconnectPolicy
 from candleviewer.ingestion.rejection import EventWindow, corrected_now_us
 from candleviewer.ingestion.service import IngestionService
 from candleviewer.ingestion.ticker_stream import TickerStream
@@ -162,7 +166,7 @@ class Rig:
         *,
         seed: int,
         symbols: tuple[str, ...] = ("BTCUSDT",),
-        conn_limit: int = 480,
+        conn_limit: int = OPENS_LIMIT,
     ) -> None:
         self.seed = seed
         self.clock = VirtualClock()
@@ -203,7 +207,10 @@ class Rig:
 
         # ---- `app.wire_public_ws` --------------------------------------------------------
         self.watchdog = StalenessWatchdog(self.clock, lambda _e: None, kind_of=topic_kind)
-        self.guard = ConnectionRateGuard(self.clock, limit=conn_limit)
+        # The adapter's one budget (24 §14.2 rule 13): `conn_limit` opens a window, the public
+        # lane stopping `PRIVATE_RESERVE` short of it.
+        self.budget = ConnectionBudget(self.clock, limit=conn_limit)
+        self.guard = self.budget.lane("public")
         self.ws = ConnectionManager(
             self.ex.socket_factory,
             SubscriptionPlanner(),

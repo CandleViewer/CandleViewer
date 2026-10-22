@@ -6,6 +6,7 @@ Memory is measured with tracemalloc; time is a fake clock. No sleeps, no network
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gc
 import statistics
 import time
@@ -19,11 +20,13 @@ from websockets.exceptions import PayloadTooBig
 from websockets.extensions.permessage_deflate import PerMessageDeflate
 from websockets.frames import Frame, Opcode
 
+from candleviewer.exchange.base.errors import RateBudgetExceededError
+from candleviewer.exchange.base.reconnect import OPENS_LIMIT, PRIVATE_RESERVE, ConnectionBudget
+
 # nosemgrep: cv-adapter-isolation reason=X02 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit import public_ws
 from candleviewer.ingestion import metrics as im
 from candleviewer.ingestion.connection import MAX_FRAME_BYTES
-from candleviewer.ingestion.reconnect import ConnectionRateGuard
 from candleviewer.ingestion.service import WS_FRAME_QUEUE_MAXSIZE, IngestionService
 from candleviewer.observability.context import spawn
 from tests.security.ingestion._harness import Rig
@@ -110,11 +113,19 @@ def test_symbol_label_cardinality_folds_to_other() -> None:
 
 
 def test_resubscribe_thrash_is_rate_guarded() -> None:
-    now = [0.0]
-    guard = ConnectionRateGuard(lambda: now[0], limit=480, window_s=300.0)
-    delays = [guard.reserve() for _ in range(5_000)]
-    assert delays[479] == 0.0 and delays[480] > 0.0  # paced past the per-IP budget
-    assert len(guard._opens) <= 480
+    """D-04 on the guard `app.wire_public_ws` gives the public stream, the public lane of the
+    adapter's connection budget (24 §14.2 rule 13): paced past 420 opens per 300 s, booked at
+    most one window ahead and refused past it, so the budget stays bounded and the private
+    streams' 60 stay free."""
+    budget = ConnectionBudget(lambda: 0.0)
+    guard, public = budget.lane("public"), OPENS_LIMIT - PRIVATE_RESERVE
+    delays: list[float] = []
+    for _ in range(5_000):
+        with contextlib.suppress(RateBudgetExceededError):
+            delays.append(guard.reserve())
+    assert delays[public - 1] == 0.0 and delays[public] > 0.0  # paced past the public lane
+    assert len(delays) == 2 * public and len(budget._opens) <= 2 * OPENS_LIMIT
+    assert budget.lane("private").remaining() == PRIVATE_RESERVE
 
 
 async def test_subscribe_unsubscribe_thrash_has_no_unbounded_growth() -> None:

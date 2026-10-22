@@ -9,11 +9,14 @@ which may not import ingestion, backs off the same way (24 §14.2 rule 13).
 venue allows 500 new connections per 5 minutes; 480 keeps headroom). Public opens stop
 `private_reserve` short of it, so private streams can always reconnect; private opens may take
 every slot; `testApiKey`'s key probe counts inside the window, at most `probe_cap` per window,
-never in the private reserve, and never waits (SR-E27-05, KV-D01). A lane's `reserve()` never
-refuses: it schedules the open and returns how long to wait for it, as `ConnectionRateGuard`
-does. The venue counts per WebSocket domain; one window over every domain is the conservative
-reading. The budget is per process, not per IP: two deployments behind one egress address
-share the venue's count (OM-D07's residual). Pure bookkeeping on an injected monotonic clock.
+never in the private reserve, and never waits (SR-E27-05, KV-D01). An open counts only against
+the windows that hold it, so one a lane booked ahead never takes a slot from an open now. A
+lane's `reserve()` books the earliest slot at most one window ahead and returns how long to wait
+for it; an open no such slot admits is refused (`RateBudgetExceededError`, nothing booked), so
+the budget holds at most two windows of opens (C-2.18). The venue counts per WebSocket domain;
+one window over every domain is the conservative reading. The budget is per process, not per
+IP: two deployments behind one egress address share the venue's count (OM-D07's residual). Pure
+bookkeeping on an injected monotonic clock.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
+from candleviewer.exchange.base.errors import RateBudgetExceededError
 from candleviewer.observability.metrics import Counter, Gauge
 
 __all__ = [
@@ -54,7 +58,8 @@ ws_conn_budget_remaining = Gauge(
 
 ws_conn_budget_refused_total = Counter(
     "ws_conn_budget_refused_total",
-    "WebSocket opens the connection budget refused, by scope (probe; streams: the cap).",
+    "WebSocket opens the connection budget refused, by scope (a lane: no slot within one window; "
+    "probe; streams: the cap).",
     ["scope"],
 )
 
@@ -77,7 +82,8 @@ class ConnectionGuard(Protocol):
     guard reads `remaining()`; `open_socket` waits out `reserve()`'s delay before it dials)."""
 
     def reserve(self) -> float:
-        """Take one open slot; the delay in seconds before the open may be issued."""
+        """Take one open slot; the delay in seconds before the open may be issued. Raises
+        `RateBudgetExceededError`, with nothing taken, when no slot within one window is free."""
         ...
 
     def remaining(self) -> int:
@@ -88,13 +94,13 @@ class ConnectionGuard(Protocol):
 class _Lane:
     """One lane of a `ConnectionBudget`: a `ConnectionGuard` capped at `cap` opens a window."""
 
-    __slots__ = ("_budget", "_cap")
+    __slots__ = ("_budget", "_cap", "_name")
 
-    def __init__(self, budget: ConnectionBudget, cap: int) -> None:
-        self._budget, self._cap = budget, cap
+    def __init__(self, budget: ConnectionBudget, cap: int, name: BudgetLane) -> None:
+        self._budget, self._cap, self._name = budget, cap, name
 
     def reserve(self) -> float:
-        return self._budget._reserve(self._cap)
+        return self._budget._reserve(self._cap, self._name)
 
     def remaining(self) -> int:
         return self._budget._remaining(self._cap)
@@ -121,15 +127,20 @@ class ConnectionBudget:
         self._window = window_s
         self._public_cap = limit - private_reserve
         self._probe_cap = probe_cap
-        #: Every open's time, sorted; one a lane scheduled ahead may lie in the future. Each is
-        #: dropped once it can no longer share a window with a new open: what stays is the last
-        #: window's opens and the ones its callers still wait for.
+        #: Every open's time, sorted; one a lane booked ahead lies at most one window ahead
+        #: (`_slot`). `_prune` drops an open once no window holding a new one can hold it, so
+        #: those kept lie within one window either side of now, and as no window holds more
+        #: than `limit`, at most `2 * limit` are kept (C-2.18).
         self._opens: list[float] = []
+        #: When each kept open leaves the window (its time plus `window_s`, in `_opens`' order).
+        #: Every window edge is reckoned from this one sum, so a slot found where an open leaves
+        #: never counts that open, whatever the float rounding.
+        self._leaves: list[float] = []
         #: The probe's own opens in the window, oldest first; at most `probe_cap`.
         self._probes: deque[float] = deque()
         self._lanes: dict[BudgetLane, _Lane] = {
-            "public": _Lane(self, self._public_cap),
-            "private": _Lane(self, limit),
+            "public": _Lane(self, self._public_cap, "public"),
+            "private": _Lane(self, limit, "private"),
         }
 
     def lane(self, lane: BudgetLane) -> ConnectionGuard:
@@ -140,59 +151,121 @@ class ConnectionBudget:
     def remaining(self, scope: Literal["public", "private", "probe"]) -> int:
         """Opens `scope` could make now without waiting."""
         if scope == "probe":
-            left = self._remaining(self._public_cap)  # prunes the probes too
-            return max(0, min(self._probe_cap - len(self._probes), left))
+            return self._probes_left(self._read())
         return self._lanes[scope].remaining()
-
-    def _publish(self) -> None:
-        """`ws_conn_budget_remaining{scope}` as the budget stands now (after a prune)."""
-        used = self._used()
-        ws_conn_budget_remaining.labels(scope="public").set(max(0, self._public_cap - used))
-        ws_conn_budget_remaining.labels(scope="private").set(max(0, self._limit - used))
-        probes = max(0, min(self._probe_cap - len(self._probes), self._public_cap - used))
-        ws_conn_budget_remaining.labels(scope="probe").set(probes)
 
     def admit_probe(self) -> bool:
         """One probe open now, or `False` at once with nothing taken: never queued. Refused past
         `probe_cap` in the window, or when only the private reserve is left."""
         now = self._clock()
         self._prune(now)
-        if len(self._probes) >= self._probe_cap or self._used() >= self._public_cap:
+        load = self._load(now)
+        if len(self._probes) >= self._probe_cap or load >= self._public_cap:
             ws_conn_budget_refused_total.labels(scope="probe").inc()
-            self._publish()
+            self._publish(load)
             return False
-        bisect.insort(self._opens, now)
+        self._book(now)
         self._probes.append(now)
-        self._publish()
+        self._publish(load + 1)  # every window holding now holds this open too
         return True
 
-    def _reserve(self, cap: int) -> float:
-        """Schedule one open of a lane capped at `cap`: the earliest time at which, counting every
-        open after it less one window (those scheduled ahead too), the lane stays within `cap`.
-        Counting the scheduled ones keeps every window, earlier or later, within the limit. The
-        slot is booked when scheduled, so an open cancelled while it waits (a KILL, a SHUTDOWN)
-        keeps its slot for one window: the budget is under-used, never exceeded."""
+    def _reserve(self, cap: int, lane: BudgetLane) -> float:
+        """Book one open of `lane`, capped at `cap`, at its earliest slot (`_slot`) and return
+        how long to wait for it; with no slot within one window, refuse with nothing booked,
+        counted under the lane. A slot is booked when scheduled, so an open cancelled while it
+        waits (a KILL, a SHUTDOWN) keeps it for one window: under-used, never exceeded."""
         now = self._clock()
         self._prune(now)
-        start = now
-        if len(self._opens) >= cap:
-            start = max(now, self._opens[-cap] + self._window)
-        bisect.insort(self._opens, start)
-        self._publish()
+        start = self._slot(cap, now)
+        if start is None:
+            ws_conn_budget_refused_total.labels(scope=lane).inc()
+            raise RateBudgetExceededError(
+                "no WebSocket open is free within one window; nothing was booked"
+            )
+        self._book(start)
+        self._publish(self._load(now))
         return start - now
 
-    def _remaining(self, cap: int) -> int:
-        self._prune(self._clock())
-        return max(0, cap - self._used())
+    def _book(self, at: float) -> None:
+        i = bisect.bisect_right(self._opens, at)
+        self._opens.insert(i, at)
+        self._leaves.insert(i, at + self._window)  # sorted too: the sum keeps the order
 
-    def _used(self) -> int:
-        """Opens sharing a window with an open now: every one kept (`_prune` drops the rest)."""
-        return len(self._opens)
+    def _remaining(self, cap: int) -> int:
+        return max(0, cap - self._read())
+
+    def _read(self) -> int:
+        """The load now (`_load`), the gauges refreshed with it."""
+        now = self._clock()
+        self._prune(now)
+        load = self._load(now)
+        self._publish(load)
+        return load
+
+    def _slot(self, cap: int, now: float) -> float | None:
+        """The earliest time from `now` to one window ahead at which one more open leaves every
+        window that holds it within `cap`, else `None`. Only `now` and the times kept opens leave
+        the window can be it: past any other time, the windows holding a later one hold no fewer
+        opens. When the window ending one window ahead is full, every later time lies in it and
+        only `now` can be; else each kept open's count enters a falling deque once (O(n log n))."""
+        opens, window, held = self._opens, self._window, self._held
+        if held(now + window) >= cap:  # every later time, to one window ahead, lies in it
+            return now if self._fits(now, cap) else None
+        ahead: deque[tuple[int, int]] = deque()  # (index, held) of opens in range, held falling
+        nxt = 0
+        last: float | None = None
+        for start in (now, *self._leaves[: bisect.bisect_right(opens, now)]):
+            if start == last:
+                continue
+            last = start
+            lo = bisect.bisect_right(opens, start)  # the opens after `start` ...
+            hi = bisect.bisect_left(opens, start + window)  # ... less than a window after it
+            for i in range(max(nxt, lo), hi):
+                count = held(opens[i])
+                while ahead and ahead[-1][1] <= count:
+                    ahead.pop()
+                ahead.append((i, count))
+            nxt = max(nxt, hi)
+            while ahead and ahead[0][0] < lo:
+                ahead.popleft()
+            if max(held(start), ahead[0][1] if ahead else 0) < cap:
+                return start
+        return None
+
+    def _fits(self, at: float, cap: int) -> bool:
+        """Whether `_load(at) < cap`, stopping at the first full window, the latest first (where
+        opens booked ahead gather)."""
+        opens, held = self._opens, self._held
+        lo = bisect.bisect_right(opens, at)
+        hi = bisect.bisect_left(opens, at + self._window)
+        return held(at) < cap and all(held(opens[i]) < cap for i in range(hi - 1, lo - 1, -1))
+
+    def _load(self, at: float) -> int:
+        """The most opens any window holding `at` holds: the window ending at `at`, or at a kept
+        open less than one window after it (a window's count rises only where an open lies)."""
+        opens = self._opens
+        lo = bisect.bisect_right(opens, at)
+        hi = bisect.bisect_left(opens, at + self._window)
+        return max([self._held(at), *map(self._held, opens[lo:hi])])
+
+    def _held(self, end: float) -> int:
+        """The opens in the window that ends at `end`: made by then, and not yet left."""
+        return bisect.bisect_right(self._opens, end) - bisect.bisect_right(self._leaves, end)
+
+    def _probes_left(self, load: int) -> int:
+        return max(0, min(self._probe_cap - len(self._probes), self._public_cap - load))
+
+    def _publish(self, load: int) -> None:
+        """`ws_conn_budget_remaining{scope}`, `load` being the most opens a window holding now
+        holds: refreshed on every open and every reading of `remaining`."""
+        ws_conn_budget_remaining.labels(scope="public").set(max(0, self._public_cap - load))
+        ws_conn_budget_remaining.labels(scope="private").set(max(0, self._limit - load))
+        ws_conn_budget_remaining.labels(scope="probe").set(self._probes_left(load))
 
     def _prune(self, now: float) -> None:
-        cutoff = now - self._window
-        del self._opens[: bisect.bisect_right(self._opens, cutoff)]
-        while self._probes and self._probes[0] <= cutoff:
+        gone = bisect.bisect_right(self._leaves, now)  # the opens that have left the window
+        del self._opens[:gone], self._leaves[:gone]
+        while self._probes and self._probes[0] + self._window <= now:
             self._probes.popleft()
 
 

@@ -268,7 +268,8 @@ SPECS: Final[tuple[MetricSpec, ...]] = (
     ),
     _c(
         "ws_conn_budget_refused_total",
-        "WebSocket opens the connection budget refused, by scope (probe; streams: the cap).",
+        "WebSocket opens the connection budget refused, by scope (a lane: no slot within one "
+        "window; probe; streams: the cap).",
         "scope",
         owner="exchange.base",
     ),

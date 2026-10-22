@@ -4014,9 +4014,10 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
    `bybit_private_ws_disconnects_total{reason}`, `bybit_private_subscribe_refused_total{topic}`,
    `bybit_private_reconnect_waited_total` (a dial that waited for the consumer to read the last
    `down`) and the gauge `bybit_private_ws_streams`; `exchange.base` adds
-   `ws_conn_budget_remaining{scope}` and `ws_conn_budget_refused_total{scope}` (`scope` a budget
-   lane, `streams` for the private stream cap, or `probe` for the key probe's opens). Clock thresholds in §14.3 are unchanged:
-   warn > 500 ms, block > 2000 ms (`recv_window/2`).
+   `ws_conn_budget_remaining{scope}` (`scope` a budget lane or `probe`: what it could open now)
+   and `ws_conn_budget_refused_total{scope}` (`scope` a lane, for an open no slot within one
+   window admits, `probe` for a refused key probe, or `streams` for the private stream cap).
+   Clock thresholds in §14.3 are unchanged: warn > 500 ms, block > 2000 ms (`recv_window/2`).
 10. **Ingest-boundary validation (#1889 / #1890 / #1892).** Parsers check market plausibility
     _before_ building a domain event; checks are O(1) per field (no regex per frame, C-2.20).
     Shared primitives live in `exchange/base/frame_guard.py`; a failure raises
@@ -4189,7 +4190,13 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
     - **Connection budget (C-12.7, OM-D07; G-8b ruling 5).** The adapter holds one
       `ConnectionBudget` (`exchange.base`): 480 opens in any 300 s, of which public opens take at
       most 420, so 60 stay for private ones; `testApiKey`'s key probe counts in it, at most 10 per
-      300 s and never in those 60 (SR-E27-05, KV-D01). The venue allows 500 new connections per 5
+      300 s and never in those 60 (SR-E27-05, KV-D01). An open counts only against the windows
+      that hold it, so opens booked ahead never take those 60 from an open now. A lane books an
+      open at most 300 s ahead and refuses one it cannot fit by then, with nothing booked
+      (`RateBudgetExceededError`, `reason` `token_bucket`, counted in
+      `ws_conn_budget_refused_total` under the lane), so the budget holds two windows of opens
+      at most: B13 then backs off, and the public stream skips that book resubscribe, which the
+      book's snapshot timeout asks for again. The venue allows 500 new connections per 5
       minutes, counted per WebSocket domain: one window over every domain is the conservative
       reading. At most 64 private streams are open; the next is refused (`RateBudgetExceededError`,
       `reason` `stream_cap`, also counted in `ws_conn_budget_refused_total{scope="streams"}`), which
@@ -5694,6 +5701,7 @@ This number follows §19.24 (#4098). §19.26 (#4137) landed first and left it th
 - §8.9 and §14.4 (the slice-2b rulings, RelayRoom [LANE-20]): `TradingStopRequest` gains `tp_size` and `sl_size`, sent as `tpSize` and `slSize` in Partial mode only, so a Partial-mode stop can be written; §14.4 lists the request and what it refuses at construction.
 - §8.9 and §14.4 (the orchestrator's ruling 2 on #2877): no port sends a stop-loss, or a stop size, that is not positive, as the venue reads a stop-loss of `0` as a cancel (C-2.6); a create, each batch item, an amend and a stop write refuse one before any token or signature.
 - §8.9 and §14.4 (the orchestrator's ruling on SEC-G8B-A-01, from ruling 2's principle): no port sends a trailing distance that is not positive either, as the venue reads a `trailingStop` of `0` as cancelling the trail; a later explicit, audited clear-trail operation is the only way to remove one.
+- §14.2 rules 9 and 13 (the code lens on G-8b, on the connection budget): an open counts only against the windows that hold it, so opens booked ahead never take the private streams' 60 from an open now; a lane books an open at most 300 s ahead and refuses past that, counted under the lane, so the budget keeps two windows of opens at most (C-2.18); rule 9 names each budget series' scopes.
 
 ### 19.26 2026-10-22 — §8.8 rule 5: only the owner can loosen a stop (E29-T07, #915; E34-S03, #1111)
 

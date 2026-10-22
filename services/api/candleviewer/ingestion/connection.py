@@ -21,6 +21,7 @@ from typing import Any, Protocol
 
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import Topic
+from candleviewer.exchange.base.errors import RateBudgetExceededError
 from candleviewer.exchange.base.reconnect import ConnectionGuard
 from candleviewer.ingestion.metrics import ingest_ws_up
 from candleviewer.ingestion.planner import SubscriptionPlanner
@@ -234,12 +235,17 @@ class ConnectionManager:
             await sock.send(json.dumps({"op": op, "args": list(batch.topics)}))
 
     async def resubscribe_topic(self, topic: str) -> None:
-        """Force a fresh snapshot for one topic: unsubscribe then subscribe,
-        shaped by the E08-T04 connection budget (the guard, `ConnectionGuard`)."""
+        """Force a fresh snapshot for one topic: unsubscribe then subscribe, paced by the
+        E08-T04 connection budget (the guard, `ConnectionGuard`). One the guard cannot book
+        within a window is skipped (the guard counts it): the book's snapshot timeout asks
+        again (24 §14.2 rule 13)."""
         sock = self._sock
         if sock is None or topic not in self._desired:
             return  # not connected: the (re)subscribe on connect yields the snapshot
-        delay = self._guard.reserve()
+        try:
+            delay = self._guard.reserve()
+        except RateBudgetExceededError:
+            return
         if delay > 0:
             await self._sleep(delay)
         await sock.send(json.dumps({"op": "unsubscribe", "args": [topic]}))
