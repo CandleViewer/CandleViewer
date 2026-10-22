@@ -35,6 +35,7 @@ from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary.registry import MetricRegistry
+from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories.alerts import (
     AlertConflictError,
     AlertNameTakenError,
@@ -149,6 +150,10 @@ class _Deps:
         return JSONResponse(self.dump(row) | extra, status, headers={"ETag": f'"{row.etag}"'})
 
 
+#: SQLSTATEs of a value the alerts table refuses: NOT NULL, and CHECK (a domain's included).
+_REFUSED_ROW = frozenset({"23502", "23514"})
+
+
 def make_alerts_router(
     repo_provider: Callable[[], AlertRepository | None],
     registry_provider: Callable[[], MetricRegistry | None],
@@ -240,6 +245,12 @@ def make_alerts_router(
     def name_taken() -> _Problem:
         return _Problem(409, "conflict", "Conflict", "You already have an alert with this name.")
 
+    def refused_row() -> _Problem:
+        """A value the stored alert's own rules refuse (#2748 (b)): 422, naming no constraint."""
+        return _Problem(
+            422, "validation_failed", "Invalid alert", "The alert's values are refused."
+        )
+
     @router.get("/alerts")
     async def list_alerts(
         actor: Annotated[Actor, Depends(lister)],
@@ -273,6 +284,10 @@ def make_alerts_router(
             )
         except AlertNameTakenError:
             raise name_taken() from None
+        except StorageConstraintViolated as refused:
+            if refused.sqlstate not in _REFUSED_ROW:
+                raise  # any other constraint error is a defect: a 500
+            raise refused_row() from None
         await d.on_change(row.id)
         return d.respond(row, 201, estimated_metrics=list(compiled.estimated_metrics))
 
@@ -306,6 +321,10 @@ def make_alerts_router(
             raise _stale() from None
         except AlertNameTakenError:
             raise name_taken() from None
+        except StorageConstraintViolated as refused:
+            if refused.sqlstate not in _REFUSED_ROW:
+                raise  # any other constraint error is a defect: a 500
+            raise refused_row() from None
         await d.on_change(new.id)
         return d.respond(new, estimated_metrics=list(compiled.estimated_metrics))
 

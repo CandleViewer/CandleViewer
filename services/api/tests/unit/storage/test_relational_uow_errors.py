@@ -21,10 +21,12 @@ import pytest
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi as _Dbapi
 
+from candleviewer.api import storage_outage
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.storage.errors import (
     BackupCheckViolation,
     BackupWriteOnceViolation,
+    StorageConstraintViolated,
     StorageQueryFailed,
     StorageTierUnavailable,
     WriteAheadTimeout,
@@ -42,6 +44,8 @@ from candleviewer.storage.repositories.account_access import AccessBusyError
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyUnitOfWork,
     constraint_of,
+    is_outage,
+    query_failure,
     sqlstate_of,
     strip_driver_text,
 )
@@ -126,6 +130,9 @@ async def test_a_driver_error_leaves_the_unit_of_work_without_the_servers_text(w
     assert (error.__cause__, error.__context__, error.__suppress_context__) == (None, None, True)
     assert (cast(Any, error).statement, cast(Any, error).params) == (None, None)
     assert (sqlstate_of(error), constraint_of(error)) == ("23505", "users_email_key")
+    # the database's error, never a client's: no class name stands in for its message
+    assert str(error).startswith("database error (sqlstate 23505, constraint users_email_key)")
+    assert cast(Any, error).orig.client is None
     assert not is_storage_outage(error)
     assert session.calls[-2:] == ["rollback", "close"]
 
@@ -406,6 +413,11 @@ def test_a_sentinel_in_a_bound_parameter_or_a_trigger_raise_never_leaves() -> No
 # -- the 1a review's follow-ups (#2748 slice 2d) ---------------------------------------------------
 
 
+#: asyncpg's text fields, its statement included, and the adapted error's `detail`: the strip's
+#: list, pinned here so that dropping a name from it fails a test.
+_TEXT_FIELDS = ("message", "detail", "hint", "context", "internal_query", "query")
+
+
 def _asyncpg_unique() -> Exception:
     """A unique violation as asyncpg's protocol builds it, the failing statement included."""
     fields = {
@@ -413,6 +425,8 @@ def _asyncpg_unique() -> Exception:
         "M": f"duplicate key {_P1}",
         "D": f"Key (email)=({_P1}) already exists.",
         "H": f"see {_P1}",
+        "W": f"PL/pgSQL function near {_P1}",
+        "q": f"internal {_P1}",
         "n": "users_email_key",
     }
     query = f"INSERT INTO users (email) VALUES ('{_P1}')"  # noqa: S608 -- error text, never run
@@ -424,12 +438,41 @@ def test_an_unwrapped_driver_error_loses_its_text_and_keeps_its_codes(shape: str
     raw = _asyncpg_unique()
     adapted: type[Exception] = _Dbapi.IntegrityError
     error = raw if shape == "asyncpg" else adapted(f"adapted: {_P1}", raw)
+    error.add_note(f"retried for {_P1}")
     assert _P1 in _rendered(error)
     strip_driver_text(error)
-    assert _P1 not in _rendered(error) and getattr(error, "query", None) is None
+    assert _P1 not in _rendered(error) and not hasattr(error, "__notes__")
+    assert all(getattr(error, name, None) is None for name in _TEXT_FIELDS)
     assert getattr(error, "sqlstate", None) == "23505"
-    if shape == "emulated":
+    if shape == "emulated":  # the raw error it wrapped is gone, from a pickle too
+        assert cast(Any, error).orig is not raw and _P1.encode() not in pickle.dumps(error)
         assert constraint_of(cast(Any, type("Wrapped", (), {"orig": error})())) == "users_email_key"
+
+
+def test_a_driver_error_raised_in_an_exception_group_loses_its_text() -> None:
+    member = _asyncpg_unique()
+    group = ExceptionGroup("writes failed", [member])
+    strip_driver_text(group)
+    assert _P1 not in _rendered(group) and getattr(member, "sqlstate", None) == "23505"
+    assert all(getattr(member, name, None) is None for name in _TEXT_FIELDS)
+
+
+class _PsycopgUnwrapped(Exception):
+    """A psycopg error raised as it is: the SQLSTATE as `pgcode`, the constraint in `diag`."""
+
+    __module__ = "psycopg.errors"  # a driver's own error, as `_is_driver` sees it
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.pgcode = "23514"
+        self.diag = type("Diag", (), {"constraint_name": "bk_verify"})()
+
+
+def test_an_unwrapped_psycopg_shaped_error_keeps_its_codes() -> None:
+    error = _PsycopgUnwrapped(f"check: {_P1}")
+    strip_driver_text(error)
+    assert str(error) == "database error (sqlstate 23514, constraint bk_verify)"
+    assert _P1 not in _rendered(error)
 
 
 def test_a_pending_rollback_error_no_longer_quotes_the_error_before_it() -> None:
@@ -447,9 +490,18 @@ def test_a_client_side_failure_keeps_its_class_name_never_its_text() -> None:
     strip_driver_text(error)
     strip_driver_text(error)  # a second strip keeps the client's class name
     copy = pickle.loads(pickle.dumps(error))  # noqa: S301 -- our own object, built above
+    assert cast(Any, copy).orig.client == "ValueError"  # `_DriverFacts` pickles its client
+    strip_driver_text(copy)  # and a copy stripped again still names it
     for stripped in (error, copy):
         assert "ValueError raised before the database" in str(stripped)
         assert _P1 not in _rendered(stripped) and sqlstate_of(stripped) is None
+
+
+def test_a_statement_error_with_no_error_behind_it_names_no_client() -> None:
+    error = sa_exc.StatementError("no driver error", "SELECT 1", None, None)
+    strip_driver_text(error)
+    assert str(error).startswith("database error (sqlstate unknown)")
+    assert cast(Any, error).orig.client is None
 
 
 def test_a_domain_error_caused_by_the_adapted_driver_error_loses_that_link() -> None:
@@ -462,27 +514,37 @@ def test_a_domain_error_caused_by_the_adapted_driver_error_loses_that_link() -> 
 
 
 class _Connection:
-    def __init__(self, fail: BaseException | None) -> None:
-        self.fail = fail
+    def __init__(self, fail: BaseException | None, fail_on: int) -> None:
+        self.fail, self.fail_on = fail, fail_on
+        self.statements: list[str] = []
 
     async def exec_driver_sql(self, statement: str) -> None:
-        if self.fail is not None:
+        self.statements.append(statement)
+        if self.fail is not None and len(self.statements) == self.fail_on:
             raise self.fail
 
 
 class _StartingSession(_Session):
-    def __init__(self, at: str, failure: BaseException, close: BaseException | None) -> None:
+    """`at`: "connection", or the `SET LOCAL` that fails ("set-local-1", "set-local-2"); any
+    other value starts cleanly."""
+
+    def __init__(self, at: str, failure: BaseException | None, close: BaseException | None) -> None:
         super().__init__(**({} if close is None else {"close": close}))
         self.at, self.failure = at, failure
+        self.connected: _Connection | None = None
 
     async def connection(self) -> _Connection:
         self.calls.append("connection")
-        if self.at == "connection":
+        if self.at == "connection" and self.failure is not None:
             raise self.failure
-        return _Connection(self.failure)
+        if self.at.startswith("set-local"):
+            self.connected = _Connection(self.failure, int(self.at[-1]))
+        else:
+            self.connected = _Connection(None, 0)
+        return self.connected
 
 
-@pytest.mark.parametrize("at", ["connection", "set-local"])
+@pytest.mark.parametrize("at", ["connection", "set-local-1", "set-local-2"])
 @pytest.mark.parametrize("close_fails", [False, True], ids=["closed", "close-failed"])
 async def test_a_unit_of_work_that_cannot_start_closes_its_session_and_leaves_stripped(
     at: str, close_fails: bool
@@ -503,3 +565,123 @@ async def test_a_unit_of_work_that_cannot_start_closes_its_session_and_leaves_st
     if close_fails:  # the close's error keeps the start's failure as its context
         assert raised.value.__context__ is failure and not raised.value.__suppress_context__
     assert _P1 not in _rendered(raised.value)
+
+
+async def test_a_cancelled_start_closes_its_session_and_the_cancellation_goes_on() -> None:
+    session = _StartingSession("connection", asyncio.CancelledError(), None)
+    pending = relational._PendingUnitOfWork(cast(Any, lambda: session), "test")
+    with pytest.raises(asyncio.CancelledError):
+        async with pending:
+            pytest.fail("the unit of work must not start")
+    assert session.calls == ["connection", "close"]
+
+
+async def test_a_unit_of_work_starts_with_its_statement_timeout_and_application_name() -> None:
+    session = _StartingSession("started", None, None)
+    pending = relational._PendingUnitOfWork(cast(Any, lambda: session), "test")
+    async with pending as uow:
+        assert isinstance(uow, SqlAlchemyUnitOfWork) and uow.session is cast(Any, session)
+    assert session.connected is not None and session.connected.statements == [
+        "SET LOCAL statement_timeout = '30000'",
+        "SET LOCAL application_name = 'candleviewer:test'",
+    ]
+    assert session.calls == ["connection", "close"]
+
+
+# -- the shared classifier and the typed error a refused statement leaves as (#2748 slice 2a) -----
+
+
+@pytest.mark.parametrize(
+    ("driver_cls", "invalidated"),
+    [
+        (asyncpg.exceptions.QueryCanceledError, False),
+        (asyncpg.exceptions.DeadlockDetectedError, False),
+        (asyncpg.exceptions.ConnectionFailureError, True),
+        (asyncpg.exceptions.LockNotAvailableError, False),
+        (asyncpg.exceptions.UniqueViolationError, False),
+        (asyncpg.exceptions.UniqueViolationError, True),
+        (asyncpg.exceptions.CheckViolationError, False),
+        (asyncpg.exceptions.InvalidTextRepresentationError, False),
+        (asyncpg.exceptions.UndefinedTableError, False),
+        (asyncpg.exceptions.RaiseError, False),
+        (asyncpg.exceptions.InFailedSQLTransactionError, False),
+        (asyncpg.exceptions.TooManyConnectionsError, False),
+        (asyncpg.exceptions.PostgresIOError, False),
+        (asyncpg.exceptions.ConnectionDoesNotExistError, False),
+    ],
+    ids=[
+        *("57014", "40P01", "08006", "55P03", "23505", "23505-invalidated", "23514"),
+        *("22P02", "42P01", "P0001", "25P02", "53300", "58030", "08003"),
+    ],
+)
+def test_is_outage_classes_a_driver_error_as_the_http_edge_does(
+    driver_cls: type[Exception], invalidated: bool
+) -> None:
+    raw, stripped = _twins(driver_cls, f"server says: {_P1}", invalidated=invalidated)
+    for error in (raw, stripped):
+        assert is_outage(error) is is_storage_outage(error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError("refused"),
+        sa_exc.TimeoutError("pool exhausted"),
+        sa_exc.InvalidRequestError("not a statement"),
+        sa_exc.OperationalError("SELECT 1", None, Exception("gone")),
+        sa_exc.InterfaceError("SELECT 1", None, Exception("closed")),
+        StorageTierUnavailable("the store cannot serve the call"),
+        ValueError("not storage"),
+    ],
+    ids=[
+        "oserror",
+        "pool-timeout",
+        "invalid-request",
+        "operational",
+        "interface",
+        "typed",
+        "other",
+    ],
+)
+def test_is_outage_classes_the_other_failures_as_the_http_edge_does(error: Exception) -> None:
+    assert is_outage(error) is is_storage_outage(error)
+
+
+def test_is_outage_reads_the_http_edges_sqlstate_classes() -> None:
+    assert relational._OUTAGE_SQLSTATE_CLASSES == storage_outage._OUTAGE_SQLSTATE_CLASSES
+    assert relational._LOCK_NOT_AVAILABLE == "55P03"
+
+
+@pytest.mark.parametrize(
+    ("state", "constraint", "kind"),
+    [
+        ("23505", "users_email_key", StorageConstraintViolated),
+        ("23502", None, StorageConstraintViolated),
+        ("22P02", None, StorageQueryFailed),
+        ("42P01", None, StorageQueryFailed),
+        (None, None, StorageQueryFailed),
+    ],
+)
+def test_query_failure_types_a_refused_statement_by_its_facts(
+    state: str | None, constraint: str | None, kind: type[StorageQueryFailed]
+) -> None:
+    failure = query_failure(state, constraint)
+    assert type(failure) is kind and failure.sqlstate == state
+    if isinstance(failure, StorageConstraintViolated):
+        assert failure.constraint == constraint
+
+
+@pytest.mark.parametrize(
+    ("state", "constraint", "kept"),
+    [
+        ("23505", f"users_email_key {_P1}", ("23505", None)),
+        (f"23505 {_P1}", "users_email_key", (None, None)),
+    ],
+    ids=["text-for-a-name", "text-for-a-sqlstate"],
+)
+def test_query_failure_drops_a_fact_that_is_not_a_code_or_a_name(
+    state: str, constraint: str, kept: tuple[str | None, str | None]
+) -> None:
+    failure = query_failure(state, constraint)
+    assert (failure.sqlstate, getattr(failure, "constraint", None)) == kept
+    assert _P1 not in str(failure)

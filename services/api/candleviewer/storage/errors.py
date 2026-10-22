@@ -159,6 +159,30 @@ class StorageQueryFailed(StorageError):
         super().__init__(f"database statement failed (sqlstate {sqlstate or 'unknown'})")
         self.sqlstate = sqlstate
 
+    def __reduce__(self) -> tuple[type[StorageQueryFailed], tuple[str | None, ...]]:
+        return type(self), (self.sqlstate,)  # rebuilt from its facts: `args` is the message
+
+
+class StorageConstraintViolated(StorageQueryFailed):
+    """A constraint refused the statement (SQLSTATE class 23) and the repository has no domain
+    error for it (#2748). `constraint` names it (None for a NOT NULL, or a trigger's refusal that
+    names none); never a value: the server's `DETAIL` is the failing row (C-12.6). A
+    `StorageQueryFailed`, so every caller that classes a statement failure by its SQLSTATE classes
+    this one too. Raise it `from None`."""
+
+    code = "STORAGE_CONSTRAINT_VIOLATED"
+
+    def __init__(self, sqlstate: str, constraint: str | None) -> None:
+        super().__init__(sqlstate)
+        self.constraint = constraint
+        self.args = (
+            f"database constraint {constraint or 'unnamed'} refused the statement "
+            f"(sqlstate {sqlstate})",
+        )
+
+    def __reduce__(self) -> tuple[type[StorageQueryFailed], tuple[str | None, ...]]:
+        return type(self), (self.sqlstate, self.constraint)
+
 
 class WriteAheadTimeout(StorageError, TimeoutError):
     """A write-ahead audit hook awaited inside a unit of work outlived its bound (#2510).
@@ -331,6 +355,7 @@ ERROR_CODES: dict[type[StorageError], str] = {
     StorageRetentionBlockedByReplay: StorageRetentionBlockedByReplay.code,
     StorageDiskCritical: StorageDiskCritical.code,
     StorageQueryFailed: StorageQueryFailed.code,
+    StorageConstraintViolated: StorageConstraintViolated.code,
     WriteAheadTimeout: WriteAheadTimeout.code,
     IlpRowError: IlpRowError.code,
     MissingDesignatedTimestamp: MissingDesignatedTimestamp.code,

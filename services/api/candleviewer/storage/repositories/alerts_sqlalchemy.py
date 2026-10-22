@@ -27,6 +27,9 @@ from candleviewer.storage.repositories.alerts import (
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    query_failure,
+    sqlstate_of,
 )
 
 #: Explicit read allow-list: the SECRET `webhook_*_enc` columns are deliberately absent.
@@ -74,6 +77,19 @@ def array_literal(values: tuple[str, ...]) -> str:
     if bad:
         raise ValueError(f"invalid alert channel: {bad[0]!r}")
     return "{" + ",".join(values) + "}"
+
+
+#: The one constraint that means "this name is taken" (`0014_alerts.py`); any other refusal is not.
+_NAME_KEY = "ux_alerts_name"
+
+
+def _refusal(name: str, state: str | None, constraint: str | None) -> Exception:
+    """The error a refused alert write leaves as, from the database's facts alone (#2748):
+    the name key's unique violation is `AlertNameTakenError`, anything else the typed
+    `query_failure` (a CHECK or NOT NULL refusal, which the route answers 422)."""
+    if state == "23505" and constraint == _NAME_KEY:
+        return AlertNameTakenError(name)
+    return query_failure(state, constraint)
 
 
 def _alert(m: Any) -> AlertRow:
@@ -223,13 +239,12 @@ class SqlAlchemyAlertRepository:
             "secret_enc": webhook_secret_enc,
             "template": message_template,
         }
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 row = (await uow.session.execute(_INSERT, params)).mappings().one()
                 await uow.commit()
         except IntegrityError as exc:
-            raise AlertNameTakenError(name) from exc
+            raise _refusal(name, sqlstate_of(exc), constraint_of(exc)) from None
         return _alert(row)
 
     async def get(self, alert_id: str) -> AlertRow | None:
@@ -297,13 +312,12 @@ class SqlAlchemyAlertRepository:
             "channels": array_literal(channels),
             "template": message_template,
         }
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 row = (await uow.session.execute(_UPDATE, params)).mappings().first()
                 await uow.commit()
         except IntegrityError as exc:
-            raise AlertNameTakenError(name) from exc
+            raise _refusal(name, sqlstate_of(exc), constraint_of(exc)) from None
         if row is None:
             raise AlertConflictError(alert_id)
         return _alert(row)

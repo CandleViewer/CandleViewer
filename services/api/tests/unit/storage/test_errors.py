@@ -7,6 +7,11 @@ log/`system_events` consumers do not break silently on a rename (ticket
 
 from __future__ import annotations
 
+import copy
+import pickle
+
+import pytest
+
 from candleviewer.storage.errors import (
     ERROR_CODES,
     AuditEntryTooLarge,
@@ -26,6 +31,7 @@ from candleviewer.storage.errors import (
     RewrapAuditNotWired,
     RewrapAuditNotWritten,
     SnapshotListTooLargeError,
+    StorageConstraintViolated,
     StorageDdlNotFound,
     StorageDiskCritical,
     StorageError,
@@ -59,6 +65,7 @@ def test_error_codes_are_stable_and_unique() -> None:
         StorageDdlNotFound: "STORAGE_DDL_NOT_FOUND",
         GuardedPrivilegesHeld: "STORAGE_GUARDED_PRIVILEGES_HELD",
         StorageQueryFailed: "STORAGE_QUERY_FAILED",
+        StorageConstraintViolated: "STORAGE_CONSTRAINT_VIOLATED",
         WriteAheadTimeout: "STORAGE_WRITE_AHEAD_TIMEOUT",
         IlpRowError: "STORAGE_ILP_ROW_INVALID",
         MissingDesignatedTimestamp: "STORAGE_ILP_MISSING_DESIGNATED_TS",
@@ -119,3 +126,34 @@ def test_storage_query_failed_names_only_the_sqlstate() -> None:
         None,
         "database statement failed (sqlstate unknown)",
     )
+
+
+def test_a_constraint_violation_is_a_query_failure_naming_only_its_constraint() -> None:
+    err = StorageConstraintViolated("23514", "al_cooldown")
+    assert isinstance(err, StorageQueryFailed)
+    assert (err.code, err.sqlstate, err.constraint) == (
+        "STORAGE_CONSTRAINT_VIOLATED",
+        "23514",
+        "al_cooldown",
+    )
+    assert str(err) == "database constraint al_cooldown refused the statement (sqlstate 23514)"
+    unnamed = StorageConstraintViolated("23502", None)
+    assert str(unnamed) == "database constraint unnamed refused the statement (sqlstate 23502)"
+
+
+@pytest.mark.parametrize(
+    "err",
+    [
+        StorageQueryFailed("40001"),
+        StorageQueryFailed(None),
+        StorageConstraintViolated("23514", "al_cooldown"),
+        StorageConstraintViolated("23502", None),
+    ],
+)
+def test_a_typed_query_failure_survives_a_copy_and_a_pickle_round_trip(
+    err: StorageQueryFailed,
+) -> None:
+    for twin in (copy.copy(err), pickle.loads(pickle.dumps(err))):  # noqa: S301 -- our own object
+        assert type(twin) is type(err) and str(twin) == str(err)
+        facts = (twin.sqlstate, getattr(twin, "constraint", None))
+        assert facts == (err.sqlstate, getattr(err, "constraint", None))

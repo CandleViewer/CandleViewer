@@ -7,6 +7,7 @@ Real-DB behaviour (ux_alerts_name partiality, trigger) is covered by
 from __future__ import annotations
 
 import json
+import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -23,6 +24,9 @@ from candleviewer.alerts.outbox import (
     alert_deliver_dedup_key,
     webhook_post_dedup_key,
 )
+from candleviewer.db import models
+from candleviewer.storage.errors import StorageConstraintViolated
+from candleviewer.storage.repositories import alerts_sqlalchemy
 from candleviewer.storage.repositories.alerts import AlertNameTakenError
 from candleviewer.storage.repositories.alerts_sqlalchemy import (
     ALERT_COLUMNS,
@@ -266,23 +270,50 @@ def test_array_literal_rejects_unknown_channel() -> None:
             array_literal(("in_app", bad))
 
 
+_ROW = "canary-2748-row"  # a value the server's DETAIL would quote
+
+
 class _Raising(_Rel):
-    """Execute raises the `ux_alerts_name` unique violation (E40-T02)."""
+    """Execute raises an IntegrityError with `state` and `constraint`, the row in its text."""
+
+    def __init__(self, state: str, constraint: str | None) -> None:
+        super().__init__()
+        self.state, self.constraint = state, constraint
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
         async def execute(stmt: Any, params: dict[str, Any] | None = None) -> _Result:
-            raise IntegrityError(str(stmt), params, Exception("ux_alerts_name"))
+            orig: Any = Exception(f"refused: Failing row contains ({_ROW})")  # a driver-shaped fake
+            orig.sqlstate, orig.constraint_name = self.state, self.constraint
+            raise IntegrityError(str(stmt), params, orig)
 
         yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=None)
 
 
-async def test_create_and_update_map_unique_name_violation_to_name_taken() -> None:
-    repo = _repo(_Raising())
-    with pytest.raises(AlertNameTakenError):
-        await repo.create(owner_user_id="u1", name="a", condition_ir={}, condition_hash="h")
-    with pytest.raises(AlertNameTakenError):
-        await repo.update("id-1", **_update_kwargs())
+@pytest.mark.parametrize(
+    ("state", "constraint", "refusal"),
+    [
+        ("23505", "ux_alerts_name", AlertNameTakenError),
+        ("23505", "alerts_pkey", StorageConstraintViolated),
+        ("23514", "al_cooldown", StorageConstraintViolated),
+        ("23502", None, StorageConstraintViolated),
+        ("23503", "alerts_owner_user_id_fkey", StorageConstraintViolated),
+    ],
+)
+@pytest.mark.parametrize("write", ["create", "update"])
+async def test_only_the_name_key_is_name_taken_and_no_write_chains_the_row(
+    state: str, constraint: str | None, refusal: type[Exception], write: str
+) -> None:
+    repo = _repo(_Raising(state, constraint))
+    with pytest.raises(refusal) as raised:
+        if write == "create":
+            await repo.create(owner_user_id="u1", name="a", condition_ir={}, condition_hash="h")
+        else:
+            await repo.update("id-1", **_update_kwargs())
+    assert raised.value.__cause__ is None and raised.value.__suppress_context__
+    assert _ROW not in "".join(traceback.format_exception(raised.value))
+    if isinstance(raised.value, StorageConstraintViolated):
+        assert (raised.value.sqlstate, raised.value.constraint) == (state, constraint)
 
 
 async def test_list_page_passes_enabled_and_symbol_filters() -> None:
@@ -296,3 +327,9 @@ def test_outbox_dedup_keys() -> None:
     assert alert_deliver_dedup_key(7) == "7"
     assert webhook_post_dedup_key("a", 1, 2) == "a:1:2"
     assert {TOPIC_ALERT_DELIVER, TOPIC_WEBHOOK_POST} == ALERT_OUTBOX_TOPICS
+
+
+def test_the_name_key_is_the_alerts_tables_unique_name_index() -> None:
+    """A renamed index would turn every name clash into a 500: the key is the DDL's name."""
+    unique = {index.name for index in models.alerts.indexes if index.unique}
+    assert alerts_sqlalchemy._NAME_KEY in unique

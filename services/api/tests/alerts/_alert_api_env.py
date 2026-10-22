@@ -49,6 +49,9 @@ class FakeAlertRepo:
         self.rows: dict[str, AlertRow] = {}
         self.deleted: set[str] = set()
         self.tick = 0
+        self.refusal: Exception | None = (
+            None  # what every write raises while set, as the store would
+        )
 
     def _now(self) -> datetime:
         self.tick += 1
@@ -64,6 +67,8 @@ class FakeAlertRepo:
     async def create(
         self, *, owner_user_id: str, alert_id: str | None = None, **f: Any
     ) -> AlertRow:
+        if self.refusal is not None:
+            raise self.refusal
         if self._taken(owner_user_id, f["name"]):
             raise AlertNameTakenError(f["name"])
         now = self._now()
@@ -110,6 +115,8 @@ class FakeAlertRepo:
         row = await self.get(alert_id)
         if row is None or row.updated_at != if_match:
             raise AlertConflictError(alert_id)
+        if self.refusal is not None:
+            raise self.refusal
         if self._taken(row.owner_user_id, f["name"], skip=alert_id):
             raise AlertNameTakenError(f["name"])
         new = replace(row, updated_at=self._now(), **f)
