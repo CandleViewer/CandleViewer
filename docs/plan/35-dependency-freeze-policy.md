@@ -189,3 +189,7 @@ Medium GHSAs here, tauri's included, and a Low until the next release, which for
 EX-09 (`04-security-program.md` §16.2), for the owner to ratify on #2701. They expire when S09
 starts, so the re-decision comes before the R1 cut and the cut-day PRs stay green. #1819 tracks
 the react-router, vitest and uuid fixes; #3639 tracks tauri, esbuild and sprintf-js.
+
+Update 2026-10-22 (#1819): apps/web now runs react-router 7.18, the first release with both
+fixes, so the two react-router entries are out of `security/accepted-risks.yaml` and EX-09. #1819
+now tracks the vitest fix only; uuid left earlier with Storybook 10 (#269).

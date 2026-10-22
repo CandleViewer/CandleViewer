@@ -7,7 +7,7 @@
  * server-side. Denials are logged at info with the route id and reason
  * (never audited client-side; the server-side 403 is the audited event).
  */
-import { redirect } from "react-router-dom";
+import { redirect } from "react-router";
 import { getMeClaims } from "../lib/auth/meCache";
 import { evaluateAccess, type RouteAccess } from "./rbac";
 
@@ -45,6 +45,8 @@ export function guardRoute(routeId: string, access: RouteAccess, requestUrl: str
       return;
     case "redirect-login": {
       const url = new URL(requestUrl);
+      // Nothing reads `next` yet. Its first reader must use it only when
+      // `new URL(next, location.origin)` keeps the same origin.
       const next = encodeURIComponent(url.pathname + url.search);
       logDenial(routeId, "unauthenticated");
       throw redirect(`/login?next=${next}`);

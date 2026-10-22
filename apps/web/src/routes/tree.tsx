@@ -8,7 +8,7 @@
  * routes this ticket owns (login/logout/403/404/settings-hub redirect)
  * render minimal placeholders.
  */
-import { createBrowserRouter, redirect, type RouteObject } from "react-router-dom";
+import { createBrowserRouter, redirect, type RouteObject } from "react-router";
 import { ROUTE_MANIFEST } from "./manifest";
 import { guardRoute } from "./guards";
 import { RouteErrorElement } from "./RouteErrorElement";

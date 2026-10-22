@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { RouterProvider } from "react-router-dom";
+import { RouterProvider } from "react-router/dom";
 import { ThemeProvider } from "@candleviewer/ui";
 import { WsErrorHost } from "./lib/ws/WsErrorHost";
 import { startTelemetry } from "./lib/telemetry/aggregator";

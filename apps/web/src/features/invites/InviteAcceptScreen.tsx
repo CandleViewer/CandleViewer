@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type JSX } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { inviteApi, type EnrollStart, type InviteView } from "./inviteApi";
 
 type Phase = "loading" | "invalid" | "accept" | "password" | "totp" | "done";

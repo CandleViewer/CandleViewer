@@ -1,6 +1,9 @@
-import { describe, expect, it, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { createMemoryRouter, RouterProvider } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+// RouterProvider comes from "react-router", not "react-router/dom" as in App.tsx: under
+// Vitest 3 on Node >= 20.19 the dom entry loads a second router copy and error elements
+// lose their context (#1819).
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { buildRoutes } from "../../src/routes/tree";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
 import { setMeClaims, resetMeClaims } from "../../src/lib/auth/meCache";
@@ -30,6 +33,10 @@ function claimsFor(role: Role | null, elevatedAt: string | null = null) {
 describe("route tree x RBAC matrix", () => {
   beforeEach(() => {
     resetMeClaims();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("redirects an unauthenticated user hitting a protected deep link to /login, not the terminal stub", async () => {
@@ -80,6 +87,29 @@ describe("route tree x RBAC matrix", () => {
     );
   });
 
+  it("returns to /admin?tab=x, replacing the entry, when Continue is pressed after a step-up", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ elevated_until: new Date().toISOString() }),
+      }),
+    );
+    claimsFor("owner", null);
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin?tab=x"] });
+    render(<RouterProvider router={router} />);
+    fireEvent.change(await screen.findByLabelText("Password"), { target: { value: "pw" } });
+    fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    expect(
+      await screen.findByRole("heading", { name: /R-300 — owned by E18/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(router.state.historyAction).toBe("REPLACE");
+    expect(router.state.location.search).toBe("?tab=x");
+  });
+
   it("renders the admin stub for an owner with fresh step-up", async () => {
     claimsFor("owner", new Date().toISOString());
     renderAt("/admin");
@@ -110,5 +140,25 @@ describe("E49-S07 reachability through the real route tree", () => {
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: /hotkeys|keyboard/i })).toBeInTheDocument(),
     );
+  });
+});
+
+describe("route ranking: a static path outranks its dynamic sibling", () => {
+  beforeEach(() => claimsFor("owner", new Date().toISOString()));
+  it.each([
+    ["/trade-groups/new", "R-142"],
+    ["/trade-groups/g1", "R-141"],
+    ["/rules/new", "R-163"],
+    ["/rules/r1", "R-161"],
+    ["/journal/analytics", "R-182"],
+    ["/journal/t1", "R-181"],
+    ["/admin/users/new", "R-303"],
+    ["/admin/users/u1", "R-302"],
+    ["/admin/accounts/new", "R-312"],
+    ["/admin/accounts/a1", "R-311"],
+  ])("%s resolves to %s", (path, routeId) => {
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: [path] });
+    expect(router.state.matches.at(-1)?.route.id).toBe(routeId);
+    router.dispose();
   });
 });
