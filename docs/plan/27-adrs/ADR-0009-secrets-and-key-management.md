@@ -261,7 +261,8 @@ Adds one key class to M2 (Design §8): the audit export signing key, which ADR-0
   export unavailable and nothing else: `start()` latches no order entry for it, while a KEK failure
   still does (Amendment 1). A key that exists but cannot be opened is never generated over.
   2026-10-22 (#889 S6a-2a): at a KEK's enrolment boot with no API key row as evidence, the signing
-  key's failed trial unwrap is such a KEK failure (`kek_mismatch`; ADR-0039 decision 6).
+  key's failed trial unwrap is such a KEK failure (`kek_mismatch`), and so is a signing-key store that cannot be
+  read (`kcv_store_unavailable`; ADR-0039 decision 6).
 - **Rotation.** `POST /admin/keys/audit-signing/rotate`, beside `rewrapKek`: Owner only
   (`keys:manage`), step-up class `keys`, CSRF, idempotent and audited in its own transaction
   (ADR-0039 decision 7). The old key stays

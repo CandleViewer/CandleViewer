@@ -281,6 +281,14 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "security.kek_rows_stranded",
         # #2266: a KEK re-wrap refused before it latched or moved a row (`rewrapKek`'s refusals).
         "security.kek_rotation_refused",
+        # #889 S6a-2b (ADR-0039): the audit export signing key at boot, each record committed with
+        # its change: the first key generated, a key re-wrapped at the rotation boot, and Q3's
+        # retried destroy of a retired key's seed (`secrets/_export_custody.py`); and, at error,
+        # a key that cannot be used, export alone unavailable (`secrets/service.py`).
+        "security.audit_signing_key_generated",
+        "security.audit_signing_key_rewrapped",
+        "security.audit_signing_key_material_destroyed",
+        "security.audit_signing_key_unavailable",
         # #2728 (E16 R-E3 "config audit"): the keyless-testnet test clock is on at boot
         # (system actor `system:test-clock`, `auth/testnet_clock.py`).
         "system.config.test_clock_enabled",

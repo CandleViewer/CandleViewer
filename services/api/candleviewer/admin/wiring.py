@@ -102,9 +102,17 @@ MachineEventSinkMetrics = SinkMetrics
 MachineEventSinkUnavailable = MachineEventUnavailable
 
 
-#: The M2 records that page: a KEK that failed to load or re-wrap, and stranded rows (#2266).
+#: The M2 records that page: a KEK that failed to load or re-wrap, and stranded rows (#2266);
+#: a signing key that cannot be used, and a retired one that still held its seed (#889, ADR-0039
+#: decision 2, Q3).
 _SECRETS_ERRORS = frozenset(
-    {"security.kek_load_failed", "security.kek_rotation_failed", "security.kek_rows_stranded"}
+    {
+        "security.kek_load_failed",
+        "security.kek_rotation_failed",
+        "security.kek_rows_stranded",
+        "security.audit_signing_key_unavailable",
+        "security.audit_signing_key_material_destroyed",
+    }
 )
 #: M2 refusals (#2266; #889 S7's rotation): stored as denied, at warning, as the other refusals
 #: are (C-12.8).
@@ -188,7 +196,8 @@ def build_secrets_service(
     """Construct M2 once and split it into narrow capabilities. No I/O; the KEK is loaded in
     `start()`. Without an injected store (fake backend) every credential op fails closed. A KEK
     re-wrap run counts `auth_keys`, the environment's auth keyring, and `export_keys`, its audit
-    export signing keys, and is never complete without both (#3505; #889)."""
+    export signing keys, which boot opens or generates, and is never complete without both
+    (#3505; #889)."""
     sink = secrets_audit_sink(audit) if audit is not None else None
     if store is None or kcv_store is None:
         svc = SecretsService(audit=sink)  # no store: fail closed, but still audited (C-2.9)

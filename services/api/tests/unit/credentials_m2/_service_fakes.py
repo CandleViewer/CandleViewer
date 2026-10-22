@@ -76,7 +76,7 @@ def _counted(auth_keys: Any = None) -> dict[str, Any]:
     (`auth_keys`, or an empty one) and the signing keys; without both a run is never complete
     (#3505; #889, ADR-0039 decision 6)."""
     return {
-        "auth_keys": auth_keys or InMemoryAuthKeyStore(),
+        "auth_keys": InMemoryAuthKeyStore() if auth_keys is None else auth_keys,
         "export_keys": InMemoryExportKeyStore(),
     }
 
@@ -128,8 +128,8 @@ async def _boot(store: Any, cur: _Src, prev: _Src | None = None) -> SecretsServi
 async def _staged(
     audit: AuditLog, auth_keys: Any = None
 ) -> tuple[SecretsService, Any, InMemoryCredentialStore]:
-    """Two keys stored under v1, then the rotation boot: v2 with v1 beside it (#2266), its
-    signing-key store empty (#889)."""
+    """Two keys stored under v1, then the rotation boot: v2 with v1 beside it (#2266), which
+    generates the environment's signing key under v2 (#889)."""
     store = InMemoryCredentialStore()
     v1 = await _boot(store, _Src(KEK_V1, 1))
     for _ in range(2):

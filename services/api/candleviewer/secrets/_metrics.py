@@ -34,6 +34,17 @@ kek_degraded_state = Gauge(
     "cv_kek_degraded_state",
     "1 while M2 is latched degraded (KEK unavailable or API key rows stranded), else 0.",
 )
+export_key_unavailable_state = Gauge(
+    "cv_audit_signing_key_unavailable_state",
+    "1 while the audit export signing key cannot be used with the KEK up, else 0 (#889).",
+)
+export_key_boot_failures_total = Counter(
+    "cv_audit_signing_key_boot_failures_total",
+    "Boot steps on the audit export signing key that failed, degrading nothing (#889).",
+    labelnames=("step",),
+)
+for _step in ("destroy", "rewrap"):  # Q3's destroy retried, the rotation boot's re-wrap
+    export_key_boot_failures_total.labels(step=_step)
 process_hardening_failures_total = Counter(
     "cv_process_hardening_failures_total", "SR-009 hardening that did not take effect."
 )
