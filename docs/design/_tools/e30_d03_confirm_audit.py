@@ -221,11 +221,20 @@ TOTALS = totals(SENT)
 # the fan-out budget frame's "send now" subset (spec section 6; M-2 of text round 2): the served
 # legs are confirmed and submitted as one intent, so 24 section 9.4 rule 4 checks what was confirmed
 SEND_NOW = totals(SERVED)
-SEND_NOW["held"] = " and ".join(r["account"] for r in LEG_ROWS if r["served"] == "no")
-SEND_NOW["button"] = f"Send {SEND_NOW['accounts']} legs now…"
-SEND_NOW["restate"] = (
-    f"{SEND_NOW['accounts']} legs — {SEND_NOW['held']} not sent (held by the rate limit)"
+# one story per account set (boards-gate Minor d): sub_003 is refused as symbol_not_allowed on
+# every Desk4 frame; the budget check holds only a leg the confirm admitted
+SEND_NOW["held"] = " and ".join(
+    r["account"] for r in LEG_ROWS if r["sent"] == "yes" and r["served"] == "no"
 )
+SEND_NOW["refused"] = " and ".join(r["account"] for r in LEG_ROWS if r["sent"] == "no")
+# N7 (Minor c): the banner button names its order like every destructive-class label; the
+# ellipsis because it opens a confirm
+SEND_NOW["button"] = f"Send {SEND_NOW['accounts']} legs now — BUY BTCUSDT limit {E:,.1f}…"
+SEND_NOW["restate"] = (
+    f"{SEND_NOW['accounts']} legs — {SEND_NOW['held']} not sent (held by the rate limit), "
+    f"{SEND_NOW['refused']} not sent (symbol not allowed)"
+)
+SEND_NOW["replay_all"] = f"Replay all {len(SENT)} when the budget allows"
 # ---- 2. gates and timers (every value beside its source) -----------------------------------------
 RETRY_AFTER_S = 42
 _abs = (14 * 3600 + 31 * 60 + 28 + RETRY_AFTER_S) % 86400
@@ -347,7 +356,10 @@ PAIRS = (
     "env pill text, 7:1 stretch (05 section 5 item 3)|text.primary|surface.raised|hc-text",
     "Confirm BUY label AAA stretch (gated in hc only)|text.inverse|buy.default|hc-text",
     "Confirm SELL label AAA stretch (gated in hc only)|text.inverse|sell.default|hc-text",
-    "disabled control label (the reason text is gated above)|text.disabled|surface.raised|exempt",
+    (
+        "disabled control label — the rate-limited submit and Replay before the retry time"
+        " (SCR-158; state-gated, not T2)|text.disabled|surface.raised|exempt"
+    ),
     "LIVE pill border + dot and the 2 px rule on the dialog|env.live|surface.overlay|non-text",
     "DEMO pill border + dot and the 2 px rule on the dialog|env.demo|surface.overlay|non-text",
     "LIVE border + dot on the raised pill (CMP-106 env dot)|env.live|surface.raised|non-text",
@@ -382,9 +394,8 @@ GREY_TOKENS = GREY_SRC.split()
 
 # ---- 6. string gates and 7. counts ---------------------------------------------------------------
 HOME_USER = Path.home().name
-FORBID = [
+FORBID = [  # generic patterns only: no personal word, host or folder name, not even split
     "/" + "home/",
-    "wt" + "-notes",
     "team-" + "id=",
     "file-" + "id=",
     "#/work" + "space",
@@ -408,7 +419,7 @@ for _f in (
     FIELD14[_f] = _f
 ANCHOR14 = re.compile(r"`14` (?:SCR-\d{3} )?(\w+) :(\d+)|(\w+) \(`14` :(\d+)\)")
 S15 = (PLAN / "15-component-catalogue.md").read_text(encoding="utf-8").splitlines()
-ANCHOR15 = re.compile(r"`15` CMP-(\d{3}) :(\d+)|CMP-(\d{3}) [^()|\n]*?\(:(\d+)\)")
+ANCHOR15 = re.compile(r"CMP-(\d{3}) :(\d+)|CMP-(\d{3}) [^()|\n]*?\(:(\d+)\)")  # every cite form
 Y_LINES, S24_LINES = Y.splitlines(), S24.splitlines()
 PIN22 = re.compile(r"`22` schema lines at the base \(([^)]*)\)")
 NAMED22 = re.compile(r"`([^`\s]+)` :(\d+)")
@@ -629,7 +640,7 @@ def main() -> int:
         f"send-now (the served legs, one confirmed intent): {SEND_NOW['accounts']} accounts · "
         f"{SEND_NOW['qty']} BTC · {SEND_NOW['notional']} USDT · risk {SEND_NOW['risk']} USDT · fee "
         f"{SEND_NOW['fee']} USDT; \"{SEND_NOW['button']}\"; \"{SEND_NOW['restate']}\"; "
-        f"\"{SEND_NOW['confirm']}\"\n"
+        f"\"{SEND_NOW['confirm']}\"; \"{SEND_NOW['replay_all']}\"\n"
     )
     p("## 2. Gates and timers\n\n| gate | value | source |\n|---|---|---|")
     p("\n".join(f"| {a} | {b} | {c} |" for a, b, c in TIMERS))
@@ -697,9 +708,11 @@ def main() -> int:
         )
     )
     p(
-        "\nthe eight leg statuses carry a word and a glyph each, never a hue (spec section 8); the "
-        "greyscale survivors of the DEMO / LIVE pair are the word, the weight and the dot shape "
-        "(the 2 px accent rule is hue only)\n"
+        "\nthe three leg status words (ready / not sent / held; the reason is one of the eight"
+        " would-be-rejected codes of spec section 8) carry a word and a glyph each, never a hue —"
+        " LegStatus's nine members are the post-submit lifecycle, shown on no frame; the greyscale"
+        " survivors of the DEMO / LIVE pair are the word, the weight and the dot shape (the 2 px"
+        " accent rule is hue only)\n"
     )
     spec, hand = read(SPEC), read(HANDOFF)
     gates = string_gates(spec, hand, extra)
