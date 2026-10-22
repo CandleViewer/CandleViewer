@@ -65,12 +65,12 @@ Tokens are process-local and never persisted; a compaction or a flusher restart 
 
 Keyed records (#3085 Q3): `emit_keyed(action, name, ...)` stores a record that must exist once
 however often it is written (one `admin.view_as_ended` per view-as context, written again until it
-is known to be stored) under the id `uuid5(KEYED_ACTIONS[action], name)` in place of a new one. A
-repeat, in this run or after a restart, is a no-op insert (`ON CONFLICT (record_id) DO NOTHING`,
-step 3): the first one written stays. Each keyed action has its own namespace and an action not
-listed is refused, so two actions never share an id, and a version 5 id never equals a random one
-(version 4) or a lane anomaly id (version 8): a repeat only ever meets its own record. `emit()` and
-`build()` are unchanged, so the lane façade still mirrors `emit()`.
+is known to be stored) under the id `uuid5(KEYED_ACTIONS[action], name)` (`keyed_record_id`) in
+place of a new one. A repeat, in this run or after a restart, is a no-op insert (`ON CONFLICT
+(record_id) DO NOTHING`, step 3): the first one written stays. Each keyed action has its own
+namespace and an action not listed is refused, so two actions never share an id, and a version 5
+id never equals a random one (version 4) or a lane anomaly id (version 8): a repeat only ever meets
+its own record. `emit()` and `build()` are unchanged, so the lane façade still mirrors `emit()`.
 """
 
 from __future__ import annotations
@@ -109,8 +109,28 @@ Sleeper = Callable[[float], Awaitable[None]]
 #: The actions `emit_keyed()` writes, each with the namespace of its record ids, one per action and
 #: fixed for good: a new value would give a name written on both sides of the change two rows.
 KEYED_ACTIONS: Final[Mapping[str, uuid.UUID]] = MappingProxyType(
-    {"admin.view_as_ended": uuid.UUID("f30c6b64-1ea6-416d-aebb-8aaa0760f421")}  # name: context id
+    {
+        "admin.view_as_ended": uuid.UUID("f30c6b64-1ea6-416d-aebb-8aaa0760f421"),  # context id
+        # E29-T04 (#913): a stop request's records, each named by its `recorded_stops` row's id,
+        # which carries the request's record id (21 Sec.3.3.11 "Audit").
+        "sl.attached": uuid.UUID("d6abc860-0257-4214-9142-d65723f23fd7"),
+        "sl.modified": uuid.UUID("132f3241-512e-445d-86af-731eab14fe5e"),
+        "tp.modified": uuid.UUID("0f574dd0-7558-4261-8417-7c38870c061d"),
+    }
 )
+
+
+def keyed_record_id(action: str, name: str) -> uuid.UUID:
+    """The id `emit_keyed(action, name, ...)` stores its record under, `uuid5(KEYED_ACTIONS[action],
+    name)` ("Keyed records" above), for a caller that names the record before it lands (a recorded
+    stop's `audit_record_id`, 21 Sec.3.3.11; the OMS's `SubmitAudit.record_id`). `ValueError` for
+    an action `KEYED_ACTIONS` does not list, or a blank `name`, never echoing the name."""
+    namespace = KEYED_ACTIONS.get(action)
+    if namespace is None:
+        raise ValueError(f"{action!r} is not a keyed audit action")
+    if not name.strip():  # one blank key would fold an action's records into one row
+        raise ValueError("a keyed audit record needs a name")  # never echoes the name
+    return uuid.uuid5(namespace, name)
 
 
 def _utc_now() -> datetime:
@@ -450,16 +470,11 @@ class AuditWriter:
         await self.ingest_counted(emission)
 
     async def emit_keyed(self, action: str, name: str, **fields: Any) -> None:
-        """`emit()` of a keyed `action` under the id `uuid5(KEYED_ACTIONS[action], name)` ("Keyed
+        """`emit()` of a keyed `action` under the id `keyed_record_id(action, name)` ("Keyed
         records" above): `build()` with the keywords of `emit()`, then `ingest()`, so a refusal is
         counted and raised as `emit()`'s, only after `build()` checked the record. `ValueError`
         for an action `KEYED_ACTIONS` does not list, or a blank `name`."""
-        namespace = KEYED_ACTIONS.get(action)
-        if namespace is None:
-            raise ValueError(f"{action!r} is not a keyed audit action")
-        if not name.strip():  # one blank key would fold an action's records into one row
-            raise ValueError("a keyed audit record needs a name")  # never echoes the name
-        keyed = {"record_id": uuid.uuid5(namespace, name)}
+        keyed = {"record_id": keyed_record_id(action, name)}
         await self.ingest_counted(self.build(action, **fields).model_copy(update=keyed))
 
     async def ingest_counted(self, record: AuditEmission) -> int:

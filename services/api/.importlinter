@@ -1229,3 +1229,11 @@ forbidden_modules =
     candleviewer.statechart
     xstate_statemachine
 
+[importlinter:contract:forbidden-adapter-isolation]
+name = C-2.2 — the OMS reaches the exchange only through exchange.base
+type = forbidden
+source_modules =
+    candleviewer.oms
+forbidden_modules =
+    candleviewer.exchange.bybit
+

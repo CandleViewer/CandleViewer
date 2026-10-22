@@ -110,11 +110,12 @@ def test_the_contract_names_no_revision_of_the_implementation(contract: Path) ->
 
 
 def test_section_8_6_lists_the_exchange_enum_and_keeps_the_oms_codes_apart() -> None:
-    """`exchange/base/errors.py` is Sec.8.6's `OmsErrorCode` block verbatim; the five codes the OMS
-    raises itself stand beside the block, and none is a member of the exchange-boundary enum."""
+    """`exchange/base/errors.py` is Sec.8.6's `OmsErrorCode` block verbatim; the six codes the OMS
+    raises itself (E29-T04 adds `EXPIRED_UNSENT`) stand beside the block, and none is a member of
+    the exchange-boundary enum."""
     doc = _SCHEMAS.read_text(encoding="utf-8").split("class OmsErrorCode(StrEnum):", 1)[1]
     block, after = doc.split("```", 1)
     assert re.findall(r'^    (\w+) = "\1"', block, re.MULTILINE) == [c.name for c in OmsErrorCode]
     paragraph = after.split("**OMS codes (E29-T03).**", 1)[1].split("\n", 1)[0]
     oms = re.findall(r"`([A-Z_]+)` \(", paragraph)
-    assert len(oms) == 5 and not set(oms) & {c.name for c in OmsErrorCode}
+    assert len(oms) == 6 and not set(oms) & {c.name for c in OmsErrorCode}

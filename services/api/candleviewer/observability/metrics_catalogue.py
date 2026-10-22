@@ -2652,6 +2652,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E29",
     ),
     _s(
+        "oms_clock_halt_trips_total",
+        "counter",
+        "trips",
+        (),
+        "Order-entry halts on clock drift (24 Sec.8.6 10002, its distinct alert): each 10002 that "
+        "reached an order and tripped, or re-tripped, the clock halt, which refuses every order "
+        "request until a measurement taken after the trip clears it (E29-T04).",
+        "> 0 (page; rule: E29-T08)",
+        _P,
+        "E29",
+    ),
+    _s(
         "bybit_clock_drift_ms",
         "gauge",
         "milliseconds",
@@ -3754,7 +3766,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "AuditSinkRefusing (any; ticket, page pending #2701)",
         _L,
         "E09",
-        max_series=37,
+        max_series=39,
         exported=True,
     ),
     _s(

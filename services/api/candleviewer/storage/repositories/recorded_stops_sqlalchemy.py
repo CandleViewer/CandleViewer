@@ -10,12 +10,17 @@ every account when it is asked to (`EVERY_ACCOUNT`); a unit test pins both sets,
 
 `insert_stops_statement` writes one request's rows in one statement, once `check_request` found
 them one request's; the first persist of an entry (`submissions_sqlalchemy.py`) runs it in its own
-transaction, with the order. `settle` locks the request's rows `FOR UPDATE` in id order, so two
-writers of one request never deadlock, then runs the compare-and-set: each row must still be in
-flight (`pending`, `answered_at` NULL), or nothing is written (`StaleRecordedStop`). An answer
-sets `answered_at`; a refusal or a read that does not show the stop makes the row `void` and
-stamps `closed_at` (`rs_times`). The writer's write-ahead audit, when given, is awaited, bounded,
-before the commit (C-2.9).
+transaction, with the order, and `insert` in one of its own, awaiting the writer's write-ahead audit
+of the request, when given, bounded, before the commit (C-2.9). `settle` locks the request's rows
+`FOR UPDATE` in id order, so two writers of one request never deadlock, then runs the
+compare-and-set: each row must still be in flight (`pending`, `answered_at` NULL), or nothing is
+written (`StaleRecordedStop`). An answer sets `answered_at`; a refusal or a read that does not show
+the stop makes the row `void` and stamps `closed_at` (`rs_times`). The writer's write-ahead audit,
+when given, is awaited, bounded, before the commit (C-2.9). `waiting_for_key_statement` reads a
+key's rows that hold it until the complete read (`RecordedStopStore.waiting_for_key`): the
+unanswered ones past their request's bound (`request_cutoff`; every unanswered one when the bound
+is missing or unusable), and an entry's pending rows whose order of the row's account
+`WAITING_ENTRY` holds.
 
 `void_orphans_statement` is R10's startup sweep (`RecordedStopStore.void_orphans`): one UPDATE that
 voids the pending entry-attach rows of an order of their account that was never placed (never sent,
@@ -54,6 +59,8 @@ from candleviewer.storage.repositories.recorded_stops import (
     REFUSED_BY,
     REFUSED_ENTRY,
     UNSENT_ENTRY,
+    WAITING_ENTRY,
+    InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
     SettleWriteAhead,
@@ -63,6 +70,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     SweepWriteAhead,
     SweptStop,
     check_request,
+    request_cutoff,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -75,7 +83,7 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import (
 __all__ = [
     "STOP_COLUMNS", "STOP_FIELDS", "SYSTEM_STATEMENTS", "UNSCOPED", "SqlAlchemyRecordedStopStore",
     "for_order_statement", "in_given_order", "insert_stops_statement", "lock_stops_statement",
-    "settle_statement", "stop_row", "void_orphans_statement",
+    "settle_statement", "stop_row", "void_orphans_statement", "waiting_for_key_statement",
 ]  # fmt: skip
 
 _S = recorded_stops.c
@@ -126,6 +134,34 @@ def settle_statement(
 def for_order_statement(account_id: UUID, order_id: UUID) -> sa.Select[Any]:
     stmt = sa.select(*STOP_COLUMNS).where(
         _S.exchange_account_id == account_id, _S.order_id == order_id
+    )
+    return stmt.order_by(_S.created_at, _S.id)
+
+
+def waiting_for_key_statement(
+    account_id: UUID, symbol: str, position_idx: int, *, now: datetime, bound_s: float | None
+) -> sa.Select[Any]:
+    """The key's pending rows that hold it until the complete read, in the account, oldest first:
+    the unanswered ones created at or before `request_cutoff(now, bound_s)`, every unanswered one
+    when that is None (fail closed), and an entry's rows, answered or not, whose order, of the
+    row's account, `WAITING_ENTRY` holds (`ix_rs_live` serves the key). `ValueError` for a naive
+    `now`, before any statement."""
+    cutoff = request_cutoff(now, bound_s)
+    unanswered: sa.ColumnElement[bool] = _S.answered_at.is_(None)
+    if cutoff is not None:
+        unanswered = sa.and_(unanswered, _S.created_at <= cutoff)
+    o = orders.c
+    ended = sa.select(sa.literal(1)).where(
+        o.id == _S.order_id,
+        o.exchange_account_id == _S.exchange_account_id,
+        *(_holds(o[name], value) for name, value in WAITING_ENTRY.items()),
+    )
+    stmt = sa.select(*STOP_COLUMNS).where(
+        _S.exchange_account_id == account_id,
+        sa.type_coerce(_S.symbol, sa.Text) == symbol,  # SQLAlchemy has no DOMAIN operator class
+        _S.position_idx == position_idx,
+        _S.status == "pending",
+        sa.or_(unanswered, sa.and_(_S.source == "entry_attach", sa.exists(ended))),
     )
     return stmt.order_by(_S.created_at, _S.id)
 
@@ -195,12 +231,17 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         super().__init__(relational, statement_timeout_ms=statement_timeout_ms)
         self._audit_timeout_s = require_audit_bound(audit_timeout_s)
 
-    async def insert(self, stops: Sequence[NewRecordedStop]) -> tuple[RecordedStopRow, ...]:
+    async def insert(
+        self, stops: Sequence[NewRecordedStop], *, write_ahead: InsertWriteAhead | None = None
+    ) -> tuple[RecordedStopRow, ...]:
         stmt = insert_stops_statement(stops)
         async with self._unit_of_work() as uow:
-            rows = list((await uow.session.execute(stmt)).mappings())
+            inserted = list((await uow.session.execute(stmt)).mappings())
+            rows = in_given_order(inserted, [stop.id for stop in stops])
+            if write_ahead is not None:
+                await bounded_write_ahead(write_ahead(rows), self._audit_timeout_s)
             await uow.commit()
-        return in_given_order(rows, [stop.id for stop in stops])
+        return rows
 
     async def settle(
         self,
@@ -232,6 +273,21 @@ class SqlAlchemyRecordedStopStore(CappedStore):
     async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(for_order_statement(account_id, order_id))
+            return tuple(stop_row(m) for m in result.mappings())
+
+    async def waiting_for_key(
+        self,
+        account_id: UUID,
+        symbol: str,
+        position_idx: int,
+        *,
+        now: datetime,
+        bound_s: float | None,
+    ) -> tuple[RecordedStopRow, ...]:
+        # a naive `now` is refused here, before any transaction opens
+        stmt = waiting_for_key_statement(account_id, symbol, position_idx, now=now, bound_s=bound_s)
+        async with self._unit_of_work() as uow:
+            result = await uow.session.execute(stmt)
             return tuple(stop_row(m) for m in result.mappings())
 
     async def void_orphans(

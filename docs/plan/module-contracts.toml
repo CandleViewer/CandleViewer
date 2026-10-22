@@ -337,6 +337,16 @@ rule = "C-2.20"
 source_modules = ["candleviewer.ws"]
 forbidden_modules = ["candleviewer.statechart", "xstate_statemachine"]
 
+[cross_cutting.adapter_isolation]
+# C-2.2 / E29-T04 (#913): the OMS reaches the exchange only through `exchange.base`'s ports, a
+# trading port per environment that the composition root wires (`oms.routing`), never through the
+# adapter package. §3 lets M14 depend on M4; C-2.2 keeps every exchange-specific name inside M4,
+# so this contract narrows that edge to nothing, as Semgrep's `cv-adapter-isolation` does for the
+# source text.
+rule = "C-2.2"
+source_modules = ["candleviewer.oms"]
+forbidden_modules = ["candleviewer.exchange.bybit"]
+
 # Frontend module boundaries (§3 "Frontend module boundaries" table).
 # dependency-cruiser (`.dependency-cruiser.js`) reads this table; there is no
 # frontend import-linter equivalent, so this section is descriptive only —

@@ -176,6 +176,8 @@ _UNNAMED: list[dict[str, Any]] = [
 ]
 _UNNAMED_IDS = ["none", "empty", "absent", "not_text", "over_max_text", "newline", "nul"]
 _NAMED = {"ok": True, "exchange_order_id": "x1"}
+#: The longest id B1 keeps, `MAX_TEXT`, which the adapter's longest order id fills (#4020 Low 2).
+_NAMED_MAX = {"ok": True, "exchange_order_id": "x" * b01.MAX_TEXT}
 _MISSING = ("error", {"error": "ExchangeOrderIdMissingError"})  # the error's class, no ack
 
 
@@ -183,9 +185,10 @@ _MISSING = ("error", {"error": "ExchangeOrderIdMissingError"})  # the error's cl
     ("ack", "leaf", "recorded", "bound"),
     [
         (_NAMED, "submitted", ("ack", _NAMED), "x1"),
+        (_NAMED_MAX, "submitted", ("ack", _NAMED_MAX), "x" * b01.MAX_TEXT),
         *[(ack, "unknown", _MISSING, None) for ack in _UNNAMED],
     ],
-    ids=["named", *_UNNAMED_IDS],
+    ids=["named", "named_sixty_four", *_UNNAMED_IDS],
 )
 async def test_an_accepted_place_is_submitted_only_when_it_names_its_order(
     ack: dict[str, Any],

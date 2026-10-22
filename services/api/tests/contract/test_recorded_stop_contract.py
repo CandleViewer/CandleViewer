@@ -150,7 +150,12 @@ def test_an_entry_row_is_voided_only_once_the_exchange_confirms_its_entry_unfill
         "decided"
     )
     assert effects[waits] == "none: `pending`, **waiting for the complete read**"
-    assert effects["`submitting` → `rejected`: the create's own answer refused it"] == "`void`"
+    refused = (
+        "`submitting` → `rejected`: the create's own answer refused it, or the command port's "
+        "`EXPIRED_UNSENT` ended a resumed create no lookup found within the venue's 24 h history "
+        "(24 §8.3 rule 6)"
+    )
+    assert effects[refused] == "`void`"
     confirmed = [step for step, rows in effects.items() if rows == "`void`"]
     assert len(confirmed) == 3
     never_sent = "`validated` → `killed`: a KILL before the send (`abandon`), so never sent"

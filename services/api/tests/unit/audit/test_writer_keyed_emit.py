@@ -13,7 +13,12 @@ from test_writer_build import _dead_flusher, _writer
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.query import AuditQueryService
-from candleviewer.audit.writer import KEYED_ACTIONS, AuditUnavailable, AuditWriterStopped
+from candleviewer.audit.writer import (
+    KEYED_ACTIONS,
+    AuditUnavailable,
+    AuditWriterStopped,
+    keyed_record_id,
+)
 
 _ACTION, _NAME = "admin.view_as_ended", "00000000-0000-4000-8000-000000000001"
 
@@ -22,6 +27,10 @@ def test_writer_keyed_actions_keep_their_namespaces_for_good() -> None:
     """A new namespace would give a context written on both sides of the change two rows (V45);
     the restart test below pins the id one derives."""
     assert KEYED_ACTIONS[_ACTION] == uuid.UUID("f30c6b64-1ea6-416d-aebb-8aaa0760f421")
+    # E29-T04 (#913): a stop request's records, named by their `recorded_stops` row's id.
+    assert KEYED_ACTIONS["sl.attached"] == uuid.UUID("d6abc860-0257-4214-9142-d65723f23fd7")
+    assert KEYED_ACTIONS["sl.modified"] == uuid.UUID("132f3241-512e-445d-86af-731eab14fe5e")
+    assert KEYED_ACTIONS["tp.modified"] == uuid.UUID("0f574dd0-7558-4261-8417-7c38870c061d")
     assert set(KEYED_ACTIONS) <= AUDIT_ACTIONS
     assert len(set(KEYED_ACTIONS.values())) == len(KEYED_ACTIONS)  # never two actions on one id
 
@@ -78,3 +87,23 @@ async def test_writer_keyed_emit_refuses_a_blank_name_without_echoing_it(
     with pytest.raises(ValueError, match=r"^a keyed audit record needs a name$"):
         await writer.emit_keyed(_ACTION, name, actor_label="ana")
     assert writer.buffer_depth == 0
+
+
+async def test_keyed_record_id_is_the_id_emit_keyed_stores_its_record_under(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock
+) -> None:
+    """CR-2B1-08: the one derivation of a keyed record's id, which a caller names ahead of the
+    record (a recorded stop's `audit_record_id`, 21 Sec.3.3.11) and `emit_keyed` stores, so the
+    two never drift apart; it refuses as `emit_keyed` does, naming no input."""
+    writer = _writer(repo, tmp_path, clock)
+    await writer.start()
+    await writer.emit_keyed(_ACTION, _NAME, actor_label="ana", reason="ended")
+    await writer.flush(5)
+    await writer.stop(1)
+    assert [row["record_id"] for row in repo.rows] == [str(keyed_record_id(_ACTION, _NAME))]
+    stop = "4a1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"  # a recorded stop's row id
+    assert keyed_record_id("sl.attached", stop) == uuid.uuid5(KEYED_ACTIONS["sl.attached"], stop)
+    with pytest.raises(ValueError, match="not a keyed audit action"):
+        keyed_record_id("sl.loosened", stop)
+    with pytest.raises(ValueError, match=r"^a keyed audit record needs a name$"):
+        keyed_record_id("sl.attached", " ")

@@ -226,6 +226,11 @@ PAIRING: Final = ("exchange_order_id", *FACTS)
 #: two reconciliation passes that found nothing (Sec.8.5).
 NATIVE_STOP_REQUIRED: Final = "NATIVE_STOP_REQUIRED"
 UNRESOLVED_AFTER_RECONCILE: Final = "UNRESOLVED_AFTER_RECONCILE"
+#: The command port's answer to a resumed create too old to re-send that no lookup found within
+#: the venue's 24 h history (E29-T04, [LANE-26]; 24 Sec.8.3 rule 6): nothing was sent, so
+#: `submitting`'s last arm ends the order `rejected`, and `map_reject_code` keeps it as the row's
+#: reason. Past that history the port answers an empty lookup instead (`unknown`, SEC-2B1-02).
+EXPIRED_UNSENT: Final = "EXPIRED_UNSENT"
 #: Bounds on what a payload may put into context (C-2.18): fills per order, id text, and money as
 #: 22's `Decimal` text (C6: no exponent, space or `_`) with numeric(38,18)'s 20 + 18 digits.
 MAX_FILLS: Final = 10_000
@@ -248,7 +253,7 @@ MAX_ATTEMPTS: Final = 4096
 REPEAT: Final = "a repeat exec_id (S4)"
 #: An EXEC before the bind waits in the facade's reorder buffer (SR-E29-03), never a FAULT.
 UNBOUND: Final = "the order has no bound exchange_order_id yet"
-_REJECT_CODES: Final = frozenset(code.value for code in OmsErrorCode)
+_REJECT_CODES: Final = frozenset(code.value for code in OmsErrorCode) | {EXPIRED_UNSENT}
 _DUPLICATE: Final = OmsErrorCode.DUPLICATE_CLIENT_ID.value
 #: Codes 24 Sec.8.6 routes to retry, poll or reconcile: the command port raises them (S1), so one
 #: recorded as a reject is logged at ERROR.
@@ -293,7 +298,10 @@ def _leaf(interp: Any, region: str = "lifecycle") -> str | None:
 
 def text_id(raw: object) -> str | None:
     """*raw* as B1 keeps an id or a code: text of 1 to `MAX_TEXT` characters with no control
-    character (`_CONTROL`), else None. The OMS facade keeps an `exec_id` by the same rule."""
+    character (`_CONTROL`), else None. The OMS facade keeps an `exec_id` by the same rule. The
+    exchange adapter's order id is text of 1 to 64 characters (`ExchangeOrderId`, 24 Sec.14.2 rule
+    11), so `MAX_TEXT` holds every one; E29-T04's command port also refuses an accepted create
+    whose id is not printable or holds whitespace (`oms.commands.order_id_kept`, #4020 Low 1)."""
     if isinstance(raw, str) and 0 < len(raw) <= MAX_TEXT and _CONTROL.search(raw) is None:
         return raw
     return None
@@ -958,9 +966,10 @@ async def keep_prior_order_live(_i: Any, context: dict[str, Any], event: Any, _a
 
 
 async def map_reject_code(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """The ack's 24 Sec.8.6 code (the adapter maps it, C-2.2); else `EXCHANGE_UNKNOWN`. A code
-    Sec.8.6 routes to retry, poll or reconcile is the port's to raise (S1): one recorded here is
-    logged at ERROR, as the order may be live on the exchange."""
+    """The ack's 24 Sec.8.6 code (the adapter maps it, C-2.2), or the command port's
+    `EXPIRED_UNSENT`; else `EXCHANGE_UNKNOWN`. A code Sec.8.6 routes to retry, poll or reconcile
+    is the port's to raise (S1): one recorded here is logged at ERROR, as the order may be live
+    on the exchange."""
     code = _fields(event).get("error_code")
     known = isinstance(code, str) and code in _REJECT_CODES
     context["reject_code"] = code if known else OmsErrorCode.EXCHANGE_UNKNOWN.value

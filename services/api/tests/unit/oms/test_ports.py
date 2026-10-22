@@ -13,13 +13,16 @@ constant time (SR-043).
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hmac
+import inspect
 import json
+import time
 from datetime import UTC, datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, Final, cast, get_args, get_type_hints
 from uuid import UUID
 
 import pytest
@@ -30,36 +33,56 @@ from structlog.testing import capture_logs
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Side
+from candleviewer.exchange.base.models import AccountRef, Order
+from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.observability.secret_type import Secret
+from candleviewer.oms import order_machine
 from candleviewer.oms.errors import (
     RULE_STOP_UNIT_UNSUPPORTED,
     FieldError,
+    HandoverUnavailable,
     OrderInvalid,
+    StopRequestPending,
     StopUnitUnsupported,
+    StoreUnavailable,
 )
+from candleviewer.oms.fakes import FakeClockHealth, InMemoryForeignOrderLockout
 from candleviewer.oms.ports import (
     FAILED,
     INTERIM_PORTS_METRIC,
     PASSED,
     PORT_NAMES,
+    STOP_REQUEST_BOUND_S,
+    STOP_REQUEST_RETRY_AFTER_S,
     ArmToken,
+    AuditOutcome,
+    AuditSeverity,
+    ClockHealth,
     FixedQtySizer,
+    ForeignOrderLockout,
     Interim,
     InterimRiskGate,
     InterimStopResolver,
     NoArmRecords,
+    NoHandoverStore,
     OrderEffect,
+    PositionKey,
+    RateReading,
+    RefuseWhileWaiting,
     SizedOrder,
     SizingRequest,
     StopOffset,
     SubmissionPorts,
+    TradingAccounts,
     Verdict,
     announce_interim_ports,
 )
 from candleviewer.risk.models import RiskDecision, RiskRefusal
 from candleviewer.statechart.bindings import b01_order
+from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.repositories.orders import OrderStoreError
 
 ACCOUNT = AccountId(UUID("7d3c9a10-28a1-4c1e-9e01-0000000000a2"))
 SESSION = UUID("5e551011-0000-4000-8000-000000000001")
@@ -544,3 +567,152 @@ def test_announce_registers_the_gauge_from_its_catalogue_entry() -> None:
     assert gauge.series_count == len(PORT_NAMES) and not gauge.breached
     [family] = [f for f in metrics.registry.collect() if f.name == INTERIM_PORTS_METRIC]
     assert family.documentation == spec.help
+
+
+# -- the clock and account ports (`ClockHealth`, `TradingAccounts`) -------------------------------
+
+_CLOCK_MEMBERS: Final = ("assert_healthy", "offset_age_s", "resync_after_signature_failure")
+
+
+async def _server_time() -> tuple[int, float, float]:
+    return 0, 0.0, 0.0
+
+
+def test_the_clock_guard_as_it_stands_and_the_fake_are_clock_healths() -> None:
+    """Slice 3 wires `ingestion.clock.ClockGuard` with no adapter, as mypy reads the list below,
+    and the fake answers alike: each member as the port declares it, sync or async, its
+    parameters of the same kinds, any other with a default. `oms` itself never imports
+    `ingestion` (C-3.4, `.importlinter`'s forbidden-M14)."""
+    clocks: list[ClockHealth] = [ClockGuard(_server_time), FakeClockHealth(time.monotonic)]
+    for clock in clocks:
+        for name in _CLOCK_MEMBERS:
+            port, member = getattr(ClockHealth, name), getattr(type(clock), name)
+            assert inspect.iscoroutinefunction(member) == inspect.iscoroutinefunction(port)
+            wanted = inspect.signature(port).parameters
+            offered = inspect.signature(member).parameters
+            assert set(wanted) <= set(offered)
+            assert all(offered[n].kind == p.kind for n, p in wanted.items())
+            assert all(p.default is not p.empty for n, p in offered.items() if n not in wanted)
+
+
+def test_trading_accounts_takes_the_account_id_alone() -> None:
+    """SR-E27-21: the key comes only from the account the OMS scope-checked, so the port takes
+    nothing a request could use to select one, and answers the trading port's `AccountRef`."""
+    member = TradingAccounts.trading_account
+    assert inspect.iscoroutinefunction(member)
+    assert list(inspect.signature(member).parameters) == ["self", "account_id"]
+    hints = get_type_hints(member)
+    assert (hints["account_id"], hints["return"]) == (AccountId, AccountRef)
+
+
+def test_a_rate_reading_admits_with_no_delay_and_refuses_with_one() -> None:
+    """24 Sec.8.7: an admission carries no `Retry-After`; a refusal carries whole seconds, 1 or
+    more (429 `exchange_rate_limited`)."""
+    assert RateReading(available=True).retry_after_s is None
+    assert RateReading(available=False, retry_after_s=1).retry_after_s == 1
+    for refused in (None, 0, -1, 1.5, True, "2"):
+        with pytest.raises(ValueError, match="at least one whole second"):
+            RateReading(available=False, retry_after_s=cast(Any, refused))  # each one off the type
+    with pytest.raises(ValueError, match="no retry_after_s"):
+        RateReading(available=True, retry_after_s=1)
+
+
+# --- the command port's collaborators (`commands.OmsCommandPort`) --------------------------------
+
+
+class _Rows:
+    """`WaitingRows`: answers `rows`, raises `error`, or never answers when `hang`; keeps asks."""
+
+    def __init__(self, rows: tuple[Any, ...] = (), *, error: BaseException | None = None) -> None:
+        self.rows, self.error, self.hang = rows, error, False
+        self.asked: list[tuple[Any, ...]] = []
+
+    async def waiting_for_key(
+        self,
+        account_id: UUID,
+        symbol: str,
+        position_idx: int,
+        *,
+        now: datetime,
+        bound_s: float | None,
+    ) -> tuple[Any, ...]:
+        self.asked.append((account_id, symbol, position_idx, now, bound_s))
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.error is not None:
+            raise self.error
+        return self.rows
+
+
+_KEY = PositionKey(AccountId(UUID(int=7)), "BTCUSDT", 0)
+_NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
+
+
+async def test_the_interim_gate_clears_a_key_no_row_waits_on() -> None:
+    rows = _Rows()
+    await RefuseWhileWaiting(rows, now=lambda: _NOW).clear(_KEY)
+    assert rows.asked == [(UUID(int=7), "BTCUSDT", 0, _NOW, STOP_REQUEST_BOUND_S)]
+
+
+async def test_the_interim_gate_refuses_while_a_row_of_the_key_waits() -> None:
+    """Q-A and Q-D: 409 `stop_request_in_flight` at once, with `Retry-After: 5`."""
+    gate = RefuseWhileWaiting(_Rows(("a waiting row",)), now=lambda: _NOW)
+    with capture_logs() as logs, pytest.raises(StopRequestPending) as refused:
+        await gate.clear(_KEY)
+    assert refused.value.retry_after_s == STOP_REQUEST_RETRY_AFTER_S == 5
+    assert [(log["event"], log["rows"]) for log in logs] == [("oms_stop_request_waiting", 1)]
+
+
+@pytest.mark.parametrize(
+    "error", [StorageTierUnavailable("down"), OrderStoreError("refused"), None], ids=str
+)
+async def test_the_interim_gate_refuses_when_it_cannot_read(error: BaseException | None) -> None:
+    """Fail closed: no stop request leaves unchecked (`StoreUnavailable`, 503)."""
+    rows = _Rows(error=error)
+    rows.hang = error is None
+    gate = RefuseWhileWaiting(rows, now=lambda: _NOW, timeout_s=0.01)
+    with pytest.raises(StoreUnavailable):
+        await gate.clear(_KEY)
+
+
+async def test_no_handover_store_hands_nothing_over() -> None:
+    """S2-Q3's deviation until E29-T06: every hand-over is refused."""
+    order = Order.model_validate(
+        {
+            "order_link_id": "cvl-x",
+            "exchange_order_id": "x1",
+            "account_id": UUID(int=7),
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "order_type": "limit",
+            "qty": "1",
+            "price": "1",
+            "state": "new",
+            "filled_qty": "0",
+            "leaves_qty": "1",
+            "avg_fill_price": None,
+            "created_at": 0,
+            "terminal_at": None,
+        }
+    )
+    with pytest.raises(HandoverUnavailable):
+        await NoHandoverStore().hand_over_order(AccountId(UUID(int=7)), order)
+
+
+def test_a_keyed_records_vocabulary_is_the_facades() -> None:
+    """`KeyedRecord` and `OrderAuditRecord` write one M19 vocabulary of outcomes and severities."""
+    assert get_args(AuditOutcome) == get_args(order_machine.Outcome)
+    assert get_args(AuditSeverity) == get_args(order_machine.Severity)
+
+
+async def test_the_lockout_fake_opens_once_per_finding() -> None:
+    """24 Sec.8.10, S2-Q7: opening where it is open changes nothing; a finding counts once."""
+    lockout: ForeignOrderLockout = InMemoryForeignOrderLockout()
+    account = AccountId(UUID(int=7))
+    await lockout.open(account, finding="order", key="x1")
+    await lockout.open(account, finding="order", key="x1")
+    await lockout.open(account, finding="execution", key="e1")
+    assert isinstance(lockout, InMemoryForeignOrderLockout)
+    assert lockout.findings == {account: {("order", "x1"), ("execution", "e1")}}
+    assert lockout.opens == 3 and lockout.is_open(account)
+    assert not lockout.is_open(AccountId(UUID(int=8)))
