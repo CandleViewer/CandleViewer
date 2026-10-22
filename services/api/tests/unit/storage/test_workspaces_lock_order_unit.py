@@ -8,16 +8,21 @@ by the CI-only `tests/integration/storage/test_drawings_layout_race.py`.
 
 from __future__ import annotations
 
+import traceback
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 
+from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories import workspaces_sqlalchemy as mod
 from candleviewer.storage.repositories.workspaces import (
     LayoutFields,
     WorkspaceConflictError,
+    WorkspaceFields,
     WorkspaceNotFoundError,
 )
 
@@ -67,11 +72,12 @@ class _Result:
 
 
 class _Rel:
-    """`unit_of_work()` factory recording every statement; `rows` answers them by name."""
+    """`unit_of_work()` factory recording every statement; `rows` answers them by name, unless
+    the database refuses every statement with `error`."""
 
-    def __init__(self, rows: dict[str, Rows]) -> None:
+    def __init__(self, rows: dict[str, Rows], error: Exception | None = None) -> None:
         self.rows, self.calls = rows, list[tuple[str, dict[str, Any]]]()
-        self.commits = 0
+        self.commits, self.error = 0, error
         self.session = self
 
     def unit_of_work(self) -> _Rel:
@@ -88,6 +94,8 @@ class _Rel:
 
     async def execute(self, stmt: sa.TextClause, params: dict[str, Any]) -> _Result:
         self.calls.append((_NAMES[id(stmt)], params))
+        if self.error is not None:
+            raise self.error
         return _Result(self.rows.get(_NAMES[id(stmt)], []))
 
     def names(self) -> list[str]:
@@ -100,6 +108,43 @@ def _repo(rel: _Rel) -> mod.SqlAlchemyWorkspaceRepository:
 
 def _fields(is_default: bool) -> LayoutFields:
     return LayoutFields("new", "1x1", None, True, False, False, None, is_default, ())
+
+
+_ROW = "canary-2748-row"  # a value the server's DETAIL would quote
+_WS_FIELDS = WorkspaceFields("w", False, "workspace.default", 0)
+_WRITES: dict[str, Callable[[mod.SqlAlchemyWorkspaceRepository], Awaitable[object]]] = {
+    "create_workspace": lambda r: r.create_workspace("o", "w", _WS_FIELDS),
+    "update_workspace": lambda r: r.update_workspace("o", "w", _WS_FIELDS, if_match=None),
+    "create_layout": lambda r: r.create_layout("o", "w", "l1", _fields(False)),
+    "replace_layout": lambda r: r.replace_layout("o", "w", "l1", _fields(False), if_match=None),
+}
+
+
+class _Driver(Exception):
+    """asyncpg's unique violation: the index it names, and the failing row in its text."""
+
+    def __init__(self, constraint: str) -> None:
+        super().__init__(f"Failing row contains ({_ROW})")
+        self.sqlstate, self.constraint_name = "23505", constraint
+
+
+@pytest.mark.parametrize(
+    ("constraint", "refusal"),
+    [("ux_ws_name", WorkspaceConflictError), ("ux_lp_slot", StorageConstraintViolated)],
+)
+@pytest.mark.parametrize("write", list(_WRITES))
+async def test_a_refused_write_is_typed_and_chains_nothing(
+    write: str, constraint: str, refusal: type[Exception]
+) -> None:
+    """#2748: an index the router answers is its conflict (409), any other the typed
+    `StorageConstraintViolated` (500); neither chains the driver error, whose text is the row."""
+    rel = _Rel({}, IntegrityError("stmt", {}, _Driver(constraint)))
+    with pytest.raises(refusal) as err:
+        await _WRITES[write](_repo(rel))
+    assert err.value.__cause__ is None and err.value.__suppress_context__ and rel.commits == 0
+    assert _ROW not in "".join(traceback.format_exception(err.value))
+    if isinstance(err.value, StorageConstraintViolated):
+        assert (err.value.sqlstate, err.value.constraint) == ("23505", constraint)
 
 
 async def test_workspace_soft_delete_locks_its_layouts_in_id_order_before_any_write() -> None:

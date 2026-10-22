@@ -20,9 +20,9 @@ import pytest
 import pytest_asyncio
 from psycopg import sql
 from sqlalchemy import event
-from sqlalchemy.exc import IntegrityError
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories import workspaces_sqlalchemy as mod
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -247,8 +247,9 @@ async def test_duplicate_slot_in_one_set_is_refused_whole(
     wid, lid = await _new_ws(repo, a), str(uuid.uuid4())
     made = await repo.create_layout(a, wid, lid, _lay("L", 4))
     dup = LayoutFields("L", "2x2", None, True, False, False, None, False, (_pane(3), _pane(3)))
-    with pytest.raises(IntegrityError, match="ux_lp_slot"):
+    with pytest.raises(StorageConstraintViolated) as refused:
         await repo.replace_layout(a, wid, lid, dup, if_match=None)
+    assert refused.value.constraint == "ux_lp_slot"
     assert await repo.get_layout(a, wid, lid) == made
 
 

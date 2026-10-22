@@ -676,12 +676,14 @@ def test_query_failure_types_a_refused_statement_by_its_facts(
     [
         ("23505", f"users_email_key {_P1}", ("23505", None)),
         (f"23505 {_P1}", "users_email_key", (None, None)),
+        (23505, None, (None, None)),  # not a string: dropped, never a `TypeError`
+        ("23505", 7, ("23505", None)),
     ],
-    ids=["text-for-a-name", "text-for-a-sqlstate"],
+    ids=["text-for-a-name", "text-for-a-sqlstate", "int-for-a-sqlstate", "int-for-a-name"],
 )
 def test_query_failure_drops_a_fact_that_is_not_a_code_or_a_name(
-    state: str, constraint: str, kept: tuple[str | None, str | None]
+    state: object, constraint: object, kept: tuple[str | None, str | None]
 ) -> None:
-    failure = query_failure(state, constraint)
+    failure = query_failure(state, constraint)  # type: ignore[arg-type]  # any type, the point
     assert (failure.sqlstate, getattr(failure, "constraint", None)) == kept
     assert _P1 not in str(failure)

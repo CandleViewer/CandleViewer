@@ -34,6 +34,7 @@ from datetime import datetime
 from typing import Any, TypeVar, assert_never
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -54,6 +55,10 @@ from candleviewer.storage.repositories.drawings import (
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     SqlAlchemyUnitOfWork,
+    constraint_of,
+    is_outage,
+    query_failure,
+    sqlstate_of,
 )
 
 #: Explicit read allow-list; internal columns (anchors, deleted_at, alert_id) stay out.
@@ -343,25 +348,44 @@ def _is_deadlock(exc: DBAPIError) -> bool:
     return any(getattr(src, "sqlstate", None) == "40P01" for src in sources)
 
 
+def _refusal(
+    exc: DBAPIError, layout_fields: tuple[str, ...], drawing_id: str | None = None
+) -> Exception:
+    """A failed write's error, from the driver error's facts alone (#2748, C-12.6): a create's
+    primary-key collision or the layout FK as the domain error, an outage as
+    `StorageTierUnavailable` (503), anything else the typed `query_failure` (500)."""
+    if isinstance(exc, IntegrityError) and drawing_id is not None and _is_pk_collision(exc):
+        return DrawingIdUnavailableError(drawing_id)
+    if isinstance(exc, IntegrityError) and _is_layout_fk(exc):
+        return DrawingLayoutNotFoundError(layout_fields)
+    if is_outage(exc):  # which outage it was, by its facts alone (C-12.6)
+        structlog.get_logger(__name__).warning(
+            "drawings_write_outage", error=type(exc).__name__, sqlstate=sqlstate_of(exc)
+        )
+        return StorageTierUnavailable("the drawings store cannot serve the write")
+    return query_failure(sqlstate_of(exc), constraint_of(exc))
+
+
 _T = TypeVar("_T")  # not PEP 695 `[T]`: Semgrep 1.99.0 (CI) would skip the rest of this file
 
 
-async def _deadlock_retry(run: Callable[[], Awaitable[_T]]) -> _T:  # noqa: UP047 (see _T)
+async def _deadlock_retry(  # noqa: UP047 (see _T)
+    run: Callable[[], Awaitable[_T]], refuse: Callable[[DBAPIError], Exception]
+) -> _T:
     """Run one whole transaction; after a `40P01` (rolled back by the unit of work's exit) run
-    it once more. A second deadlock is a store outage (503, retryable), never a 500."""
-    # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
+    it once more. A second deadlock is a store outage (503, retryable), never a 500. Any other
+    driver error leaves as `refuse` types it, raised after its handler: nothing chains it."""
     try:
         return await run()
     except DBAPIError as exc:
-        if not _is_deadlock(exc):
-            raise
-    # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
+        failure = None if _is_deadlock(exc) else refuse(exc)
+    if failure is not None:
+        raise failure from None
     try:
         return await run()
     except DBAPIError as exc:
-        if not _is_deadlock(exc):
-            raise
-        raise StorageTierUnavailable("drawings write deadlocked twice") from exc
+        failure = None if _is_deadlock(exc) else refuse(exc)
+    raise failure or StorageTierUnavailable("drawings write deadlocked twice") from None
 
 
 async def _lock_live_layouts(
@@ -426,15 +450,7 @@ class SqlAlchemyDrawingRepository:
                 await uow.commit()
             return _to_row(row)
 
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
-        try:
-            return await _deadlock_retry(attempt)
-        except IntegrityError as exc:
-            if _is_pk_collision(exc):
-                raise DrawingIdUnavailableError(drawing_id) from exc
-            if _is_layout_fk(exc):
-                raise DrawingLayoutNotFoundError(("layout_id",)) from exc
-            raise
+        return await _deadlock_retry(attempt, lambda exc: _refusal(exc, ("layout_id",), drawing_id))
 
     async def update(
         self,
@@ -460,13 +476,7 @@ class SqlAlchemyDrawingRepository:
                 await uow.commit()
             return _to_row(row)
 
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
-        try:
-            return await _deadlock_retry(attempt)
-        except IntegrityError as exc:
-            if _is_layout_fk(exc):
-                raise DrawingLayoutNotFoundError(("layout_id",)) from exc
-            raise
+        return await _deadlock_retry(attempt, lambda exc: _refusal(exc, ("layout_id",)))
 
     async def soft_delete(self, owner: str, drawing_id: str) -> bool:
         async with self._relational.unit_of_work() as uow:
@@ -484,14 +494,10 @@ class SqlAlchemyDrawingRepository:
             for i, op in enumerate(ops)
             if not isinstance(op, DeleteOp)
         ]
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
-        try:
-            return await _deadlock_retry(lambda: self._apply_batch_once(owner, ops, refs))
-        except IntegrityError as exc:
-            if _is_layout_fk(exc):
-                named = tuple(field for field, lid in refs if lid is not None)
-                raise DrawingLayoutNotFoundError(named) from exc
-            raise
+        named = tuple(field for field, lid in refs if lid is not None)
+        return await _deadlock_retry(
+            lambda: self._apply_batch_once(owner, ops, refs), lambda exc: _refusal(exc, named)
+        )
 
     async def _apply_batch_once(
         self, owner: str, ops: Sequence[BatchOp], refs: Sequence[tuple[str, str | None]]

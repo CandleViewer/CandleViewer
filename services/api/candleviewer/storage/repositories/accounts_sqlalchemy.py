@@ -16,8 +16,8 @@ only on the caller). The owner read statements also carry the owner predicate in
 stay scoped by `:caller` even on a path that skipped the gate.
 The `count_*` reads (M13 row gauges, #2314) are the one principal-free surface: env-bound
 aggregate counts that return no row, id or label, and that no route reaches.
-No hard DELETE exists. Mapped errors are raised `from None`: IntegrityError text carries P1
-parameters (exchange_uid, label).
+No hard DELETE exists. A refused write's error, mapped or the typed `query_failure`, is raised
+`from None`: IntegrityError text carries P1 parameters (exchange_uid, label).
 """
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ from candleviewer.storage.repositories.accounts import (
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    query_failure,
 )
 
 _ENVS = frozenset({"live", "demo", "testnet"})
@@ -434,12 +435,14 @@ def _sqlstate_and_constraint(exc: IntegrityError) -> tuple[str | None, str | Non
     return state, None
 
 
-def _raise_mapped(exc: IntegrityError) -> None:
-    state, name = _sqlstate_and_constraint(exc)
+def _refusal(state: str | None, name: str | None) -> Exception:
+    """A refused write's error, from its SQLSTATE and constraint alone (#2748): a known key's
+    conflict, a known CHECK's or guard's rule error, else the typed `query_failure`."""
     if state == "23505" and name in _CONFLICT_CONSTRAINTS:
-        raise AccountsStoreConflictError(name) from None
+        return AccountsStoreConflictError(name)
     if state == "23514" and name in _RULE_CONSTRAINTS:
-        raise AccountsStoreRuleError(name) from None
+        return AccountsStoreRuleError(name)
+    return query_failure(state, name)
 
 
 def _decode(value: object) -> dict[str, object]:
@@ -543,7 +546,6 @@ class SqlAlchemyAccountsStore:
             "label": new.label,
             "caller": str(owner.user_id),
         }
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._gate(uow, owner)
@@ -552,8 +554,8 @@ class SqlAlchemyAccountsStore:
                     raise AccountsStoreRuleError("parent_unavailable")
                 await uow.commit()
         except IntegrityError as exc:
-            _raise_mapped(exc)
-            raise
+            state, name = _sqlstate_and_constraint(exc)
+            raise _refusal(state, name) from None
         return _account(row)
 
     async def get_account(self, scope: AccountScope, account_id: UUID) -> ExchangeAccountRow | None:
@@ -614,7 +616,6 @@ class SqlAlchemyAccountsStore:
             "margin_mode": patch.margin_mode,
             "if_match": if_match,
         }
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._gate(uow, owner)
@@ -628,8 +629,8 @@ class SqlAlchemyAccountsStore:
                     return None
                 await uow.commit()
         except IntegrityError as exc:
-            _raise_mapped(exc)
-            raise
+            state, name = _sqlstate_and_constraint(exc)
+            raise _refusal(state, name) from None
         return _account(row)
 
     async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> bool:
@@ -679,7 +680,6 @@ class SqlAlchemyAccountsStore:
             "new": new,
             "caller": str(owner.user_id),
         }
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._gate(uow, owner)
@@ -699,8 +699,8 @@ class SqlAlchemyAccountsStore:
                     raise AccountsStoreConflictError("key_status")
                 await uow.commit()
         except IntegrityError as exc:
-            _raise_mapped(exc)
-            raise
+            state, name = _sqlstate_and_constraint(exc)
+            raise _refusal(state, name) from None
         return _key(row)
 
     # -- api_key_rotations ------------------------------------------------------------------
@@ -716,7 +716,6 @@ class SqlAlchemyAccountsStore:
             "grace": new.grace_seconds,
             "caller": str(owner.user_id),
         }
-        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._gate(uow, owner)
@@ -725,8 +724,8 @@ class SqlAlchemyAccountsStore:
                     return None
                 await uow.commit()
         except IntegrityError as exc:
-            _raise_mapped(exc)
-            raise
+            state, name = _sqlstate_and_constraint(exc)
+            raise _refusal(state, name) from None
         return _rotation(row)
 
     async def get_rotation(

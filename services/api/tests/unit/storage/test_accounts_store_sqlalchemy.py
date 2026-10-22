@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
+from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories import accounts_sqlalchemy as mod
 from candleviewer.storage.repositories.accounts import (
     AccountKey,
@@ -477,17 +479,31 @@ async def test_check_violation_maps_to_rule() -> None:
     ("state", "name"),
     [("23505", "other"), ("23514", "other"), ("23505", None), ("23503", "ux_ea_uid")],
 )
-async def test_unknown_integrity_errors_are_reraised(state: str, name: str | None) -> None:
-    err = _integrity(state, name)
-    rel = _Rel(_Result(), raises=err)
+async def test_unknown_integrity_errors_are_typed_by_their_facts_alone(
+    state: str, name: str | None
+) -> None:
+    rel = _Rel(_Result(), raises=_integrity(state, name))
     new = NewExchangeAccount(uuid4(), "e", "demo", "main", "1", "L")
-    with pytest.raises(IntegrityError):
+    with pytest.raises(StorageConstraintViolated) as ei:
         await _store(rel).create_account(_OWNER, new)
+    assert (ei.value.sqlstate, ei.value.constraint, ei.value.__cause__) == (state, name, None)
+    assert ei.value.__suppress_context__ is True
+    assert "secret-uid" not in "".join(traceback.format_exception(ei.value))
 
 
-async def test_unmapped_integrity_error_is_reraised_unchanged_by_every_write() -> None:
+@pytest.mark.parametrize(
+    ("state", "name", "refusal"),
+    [("23505", "ux_api_keys_active", AccountsStoreConflictError),
+     ("23514", "akr_grace", AccountsStoreRuleError),
+     ("23503", "some_fk", StorageConstraintViolated)],
+)  # fmt: skip
+async def test_every_write_types_a_refusal_and_chains_nothing(
+    state: str, name: str, refusal: type[Exception]
+) -> None:
     nr = NewKeyRotation(uuid4(), uuid4(), uuid4(), uuid4())
+    new = NewExchangeAccount(uuid4(), "e", "demo", "main", "1", "L")
     calls: list[Callable[[SqlAlchemyAccountsStore], Awaitable[object]]] = [
+        lambda s: s.create_account(_OWNER, new),
         lambda s: s.update_account(_OWNER, uuid4(), ExchangeAccountPatch(label="b"), if_match=None),
         lambda s: s.transition_key_status(
             _OWNER, uuid4(), uuid4(), expected="pending", new="active"
@@ -495,10 +511,12 @@ async def test_unmapped_integrity_error_is_reraised_unchanged_by_every_write() -
         lambda s: s.start_rotation(_OWNER, nr),
     ]
     for call in calls:
-        err = _integrity("23503", "some_fk")
-        with pytest.raises(IntegrityError) as ei:
-            await call(_store(_Rel(_Result(), raises=err)))
-        assert ei.value is err
+        with pytest.raises(refusal) as ei:
+            await call(_store(_Rel(_Result(), raises=_integrity(state, name))))
+        assert ei.value.__cause__ is None and ei.value.__suppress_context__
+        assert "secret-uid" not in "".join(traceback.format_exception(ei.value))
+        if isinstance(ei.value, StorageConstraintViolated):
+            assert (ei.value.sqlstate, ei.value.constraint) == (state, name)
 
 
 async def test_update_success_bumps_via_sql_and_commits() -> None:
