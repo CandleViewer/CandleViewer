@@ -1,0 +1,76 @@
+name: perf-bars-memdiag
+# #399 R4 (E12-T06 D2-G4): one leg of the soak_bars memory diagnosis on the self-hosted bench runner
+# cv-bench-01 (labels self-hosted, Linux, X64, bench). Dispatch only: never on a PR or a schedule (a
+# self-hosted runner never runs a PR's code), and not a required check (C-9.2). The leg runs the
+# unchanged soak on the synthetic feed: no exchange, no credential, no egress beyond the dependency
+# sync (C-13.5). The legs, in order: default (24 h, the reading) -> tracemalloc (12 h, attribution
+# only) -> malloc -> mmap128k (24 h each). The rule that reads them is in
+# docs/qa/perf/e12-bars-r4-diagnosis.md; `memdiag judge` applies it to the downloaded artifacts.
+#
+# One leg a dispatch, never two at once, and never beside the 24 h full pack: concurrent legs
+# contend for memory and CPU and distort the very RSS and lag figures they read. This job and
+# perf-ingestion-nightly.yml's perf-pack-full share the concurrency group `cv-bench-01`, so the two
+# serialise across workflows (the orchestrator's ruling (a), 2026-10-22). GitHub keeps one PENDING
+# run per group and cancels the older pending one when another queues: dispatch a leg only once the
+# one before it has started. The allocator variables are set here, before the interpreter starts
+# (it reads PYTHONMALLOC and glibc's MALLOC_* only then); any already set are dropped first, and the
+# leg records what it saw and checks pymalloc against it. Every input reaches the script through
+# env and is checked first; the checkout drops its token.
+on:
+  workflow_dispatch:
+    inputs:
+      leg:
+        description: "default (24 h, the reading), tracemalloc (12 h), malloc or mmap128k (24 h each); one a dispatch"
+        type: choice
+        options: [default, tracemalloc, malloc, mmap128k]
+        default: default
+permissions:
+  contents: read
+jobs:
+  leg:
+    runs-on: [self-hosted, Linux, X64, bench]
+    concurrency:
+      group: cv-bench-01
+      cancel-in-progress: false
+    timeout-minutes: 1380 # 23 h; the leg stops itself at 22 h with its report written
+    env:
+      CV_ENV: test
+      CV_BENCH_MACHINE_PROFILE: bench-runner
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - id: sync
+        run: uv sync --project services/api
+      - name: memdiag leg (${{ inputs.leg }})
+        id: leg
+        working-directory: services/api
+        env:
+          LEG: ${{ inputs.leg }}
+        run: |
+          set -euo pipefail
+          args=(leg --label "$LEG" --out-dir "$RUNNER_TEMP/memdiag/$LEG" --deadline-h 22)
+          for v in PYTHONMALLOC PYTHONTRACEMALLOC GLIBC_TUNABLES $(compgen -e | grep '^MALLOC_' || true); do
+            unset "$v"
+          done
+          case "$LEG" in
+            default) ;;
+            tracemalloc) args+=(--hours 12 --tracemalloc 6) ;;
+            malloc) export PYTHONMALLOC=malloc ;;
+            mmap128k) export MALLOC_MMAP_THRESHOLD_=131072 ;;
+            *) echo "leg must be default, tracemalloc, malloc or mmap128k" >&2; exit 2 ;;
+          esac
+          uv run python -m bench.ingestion.memdiag "${args[@]}"
+      - name: This leg under the rule (the verdict over all legs is judged on the downloaded artifacts)
+        if: always() && steps.sync.outcome == 'success'
+        working-directory: services/api
+        run: uv run python -m bench.ingestion.memdiag judge "$RUNNER_TEMP/memdiag"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: memdiag-${{ inputs.leg }}
+          path: ${{ runner.temp }}/memdiag/
+          retention-days: 30 # the four legs take four nights or more
+          if-no-files-found: error
