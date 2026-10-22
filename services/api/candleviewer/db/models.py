@@ -1370,6 +1370,9 @@ exchange_accounts = Table(
     Column("policy_disarm_code", Text),
     Column("policy_disarmed_at", TIMESTAMP(timezone=True)),
     Column("policy_disarm_audited_at", TIMESTAMP(timezone=True)),
+    # 0048_account_default_binding (#906 0d): the default binding's version, one more each time
+    # a profile becomes the account's default (`trg_ap_default_binding`, 21 Sec.3.2.4).
+    Column("default_binding_version", Integer, nullable=False, server_default=text("1")),
     CheckConstraint("(kind = 'main') = (parent_account_id IS NULL)", name="ea_parent_shape"),
     CheckConstraint("parent_account_id IS DISTINCT FROM id", name="ea_no_self_parent"),
     CheckConstraint("position_mode IN ('one_way','hedge')", name="ea_posmode"),
@@ -1383,6 +1386,7 @@ exchange_accounts = Table(
         "AND (policy_disarm_audited_at IS NULL OR policy_disarmed_at IS NOT NULL)",
         name="ea_disarm_shape",
     ),
+    CheckConstraint("default_binding_version >= 1", name="ea_default_binding_version"),
     Index(
         "ux_ea_uid",
         "exchange",

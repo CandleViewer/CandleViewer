@@ -992,6 +992,7 @@ One row per Bybit UID/environment pair. Main account and sub-accounts live in th
 | `policy_disarm_code`        | text           | yes  | NULL               | Rule code of the last self-check disarm (0031)         |
 | `policy_disarmed_at`        | timestamptz    | yes  | NULL               | That disarm's time; set with the code                  |
 | `policy_disarm_audited_at`  | timestamptz    | yes  | NULL               | When its record was written; NULL after a disarm: owed |
+| `default_binding_version`   | integer        | no   | `1`                | ≥ 1; +1 per default move (`trg_ap_default_binding`)    |
 
 ```sql
 CREATE TABLE exchange_accounts (
@@ -1088,6 +1089,14 @@ ALTER TABLE exchange_accounts ENABLE ALWAYS TRIGGER trg_ea_env_write_once;
 > hole for every account not in use, so use it only to roll back.
 
 **No hard delete (#2758, revision `0044_account_no_hard_delete`).** The write-once guards of this table and of `api_keys` (§3.2.2) are BEFORE UPDATE triggers and neither fires on a DELETE or an INSERT, so they could be stepped around by deleting an account that nothing RESTRICTs (no sub-account, order, execution, leg, membership, risk row or key rotation), its keys, profiles, positions and grants cascading with it, and inserting its id again: in another environment, or with an older key row. The revision revokes DELETE on `exchange_accounts` from `cv_app` where the role exists, as `0024` does for `api_keys`. An account leaves by soft delete (`deleted_at`): the accounts store never issues a DELETE, and a unit test scans `candleviewer/` and `cvdev/` for one. `cv_app` keeps INSERT, SELECT and UPDATE and holds no TRUNCATE, REFERENCES or TRIGGER: the default privileges of `pg_bootstrap.sql` (§1.1) grant SELECT, INSERT, UPDATE and DELETE, so TRUNCATE needs no REVOKE; `cv_ro` holds SELECT only. No foreign key cascades into the table (`created_by` and `updated_by` are `ON DELETE SET NULL`, `parent_account_id` is `RESTRICT`), and referential actions run as the table owner, so an account removed on purpose under change control, by `cv_owner`, still takes its keys, profiles, positions, position snapshots and grants with it. Rewriting the primary key is the other way to free an id, and no trigger guards `id` on this table (`trg_ea_env_write_once` compares `env` only): `cv_app`'s `UPDATE exchange_accounts SET id = ...` is refused with SQLSTATE 23503 through the table's children. Every account has its `Default` profile (§3.2.4), every foreign key into the table is `ON UPDATE NO ACTION`, and `cv_app` can neither re-point a profile or a key (`trg_ap_version`, `trg_api_keys_write_once`: SQLSTATE 23514) nor delete one (no DELETE on `account_profiles` or `api_keys`), so the old id stays referenced (`test_cv_app_cannot_free_an_account_id_by_updating_it`, with and without a key). That refusal rests on the chain alone: only a way to detach or remove the profile row would re-open the route (a cascading foreign key together with the profile's write-once guard gone, or a DELETE path on `account_profiles`; a cascade alone still meets `trg_ap_version`, SQLSTATE 23514), and a write-once guard on `id` would close it directly. The owner role (`cv_owner`: migrations, and the alert purge when `CV_PG_OWNER_DSN` is set) and superusers can still delete accounts and grant DELETE again. `lock_timeout` (5 s) brackets both directions and no row changes. The downgrade grants DELETE back, the `pg_bootstrap.sql` default, which re-opens the hole: use it only to roll back.
+
+**The default binding's version (#906 0d, revision `0048_account_default_binding`).** An account's default profile (§3.2.4) is a resource of its own in the REST contract, `getAccountDefaultProfile` and `setAccountDefaultProfile`, whose `ETag`, `W/"<accountId>:default:<n>"`, names a version and never the profile it binds, so a tag read before a move never matches after it, even once the default is back on the same profile. `default_binding_version` is that `n`: 1 for every account, whose bootstrap `Default` is its first binding, and one more each time a profile becomes the account's default (`trg_ap_default_binding`, §3.2.4). The constant default takes the PG 11+ fast path, so the ALTER rewrites no row (§9.3 rule 2). P0 (§12): no comment tag; `cv_app`'s table-level DML covers the column, so no GRANT.
+
+```sql
+ALTER TABLE exchange_accounts
+  ADD COLUMN default_binding_version integer NOT NULL DEFAULT 1,
+  ADD CONSTRAINT ea_default_binding_version CHECK (default_binding_version >= 1);
+```
 
 #### 3.2.2 `api_keys`
 
@@ -1606,6 +1615,23 @@ END $$;
 CREATE TRIGGER trg_ea_default_profile AFTER INSERT ON exchange_accounts
   FOR EACH ROW EXECUTE FUNCTION ea_default_profile();
 ALTER TABLE exchange_accounts ENABLE ALWAYS TRIGGER trg_ea_default_profile;
+```
+
+**The default moves with its version (revision `0048_account_default_binding`).** `trg_ap_default_binding` (AFTER UPDATE OF `is_default`, per row, `ENABLE ALWAYS`) adds one to the account's `exchange_accounts.default_binding_version` (§3.2.1) whenever one of its profiles becomes the default, whichever statement makes the move; an unset alone, an insert, a re-set default and every other edit leave it. The function pins its `search_path` and is no `SECURITY DEFINER`: `cv_app` holds UPDATE on `exchange_accounts`. No store statement writes the column. The owner role, superusers and a `cv_app` session that writes the column in SQL can still rewind it, PF-T08's accepted residual. The downgrade drops the trigger, its function, the CHECK and the column; the versions are lost, so a tag issued before it could match again after a re-upgrade: a rollback-only path.
+
+```sql
+CREATE FUNCTION ap_default_binding_bump() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  UPDATE public.exchange_accounts
+     SET default_binding_version = default_binding_version + 1
+   WHERE id = NEW.exchange_account_id;
+  RETURN NULL;
+END $$;
+CREATE TRIGGER trg_ap_default_binding AFTER UPDATE OF is_default ON account_profiles
+  FOR EACH ROW WHEN (NEW.is_default AND NOT OLD.is_default)
+  EXECUTE FUNCTION ap_default_binding_bump();
+ALTER TABLE account_profiles ENABLE ALWAYS TRIGGER trg_ap_default_binding;
 ```
 
 #### 3.2.5 `account_profile_revisions`
@@ -4624,6 +4650,7 @@ NAMING_CONVENTION = {
 | `0046_audit_signing_keys`       | `audit_signing_keys`, the audit export signing keys (§3.1.5b, ADR-0039): sealed seeds, KEK-wrapped DEKs, one active key per environment, trigger `trg_audit_signing_keys_write_once`, no DELETE for `cv_app` — **#889 S4**; the downgrade refuses while any row exists                                                                  |
 | `0043_order_submission`         | `idempotency_anchors` (§3.3.10), `recorded_stops` (§3.3.11) and `orders.provenance` (§3.3.4), their guard and TRUNCATE triggers; no `DELETE` or `TRUNCATE` for `cv_app` — **E29-T04 #913**; the downgrade refuses while an anchor, a recorded stop or an order not `placed` exists; on `0046_audit_signing_keys` by merge order (C-5.3) |
 | `0047_system_events_recipient`  | `system_events.recipient_user_id` (nullable, `REFERENCES users(id) ON DELETE SET NULL`) and the partial index `ix_se_recipient` (§3.10.2): a row addressed to one user, the view-as start's notice — **#3085 S13a**; the downgrade refuses while a row is addressed; on `0043_order_submission` by merge order (C-5.3)                  |
+| `0048_account_default_binding`  | `exchange_accounts.default_binding_version` (§3.2.1), trigger `trg_ap_default_binding` (§3.2.4): the default binding's version, one more each time a profile becomes the default — **#906 0d**; the downgrade (rollback only) drops both                                                                                                |
 
 ---
 
