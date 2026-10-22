@@ -77,6 +77,11 @@ def test_rule_5_puts_one_synchronous_check_at_the_recorded_stop_writer() -> None
         "greater, or it arms later (a higher activation price for a long, a lower one for a "
         "short; a trail with no activation price arms at once)",
         "Adding a trail where the record has none never loosens.",
+        "A request that omits the trail leaves the venue's trail in place, and its record carries "
+        "the record's trail forward (rule 6), so only an explicit clear (`trailing_stop: null`) "
+        "removes one",
+        "the writer refuses a clear before any record or audit is written, the owner's included",
+        "a re-sent armed trail is compared by the trigger it re-arms at",
         "The check is synchronous (C-2.21) and sits once, at the recorded-stop writer (rule 6)",
         "every stop request, from every writer, is compared with the record in force before its "
         "own record is written",
@@ -84,7 +89,11 @@ def test_rule_5_puts_one_synchronous_check_at_the_recorded_stop_writer() -> None
         "No route or rule keeps a copy of the check",
         "A tightening is never refused by it (§8.10, C-2.6). The watchdog's write (rule 3) is the "
         "one exception, and it is no loosening path",
-        "No other writer's request is exempt.",
+        "attached only where no record is in force or the market is already through the recorded "
+        "trigger",
+        "No other writer's request is exempt, and the writer takes no stop terms from a caller for "
+        "it: it derives the exempt stop from its own latest read",
+        "audited as `sl.attached` with the reason `no_record_in_force` or `trigger_passed`",
     ):
         assert phrase in rule, phrase
     assert "neither is attaching a stop where the exchange shows none" not in rule  # D-4137-02
@@ -96,7 +105,8 @@ def test_the_watchdog_attaches_the_record_in_force_where_it_can() -> None:
     section = _INTERNAL_DOC.split("\n### 8.8 ", 1)[1].split("\n### 8.9 ", 1)[0]
     rule = _words(section.split("\n3. ", 1)[1].split("\n4. ", 1)[0])
     for phrase in (
-        "Where a record is in force for the position (rule 6) and its trigger can still be placed",
+        "Where a record is in force for the position (rule 6) and its trigger can still be placed "
+        "(the market is not already through it: below it for a long, above it for a short)",
         "the watchdog attaches that recorded stop, as §8.5 step 5 would; otherwise it attaches a "
         "fallback SL at `profile.fallback_sl_offset`",
         "through B8's fallback path (`attach_fallback_sl`; INV-B8-d, INV-B8-f)",
@@ -106,7 +116,25 @@ def test_the_watchdog_attaches_the_record_in_force_where_it_can() -> None:
     assert "That fallback is B8's path, never a free choice: bounded by `CV_B8_MAX_FALLBACK`" in (
         five
     )
-    assert "audited as a fallback attach with its reason, so a loosening by necessity is " in five
+    assert "so a loosening by necessity is visible, never silent" in five
+
+
+def test_step_5_and_the_rule_table_defer_to_rule_3() -> None:
+    """D2-4137-01: no other text says the watchdog never sends the recorded stop."""
+    assert "attaches a fallback at `profile.fallback_sl_offset`, not the recorded stop" not in (
+        _INTERNAL_DOC
+    )
+    assert "| Position without a native SL >10 s → attach fallback" not in _INTERNAL_DOC
+    step_5 = _words(_INTERNAL_DOC.split("\n### 8.5 ", 1)[1].split("\n### 8.6 ", 1)[0])
+    assert (
+        "attaches the record in force where its trigger can still be placed, its profile "
+        "fallback otherwise (§8.8 rules 3 and 5)"
+    ) in step_5
+    section = _INTERNAL_DOC.split("\n### 15.5 ", 1)[1].split("\n### 15.6 ", 1)[0]
+    assert (
+        "The watchdog's fallback attach (§8.8 rules 3 and 5) is `sl.attached` with the reason"
+        in (_words(section))
+    )
 
 
 def test_a_rule_action_that_widens_a_stop_is_refused_at_the_writer() -> None:
