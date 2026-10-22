@@ -15,7 +15,8 @@ E13-T02 the frozen `GET /indicators`, E42-T09 two of each, and E13-T03 the four 
 `/indicator-presets*` operations); E28-T02's P-1a (#906) raised it by its overflow of 2, to
 125: E28-T05's five unmounted `/trade-group-definitions*` operations on that day's ``main``.
 E28-T02's slice 0d-1 (#906) raised it by 2, to 127: the default binding's `GET`/`PUT`, which
-the router slice D2 serves. Keep both caps tight: a contract PR that adds an operation raises
+the router slice D2 serves. #889 S9-1b serves the contract-first `downloadAuditExport`, which
+lowers it to 126. Keep both caps tight: a contract PR that adds an operation raises
 ``PENDING_BASELINE`` by exactly its overflow, measured against current ``main`` with CI re-run
 there (two parallel raises merge cleanly yet both under-count); a PR that serves a frozen
 operation lowers ``FROZEN_BASELINE`` and ``PENDING_BASELINE`` by the same amount.
@@ -46,7 +47,7 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 127
+PENDING_BASELINE = 126
 FROZEN_BASELINE = 116
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")

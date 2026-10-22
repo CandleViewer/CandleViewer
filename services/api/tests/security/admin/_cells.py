@@ -33,9 +33,9 @@ The rules the cells hold:
   onto `admin_router` (SR-E42-09).
 - Elevation never stands in for a permission: a manager or viewer holding every grace window is
   still refused wherever the matrix refuses it.
-- A handler that answers `501` before its gate in the app as wired today is listed in
-  `BEFORE_GATE` with its reason; its allowed caller must get that `501`, so a challenge or any
-  other answer fails the cell.
+- A handler that answers before its gate in the app as wired today is listed in `BEFORE_GATE`
+  with that answer's status and its reason; its allowed caller must get that status, so a
+  challenge or any other answer fails the cell.
 - A route the matrix makes public (BK-11's fetch, whose token is the credential) runs for every
   caller, the one with no session included.
 
@@ -121,6 +121,7 @@ OWN_GUARD: dict[str, OwnGuard] = {
     "GET /admin/audit": _AUDIT_READ,
     "POST /admin/audit/verify": _AUDIT_READ,
     "POST /admin/audit/export": _AUDIT_READ,
+    "GET /admin/audit/exports/{jobId}": _AUDIT_READ,  # #889 S9, its refusals in the same budget
     "POST /admin/support-bundle": OwnGuard(
         "health.diagnostics_exported", False, "E04's diagnostics export"
     ),
@@ -151,12 +152,18 @@ GATE_REQUESTS: dict[str, dict[str, Any]] = {
 }
 #: The class a handler-gated cell demands, where its route has several (`setFeatureFlag`).
 GATE_CLASS: dict[str, str] = {"PUT /admin/feature-flags/{flagKey}": "flags"}
-#: Handler-gated routes whose handler answers `501` before its gate in the app as wired today: the
-#: Owner is let in and must get that `501`, never a challenge or another answer. The day the
-#: service is wired, the challenge (a 403) fails the Owner's cells until the row goes.
-BEFORE_GATE: dict[str, str] = {
+#: Handler-gated routes whose handler answers before its gate in the app as wired today, and with
+#: what: the Owner is let in and must get that status, never a challenge or another answer. The
+#: day the service is wired, the challenge (a 403) fails the Owner's cells until the row goes.
+BEFORE_GATE: dict[str, tuple[int, str]] = {
     "DELETE /admin/backups/{backupId}": (
-        "#966 BK-12: `501` before its gate until the backup engine passes a remover (#3319)"
+        501,
+        "#966 BK-12: `501` before its gate until the backup engine passes a remover (#3319)",
+    ),
+    "GET /admin/audit/exports/{jobId}": (
+        404,
+        "#889 S9: the cell's job id names no job, so the requester check's `404` comes first; "
+        "`test_audit_export_download.py` and `test_job_poll.py` reach the gate",
     ),
 }
 #: Served `not_executable` rows whose path guard answers before RBAC and before any body is read,
@@ -295,7 +302,7 @@ def expect(op: Op, actor: str, state: str) -> Expected:
     fresh = state == "fresh"
     gate = op.gate
     graced: tuple[Record, ...] = ()
-    if gate is not None and gate.grace and fresh:
+    if gate is not None and gate.grace and fresh and op.key not in BEFORE_GATE:
         graced = (Record("auth.step_up_grace_used", "success", gate.action_class),)
     if gate is not None and gate.where == "path" and not fresh:
         return _challenge(gate)  # the path guard runs before RBAC
@@ -422,8 +429,8 @@ def assert_status(world: AdminWorld, op: Op, actor: str, state: str, *, cell: st
     want, seen = expect(op, actor, state), observe(world, op, actor, state, cell=cell)
     got = f"{_where(op, actor, state)}: got {seen.status} {seen.code}"
     if want.kind == "allow" and op.key in BEFORE_GATE:  # each excuse limits itself (SR-X03-3)
-        excused = f"{got}, expected the 501 before its gate ({BEFORE_GATE[op.key]})"
-        assert seen.status == 501, excused
+        status, why = BEFORE_GATE[op.key]
+        assert seen.status == status, f"{got}, expected the {status} before its gate ({why})"
     elif want.kind == "allow":
         assert seen.status not in (401, 403), f"{got}, expected the route to run"
         assert seen.status < 500 or seen.status in (501, 503), f"{got}, an unhandled error"

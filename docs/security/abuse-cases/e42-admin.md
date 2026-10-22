@@ -66,9 +66,10 @@ registries of `api/step_up.py` (path-gated before RBAC, handler-gated after it),
    permission check. Each restores what it changed. A PR that mounts an admin or users route must
    put it on `admin_router` or give it an `OWN_GUARD` row, and a `GATE_REQUESTS` row if its gate
    needs a body; the in-flight #3084, #3085 and #3319 will meet this, as #2649's four routes did.
-6. A handler that answers `501` before its gate in the app as wired today is listed, with its
-   reason, in `BEFORE_GATE` (`_cells.py`): `deleteBackup` answers `501` until the backup engine
-   passes an artefact remover (#3319). Its allowed caller must get exactly that `501`; a challenge
+6. A handler that answers before its gate in the app as wired today is listed, with that status and
+   its reason, in `BEFORE_GATE` (`_cells.py`): `deleteBackup` answers `501` until the backup engine
+   passes an artefact remover (#3319), and `downloadAuditExport` `404` for the cell's job id, which
+   names no job (#889 S9). Its allowed caller must get exactly that status; a challenge
    or any other answer fails the cell, so the row cannot excuse a wired handler.
 7. A route the matrix makes public runs for every caller, the one with no session included:
    `downloadBackup`, whose single-use token is the credential (#966 BK-11), is in `OWN_GUARD`.
@@ -127,7 +128,7 @@ Test paths are under `services/api/`; `::name` continues the path before it.
 | AC-ADM-18 | COVERED | `tests/unit/api/test_audit_router.py::test_refusals_write_at_most_the_hourly_cap_and_the_owner_still_reads`, `::test_refusal_carries_retry_after_only_over_the_cap` |
 | AC-ADM-19 | COVERED | `tests/unit/api/test_audit_router.py::test_verify_span_over_the_cap_is_422_naming_the_limit`, `::test_verify_rate_limit_is_checked_before_single_flight` |
 | AC-ADM-20 | COVERED, WAITING | `tests/unit/api/test_audit_router.py::test_export_owner_gets_501_with_not_implemented_type`. The rest waits on E42-T02 (#889), decision D1 |
-| AC-ADM-21 | WAITING | `downloadAuditExport` is not mounted; export jobs answer 501: E42-T02 (#889) |
+| AC-ADM-21 | COVERED, WAITING | `tests/unit/api/test_audit_export_download.py::test_each_refusal_comes_in_the_contracts_order`, `::test_another_owner_gets_the_404_of_an_unknown_job`, `::test_served_downloads_count_against_the_hour`; `tests/unit/api/test_admin_jobs_router.py::test_every_404_is_not_found_with_rule_job_unknown` (#889 S9). The end-to-end flow waits on S10, which creates the job |
 | AC-ADM-22 | WAITING | #3085's server slice; the contract is pinned by `tests/contract/test_admin_view_as_contract.py` |
 | AC-ADM-23 | COVERED, WAITING | `tests/unit/admin/test_restore_guard.py::test_maintenance_off_is_409_maintenance_mode_required_and_creates_no_job`, `::test_preconditions_are_checked_in_the_contract_order`. The route waits on #3084 (AD-F02) |
 | AC-ADM-24 | WAITING | #3084, Owner decision D7 |

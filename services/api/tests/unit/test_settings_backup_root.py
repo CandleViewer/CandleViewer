@@ -87,6 +87,7 @@ _AUDIT = "the directory of CV_AUDIT_WAL_PATH"
             id="lake-reached-through-a-symlink",
         ),
         pytest.param("{tmp}/data/bars", {}, "CV_BARS_STATE_ROOT", id="above-the-default-bar-state"),
+        pytest.param("{tmp}/data/audit-exports/b", {}, "audit export", id="in-audit-exports"),
         # The spill WAL and the bar state are stripped, and their `~` expanded, as their own
         # checks do; so is the lake's `~`, for the defaults derived from it.
         pytest.param(

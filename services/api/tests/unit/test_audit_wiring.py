@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -42,6 +43,8 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
             audit_verify_max_span=31,
             audit_verify_rate_per_hour=37,
             audit_verify_deadline_s=41.0,
+            audit_download_rate_per_hour=43,
+            audit_export_ttl_s=47,
         )
     )
     lim, bud = seen["limiter"], seen["budget"]
@@ -49,6 +52,10 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
     assert (seen["query_timeout_ms"], seen["verify_max_span"]) == (1500, 31)
     assert (seen["verify_limiter"]._rate, seen["verify_limiter"]._cap) == (37, 71)
     assert seen["verify_deadline_s"] == 41.0
+    assert (seen["download_limiter"]._rate, seen["download_limiter"]._cap) == (43, 71)  # #889 S9
+    assert seen["exports"]._ttl == timedelta(seconds=47)
+    assert seen["exports"]._jobs is app.state.admin_jobs  # the store the poll reads
+    assert seen["step_up"] is app.state.app_context.auth
     assert seen["verify_events"] is None  # the fake backend wires no `system_events` writer
     assert (bud._per_hour, bud._owner_per_hour) == (11, 13)
     assert (bud._flush_pages, bud._flush_s) == (17, 19.0)

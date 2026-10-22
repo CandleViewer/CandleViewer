@@ -249,6 +249,17 @@ path is S0 → S2 → S8 → S9 → S10; S3 starts at once, S5 merges after S0, 
 | S9 | The download and the requester rule (`getJob` too), dark until S10. 2026-10-22: four PRs, S9-0 the requester rule and `getJob`, S9-1a the reader (the lookup, the expiry, the file's checks and its guarded stream, mounting nothing), S9-1b the route, S9-2 the boot sweep and the hard-link probe | S2, S8 |
 | S10 | The signed export replaces the 501, through the injected signer; an export that straddles a rotation fails the job; the SR-E42-08 mark; AC-ADM-20 and AC-ADM-21 | S6, S7, S9 |
 
+2026-10-22 (#889 S9-1b), the download's choices where 22 is silent: a file that cannot be served (missing, a link, not
+one regular file, or not its manifest's size) answers `503 store_unavailable`, with `Retry-After` only for the reader's
+transient cause, and is recorded as `admin.audit_denied`, reason `export_unservable`, under the audit budget, as the
+`404` (`export_not_found`) and the `410` (`export_expired`) are; those records name `object_kind` `audit_export` and
+`object_id` the job id, as S10's must, while the `403 forbidden` is `authorize()`'s record, with `object_kind`
+`audit_log`; a step-up refusal is a challenge, recorded once by B16 and not budgeted; a queued, running, failed or
+manifest-less job, like an unwired route, answers the `404` before the step-up; a file expires at the earlier of
+`expires_at` and its job's end plus `audit_export_ttl_s`, so S10 derives `expires_at` from that TTL, from that instant
+on (22 says after it: the boundary fails closed), and the `410` deletes it; `Repr-Digest` is the manifest's signed
+digest, so the server checks only the size and the client the bytes.
+
 ## Why not the alternatives
 
 - **(b) The §3 edge.** It is the same narrow call, made through a CONSTITUTION amendment: C-16.1's issue, three

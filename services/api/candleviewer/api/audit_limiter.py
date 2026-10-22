@@ -95,6 +95,8 @@ class AuditQueryLimiter:
 _HOUR_S = 3600.0
 #: The `audit_verify_rate_per_hour` default: verify runs a user may start in a rolling hour.
 VERIFY_RATE_PER_HOUR: int = Settings.model_fields["audit_verify_rate_per_hour"].default
+#: The `audit_download_rate_per_hour` default: export files a user may download in a rolling hour.
+DOWNLOAD_RATE_PER_HOUR: int = Settings.model_fields["audit_download_rate_per_hour"].default
 
 
 class AuditVerifyLimiter:

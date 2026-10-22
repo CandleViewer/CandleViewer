@@ -130,6 +130,15 @@ def test_export_limits_are_settings_named_with_their_defaults() -> None:
         assert name not in Settings.model_fields or Settings.model_fields[name].default == default
 
 
+def test_the_download_limit_is_a_setting_with_the_default_the_contract_states() -> None:
+    """#889 S9: `downloadAuditExport` names `audit_download_rate_per_hour` with its default."""
+    download = text(SPEC["paths"]["/admin/audit/exports/{jobId}"]["get"]["description"])
+    stated = re.search(r"`audit_download_rate_per_hour` \(default (\d+)\)", download)
+    assert stated and Settings.model_fields["audit_download_rate_per_hour"].default == int(
+        stated[1]
+    )
+
+
 @pytest.mark.parametrize(
     "rule",
     [
