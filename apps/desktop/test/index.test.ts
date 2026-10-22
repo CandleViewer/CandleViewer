@@ -39,6 +39,7 @@ vi.mock("electron", () => ({
     defaultSession: {
       webRequest: { onHeadersReceived: vi.fn() },
       setPermissionRequestHandler: vi.fn(),
+      setDevicePermissionHandler: vi.fn(),
     },
   },
   ipcMain: { handle: vi.fn() },
@@ -195,6 +196,57 @@ describe("app:// wiring (#3410)", () => {
     expect(devCallback).toHaveBeenCalledWith({
       responseHeaders: { "x-a": ["b"], "Content-Security-Policy": [buildCsp()] },
     });
+  });
+});
+
+describe("the session's permission handlers", () => {
+  it("denies every permission request", async () => {
+    const requests = vi.mocked(session.defaultSession.setPermissionRequestHandler);
+    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(1));
+    const onRequest = requests.mock.calls[0]?.[0];
+    if (typeof onRequest !== "function") {
+      throw new Error("the permission request handler was not installed");
+    }
+    const callback = vi.fn();
+    // The handler reads only the callback: the cast stands in for the WebContents and details.
+    onRequest(...([{}, "media", callback, {}] as unknown as Parameters<typeof onRequest>));
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(false);
+  });
+
+  it.each([
+    ["hid", "app://candleviewer"],
+    ["hid", "https://evil.test"],
+    ["usb", "app://candleviewer"],
+    ["usb", "https://evil.test"],
+    ["serial", "app://candleviewer"],
+    ["serial", "https://evil.test"],
+  ] as const)(
+    "denies a %s device check from %s (GHSA-fw47-9c62-h3vw)",
+    async (deviceType, origin) => {
+      const devices = vi.mocked(session.defaultSession.setDevicePermissionHandler);
+      await vi.waitFor(() => expect(devices).toHaveBeenCalledTimes(1));
+      const onDevice = devices.mock.calls[0]?.[0];
+      if (typeof onDevice !== "function") {
+        throw new Error("the device permission handler was not installed");
+      }
+      // The handler reads none of the details: the cast stands in for Electron's device object.
+      const details = { deviceType, origin, device: {} } as unknown as Parameters<
+        typeof onDevice
+      >[0];
+      expect(onDevice(details)).toBe(false);
+    },
+  );
+
+  it("installs the device handler before the window is created", async () => {
+    await vi.waitFor(() => expect(BrowserWindow).toHaveBeenCalled());
+    const [installed] = vi.mocked(session.defaultSession.setDevicePermissionHandler).mock
+      .invocationCallOrder;
+    const [created] = vi.mocked(BrowserWindow).mock.invocationCallOrder;
+    if (installed === undefined || created === undefined) {
+      throw new Error("the device handler or the window is missing");
+    }
+    expect(installed).toBeLessThan(created);
   });
 });
 
