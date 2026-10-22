@@ -403,6 +403,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.focus.ring`.
 - **Storybook**: RingOnButton, RingOnCustomSurrogate.
 - **Tests**: contrast-ratio automated check, visual.
+- **On canvas-adjacent surrogates (`docs/design/E11/E11-D05.md` §9.1):** on a DOM-mirror surrogate aligned over canvas content (`05-accessibility-standard.md` §6.1; E06-D03; E11-D02 §7) the ring is **2 px `color.focus.ring` at 2 px offset with a 1 px pane-colour halo** (`color.surface.canvas`) between ring and content, so it stays visible over data ink of any luminance; the keyboard cursor column is E06-D03 D10's double ring (core ≥2 px plus halos), drawn on the canvas in `color.chart.focus.ring` with a `color.chart.pane.bg.default` halo (= `color.focus.ring` / `color.surface.canvas` — the engine-prefix aliases of `docs/design/E11/E11-D05.md` §4.1b, because the engine never reads CSS), and the chart draws **one** CMP-039 ring at the chart boundary, never two; measured on the canvas 7.05 / 6.30 / 18.32 and on raised chrome 6.66 / 5.86 / 17.30 (dark / light / high-contrast — the high-contrast ring is `palette.white` since #3896); in high-contrast the ring is ≥20 CIE76 ΔE from the primary and selected fills (`16` §2.1). Storybook adds RingOnCanvasData (the ring over candles in three themes; PROPOSED).
 
 ---
 
@@ -2064,30 +2065,39 @@ These are the building blocks of the fully custom WebGL chart engine (`26-chart-
 
 ### CMP-180 ChartRoot
 
-- **Tier**- Chart-primitive · **Purpose**: top-level engine mount — owns the WebGL context, device-pixel-ratio handling, resize observer, and the master render loop; hosts N Panes.
-- **Props**: `panes: PaneConfig[]` · `timeScale: TimeScaleConfig` · `theme: ThemeTokens` · `onReady?(api: ChartApi)`.
-- **A11y**: root canvas carries `role="img"` + a computed `aria-label` summarising the whole chart state ("BTCUSDT, 5 minute, last 65,432, up 1.2%"), kept in sync every render tick but throttled to avoid live-region flooding; owns the top-level DOM-mirror container that all descendant primitives render their surrogate nodes into (per `05-accessibility-standard.md` §6.1).
-- **Tokens**: `color.chart.background`, `color.chart.grid`.
-- **API sketch**:
+- **Tier**: Chart-primitive · **Purpose**: top-level engine mount — owns the WebGL2 context, device-pixel-ratio handling, the resize observer, the master render loop and the worker / inline run mode (`26-chart-engine-design.md` §2); hosts N Panes under one TimeAxis (§3.1); owns the DOM-mirror root and the two live regions (`docs/design/E11/E11-D02.md` §10; E06-D03 D1).
+- **Props**: `panes: PaneConfig[]` · `timeScale: TimeScaleConfig` · `theme: ThemeTokens` (the resolved `theme-uniforms.json` of the active theme, `16-design-system-brief.md` §11.1 — a data swap, never a CSS cascade) · `density: "comfortable" | "compact" | "dense"` (`docs/design/E11/E11-D05.md` §6; `dense` is chart-only) · `runMode?: "worker" | "inline"` (`26` §8; default `worker` when OffscreenCanvas exists) · `syncGroup?: string` · `onReady?(chart: Chart)`.
+- **Variants**: single pane · multi pane (splitters, collapsed stubs, pane focus bar — E11-D02 D14).
+- **States** (E11-D02 D16): loading (skeleton grid + "Loading 5 000 bars…") · streaming · stale (data-ink × 0.85 + the `Stale Ns · last hh:mm:ss` chip) · disconnected (frozen chart, DOM scrim, "Disconnected — last data hh:mm") · replay (4 px `color.chart.replay.border` frame + REPLAY chip with clock) · reduced detail (corner badge: "Reduced detail — footprint text hidden" / "Reduced detail — colour only" / "Reduced live detail — background pane" / "Basic rendering — WebGL unavailable") · aggregated (status-row chip) · context lost / recovering.
+- **A11y**: the canvas carries `role="img"` with a rolling, throttled `aria-label` (symbol, interval, last, change — E06-D03 D4; `05-accessibility-standard.md` §6.4); the root wrapper's role (`application` per E06-D03 D4 vs `img` + an APG-grid mirror per E11-D01 Q4-e) is **open — E11-D07's call**; owns the top-level DOM-mirror container every descendant primitive renders its surrogate nodes into (`05` §6.1; windowed and cursor-centred, E06-D03 D1) and the two pre-rendered live regions (polite ambient values ≤1 per 2 s per field; `role="alert"` for discrete events — E11-D02 §10 "Ambient live-region policy"); Tab order per E11-D02 §12 (toolbar → status chips → per pane: legend → left gutter → plot → handles → right gutter → lock badge → splitter; `Ctrl+\` leaves the region); the focus ring is CMP-039 **once** at the chart boundary with the E06-D03 D10 cursor column inside (E11-D05 §9.1).
+- **Tokens**: `color.chart.pane.bg.default`, `color.chart.pane.bg.focused` (both = `color.surface.canvas`), `color.chart.grid.major` (= `color.border.default`), `color.chart.grid.minor` (= `color.grid.line`; off in high-contrast), `color.chart.replay.border`, `color.focus.ring`, `color.surface.raised` (chrome rows, badges, chips), `color.text.primary`, `color.status.warning.strong` (badge glyph) — the `color.chart.*` names are E11-D05 slots (`docs/design/E11/E11-D05.md` §4), PROPOSED aliases until the token PR lands (E11-T04).
+- **API sketch** (`26` §8's `Chart`, which supersedes this entry's earlier `ChartApi`):
 
 ```ts
-interface ChartApi {
-  addPane(config: PaneConfig): PaneHandle;
-  removePane(id: string): void;
-  setTimeRange(from: number, to: number): void;
-  subscribeCrosshairMove(cb: (point: CrosshairPoint) => void): () => void;
-  getDomMirrorRoot(): HTMLElement; // a11y contract anchor
-}
-interface ChartRootProps {
-  panes: PaneConfig[];
-  timeScale: TimeScaleConfig;
+interface ChartOptions {
+  container: HTMLElement;
+  runMode?: "worker" | "inline";
   theme: ThemeTokens;
-  onReady?: (api: ChartApi) => void;
+  density?: "comfortable" | "compact" | "dense";
+  syncGroup?: string;
+  timeZone?: "UTC" | string;
+}
+interface Chart {
+  readonly panes: readonly Pane[];
+  addPane(opts: PaneOptions): Pane;
+  removePane(id: PaneId): void;
+  readonly timeScale: TimeScale;
+  setTheme(theme: ThemeTokens): void;
+  setDensity(d: Density): void; // one call sets the whole record (E11-D05 §6)
+  subscribe<E extends keyof ChartEvents>(e: E, cb: (p: ChartEvents[E]) => void): Unsubscribe;
+  getStats(): FrameStats; // renderProfile, lod tiers, draw calls (26 §8)
+  dispose(): void;
 }
 ```
 
-- **Storybook**: EmptyChart, SinglePane, MultiPane, ThemeSwitchDemo.
-- **Tests**: unit (API contract), visual, axe (root aria-label + mirror-root presence), performance (mount ≤150ms, resize responsiveness), WebGL-context-loss recovery test.
+- **Data contract**: the `26` §6 worker protocol — `init { canvas, dpr, theme, chartConfig }` · `resize { width, height, dpr }` · `command { setTheme | setLod | … }` · `frame { frameTimeMs, drawCalls, triangles, uploadedBytes, lod }` · `viewport { timeStart, timeEnd, priceLow, priceHigh, barSpacing }` · `a11y { cursorSummary }` · `error`; market data through the host from `bars.{symbol}.{bar_type}.{param}` and `ticker.{symbol}` (`14-screens-catalogue.md` §0.4, SCR-030).
+- **Storybook**: `ChartEngine/ChartRoot` — EmptyChart, SinglePane, MultiPane, ThemeSwitchDemo, DensityComfortable, DensityCompact, DensityDense, HighContrast, ReducedMotion, DegradedTwoD, ContextLostRecovery, SyncAnnouncement (the E11-D05 §9.2 harness: `runMode: "inline"`, the seeded bench fixture, a fixed viewport and DPR).
+- **Tests**: unit (API contract), visual (goldens per theme × density on SwiftShader, E11-T08), axe (root label, mirror root, live regions), performance budget (mount ≤150 ms, resize within one frame, ≤18 draw calls per pane — `26` §4), DOM-mirror parity (the mirror's rows equal the fixture's bars at every LOD tier, `26` §12), WebGL-context-loss recovery.
 
 ### CMP-181 CandleSeries
 
@@ -2184,30 +2194,42 @@ interface FootprintSeriesProps {
 
 ### CMP-188 PriceAxis
 
-- **Tier**: Chart-primitive · **Purpose**: vertical price-scale axis, shared across panes bound to the same scale; supports linear/log.
-- **Props**: `min/max` · `scaleType: "linear"|"log"` · `tickFormatter` · `onDragScale?`.
-- **A11y**: axis tick labels are part of the DOM-mirror (a real, if visually-hidden-when-redundant, list of tick values), draggable-to-rescale has a keyboard equivalent (focus axis, arrow keys nudge scale).
-- **Tokens**: `color.chart.axis`, `font.mono`.
-- **Storybook**: Linear, Log, Dragging(keyboard demo).
-- **Tests**: unit, visual, axe, keyboard rescale test.
+- **Tier**: Chart-primitive · **Purpose**: the vertical price scale per pane in a right gutter (a left gutter when a secondary indicator scale exists — two gutters per pane, E11-D02 D7); linear / log / percent / inverted; the whole gutter is the drag zone.
+- **Props**: `min / max` · `scaleType: "linear" | "log" | "percent"` · `inverted?: boolean` · `locked?: boolean` · `side: "right" | "left"` · `tickFormatter` · `showMarkPill` (default on) · `showIndexPill` (opt-in, SCR-031 Scales) · `onDragScale?`.
+- **Variants**: right / left gutter · per density (`type.num.base` / `type.num.sm` / `type.num.xs` by `axisFontSizeClass`).
+- **States** (E11-D02 D7): auto · locked ("Price scale locked" badge — the restore control) · mode tag `log` / `%` / `inv` · last-price pill up / down (keyed to the bar's direction, held ≤2/s, ▲ / ▼ glyph) · mark pill `M …` · index pill `I …` · focused (the CMP-039 ring 2 px inside the gutter) · dragging.
+- **A11y**: tick labels are part of the DOM mirror; the surrogate is `role="group"` named "Price axis, 63,900 to 64,300, linear, auto"; keyboard: `↑/↓` compress / expand 10 %, `Shift+↑/↓` 25 %, `PageUp/PageDown` pan the range 50 %, `Home` auto-fit, `Shift+F10` the SCR-043 menu, `Esc` back to the plot cursor, `Tab` to the lock badge when locked (E11-D02 §7.1 table); announcements polite ≤2/s ("Price scale locked" once, then the range; "Price scale: auto"); direction is never colour-only (the pill's glyph).
+- **Tokens**: `color.chart.axis` (= `color.text.tertiary`; 5.96 / 6.36 / 11.87 on the canvas — E11-D02 CR-2; tick labels, mode tag), `font.family.mono` via `type.num.xs` / `type.num.sm` / `type.num.base`, `type.ui.caption` (mode tag), `color.chart.rule` (= `color.border.default`; the axis rule), `color.candle.up` / `color.candle.down` + `color.chart.pill.text.inverse` (= `color.text.inverse`; the last-price pill, GL text in the axis batch), `color.chart.pill.bg` + `color.chart.pill.border` + `color.chart.pill.text.default` (= `color.surface.raised` / `color.border.strong` / `color.text.primary`; the mark / index pills, GL), `color.surface.raised` + `color.border.strong` + `color.text.primary` (the lock badge, DOM), `color.chart.boundary` (= `color.text.tertiary`; the mark line), `color.focus.ring` (the DOM ring on the surrogate) — every colour the engine draws for this entry is under an engine prefix (`docs/design/E11/E11-D05.md` §4.1b, PROPOSED aliases).
+- **API sketch**: `26` §8 declares `PriceScale` (on `Pane.priceScale`) as a type name without members; PROPOSED members, contract-first to the `26` owner (E11-D05 G14): `setMode(mode)`, `setLocked(locked)`, `fit()`; the lock badge is a button whose accessible name is its text.
+- **Data contract**: the pane's visible range (`viewport { priceLow, priceHigh }`); mark / index from `ticker.{symbol}`; tick size from `GET /api/v1/instruments/{symbol}`.
+- **Storybook**: `ChartEngine/PriceAxis` — Linear, Log, Dragging (keyboard demo), Percent, Inverted, Locked, TwoGutters, LastPricePillUp, LastPricePillDown, MarkPill, HighContrast, Dense.
+- **Tests**: unit (the ladder `{1, 2, 5} × 10^n × tickSize`, decimal-round majors D2, the pill nudge D5), visual, axe, keyboard rescale test (the table above), DOM-mirror parity (tick values), performance (gutter re-measured only on a format / font / magnitude change).
 
 ### CMP-189 TimeAxis
 
-- **Tier**: Chart-primitive · **Purpose**: horizontal time-scale axis, shared master clock across all panes in a chart (synced pan/zoom).
-- **Props**: `range: {from,to}` · `tickFormatter` · `onPan/onZoom`.
-- **A11y**: keyboard pan (`←/→`) and zoom (`+/-`, `Ctrl+scroll` equivalent via keyboard modifiers) documented in the global hotkey table.
-- **Tokens**: `color.chart.axis`, `font.mono`.
-- **Storybook**: Default, ZoomedIn, ZoomedOut.
-- **Tests**: unit, visual, axe, keyboard pan/zoom test, sync-across-panes integration test.
+- **Tier**: Chart-primitive · **Purpose**: the shared horizontal time strip under the lowest pane, master clock for every pane (synced pan / zoom); calendar-ladder decimation (E11-D02 D4); the cluster `[ auto | fit | › ]` (E11-D01 Q2-c).
+- **Props**: `range: {from, to}` · `timeZone` (`UTC` default) · `boundary` (US-CHART-009's one setting) · `tickFormatter` · `onPan / onZoom`.
+- **Variants**: per density (density gap `G` 96 / 80 / 64 px); time bars (this ladder); non-time bars' label strategy is E12-D06's.
+- **States** (E11-D02 D8): following live (`auto` pressed) · paused ("Paused at hh:mm" pill) · session / day boundary · maintenance band (`pattern.hatch.gap`) · loading band ("Loading older bars…") · go-to-date marker · remote crosshair · virtual-now (replay) · focused.
+- **A11y**: the surrogate is `role="group"` named "UTC time axis, 14 Oct 07:30 to 13:47, 1 minute bars"; keyboard: `←/→` pan 10 % (`Shift` one width), `+/−` bar spacing × 1.1 (`Shift` × 1.25), `Home` = fit, `End` = latest, `Ctrl+Home` default spacing, `Shift+F10` the SCR-043 menu, `Esc` back to the plot; the cluster is one roving stop (`←/→`, `Enter` / `Space`) whose `auto` button is named by its visible text ("Following live" / "Paused at 13:47 — resume live"); **`+/−` on the focused axis; no modifier + wheel is bound** (E11-D01, ruled 2026-10-20); the zone tag's 1 Hz clock is `aria-live="off"`. Pattern (hollow, dashed, hatched) marks estimated or absent, never a side (E25-D01 §9.5, PROPOSED for `16` §6; binding today under `16` §6 rules 1 and 5): the maintenance band is `pattern.hatch.gap`, a boundary is a `dash.4-4` line.
+- **Tokens**: `color.chart.axis` (tick labels, zone tag), `font.family.mono` via `type.num.*`, `color.chart.rule` (= `color.border.default`; the strip rule), `color.chart.boundary` (= `color.text.tertiary`; boundary line, band edges), `color.chart.hatch.texture` (= `color.border.strong`; `pattern.hatch.gap`'s texture), `color.surface.raised` + `color.border.default` (cluster), `color.surface.selected` + `color.border.strong` + `color.text.primary` (pressed `auto`), `color.status.warning.subtle` + `color.status.warning.strong` (Paused pill), `color.surface.hover` + `color.text.secondary` (loading band), `color.chart.marker.goto` + `color.chart.pill.text.on-marker` (= `color.action.primary.default` / `color.text.on-action`; the go-to-date marker and its GL pill), `color.chart.crosshair` at `opacity.muted` (remote crosshair), `color.chart.replay.border` + `opacity.scrim` (virtual-now line, future dim), `color.focus.ring` (the DOM ring on the surrogate) — the engine-drawn chrome binds the `docs/design/E11/E11-D05.md` §4.1b aliases (PROPOSED).
+- **API sketch**: `26` §8 declares `TimeScale` (on `Chart.timeScale`) as a type name without members; PROPOSED members (E11-D05 G14): `setVisibleRange(from, to)`, `fit()`, `scrollToLatest()`, `follow(on)`.
+- **Data contract**: `viewport { timeStart, timeEnd, barSpacing }`; `sync { groupId, timeRange }`; boundaries and maintenance windows from the instrument / system feed; the WS-corrected server clock (E11-S07).
+- **Storybook**: `ChartEngine/TimeAxis` — Default, ZoomedIn, ZoomedOut, Decimation0_5PxPerBar, Decimation3PxPerBar, Decimation12PxPerBar, Decimation50PxPerBar, SessionBoundary, MaintenanceBand, ClusterLive, ClusterPaused, LoadingBand, GoToDateMarker, Replay, HighContrast.
+- **Tests**: unit (the ladder, the drop order P3 → P0, the two 8 px exclusion zones, the worked sets of E11-D02 §5.4), visual, axe, keyboard pan / zoom test, sync-across-panes integration test, DOM-mirror parity (the retained labels), performance (≤20 time lines and labels in one SDF call).
 
 ### CMP-190 Crosshair
 
-- **Tier**: Chart-primitive · **Purpose**: synced crosshair across all panes + linked charts in a multi-chart layout, with an OHLCV/value readout tooltip.
-- **Props**: `position: {time,price}|null` · `syncGroupId?: string` (for cross-panel/cross-chart linking, digest 23 §11).
-- **A11y**: crosshair position is exposed via the currently-focused bar/cell's DOM-mirror (keyboard-driven crosshair movement is the accessible path — mouse-hover crosshair is the pointer-only convenience layer, per the "no hover-only functionality" rule in `05-accessibility-standard.md` §3.1.6).
-- **Tokens**: `color.chart.crosshair`.
-- **Storybook**: Default, SyncedAcrossPanes, KeyboardDriven.
-- **Tests**: unit, visual, axe, keyboard test, cross-pane sync integration test.
+- **Tier**: Chart-primitive · **Purpose**: the synced cursor across the panes of a chart and the charts of a sync group, with the readout (CMP-197); the data cursor and the pointer crosshair are one position with two drivers, last input wins (E11-D01).
+- **Props**: `position: {time, price} | null` · `magnetMode: "off" | "weak" | "strong"` (default `off`, E11-D01 D3) · `syncGroupId?: string`.
+- **Variants**: none (pointer / keyboard / remote / magnet are states).
+- **States** (E11-D02 D3, D9): pointer · keyboard (the E06-D03 D10 cursor column replaces the vertical line while the chart root has focus) · magnet snap (OHLC letter + magnet glyph in the price pill) · remote (dashed at `opacity.muted` with a neutral time pill) · coincident with a gridline (dash phase offset 4 px) · hidden during a drag / wheel burst.
+- **A11y**: the crosshair position is the focused bar's DOM-mirror row (`aria-current`); keyboard-driven movement is the accessible path — `←/→` bar, `Shift` ×10 (= `PageUp/PageDown`, E06-D03 D6), `↑/↓` price level, `Home/End`, `Enter` expands the bar in the mirror — and pointer hover is a readout only (`05-accessibility-standard.md` §3.1.6); announcement cadence per E06-D03 D5 (lead 0 ms, repeat window 500 ms, trailing flush ≤250 ms). Pattern (hollow, dashed, hatched) marks estimated or absent, never a side (E25-D01 §9.5, PROPOSED for `16` §6; binding today under `16` §6 rules 1 and 5): the remote line is dashed because it is a remote cursor.
+- **Tokens**: `color.chart.crosshair` (= `color.crosshair`; 9.33 / 9.65 / 9.33 on the canvas, ≥3.08 over any gridline — E11-D02 D3), `color.chart.pill.text.inverse` (= `color.text.inverse`; the pill text on the crosshair fill, GL — E11-D02 A-9), `color.chart.pill.bg` + `color.chart.pill.border` + `color.chart.pill.text.default` (the remote crosshair's neutral time pill), `opacity.muted` (remote), `color.chart.focus.ring` + `color.chart.pane.bg.default` (= `color.focus.ring` / `color.surface.canvas`; the D10 cursor column and its halo, drawn on the canvas — `docs/design/E11/E11-D05.md` §4.1b), `type.num.*`, `radius.xs`.
+- **API sketch**: `ChartEvents["crosshair"] { time, price, barIndex, cell? }`, edge-triggered (`26` §8); `chart.setMagnet(mode)` is PROPOSED — `26` §8 has no magnet member (E11-D05 G14).
+- **Data contract**: `pick { objectId, kind, bar, price, cell? }`, `a11y { cursorSummary }`, `sync { crosshair }` (`26` §6).
+- **Storybook**: `ChartEngine/Crosshair` — Default, SyncedAcrossPanes, KeyboardDriven, MagnetOn, RemoteCrosshair, CoincidentGridline, HiddenDuringDrag, KeyboardCursorColumn.
+- **Tests**: unit (snap, dash phase, hide-on-drag), visual, axe, keyboard test (the announcement cadence), cross-pane sync integration test, DOM-mirror parity (`aria-current` = the drawn column), performance (pills in the axis batch, +0 draw calls — E11-D02 A-9).
 
 ### CMP-191 DrawingToolOverlay (base: trendline/ray/hline/rectangle/fibonacci)
 
@@ -2293,37 +2315,54 @@ interface OrderLineOverlayProps {
 
 ### CMP-196 MultiChartLinker (crosshair/level sync engine hook, non-visual)
 
-- **Tier**: Chart-primitive (utility) · **Purpose**: the shared-sync coordinator for multi-chart layouts — crosshair-sync, level-sync (drawing a level on one pane reflects on linked panes), independent-vs-linked scaling (digest 23 §11).
-- **Props**: `groupId` · `linkedPanes: string[]` · `syncModes: {crosshair:boolean; levels:boolean; scale:boolean}`.
-- **A11y**: n/a directly (non-visual), but is a dependency of CMP-190's sync a11y story — sync-state changes are announced once via a shared status region ("Panes linked: crosshair, levels").
+- **Tier**: Chart-primitive (utility) · **Purpose**: the sync coordinator for multi-chart layouts (`26-chart-engine-design.md` §3.5 `SyncGroup`): the time range is synced within a group, crosshair and levels optionally, **price never** (E11-D01); single-phase propagation once per frame with an `origin` token so re-entrant propagation is impossible (E11-S09).
+- **Props**: `groupId` · `linkedPanes: string[]` · `syncModes: { crosshair: boolean; levels: boolean; scale: boolean }` (`scale` links indicator scales within a chart, never price across charts).
+- **Variants**: none visual. **States**: joined · left · modes changed.
+- **A11y**: n/a directly (non-visual); a sync-state change is announced **once** through the shared polite status region ("Panes linked: crosshair, levels" — E11-S09); the remote crosshair's treatment is CMP-190's.
 - **Tokens**: n/a.
-- **Storybook**: n/a (covered via CMP-190/multi-pane integration stories).
-- **Tests**: integration test (sync propagation across 2-4 panes).
+- **API sketch**: `ChartOptions.syncGroup`; `SyncGroup { add(chart), remove(chart), setModes(modes) }`.
+- **Data contract**: the `sync { groupId, timeRange, crosshair }` message (`26` §6), ≤1 per frame, main → worker so instances sharing the worker propagate without a main-thread round trip.
+- **Storybook**: n/a (covered via `ChartEngine/Crosshair` SyncedAcrossPanes and `ChartEngine/ChartRoot` MultiPane / SyncAnnouncement).
+- **Tests**: integration test (sync propagation across 2–4 panes; the no-echo assertion), axe on the status region (one announcement per change).
 
 ### CMP-197 ChartTooltip (crosshair/hover value readout)
 
-- **Tier**: Chart-primitive · **Purpose**: the floating readout box following the crosshair — OHLCV, footprint cell detail, indicator values at the focused time/price.
-- **Props**: `content: TooltipField[]` · `position: {x,y}` · `visible: boolean`.
-- **A11y**: purely a pointer/visual convenience layer; the equivalent information is always simultaneously available via the DOM-mirror for the focused element per the engine-wide accessible-equivalent rule (this tooltip itself is `aria-hidden`, preventing duplicate announcement).
-- **Tokens**: `elevation.3`, `color.surface.overlay`, `font.mono`.
-- **Storybook**: OhlcvTooltip, FootprintCellTooltip, IndicatorTooltip.
-- **Tests**: unit, visual, axe (hidden-from-AT verification), performance (update cost during rapid crosshair movement).
+- **Tier**: Chart-primitive (DOM overlay) · **Purpose**: the floating readout box following the crosshair — OHLCV, delta, footprint cell detail, indicator values at the focused time / price; it flips, never clips, and never covers the last-price line (E11-D02 D10).
+- **Props**: `content: TooltipField[]` (`{ label, value, unit, colorToken? }`, the E11-S07 field model) · `position: {x, y}` · `visible: boolean` · `mode: "follow" | "docked" | "off"` (SCR-031 crosshair option, E11-D03).
+- **Variants**: `mode` follow / docked / off.
+- **States**: follow (anchored 16 px right-below) · flipped left / above · shifted clear of the last-price band · docked (pane shorter than the box + 32 px) · overflow after 12 rows ("+3 more · Alt+T") · hidden (pointer out, drag).
+- **A11y**: `aria-hidden` — a pointer / visual convenience layer; the same values are always in the DOM mirror and the live region for the keyboard cursor (E06-D03 D9 `getBarSummary`), which prevents duplicate announcement; values are never coloured by direction (▲ / ▼ glyph and `+` / `−` sign; `color.candle.down` on the overlay measures 4.09:1) — E13's coloured indicator values wait for `color.text.buy` / `color.text.sell` (E11-D02 CR-5).
+- **Tokens**: `color.surface.overlay`, `color.border.default`, `radius.card`, `elevation.popover` (not `elevation.3`, a primitive — E11-D02 A-2), `color.text.secondary` (title, labels), `color.text.primary` (values), `type.ui.caption` / `type.ui.label` (title per density), `type.num.*`, `space.inset.xs` / `space.inset.sm` / `space.inset.md` per density, `motion.duration.fast` (fade; instant under reduced motion — E11-D06).
+- **API sketch**: a DOM component in the main-thread overlay layer fed by `ChartEvents["crosshair"]` and each visible series' `valueAt(bar)`.
+- **Data contract**: the bar store and the footprint cell under the cursor (`a11y` / `pick` messages); repositioned at most once per frame (`26` §3.11).
+- **Storybook**: `ChartEngine/ChartTooltip` — OhlcvTooltip, FootprintCellTooltip, IndicatorTooltip, FlipLeft, FlipAbove, ClearOfLastPrice, Docked, OverflowTwelveRows, HighContrast.
+- **Tests**: unit (flip rules 1–6, the priority stack last-price > pills > order-line labels > tooltip > legend > badge > watermark), visual, axe (hidden-from-AT verification; the mirror carries the values), performance (update cost during rapid crosshair movement, ≤1 reposition per frame).
 
 ### CMP-198 ChartWatermark / PaneBackground
 
-- **Tier**: Chart-primitive · **Purpose**: symbol/interval watermark text behind chart data, and pane background fill (also carries the mandatory Lightweight-Charts-derived-license notice location if any code is adapted, per digest 10 licensing note — engine is fully custom, so this is a placeholder slot only, not a live obligation).
-- **Props**: `text` · `opacity`.
-- **Tokens**: `color.chart.watermark`.
-- **Storybook**: Default.
-- **Tests**: unit, visual.
+- **Tier**: Chart-primitive · **Purpose**: the pane fill behind the data and the `symbol · interval` watermark (` · replay` in a replay session), centred in the price pane only (E11-D02 D13); the pane fill never changes on focus — pane focus is the D14 bar. (Also carries the mandatory Lightweight-Charts-derived-license notice location if any code is adapted, per digest 10 licensing note — engine is fully custom, so this is a placeholder slot only, not a live obligation.)
+- **Props**: `text` · `opacity` (fixed at 1 — the token already encodes the lightness; an alpha would double-count under the stale dim).
+- **Variants**: none (dense 40 px is a state).
+- **States**: default · replay suffix · hidden below 120 px of pane height (160 px comfortable) · dense (40 px).
+- **A11y**: `aria-hidden`; decorative (1.50 / 1.31 / 3.03 on the canvas); the symbol and interval are in the toolbar and the canvas `aria-label`.
+- **Tokens**: `color.chart.pane.bg.default`, `color.chart.pane.bg.focused` (both = `color.surface.canvas`), `color.chart.watermark` (= `color.border.default`), `font.family.ui`, `font.weight.semibold` (48 px; 40 px dense).
+- **API sketch**: `PaneOptions.watermark?: { text }` is PROPOSED — `26` §8 declares `PaneOptions` without members (E11-D05 G14); drawn as SDF text in the axis batch (0 extra draw calls).
+- **Data contract**: symbol and interval from the chart config; the replay flag from the session.
+- **Storybook**: `ChartEngine/Watermark` — Default, HiddenBelow120px, Replay, Dense40px, FocusDoesNotChangeFill.
+- **Tests**: unit (hide threshold per density, width ≤60 % of the plot), visual (three themes).
 
 ### CMP-199 ChartLegend (per-pane series/indicator legend with visibility toggles)
 
-- **Tier**: Chart-primitive · **Purpose**: top-left per-pane legend listing active series/overlays/indicators with colour swatch, current value, and show/hide toggle.
-- **Props**: `items: {label,color,value,visible,onToggleVisible,onRemove?}[]`.
-- **Tokens**: inherits CMP-037 SwatchLegendItem.
-- **Storybook**: Default, ManyIndicators, AllHidden.
-- **Tests**: unit, visual, axe, keyboard toggle.
+- **Tier**: Chart-primitive (DOM overlay) · **Purpose**: top-left per-pane legend — row 0 is the pane-label row (2 px pane-focus bar, label, collapse chevron, pane menu), rows 1…n are series rows (8 × 8 shape swatch = CMP-037, label, cursor value, eye toggle); the **one home** for per-series visibility toggles and cursor values (E11-D02 D12, A-14: CMP-224 becomes the toolbar's indicator entry).
+- **Props**: `items: { id, label, kind, colorToken, value, visible, estimated? }[]` · `paneLabel` · `collapsed` · `onToggleVisible` · `onRemove?` (E13's remove-with-undo).
+- **Variants**: per density (rows 32 / 24 / 24).
+- **States**: default · one hidden (eye-off icon, `color.text.tertiary` label, value `—`, the word "hidden" in the name) · all hidden (`6 series · 6 hidden`) · overflow "+N more" (visible rows ≤ ⌊0.3 × pane height / row height⌋, min 3) · popover open · collapsed (`6 series · 2 hidden`) · pane-label row focused · estimated series ("(estimated)" in the label and the accessible name).
+- **A11y**: one roving stop placed before its pane's plot: `↑/↓` rows, `←/→` a row's controls, `Space` / `Enter` toggle ("EMA 20 hidden" / "shown", polite), `Enter` on "+N more" opens a focus-managed popover (`Esc` closes it and returns focus), `Esc` back to the plot; the eye toggle is `aria-pressed` with the **stable name** "EMA 20 visible"; the shape swatch repeats the series kind so colour is never alone; labels ellipsise at 18 characters with the full name in the accessible name and tooltip.
+- **Tokens**: inherits CMP-037 SwatchLegendItem; `type.ui.label` / `type.ui.body` (comfortable), `type.num.*` (values), `color.text.primary`, `color.text.tertiary` (hidden rows), `color.action.primary.default` (the pane focus bar), `color.surface.overlay` + `elevation.popover` (the popover), `space.inset.xs` / `space.inset.sm` / `space.inset.md` (inset per density), `size.control.compact` / `size.control.comfortable` (rows 24 / 32; 24 in dense), `color.focus.ring`.
+- **API sketch**: a DOM component in the overlay layer; `Pane.legend` (PROPOSED — `26` §8 declares no legend member, E11-D05 G14) reads each series' `valueAt(bar)`.
+- **Data contract**: the bar under the cursor (`a11y` / `viewport` messages, ≤1 per frame); the series list from `Pane.addSeries` / `addIndicator`.
+- **Storybook**: `ChartEngine/ChartLegend` — Default, ManyIndicators, AllHidden, PlusNMore, PopoverOpen, OneHidden, Collapsed, PaneLabelRowFocused, Comfortable, Compact, Dense.
+- **Tests**: unit (the overflow rule, the stable name, the ellipsis), visual, axe, keyboard toggle test, DOM-mirror parity (the legend's values equal the cursor bar's), performance (values ≤1 per frame).
 
 ---
 
@@ -2571,12 +2610,14 @@ This band was added during the cross-document traceability reconciliation (see `
 
 ### CMP-226 BarCountdown
 
-- **Tier**: Atom (chart chrome) · **Purpose**: time remaining until the current bar closes.
-- **Props**: `msRemaining: number` · `interval: Interval` · `warnBelowMs?: number`.
-- **A11y**: text, never a bare progress ring; updates at 1 Hz with `aria-live="off"` by default (opt-in announcement only) so it does not flood a screen reader; the warn state adds a word, not just a colour.
-- **Tokens**: `font.mono`, `color.text.muted`, `color.status.warn`.
-- **Storybook**: Normal, Warning, Closed.
-- **Tests**: unit, visual, axe.
+- **Tier**: Atom (chart chrome) · **Purpose**: time remaining until the current bar closes, in the status row beside the mark / last / spread readout — one home (E11-D02 D11).
+- **Props**: `msRemaining: number` · `interval: Interval` · `barType` · `warnBelowMs?: number` (default 10 000, US-CHART-008).
+- **Variants**: comfortable / compact (DOM chrome, two-valued).
+- **States**: normal (`bar close 0:41`, `color.text.secondary`) · **warn** (≤10 s: `0:08 closing` — adds the word "closing" and `font.weight.medium` on a `color.status.warning.subtle` pill with a `color.status.warning.strong` clock glyph; the flip is instant in both motion modes, E11-D06 D15) · closed (`closed`, `color.text.tertiary`) · non-time bars (`—` with the title "No countdown for tick bars"; the designed behaviour on non-time bars is E12-D06 D5's / E12-D09's).
+- **A11y**: text, never a bare progress ring; updates at 1 Hz with `aria-live="off"` by default; an opt-in announcement at 10 s ("Bar closing in 10 seconds") in Settings → Accessibility, never default; the warn state adds a word, not just a colour.
+- **Tokens**: `font.family.mono` via `type.num.sm` (digits), `type.ui.caption` (label), `color.text.secondary` (normal: 8.81 / 8.98 / 14.35 on the row), `color.status.warning.subtle` + `color.text.primary` + `color.status.warning.strong` (warn: text 9.86 / 15.62 / 11.16, glyph 7.56 / 4.11 / 7.56; `warning.strong` as text measures 4.11 in light and is rejected), `color.text.tertiary` (closed / n/a: 5.62 / 5.92 / 11.21), `font.weight.medium`, `color.surface.raised` (the row).
+- **Storybook**: `Atoms/BarCountdown` — Normal, Warning, Closed, NonTimeBar, Comfortable, HighContrast, ReducedMotionIdentical (band 7A has no `15` §0.3 rule 8 band; the title follows the tier).
+- **Tests**: unit (the 10 s threshold, the server-clock source), visual, axe (`aria-live="off"`; the opt-in announcement fires once).
 
 ### CMP-227 EstimatedBadge
 
