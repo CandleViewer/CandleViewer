@@ -159,6 +159,9 @@ class StorageQueryFailed(StorageError):
         super().__init__(f"database statement failed (sqlstate {sqlstate or 'unknown'})")
         self.sqlstate = sqlstate
 
+    def __reduce__(self) -> tuple[type[StorageQueryFailed], tuple[str | None, ...]]:
+        return type(self), (self.sqlstate,)  # rebuilt from its facts: `args` is the message
+
 
 class StorageConstraintViolated(StorageQueryFailed):
     """A constraint refused the statement (SQLSTATE class 23) and the repository has no domain
@@ -176,6 +179,9 @@ class StorageConstraintViolated(StorageQueryFailed):
             f"database constraint {constraint or 'unnamed'} refused the statement "
             f"(sqlstate {sqlstate})",
         )
+
+    def __reduce__(self) -> tuple[type[StorageQueryFailed], tuple[str | None, ...]]:
+        return type(self), (self.sqlstate, self.constraint)
 
 
 class WriteAheadTimeout(StorageError, TimeoutError):

@@ -21,6 +21,7 @@ import pytest
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi as _Dbapi
 
+from candleviewer.api import storage_outage
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.storage.errors import (
     BackupCheckViolation,
@@ -604,10 +605,13 @@ async def test_a_unit_of_work_starts_with_its_statement_timeout_and_application_
         (asyncpg.exceptions.UndefinedTableError, False),
         (asyncpg.exceptions.RaiseError, False),
         (asyncpg.exceptions.InFailedSQLTransactionError, False),
+        (asyncpg.exceptions.TooManyConnectionsError, False),
+        (asyncpg.exceptions.PostgresIOError, False),
+        (asyncpg.exceptions.ConnectionDoesNotExistError, False),
     ],
     ids=[
         *("57014", "40P01", "08006", "55P03", "23505", "23505-invalidated", "23514"),
-        *("22P02", "42P01", "P0001", "25P02"),
+        *("22P02", "42P01", "P0001", "25P02", "53300", "58030", "08003"),
     ],
 )
 def test_is_outage_classes_a_driver_error_as_the_http_edge_does(
@@ -625,12 +629,27 @@ def test_is_outage_classes_a_driver_error_as_the_http_edge_does(
         sa_exc.TimeoutError("pool exhausted"),
         sa_exc.InvalidRequestError("not a statement"),
         sa_exc.OperationalError("SELECT 1", None, Exception("gone")),
+        sa_exc.InterfaceError("SELECT 1", None, Exception("closed")),
+        StorageTierUnavailable("the store cannot serve the call"),
         ValueError("not storage"),
     ],
-    ids=["oserror", "pool-timeout", "invalid-request", "operational", "other"],
+    ids=[
+        "oserror",
+        "pool-timeout",
+        "invalid-request",
+        "operational",
+        "interface",
+        "typed",
+        "other",
+    ],
 )
 def test_is_outage_classes_the_other_failures_as_the_http_edge_does(error: Exception) -> None:
     assert is_outage(error) is is_storage_outage(error)
+
+
+def test_is_outage_reads_the_http_edges_sqlstate_classes() -> None:
+    assert relational._OUTAGE_SQLSTATE_CLASSES == storage_outage._OUTAGE_SQLSTATE_CLASSES
+    assert relational._LOCK_NOT_AVAILABLE == "55P03"
 
 
 @pytest.mark.parametrize(
@@ -650,3 +669,19 @@ def test_query_failure_types_a_refused_statement_by_its_facts(
     assert type(failure) is kind and failure.sqlstate == state
     if isinstance(failure, StorageConstraintViolated):
         assert failure.constraint == constraint
+
+
+@pytest.mark.parametrize(
+    ("state", "constraint", "kept"),
+    [
+        ("23505", f"users_email_key {_P1}", ("23505", None)),
+        (f"23505 {_P1}", "users_email_key", (None, None)),
+    ],
+    ids=["text-for-a-name", "text-for-a-sqlstate"],
+)
+def test_query_failure_drops_a_fact_that_is_not_a_code_or_a_name(
+    state: str, constraint: str, kept: tuple[str | None, str | None]
+) -> None:
+    failure = query_failure(state, constraint)
+    assert (failure.sqlstate, getattr(failure, "constraint", None)) == kept
+    assert _P1 not in str(failure)

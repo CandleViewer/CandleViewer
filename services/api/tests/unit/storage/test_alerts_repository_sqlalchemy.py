@@ -24,7 +24,9 @@ from candleviewer.alerts.outbox import (
     alert_deliver_dedup_key,
     webhook_post_dedup_key,
 )
+from candleviewer.db import models
 from candleviewer.storage.errors import StorageConstraintViolated
+from candleviewer.storage.repositories import alerts_sqlalchemy
 from candleviewer.storage.repositories.alerts import AlertNameTakenError
 from candleviewer.storage.repositories.alerts_sqlalchemy import (
     ALERT_COLUMNS,
@@ -281,8 +283,8 @@ class _Raising(_Rel):
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
         async def execute(stmt: Any, params: dict[str, Any] | None = None) -> _Result:
-            orig = Exception(f"refused: Failing row contains ({_ROW})")
-            orig.sqlstate, orig.constraint_name = self.state, self.constraint  # type: ignore[attr-defined]
+            orig: Any = Exception(f"refused: Failing row contains ({_ROW})")  # a driver-shaped fake
+            orig.sqlstate, orig.constraint_name = self.state, self.constraint
             raise IntegrityError(str(stmt), params, orig)
 
         yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=None)
@@ -325,3 +327,9 @@ def test_outbox_dedup_keys() -> None:
     assert alert_deliver_dedup_key(7) == "7"
     assert webhook_post_dedup_key("a", 1, 2) == "a:1:2"
     assert {TOPIC_ALERT_DELIVER, TOPIC_WEBHOOK_POST} == ALERT_OUTBOX_TOPICS
+
+
+def test_the_name_key_is_the_alerts_tables_unique_name_index() -> None:
+    """A renamed index would turn every name clash into a 500: the key is the DDL's name."""
+    unique = {index.name for index in models.alerts.indexes if index.unique}
+    assert alerts_sqlalchemy._NAME_KEY in unique

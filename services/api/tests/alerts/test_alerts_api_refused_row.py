@@ -8,16 +8,15 @@ The store is a fake; the contract is read from `docs/plan/22-api-openapi.yaml`.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 from _alert_api_env import PRICE_CROSS, Env
+from fastapi.testclient import TestClient
 
+from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.storage.errors import StorageConstraintViolated
-
-_SPEC = Path(__file__).resolve().parents[4] / "docs" / "plan" / "22-api-openapi.yaml"
 
 
 @pytest.fixture
@@ -47,13 +46,15 @@ def test_a_value_a_stored_alert_rule_refuses_is_422_naming_no_constraint(
 
 @pytest.mark.parametrize("write", ["create", "update"])
 def test_any_other_constraint_error_stays_a_defect(env: Env, write: str) -> None:
-    refusal = StorageConstraintViolated("23503", "alerts_owner_user_id_fkey")
-    with pytest.raises(StorageConstraintViolated):  # the test client re-raises the app's 500
-        _write(env, write, refusal)
+    install_error_redaction(env.c.app)  # the app's own handler answers the 500
+    env.c = TestClient(env.c.app, raise_server_exceptions=False)
+    r = _write(env, write, StorageConstraintViolated("23503", "alerts_owner_user_id_fkey"))
+    assert r.status_code == 500 and r.json()["code"] == "internal_error"
+    assert "alerts_owner_user_id_fkey" not in r.text and "23503" not in r.text
 
 
 def test_the_contract_declares_409_and_422_for_alert_writes() -> None:
-    paths = yaml.safe_load(_SPEC.read_text(encoding="utf-8"))["paths"]
+    paths: Any = load_openapi_spec()["paths"]
     for op in (paths["/alerts"]["post"], paths["/alerts/{alertId}"]["put"]):
         responses = op["responses"]
         assert responses["409"] == {"$ref": "#/components/responses/Conflict"}

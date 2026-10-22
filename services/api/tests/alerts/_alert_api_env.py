@@ -49,7 +49,9 @@ class FakeAlertRepo:
         self.rows: dict[str, AlertRow] = {}
         self.deleted: set[str] = set()
         self.tick = 0
-        self.refusal: Exception | None = None  # what the next write raises, as the store would
+        self.refusal: Exception | None = (
+            None  # what every write raises while set, as the store would
+        )
 
     def _now(self) -> datetime:
         self.tick += 1

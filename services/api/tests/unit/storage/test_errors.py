@@ -7,6 +7,11 @@ log/`system_events` consumers do not break silently on a rename (ticket
 
 from __future__ import annotations
 
+import copy
+import pickle
+
+import pytest
+
 from candleviewer.storage.errors import (
     ERROR_CODES,
     AuditEntryTooLarge,
@@ -134,3 +139,21 @@ def test_a_constraint_violation_is_a_query_failure_naming_only_its_constraint() 
     assert str(err) == "database constraint al_cooldown refused the statement (sqlstate 23514)"
     unnamed = StorageConstraintViolated("23502", None)
     assert str(unnamed) == "database constraint unnamed refused the statement (sqlstate 23502)"
+
+
+@pytest.mark.parametrize(
+    "err",
+    [
+        StorageQueryFailed("40001"),
+        StorageQueryFailed(None),
+        StorageConstraintViolated("23514", "al_cooldown"),
+        StorageConstraintViolated("23502", None),
+    ],
+)
+def test_a_typed_query_failure_survives_a_copy_and_a_pickle_round_trip(
+    err: StorageQueryFailed,
+) -> None:
+    for twin in (copy.copy(err), pickle.loads(pickle.dumps(err))):  # noqa: S301 -- our own object
+        assert type(twin) is type(err) and str(twin) == str(err)
+        facts = (twin.sqlstate, getattr(twin, "constraint", None))
+        assert facts == (err.sqlstate, getattr(err, "constraint", None))
