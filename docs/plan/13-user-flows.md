@@ -784,7 +784,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  A2["Chart on time 1m"] --> B2["Open SCR-042: toolbar interval button, or Alt+I"]
+  A2["Chart on time 1m"] --> B2["Open SCR-042: toolbar interval button, or its new key I, OQ-4"]
   B2 --> C2["Down to the group Bar modes: the x-axis is not time"]
   C2 --> D2{"Symbol has recorded prints?"}
   D2 -->|none yet| E2["Mode rows disabled with the reason Needs recorded prints"]
@@ -809,9 +809,9 @@ flowchart TD
   R2 -->|yes| S2["F-BAR-5"]
 ```
 
-- **Keyboard:** `Alt+I` (new, OQ-4) or the toolbar path; `↓` into the bar-mode group; `Enter` commits the mode with
-  its shown parameter (on a row that reads "Needs a build" or has no status yet, it opens the editor with the
-  estimate), or `→` opens the editor, then type and `Enter`. `Esc` in the editor returns to the row.
+- **Keyboard:** `I` (a new keymap entry, OQ-4) or the toolbar path; `↓` into the bar-mode group; `Enter` commits
+  the mode with its shown parameter (on a row that reads "Needs a build" or has no status yet, it opens the editor
+  with the estimate), or `→` opens the editor, then type and `Enter`. `Esc` in the editor returns to the row.
 - **Events:** `chart.bar_mode_changed {from, to, source, cache}` when the new mode paints.
 
 ### 22.3 F-BAR-3 — Change a parameter: rebuild, progress, cancel, revert
@@ -824,14 +824,14 @@ flowchart TD
   C3 --> D3{"Elapsed time"}
   D3 -->|under 600 ms| E3["No progress UI"]
   D3 -->|600 ms to 2 s| F3["Strip: Building Volume 75 BTC, indeterminate, Esc cancels"]
-  D3 -->|over 2 s| G3["Strip: 40 percent, 1.24 M of 3.1 M prints, about 19 s left, Cancel button, an unknown total stays indeterminate"]
+  D3 -->|over 2 s| G3["Strip: Building Volume 75 BTC, 40 percent, 1.24 M of 3.1 M prints, about 19 s left, Cancel button, an unknown total stays indeterminate"]
   E3 --> H3{"Outcome"}
   F3 --> H3
   G3 --> H3
   H3 -->|done| I3["One-frame swap to the new generation, every bar redrawn, drawings keep their timestamps, focus unchanged"]
   H3 -->|cancel at 40 percent, button or Esc| J3["Cancel sent, Volume 50 is already on screen: no refetch, no empty chart"]
   J3 --> K3["Pill and field revert to 50, strip: Build cancelled at 40 percent, still showing Volume 50, Retry Volume 75, Dismiss"]
-  H3 -->|refused or failed| N3["Restore as on cancel. The strip names the cause and the next step: too many bars, choose a larger size or a shorter window, the service is busy, or, for another setting, no memory to stage the build"]
+  H3 -->|refused or failed| N3["Restore as on cancel. The strip names the cause and the next step: too many bars, choose a larger size or a shorter window, the service is busy, or, for another setting, no memory to stage the build. Change size opens the editor with the refused value, Retry when busy, Dismiss"]
   H3 -->|connection lost| O3["The disconnect cancels the build, Volume 50 frozen with its last-good time, Retry after reconnect"]
   H3 -->|user picks another setting| P3["Superseded: this build is cancelled, the new intent proceeds"]
   I3 --> Q3["chart.bar_rebuild_completed and chart.bar_mode_changed"]
@@ -841,10 +841,10 @@ flowchart TD
   P3 --> U3["chart.bar_rebuild_cancelled, reason superseded"]
 ```
 
-- **Keyboard:** after a toolbar commit focus is on the interval button and one `Tab` reaches `Cancel`; after `Alt+I`
-  it is on the chart region and `Shift+Tab` reaches it; `Esc` cancels from anywhere in the chart panel when no
-  popover or drawing is open. Completion never moves focus, except from a `Cancel` button that disappears, and then
-  to the chart region. Announced politely at start and end only.
+- **Keyboard:** `Cancel` is the strip's stop, after the status chips and before the first pane's legend in E11-D02's
+  `Tab` order; `Esc` cancels the build last, when no ticket, popover, editor, drawing, chip, axis or expanded bar
+  takes it first (E12-D02 D-11). Completion never moves focus, except from a `Cancel` button that disappears, and
+  then to the plot cursor. Announced politely at start and end only.
 - **Build earlier bars:** the built-from boundary's action runs this flow over a wider window with the same setting;
   the strip says every bar is redrawn. D-1 holds only until the server's swap, when the old generation stops: from
   then the client stages only the visible window of the new generation, labels the held frame "Updating..." after
@@ -885,7 +885,7 @@ conflict, choice}`, both proposed in E12-D02 §10.
 ```mermaid
 flowchart TD
   A5["Series requested or painted: the recording start and /market/data-coverage compared with the window. Coverage counts only inside the span it reports, the last 90 days as built, so an older window is unknown and takes the /market/bars answer: rows, 422 no_data_recorded or not built"] --> Z5{"Instrument trading?"}
-  Z5 -->|no| L5["SCR-047 instrument not trading, history still viewable"]
+  Z5 -->|no| L5["With bars: bars kept with the E08 delisted state, E11-D04. With no bars: SCR-047 not trading"]
   Z5 -->|yes| B5{"Bar family"}
   B5 -->|time, 1m and longer| C5{"Window before recording start?"}
   C5 -->|no| D5["Normal chart"]
@@ -894,7 +894,7 @@ flowchart TD
   C5 -->|exchange returned no bars| M5["SCR-047 names the first available timestamp"]
   B5 -->|non-time, or sub-minute after OQ-1| G5{"Recorded prints in the window, per data coverage inside its span, else per /market/bars?"}
   G5 -->|all| D5
-  G5 -->|part| H5["Requested from the recording start: bars from the boundary on, the region left of it says no recorded prints before that time"]
+  G5 -->|part| H5["Requested from the recording start: bars from the boundary on, the band left of it reads History starts at that time, recording began then"]
   G5 -->|none, 422 no_data_recorded or no trades in data coverage inside its span| I5["SCR-047 no data in this range, before recording start or inside a recording gap: Go to recorded data, Switch to time bars"]
   G5 -->|first load with no bars in the window, not built| Q5["Never SCR-047: build the window, F-BAR-3. Before G-2: the live series from its first bar, with the built-from boundary. A backfill page past the built range's start takes the built-from boundary, F-BAR-1"]
   G5 -->|symbol never recorded| J5["SCR-047 not recorded: copy and CTA follow autorecord_enabled and the recorder status refusal, E12-D02 §8"]
@@ -903,16 +903,17 @@ flowchart TD
   E5 --> R5
   H5 --> R5
   R5 -->|yes| S5["Time axis: a hatched, labelled band per gap over its time slots, its kline bars where kline rows fill it, otherwise empty slots, or a seam where no slots exist. Non-time: a seam between the bars that straddle it. A builder cold start adds a seam, a rebuild swap the built-from boundary"]
-  I5 --> N5["chart.empty_state_shown, reason no_data_in_range"]
+  I5 -->|inside a gap| N5["chart.empty_state_shown, reason no_data_in_range"]
+  I5 -->|before recording start| O5
   M5 --> N5
   J5 --> O5["chart.empty_state_shown, reason not_recorded"]
-  L5 --> P5["chart.empty_state_shown, reason symbol_delisted"]
+  L5 -->|no bars| P5["chart.empty_state_shown, reason symbol_delisted"]
 ```
 
 - **Keyboard:** the data cursor (`←`/`→`) names the boundary at its first bar ("first bar with recorded prints",
   "first built bar; earlier prints are not built yet" or "first loaded bar") and a gap at the bar after it; `Alt+T`
-  opens SCR-045, where the boundary and each gap are separator rows; SCR-047's heading, text and buttons are in the
-  `Tab` order.
+  opens SCR-045, where the boundary and each gap would be separator rows (proposed, E12-D02 OQ-14); SCR-047's
+  heading, text and buttons are in the `Tab` order.
 - **Events:** `chart.empty_state_shown {reason}`; the boundary and the gaps are not announced, they are part of the
   chart's accessible description (C-2.14: the true available range is always stated).
 
