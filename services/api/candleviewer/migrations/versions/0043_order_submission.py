@@ -1,7 +1,7 @@
 """the order submission: the replay anchor, the recorded stops, the order's provenance (E29-T04)
 
 Revision ID: 0043_order_submission
-Revises: 0044_account_no_hard_delete
+Revises: 0045_audit_chain_hardening
 Create Date: 2026-10-21
 
 Slice 2a of E29-T04 (#913), the storage of the order-submission pipeline. The tables, functions
@@ -43,7 +43,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "0043_order_submission"
-down_revision: str | None = "0044_account_no_hard_delete"
+down_revision: str | None = "0045_audit_chain_hardening"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

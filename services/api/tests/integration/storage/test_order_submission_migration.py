@@ -24,7 +24,7 @@ pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
-_REV, _PREV = "0043_order_submission", "0044_account_no_hard_delete"
+_REV, _PREV = "0043_order_submission", "0045_audit_chain_hardening"
 _TEMPLATE = "order_submission_head"
 _TABLES = ("idempotency_anchors", "recorded_stops")
 _CATALOG = (

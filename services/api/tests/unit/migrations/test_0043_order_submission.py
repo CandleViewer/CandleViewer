@@ -21,7 +21,7 @@ from candleviewer.db import models
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
-_REV, _PREV = "0043_order_submission", "0044_account_no_hard_delete"
+_REV, _PREV = "0043_order_submission", "0045_audit_chain_hardening"
 _ORDERS = "3.3.4 `orders`"
 _ANCHORS = "3.3.10 `idempotency_anchors`"
 _STOPS = "3.3.11 `recorded_stops`"
