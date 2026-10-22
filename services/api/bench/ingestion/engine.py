@@ -18,7 +18,9 @@ Stage latency (§5.1): every frame records receipt -> parsed -> derived -> emitt
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
+import sys
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
@@ -39,6 +41,9 @@ from candleviewer.exchange.base.trade_print import TradePrint
 from candleviewer.exchange.bybit.trades import parse_trade_frame, trade_topic
 from candleviewer.ingestion.trade_stream import GapEvent, TradeStream
 from candleviewer.observability.latency import StageStamps, stage_durations
+from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.metrics_catalogue import register_r0
+from candleviewer.observability.metrics_runtime import GcPauseTimer
 
 if TYPE_CHECKING:
     from bench.ingestion.bars_lane import BarsLane
@@ -134,6 +139,12 @@ class LaneResult:
     sampling_cost_ms: float = 0.0
     wall_s: float = 0.0
     retained: int = 0
+    #: #3641: each full (generation-2) collection while the lanes ran, in ms (`GcPauseTimer`);
+    #: one forced `gc.collect(2)` after them, in ms (the deterministic worst case); and the
+    #: pymalloc blocks in use just before it (`cv_gc_blocks_in_use`'s proxy for the heap it walks).
+    gc_natural_ms: list[float] = field(default_factory=list)
+    gc_forced_ms: float = 0.0
+    gc_blocks_in_use: int = 0
 
 
 class _Frame:
@@ -359,17 +370,43 @@ async def run_lanes(
     window that follows, and sample times count from its start. The bars path
     (`LaneConfig.bars_specs`) is built and hydrated after the lanes, inside budget #8's figure;
     its lanes stop however the run ends, an error included (`stop_each`: a stop that fails is
-    logged and skips no lane, and is raised only after a run that returned)."""
+    logged and skips no lane, and is raised only after a run that returned). Every run times its
+    garbage collections and ends with one timed, forced full collection (#3641)."""
     bars: list[BarsLane] = []
     returned = False
+    natural: list[float] = []
+    timer = _gc_timer(natural)
+    timer.install()
     try:
         res = await _drive(cfg, sampler, bars, record_stages, drain_ticks, bind)
+        timer.remove()  # the forced collection below is not a natural one
+        res.gc_blocks_in_use = sys.getallocatedblocks()  # the heap the forced collection walks
+        res.gc_natural_ms, res.gc_forced_ms = natural, _forced_full_collection_ms()
         returned = True
         return res
     finally:
+        timer.remove()
         failed = await stop_each(bars)
         if returned and failed is not None:
             raise failed
+
+
+def _gc_timer(natural: list[float]) -> GcPauseTimer:
+    """#3641: a `GcPauseTimer` on a bench registry that also keeps each full collection's pause."""
+    r0 = register_r0(Metrics("dev"))  # a private registry; `env` takes a deployment name
+
+    def full(generation: int, pause_s: float) -> None:
+        if generation == 2:
+            natural.append(pause_s * 1000)
+
+    return GcPauseTimer(r0["cv_gc_pause_seconds"], r0["cv_gc_blocks_in_use"], on_pause=full)
+
+
+def _forced_full_collection_ms() -> float:
+    """One full collection of the warm heap, timed: the worst case no run can miss."""
+    t0 = time.perf_counter()
+    gc.collect(2)
+    return (time.perf_counter() - t0) * 1000
 
 
 async def _drive(

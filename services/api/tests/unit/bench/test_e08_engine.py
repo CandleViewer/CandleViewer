@@ -5,7 +5,10 @@ injected into the real lane engine and must flip the verdict."""
 
 from __future__ import annotations
 
+import asyncio
+import gc
 import itertools
+import time
 from pathlib import Path
 from typing import Any
 
@@ -245,6 +248,84 @@ async def test_run_soak_takes_the_flatness_base_from_the_window_not_the_warmup()
     flat = next(c for c in v.checks if c.name == "memory_flatness")
     # 1/12 of the 30 s window is 2.5 s: the base is the t=3 s sample (over window + warm-up: t=5 s)
     assert "t=3s baseline" in flat.note
+
+
+async def test_run_soak_reports_one_forced_full_collection_and_leaves_no_gc_callback() -> None:
+    """#3641: every soak report carries a timed `gc.collect(2)` of the warm heap, labelled the
+    forced worst case, beside the natural full collections (often none on a short run)."""
+    full: list[str] = []
+
+    def spy(phase: str, info: dict[str, int]) -> None:
+        if info["generation"] == 2:
+            full.append(phase)
+
+    before, enabled = gc.callbacks[:], gc.isenabled()
+    over = {"duration_s": 2.0, "sample_every_s": 1.0, "warmup_s": 0.0, "warmup_wall_s": 0.0}
+    gc.callbacks.append(spy)
+    gc.disable()  # no natural collection, so the forced one is the run's only full collection
+    try:
+        v = await run_soak(load("soak_steady"), ScriptedSampler(), **over)
+    finally:
+        gc.callbacks.remove(spy)
+        if enabled:
+            gc.enable()
+    assert full == ["start", "stop"]  # the forced collection ran, once
+    forced = v.metrics["gc_full_pause_ms (forced, worst case)"]
+    assert forced["count"] == 1 and forced["max"] > 0
+    assert v.metrics["gc_full_pause_ms (natural)"]["count"] == 0  # the forced one is apart
+    assert v.metrics["gc_blocks_in_use"]["max"] > 10_000
+    assert gc.callbacks == before  # the run's timer left with it
+
+
+async def test_run_lanes_reports_a_natural_full_collection_in_ms() -> None:
+    outside: list[float] = []
+
+    def collect(_lanes: list[Lane]) -> None:  # a full collection while the lanes are built
+        t0 = time.perf_counter()
+        gc.collect(2)
+        outside.append((time.perf_counter() - t0) * 1000)
+
+    enabled = gc.isenabled()
+    gc.disable()  # this is then the run's only natural full collection
+    try:
+        res = await run_lanes(_cfg(duration_s=1.0), ScriptedSampler(), bind=collect)
+    finally:
+        if enabled:
+            gc.enable()
+    assert len(res.gc_natural_ms) == 1
+    assert 0.5 * outside[0] <= res.gc_natural_ms[0] <= outside[0]
+
+
+class _Dies(ScriptedSampler):
+    """A sampler that fails at its third reading, inside the sampled window."""
+
+    def __init__(self, exc: BaseException) -> None:
+        super().__init__()
+        self.exc = exc
+
+    def sample(self) -> tuple[int, float]:
+        if self.n >= 2:
+            raise self.exc
+        return super().sample()
+
+
+@pytest.mark.parametrize(
+    "exc", [RuntimeError("sampler died"), asyncio.CancelledError()], ids=["raises", "cancelled"]
+)
+async def test_run_lanes_takes_its_gc_timer_out_when_the_run_dies(exc: BaseException) -> None:
+    before = gc.callbacks[:]
+    with pytest.raises(type(exc)):
+        await run_lanes(_cfg(), _Dies(exc))
+    assert gc.callbacks == before
+
+
+def test_bench_gc_timer_keeps_full_collections_only() -> None:
+    natural: list[float] = []
+    timer = engine._gc_timer(natural)
+    for generation in (0, 1, 2):
+        timer("start", {"generation": generation})
+        timer("stop", {"generation": generation, "collected": 0, "uncollectable": 0})
+    assert len(natural) == 1 and natural[0] >= 0  # the young ones are not "full pause" rows
 
 
 def test_soak_smoke_declares_a_warmup_and_the_full_profile_keeps_its_hour_2_base() -> None:

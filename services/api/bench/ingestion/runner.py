@@ -80,6 +80,11 @@ async def run_soak(sc: Scenario, sampler: ProcSampler, **over: Any) -> budgets.V
             "max": res.sampling_cost_ms,
             "count": float(len(res.samples)),
         },
+        # #3641: the forced full collection, the worst case every run has, beside any natural
+        # ones the run triggered and the heap proxy the forced one walked.
+        "gc_full_pause_ms (forced, worst case)": budgets.summary([res.gc_forced_ms]),
+        "gc_full_pause_ms (natural)": budgets.summary(res.gc_natural_ms),
+        "gc_blocks_in_use": budgets.summary([float(res.gc_blocks_in_use)]),
     }
     v.metrics["_curve"] = {f"{s.t_s:.0f}": s.rss_bytes / 2**20 for s in res.samples}
     if cfg.bars_specs:  # #8 above is a reading at the bars cap only while these checks pass

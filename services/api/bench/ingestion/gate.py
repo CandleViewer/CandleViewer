@@ -153,7 +153,8 @@ def record(
         "run_profile": run_profile,
         "higher_is_better": sorted(HIGHER_IS_BETTER & set(verdict.metrics)),
         "profile_scaling": scaling,
-        "metrics": {k: v for k, v in verdict.metrics.items() if not k.startswith("_")},
+        # #3641: one forced collection is a reading, not a budget a later run is held to
+        "metrics": {k: v for k, v in verdict.metrics.items() if not k.startswith(("_", "gc_"))},
     }
     p = baseline_path(verdict.scenario, root)
     p.write_text(json.dumps(out, indent=2, sort_keys=True) + "\n", encoding="utf-8")

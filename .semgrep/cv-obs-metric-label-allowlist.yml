@@ -30,6 +30,8 @@ rules:
       # entity_kind (E17-T08): the closed 23 §6.4 machine kinds (`ws/topics.MACHINE_KINDS`, 13);
       #   max_series=13.
       # filter_class (E42-T02): the audit query's 10 shape classes; max_series=10.
+      # generation (#3641, cv_gc_pause_seconds): CPython's three collector generations {0, 1, 2};
+      #   max_series=3. GC generations only: the bars/CVWB `generation` is unbounded.
       # operation (E15-T01): the 11 /workspaces router operations; max_series=11.
       # outcome (E42-T04, #965, cv_user_lifecycle_steps_total): {ok, failed} for each cascade
       #   step, the closing record and the role push (E42-T09), `skipped` too for b16_revoke and
@@ -101,7 +103,7 @@ rules:
       #   no identifier; max_series=4 together.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(action|bucket|builtin|cap|cause|class|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|indicator|kind|method|operation|outcome|permission|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger_mode|version|where|wire)$).*$"
+          regex: "^(?!(action|bucket|builtin|cap|cause|class|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|indicator|kind|method|operation|outcome|permission|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger_mode|version|where|wire)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"

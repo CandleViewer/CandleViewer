@@ -39,6 +39,7 @@ from prometheus_client import (
     generate_latest,
 )
 from prometheus_client import REGISTRY as _DEFAULT_REGISTRY
+from prometheus_client import values as _values
 from prometheus_client.metrics import MetricWrapperBase
 from prometheus_client.metrics_core import CounterMetricFamily, GaugeMetricFamily, Metric
 from prometheus_client.registry import Collector
@@ -108,6 +109,13 @@ ENV_LABEL: Final[str] = "env"
 DEFAULT_MAX_SERIES: Final[int] = 200
 
 _LOGGER_NAME = "candleviewer.observability.metrics"
+
+
+def single_process_values() -> bool:
+    """Whether metric values take prometheus_client's in-process lock, the default. Multiprocess
+    mode (`PROMETHEUS_MULTIPROC_DIR`) runs Python code under one module-wide lock, so a garbage
+    collection callback that updates a metric could deadlock its own thread there (#3641)."""
+    return _values.ValueClass is _values.MutexValue
 
 
 class MetricsError(ValueError):

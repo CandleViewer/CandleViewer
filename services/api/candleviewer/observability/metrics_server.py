@@ -3,7 +3,8 @@
 The listener serves the process-wide registry on `CV_METRICS_BIND` and refuses
 to start on a public interface (`20-architecture.md` 13.1: an exposed
 `/metrics` leaks order rates and trading activity). The loop-lag sampler,
-cardinality check and fallback-snapshot ticker run alongside it.
+cardinality check and fallback-snapshot ticker run alongside it, and the
+garbage-collection pause timer is in `gc.callbacks` while it runs (#3641).
 """
 
 from __future__ import annotations
@@ -22,9 +23,11 @@ from candleviewer.observability.metrics import (
     CollectorRegistry,
     Metrics,
     generate_latest,
+    single_process_values,
 )
 from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.observability.metrics_runtime import (
+    GcPauseTimer,
     run_cardinality_check,
     run_fallback_snapshots,
     run_loop_lag_sampler,
@@ -72,12 +75,14 @@ def _task_ended(task: asyncio.Task[None]) -> None:
 
 
 class MetricsRuntime:
-    """Owns the private listener and the three background metric tasks."""
+    """Owns the private listener, the three background metric tasks and the GC pause timer."""
 
     def __init__(self, metrics: Metrics, bind: str) -> None:
         self._host, self._port = parse_private_bind(bind)
         self.metrics = metrics
         self._r0 = register_r0(metrics)
+        r0 = self._r0
+        self.gc_timer = GcPauseTimer(r0["cv_gc_pause_seconds"], r0["cv_gc_blocks_in_use"])
         self._server: uvicorn.Server | None = None
         self._tasks: list[asyncio.Task[None]] = []
 
@@ -103,11 +108,18 @@ class MetricsRuntime:
         ]
         for task in self._tasks:
             task.add_done_callback(_task_ended)
+        if single_process_values():
+            self.gc_timer.install()
+        else:  # its metric updates could deadlock the collecting thread there
+            log = structlog.get_logger(__name__)
+            log.warning("gc_pause_timer_off", reason="multiprocess_values")
 
     async def stop(self) -> None:
-        """Ask the listener to exit, cancel the samplers, await all four: a dead task never keeps
-        another from being awaited (its failure was logged when it happened), and a cancellation
-        of the caller of `stop()` propagates."""
+        """Leave `gc.callbacks` first, before any await, so a cancelled `stop()` still removes the
+        timer. Then ask the listener to exit, cancel the samplers, await all four: a dead task never
+        keeps another from being awaited (its failure was logged when it happened), and a
+        cancellation of the caller of `stop()` propagates."""
+        self.gc_timer.remove()
         tasks, self._tasks = self._tasks, []
         if self._server is not None:
             self._server.should_exit = True
