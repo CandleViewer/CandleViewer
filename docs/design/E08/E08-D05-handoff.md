@@ -3,17 +3,17 @@
 Ticket E08-D05 (#126); spec `docs/design/E08/E08-D05.md`. Six component contracts change (spec §13): one `16`
 §11.4 block each for CMP-213, CMP-219 and CMP-026, and one for the input, menu and `⋯` (CMP-048 / CMP-160,
 CMP-041, CMP-002). Tables 4, 5, Density and Essential exceptions share one shape, so they are given once, with a
-component column (§ "Shared tables"). **Status:** text pass; Penpot and PNG lines are PENDING until the boards
-step (page `E08-D05 Symbol search & quick-switcher`, B01–B27); the FE ticket, not yet named (spec Q8), writes
-the stories. Penpot token sets = `packages/ui/tokens` at `1e495858930b5a88509e1912d86b203f74a27cab`.
+component column (§ "Shared tables"). **Status:** text pass and boards drawn; the Penpot and PNG lines are closed
+(page `E08-D05 Symbol search & quick-switcher` · id `30d9b30e-268f-80df-8008-d47e99ea26c2`, B01–B27); the FE ticket, not yet
+named (spec Q8), writes the stories. Penpot token sets = `packages/ui/tokens` at `1e495858930b5a88509e1912d86b203f74a27cab`.
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3). `[ ] PENDING` marks a line the boards step closes.
 
 ## Handoff checklist — CMP-213 FuzzyList (E08-D05, #126)
 
-- [ ] **Final Penpot link** — PENDING: page `E08-D05 Symbol search & quick-switcher`, board B01 (the shared DS library file is not touched, `docs/design/README.md`); PNG `docs/design/E08/img/cmp-213-row-variants-states.png`
-- [x] **Variants × States matrix** — table 1; the Penpot variants are PENDING on B01; the FE ticket writes the stories
+- [x] **Final Penpot link** — page `E08-D05 Symbol search & quick-switcher` · id `30d9b30e-268f-80df-8008-d47e99ea26c2`, board B01 (the shared DS library file is not touched, `docs/design/README.md`); PNG `docs/design/E08/img/cmp-213-row-variants-states.png`
+- [x] **Variants × States matrix** — table 1; the Penpot variants are drawn on B01; the FE ticket writes the stories
 - [x] **Keyboard table** — table 2; the keys are the host combobox's (CMP-048), checked against `keymap.json` and `reserved-keys.json` (spec §8): no global override, no unmodified trading key, `Esc` / `Ctrl+K` untouched; the host's root stops them, since the shipped dispatcher reports every binding
 - [x] **Accessible name / role table** — table 3
 - [x] **Live data** — shared table 5: the count only; no streaming value in the list
@@ -58,7 +58,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-219 SymbolPicker (E08-D05, #126)
 
-- [ ] **Final Penpot link** — PENDING: page `E08-D05 Symbol search & quick-switcher`, boards B02, B15–B23; PNGs `cmp-219-symbol-picker-states.png`, `scr-041-*.png`
+- [x] **Final Penpot link** — page `E08-D05 Symbol search & quick-switcher` · id `30d9b30e-268f-80df-8008-d47e99ea26c2`, boards B02, B15–B23; PNGs `cmp-219-symbol-picker-states.png`, `scr-041-*.png`
 - [x] **Variants × States matrix** — table 1
 - [x] **Keyboard table** — table 2; checked against `keymap.json` and `reserved-keys.json`; the popover root stops every key but four Global chords, which close it first (spec §8)
 - [x] **Accessible name / role table** — table 3; the catalogued combobox becomes a button that opens a dialog (A-D05-4)
@@ -105,7 +105,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-026 EmptyState (E08-D05, #126)
 
-- [ ] **Final Penpot link** — PENDING: board B03 (in context on B07–B10, B17, B22); PNG `cmp-026-search-empty-variants.png`
+- [x] **Final Penpot link** — page `E08-D05 Symbol search & quick-switcher` · id `30d9b30e-268f-80df-8008-d47e99ea26c2`, board B03 (in context on B07–B10, B17, B22); PNG `cmp-026-search-empty-variants.png`
 - [x] **Variants × States matrix** — table 1 (the existing `filtered-empty` and `error` variants, new copy and actions)
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — table 3
@@ -143,7 +143,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-048 Combobox / CMP-160 SymbolSearchInput (keyboard), CMP-041 Menu and CMP-002 IconButton (E08-D05, #126)
 
-- [ ] **Final Penpot link** — PENDING: boards B05, B06, B14, B23; PNGs `scr-102-typing-ranked.png`, `scr-102-row-actions.png`, `scr-102-keyboard-path.png`
+- [x] **Final Penpot link** — page `E08-D05 Symbol search & quick-switcher` · id `30d9b30e-268f-80df-8008-d47e99ea26c2`, boards B05, B06, B14, B23; PNGs `scr-102-typing-ranked.png`, `scr-102-row-actions.png`, `scr-102-keyboard-path.png`, `scr-041-keyboard-path.png`
 - [x] **Variants × States matrix** — table 1
 - [x] **Keyboard table** — table 2; each key checked against the 71 shipped commands and the 27 reserved keys; the dialog, popover and menu roots stop every key but `Ctrl+K`, `Ctrl+Shift+A`, `Ctrl+/` and `F11`, which close the surface first, since the shipped dispatcher reports every binding; A-D05-2 lets a function key, like a Ctrl or Alt chord, run in a field (spec §8)
 - [x] **Accessible name / role table** — table 3
@@ -244,12 +244,12 @@ Screen reader: written, not run; the release-level pass (`05` §8) runs it. Exce
 
 ## `16` §12 design QA checklist
 
-- [ ] Published Tier-2 / Tier-3 tokens only — yes in the spec; the missing names are change requests,
-      none invented (spec §13); PENDING the boards' read-back.
-- [ ] Three themes × two densities — measured for contrast; PENDING on the boards (B25, B26).
+- [x] Published Tier-2 / Tier-3 tokens only — yes in the spec; the missing names are change requests,
+      none invented (spec §13); the boards' read-back: no stale token (`refresh-stale`, count mode: 0 on 3,564 shapes).
+- [x] Three themes × two densities — measured for contrast; drawn on the boards (B25, B26).
 - [x] Contrast matrix for every pair introduced — the audit script, exit 0.
 - [x] CVD simulation reviewed — section C of the script; the light collapses are carried by words.
-- [ ] A Penpot variant and a story per state — variants PENDING (boards); stories named above.
+- [x] A Penpot variant and a story per state — the variants are drawn (table 1 of each block names the board); stories named above.
 - [x] Disabled-with-reason (CMP-079) for RBAC-gated actions — T2 items and buttons (spec §6.3).
 - [x] Loading, empty and error designed — the catalogue states with their own copy (spec §6.2).
 - [x] Keyboard table matches a keyboard path — spec §8; the test is the FE ticket's.
@@ -260,4 +260,4 @@ Screen reader: written, not run; the release-level pass (`05` §8) runs it. Exce
 - [x] Order placement, positions, arming — search places no orders; an armed target is shown (spec D-10).
 - [x] Estimated values chip-tagged — N/A: none here. Demo / Live unambiguous — the env band stays (D-11).
 - [x] Reuses existing CMP-\* — yes (load failed is CMP-026 `error`, spec A-D05-5); CMP-213's slot change waits on A-6 / G-2.
-- [ ] Stories match the matrix — PENDING the FE ticket. Published library components only — PENDING boards.
+- [ ] Stories match the matrix — PENDING the FE ticket. Published library components only — yes: no component instance on the boards.
