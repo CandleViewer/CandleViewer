@@ -20,7 +20,7 @@ with `contrast_ratio()` from `docs/design/_tools/contrast_check.py` (WCAG 2.x re
 over the surface, mixed per sRGB channel as `verify_tokens.py`'s `over()` does: the scrim is black at `opacity.scrim`
 (0.6), a plain-disabled item `opacity.disabled` (0.45). "The host surfaces" are `color.surface.canvas`, `raised` and
 `overlay`. The keyboard and name/role rows summarise the full tables in `E05-D02-feedback-overlays.md` §7. "§6 Hn"
-points at that document's owner decisions; "conventions n" at its §3. In §4 a colour token drops its `color.` prefix
+points at that document's owner decisions; "conventions n" at its §3. In §4–§6 a colour token drops its `color.` prefix
 (`text.primary` is `color.text.primary`) except `color.border.*`, which keeps it because `border.*` names the
 border-width primitives.
 
@@ -145,7 +145,7 @@ item 3). ΔE76 spot checks (base, then protanopia / deuteranopia / tritanopia); 
 1. The dialog card is 1.25:1 against the scrimmed canvas in dark; its content and the trap carry it, and the scrim needs
    a colour token (§6 H1, E09-D08 A-2).
 2. Red danger text fails 4.5:1 on the dark overlay (3.17:1): danger menu items keep `text.primary` and a `.strong` glyph
-   (§6 H16); E14-D03's `danger.default` glyph falls to 2.92:1 on a focused dark item.
+   (§6 H16); E14-D03's `status.danger.default` glyph falls to 2.92:1 on a focused dark item.
 3. Light `status.warning.default` is 2.76:1 on the overlay and the progress track: toasts keep `.default` edges with
    words and glyphs (§6 H6); the progress warning fill binds `.strong` (§6 H4).
 4. The dark danger progress fill is 2.92:1 on its track: a `color.track` token is the follow-up (§6 H4).

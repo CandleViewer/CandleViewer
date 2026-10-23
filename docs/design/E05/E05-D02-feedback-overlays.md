@@ -7,7 +7,7 @@ and E09-D09 without a Penpot build (the coordinator's ruling of 2026-10-23); the
 (the molecules and the three route states beside the atoms), exports them, adds the page id and redraws nothing in
 slices 1–3. Slice 5 carries #161's closing line.
 **Slices:** #161 ships as five design PRs. Slice 1 (#3914, `E05-D02.md`) covers actions and selection; slice 2 (#4290,
-`E05-D02-data-display.md`) the data display and text atoms; slice 3 (text-first, PR pending, `E05-D02-form-controls.md`)
+`E05-D02-data-display.md`) the data display and text atoms; slice 3 (#4322, `E05-D02-form-controls.md`)
 the form controls; this slice the feedback and overlays of the coordinator's five-slice plan on #161: CMP-015 Skeleton,
 CMP-016 Tooltip, CMP-017 Popover, CMP-023 ProgressBar, CMP-026 EmptyState, CMP-027 ErrorState / InlineError, CMP-028
 Callout / Banner, CMP-029 Skeleton-Chart placeholder, CMP-038 InlineSpinnerText, CMP-041 Menu, CMP-043 Dialog, CMP-044
@@ -15,10 +15,10 @@ ConfirmDialog, CMP-045 Toast, CMP-046 Drawer, CMP-089 ForbiddenState, CMP-090 No
 GlobalErrorBoundaryFallback. Slice 5 covers the rest.
 **Companion:** `E05-D02-feedback-overlays-a11y-audit.md` (accessibility pre-review of this slice).
 **Builds on:** slice 1's conventions 1–14, token mirror, exceptions and decisions A1–A12, B1–B7, C1–C15 and D1–D17 (D13
-is superseded by E09-D09 §2.2 T2); slice 2 (#4290)'s conventions 15–20 and decisions E1–E27 (read at its head
-`fd4ea21d1`, cited as it stands, if #4290 merges as is); slice 3 (text-first, PR pending)'s conventions 21–29 and
-decisions G1–G21 (read at `a069d28ee`, the base of this branch). They apply unchanged and are cited as "slice 1 A8",
-"slice 2 (#4290) E20" and "slice 3 (text-first, PR pending) conventions 24".
+is superseded by E09-D09 §2.2 T2); the conventions 15–20 and decisions E1–E27 of slice 2 (#4290, head `fd4ea21d1`);
+and the conventions 21–29 and decisions G1–G21 of slice 3 (#4322, head `838bbb768`), the base of this branch. Slices 2
+and 3 are read at those heads and cited as they stand, if their PRs merge as is. They apply unchanged and are cited as
+"slice 1 A8", "slice 2 (#4290) E20" and "slice 3 (#4322) conventions 24".
 **Key.** `05`, `14`, `15`, `16` are the `docs/plan/` documents by number; D09 is `docs/design/E09/E09-D09.md`, D08
 `docs/design/E09/E09-D08.md`. `path:line` references are at `origin/main` `5a382efec`; slices 2 and 3 are cited by
 section.
@@ -67,7 +67,7 @@ section.
 
 Every gated cell — CMP-016's echo · reason, CMP-041's disabled-with-reason, CMP-044's gated and CMP-045's T2 action —
 is a CMP-079 RbacGate composition with the CMP-019 `lock` glyph (conventions 36); CMP-026's two sentence cells carry
-neither, because the sentence form has no glyph and no button (D09 §8).
+neither, because the sentence form has no `lock` and no button (D09 §2.2, §8).
 
 **Deviations.** None of the 17 belongs elsewhere: CMP-089, 090 and 091 sit in the organism band of `15` §0.2, but the
 ticket lists them as cross-band v0 additions. The brief's "slice 2 E-row on CMP-014's cap" is slice 1's D15
@@ -100,8 +100,9 @@ ticket lists them as cross-band v0 additions. The brief's "slice 2 E-row on CMP-
     by a modal"). The page under it is `inert`. CMP-212's toasts render above the scrim but outside the dialog's trap
     and never over its footer, and they stay in the inert subtree: a toast is seen, its sentence speaks through
     CMP-212's pre-rendered regions, which stay outside the subtree with the shell's, and its actions are reached after
-    the dialog closes (E40-D02 §4.3 "Modals", `E40-D02.md:671`, D-20). A press on the scrim is Cancel for
-    `role="dialog"` and does nothing for `role="alertdialog"`, which asks for an explicit choice.
+    the dialog closes (E40-D02 §4.3 "Modals", `E40-D02.md:671`, D-20); while the stack is inert, every timer in it is
+    paused, and they resume when the dialog closes (conventions 34). A press on the scrim is Cancel for `role="dialog"`
+    and does nothing for `role="alertdialog"`, which asks for an explicit choice.
 32. **Focus contract for overlays** (`05` §3.4 items 3–4, `05:96`–`:97`). Nothing here takes focus on its own: a toast,
     a callout, a tooltip and a route-level replacement never move it (D09 §9.4 restorations excepted, CMP-089, 091). A
     surface opened by the user takes it: a popover to its first control (or `initialFocusRef`; without one, its heading
@@ -138,9 +139,9 @@ ticket lists them as cross-band v0 additions. The brief's "slice 2 E-row on CMP-
 36. **Containers never gate; their nested controls do** (the ruling, §1). A gated action inside any component of this
     slice is the nested control's T2 form: CMP-001's and CMP-002's (D09 §2.2, which supersedes slice 1 D13), a CMP-041
     item's (§7 CMP-041), CMP-006's option (slice 1). _Wrapper:_ CMP-079 RbacGate wraps the step-3 leg (D09 §2.1 step 3;
-    §8, `E09-D09.md:204`) in slice 3 (text-first, PR pending) G15's `form` — `inline` by default, `tooltip` for an
+    §8, `E09-D09.md:204`) in slice 3 (#4322) G15's `form` — `inline` by default, `tooltip` for an
     icon-only control or a toolbar segment without room, `notice` for one reason line that several controls point at; a
-    step-4 state reason goes to the control's own `disabledReason` (slice 3 (text-first, PR pending) conventions 24).
+    step-4 state reason goes to the control's own `disabledReason` (slice 3 (#4322) conventions 24).
     _Semantics:_ the control keeps its role and its full label; `aria-disabled="true"`, never `disabled`, so it stays in
     the Tab order and a menu item stays arrow-reachable; the CMP-019 `lock` glyph (`decorative=false`, name "Not
     available") leads the label in rendering 2a, and is the badge on an icon-only control in 2b; the reason is in the
@@ -152,8 +153,8 @@ ticket lists them as cross-band v0 additions. The brief's "slice 2 E-row on CMP-
     arrow lands on a T2 menu item without activating it (D09 §9.3). _Reason:_ the host's key (D09 §3.1 or a registered
     state vocabulary); a component never writes it, and it emits no audit and no analytics. Several gated controls in
     one surface point at one reason line ("one notice, many pointers"). The sentence form is CMP-026 with `cta` omitted:
-    no glyph, no button (D09 §8, `E09-D09.md:210`). A link whose only destination is an admin route is hidden (T3, D09
-    §2.1 step 1), never locked.
+    no `lock` and no button; CMP-026's own decorative glyph stays (D09 §2.2, `E09-D09.md:49`; §8, `E09-D09.md:210`). A
+    link whose only destination is an admin route is hidden (T3, D09 §2.1 step 1), never locked.
 37. **What is not T2 here** (D09 §9.1; the standing rulings). _Busy:_ a confirm whose request is in flight, a toast
     action being sent, a load — CMP-001 `loading`, `aria-busy`, focusable, no lock, no reason. _Outcome:_ an action done
     or no longer applicable is replaced by its outcome line (an expired Undo by "EMA 21 removed."; #960 Q13).
@@ -223,7 +224,7 @@ Deduplicated across the 17 components and against slices 1–3; H1–H30 are new
 recommendation. Not asked again: slice 1 A4 (overlay rules bind `color.border.default`), A6 (light danger and warning
 glyphs share one amber), A8 (motion primitives), A10 (icon sizes), B1–B3 (geometry, rings, overlay anchors), C9 (spinner
 modes), C13 (strict matrix), C15 (stories) and D15 (the slow path); slice 2 (#4290) E20 ("Copied" once); slice 3
-(text-first, PR pending) G2 (the error glyph), G17 (answered by H14) and G21 (row menus).
+(#4322) G2 (the error glyph), G17 (answered by H14) and G21 (row menus).
 
 ### (a) Token gaps (E05-D01's token files, outside this PR's write set)
 
@@ -796,8 +797,8 @@ never truncate. **Forced colors:** CanvasText text, the glyph `currentColor`, th
 
 **Catalogue alignment** (`15:293-300`): Props gains `form?`, `live?` and `action?` (H14); a States line (panel and
 inline, error and warning, details closed and open); A11y appends the `live` default and overrides, the mount rule,
-"never raw exchange text" and the disclosure; Tokens become the anatomy's (the `.strong` glyphs for the bare
-`color.status.warning/danger`); Storybook adds Inline and Polite.
+"the message never carries raw exchange or server text" and the disclosure; Tokens become the anatomy's (the `.strong`
+glyphs for the bare `color.status.warning/danger`); Storybook adds Inline and Polite.
 
 ### CMP-028 · Callout / Banner
 
@@ -859,11 +860,11 @@ the actions wrap under the body. **Forced colors:** the fill drops; a 1 px Canva
 turns CanvasText, and the glyph and the title carry the tone (conventions 38).
 
 **Catalogue alignment** (`15:302-311`): Purpose reads CMP-074 for "CMP-078"; Props gains `placement?` and `live?` (H15);
-a States line (six tones, inline and band, dismissible); A11y appends the `live` override and "once per state entry";
-Tokens become the anatomy's (for `color.callout.*` and the `color.data-confidence.*.indicator` accents, H5), and the
-E08-D04 paragraph's two accents are qualified to match: they stay on `color.surface.*`, and on the callout's fill the
-edge and the glyph bind `color.status.danger.strong` (H5; E17-D02 C21, `E17-D02.md:443`); Storybook adds Band and
-LivePolite. Held: the disclosure (H15 (3)).
+a States line (six tones, inline and band, dismissible); A11y appends the `live` override and "each state entry is
+announced once"; Tokens become the anatomy's (for `color.callout.*` and the `color.data-confidence.*.indicator` accents,
+H5), and the E08-D04 paragraph's two accents are qualified to match: they stay on `color.surface.*`, and on the
+callout's fill the edge and the glyph bind `color.status.danger.strong` (H5; E17-D02 C21, `E17-D02.md:443`); Storybook
+adds Band and LivePolite. Held: the disclosure (H15 (3)).
 
 ### CMP-029 · Skeleton-Chart placeholder
 
@@ -941,8 +942,9 @@ never offered on an order submit: its retries reuse the `orderLinkId` (C-2.10). 
 **Resize & overflow:** the text wraps after the spinner. **Forced colors:** CanvasText text, the arc `currentColor`.
 
 **Catalogue alignment** (`15:396-403`): Props gains `slowLabel?`, `onCancel?` and `cancelLabel?` (H29); a States line
-(waiting, slow, with Cancel); A11y appends the mount rule and "the label once, the slow text once, no time cap"; Tokens
-become the anatomy's (for "inherits CMP-014/CMP-020"); Storybook adds SlowPath and SlowPathWithCancel.
+(waiting, slow, with Cancel); A11y appends the mount rule and "the label is announced once and the slow text once, with
+no time cap and no elapsed counter"; Tokens become the anatomy's (for "inherits CMP-014/CMP-020"); Storybook adds
+SlowPath and SlowPathWithCancel.
 
 ### CMP-041 · Menu
 
@@ -1021,8 +1023,8 @@ item, rendering 2a with the reason as the second line, the step-3 leg through CM
 `E09-D09.md:208`; slice 3 G21); a plain disabled item is unavailability, not a gate (conventions 37). **Hit target:**
 every item is `size.row.height` tall and the menu's full width. **Resize & overflow:** items grow taller with text;
 labels and second lines wrap and never truncate; the menu caps its height and scrolls. **Forced colors:** the focused
-item a Highlight fill with HighlightText (`forced-color-adjust: none`); separators CanvasText; a T2 item's label and
-lock GrayText, its reason CanvasText (slice 3 conventions 29).
+item a Highlight fill with HighlightText (`forced-color-adjust: none`); separators CanvasText; a T2 item keeps its lock,
+label and reason in CanvasText (HighlightText while focused), never GrayText (slice 3 conventions 29).
 
 **Catalogue alignment** (`15:428-435`): Props applies E11-D03 D03-CR-1 (H16); a States line (the item states, T2 per D09
 §2.2 through CMP-079, danger last); A11y appends Enter and Space, Tab closing all, disabled and T2 items reached and
@@ -1096,9 +1098,10 @@ conventions 39. **Forced colors:** conventions 38.
 
 **Catalogue alignment** (`15:446-453`): Props gains the `size` values and `role?` (H17); a States line (default,
 scrolls, busy, reflow); A11y rewrites the `Esc` clause (H22) and gains the scrim, the inert page (H23) with CMP-212's
-toasts above the scrim and inert (conventions 31), the initial focus, the close button's name "Close {title}" and the
-fallback return; Tokens become the anatomy's (`elevation.dialog` for `elevation.4`, `radius.dialog` for `radius.lg`, the
-scrim's stand-in of H1); Storybook drops NoEscClose and adds AlertDialog, Scrolling and Busy.
+toasts above the scrim, inert and their timers paused (conventions 31), the initial focus, the close button's name
+"Close {title}" and the fallback return; Tokens become the anatomy's (`elevation.dialog` for `elevation.4`,
+`radius.dialog` for `radius.lg`, the scrim's stand-in of H1); Storybook drops NoEscClose and adds AlertDialog, Scrolling
+and Busy.
 
 ### CMP-044 · ConfirmDialog
 
@@ -1227,13 +1230,13 @@ adds Busy, PartialFailure and ConfirmGated.
 
 **Keyboard** (no APG widget; its messages follow the APG Alert pattern through CMP-212's regions):
 
-| Keys                         | Action                                                                                                                                                                                                                                                                                                            |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab              | A toast never takes focus on arrival; Tab reaches the stack (CMP-212's place in the Tab order, or the palette's "Focus toasts", E40 a11y KM-5) and moves through each toast's actions and dismiss button; while a modal is open the stack is inert and its actions wait for the dialog to close (conventions 31). |
-| Enter / Space                | Activate the focused action.                                                                                                                                                                                                                                                                                      |
-| Enter / Space on a T2 action | Nothing changes; the reason line is re-shown and announced once, politely (D09 §9.3).                                                                                                                                                                                                                             |
-| Esc on a focused toast       | Dismisses it; focus moves to the next toast, else back to where it was before the stack (E40 a11y KM-6).                                                                                                                                                                                                          |
-| hover or focus in the stack  | Pauses every timer in it; leaving resumes them.                                                                                                                                                                                                                                                                   |
+| Keys                                          | Action                                                                                                                                                                                                                                                                                                            |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                               | A toast never takes focus on arrival; Tab reaches the stack (CMP-212's place in the Tab order, or the palette's "Focus toasts", E40 a11y KM-5) and moves through each toast's actions and dismiss button; while a modal is open the stack is inert and its actions wait for the dialog to close (conventions 31). |
+| Enter / Space                                 | Activate the focused action.                                                                                                                                                                                                                                                                                      |
+| Enter / Space on a T2 action                  | Nothing changes; the reason line is re-shown and announced once, politely (D09 §9.3).                                                                                                                                                                                                                             |
+| Esc on a focused toast                        | Dismisses it; focus moves to the next toast, else back to where it was before the stack (E40 a11y KM-6).                                                                                                                                                                                                          |
+| hover or focus in the stack, or an open modal | Pauses every timer in it; leaving the stack, or the dialog closing, resumes them (conventions 31).                                                                                                                                                                                                                |
 
 **Accessible name and role:**
 
@@ -1260,10 +1263,10 @@ CanvasText; the glyph and the kicker carry the tone.
 
 **Catalogue alignment** (`15:464-471`): Props gains `kicker?`, `persistent?` and `politeness?` (E40-D02 §7.4; H28) and
 the persistence rule (H26); a States line (the seven cells; a gated action through CMP-079 with the `lock`, the tertiary
-label and one reason line every gated action points at, D09 §2.2); A11y rewrites the role clause (H28) and gains "never
-takes focus; `Esc` dismisses a focused toast; no Undo on an order cancel" (H27); Tokens become the anatomy's
-(`elevation.popover` for `elevation.3`; for the bare `color.status.*`); Storybook adds Persistent, Focused, ActionGated
-and Undo.
+label and one reason line every gated action points at, D09 §2.2); A11y rewrites the role clause (H28) and gains "A
+toast never takes focus; `Esc` on a focused toast dismisses it; an order cancel offers no Undo" (H27); Tokens become the
+anatomy's (`elevation.popover` for `elevation.3`; for the bare `color.status.*`); Storybook adds Persistent, Focused,
+ActionGated and Undo.
 
 ### CMP-046 · Drawer
 
