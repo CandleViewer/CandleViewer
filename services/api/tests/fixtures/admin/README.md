@@ -9,11 +9,12 @@ trigger, and the invite's token. Nothing here is a credential, an exchange key, 
 personal data, and `tests/unit/test_admin_fixture_handles.py` and `test_admin_fixture_seed.py` pass
 every value, and this file, through the log redactor to keep it so.
 
-| File         | What it holds                                                                                   |
-| ------------ | ----------------------------------------------------------------------------------------------- |
-| `handles.py` | The users (every status and role), the demo accounts, the trade grants and the flags, by handle |
-| `seed.py`    | `seed_admin_world` and `check_admin_world`, and the refusal of a database not named for tests   |
-| `README.md`  | This file                                                                                       |
+| File               | What it holds                                                                                   |
+| ------------------ | ----------------------------------------------------------------------------------------------- |
+| `handles.py`       | The users (every status and role), the demo accounts, the trade grants and the flags, by handle |
+| `seed.py`          | `seed_admin_world` and `check_admin_world`, and the refusal of a database not named for tests   |
+| `corrupt_chain.py` | AUDIT-CORRUPT: `seed_corrupted_chain`, a chain with one of its own entries altered behind it    |
+| `README.md`        | This file                                                                                       |
 
 ## The handles
 
@@ -63,3 +64,20 @@ async with engine.begin() as conn:
   suite that signs in passes a hash it computes at run time, as `password_hash=`.
 
 `tests/integration/admin/test_admin_fixture_seed_pg.py` runs the seed twice on Postgres 16 and checks it.
+
+## The corrupted chain (AUDIT-CORRUPT)
+
+```python
+from tests.fixtures.admin.corrupt_chain import seed_corrupted_chain
+
+victim = await seed_corrupted_chain(audit_service.writer, psycopg_dsn)
+```
+
+- **What it writes:** seven entries through the real append path, so the trigger chains them. Then it
+  alters the fourth behind the chain, its `reason` only, and answers that entry's id: the `first_bad_id`
+  that `POST /admin/audit/verify` must report.
+- **Who can run it:** altering a row behind the chain needs the database's superuser, as an attacker
+  holding the owner role would. That is the test container's user.
+- **Idempotent:** a second run writes no entry, alters nothing and answers the same id.
+- **Test databases only:** a database not named for tests is refused with `FixtureRefused` before any read.
+- `tests/integration/admin/test_admin_corrupt_chain_pg.py` runs it through the verify route on Postgres 16.
