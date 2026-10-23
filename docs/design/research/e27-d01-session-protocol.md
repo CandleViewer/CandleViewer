@@ -4,14 +4,15 @@
   F-, RA-, CP-, CD-, AD- and OQ- ids refer to it, as do the `path:line` pin and shorthand (report front matter), and a
   bare "§n" is a section of this file.
 - **Status:** not yet run. Every duration below is an allocation inside a 45-minute session, not an observation; no
-  participant, timing, count or quote exists. Results are appended to the report as a dated addendum (§8).
+  participant, timing, count or quote exists. Synthesised findings, never a participant's real key practice, are
+  appended to the report as a dated addendum (§8).
 - **Ready to run: partly.** The interview (part A) and the comprehension probes (part C) can run on paper today. The
   think-aloud tasks (part B) need the report's board 06 and figures in a keyboard-operable medium, and none exists yet
-  (report §1 and OQ-15: open, with a PROPOSED HTML click-through). Until one exists, part B runs as a paper
-  walkthrough the moderator drives, and the keyboard-only pass (§6) waits.
-- **Roles:** the moderator is never the participant. The owner is tagged **P1** on every sheet, because the owner
-  also approves the report; someone else moderates the owner's session, or an agent reads this script while the owner
-  answers and a note-taker records.
+  (report §1 and OQ-15, ruled on #732 in comment 6364262239: an HTML click-through built in the boards PR). Until one
+  exists, part B runs as a paper walkthrough the moderator drives, and the keyboard-only pass (§6) waits.
+- **Roles:** the moderator is never the participant. The owner is tagged **P1** on every sheet, because the owner also
+  approves the report; someone else moderates the owner's session. An agent may read the prompts aloud but receives no
+  answer: the owner answers to a human note-taker, and no answer reaches an agent, a chat or this repository (§2).
 
 ## 1. Who takes part (recruiting rule)
 
@@ -32,12 +33,11 @@ learn how you handle keys, when you rotate them and what you would do first if o
 should change." The script names no rule on purpose: the rules are what parts A and C measure, so the moderator states
 them only in the debrief (§7).
 
-**Consent script (read verbatim; no recording without a yes).** "We record the screen and the audio. Everything you
-will see is made up: no real key, account number or address appears. Please never read a real key, secret or account
-number aloud, and never show one on your screen. The recording stays on the owner's encrypted host — never in the
-repository, Penpot, GitHub, RelayRoom or any chat — and is deleted once the findings are written up. If the owner
-has approved an AI tool for Confidential data, a redacted written summary may be analysed with it; the recording
-never leaves the host. Is that all right?"
+**Consent script (read verbatim; no recording without a yes).** "We record the screen and the audio. Everything you will
+see is made up: no real key, account number or address appears. Please never read a real key, secret or account number
+aloud, and never show one on your screen. The recording and the notes stay on the owner's encrypted host — never in the
+repository, Penpot, GitHub, RelayRoom, any chat or any AI tool — and are deleted once the findings are written up. Is
+that all right?"
 
 **Data rules** (ticket Security notes; E42-D01's rule, `E42-D01:967-972`, because `04` has none — report G-9):
 
@@ -48,17 +48,23 @@ never leaves the host. Is that all right?"
   live app.
 - **Screens:** before any screen share the participant closes exchange, password-manager and wallet windows, and the
   note-taker checks the shared screen first. A real credential that appears anyway stops the session: it is redacted
-  from the recording before storage, the unredacted copy is deleted the same day, and the participant is told to treat
-  it as compromised. For an API key: if it is stored in CandleViewer, freeze its account and revoke it there (report
-  §7), then delete it in Bybit's dashboard and create a new key. While the freeze and the revoke are not yet served
-  (`MX:1533-1539`, `MX:589-595`), the owner deletes it at Bybit and follows `docs/ops/runbooks/key-selfcheck.md`: the
-  stored key then fails its checks, order entry stays read-only and its account is disarmed (`RB:53`; `RB:30-31`). Never
-  rotate it: a compromise takes the revoke path (`22:2830-2831`). For a password or a two-factor secret: change it.
+  from the recording before storage, the unredacted copy is deleted at once, and the participant is told to treat it as
+  compromised. For an API key: in every case, delete it in Bybit's dashboard at once (C-12.12); if it is also stored in
+  CandleViewer, freeze its account and revoke it there, then C-12.12's KEK rotation, session invalidation and
+  exposure-window audit, and only then a new key (report §7 gives the order). While the freeze and the revoke are not
+  yet served (`MX:1533-1539`, `MX:589-595`), the stored key then fails its checks: order entry turns read-only for every
+  account until the key can be revoked here (#898) and a restart passes the check, and its account is disarmed (`RB:53`;
+  `RB:30-31`; `23:4262`); follow `docs/ops/runbooks/key-selfcheck.md`. Never rotate it: a compromise takes the revoke
+  path (`22:2830-2831`). For a password or a two-factor secret: change it.
 - **Redacted** means every real credential location, tool, host, UID, IP and account label is removed, not only
   names.
 - **Confidential** (ticket): recordings and notes stay on the owner's encrypted host, not in the ticket's "research
   repository", because this repository is public (report Deviation 4); transcripts quote fixture names only; both are
   deleted after synthesis, and the deletion is noted on #732.
+- **AI tools:** none receives a recording, a note or an answer. Whether one the owner approves for Confidential data may
+  analyse a redacted written summary is in neither E42-D01's rule nor `04`; it goes to the `04` owner with G-9 (report
+  §16), and until that rule exists no agent pass runs (§7). If it is set, the consent script says so before any session
+  it covers.
 
 ## 3. Session plan (45 minutes, remote; ticket Technical notes)
 
@@ -90,7 +96,7 @@ with the moderator turning the pages; fixture data only. Prompts are read verbat
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
 | T1 Add a key (SCR-126)                             | "Add the key you made at Bybit for `sub_001`." The validating state runs 8 s, once as a bare spinner and once naming the check and its 12 s limit, in counterbalanced order | whether they look for a test before saving; where they look for the allowlist; for each rendering, the moment they call it stuck or would retry                                           | H8; F-2, F-4, F-18   |
 | T2 Rotate (SCR-127)                                | "`sub_002`'s key is due. Replace it." Then the refused-new-key frame, then the switched frame                                                                               | what they expect for open orders; whether they name the delete at Bybit unprompted; how they read the overlap                                                                             | H3; RA-1, RA-6; F-8  |
-| T3 Suspected compromise (SCR-128 → revoke dialog)  | "You think `sub_001`'s key has leaked. It holds two open positions. You have 60 seconds." The two choices appear in counterbalanced order                                   | the first three actions in order, and whether the delete at Bybit comes before the revoke; whether they reach for rotate; the branch, its reason (verbatim) and the order it was shown in | H5; F-10, F-11, F-21 |
+| T3 Suspected compromise (SCR-128 → revoke dialog)  | "You think `sub_001`'s key has leaked. It holds two open positions. You have 60 seconds." The compromise card; the two choices, counterbalanced; then a refused revoke      | the first three actions in order, and whether the delete at Bybit waits on any other step; whether they reach for rotate; the branch, its reason (verbatim) and the order it was shown in | H5; F-10, F-11, F-21 |
 | T4 Disable or delete (SCR-129)                     | "You will not use `demo-1` again. Remove it." Then read the delete warning (CD-5)                                                                                           | disable or delete; what they believe is gone and what stays                                                                                                                               | H7; F-12             |
 | T5 Read the list (SCR-125)                         | "Is withdrawal off on every account right now? How do you know?" One key's check has failed                                                                                 | the answer and the cue they cite; whether they see both the row and the system banner                                                                                                     | F-5, F-6             |
 | T6 Manager: a pending, then a failed key (SCR-079) | "Your account shows a pending key. When can you trade live?" Then the failed-key frame                                                                                      | what they expect to see and whom they would ask                                                                                                                                           | H1, H4; F-15, F-16   |
@@ -98,6 +104,9 @@ with the moderator turning the pages; fixture data only. Prompts are read verbat
 
 The 60 seconds in T3 are a stated budget, not a trap: a participant who runs out is asked what they would have done
 next and the task continues; no destructive gate in the prototype times out (`05` §3.1 rule 4).
+
+In T3 also record whether they would wait for a flatten before the delete at Bybit, and why (report OQ-16), and,
+after the refused revoke, whether they go straight to the Bybit delete (report §7).
 
 ## 5. Comprehension probes (part C; AC4)
 
@@ -128,28 +137,38 @@ refusal is announced once.
 - **Hypotheses:** H1–H9 are scored confirmed, refuted or not tested; H10 waits for launch data (report §14).
 - **Two coders** (ticket): two independent affinity passes, then reconciled. The owner never codes their own session:
   its two passes are a second human's, if the owner names one, and an agent's, or two independent agents', each agent
-  pass on a redacted written summary under §2's AI-tool rule; the owner reviews the reconciled codes. Without an
-  approved AI tool no agent pass runs: a named second human's pass codes the owner's session once, and with no second
-  human it stays uncoded; either way the two-coder item stays open (report AC trace). A pattern seen in one session is a
-  **signal**; in two or more, a **finding**. The owner's sessions keep the P1 tag through both passes.
+  pass on a redacted written summary, and only once the `04` owner sets the AI-tool rule (§2; report G-9); the owner
+  reviews the reconciled codes. Until then no agent pass runs: a named second human's pass codes the owner's session
+  once, and with no second human it stays uncoded; either way the two-coder item stays open (report AC trace). A pattern
+  seen in one session is a **signal**; in two or more, a **finding**. The owner's sessions keep the P1 tag through both
+  passes.
 - **AC4:** comprehension is unmeasured until run; once run, a statement misunderstood by more than one participant is
   rewritten and retested.
-- **Debrief (4 minutes):** first the moderator states the fixed rules the session held back: CandleViewer never stores
-  a key that can withdraw, never shows a secret again and never deletes a key at Bybit, and a passing Test never ends a
-  read-only state. Then: "Which rule cost you the most time today, and what would have made it read as protection?"
-  Recorded verbatim; it feeds E27-D03's copy and is never a reason to change a locked rule (report §12).
+- **Debrief (4 minutes):** first the moderator states the fixed rules the session held back: CandleViewer never stores a
+  key that can withdraw, never shows a secret again and never deletes a key at Bybit, a passing Test never ends a
+  read-only state, and a suspected compromise is deleted at Bybit at once and revoked here, never rotated. Then: "Which
+  rule cost you the most time today, and what would have made it read as protection?" Recorded verbatim; it feeds
+  E27-D03's copy and is never a reason to change a locked rule (report §12).
 
 ## 8. The addendum rule
 
-Results are appended to the report as "Addendum YYYY-MM-DD — sessions", never as a new document: the number of
-sessions run, the H scores, the RA categories as observed, the CP scores, new findings with their F-ids and the AC
-rows they close. A changed recommendation names the AD it changes. The owner's walkthrough answers (report §15) are
-appended the same way, and the deletion of the recordings is noted on #732 and in the addendum.
+Results are appended to the report as "Addendum YYYY-MM-DD — sessions", never as a new document, and carry synthesised
+findings only: the number of sessions run, the H2 and H5–H9 scores, the CP scores, the RA list as revised from the
+owner's walkthrough (report §15: a category named there in general terms, never one from part A, with its design
+response), new findings with their F-ids and the AC rows they close. A
+changed recommendation names the AD it changes. No participant's real key practice — where keys live, who can reach
+them, when one was last rotated or why not — enters the addendum, the report or #732: it stays in the Confidential notes
+(§2). H1, H3 and H4 and every RA category a participant named in part A, a new one included, come from answers about
+their own keys, so they stay there too, and the addendum names none of them, even without a count or attribution: with
+one key holder, a category is that person's practice. The owner's walkthrough answers (report §15) are about the mocks
+only and are synthesised the same way, and
+the deletion of the recordings is noted on #732 and in the addendum.
 
 ## 9. Recording sheet (template; empty until a session runs)
 
 Session id · date · persona (P1 / P2 / P3 / operator) · keyboard-only (y/n) · screen reader (y/n) · stimulus build ·
 A1–A5 notes · RA categories named · T1: test-before-save sought (y/n), allowlist place, retry moment per rendering
 (spinner, named) · T2: orders expectation, delete at Bybit named (y/n), overlap reading · T3: first three actions,
-delete at Bybit before revoke (y/n), branch, order shown, reason · T4: choice, what is gone, what stays · T5: answer and
-cue · T6 / T7 notes · CP-1..CP-6 scores and restatements · keyboard pass counts and blockers · debrief verbatim.
+delete at Bybit at once, waiting on nothing (y/n), rotate reached for (y/n), branch, order shown, reason, flatten wanted
+before the delete (y/n, why), step after the refused revoke · T4: choice, what is gone, what stays · T5: answer and cue
+· T6 / T7 notes · CP-1..CP-6 scores and restatements · keyboard pass counts and blockers · debrief verbatim.
