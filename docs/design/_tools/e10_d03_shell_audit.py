@@ -1020,6 +1020,16 @@ NOT_T2_RE = re.compile(r"\b(?:not|never|no)\s+T2(?![\w-])", re.IGNORECASE)
 CARVE_OUT_SENTENCE = "View-as never gates the C-2.6 protective writes"
 PROTECTIVE = ("FLATTEN ALL", "CANCEL ALL", "FREEZE", "Kill switch…", "the cluster")
 FALLBACK_CMD = "candleviewer kill"
+# the exact carve-out clauses each gated place must keep (the delta lens's Nit 1: a reworded row
+# or a dropped section 6.1 / row 4 clause must fail, not only a leading "view-as;")
+CARVE_OUT_CLAUSES = (
+    "never view-as — the C-2.6 carve-out keeps both enabled on the target's accounts",
+    "view-as on the global scope and Release… only — engaging on the target's accounts"
+    " stays enabled",
+    "view-as on every write command but the C-2.6 protective ones",
+)
+PALETTE_CARVE_OUT = '"Cancel all orders on this account…" stays enabled while viewing as'
+FALLBACK_LINE = "Fallback: the server console command"
 AGGREGATE_LINE = "Safety · your role can't use these"  # D02 :84's cluster line, superseded (C25)
 RELEASE_SENTENCE = "Only the owner can release the kill switch."  # E09-D09 §3.1 :97 (C28)
 # the PROPOSED state keys and their sentences
@@ -1088,13 +1098,27 @@ def string_report(fails: list[str], spec: str) -> dict[str, Any]:
         and "enabled on the target's accounts" in cell6
         and not any(p in before for p in PROTECTIVE)
         and not any(r.split("|")[2].strip().startswith("view-as;") for r in rows13[:2])
+        and len(rows13) == 6
+        and all(
+            clause in r.split("|")[2]
+            and not re.search(r"view-as on every scope|engaging included", r)
+            for clause, r in zip(CARVE_OUT_CLAUSES, (rows13[0], rows13[1], rows13[3]), strict=True)
+        )
+        and PALETTE_CARVE_OUT in rows13[3]
+        and "never on a C-2.6 protective command" in section(spec, "### 6.1", "### 6.2")
+        and PALETTE_CARVE_OUT in section(spec, "### 6.1", "### 6.2")
     )
     va = s1.find(VIEW_AS)
     g["view_as_first"] = 0 <= va < s1.find(PERMISSION) and va < s1.find(OWNER_ONLY)
     g["update_phrase_on_scr157"] = UPDATE_PHRASE in s9 and UPDATE_PHRASE in s4
     s92 = section(spec, "### 9.2", "### 9.3")
     variants = [r for r in table_rows(s92) if re.match(r"^\| (?:offline|tailnet-unreachable) ", r)]
-    g["offline_fallback_named"] = len(variants) == 2 and all(FALLBACK_CMD in r for r in variants)
+    # both columns of both rows: the page ("Where") and its copy name the command (Nit 1)
+    vcells = [[c.strip() for c in r.split("|")[1:-1]] for r in variants]
+    g["offline_fallback_named"] = len(variants) == 2 and all(
+        len(c) == 4 and FALLBACK_CMD in c[2] and FALLBACK_CMD in c[3] and FALLBACK_LINE in c[3]
+        for c in vcells
+    )
     g["no_same_as_dark"] = "same as dark" not in spec.lower()
     g["no_placeholders"] = not re.search(r"SET-ME|TODO|TBD", spec)
     g["no_local_path"] = not LOCAL_PATH_RE.search(spec)
