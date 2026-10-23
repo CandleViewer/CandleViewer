@@ -12,8 +12,10 @@ constructor and its hub's `subscriptions`, `publish` and `resnapshot` are inject
   a runtime is bound, so a subscription stays `snapshot_pending` (§7.7). Private: generation 0, and
   every `snapshot: false` attach is forced (§7.6).
 - View: `role_restricted`, recorded on the subscription at `sub` for every principal but the Owner
-  (ruling Q6), never a client value. A restricted frame has no symbol recorded only for an open
-  position, no `position_open` and no endpoint, so no path character.
+  (ruling Q6), never a client value, and again at each §9.5 re-evaluation: a principal that is no
+  longer the Owner is re-snapped (`reconfigure`) in the restricted view, while one that becomes the
+  Owner keeps the restricted view until it resubscribes. A restricted frame has no symbol recorded
+  only for an open position, no `position_open` and no endpoint, so no path character.
 - Deltas: on each computation, the whole frame (never merged, §8.2), one `publish` per (symbols,
   view) group, which also wakes that group's pending subscriptions; a full frame reaches only a
   principal that is the Owner now. A publish that raises re-snapshots every `recorder`

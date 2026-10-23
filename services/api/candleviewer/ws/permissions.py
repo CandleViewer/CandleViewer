@@ -369,8 +369,9 @@ class Subscription:
     #: user (`sequencing.in_scope`). A connection's principal never changes user
     #: (`apply_snapshot`), so it holds for the subscription's life.
     owner: uuid.UUID | None = None
-    #: #492 (ruling Q6): the principal was not the Owner at admit, never a client value; the
-    #: `recorder` topic serves such a subscription its role-restricted view (R-I2).
+    #: #492 (ruling Q6): the principal was not the Owner at admit or at a later §9.5
+    #: re-evaluation (`apply_snapshot`), never a client value; the `recorder` topic serves such a
+    #: subscription its role-restricted view (R-I2). Only a new `sub` widens it again.
     role_restricted: bool = False
 
     @property
@@ -1168,12 +1169,24 @@ class ConnectionAuthz:
             if frame is not None:
                 frames.append(frame)
                 affected.append(sub)
+        # #492 (ruling Q6): a principal no longer the Owner narrows the recorded view now, and a
+        # `recorder` subscription is re-snapped in it; a new Owner keeps it until a new `sub`
+        viewed: set[str] = set()
+        if not new.principal.is_owner:
+            known = {s.sub_id for s in affected}
+            for sub in sorted(self.by_id.values(), key=lambda s: (s.ch, s.sub_id)):
+                if not sub.role_restricted:
+                    sub.role_restricted = True
+                    if sub.topic.family.family == _RECORDER and sub.sub_id not in known:
+                        affected.append(sub)
+                        viewed.add(sub.sub_id)
         # #415: a grant or a permission withdrawn alike, one rule at the sending boundary (C-12.4)
         purged = self.on_purge(affected) if self.on_purge is not None and affected else set()
         self._dropped(affected)  # the discard comes first (§9.5)
         for sub in affected:  # then a narrowed one is re-pended unless paused (its resume
             # re-snapshots it, §5.4, §8.4 step 1): flag on always, flag off once its frames went
-            if self.on_drop is None and (sub.ch, sub.replay_session_id) not in purged:
+            gone = (sub.ch, sub.replay_session_id) in purged
+            if self.on_drop is None and not gone and sub.sub_id not in viewed:
                 continue
             paused = sub.effective.get("paused") is True
             if sub.sub_id in self.by_id and not (sub.snapshot_pending or paused):
