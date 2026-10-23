@@ -28,13 +28,16 @@ its source so a reviewer can re-grep it:
 7. Token bindings: every token the spec binds exists in the merged dark set, or its row is marked
    PROPOSED / G-row; ``color.text.disabled`` / ``opacity.disabled`` never in a T2 row; which pairs
    ``tools/contrast/pairs.mjs`` registers.
-8. String gates on the committed files (the badge contract once, the T2 rule once, "T2" in every
-   gated row, the view-as leg first, no aggregate cluster line in a gated or board row, Release
-   T2 when engaged, every PROPOSED ``health.*`` sentence <= 60 characters with a full stop, the
-   SCR-157 phrase, no "same as dark", no placeholders, no
-   chrome trading word, no local path, no Penpot host (a generic pattern; no host named), no
-   pageLink, no closing keyword with an issue number, every planned board PENDING, the nine
-   catalogue pointer lines, every ``US-…`` id cited exists in ``docs/plan/11-user-stories.md``).
+8. String gates on the committed files (the badge contract once, the T2 rule once, every one of
+   the 18 matrix cells either "none" with no gated key or "T2 per §10.1" with no "not T2", every
+   section 1.3 row rendered 2a / 2b, the view-as leg first and never on the C-2.6 protective
+   writes, the SCR-157 fallback block on SCR-159's offline and tailnet variants, no aggregate
+   cluster line in a gated or board row, Release T2 when engaged, every PROPOSED ``health.*``
+   sentence <= 60 characters with a full stop, the SCR-157 phrase, no "same as dark", no
+   placeholders, no chrome trading word, no local path, no Penpot host (a generic pattern; no
+   host named), no pageLink, no closing keyword with an issue number, every planned board
+   PENDING, the nine catalogue pointer lines, every ``US-…`` id cited exists in
+   ``docs/plan/11-user-stories.md``).
 9. The counts the boards and the PR draft quote (``--json`` feeds the local check-nums).
 
 Usage: python3 -I docs/design/_tools/e10_d03_shell_audit.py [--json] [--check]
@@ -153,7 +156,7 @@ RING_OFFSET_SOURCE = (
 TOAST_WIDTH = 360
 TOAST_WIDTH_STATUS = "PROPOSED size.toast.width — no token exists (G-row G11)"
 TOAST_BODY_PX = 13  # type.ui.body
-TOAST_EM = 0.56  # the lane's conservative Inter advance per character
+TOAST_EM = 0.56  # the board-geometry rule's conservative Inter advance per character (estH)
 TOAST_SENTENCES = (
     "Order accepted · id 42f",
     "Update available",
@@ -1012,6 +1015,11 @@ TRADE_WORD_RE = re.compile(r"^(?:Buy|Sell|Place)\b")
 D02_PAGE_ID_RE = re.compile(r"page id `([0-9a-f-]{36})`")
 HEX_RE = re.compile(r"#[0-9A-Fa-f]{6}\b")
 US_ID_RE = re.compile(r"\bUS-[A-Z]+-(\d{3})(?:\.\.(\d{3}))?\b")
+T2_EXACT = "T2 per §10.1"
+NOT_T2_RE = re.compile(r"\b(?:not|never|no)\s+T2(?![\w-])", re.IGNORECASE)
+CARVE_OUT_SENTENCE = "View-as never gates the C-2.6 protective writes"
+PROTECTIVE = ("FLATTEN ALL", "CANCEL ALL", "FREEZE", "Kill switch…", "the cluster")
+FALLBACK_CMD = "candleviewer kill"
 AGGREGATE_LINE = "Safety · your role can't use these"  # D02 :84's cluster line, superseded (C25)
 RELEASE_SENTENCE = "Only the owner can release the kill switch."  # E09-D09 §3.1 :97 (C28)
 # the PROPOSED state keys and their sentences
@@ -1056,12 +1064,37 @@ def string_report(fails: list[str], spec: str) -> dict[str, Any]:
     s1, s4 = section(spec, "## 1.", "## 2."), section(spec, "## 4.", "## 5.")
     s9, s10 = section(spec, "## 9.", "## 10."), section(spec, "## 10.", "## 11.")
     keys = ("rbac.", "health.", UPDATE_PHRASE)
-    gated_rows = [r for r in table_rows(s4) if any(k in r for k in keys)]
-    g["t2_in_gated_rows"] = bool(gated_rows) and all("T2" in r for r in gated_rows)
-    g["t2_rows_cite_rule"] = bool(gated_rows) and all("§10.1" in r for r in gated_rows)
+    # every matrix cell: its T2 column is "none" with no gated key, or names "T2 per §10.1" exactly
+    # and never "not T2" (the orchestrator's text round 1, Minor 8)
+    mcells = [r for r in table_rows(s4) if re.match(r"^\| \d+ +\| ", r)]
+    t2cols = [[c.strip() for c in r.split("|")[1:-1]][4] for r in mcells]
+    gated_rows = [c for c in t2cols if not c.startswith("none")]
+    g["t2_in_every_cell"] = len(mcells) == 18 and all(
+        (not any(k in c for k in keys)) if c.startswith("none") else T2_EXACT in c for c in t2cols
+    )
+    g["no_not_t2_in_cells"] = not any(NOT_T2_RE.search(c) for c in t2cols)
+    g["t2_rows_cite_rule"] = bool(gated_rows) and all("§10.1" in c for c in gated_rows)
+    s13 = section(spec, "### 1.3", "### 1.4")
+    rows13 = [r for r in table_rows(s13) if not r.startswith("| Control")]
+    g["t2_rendering_in_1_3"] = len(rows13) == 6 and all(
+        re.search(r"\b2a\b|\b2b\b|T2 rendering", r) for r in rows13
+    )
+    # the C-2.6 carve-out: view-as never gates the protective writes (cell 6, section 1.3, 10.1)
+    cell6 = next((c for r, c in zip(mcells, t2cols, strict=True) if re.match(r"^\| 6 ", r)), "")
+    before = cell6.split(T2_EXACT)[0]
+    g["view_as_spares_carve_out"] = (
+        CARVE_OUT_SENTENCE in s1
+        and "never gates the C-2.6 protective writes" in s10
+        and "enabled on the target's accounts" in cell6
+        and not any(p in before for p in PROTECTIVE)
+        and not any(r.split("|")[2].strip().startswith("view-as;") for r in rows13[:2])
+    )
     va = s1.find(VIEW_AS)
     g["view_as_first"] = 0 <= va < s1.find(PERMISSION) and va < s1.find(OWNER_ONLY)
     g["update_phrase_on_scr157"] = UPDATE_PHRASE in s9 and UPDATE_PHRASE in s4
+    s92 = section(spec, "### 9.2", "### 9.3")
+    variants = [r for r in table_rows(s92) if re.match(r"^\| (?:offline|tailnet-unreachable) ", r)]
+    g["offline_fallback_named"] = len(variants) == 2 and all(FALLBACK_CMD in r for r in variants)
     g["no_same_as_dark"] = "same as dark" not in spec.lower()
     g["no_placeholders"] = not re.search(r"SET-ME|TODO|TBD", spec)
     g["no_local_path"] = not LOCAL_PATH_RE.search(spec)
@@ -1077,9 +1110,9 @@ def string_report(fails: list[str], spec: str) -> dict[str, Any]:
     g["stamps_present"] = "PROPOSED" in spec and "RULED" in spec
     g["shape_sentence"] = SHAPE_SENTENCE in spec
     g["validity_sentence"] = VALIDITY_SENTENCE in spec
-    # the T2 pre-check fold: one reason node per control (no aggregate line in a gated row or a
-    # board row), Release… T2 for a non-owner when engaged, every PROPOSED health.* sentence
-    # <= 60 characters with a full stop
+    # E09-D09 §2.2's one reason node per control (no aggregate line in a gated row or a board
+    # row), Release… T2 for a non-owner when engaged (§3.1 :97), every PROPOSED health.* sentence
+    # <= 60 characters with a full stop (§3.1)
     s0 = section(spec, "## 0.", "## 1.")
     g["no_aggregate_cluster_line"] = (
         AGGREGATE_LINE not in s4
@@ -1108,6 +1141,7 @@ def string_report(fails: list[str], spec: str) -> dict[str, Any]:
     fails += [f"string gate failed: {k}" for k, ok in g.items() if not ok]
     return {
         "gates": g,
+        "matrix_cells": len(mcells),
         "gated_rows": len(gated_rows),
         "board_rows": len(board_rows),
         "catalogue_lines": nine,
