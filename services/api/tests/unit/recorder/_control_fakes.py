@@ -31,6 +31,7 @@ class FakeRecorder:
         self.entries: dict[str, rc.RecordedEntry] = {}
         self.refused: dict[str, RefusalCause] = {}
         self.max_symbols = max_symbols
+        self.status_fields: dict[str, Any] = {}  # `ControlStatus` beside its entries
 
     def put(self, symbol: str, *reasons: rc.RecordReason, **fields: Any) -> rc.RecordedEntry:
         """Seed (or replace) an entry recording for `reasons`; ids follow creation order."""
@@ -105,6 +106,10 @@ class FakeRecorder:
 
     async def get(self, entry_id: str) -> rc.RecordedEntry | None:
         return next((e for e in self.entries.values() if e.id == entry_id), None)
+
+    async def status(self) -> rc.ControlStatus:
+        entries = tuple(e for _, e in sorted(self.entries.items()))
+        return rc.ControlStatus(entries, **self.status_fields)
 
 
 class EmptyRows:
