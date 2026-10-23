@@ -1676,6 +1676,7 @@ def make_ws_router(
             user_id=str(user_id),  # §9.6: the session's own user, the target's scope
             session_id=session_id,
             token_expires_at_ms=expires_ms,
+            git_sha=git_sha,  # §4.3 (E09-X02 F-8): the exact build, after authentication only
             **({} if view is None else {"kill_switch": view}),  # none for a principal with no role
         )
         conn.push(_reply("auth_ok", frame.get("id"), ts=now_ms, p=payload))
@@ -1775,7 +1776,6 @@ def make_ws_router(
             welcome = welcome_payload(
                 encoding=conn.encoding.removeprefix("cv.v1."),
                 server_version=server_version,
-                git_sha=git_sha,
                 connection_id=conn.connection_id,
                 server_time_ms=now_ms,
                 client_clock_ms=clock_ms,

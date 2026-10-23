@@ -220,11 +220,12 @@ def test_happy_path_handshake_welcome_auth_ok_and_system(world: _World, offer: l
         assert (welcome["t"], welcome["id"]) == ("welcome", "c-1")
         p = welcome["p"]
         assert p["protocol"] == "cv.v1" and p["encoding"] == offer[0].removeprefix("cv.v1.")
-        assert (p["server_version"], p["git_sha"]) == ("1.2.3", "a91f0c3")
+        assert p["server_version"] == "1.2.3" and "git_sha" not in p  # E09-X02 F-8 (§4.3)
         assert p["clock_skew_ms"] == 22 and p["connection_id"].startswith("ws_")
         assert p["limits"]["max_symbols_per_connection"] == 40
         ok = _auth(ws)
         assert (ok["t"], ok["id"]) == ("auth_ok", "c-2")
+        assert ok["p"]["git_sha"] == "a91f0c3"  # the exact build, after authentication only
         assert ok["p"]["roles"] == ["viewer"] and ok["p"]["permissions"] == ["marketdata:read"]
         assert ok["p"]["account_scope"] == [] and ok["p"]["session_id"] == SESSION
         assert ok["p"]["token_expires_at_ms"] == BASE_MS + TOKEN_TTL_S * 1000

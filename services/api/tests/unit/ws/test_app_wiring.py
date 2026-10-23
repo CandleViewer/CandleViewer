@@ -240,11 +240,18 @@ def test_market_bars_router_reads_the_catalogue_qty_step(monkeypatch: pytest.Mon
     assert seen["qty_step"]("BTCUSDT") == Decimal(1) and seen["qty_step"]("NOPEUSDT") is None
 
 
-def test_welcome_carries_settings_build_info(world: tuple[TestClient, _Kill]) -> None:
+def test_welcome_carries_the_build_label_and_auth_ok_the_settings_sha(
+    world: tuple[TestClient, _Kill],
+) -> None:
+    """E09-X02 F-8 (`23-ws-protocol.md` §4.3): the exact build only after authentication."""
     client, _ = world
     with client.websocket_connect("/ws", subprotocols=JSON) as ws:
-        p = _open(ws)["p"]
-    assert (p["server_version"], p["git_sha"]) == ("4.5.6", "cafe123")
+        ws.send_json({"t": "hello", "id": "h", "p": {"clock_ms": 1}})
+        welcome = ws.receive_json()["p"]
+        ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
+        ok = ws.receive_json()
+    assert welcome["server_version"] == "4.5.6" and "git_sha" not in welcome
+    assert (ok["t"], ok["p"]["git_sha"]) == ("auth_ok", "cafe123")
 
 
 def test_revocation_hub_remembers_revoked_ids_for_one_access_token_lifetime(
