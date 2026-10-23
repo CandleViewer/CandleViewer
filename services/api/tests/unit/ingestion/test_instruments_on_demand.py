@@ -522,7 +522,7 @@ async def test_ensure_fresh_stop_cancels_the_shared_refresh_and_answers_its_wait
     assert fetch.calls == 1 and sched._on_demand is None
 
 
-async def test_ensure_fresh_waiter_cancelled_in_the_turn_its_refresh_is_ends_cancelled() -> None:
+async def test_ensure_fresh_waiter_cancelled_with_its_refresh_ends_cancelled() -> None:
     """#4238 R1C-03 (a): a waiter cancelled together with the shared refresh (both, in one turn)
     propagates its own cancellation; only a refresh cancelled under it is a 503."""
     sched = _scheduler(HangingFetch())

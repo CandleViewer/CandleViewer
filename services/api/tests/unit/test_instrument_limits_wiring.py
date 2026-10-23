@@ -7,6 +7,7 @@ page (C-13.5); no I/O, no clock."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 
 import pytest
 
@@ -49,6 +50,15 @@ class _Catalogue:
         if isinstance(self.answer, BaseException):
             raise self.answer
         return self.answer
+
+
+@pytest.mark.parametrize("member", ["environment", "catalogue"])
+def test_the_binding_is_frozen(member: str) -> None:
+    """Spec B2 section 2.4 (#906, B2c code lens R1C-02): nothing re-binds the environment or the
+    catalogue once the composition root has built the binding."""
+    limits = CatalogueLimits("demo", lambda: None)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(limits, member, None)
 
 
 async def test_a_fresh_catalogue_is_every_instrument_by_symbol() -> None:

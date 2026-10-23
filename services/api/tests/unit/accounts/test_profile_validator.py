@@ -27,7 +27,7 @@ import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
-from candleviewer.accounts.errors import AccountNotFoundError
+from candleviewer.accounts.errors import AccountNotFoundError, AccountsError
 from candleviewer.accounts.profile_input import ProfileFieldError
 from candleviewer.accounts.profile_validator import (
     INSTRUMENT_DEADLINE_S,
@@ -669,6 +669,12 @@ async def test_an_unavailable_catalogue_judges_nothing() -> None:
     assert caught.value is unavailable and port.calls == [_BOUNDS]
 
 
+def test_the_catalogues_503_is_an_accounts_error() -> None:
+    """The write edge maps it with the accounts errors, ahead of the generic one (#906, B2c code
+    lens R1C-02)."""
+    assert issubclass(InstrumentLimitsUnavailable, AccountsError)
+
+
 @pytest.mark.parametrize(
     "changes",
     [
@@ -719,6 +725,19 @@ async def test_a_figure_moved_toward_a_limit_reads_the_catalogue(
     assert result == judge_exchange_limits(profile, _LISTED, stored=stored)
 
 
+async def test_unsetting_fixed_qty_still_reads_the_catalogue() -> None:
+    """Fail closed (#906, the ruling of 2026-10-23 16:29Z, issuecomment-6371879028): a write that
+    only unsets `fixed_qty` reads the catalogue, though no listing can refuse it; a 503 during a
+    catalogue outage is the right cost (B2c code lens R1C-01)."""
+    stored = _profile(_Q, **_CLEAN)
+    profile = _profile(_Q, **{**_CLEAN, "sizing_mode": _N, _QTY: None, "fixed_notional": "1000"})
+    port = _Limits("demo", _LISTED)
+    result = await check_exchange_limits(
+        profile, environment="demo", instruments=port, stored=stored
+    )
+    assert port.calls == [_BOUNDS] and result.errors == ()
+
+
 @pytest.mark.parametrize(("stored_changes", "changes"), _REDUCTIONS)
 async def test_a_pure_reduction_reads_no_catalogue(
     stored_changes: dict[str, Any], changes: dict[str, Any]
@@ -745,6 +764,17 @@ async def test_a_stored_profile_other_than_the_one_replaced_is_refused_unread(me
     with pytest.raises(AccountNotFoundError) as refused:
         await check_exchange_limits(profile, environment="demo", instruments=port, stored=stored)
     assert refused.value.entity == "profile" and port.calls == []
+
+
+async def test_the_environment_is_checked_before_the_stored_profile() -> None:
+    """C-2.11 first (#906, B2c code lens R1C-02): a write judged against another environment's
+    catalogue and naming a foreign `stored` is refused for the account, before any read."""
+    profile = _profile(_Q, **_BREACHING)
+    stored = profile.model_copy(update={"profile_id": UUID("0b5f6d0e-28a1-4c1e-9e01-0000000000ff")})
+    port = _unread("live")
+    with pytest.raises(AccountNotFoundError) as refused:
+        await check_exchange_limits(profile, environment="demo", instruments=port, stored=stored)
+    assert refused.value.entity == "account" and port.calls == []
 
 
 #: Each symbol `_POOL` names, a trading USDT perpetual whose limits every drawn figure breaks

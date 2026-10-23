@@ -10,8 +10,9 @@ and `stop_beyond_liquidation` need the sizer (E28-T03).
 `judge_exchange_limits` refuses a write against the exchange's limits (`ProfileRejected`'s second
 pass), judged for the entries the write introduces; it has no I/O, logging or clock.
 `check_exchange_limits` is its async edge: it reads the listing of the account's environment
-through `InstrumentLimitsPort`, bound in the composition root, only when some listing could refuse
-the write, so a write that introduces nothing never waits on the exchange's data.
+through `InstrumentLimitsPort`, bound in the composition root, only when the write introduces
+allow scope or moves a judged figure toward a limit. A read it skips is one no listing could
+refuse, so a write that introduces nothing never waits on the exchange's data.
 """
 
 from __future__ import annotations
@@ -170,7 +171,8 @@ def _judged(
 ) -> tuple[list[Instrument], list[Instrument], list[Instrument]]:
     """What the leverage, quantity and position-cap rules judge, in `allowed`'s order: the
     instruments the write introduces, or all it allows when it moved the rule's figure toward
-    the limit. A create introduces all it allows."""
+    the limit. A create introduces all it allows. A rule or trigger added here must be added to
+    `_needs_listing` too; the skip-implies-no-refusal property test guards the pair."""
     if stored is None:
         return allowed, allowed, allowed
     before = SymbolScope.of(stored)
@@ -235,12 +237,14 @@ async def check_exchange_limits(
     instruments: InstrumentLimitsPort,
     stored: AccountProfile | None,
 ) -> SecondPassResult:
-    """The second pass over the listing of the account's `environment`, read only when some listing
-    could refuse the write (#906, ruling of 2026-10-22 14:39Z, issuecomment-6360499465): when it
+    """The second pass over the listing of the account's `environment`, read only when the write
     introduces allow scope (a create allowing anything; a new allow entry, `all_symbols` turned
-    on, a block entry removed) or moves a figure toward a limit (leverage raised; `fixed_qty`
-    changed or set; `max_position_notional` lowered or set). Any other write, a profile allowing
-    nothing (D11) among them, answers no refusal and the read's warnings, and is never a 503.
+    on, a block entry removed) or moves a judged figure toward a limit (leverage raised;
+    `fixed_qty` changed, set or unset, fail closed by the ruling of 2026-10-23 16:29Z;
+    `max_position_notional` lowered or set), per #906's ruling of 2026-10-22 14:39Z
+    (issuecomment-6360499465). A read it skips is one no listing could refuse. Any other write,
+    a profile allowing nothing (D11) among them, answers no refusal and the read's warnings, and
+    is never a 503.
 
     Before any read, `AccountNotFoundError` for a port of another environment (C-2.11), and for a
     `stored` that is not the profile this write replaces (another profile, or another account's).
