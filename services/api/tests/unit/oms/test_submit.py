@@ -22,7 +22,7 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from structlog.testing import capture_logs
@@ -59,6 +59,7 @@ from candleviewer.oms.errors import (
     OrderInvalid,
     OrderLinkIdExhausted,
     OrderStepUnknown,
+    ProfileNotFound,
     RateBudgetExceeded,
     RiskRefused,
     StopRequestPending,
@@ -379,6 +380,56 @@ async def test_an_entry_with_no_profile_is_refused_403(rig: SubmitRig) -> None:
     refused = await _refused(rig)
     assert isinstance(refused, RiskRefused)
     _nothing_done(rig)
+
+
+#: A `profile_id` a request names.
+_NAMED = UUID("5f0e1d2c-3b4a-4c96-8877-665544332211")
+
+
+def _profile_not_found(rig: SubmitRig, refused: OmsError) -> None:
+    """22 `PlaceOrderRequest.profile_id`: one answer whatever the case, recorded denied first at
+    the resolve step (C-2.9), naming no profile (no oracle of which case it was)."""
+    assert isinstance(refused, ProfileNotFound) and refused.detail == "No such profile."
+    assert (problem_for(refused).status, problem_for(refused).code) == (404, "not_found")
+    [record] = _denied(rig)
+    assert (record.reason, record.object_id) == ("not_found", cr.ACCOUNT)
+    assert record.detail == {
+        "step": "resolve", "code": "not_found", "symbol": SYMBOL, "environment": "demo",
+        "order_link_id": None,
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize("held", ["another_accounts", "missing"])
+@pytest.mark.parametrize(
+    "request_",
+    [entry(profile_id=_NAMED), flatten(profile_id=_NAMED)],
+    ids=["entry", "reduce_only"],
+)
+async def test_a_named_profile_the_account_does_not_hold_is_404_with_nothing_done(
+    rig: SubmitRig, held: str, request_: OrderRequest
+) -> None:
+    """SEC-2B2-01's IDOR, its profile part: another account's profile and one that does not exist
+    are refused alike, `404 not_found` before the order is sized, nothing recorded or sent; a
+    reduce-only order too, never let through without the profile it names. The double answers
+    each as `EffectiveProfiles` does (no such profile of the account)."""
+    if held == "another_accounts":
+        foreign = profile(cr.LIVE_ACCOUNT, profile_id=str(_NAMED), is_default=False)
+        rig.profiles.held[(cr.LIVE_ACCOUNT, _NAMED)] = foreign
+    refused = await _refused(rig, request_)
+    _profile_not_found(rig, refused)
+    _nothing_done(rig)
+
+
+async def test_a_deleted_profile_is_404_as_a_missing_one_is(rig: SubmitRig) -> None:
+    """The profile an earlier order named, once deleted (the store reads no deleted row, and the
+    write invalidates the cache), answers as one never seen: nothing more recorded or sent."""
+    rig.profiles.held[(cr.ACCOUNT, _NAMED)] = profile(profile_id=str(_NAMED), is_default=False)
+    assert (await rig.submit(entry(profile_id=_NAMED))).status == 202
+    del rig.profiles.held[(cr.ACCOUNT, _NAMED)]
+    written, calls = rig.written(), rig.calls()
+    refused = await _refused(rig, entry(profile_id=_NAMED), context(client_ref=uuid4()))
+    _profile_not_found(rig, refused)
+    assert (rig.written(), rig.calls()) == (written, calls)
 
 
 @pytest.mark.parametrize(

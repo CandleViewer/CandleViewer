@@ -11,8 +11,10 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
    `oms_clock_drift_blocked_total`), then the read-only gate (403 `trading_disabled`);
 2. the account the order is signed for, by its id alone (`TradingAccounts`, SR-E27-21), the route
    of its environment (C-2.11: a miswired one is a 500 that pages), the instrument (400 for a
-   symbol none lists) and the effective profile (none: an entry is refused at step 4, D11); a
-   read that fails or does not answer within `store_timeout_s` is 503 `store_unavailable`;
+   symbol none lists) and the effective profile (a named one the account does not hold, another
+   account's, a deleted or a missing one alike, is 404 `not_found`; with none named and no
+   default, an entry is refused at step 4, D11); a read that fails or does not answer within
+   `store_timeout_s` is 503 `store_unavailable`;
 3. the size (`Sizer`), the effect on the exchange-truth position (SR-E29-01, read for a
    reduce-only order only, within `position_timeout_s`), the reference price (the order's own
    price, else the market's, 24 Sec.9.3 step 2), the native stop and the intent
@@ -162,6 +164,7 @@ from .errors import (
     OrderLinkIdExhausted,
     OrderStepRefused,
     OrderStepUnknown,
+    ProfileNotFound,
     RateBudgetExceeded,
     RiskRefused,
     StopRequestInFlight,
@@ -684,14 +687,19 @@ class OrderSubmission:
         return instrument
 
     async def _profile(self, request: OrderRequest) -> AccountProfile | None:
-        """The effective profile (24 Sec.9.3), or None when the account has none: an entry is then
-        refused at the check (D11), never sized from a default (SR-E28-24)."""
+        """The effective profile (24 Sec.9.3). A named `profile_id` the account does not hold,
+        another account's, a deleted one or one that does not exist, is 404 `not_found`, the same
+        answer for each (22 `PlaceOrderRequest`), whatever the order's kind. With none named, an
+        account with no default answers None: an entry is then refused at the check (D11), never
+        sized from a default (SR-E28-24)."""
         try:
             async with asyncio.timeout(self._store_timeout_s):
                 return await self._deps.profiles.get_effective_profile(
                     request.account_id, request.profile_id
                 )
         except AccountNotFoundError:
+            if request.profile_id is not None:
+                raise ProfileNotFound from None
             return None
         except (TimeoutError, ProfileUnavailableError, StorageError) as exc:
             _log().warning("oms_submit_profile_unread", failure=type(exc).__name__)
