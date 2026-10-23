@@ -149,15 +149,16 @@ def _validated(response: httpx.Response) -> dict[str, Any]:
     return body
 
 
-def _answers(statuses: range) -> list[Any]:
+def _answers(*, created: bool) -> list[Any]:
+    """The 201 when `created`, else every other declared answer: together, all of them."""
     return [
         pytest.param(status, send, id=f"startViewAs-{status}-{why}")
         for status, why, send in _ANSWERS
-        if status in statuses
+        if (status == 201) is created
     ]
 
 
-@pytest.mark.parametrize(("status", "send"), _answers(range(201, 202)))
+@pytest.mark.parametrize(("status", "send"), _answers(created=True))
 async def test_a_201_is_a_view_as_context_that_round_trips(status: int, send: Send) -> None:
     response = await send(World())
     assert response.status_code == status
@@ -165,7 +166,7 @@ async def test_a_201_is_a_view_as_context_that_round_trips(status: int, send: Se
     assert api.ViewAsContext.model_validate(body).model_dump(mode="json") == body
 
 
-@pytest.mark.parametrize(("status", "send"), _answers(range(400, 600)))
+@pytest.mark.parametrize(("status", "send"), _answers(created=False))
 async def test_a_refusal_is_a_problem_of_its_declared_response(status: int, send: Send) -> None:
     response = await send(World())
     assert response.status_code == status

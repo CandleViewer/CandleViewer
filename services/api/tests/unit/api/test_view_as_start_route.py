@@ -559,6 +559,20 @@ async def test_a_target_row_outside_the_contract_answers_503_and_starts_nothing(
     assert w.held() is None and w.repo.notices == [] and w.ports.calls == []
 
 
+async def test_a_target_row_outside_the_contract_logs_its_fields_and_never_their_values() -> None:
+    """#4245's re-check Minor-1: the row's display name is P1, so the 503's log line names the
+    failing fields and their error types, never the value pydantic's text would echo."""
+    w = World()
+    await w.sign_in()
+    name = "Bartholomew-" + "X" * 80
+    w.users.rows[str(_TARGET)] = {**_user("bo"), "display_name": name}
+    with capture_logs() as logs:
+        assert _code(await w.start()) == (503, "store_unavailable")
+    (line,) = [e for e in logs if e.get("read") == "users"]
+    assert line["fields"] == [("target_display_name", "string_too_long")]
+    assert "exc_info" not in line and "Bartholomew" not in json.dumps(logs, default=str)
+
+
 async def test_a_target_with_no_display_name_starts_with_a_null_one() -> None:
     w = World()
     await w.sign_in()
