@@ -2,8 +2,9 @@
 session (401), permission (403, audited), a user actor (403), the per-user write limit (429), the
 `Idempotency-Key` and the body (422), the store (503), the `recorder` step-up where the write
 changes retention (403), a replay (409 on another body), the entry in the settings' env and the
-caller's view (404), then the write, audited ahead of the store (503 when it cannot be). No
-control has writes until the recorder runtime is bound (#2188): until then every write is 503."""
+caller's view (404), then the write, which the policy records ahead of the store (503 when it
+cannot); the routes record only what they refuse. No control has writes until the recorder
+runtime is bound (#2188): until then every write is 503."""
 
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ import math
 import time
 import uuid
 from collections import OrderedDict, deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Annotated, Any, Final
 
@@ -36,7 +37,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.recorder import control as rc
-from candleviewer.recorder.errors import RecorderError, RecorderSymbolLimitError
+from candleviewer.recorder.errors import RecorderSymbolLimitError
 from candleviewer.recorder.models import Actor
 from candleviewer.ws._generated.error_codes import ErrorCode
 
@@ -47,6 +48,7 @@ _RETAINS: Final = frozenset({"pinned", "retention_days"})  # a retention change 
 _BASIS: Final = "~0.5-0.75 GB/day/symbol compressed at depth 200"
 _DEEP: Final = "Depth 500 records more than the depth-200 planning rate."
 _WINDOW_S: Final = 60.0
+_NO_AUDIT: Final = "The audit record could not be written; nothing changed."
 
 
 class WriteLimiter:
@@ -137,10 +139,21 @@ def _spec(body: BaseModel) -> rc.EntrySpec:
                         named.get("pinned"), named.get("retention_days"))  # fmt: skip
 
 
-def _state(e: rc.RecordedEntry | rc.EntrySpec) -> dict[str, Any]:
-    streams = None if e.streams is None else list(e.streams)
-    return {"streams": streams, "depth": e.depth, "pinned": e.pinned,
-            "retention_days": e.retention_days}  # fmt: skip
+def _fresh(seen: rc.RecordedEntry, body: api.AddRecordedSymbolRequest, actor: Actor,
+           spec: rc.EntrySpec) -> rc.RecordedEntry:  # fmt: skip
+    """A re-add of a row hidden from the caller reads as a fresh add (restricted refusal parity)."""
+    days, streams = None if spec.pinned else spec.retention_days, tuple(body.streams)
+    return rc.RecordedEntry(seen.id, seen.symbol, seen.reasons, "starting", bool(spec.pinned),
+                            streams, body.depth, None, days, actor.id, lingering=False,
+                            refusals=seen.refusals)  # fmt: skip
+
+
+async def _stored[T](write: Coroutine[Any, Any, T]) -> T:
+    """A port write, which the policy records ahead of the store: a refused record is `503`."""
+    try:
+        return await write
+    except (AuditUnavailable, AuditWriterStopped):
+        raise common.Problem(503, ErrorCode.AUDIT_UNAVAILABLE, _NO_AUDIT) from None
 
 
 def make_recording_writes_router(
@@ -213,20 +226,16 @@ def make_recording_writes_router(
             raise _missing()
         return entry
 
-    async def _audit(call: _Call, action: str, symbol: str, entry_id: str | None = None,
-                     **fields: Any) -> None:  # fmt: skip
-        """One audit record, written before the store changes (C-2.9); none, no write (503)."""
-        p, denied = call.p, fields.get("outcome") == AuditOutcome.DENIED
-        try:
-            await audit.emit(
-                action, actor_label=p.actor_name, actor_user_id=p.actor_id, actor_ip=p.ip,
-                session_id=p.session_id, request_id=p.request_id, object_kind="recorded_symbol",
-                object_id=entry_id, object_label=symbol,
-                severity=Severity.WARNING if denied else Severity.INFO, **fields,
-            )  # fmt: skip
-        except (AuditUnavailable, AuditWriterStopped):
-            msg = "The audit record could not be written; nothing changed."
-            raise common.Problem(503, ErrorCode.AUDIT_UNAVAILABLE, msg) from None
+    async def _denied(call: _Call, action: str, symbol: str, entry_id: str | None,
+                      reason: str) -> None:  # fmt: skip
+        """The record of a write refused before the policy wrote one, naming the real cause."""
+        p = call.p
+        await _stored(audit.emit(
+            action, actor_label=p.actor_name, actor_user_id=p.actor_id, actor_ip=p.ip,
+            session_id=p.session_id, request_id=p.request_id, object_kind="recorded_symbol",
+            object_id=entry_id, object_label=symbol, severity=Severity.WARNING,
+            outcome=AuditOutcome.DENIED, reason=reason,
+        ))  # fmt: skip
 
     @router.post("/recording/symbols")
     async def add_recorded_symbol(request: Request) -> Response:
@@ -238,18 +247,19 @@ def make_recording_writes_router(
             rule = {"field": "symbol", "rule": "listed_instrument", "message": "Not listed."}
             raise common.Problem(422, BAD, "The symbol is not a listed instrument.", errors=[rule])
         spec = _spec(body)
-        await _audit(call, "recorder.start", body.symbol, after_state=_state(spec))
-        try:
-            entry, created = await call.control.add(body.symbol, spec, call.actor)
-        except RecorderSymbolLimitError:
+        try:  # the policy writes `recorder.start` ahead of the row (add_manual)
+            entry, prior = await _stored(call.control.add(body.symbol, spec, call.actor))
+        except RecorderSymbolLimitError:  # refused before the policy's record
             code = ErrorCode.RECORDER_SYMBOL_LIMIT
-            await _audit(call, "recorder.start", body.symbol, outcome=AuditOutcome.DENIED,
-                         reason=code.value)  # fmt: skip
+            await _denied(call, "recorder.start", body.symbol, None, code.value)
             raise common.Problem(422, code, "The recorder's symbol cap is reached.") from None
-        out = _dump(shown(call, entry))
-        if created:
-            out["estimate"] = {"basis": _BASIS, "warning": _DEEP if entry.depth == 500 else None}
-        return done(call, JSONResponse(out, 201 if created else 200))
+        seen = shown(call, entry)
+        if prior is not None and view(call, prior) is None:
+            prior, seen = None, _fresh(seen, body, call.actor, spec)
+        out = _dump(seen)
+        if prior is None:
+            out["estimate"] = {"basis": _BASIS, "warning": _DEEP if seen.depth == 500 else None}
+        return done(call, JSONResponse(out, 201 if prior is None else 200))
 
     @router.put("/recording/symbols/{recordedSymbolId}/pin")
     async def pin_recorded_symbol(
@@ -260,16 +270,11 @@ def make_recording_writes_router(
         if call.replayed is not None:
             return call.replayed
         entry = await visible(call, entry_id)
-        after = {"pinned": body.pinned, "retention_days": body.retention_days}
-        await _audit(call, "retention.change", entry.symbol, entry.id,
-                     before_state=_state(entry), after_state=after)  # fmt: skip
-        try:
-            pinned = await call.control.pin(entry.id, body.pinned, call.actor,
-                                            retention_days=body.retention_days)  # fmt: skip
-        except RecorderError as exc:  # the row went after the lookup: no active row to pin
-            await _audit(call, "retention.change", entry.symbol, entry.id,
-                         outcome=AuditOutcome.DENIED, reason=type(exc).__name__)  # fmt: skip
-            raise _missing() from None
+        pinned = await _stored(call.control.pin(entry.id, body.pinned, call.actor,
+                                                retention_days=body.retention_days))  # fmt: skip
+        if pinned is None:  # the row went after the lookup: no active row to pin
+            await _denied(call, "retention.change", entry.symbol, entry.id, "not_recorded")
+            raise _missing()
         return done(call, JSONResponse(_dump(shown(call, pinned))))
 
     return router

@@ -1,13 +1,12 @@
 """Fakes for the #492 recording tests (no I/O, no clock). `FakeRecorder` mirrors #2188's agreed
 `PolicyControlSurface` member for member until its S2b and S3 land, and serves reads over it.
-As the policy does (#2188 S2b), its writes record themselves through `audit` ahead of the row
-change, so a refused record (the sink raises) changes nothing."""
+Like the policy, it records each write through `audit` before the row changes (none on a raise)."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final, Protocol
+from typing import Any, Final
 
 from candleviewer.recorder import control as rc
 from candleviewer.recorder.errors import InvalidRecorderActorError, RecorderError
@@ -28,10 +27,6 @@ class RecorderSymbolNotRecordedError(RecorderError):
     """Mirrors #2188 S2b's `candleviewer.recorder.errors.RecorderSymbolNotRecordedError`."""
 
 
-class Sink(Protocol):  # `recorder.policy.AuditSink`, keyword for keyword as the policy calls it
-    async def emit(self, action: str, **fields: Any) -> None: ...
-
-
 def _user(actor: Actor) -> None:
     if actor.kind != "user":
         raise InvalidRecorderActorError("a manual change needs a user actor")
@@ -43,19 +38,16 @@ class FakeRecorder:
         self.refused: dict[str, RefusalCause] = {}
         self.max_symbols = max_symbols
         self.status_fields: dict[str, Any] = {}  # `ControlStatus` beside its entries
-        self.audit: Sink | None = None  # the policy's injected emitter; `None`: no records
+        self.audit: Any = None  # the policy's injected `AuditSink`; `None`: no records
 
     async def _record(self, action: str, symbol: str, actor: Actor, reason: str,
                       **extra: str | bool | None) -> None:  # fmt: skip
-        """The policy's `_audit_emit`: one record, written before the row changes."""
+        user, label = actor.id if actor.kind == "user" else None, f"{actor.kind}:{actor.id}"
+        after = {"symbol": symbol, "reason": reason, "actor": actor.id, **extra}
         if self.audit is not None:
-            await self.audit.emit(
-                action, actor_label=f"{actor.kind}:{actor.id}",
-                actor_user_id=actor.id if actor.kind == "user" else None,
-                object_kind="recorded_symbol", object_id=symbol, reason=reason, env="demo",
-                after_state={"symbol": symbol, "reason": reason, "actor": actor.id, **extra},
-                outcome="success",
-            )  # fmt: skip
+            await self.audit.emit(action, actor_label=label, actor_user_id=user, after_state=after,
+                                  object_kind="recorded_symbol", object_id=symbol, reason=reason,
+                                  env="demo", outcome="success")  # fmt: skip
 
     def put(self, symbol: str, *reasons: rc.RecordReason, **fields: Any) -> rc.RecordedEntry:
         """Seed (or replace) an entry recording for `reasons`; ids follow creation order."""
@@ -73,9 +65,8 @@ class FakeRecorder:
         if old is None and len(self.entries) >= self.max_symbols:  # a re-add is never capped
             raise LimitError(f"max {self.max_symbols} recorded symbols")
         held = () if old is None or old.lingering else old.reasons
-        kept: dict[str, Any] = {"added_by": actor.id, "state": "starting"}
-        if old is not None:  # a re-add keeps the row's pin, author and session
-            kept = {"pinned": old.pinned, "added_by": old.added_by, "state": old.state}
+        kept: dict[str, Any] = {"added_by": actor.id, "state": "starting"} if old is None else {
+            "pinned": old.pinned, "added_by": old.added_by, "state": old.state}  # fmt: skip
         streams, depth = streams or ("trades",), depth or 200
         await self._record("recorder.start", symbol, actor, "manual", streams=",".join(streams),
                            depth=str(depth), held_by=",".join(held) or None)  # fmt: skip
@@ -145,20 +136,17 @@ class FakeRecorder:
     def _symbol(self, entry_id: str) -> str | None:
         return next((s for s, e in self.entries.items() if e.id == entry_id), None)
 
-    async def add(
-        self, symbol: str, spec: rc.EntrySpec, actor: Actor
-    ) -> tuple[rc.RecordedEntry, rc.RecordedEntry | None]:
+    async def add(self, symbol: str, spec: rc.EntrySpec,
+                  actor: Actor) -> tuple[rc.RecordedEntry, rc.RecordedEntry | None]:  # fmt: skip
         old = self.entries.get(symbol)
         streams, depth = (old.streams, old.depth) if old else (STREAMS, 200)
         await self.add_manual(symbol, actor, spec.streams or streams, spec.depth or depth)
         return await self._settle(symbol, spec, actor), old
 
-    async def pin(
-        self, entry_id: str, pinned: bool, actor: Actor, *, retention_days: int | None = None
-    ) -> rc.RecordedEntry | None:
-        """A pin keeps forever (no `retention_days`); an unpin takes `retention_days` (none: the
-        global default), and of an idle row removes it. No active row: `None`, as S9 maps the
-        policy's `RecorderSymbolNotRecordedError`."""
+    async def pin(self, entry_id: str, pinned: bool, actor: Actor, *,
+                  retention_days: int | None = None) -> rc.RecordedEntry | None:  # fmt: skip
+        """A pin keeps forever; an unpin takes `retention_days` (none: the default) and removes
+        an idle row. No active row: `None` (S9 maps `RecorderSymbolNotRecordedError` so)."""
         if (symbol := self._symbol(entry_id)) is None:
             return None
         kept = replace(self.entries[symbol], pinned=pinned,
