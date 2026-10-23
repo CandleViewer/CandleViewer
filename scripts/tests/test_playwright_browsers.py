@@ -225,6 +225,22 @@ def test_empty_backoff_list_ends_with_the_code(env: dict[str, str]) -> None:
     assert r.returncode == 1 and "CI-A11Y-005" in r.stderr and "PW_BACKOFF" in r.stderr
 
 
+@pytest.mark.parametrize("backoff", ["10 x 40", "1.5", "-5"])
+def test_a_backoff_that_is_not_whole_seconds_ends_with_the_code(
+    env: dict[str, str], backoff: str
+) -> None:
+    r = _run(
+        env,
+        "install",
+        PW_CACHE_KEY=KEY,
+        PW_CACHE_HIT="false",
+        PW_VERSION=VERSION,
+        PW_BACKOFF=backoff,
+        INSTALL_FAILS="2",
+    )
+    assert r.returncode == 1 and "CI-A11Y-005" in r.stderr and "PW_BACKOFF" in r.stderr
+
+
 def test_failure_is_annotated_for_the_run_page(env: dict[str, str]) -> None:
     r = _run(env, "version", FAKE_VERSION="x")
     assert r.stderr.startswith("::error::CI-A11Y-005")

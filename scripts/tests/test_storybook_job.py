@@ -61,7 +61,7 @@ def test_storybook_job_runs_beside_a11y_hardened_and_uploads_only_the_a11y_repor
     steps = job["steps"]
     # Nor at step level: only the report upload has a condition (always()), none fails softly.
     # (plus the browser cache save, which runs only after a green install: test_playwright_browsers).
-    conditions = [s.get("if") for s in steps if "if" in s and "cache/save@" not in s["uses"]]
+    conditions = [s.get("if") for s in steps if "if" in s and "cache/save@" not in s.get("uses", "")]
     assert conditions == ["always()"] == [steps[-1].get("if")]
     assert not any("continue-on-error" in step for step in steps)
     uses = [step["uses"] for step in steps if "uses" in step]
