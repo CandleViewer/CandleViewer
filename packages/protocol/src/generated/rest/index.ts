@@ -4507,6 +4507,14 @@ export interface paths {
      *     above its hard cap, in `x-cv-limit-caps` on `RuleIr`, is refused for every role with
      *     `422 rule_ir_invalid` (issue code `schema_error`, class `safety`). Each value is compared
      *     with its default and its cap, never with an earlier version.
+     *
+     *     **No rule loosens a stop (24-internal-schemas.md section 8.8 rule 5).** A `widen_stop`
+     *     action, or a `modify_stop_loss`, `tighten_stop` or `move_to_breakeven` action whose
+     *     `only_tighten` is anything but `true`, is refused for every role, the Owner included,
+     *     whatever permission the caller holds: `422 rule_ir_invalid`, issue code `stop_loosening`,
+     *     class `safety`, at `actions[i].type` or `actions[i].params.only_tighten`, with the reason
+     *     "Not available — rules never loosen a stop." `validateRule` and `compileRule` report the
+     *     same issue, and an imported rule is refused with it.
      */
     post: operations["createRule"];
     delete?: never;
@@ -4544,7 +4552,7 @@ export interface paths {
      *     live-enablement step-up bound to that request). Activating a different version of an
      *     armed rule returns it to `simulate`; it acts again only after `setRuleMode` arms it, with
      *     the live step-up where the scope includes `live`. Every save is held to the action budget
-     *     of `createRule`, also a save that matches an existing version.
+     *     and the stop rule of `createRule`, also a save that matches an existing version.
      */
     put: operations["updateRule"];
     post?: never;
@@ -9695,7 +9703,8 @@ export interface components {
         | "multiple_sinks"
         | "feedback_loop"
         | "native_stop_violation"
-        | "high_frequency";
+        | "high_frequency"
+        | "stop_loosening";
       message?: string;
       path?: string;
       /** @enum {string} */

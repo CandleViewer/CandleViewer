@@ -3805,6 +3805,7 @@ class RuleValidationIssue(BaseModel):
             "feedback_loop",
             "native_stop_violation",
             "high_frequency",
+            "stop_loosening",
         ]
         | None
     ) = None
