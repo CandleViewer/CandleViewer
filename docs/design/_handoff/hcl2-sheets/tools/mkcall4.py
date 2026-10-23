@@ -41,7 +41,10 @@ if f"storage.cvsheet.v < {V}) {{" not in LIB:
 
 
 def js(x: object) -> str:
-    return json.dumps(x, ensure_ascii=False, separators=(",", ":"))
+    # The plugin's SES sandbox rejects "-->" and "<!--" anywhere in source text (SES_HTML_COMMENT_REJECTED), even
+    # inside a string literal; emit them with a JSON \u escape, which is the same text at run time.
+    s = json.dumps(x, ensure_ascii=False, separators=(",", ":"))
+    return s.replace("-->", "--\\u003e").replace("<!--", "\\u003c!--")
 
 
 def compacted(n: object) -> bool:
