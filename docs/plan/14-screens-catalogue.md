@@ -299,6 +299,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Audit:** `session.flatten_all`, `session.freeze`, `session.account_scope_changed`.
 - **Sign-off:** [ ] Live vs Demo unmistakable at 3 m [ ] panic buttons unreachable by accidental keystroke [ ] rails collapsible to icons [ ] 1920×1080 and 2560×1440 layouts. **Stories:** US-SHELL-001..006.
 - **Stories:** US-LAY-005, US-PAPER-002, US-SET-002, US-ADMIN-012.
+- **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the shell chrome in colour: tokens per region, slot and state, the six states × three roles at 1280×800 and 1920×1080 and the 2560×1440 strip, the environment signal in three themes and greyscale, the measured contrast; Penpot page `E10-D03 Shell chrome hi-fi`; board exports follow in `docs/design/E10/img/` (pending); owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] DEMO and LIVE chrome variants drawn side by side and distinguishable in greyscale [ ] connection indicator has 5 states with text (live/delayed/stale/reconnecting/offline; E17-D01 A4) [ ] role variants (owner/manager/viewer) drawn, admin entry absent for non-owners [ ] 1280x800 and 2560x1440 layouts [ ] skip-to-content link visible on focus
 
 ### SCR-011 — Navigation rail (expanded) & workspace switcher
@@ -329,6 +330,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Components:** CMP-016 Tooltip, CMP-019 Icon (`lock`), CMP-022 Kbd, CMP-071 NavRail, CMP-073 WorkspaceSwitcher, CMP-079 RbacGate.
 - **Stories:** US-LAY-006, US-SET-001.
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.2 (heuristic; owner approval pending).
+- **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the rail in colour: item states, the markers, the collapsed tooltips, the > 20 search, the eight-item menu's T2 writes, the 125 % and 200 % reflow; Penpot page `E10-D03 Shell chrome hi-fi`; board exports follow in `docs/design/E10/img/` (pending); owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] collapsed (icon) and expanded (label) variants [ ] workspace switcher with >20 workspaces (scroll + search) [ ] active-route indication is not colour-only [ ] tooltips on collapsed icons reachable by keyboard focus
 
 ### SCR-012 — Command palette
@@ -356,6 +358,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Performance:** filter ≤16 ms over 2 000 entries (precomputed index).
 - **Audit:** `command.executed` (name only, no payload). **Stories:** US-SHELL-007.
 - **Stories:** US-SET-002, US-MKT-002.
+- **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the palette in colour: the five groups, the destructive marking, the T2 rows with the reason as the second line, the empty and no-results states; Penpot page `E10-D03 Shell chrome hi-fi`; board exports follow in `docs/design/E10/img/` (pending); owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] result grouping (navigate / panel / symbol / action / setting) drawn [ ] no-results state with suggestion [ ] destructive actions visually marked and step-up-gated [ ] recent/frequent ordering shown [ ] opens and closes within one frame budget on a loaded workspace
 
 ### SCR-013 — Hotkey cheatsheet overlay
@@ -368,6 +371,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Components:** CMP-022 Kbd, CMP-049 Table, CMP-054 SearchBox, CMP-094 HotkeyOverlay.
 - **Stories:** US-SET-002.
 - **Design (hi-fi + handoff):** [E39-D03.md](../design/E39/E39-D03.md) · [E39-D03-handoff.md](../design/E39/E39-D03-handoff.md) (E39-D03 §7; the kill-switch chord `Ctrl+Shift+K` is PROPOSED in E39-D03 §7 and registered by E39-S05 (OD-16): a Global row "Open the freeze confirmation (never freezes)").
+- **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the cheatsheet in colour: the nine shipped contexts, the remap mark, the conflict chip (a proposed component for E05, #1478), Customise… T2, the loading, 125 % and printable variants; Penpot page `E10-D03 Shell chrome hi-fi`; board exports follow in `docs/design/E10/img/` (pending); owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] grouped by context (global / chart / ladder / ticket / rules) [ ] shows user-remapped bindings, not just defaults [ ] printable/plain-text variant [ ] dismiss via Esc and click-outside [ ] scrollable at 125% zoom without clipping
 
 ### SCR-014 — Notification centre (right-rail drawer)
@@ -403,6 +407,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Stories:** US-ALRT-005, US-SET-003.
 - **Performance:** At most 3 toasts on screen; overflow collapses into a counted stack; toast animation is transform/opacity only so it never triggers layout on the chart surface.
 - **Analytics/audit:** None of its own; toasts mirror events already emitted by their originating screen.
+- **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the toast host in colour: the four tones, the stack of three with its offsets, the overflow summary, the sticky error, the reduced-motion end frame; Penpot page `E10-D03 Shell chrome hi-fi`; board exports follow in `docs/design/E10/img/` (pending); owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] info/success/warning/error variants with icon + text [ ] auto-dismiss timing per severity (errors are sticky) [ ] pause-on-hover/focus [ ] stacking and overflow drawn [ ] `prefers-reduced-motion` variant drawn
 - **Fired-alert variants (E40-D02):** CMP-165 single, repeat ("×7 in 2 min"), symbol batch ("3 alerts fired for BTCUSDT"), the counted overflow, the storm summary, the disarm notice and one digest after a reconnect; fired-alert toasts close after 20 s by default (Error and Critical stay until dismissed), adjustable in SCR-115, pause on hover and focus, and fade only under reduced motion: [E40-D02.md](../design/E40/E40-D02.md) §4.3–§4.5, §8; [e40-alerts-a11y-review.md](../design/a11y/e40-alerts-a11y-review.md) §2 T-1..T-4, AM-5, AM-9.
 
@@ -635,6 +640,7 @@ Drag preview                Drop zones
 - **Performance:** Each floating window is a separate renderer process with its own GL context; the combined budget target is >=58 fps across at most 4 GPU-heavy windows on the reference machine, beyond which the shell warns (SCR-046).
 - **Analytics/audit:** `panel.floated`, `panel.redocked`, `window.opened`, `window.closed` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.12 (heuristic; owner approval pending).
+- **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the title bar in colour: CMP-215 per E15-D02 D-31 in DEMO and LIVE, always-on-top, display-gone, the browser's hidden Pop out; Penpot page `E10-D03 Shell chrome hi-fi`; board exports follow in `docs/design/E10/img/` (pending); owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] DEMO/LIVE band repeated in every floating window [ ] window chrome with re-dock control [ ] multi-monitor placement is remembered and restored [ ] behaviour when the parent window closes is drawn [ ] browser (non-Electron) build drawn - Pop out is hidden with an explanation, never a maximised overlay
 
 ### SCR-028 — Panel context menu
@@ -2953,6 +2959,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **A11y:** `role="alert"` region with a heading, a plain-language statement, a selectable correlation id and two named actions (reload, report); the stack trace is behind an expandable control labelled as technical detail.
 - **Performance:** The boundary is per-panel first and per-route second: a crashing panel must not take down the workspace, and in particular must not take down the positions grid or the order ticket. Recovery re-mounts only the failed subtree.
 - **Analytics/audit:** `app.error_boundary_triggered` `{component, correlationId, stackHash}` (analytics + incident log); crashes affecting a trading surface are raised at high severity.
+- **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the error boundary in colour: panel level and route level, the repeated-crash stop, the diagnostics action; Penpot page `E10-D03 Shell chrome hi-fi`; board exports follow in `docs/design/E10/img/` (pending); owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] panel-level and route-level variants drawn [ ] the surviving surrounding UI is shown in the panel-level variant [ ] correlation id and copy-diagnostics action [ ] 'your positions are unaffected and protected by native stops' reassurance where true [ ] reload-panel vs reload-app actions [ ] repeated-crash state that stops auto-remounting and explains why
 
 ### SCR-157 — Version mismatch / update available
@@ -2963,6 +2970,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **A11y:** A `role="status"` banner (non-blocking) or dialog (blocking, when the API contract is incompatible) stating the current and required versions and what will happen; the action is a named button.
 - **Performance:** The version check runs on boot and every 15 min; an incompatible backend blocks trading surfaces only, leaving read-only views usable where safe.
 - **Analytics/audit:** `app.version_mismatch` `{clientVersion, serverVersion, blocking}`, `app.update_applied` (analytics).
+- **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the version-mismatch banner (desktop pre-signing variant, browser variant, Later) and the blocking dialog listing what stops, what still works and the console fallback; Penpot page `E10-D03 Shell chrome hi-fi`; board exports follow in `docs/design/E10/img/` (pending); owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] non-blocking 'update available' and blocking 'incompatible version' variants drawn [ ] what stops working in the blocking case is listed [ ] the update action per shell (Electron auto-update vs browser reload) [ ] 'do not update mid-trade' guidance with the open-position count [ ] postpone behaviour for the non-blocking case
 
 ### SCR-158 — Rate-limited state
@@ -2983,6 +2991,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **A11y:** Each shell-specific state is a page or banner with a heading and a plain sentence; nothing depends on OS-level chrome; the Tailscale case names the exact condition ('Not connected to the tailnet').
 - **Performance:** Offline detection is driven by actual request failure, not only `navigator.onLine`, so a connected-but-unreachable tailnet is detected within 5 s.
 - **Analytics/audit:** `shell.offline_detected` `{cause}`, `shell.tailscale_unreachable`, `shell.gpu_unavailable`, `shell.window_restored` (analytics + incident log).
+- **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the four offline variants mapped to the shipped causes, the R-902 takeover without chrome or badge, the GPU fallback; Penpot page `E10-D03 Shell chrome hi-fi`; board exports follow in `docs/design/E10/img/` (pending); owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] offline / tailnet-unreachable / backend-unreachable states drawn with distinct, accurate copy [ ] the GPU-unavailable state naming the fallback and its limitations [ ] the browser-vs-Electron differences drawn (auto-update, floating windows, notifications) [ ] cached read-only content is offered where it exists and is labelled with its age [ ] recovery is automatic and announced when connectivity returns
 
 ---
