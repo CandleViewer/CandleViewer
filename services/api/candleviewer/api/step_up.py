@@ -582,7 +582,8 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     #   plain add (the rules vocabulary's `{symbol}` hint) passes.
     # - updateRecordedSymbol: `pinned` or `retention_days` in the body (streams, depth: row 8).
     # removeRecordedSymbol is no step-up route (the registry test's allow-list says why): a stop
-    # ends the manual reason only, keeps a pin, and refuses `purge_data=true`.
+    # ends the manual reason only, keeps a pin, and refuses `purge_data=true`; 22 names no
+    # step-up for it either.
     ("POST", "/recording/symbols", "recorder"),
     ("PATCH", "/recording/symbols/{recordedSymbolId}", "recorder"),
     # #3083 (AD-F01): the PR that mounts one drops it from `_PENDING_HANDLER_GATES` and adds the

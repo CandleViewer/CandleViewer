@@ -118,7 +118,7 @@ class RecordingControl(RecordingReads, Protocol):  # `add` also returns the entr
     # (`None`: it created one). A pin keeps forever; an unpin takes `retention_days` (`None`:
     # the global default). Each write is recorded by the policy ahead of the store (C-2.9).
     # `remove` ends the manual reason; while a `STOP_CAUSES` member holds, and without `force`,
-    # it changes nothing and raises `StopRefused`.
+    # it changes nothing and raises `StopRefused`; `update` refuses with `ChangeRefused`.
     async def add(self, symbol: str, spec: EntrySpec,
                   actor: Actor) -> tuple[RecordedEntry, RecordedEntry | None]: ...  # fmt: skip
     # `add` raises the policy's `RecorderInvalidUpdateError` and `RecorderSymbolLimitError`
@@ -156,6 +156,15 @@ class StopRefused(Exception):
     def __init__(self, causes: tuple[Refusal, ...]) -> None:
         super().__init__(*causes)
         self.causes = causes
+
+
+class ChangeRefused(Exception):
+    """`update` refused, nothing changed: `rule` says why, `not_manual` (streams and depth
+    change only on a manual entry) or the rule of the invalid `field`."""
+
+    def __init__(self, rule: str, field: str | None = None) -> None:
+        super().__init__(rule, field)
+        self.rule, self.field = rule, field
 
 
 def stop_refusal(entry: RecordedEntry, *, restricted: bool = False) -> Refusal | None:
