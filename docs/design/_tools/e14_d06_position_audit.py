@@ -258,7 +258,7 @@ PLACE_REQ = re.search(r"PlaceOrderRequest:\n(?:.*\n){0,3}.*required: \[([^\]]+)\
 # every code / state word the copy deck binds -> the registry that must hold it
 BOUND_SRC = (
     "account_locked kill_switch_engaged symbol_not_allowed cap_breached@preview.rejection.code",
-    "invalid_stop_distance below_min_notional@24.9.3 skip/fail",
+    "invalid_stop_distance below_min_notional profile_disabled@24.9.3 skip/fail",
     "Delivering Trading@Instrument.status",
     "long_position short_position@DrawingTool",
     "max_position_notional@24.9.3.2 clamps",
