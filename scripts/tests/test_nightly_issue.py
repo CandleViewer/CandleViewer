@@ -37,6 +37,8 @@ NIGHTLIES = (
     "chaos-ws-nightly.yml",
 )
 BOT = "github-actions[bot]"
+#: Jobs that read more than `contents` and write nothing: #2825's guard lists runs and jobs.
+READERS = {("perf-ingestion-nightly.yml", "bench-free"): {"actions": "read"}}
 RUN_URL = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 #: (workflow, caller job) -> (measuring job, `if:`, signal, title prefix, labels). The prefixes are
 #: those of the open issues filed before #1849, byte for byte, so the next red night finds them.
@@ -181,7 +183,9 @@ def test_nightlies_file_nothing_themselves_and_only_their_callers_can_write() ->
         assert doc["permissions"] == {"contents": "read"} and "concurrency" not in doc
         for job_id, job in doc["jobs"].items():
             held = job.get("permissions")
-            if held != {"contents": "read"} and held is not None:
+            if (name, job_id) in READERS:
+                assert held == READERS[(name, job_id)]
+            elif held != {"contents": "read"} and held is not None:
                 writers.add((name, job_id))
     assert writers == set(SIGNALS)
     for path in sorted(WORKFLOWS.glob("*.y*ml")):  # no other caller, and one caller per signal
