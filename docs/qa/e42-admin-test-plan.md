@@ -23,6 +23,7 @@ in section 1.
   download link and bearer a run uses is synthetic, generated per run and never committed, and defects,
   notes, screenshots, Playwright traces and videos, and HARs are scrubbed of them before they are filed.
 - **Each case starts from a fresh seed** of section 1's handles, so no case depends on another's end state.
+- **Actor:** a case runs as OWNER (section 1) unless it names another actor.
 - **"Elevated"** means the actor holds a live step-up grace for the case's action class.
 - **Time:** a case that moves the server's clock (`CV_TEST_CLOCK`: testnet only, no exchange key) runs on
   testnet and seeds users only, since the seeded sub-accounts need demo, which refuses that clock; on demo or
@@ -39,7 +40,7 @@ in section 1.
   `services/api/candleviewer/audit/actions.py`, or says it expects none. After the step, the tester confirms
   one record per audited action, with its actor, target, outcome, request id and, where `22` names one,
   severity. An audited action with no record is a defect. A disable also writes its cascade's records, one
-  `auth.session_revoked` per session and one `rules.disarm` per armed rule. The exceptions: `admin.area_entered`
+  `auth.session_revoked` per session and `rules.disarm` per armed rule. Exceptions: `admin.area_entered`
   is written once per admin API call, so a page that makes several calls writes several; a call let
   through by a live grace also writes `auth.step_up_grace_used`; a write-ahead record whose change did not
   commit is closed by a second, `failure` record; and past a budget (view-as refusals, audit reads) records
@@ -58,11 +59,23 @@ in section 1.
 
 The handles below are fixed here. The fixture slices define each one as an idempotent seed script under
 `services/api/tests/fixtures/admin/`, with a README line saying how to load it. A handle that writes audit
-rows or sealed snapshots (AUDIT-10M, AUDIT-CORRUPT, AUDIT-SECRET-MARKER, SC-FORGED-SEAL) loads only into a
-database named for tests: audit tables are append-only (C-5.7), so rows loaded anywhere else could never be
-removed. E42-X03's threat model asks this plan for the seeds that need state outside the API: AC-ADM-09
-(FLAG-OVERRIDE-ROWS), AC-ADM-15 (any audit rows: AUDIT-10M), AC-ADM-16 (AUDIT-CONCURRENT), AC-ADM-24
-(BACKUP-THEN-REVOKED), AC-ADM-25 (BACKUP-TAMPERED) and AC-ADM-31 (OOB-WRITES).
+rows or sealed snapshots (AUDIT-10M, AUDIT-CORRUPT, AUDIT-KEY-ENTRY, AUDIT-SECRET-MARKER,
+AUDIT-CONCURRENT, SC-FORGED-SEAL), or an Owner role row and `trading.live_enabled` outside the API
+(OOB-WRITES), loads only into a database named for tests: audit tables are append-only (C-5.7), so rows
+loaded anywhere else could never be removed, and a stray Owner row or a set live gate would stay as a
+standing privilege. E42-X03's threat model asks this plan for the seeds that need state outside the API:
+AC-ADM-09 (FLAG-OVERRIDE-ROWS), AC-ADM-15 (any audit rows: AUDIT-10M), AC-ADM-16 (AUDIT-CONCURRENT),
+AC-ADM-24 (BACKUP-THEN-REVOKED), AC-ADM-25 (BACKUP-TAMPERED) and AC-ADM-31 (OOB-WRITES).
+
+On this `main` no open-position source is wired: the composition root passes `_NoPositionStore`
+(`app.py`), so a user's open-position state always reads unknown, never 0. Every disable, delete and
+grant removal therefore needs `acknowledge_unknown_positions=true`, else `409 positions_unknown`, and a
+case that needs a readable position state, or POS-M-S, is blocked until a source is wired.
+
+No seed or stack switch makes the real audit writer fail, so a case that needs an unwritable record
+(AD-S02-N08, AD-S02-N09 and AD-S03-N09 to AD-S03-N11) runs at the `integration` layer, with the writer
+replaced by one that raises `AuditUnavailable` for that record only, as
+`tests/integration/admin/test_user_lifecycle_pg.py` does.
 
 | Handle                                | What it is                                                                                                                                 |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -79,7 +92,7 @@ removed. E42-X03's threat model asks this plan for the seeds that need state out
 | TIER-FULL                             | The account tier `regular`, recorded, with 5 of 5 sub-accounts in use                                                                      |
 | HEALTH-RECORDER-DOWN                  | The overview's `recorder` slice unreachable, every other slice healthy                                                                     |
 | HEALTH-RECORDER-HANG                  | The overview's `recorder` slice never answering, every other slice healthy                                                                 |
-| POS-M-S                               | An open position of MGR-M's on SUB-S, its exposure above the tightened cap AD-S03-04 saves                                                 |
+| POS-M-S                               | An open position of MGR-M's on SUB-S, its exposure above the tightened cap AD-S03-04 saves; blocked: no position source (see above)        |
 | PROFILE-S                             | The profile bound to SUB-S                                                                                                                 |
 | OVERVIEW-503                          | `GET /api/v1/admin/overview` answering `503`                                                                                               |
 | AUDIT-10M                             | 10 million generated audit entries, from the generator E42-K01 shares; test database only                                                  |
@@ -90,7 +103,7 @@ removed. E42-X03's threat model asks this plan for the seeds that need state out
 | OOB-WRITES                            | As `cv_app`, outside the API: an Owner role row, MGR-M's grant widened, `trading.live_enabled` set and a backup digest changed (AC-ADM-31) |
 | FLAG-UI                               | A catalogued UI flag, `rules.graph_editor`, on (see Q-9)                                                                                   |
 | FLAG-LIVE-BLOCKED                     | `trading.live_enabled` off, with the pen-test sign-off outstanding                                                                         |
-| RULES-ON-FLAG                         | Two armed rules that depend on a flag being disabled                                                                                       |
+| RULES-ON-FLAG                         | Two armed rules that depend on a flag being disabled; not buildable until Q-29 is answered                                                 |
 | FLAG-OVERRIDE-ROWS                    | An override row on a safety flag, and an unreadable flag row (AC-ADM-09)                                                                   |
 | HEALTH-SUB002-WS-DOWN, HEALTH-TIMEOUT | Health payloads: `sub_002`'s private WebSocket down; the health read timing out                                                            |
 | BACKUP-VERIFY-FAILED, BACKUPS-NONE    | The latest backup failing verification; no backup at all                                                                                   |
@@ -120,7 +133,7 @@ admin area with a stale token"; SCR-149; D02 D2 and A-14)
 **AD-S01-02 A non-owner cannot reach the admin area [R]** (`e2e`, `contract`; E42-S01 "Non-owner cannot
 reach the admin area"; SCR §10 preamble; AC-ADM-01)
 
-- Pre: MGR-M; then the same steps for VIEWER-V (a new user is a Viewer, SR-027).
+- Pre: MGR-M; then the same steps for VIEWER-V (a new user is a Viewer, SR-027; see Q-23).
 - Steps: look at the left rail; open `/admin/users` directly; send each admin **read** with the user's
   bearer, `GET /admin/audit` included, and recorder compact and import.
 - Expected: no "Admin" rail item. The router renders the 404 surface (SCR-155), with the same copy as any
@@ -147,8 +160,10 @@ independently"; SCR-120)
 - Steps: open `/admin`, once per handle.
 - Expected: the recorder tile shows its own error state with a retry action. Every other tile renders its
   value within 800 ms (SCR-120), measured by the overview's render metric (`cv_admin_overview_render_ms`,
-  E42-Q03). With HEALTH-RECORDER-HANG the same holds, and the recorder tile reaches its error state at 3 s,
-  its own timeout (E42-S01 performance notes), with no other tile waiting for it.
+  E42-Q03). With HEALTH-RECORDER-HANG the server reads the slice under its own 300 ms budget and answers
+  `200` with that slice `status: error` (22 `getAdminOverview`), and the tile reads "Error — timed out
+  after 300 ms [Retry]" (D02 §4.2 and §10); no other tile waits for it, and every tile is still within
+  §8.2's 800 ms. See Q-25.
 - Audit: `admin.area_entered` (allowed), once per call.
 
 **AD-S01-04 Re-auth expires mid-edit** (`e2e`; E42-S01 "Re-auth expires mid-edit"; D02 D2)
@@ -291,6 +306,7 @@ destructive action")
   `users.disable`, the second being a no-op with no record. Two `PATCH`es to `disabled` with the same
   `ETag` answer one `200` and one `412 version_conflict`, and the loser changes nothing; the second must
   send `If-Match`, since without it the server reads last write wins.
+  Every request carries `acknowledge_unknown_positions=true` (§1).
 - **AD-S02-N04 A disabled user cannot sign in, and enabling restores nothing else** (`e2e`; 22 `updateUser`,
   `login`): the sign-in is refused with no session and recorded `auth.login_failed` (Q-15). On Enable,
   `users.enable`; the grants, sessions and disarmed rules stay gone, and a scheduled purge is cancelled.
@@ -306,7 +322,10 @@ destructive action")
   and creates no user; the same body with `account_access` empty or absent is accepted. Audit:
   `users.invite_refused` (outcome `denied`) for the refusal.
 - **AD-S02-N08 An unwritable audit record leaves a status change unchanged** (`integration`; 22
-  `updateUser`; UL-AC05): OWNER, elevated; MGR-M, active; the `users.disable` record made unwritable.
+  `updateUser`; UL-AC05): OWNER, elevated; MGR-M, active; the `users.disable` record made unwritable
+  (§1); every request carries `acknowledge_unknown_positions=true`, since without it the answer is
+  `409 positions_unknown`, which the service checks before it writes the record
+  (`admin/user_disable.py`).
   `PATCH /users/{userId}` to `disabled` answers `503 audit_unavailable` and changes nothing: MGR-M stays
   `active`, its sessions stay valid, its grants stay live and its rule stays armed. Audit: no
   `users.disable`, `auth.session_revoked` or `rules.disarm`.
@@ -341,6 +360,8 @@ sub-account")
 - Expected: the save is blocked until the owner chooses, with neither option pre-selected: leave the
   positions open (the owner takes them over) or flatten first (D02 §6.4).
 - Audit: `users.access_change`, with its `positions_decision`. See Q-11.
+- **Blocked** until a position source is wired (§1): POS-M-S needs a readable open-position state.
+  AD-S03-03b is the case that runs.
 - **AD-S03-03b An unknown position count fails closed** (`contract`; 22 `setUserAccountAccess`): OWNER is
   elevated, and while the open-position count cannot be read the save answers `409 positions_unknown`
   unless it carries `acknowledge_unknown_positions`. Audit: none for the refusal.
@@ -417,14 +438,16 @@ UL3-T1)
   with its absolute unlock time.
 - **AD-S03-N05 A stale grant set re-grants a revoked account** (`integration`, `e2e`; 22
   `setUserAccountAccess`; E42-S03 technical notes; Q-16): OWNER and OWNER-2 each hold a live `users`
-  grace, and MGR-MANY's open-position state is readable (else a grant save answers `409
-positions_unknown`). OWNER loads MGR-MANY's grants (SUB-S, SUB-T, SUB-U); OWNER-2 then removes SUB-S and
-  saves; OWNER, whose page still lists SUB-S, changes SUB-U's level
-  and saves, the payload being the complete set (replace semantics). The route takes no `If-Match`, so the
+  grace, and MGR-MANY's open-position state is readable (else a grant save answers
+  `409 positions_unknown`). OWNER loads MGR-MANY's grants (SUB-S, SUB-T, SUB-U); OWNER-2 then removes
+  SUB-S and saves; OWNER, whose page still lists SUB-S, changes SUB-U's level and saves, the payload
+  being the complete set (replace semantics). The route takes no `If-Match`, so the
   save answers `200` with the stored set, SUB-S included, and SUB-S is a live grant again (its soft-revoked
   row is revived, its freeze state and caps as they were). Nothing refuses it. Audit: `users.access_change`
   for each save: OWNER-2's has SUB-S in its `before_state` only, OWNER's in its `after_state` only. Until
   Q-16 is answered the case records this end state, and a tester files it against Q-16, not as a defect.
+  **Blocked** until a position source is wired (§1), since the open-position state it needs is
+  unreadable.
 - **AD-S03-N06 The view-as start's gates** (`contract`, `security`; 22 `startViewAs`; AC-ADM-22; SR-025):
   - a valid start (an eligible target and a good reason) with no live `users` grace answers
     `403 step_up_required` (`action_class: users`, `action_summary` "View as user '<username>', read-only").
@@ -459,17 +482,18 @@ positions_unknown`). OWNER loads MGR-MANY's grants (SUB-S, SUB-T, SUB-U); OWNER-
     re-`auth` whose session's view-as state differs from the socket's (no context, or another one) gets
     `bye view_as_changed` and `4401` instead of `auth_ok` (`23` §9.6, "In-place re-`auth`").
 - **AD-S03-N09 An unwritable audit record leaves a role change unchanged** (`integration`; 22
-  `setUserRoles`; UL-AC05): OWNER, elevated; VIEWER-V; the role records unwritable. The request
+  `setUserRoles`; UL-AC05): OWNER, elevated; VIEWER-V; the role records unwritable (§1). The request
   `PUT /users/{userId}/roles` with `[manager]` answers `503 audit_unavailable`, and VIEWER-V's roles are
   as before. Audit: no `roles.grant` or `roles.revoke`.
 - **AD-S03-N10 An unwritable audit record leaves a grant change unchanged** (`integration`; 22
   `setUserAccountAccess`; UL-AC05): OWNER, elevated; MGR-MANY subscribed to SUB-S, its open-position state
-  readable; the `users.access_change` record unwritable. Removing the SUB-S grant answers `503 audit_unavailable`: the
-  grant set is as before and MGR-MANY's subscription carries on, with no `revoked` frame. Audit: no
-  `users.access_change` and no `ws.subscription.revoked`.
+  readable; the `users.access_change` record unwritable (§1). Removing the SUB-S grant answers
+  `503 audit_unavailable`: the grant set is as before and MGR-MANY's subscription carries on, with no
+  `revoked` frame. Audit: no `users.access_change` and no `ws.subscription.revoked`. **Blocked** until a
+  position source is wired (§1).
 - **AD-S03-N11 An unwritable audit record stops a view-as start** (`integration`; 22 `startViewAs`;
-  AC-ADM-22): OWNER with a live `users` grace; MGR-M; the `admin.view_as_started` record unwritable (the
-  guard's `admin.area_entered` stays writable, so the refusal is the start's). The start answers
+  AC-ADM-22): OWNER with a live `users` grace; MGR-M; the `admin.view_as_started` record unwritable (§1).
+  The guard's `admin.area_entered` stays writable, so the refusal is the start's. The start answers
   `503 audit_unavailable`: no context starts (`GET /auth/session/view-as` answers `204`), OWNER's sockets
   see no `view_as_changed`, and MGR-M is not notified. Audit: no `admin.view_as_started`.
 
@@ -498,12 +522,17 @@ exists"; D11; AC-ADM-15)
 22 `verifyAuditChain`)
 
 - Pre: AUDIT-CORRUPT, the corrupted-chain fixture, on a test database.
-- Steps: run the tamper check over the full range; then over a range that ends before the break.
+- Steps: open the log on a page away from the altered entry and on the page that holds it; then run the
+  tamper check over the full range; then over a range that ends before the break.
 - Expected: the first run reports the break at the fixture's `first_bad_id`, as a critical banner naming
   a security incident, not a UI error; the banner cannot be dismissed (D02 D11). The second run reports
   its range verified, and the break stays shown: a passing partial range never clears a known break (the
   page's banner and SCR-120's strip; `cv_audit_chain_verified_state` stays 0, `api/audit_verify.py`).
-  The page footer's tamper line shows its three states across the runs.
+  The footer's tamper line shows D02 §6.7's three states: before any run, "this page checked — passed"
+  on the page away from the break (`chain_verified: true`) and "this page could not be fully checked —
+  run a full check" on the page that holds it (`false`, not by itself evidence of tampering); after a
+  run, "Tamper check FAILED at entry N" (the full range) or "verified entries A–B at HH:MM — passed"
+  (the partial range, with the banner still shown).
 - Audit: at most two `admin.audit_verify` records per run, a write-ahead `started` then the result:
   `success` at `info` when verified, `failure` at `critical` with reason `<kind>@<first_bad_id>` on a
   break (22 `verifyAuditChain`). A break also raises the critical `audit_chain_break` system event.
@@ -514,13 +543,16 @@ AC-ADM-17)
 - Pre: MGR-M, with actions of its own and of others in the log.
 - Steps: open MGR-M's own-actions log, which D02 renders on the non-admin "My activity" route (D6,
   OQ-15; see Q-19); then ask the API (`GET /admin/audit`) for another actor's events with
-  `actor_user_id`; then filter on `q` and on `ip`.
+  `actor_user_id`; then filter on `q` and on `ip`, one request each.
 - Expected: only MGR-M's own actions, enforced server-side, under the header "Showing your actions only".
   The request naming another actor answers `200` with MGR-M's own entries only and no row of another
   actor's: the data layer narrows the filter (22 `queryAuditLog`). A filter on `q` or `ip` answers
-  `403 forbidden`.
-- Audit: `admin.audit_read`; the narrowed request, `admin.audit_denied` with reason
-  `cross_actor_filter_narrowed`.
+  `403 forbidden`. The UI half (the route and its header) is **blocked** on Q-19, since no ticket mounts
+  "My activity" yet; the API half runs.
+- Audit: `admin.audit_read` for each served read; `admin.audit_denied` (outcome `denied`) for the
+  narrowed request, reason `cross_actor_filter_narrowed`, and for each refused filter, reason
+  `filter_not_permitted:q` or `filter_not_permitted:ip` (`api/audit.py`); a refused request serves no
+  read.
 
 **AD-S04-05 Export is signed and audited [R]** (`e2e`, `contract`; E42-S04 "Export is signed and
 audited"; D11; 22 `exportAuditLog`; 24 "Verification"; AC-ADM-20)
@@ -537,15 +569,17 @@ audited"; D11; 22 `exportAuditLog`; 24 "Verification"; AC-ADM-20)
   The export control names the real format. Every verification step passes; the same file with one byte
   altered, or checked against another environment's pin, fails.
 - Audit: `admin.audit_export` for the request, written before the job exists; `security.audit_export_signed`
-  before it signs; the completion record (job id, window, span, row count, digest, actor); and
-  `admin.audit_export` with reason `downloaded`, written before any byte is streamed (22
-  `exportAuditLog`). See Q-5.
+  before it signs; the completion record, also `admin.audit_export`, the registry's only export action
+  (job id, window, span, row count, digest, actor); and `admin.audit_export` with reason `downloaded`,
+  written before any byte is streamed (22 `exportAuditLog`; ADR-0039 decision 7). See Q-5.
 
 **AD-S04-06 A failed export offers no partial file** (`e2e`; E42-S04 "Export job fails")
 
 - **Blocked** with AD-S04-05.
 - Pre: an export job that ends `failed`.
 - Expected: the failure shows its reason and a retry action, and no partial file is offered.
+- Audit: the request's `admin.audit_export`; none with reason `downloaded`, since no file is offered; a
+  failure at signing also writes `security.audit_export_sign_failed`.
 
 **AD-S04-07 A secret-bearing entry shows fingerprints only [R]** (`e2e`, `security`; E42-S04 "Secret-bearing
 entry"; C-12.6)
@@ -556,26 +590,32 @@ entry"; C-12.6)
 - Expected: the diff renders fingerprints only, never a secret value, in the drawer and in the export. A
   scan of the drawer's DOM and of the exported file finds no marker. What the export holds for a row of
   redaction class P0 is ADR-0039's open Q2: see Q-20.
+- Audit: `admin.audit_read` for the page read; none for opening the drawer.
 
 **Negative and boundary cases**
 
 Each of N01 to N04, N08 and N09 needs the OWNER's live `audit` grace in its Pre: the step-up guard runs
 first, so without it each answers `403 step_up_required` instead (22 `exportAuditLog`). They are
-**blocked** with AD-S04-05.
+**blocked** with AD-S04-05. Audit, for each refusal below: no `admin.audit_export` record; the refusal
+itself falls under `queryAuditLog`'s audit budget, as an `admin.audit_denied` record or, for a `429`, a
+count carried by the next record (`suppressed`). N05's step-up guard writes `auth.step_up_required`
+first, and N07's `501` writes none.
 
 - **AD-S04-N01 An export over the range limit** (`contract`; 22 `exportAuditLog`): a window longer than
   `audit_export_max_range_days` (31 by default) answers `422 validation_failed`, with `errors[].rule`
   `max_export_range`, and no job is created.
 - **AD-S04-N02 The export rate limit** (`contract`): the sixth export in an hour answers `429 rate_limited`
-  with `Retry-After`.
+  with `Retry-After`. Audit: none written for the `429`; it is counted (`suppressed`).
 - **AD-S04-N03 One export at a time** (`contract`): a second export while one is queued or running answers
-  `409 conflict`.
+  `409 conflict`. Audit: `admin.audit_denied` for the refusal.
 - **AD-S04-N04 An expired download** (`contract`): a download after `expires_at` answers `410 gone`; the
   download's `audit` grace is checked after the requester check (22 `downloadAuditExport`).
 - **AD-S04-N05 Export without the step-up** (`contract`): `403 step_up_required` with `action_class`
   `audit`, and no job.
-- **AD-S04-N06 The detail's fetch** (`perf`; SCR-136): one record in ≤300 ms; the raw payload loads only
-  when expanded.
+- **AD-S04-N06 The detail drawer's budget** (`perf`; SCR-136; D02 §6.8 and §13.1; Q-28): the drawer
+  opens from the entry already on the page, since no single-record route exists, so no fetch is timed:
+  one record in ≤300 ms, and the raw payload is built only when expanded. Audit: `admin.audit_read` for
+  the page read that carried the entry; opening the drawer writes none of its own.
 - **AD-S04-N07 Export is not implemented yet** (`contract`; 22 `exportAuditLog`): an Owner with the
   `audit` step-up gets `501 not_implemented`, no job and no record; a Manager gets `403 forbidden`;
   without the step-up, `403 step_up_required` comes first. D02 draws the "Not available yet" state.
@@ -591,10 +631,15 @@ first, so without it each answers `403 step_up_required` instead (22 `exportAudi
 US-ADMIN-007)
 
 - Pre: OWNER, elevated; FLAG-UI, on; MGR-M and VIEWER-V connected. See Q-9.
-- Steps: disable the flag through its dialog; then change an `owner_only` flag.
+- Steps: disable the flag through its dialog; then change `maintenance.keep_recorder`, the owner-only
+  flag that stops nothing: it is read only when maintenance mode is entered, so with maintenance off a
+  write changes no behaviour. The other owner-only flags are avoided because each changes a running
+  service: `killswitch.ingestion` stops market-data ingestion, `recorder.auto_record` turns automatic
+  recording off, `storage.cold_tier` re-routes cold storage and `desktop.backend_connection` changes the
+  CORS answers and the desktop's cookie attributes (`admin/flags/catalogue.py`).
 - Expected: the feature disappears for every connected user within **≤10 s** of the `flags.change`
-  record, through the `system` topic (`23` §8.1 pushes within 2 s: see Q-21). The `owner_only` flag's
-  frame reaches neither MGR-M nor VIEWER-V (AC-ADM-11).
+  record, measured to the `ts` of the `feature_flags` frame on the `system` topic (`23` §15.9 pushes it
+  within 2 s: see Q-21). The `owner_only` flag's frame reaches neither MGR-M nor VIEWER-V (AC-ADM-11).
 - Audit: `flags.change`, with the before and after values and OWNER as the actor.
 
 **AD-S05-02 A safety flag needs a fresh step-up** (`e2e`, `contract`; E42-S05 "Safety flags require
@@ -602,17 +647,29 @@ step-up"; D13)
 
 - Pre: OWNER, with no live `flags` grace (an ordinary flag write is the `flags` class, with a 5-minute
   grace; a kill-switch-class release is `killswitch`, no grace, and needs a fresh code every time).
-- Steps: change a trading-capability flag of the `flags` class; then release a kill-switch-class flag.
+- Steps: change `trading.one_click`, the catalogue's one-click trading flag and the story's own example
+  of a trading-capability flag (class `flags`); then engage `killswitch.order_entry` through
+  `PUT /admin/feature-flags/killswitch.order_entry`, which needs only `flags` and sets up the release,
+  since the class follows the stored value (22 `setFeatureFlag`); then release it.
 - Expected: the gate appears, and the write does not happen until the step-up succeeds; the release asks
   for a fresh code even inside a `flags` grace.
-- Audit: `auth.step_up_required` (and no `flags.change` for the challenged request), `auth.step_up_granted`,
-  then one `flags.change` per write.
+  The engage passes inside the live `flags` grace, with no new challenge.
+- Audit: `auth.step_up_required` (and no `flags.change` for the challenged request),
+  `auth.step_up_granted` and `flags.change` for the first write; `auth.step_up_grace_used` and
+  `flags.change` for the engage; `auth.step_up_required`, `auth.step_up_granted` and `flags.change` for
+  the release.
 
 **AD-S05-03 Each flag's state is visible** (`e2e`; E42-S05 "Flag state visibility"; D13)
 
+- Pre: FLAG-OVERRIDE-ROWS, for the `unreadable` row; a write on a stale `expected_updated_at`
+  (AD-S05-N02), for the `409 conflict` state.
 - Expected: flags are grouped as Safety flags, Gated, Rollouts and Other. Each shows its state as a word, its
-  description, its scope, who changed it last and when, and its own history. The `fail_closed`,
-  `unreadable` and `409 conflict` states are drawn. No flag is labelled "kill switch".
+  description, its scope, who changed it last and when, and its own history. The `unreadable` and
+  `409 conflict` states are drawn. No flag is labelled "kill switch". The `fail_closed` state (the
+  banner, and every Change disabled) is **blocked**: it needs the flag store unreadable or over its read
+  budget, which no seed or API step reaches.
+- Audit: none beyond `admin.area_entered` per call; a flag's History link opens SCR-135 on
+  `flags.change` and writes an `admin.audit_read`.
 
 **AD-S05-04 Live enablement stays blocked [R]** (`e2e`, `contract`, `security`; E42-S05 "Live enablement
 stays blocked here"; 22 `setFeatureFlag`)
@@ -623,9 +680,10 @@ stays blocked here"; 22 `setFeatureFlag`)
 - Expected: the toggle is disabled, with the blocking reason and a link to the security centre. The direct
   write without evidence answers `422 validation_failed` with rule `gate_evidence_required` before any
   step-up, and nothing is written; the write with evidence meets the no-grace `live_enablement`
-  challenge (AC-ADM-06).
+  challenge (AC-ADM-06): the tester stops at the challenge and never completes it, since completing the
+  step-up would enable live order entry (§0, "Never live").
 - Audit: `flags.change` for the refused write (every attempt past RBAC is recorded, its `422`s included;
-  22 `setFeatureFlag`); the challenge, `auth.step_up_required`.
+  22 `setFeatureFlag`); for the write with evidence, `auth.step_up_required` and no `flags.change`.
 
 **AD-S05-05 Maintenance mode's consequences are explicit [R]** (`e2e`; E42-S05 "Maintenance mode
 consequences are explicit"; SCR-148; D15)
@@ -648,20 +706,24 @@ mid-flight")
 **AD-S05-07 Armed rules that depend on a flag are listed** (`e2e`; E42-S05 "Armed rule depends on the
 flag")
 
+- **Blocked** on Q-29: no source gives a rule-to-flag dependency, so RULES-ON-FLAG cannot be built.
 - Pre: RULES-ON-FLAG, two armed rules that depend on the flag being disabled.
 - Expected: the dialog lists both rules, and the write waits for the owner's acknowledgement.
+- Audit: `flags.change` for the write once it is acknowledged; none for a write that waits.
 
 **Negative and boundary cases**
 
-- **AD-S05-N01 A flag changed twice in one second** (`e2e`, `integration`; US-ADMIN-007; 23 §8.1 and §15.9):
+- **AD-S05-N01 A flag changed twice in one second** (`e2e`, `integration`; US-ADMIN-007; 23 §8.2 and §15.9):
   the second write carries the first's `updated_at` as its version. Two `flags.change` records, in order.
-  A flag key is last-write-wins on the `system` topic (`23` §15.9), so every connected client ends on
-  the second value within ≤10 s, whether or not it saw the first.
+  A flag key is last-write-wins on the `system` topic (`23` §8.2), so every connected client ends on the
+  second value within ≤10 s, whether or not it saw the first, measured to the `ts` of the
+  `feature_flags` frame that carries it (`23` §15.9).
 - **AD-S05-N02 Two owners change one flag** (`contract`; D13): both owners hold a live `flags` grace (the
   order is RBAC, validation, step-up, then the precondition). The second write, made on a stale version,
   answers `409 conflict`, nothing of it is applied, and it is recorded as `flags.change`.
 - **AD-S05-N03 A safety flag ignores overrides** (`security`; AC-ADM-09): an override row never changes a
   safety flag's resolved value, and an unreadable row fails closed. Pre: FLAG-OVERRIDE-ROWS (see §1).
+  Audit: none beyond what the reads write (`admin.area_entered`).
 - **AD-S05-N04 A credential in the reason or the evidence URL** (`contract`, `security`; 22
   `setFeatureFlag`; C-12.6): a write whose `reason` carries a credential answers `422` with rule
   `credential_in_reason`, and one whose `evidence_url` does, rule `credential_in_url`; nothing is
@@ -673,30 +735,40 @@ flag")
 **AD-S06-01 The health overview** (`e2e`, `a11y`; E42-S06 "Health overview"; D12)
 
 - Steps: open `/admin/health`.
-- Expected: WebSocket connection states, ingest rates and lag, the rate-limit budget per account, queue
-  depths, database sizes and latency, error rates and process uptime. Each tile shows a number with its
-  unit, a state word and "as of"; never colour alone. No health payload or drill-down carries a hostname,
-  a connection string or a stack trace (E42-D05; `04` row 48).
+- Expected: `HealthReport.components[]` as D02 §6.9 draws it: a row per component (postgres, questdb,
+  bybit_public_ws, bybit_private_ws, bybit_rest, oms, rule_engine, recorder, disk, clock), each with its
+  state as a word, its number with its unit, its detail and "as of"; never colour alone. Per-account
+  rows and rate budgets are not on this page, which links to SCR-147. No health payload or drill-down
+  carries a hostname, a connection string or a stack trace (E42-D05; `04` row 48). What the story lists
+  beyond this is Q-26's.
+- Audit: none beyond `admin.area_entered`, once per call.
 
 **AD-S06-02 Drill down** (`e2e`; E42-S06 "Drill down"; D12)
 
-- Steps: select the recorder.
-- Expected: its recent errors, recent reconnects and metrics over the last hour. The sparkline has a table
-  alternative.
+- Steps: open `/admin/health`; find the recorder's row; open the history disclosure.
+- Expected: D02 §6.9's history: a sparkline for the recorder with its table alternative (time, value and
+  unit), reachable by keyboard, and the page's link to the incident log (SCR-144). Recent errors and
+  recent reconnects as lists are Q-26's.
+- Audit: none beyond `admin.area_entered`, once per call.
 
 **AD-S06-03 A degraded state names its impact [R]** (`e2e`; E42-S06 "Degraded state names the impact")
 
 - Pre: HEALTH-SUB002-WS-DOWN, the private WebSocket for `sub_002` down.
-- Expected: that tile escalates with a text label, names the features affected and gives a remediation
-  hint. The page says native exchange stops are unaffected.
+- Expected: the one `bybit_private_ws` row, which covers every account, escalates with its state word
+  and glyph, names what stops in D02's fixed sentence ("order and position updates may lag; REST
+  reconcile runs") and adds "Exchange-side stop-losses stay active." A tile for `sub_002` alone is
+  Q-26's.
+- Audit: none beyond `admin.area_entered`, once per call.
 
 **AD-S06-04 The page survives the outage it reports [R]** (`e2e`; E42-S06 "The page survives the outage it
 reports"; D4)
 
 - Pre: HEALTH-TIMEOUT: `GET /api/v1/admin/health` times out, and the `system` topic is the only live
   source.
-- Expected: the shell and navigation stay usable. Each tile keeps its last-known value, marked "stale
-  since", rather than an empty page.
+- Expected: the shell and navigation stay usable. Each tile keeps its last-known value, marked "as of"
+  the time of its last frame (D02 §4.2 and §6.9), rather than an empty page. The "stale since" mark is
+  **blocked** on Q-27: `23` §15.9 has no keepalive for `system`.
+- Audit: none beyond `admin.area_entered`, once per call.
 
 **AD-S06-05 Restore is gated [R]** (`e2e`, `contract`; E42-S06 "Restore is gated"; D14; 22
 `restoreBackup`; AC-ADM-23, AC-ADM-25)
@@ -704,26 +776,38 @@ reports"; D4)
 - **Blocked:** `POST /admin/backups/{backupId}/restore` is `not_mounted` on this `main`
   (`tests/contract/rbac/matrix.yaml`); the route waits on #3084. The service's preconditions are
   already pinned by unit tests (AC-ADM-23, AC-ADM-25). Run it on a disposable stack: a restore
-  overwrites state.
-- Pre: OWNER with 2 open positions; maintenance mode on; a backup in status `verified`; a fresh
-  `backups` code for every attempt (`backups` is a no-grace class).
-- Steps: go through the restore wizard to the confirmation and submit it; then repeat the submission with
-  each precondition below broken in turn, stepping up again before each attempt.
+  overwrites state. Stack: the backup engine (#3319), which sets `BACKUPS_CATALOGUED`, else
+  `GET /admin/backups` answers `501` and no backup is listed (`backups_wiring.py`).
+- Pre: OWNER; a backup in status `verified`; a fresh `backups` code for every attempt (`backups` is a
+  no-grace class). On this `main` the open-position state always reads unknown (§1), so the wizard draws
+  D02's "positions unknown" acknowledgement, not the "2 open positions" one.
+- Steps: go through the restore wizard to the confirmation and submit it once per arm below, refusals
+  first and the accepted restore last, stepping up again before each attempt; turn maintenance mode on
+  (AD-S05-05) after arm 1.
 - Expected, the client:
   - the wizard leads with "Bybit is not affected" (D02 §6.12 step 2), and the owner must acknowledge
     that a restore changes nothing on Bybit before continuing;
   - the impact preview says trading halts during the restore and market history is not restored;
   - completion is rung 4: the backup's timestamp as the typed token, and a fresh `backups` code.
-- Expected, the server, whatever the client did, checked in this order and each refusal creating no job:
-  1. maintenance mode off: `409 conflict`, rule `maintenance_mode_required` (D14's maintenance gate);
-  2. a backup or restore running: `409 conflict`, rule `backup_or_restore_running`;
-  3. a backup not `ok`, `verified` or `restored`: `409 conflict`, rule `backup_not_usable` (a backup
-     whose digest differs from its bound record is not usable, AC-ADM-25);
-  4. the open-position state unreadable without `acknowledge_unknown_positions: true`:
-     `409 positions_unknown`;
+- Expected, the server, whatever the client did, checked in this order and each refusal creating no job,
+  with each arm's setup:
+  1. maintenance mode off (the seeds' default): `409 conflict`, rule `maintenance_mode_required` (D14's
+     maintenance gate);
+  2. a backup or restore running: `409 conflict`, rule `backup_or_restore_running`. **Blocked:** no
+     handle holds a run open, and a run on demand answers `501` until the engine (#3319) is wired;
+  3. a backup not `ok`, `verified` or `restored` (BACKUP-VERIFY-FAILED's, or BACKUP-TAMPERED's, whose
+     digest differs from its bound record: AC-ADM-25), with maintenance on: `409 conflict`, rule
+     `backup_not_usable`;
+  4. the open-position state unreadable without `acknowledge_unknown_positions: true`, with maintenance
+     on and a usable backup: `409 positions_unknown`. On this `main` this precondition always holds, so
+     the accepted restore carries `acknowledge_unknown_positions: true`; the two acknowledgements are
+     separate and neither implies the other (22 `restoreBackup`), so once a position source is wired an
+     accepted restore with open positions needs `acknowledge_open_positions: true` too;
   5. open positions without `acknowledge_open_positions: true`: `409 conflict`, rule
-     `open_positions_unacknowledged`.
+     `open_positions_unacknowledged`. **Blocked:** it needs a readable open-position state (§1).
 
+  The accepted restore comes last: maintenance on, a `verified` backup, nothing running and
+  `acknowledge_unknown_positions: true`.
   A refusal has already spent the step-up code, so the next attempt needs a fresh one; without one the
   answer is `403 step_up_required` with `action_class: backups`. A refusal is not stored under the
   `Idempotency-Key`, so the same key and body succeed once the cause clears. After an accepted restore
@@ -738,38 +822,63 @@ reports"; D4)
 **AD-S06-06 A failed verification is shown with its reason [R]** (`e2e`; E42-S06 "Backup verification
 fails")
 
-- Pre: BACKUP-VERIFY-FAILED, the most recent backup having failed verification.
+- Pre: BACKUP-VERIFY-FAILED, the most recent backup having failed verification. Stack: the backup engine
+  (#3319), which sets `BACKUPS_CATALOGUED`; until then `GET /admin/backups` answers `501`
+  (`backups_wiring.py`).
 - Expected: its row shows the failed-verification state and its reason, and a warning states how old the
   last verified backup is. Restore is disabled for it, with the reason; a restore of it sent to the API
   answers `409 conflict` with rule `backup_not_usable` (blocked with AD-S06-05).
+- Audit: none beyond `admin.area_entered` for the reads; the restore sent to the API writes
+  `backup.restore` at `error`, outcome `failure`, reason `backup_not_usable`, once it is past the
+  step-up (blocked with AD-S06-05).
 
 **AD-S06-07 No backups yet** (`e2e`; E42-S06 "No backups yet")
 
-- Pre: BACKUPS-NONE.
+- Pre: BACKUPS-NONE. Stack: as AD-S06-06; with the catalogue set and no run recorded, it reads empty.
 - Expected: the empty state says no backup has run, names the schedule and offers "Back up now".
+- Audit: none beyond `admin.area_entered`, once per call.
 
 **Negative and boundary cases**
 
-- **AD-S06-N01 An acknowledged incident stays open** (`e2e`, `contract`; D12; 22 `listIncidents`):
-  acknowledging never resolves; the system resolves it, and a new occurrence reopens it. Audit:
-  `incident.acknowledged`.
+- **AD-S06-N01 An acknowledged incident stays open** (`e2e`, `contract`; D12; 22 `listIncidents`,
+  `acknowledgeIncident`): Pre: one open incident, made through the API on a test database by AD-S04-03's
+  full-range tamper check, which raises the critical `audit_chain_break` system event (component `db`),
+  so `GET /admin/incidents` lists it `open`. Acknowledging it moves it to `acknowledged` and never to
+  `resolved`. The other half, that the system resolves it and a new occurrence reopens it, is
+  **blocked**: no API step resolves an incident (`resolved_at` is the system's), so no handle yields a
+  resolved one. Audit: `incident.acknowledged`, once, naming the actor.
 - **AD-S06-N02 A backup's download and delete always need a fresh code** (`contract`, `security`; D14;
-  AC-ADM-26): rung 4, no grace. The download link serves once: a second use, or one after its expiry, answers `410 gone` for an
-  hour and then as an unknown link, and the link's token appears in no log, record or answer. D02's handling warning
-  shows before the download. Audit: `backup.downloaded`, `backup.deleted`.
+  AC-ADM-26): rung 4, no grace. The issue answer carries the link once, and the link serves once: a
+  second use, or one after its expiry, answers `410 gone` for at most 1 hour and then `404 not_found`,
+  as an unknown link (22 `downloadBackup`). The link appears only in the issue answer's body: no log,
+  trace, metric label or audit field holds it or its token (22 `issueBackupDownload`). D02's handling
+  warning shows before the download. Stack: the catalogue (`BACKUPS_CATALOGUED`, set with the engine,
+  #3319) and `CV_BACKUP_ROOT` for the link (`backups_wiring.py`). The delete half is **blocked**:
+  `DELETE /admin/backups/{backupId}` answers `501 not_implemented` before any challenge until an
+  artefact remover is wired (22 `deleteBackup`). Audit: `backup.downloaded` at severity `error` for the
+  issue (`after_state.stage: issued`) and the fetch (`served`): see Q-18; `backup.deleted` once the
+  delete is reachable.
 
 ### S07: manager onboarding and governance (US-ADMIN-001, 005, 006, 013; SCR-140, SCR-141)
 
 **AD-S07-01 The guided steps** (`e2e`; E42-S07 "Guided steps")
 
-- Pre: the dev-only fixture exchange transport (`account_fixture_wiring.py`), whose synthetic keys the
-  key step can verify; never a real Bybit key (§0), since the server verifies a candidate key with the
-  exchange first (22 `createApiKey`).
-- Steps: start the manager onboarding flow and complete it.
+- Pre: the dev-only fixture exchange transport (`account_fixture_wiring.py`), which starts only on
+  `CV_ENVIRONMENT=demo` with `CV_FEED=synthetic`, no `CV_TEST_CLOCK` and no `CV_BYBIT_API_*` variable
+  (`settings.py`), so the key-step cases (AD-S07-01, AD-S07-06) run on that stack, never on testnet or
+  with an exchange key. Its synthetic keys are what the key step can verify; never a real Bybit key
+  (§0), since the server verifies a candidate key with the exchange first (22 `createApiKey`). On this
+  `main` the transport still refuses every request, until #2893's serving slices land, so the key step
+  is blocked.
+- Steps: start the manager onboarding flow and complete it, ending with the invite.
 - Expected: it walks through sub-account creation, the 48-hour key restriction, key creation with 2FA,
-  permission scoping, IP whitelisting, profile creation and limits, marking each completed step.
-- Audit: each step's own record (the key's, the profile's, the grant's); the onboarding records E42-S07
-  names are not registered: see Q-22.
+  permission scoping, IP whitelisting, profile creation and limits, and the invite, marking each
+  completed step. The invite is a redeemable link, and its step is challenged when no `users` grace is
+  live (SR-025; AD-S02-N06).
+- Audit: each step's own record: the key's `api_key.import`, the profile's `profile.created` and
+  `profile.bound`, the grant's `users.access_change` and the invite's `users.invited`; the onboarding
+  records E42-S07 names are not registered: see Q-22.
+- End: the invite link is redeemed or revoked (`users.invite_revoked`), so none outlives the case.
 
 **AD-S07-02 A blocked step does not halt the flow [R]** (`e2e`; E42-S07 "Blocked step does not halt the
 flow"; D02 D8)
@@ -777,12 +886,15 @@ flow"; D02 D8)
 - Pre: SUB-K, under the 48-hour key restriction.
 - Expected: the key step is blocked and shows the exact unlock time, as an absolute time. The other steps
   stay available.
+- Audit: none, as the step only reads.
 
 **AD-S07-03 Resume on another device** (`e2e`; E42-S07 "Resume")
 
 - Pre: the flow left after the profile step.
 - Steps: return on a different device.
 - Expected: the flow resumes at the first incomplete step, with the earlier steps marked complete.
+- Audit: none for the resume (`user.onboarding_resumed` is unregistered: Q-22); the earlier steps'
+  records are AD-S07-01's.
 
 **AD-S07-04 Disable a trade group** (`e2e`, `integration`; E42-S07 "Disable a trade group")
 
@@ -791,13 +903,18 @@ flow"; D02 D8)
 - Expected: G leaves the ticket's targets, and the positions opened through G stay fully manageable. The
   contract has no group-level enable or disable (`enabled` is per member, 22 trade groups), so this case
   checks the ticket's targets only, with no server refusal to assert: see Q-22.
+- Audit: the group change's own record, which the registry does not hold (E28's `tradegroup.updated`:
+  Q-22); none for the open trade, whose positions are neither closed nor amended.
 
 **AD-S07-05 A membership change keeps the open trade's snapshot** (`integration`; E42-S07 "Membership change
 during an open trade")
 
 - Pre: GROUP-G with an open group trade.
 - Steps: change G's membership.
-- Expected: the open trade keeps its original membership, and its detail shows which group version it used.
+- Expected: the open trade keeps its original membership. The group version its detail should show has
+  no field in `22`, so that half is blocked on Q-22.
+- Audit: the membership change's own record (`tradegroup.updated`, unregistered: Q-22); none for the
+  open trade, which keeps its snapshot.
 
 **AD-S07-06 A secret is never shown again [R]** (`e2e`, `security`; E42-S07 "Secret never re-displayed";
 C-2.7)
@@ -806,27 +923,37 @@ C-2.7)
 - Steps: enter an API secret at the key step; go back to that step.
 - Expected: only the key's fingerprint and status are shown. No secret value was written outside the
   encrypted store: not in a log, a record, the page state or local storage.
+- Audit: `api_key.import` for the key step, naming the Owner and never key material; no log, record or
+  answer holds the secret.
 
 **AD-S07-07 A recorder purge meets the gate first** (`e2e`; E42-S07 "Recorder purge from the admin area")
 
-- Pre: OWNER with no live `recorder` grace.
+- Pre: OWNER, whose last step-up is older than the router's freshness window (AD-S01-01's setup), with
+  no live `recorder` grace.
 - Steps: open `/admin/recorder`; purge; then, elevated, send a purge whose `confirm_symbol` differs from
   the symbol, and one while a purge is queued; and send a purge as MGR-M.
-- Expected: the gate appears before any destructive control is reachable: without the grace the API
-  answers `403 step_up_required` with `action_class: recorder`, before the body is parsed. The purge
-  shows its impact preview and is rung 3: the object's own name as the typed token. A mismatched echo
-  answers `422` with code `purge_confirmation_mismatch`; a second purge while one is queued or running,
-  `409 job_running`; MGR-M, a `403` with no step-up prompt, the handler checking owner-only before the
-  step-up (audited `purge_owner_only`, `api/recorder_purge.py`).
-- Audit: `retention.purge` with the exact window, partition count, rows and bytes, written before the job
-  exists (22 `purgeRecordedData`; Q-8).
+- Expected: the area gate (AD-S01-01) appears on `/admin/recorder` before any destructive control is
+  reachable. Past it, with no live `recorder` grace, the API answers a purge `403 step_up_required` with
+  `action_class: recorder`, before the body is parsed. The purge shows its impact preview and is rung 3:
+  the object's own name as the typed token. A mismatched echo answers `422` with code
+  `purge_confirmation_mismatch`; a second purge while one is queued or running, `409 job_running`;
+  MGR-M, a `403` with no step-up prompt, the handler checking owner-only before the step-up (audited
+  `purge_owner_only`, `api/recorder_purge.py`).
+- Audit: `retention.purge` with the exact window, partition count, rows and bytes, written before the
+  job exists (22 `purgeRecordedData`; Q-8); and `retention.purge` with outcome `denied` for each
+  refusal, reasons `purge_owner_only`, `purge_requires_elevation` and `purge_confirmation_mismatch`
+  (`api/recorder_purge.py`); the `409 job_running` writes none.
 
 **Negative and boundary cases**
 
 - **AD-S07-N01 A key with withdrawal rights is refused [R]** (`contract`, `security`; 22 `createApiKey`;
-  C-2.8): a synthetic key that holds a right whose name carries `withdraw` or `transfer` answers
-  `422 validation_failed` with code `key_withdraw_permission`; nothing is stored, and no secret is echoed
-  in the answer, a log or a record.
+  C-2.8): a synthetic key that holds a right whose name carries `withdraw` or `transfer`, from the
+  pack's `withdraw_enabled` or `transfer_enabled` scenario (`packages/fixtures/accounts`), answers
+  `422 validation_failed` with code `key_withdraw_permission`; nothing is stored, and no secret is
+  echoed in the answer, a log or a record. Audit: `api_key.import` (outcome `denied`, reason
+  `key_withdraw_permission`, no key material), then `security.key_policy_violation` at `critical`,
+  naming the account. The contract test serves the scenario through the pack's resolver; a running stack
+  needs the fixture transport to serve it, which waits on #2893's serving slices (AD-S07-01).
 
 ### E42-T07 and E42-S08: the statechart inspector
 
@@ -834,42 +961,58 @@ C-2.7)
 
 - Pre: several machines running, among them one of a kind with no public entity id (B8, B9, B13 or B15).
 - Expected: one row per live machine of a kind that has a public entity id, with its kind, state,
-  `machine_hash`, `chain_trips` and `dropped_receipts`; a kind with none gets no row and appears only in
-  `kinds`' counters-only summary (22 `listStatecharts`).
+  `machine_hash` and `chain_trips`; a kind with none gets no row and appears only in `kinds`'
+  counters-only summary (22 `listStatecharts`). `dropped_receipts` is on that summary, per kind and
+  environment, not on a row: it is `null` while no metrics source can be read (`admin/inspector.py`),
+  and the `metrics` slice then says why. See Q-24.
+- Audit: none beyond `admin.area_entered`.
 
 **AD-T07-02 No live interpreter is queried** (`unit`, `integration`; E42-T07 "No hot-path interpreter
 query"; C-2.20)
 
 - Expected: the answer comes from the persisted snapshots and `machine_events`; a spy on the interpreter
   records no call.
+- Audit: none beyond `admin.area_entered` for the call.
 
 **AD-T07-03 The export matches the registered chart** (`contract`; E42-T07 "Stately export matches the
-registered chart")
+registered chart"; 22 `exportStatechart`)
 
-- Expected: the export for a registered `machine_hash` round-trips through the Stately schema the chart
-  was authored in.
+- Expected: `GET /admin/statecharts/{machineKey}/export` addresses the chart by its key, a live
+  machine's or a bare catalogue `machine_kind`, not by `machine_hash`, and answers the registered
+  chart's `machine_hash` with its `stately` projection: the chart without exactly the six CV policy keys
+  (`strictConfig`, `strict`, `strictTargets`, `actionErrorPolicy`, `guardErrorPolicy`,
+  `spawnBlockingTimeout`), every other key kept, which validates against `MACHINE_SCHEMA`
+  (`statechart/schema.py`) with those six taken out, the schema the chart was authored in. An
+  `algo:{id}` key answers `404 not_found`, as does a key outside the grammar or an unregistered kind (22
+  `exportStatechart`).
+- Audit: none beyond `admin.area_entered`.
 
 **AD-T07-N01 A snapshot whose seal fails is left out** (`security`; 22 `listStatecharts`): Pre:
 SC-FORGED-SEAL (see §1), on a test database. It is left out of the list, `snapshots` says `error` with a
-fixed reason, and a critical event is raised once per machine, environment and snapshot.
+fixed reason, and a critical event is raised once per machine, environment and snapshot. Audit: none
+beyond `admin.area_entered`; the critical event is a `system_events` row, not an audit record.
 
 **AD-T07-N02 A machine the caller may not see is invisible** (`contract`, `security`; 22 `listStatecharts`,
 `getStatechart`; C-12.4): the inspector is the Owner's (`admin:read`), so a Manager or Viewer gets
 `403 forbidden` on both reads. The Owner sees an `alert`, `replay` or `session` machine only if it is its
 own; a row it may not see is omitted, never redacted. `GET` of a machine the Owner may not see answers
 `404 not_found`, as an unknown machine does, even when that machine's seal fails (the visibility check
-comes first).
+comes first). Audit: `admin.area_entered` with outcome `denied` for the Manager's and the Viewer's
+reads, and none beyond `admin.area_entered` for the Owner's.
 
 **AD-T07-N03 The context summary is redacted** (`contract`, `security`; 22 `getStatechart`; C-12.6): a
 machine's `context_summary` holds only the keys its kind's `machines.{entity}.state` topic allows, and
 never a secret, a user id, free text, a deadline, an exchange id, a price, a quantity, a balance or a
-limit.
+limit. Audit: none beyond `admin.area_entered`.
 
 **AD-S08-01 See a degraded machine [R]** (`e2e`; E42-S08 "See a degraded machine")
 
 - Pre: SC-CHAIN-TRIPS, a machine of a kind that has a public entity id (so it has a row), restored with
   `chain_trips` above 0.
-- Expected: it is listed as degraded, with its `chain_trips` and `dropped_receipts` counts shown.
+- Expected: it is listed as degraded (`degraded: true`), with its `chain_trips` count shown; its kind's
+  `dropped_receipts` count is on the `kinds` summary, `null` until a metrics source exists, so no count
+  can be shown today (Q-24).
+- Audit: none beyond `admin.area_entered` per call.
 
 **AD-S08-02 Acknowledge a latch [R]** (`e2e`, `integration`; E42-S08 "Acknowledge a latch")
 
@@ -878,6 +1021,7 @@ limit.
 - Expected: the latch clears, and the machine serves order-path commands again. The acknowledgement is
   audited with the owner's identity, the machine and its prior `chain_trips` count. Its operation, step-up
   class and action are not in `22` yet: see Q-7.
+- **Blocked** on Q-7: the acknowledgement has no operation, step-up class or audit action yet.
 
 **AD-S08-03 Acknowledging without elevation is refused [R]** (`contract`, `security`; E42-S08 "Acknowledge
 without elevation is refused")
@@ -887,12 +1031,14 @@ without elevation is refused")
 - Expected: the server answers `403 step_up_required` with the acknowledgement's `action_class`, the gate
   appears, and the latch stays set.
 - Audit: `auth.step_up_required`; no acknowledgement record.
+- **Blocked** on Q-7, as AD-S08-02.
 
 **AD-S08-04 The diagram matches the running chart** (`e2e`; E42-S08 "State diagram matches the running
 chart")
 
 - Expected: the diagram matches the Stately export for that `machine_hash` and highlights the current
   state.
+- Audit: none beyond `admin.area_entered` per call.
 
 ## 3. Cross-session scenarios
 
@@ -926,6 +1072,8 @@ catalogue's, and it is measured between server timestamps.
   record (22 `setUserAccountAccess`; `23` §16.4's matrix asks ≤1 s, see Q-14), and the SUB-T topics carry
   on. B's next read of SUB-S answers as for an account it was never granted, and resubscribing to SUB-S
   alone is refused `account_scope_denied` (a refused `sub_ok` result, 23 §6.2; `403` on REST).
+- **Blocked** until a position source is wired (§1): the grant removal needs a readable open-position
+  state.
 - Audit: `users.access_change` (before and after grant sets), `ws.subscription.revoked`, then, for the
   resubscribe, one `ws.subscribe.denied` naming B's session (23 §5.2).
 
@@ -960,7 +1108,7 @@ notes, the defects filed and the coverage it reached.
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **CH-AD-1** Try to see data outside your scope as a manager: deep links with foreign ids, the scope selector, `/me`, WebSocket subscriptions, the own-redacted audit view, exports                       | 90 min  | Any byte of another user's or an ungranted account's data; or a foreign id answered differently from a missing one                                                              |
 | **CH-AD-2** Try to make the audit log look editable: SCR-135 and SCR-136 controls, every HTTP verb on `/admin/audit*`, the export, a detail view edited in the browser, the chain check on AUDIT-CORRUPT | 60 min  | Any control or verb that changes a record; any affordance that suggests editing; a verify of AUDIT-CORRUPT that reports an intact chain or another `first_bad_id`               |
-| **CH-AD-3** Try to reach an admin screen without elevation: deep links, the back button after a cancelled gate, a second tab, a grace lapsing mid-load, a view-as session                                | 60 min  | A step-up-gated action that succeeds with no live grace or bound grant; a state change or admin call with no record; an Owner-only route not refused `403` in a view-as session |
+| **CH-AD-3** Try to reach an admin screen without elevation: deep links, the back button after a cancelled gate, a second tab, a grace lapsing mid-load, a view-as session                                | 60 min  | A step-up-gated action that succeeds with no grace or bound grant; a state change or admin-area call with no record; an Owner-only route not refused `403` in a view-as session |
 | **CH-AD-4** Try to lose form content by letting the step-up lapse, on every admin form                                                                                                                   | 60 min  | A form whose content is lost, that saves twice, or that saves without passing the gate                                                                                          |
 | **CH-AD-5** Try to make two tiles block each other: SCR-120 with subsystems slowed, failing and flapping                                                                                                 | 60 min  | One tile's failure or slowness delays another past 800 ms; a retry that blocks the page                                                                                         |
 
@@ -982,46 +1130,53 @@ changed there would permanently break an append-only, hash-chained log.
 | E42-S02 | (failure) Last owner protection                       | AD-S02-04                                                          |
 | E42-S02 | (edge) Capacity reached                               | AD-S02-05                                                          |
 | E42-S02 | (failure) Step-up expired during a destructive action | AD-S02-06                                                          |
-| E42-S02 | (ticket rule) No audit record, no action              | AD-S02-N08, AD-S02-N09                                             |
+| E42-S02 | (E42-T04 R5) No audit record, no action               | AD-S02-N08, AD-S02-N09                                             |
 | E42-S03 | Bind a manager to a sub-account                       | AD-S03-01                                                          |
 | E42-S03 | Multiple bindings                                     | AD-S03-02                                                          |
 | E42-S03 | Unbind with open positions                            | AD-S03-03, AD-S03-03b                                              |
+| E42-S03 | (no scenario) Grant revoked while subscribed          | AD-X-02                                                            |
 | E42-S03 | Tighten a limit during an open position               | AD-S03-04                                                          |
 | E42-S03 | View-as is unmistakably read-only                     | AD-S03-05, AD-S03-N01 to AD-S03-N03, AD-S03-N06 to AD-S03-N08      |
 | E42-S03 | (failure) Concurrent edit                             | AD-S03-06, AD-S02-N03, AD-S03-N05                                  |
-| E42-S03 | (ticket rule) No audit record, no action              | AD-S03-N09 to AD-S03-N11                                           |
-| E42-S04 | Search the log                                        | AD-S04-01, AD-S04-N06                                              |
+| E42-S03 | (E42-T04 R5) No audit record, no action               | AD-S03-N09 to AD-S03-N11                                           |
+| E42-S04 | Search the log                                        | AD-S04-01                                                          |
 | E42-S04 | No mutation affordance exists                         | AD-S04-02, CH-AD-2                                                 |
 | E42-S04 | Integrity verification                                | AD-S04-03                                                          |
 | E42-S04 | Manager scope                                         | AD-S04-04, CH-AD-1                                                 |
 | E42-S04 | Export is signed and audited                          | AD-S04-05, AD-S04-N01 to AD-S04-N05, AD-S04-N07 to AD-S04-N09      |
 | E42-S04 | (failure) Export job fails                            | AD-S04-06                                                          |
 | E42-S04 | (edge) Secret-bearing entry                           | AD-S04-07                                                          |
+| E42-S04 | (no scenario) The detail drawer's budget              | AD-S04-N06                                                         |
 | E42-S05 | Toggle a flag                                         | AD-S05-01, AD-S05-N01                                              |
-| E42-S05 | Safety flags require step-up                          | AD-S05-02, AD-S05-N03, AD-S05-N04                                  |
-| E42-S05 | Flag state visibility                                 | AD-S05-03, AD-S05-N02                                              |
+| E42-S05 | Safety flags require step-up                          | AD-S05-02                                                          |
+| E42-S05 | Flag state visibility                                 | AD-S05-03                                                          |
 | E42-S05 | Live enablement stays blocked here                    | AD-S05-04                                                          |
 | E42-S05 | Maintenance mode consequences are explicit            | AD-S05-05, AD-X-03                                                 |
 | E42-S05 | (failure) Flag write rejected mid-flight              | AD-S05-06                                                          |
 | E42-S05 | (edge) Armed rule depends on the flag                 | AD-S05-07                                                          |
+| E42-S05 | (no scenario) A concurrent write: 409 conflict        | AD-S05-N02                                                         |
+| E42-S05 | (no scenario) Flag write and resolution rules         | AD-S05-N03, AD-S05-N04                                             |
 | E42-S06 | Health overview                                       | AD-S06-01                                                          |
 | E42-S06 | Drill down                                            | AD-S06-02                                                          |
 | E42-S06 | Degraded state names the impact                       | AD-S06-03                                                          |
 | E42-S06 | The page survives the outage it reports               | AD-S06-04, CH-AD-5                                                 |
-| E42-S06 | Restore is gated                                      | AD-S06-05, AD-S06-N02                                              |
+| E42-S06 | Restore is gated                                      | AD-S06-05                                                          |
 | E42-S06 | (failure) Backup verification fails                   | AD-S06-06                                                          |
 | E42-S06 | (edge) No backups yet                                 | AD-S06-07                                                          |
 | E42-S06 | (no scenario) An acknowledged incident stays open     | AD-S06-N01                                                         |
+| E42-S06 | (no scenario) Backup download and delete              | AD-S06-N02                                                         |
 | E42-S07 | Guided steps                                          | AD-S07-01                                                          |
 | E42-S07 | Blocked step does not halt the flow                   | AD-S07-02                                                          |
 | E42-S07 | Resume                                                | AD-S07-03                                                          |
 | E42-S07 | Disable a trade group                                 | AD-S07-04                                                          |
 | E42-S07 | Membership change during an open trade                | AD-S07-05                                                          |
-| E42-S07 | (failure) Secret never re-displayed                   | AD-S07-06, AD-S07-N01                                              |
+| E42-S07 | (failure) Secret never re-displayed                   | AD-S07-06                                                          |
 | E42-S07 | (edge) Recorder purge from the admin area             | AD-S07-07                                                          |
-| E42-T07 | List live machines                                    | AD-T07-01, AD-T07-N01 to AD-T07-N03                                |
+| E42-S07 | (no scenario) A withdrawal-right key is refused       | AD-S07-N01                                                         |
+| E42-T07 | List live machines                                    | AD-T07-01, AD-T07-N01, AD-T07-N02                                  |
 | E42-T07 | No hot-path interpreter query                         | AD-T07-02                                                          |
 | E42-T07 | Stately export matches the registered chart           | AD-T07-03                                                          |
+| E42-T07 | (no scenario) The context summary is redacted         | AD-T07-N03                                                         |
 | E42-S08 | See a degraded machine                                | AD-S08-01                                                          |
 | E42-S08 | Acknowledge a latch                                   | AD-S08-02                                                          |
 | E42-S08 | Acknowledge without elevation is refused              | AD-S08-03                                                          |
@@ -1054,7 +1209,10 @@ order is placed after a disable in AD-X-01; and the view-as entry criterion in s
   `not_mounted`, and AC-ADM-22 waits on #3085's server slice), so no context can start and those cases
   are blocked; AD-S03-05's protective-write half also needs the four handlers, E39-S03 (`setKillSwitch`),
   E29-T07 (`amendOrder`, `setPositionTpSl`) and E34-S03 (`amendTradeGroup`), since until each is mounted
-  the guard refuses it like any other write.
+  the guard refuses it like any other write;
+- for S08's latch cases (AD-S08-02 and AD-S08-03), Q-7 is answered: until the story's contract slice
+  registers the acknowledge operation, its step-up class and its audit action, both are blocked; so are
+  AD-S05-07 (Q-29) and AD-S06-04's "stale since" half (Q-27).
 
 **Exit.** A story group is done when all of these hold:
 
@@ -1068,11 +1226,11 @@ order is placed after a disable in AD-X-01; and the view-as entry criterion in s
 ## 7. The regression pack
 
 - **Members:** every case marked **[R]**, and every security refusal case: AD-S02-N06, AD-S02-N08,
-  AD-S02-N09, AD-S03-N06 to AD-S03-N11, AD-S04-N05, AD-S04-N08, AD-S05-02, AD-S05-N04, AD-S07-07,
-  AD-S07-N01, AD-T07-N01 to AD-T07-N03 and AD-S08-03. They cover each story group's headline behaviour,
-  every cross-session scenario, every case whose failure is a security or money incident (view-as, live
-  enablement, maintenance, the tamper check, the secret display, "no record, no action"), and each
-  "survives the outage" case.
+  AD-S02-N09, AD-S03-N03, AD-S03-N06 to AD-S03-N11, AD-S04-N05, AD-S04-N08, AD-S05-02, AD-S05-N03,
+  AD-S05-N04, AD-S06-N02, AD-S07-07 and AD-T07-N01 to AD-T07-N03. They cover each story group's headline
+  behaviour, every cross-session scenario, every case whose failure is a security or money incident
+  (view-as, live enablement, maintenance, the tamper check, the secret display, "no record, no action"),
+  and each "survives the outage" case.
 - **When:** every sprint after the group's exit, and on any change to the admin routes, the auth and RBAC
   modules, the audit writer or reader, the flag service, the health feed or the backup engine.
 - **How:** the automated members run in CI's E2E and contract jobs (E42-Q02); the manual members run in the
@@ -1107,6 +1265,21 @@ never lost.
 8. **Flags (D13):** each toggle is labelled with the flag's description, and its value is a word.
 9. **Countdowns (D16):** a polite announcement at 5 minutes left, and an assertive one at 1 minute and at
    expiry; never on every tick.
+10. **Unbind with open positions (D3, SCR-122):** the choice is an `alertdialog` with two named buttons,
+    "Leave positions open — you take over" and "Flatten first, then remove access", neither pre-selected
+    or focused; `Esc` changes nothing and says so.
+11. **Maintenance mode (D15):** the entry and the exit dialogs are `alertdialog`s with Cancel first and
+    the consequences read as a list; neither asks for a typed word; the exit's fresh-code dialog
+    replaces it and returns to it.
+12. **Export (D11):** the export control is a button whose marker says it needs confirmation; after the
+    step-up the job's progress is announced politely at 25 % steps, and "Ready — download", "Not
+    available yet" or a rate-limit time is reached by keyboard and read in words.
+13. **Restore (D14):** the stepper marks the current step with `aria-current="step"`, each step is a
+    labelled region, the typed-date and reason fields have visible labels, Back never discards the typed
+    reason, progress is read in text percentages and a refusal says the code was spent.
+14. **The onboarding wizard (E42-S07):** a labelled stepper with `aria-current="step"`; each step's
+    status is a word (complete, blocked, current), a blocked step says why and until when in text, the
+    secret field states it will not be shown again, and on return only the fingerprint is read.
 
 ### 8.2 The per-screen budgets
 
@@ -1121,7 +1294,7 @@ never lost.
 ## 9. Questions
 
 Each is a question for the owner of the source it names (a story, the contract or the server), not a
-guess.
+guess. A question marked (answered) stays, so the numbers do not move.
 
 - **Q-1:** E42-S01 and SCR-149 describe a 15-minute admin token. The server has per-action step-up instead,
   with a 5-minute grace per action class, and records an entry without refusing it. The web router gates
@@ -1148,7 +1321,8 @@ guess.
   (it has `risk.freeze_manager` and `risk.unfreeze_manager`), and the per-user caps override has no admin
   endpoint on `main` (D02 §6.4, §13.1 and O-G). AD-S03-04 is blocked until both exist.
 - **Q-5:** E42-S04 expects `audit.exported` for an export. The registry has `admin.audit_export`, which the
-  contract writes for the request and, with reason `downloaded`, for the download. AD-S04-05 expects those.
+  contract writes for the request and, with reason `downloaded`, for the download; it names no action
+  for the completion record, so AD-S04-05 expects that under `admin.audit_export` too.
 - **Q-6:** E42-S05 requires a typed confirmation to enter maintenance mode. D02 D15 drops it, since it has no
   server counterpart, and leaves the choice open (O-E). AD-S05-05 asserts the rungs and not a typed word.
 - **Q-7:** E42-S08's latch acknowledgement has no operation in `22`, no registered audit action and no
@@ -1198,23 +1372,62 @@ guess.
   §13.2: a contract gap, routed to #889 and #2701). AD-S02-N06 asserts that gate. The server also gates
   re-issue and revoke (`POST` and `DELETE /users/{userId}/invite`) on `users`, which D02 §5 draws with no
   step-up, so no case asserts either until this is settled.
-- **Q-18:** E42-S06 expects `backup.restore` "at high severity". The contract writes it at `error` for every
-  attempt past RBAC and the step-up (22 `restoreBackup`; `critical` is kept for security events), and the
-  audit scale (`audit/models.py`) has no "high". AD-S06-05 expects `error`.
+- **Q-18:** E42-S06 expects `backup.restore` and `backup.downloaded` "at high severity". The contract
+  writes `backup.restore` at `error` for every attempt past RBAC and the step-up (22 `restoreBackup`;
+  `critical` is kept for security events) and `backup.downloaded` at `error` for the issue and the fetch
+  (22 `issueBackupDownload`, `downloadBackup`), and the audit scale (`audit/models.py`) has no "high".
+  AD-S06-05 expects `error` for the first and AD-S06-N02 for the second.
 - **Q-19:** E42-S04's manager-scope scenario opens "the audit log". D02 renders a manager's own actions on
   the non-admin "My activity" route (D6, OQ-15), and `/admin/**` answers a Manager with the 404 surface.
-  AD-S04-04 opens that route; which ticket mounts it is OQ-15's to settle.
+  AD-S04-04 opens that route, and its UI half is blocked until OQ-15 settles which ticket mounts it.
 - **Q-20:** ADR-0039's open Q2 (and `24`'s export section) leave what an export holds for a row of
   redaction class P0 undecided. AD-S04-07 asserts that no secret value reaches the file; the P0 row's
   exact content waits on that decision.
-- **Q-21:** US-ADMIN-007 bounds a flag change's reach at 10 s; `23` §8.1 pushes the `feature_flags` frame
+- **Q-21:** US-ADMIN-007 bounds a flag change's reach at 10 s; `23` §15.9 pushes the `feature_flags` frame
   within 2 s of the commit. AD-S05-01 asserts the story's ≤10 s until they agree.
 - **Q-22:** E42-S07's scope names actions the registry does not hold: `user.onboarding_started`,
   `user.onboarding_resumed`, `user.onboarding_completed`, `trade_group.enabled`, `trade_group.disabled`,
   `trade_group.renamed`, `trade_group.reordered` and `trade_group.membership_changed`. And `22` has no
-  group-level enable or disable and no per-user allowlist (`enabled` is per member). AD-S07-01 to
-  AD-S07-05 assert the records the steps' own operations write, and AD-S07-04 the ticket's targets only,
-  until the story's contract slice registers them.
+  group-level enable or disable, no per-user allowlist (`enabled` is per member) and no group version:
+  neither `TradeGroup` nor `TradeGroupDefinition` carries one, though the story wants the trade detail
+  to show the version a trade used. AD-S07-01 to AD-S07-05 assert the records the steps' own operations
+  write, AD-S07-04 the ticket's targets only and AD-S07-05 the kept membership, not a version, until the
+  story's contract slice registers them.
 - **Q-23:** C-12.4 calls a Viewer "read-only, including audit", and E42-S04's context gives viewers
   `audit:read`. The contract (22 `queryAuditLog`: a Viewer holds no `audit:read` and gets `403`), `04`
   §7.2, D02 AM-5 and the server refuse a Viewer (owner decision on #2083). AD-S01-02 follows the refusal.
+- **Q-24:** E42-T07's and E42-S08's Gherkin show `dropped_receipts` on each machine ("per machine").
+  `22` carries it only on `StatechartKindSummary`, per kind and environment, since the library counts it
+  per interpreter and never persists it, and the server returns `null` there until a metrics source
+  exists (`admin/inspector.py`). AD-T07-01 and AD-S08-01 assert it on the `kinds` summary; AD-S08-01
+  cannot show a count until that source exists.
+- **Q-25:** E42-S01's performance notes give each overview tile its own 3 s timeout. `22`
+  `getAdminOverview`, D02 §6.2 and §13.1 give each slice a 300 ms budget, a `200` with that slice
+  `status: error` and the copy "Error — timed out after 300 ms [Retry]", and E42-Q03 and SCR-120 ask for
+  every tile in ≤800 ms with or without a slow subsystem. AD-S01-03 asserts the 300 ms error state
+  within the 800 ms; the story should reconcile its 3 s with them, since a hung slice answers at 300 ms
+  and the 3 s can only bound a tile's own request.
+- **Q-26:** E42-S06's health scenarios list more than D02 and `22` carry. D02 §6.9, §13.1 and §14 draw
+  `HealthReport.components[]` only (state, number, detail, last good); per-account private-WebSocket
+  rows, REST latency per class and per-UID budgets are SCR-147's (`CapacityReport.rate_budget`) and
+  database sizes SCR-142's, and neither D02 nor `22` has a field for queue depths or error rates; `22`
+  carries `uptime_seconds`, which D02 does not draw. The drill-down is a history disclosure with a table
+  alternative and the incident-log link, not recent errors and reconnects. The single `bybit_private_ws`
+  row covers every account, with a fixed "what stops" sentence and no separate remediation hint, not a
+  tile for `sub_002`. AD-S06-01 to AD-S06-03 assert what D02 draws; the rest waits for the story or the
+  contract.
+- **Q-27:** E42-S06 expects each tile to show its last-known value marked stale when `GET /admin/health`
+  times out and the `system` topic is the only live source. D02 §4.2, §6.9 and O-B say that cannot be
+  built yet: `23` §15.9 gives `system` a 1 000 ms throttle and no keepalive or minimum cadence, so a
+  quiet healthy producer and a dead one cannot be told apart, and until a keepalive `health` frame or an
+  announced `publish_interval_ms` exists a `system`-fed tile shows only "as of". AD-S06-04 asserts "as
+  of" and the kept value; its "stale since" half is blocked on that.
+- **Q-28:** SCR-136's catalogue entry and E42-S04's performance notes budget a "single-record fetch" at
+  ≤300 ms. D02 §6.8 and §13.1 say no single-record route exists on `main`, so the drawer renders the
+  entry already on the page and the budget holds without a fetch. AD-S04-N06 times the drawer's opening,
+  not a fetch, until a record route exists.
+- **Q-29:** E42-S05's scope has turning off a flag that an armed rule depends on list the affected rules
+  and wait for the owner's acknowledgement. No source gives a rule-to-flag dependency: `22`
+  (`FeatureFlag`, `setFeatureFlag`), the flag service (`admin/flags/`) and D02 §6.11 have no dependency
+  list, source or acknowledgement field, and no rule definition or store references a flag. AD-S05-07 is
+  blocked on it, and RULES-ON-FLAG cannot be built until the story says what a dependency is.
