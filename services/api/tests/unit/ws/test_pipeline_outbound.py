@@ -336,9 +336,11 @@ async def test_flag_off_wire_transcript_is_unchanged(encoding: str) -> None:
 
 #: Recorded with `_flag_off_session` on 731f4820f (the S1 head, before S2a-i touched the gateway),
 #: in the rebase from 65d480a2: main's #2890, in between, moved `sub_ok`'s `id` after its `p`.
+#: Re-recorded for E09-X02 F-8 (#298): `welcome` no longer carries `git_sha` and `auth_ok` does;
+#: those six frames (three of each) are the transcript's only change.
 _FLAG_OFF_DIGESTS = {
-    _JSON: "c9c702e8629f7a4dd7ee157e3acddb6a8410db9c249a879f4d015dd8176bb21b",
-    _MSGPACK: "134597ecbab2a0f1b5f68bcdd615fff0ec731dda2af32de52c0ecea40fc1403f",
+    _JSON: "aa4ccea25766a39e2b1442261a273f082001010377baff6b661d1fcde7640546",
+    _MSGPACK: "41fb623bf0d9f1b97ba9c94da80ace8dfabb6f3854ebbdd0aa734aa0c9dd7e99",
 }
 
 
