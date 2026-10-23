@@ -9,11 +9,8 @@ SQL only. `reason_refs` edits and the policy resolution are single statements
 so the auto-record path (E16-T02) cannot lose an update to a read-modify-write
 race; so are the manual-row writes (`upsert_manual`, `clear_manual`, `set_pinned`,
 E16-F01). Nothing here hard-deletes a row: `soft_remove` sets `removed_at`, and the
-gap/session tables are append/update-only (ADR-0015 Sec.7). A pinned row is never soft-removed
-by `clear_manual`, so its retention protection holds (the reaper and `resolve_policy` read
-active rows only; ADR-0015 decisions 4 and 6, 21-database-schema.md Sec.3.6.1 and line 4471,
-and #2188's Q3 ruling and S2b slice: a B11 stop removes an auto row unless it is manual or
-pinned); the policy's B11 lifecycle, not these writes, stops a pinned row's recording.
+gap/session tables are append/update-only (ADR-0015 Sec.7). `clear_manual` never soft-removes
+a pinned row, so its retention protection holds (ADR-0015 decisions 4 and 6).
 """
 
 from __future__ import annotations
@@ -254,9 +251,10 @@ class SqlAlchemyRecorderRepository:
         try:
             return await self._all(stmt, params)
         except sa.exc.DBAPIError as exc:
-            if is_outage(exc):
-                raise
-            raise query_failure(sqlstate_of(exc), constraint_of(exc)) from None
+            if not is_outage(exc):
+                raise query_failure(sqlstate_of(exc), constraint_of(exc)) from None
+            passing = exc  # stripped in place by the unit of work; re-raised after the handler
+        raise passing
 
     async def list_recorded(self, env: str = "live") -> list[dict[str, Any]]:
         return await self._all(_LIST, {"env": env})

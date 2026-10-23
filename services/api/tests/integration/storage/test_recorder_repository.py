@@ -423,6 +423,15 @@ async def test_clear_manual_without_an_active_manual_row_is_absent_and_changes_n
     assert rid is None or _state(conn, rid) == before
 
 
+async def test_clear_manual_leaves_the_other_envs_row_alone(repo: Repo, conn: Conn) -> None:
+    live = await _manual(repo, "live")
+    demo = await _manual(repo, "demo")
+    before = _state(conn, live)
+    assert await repo.clear_manual("BTCUSDT", "demo") == "removed"
+    assert _state(conn, demo)["removed_at"] is not None
+    assert _state(conn, live) == before
+
+
 @pytest.mark.parametrize("ref", [None, _CHART], ids=["no-refs", "chart-ref"])
 async def test_clear_manual_on_a_pinned_row_demotes_it_and_keeps_it_active(
     repo: Repo, conn: Conn, ref: dict[str, str] | None
