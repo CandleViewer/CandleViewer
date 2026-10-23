@@ -1118,8 +1118,7 @@ operations:
     permissions: ['recording:read']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /recording/status:
     permissions: ['recording:read']
@@ -1132,8 +1131,7 @@ operations:
     permissions: ['recording:read']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /recording/symbols:
     permissions: ['recording:read']
