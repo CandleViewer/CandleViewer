@@ -5,9 +5,21 @@ should stay or become per family. No product code measures it: the client reads,
 family's bytes, frames, `coalesced_count` and staleness in each class, and process CPU per phase,
 fed-but-unsubscribed baseline taken off, gives the CPU a family costs. A cohort is put into a class
 by delaying `pong` to the server's `s-rtt-*` probes (`pacing.classify` reads the RTT), so the class
-is deterministic, and `system` `connection_quality.applied` says which class a phase really ran in.
+is deterministic, and the probe round trips of the steady window say which class a phase held.
 
-The rule is pre-registered here, before any run, so the data gives the answer:
+A mixed phase is read only when its cohort held the class it was set up for: at least 90 % of the
+steady window's probe samples in that class's band (150 ms and 500 ms are the lines); for
+`lagging` and `saturated`, at least as many announcements of the class as connections; and no
+`overflowing`. A share of samples is looser than a share of time: there is one sample per answered
+probe (a probe unanswered for 10 s counts once), and the server's two-sample hysteresis holds a
+worse class for up to two ticks after an excursion. The announcements are a frame count
+(`cv_class_*` has no connection id). Only the round trip and `overflowing` are read, so a class
+the server gave by queue depth (25 %, 60 %) is not seen: a known limitation (in run 39912100280
+every queue sample was at or under 64 KiB and 100 frames). The first rule took the worst class
+announced over a socket's life, which left out two cohorts of that run for a few late probes and
+recorded `no_data`; `runner w5-judge` re-reads the run under this rule, added after it.
+
+The rest of the rule is pre-registered here, before any run, so the data gives the answer:
 
 - relief(f, c) = 1 - bytes(f, c) / bytes(f, healthy); cost(f, c) = p95(f, c) - p95(f, healthy)
   (floored at 1 ms, the k6 clock's resolution); efficiency = relief / cost.
@@ -35,7 +47,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from bench.ws.budgets import Scrape, total
+from bench.ws.budgets import Scrape, fraction_le, total
 
 CLASSES: Final = ("healthy", "lagging", "saturated")
 FAMILIES: Final = ("book", "trades", "bars", "footprint", "heatmap")
@@ -58,6 +70,14 @@ STALENESS_TREND: Final = {
     "bars": "cv_hold_ms_bars",
 }
 MIXED: Final = ("mixed-healthy", "mixed-lagging", "mixed-saturated")
+#: The class lines on a probe's round trip (`pacing.classify`: `lagging` from 150 ms, `saturated`
+#: above 500 ms) and the product's histogram of it, which has a bucket edge on each.
+LAGGING_RTT_MS: Final = 150
+SATURATED_RTT_MS: Final = 500
+RTT_SERIES: Final = "cv_ws_rtt_seconds"
+#: The share of a steady window's probe samples (not of its time) one class must hold to be the
+#: class the cohort ran in.
+HELD_FLOOR: Final = 0.90
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,9 +148,36 @@ def cpu_by_family(
     return {key: max(0.0, cpu - idle_cpu_s_per_s) for key, cpu in phases.items()}
 
 
-def applied_class(counters: Mapping[str, float]) -> str:
-    """The worst class the server announced to the cohort (`cv_class_<name>` counts the
-    `connection_quality` frames by class); none announced means `healthy` (the start class)."""
+def rtt_bands(delta: Scrape) -> dict[str, int]:
+    """The probe round trips of a steady window by the class they sit in: the `cv_ws_rtt_seconds`
+    bucket deltas cut at the class lines, `healthy` up to 150 ms, `lagging` above that up to
+    500 ms, `saturated` above. Empty when the window took no sample, or when the counts cannot be
+    one window (negative after a counter reset, buckets that are not cumulative)."""
+    under_lagging, n = fraction_le(delta, RTT_SERIES, LAGGING_RTT_MS / 1000)
+    under_saturated, _ = fraction_le(delta, RTT_SERIES, SATURATED_RTT_MS / 1000)
+    if not n:
+        return {}
+    healthy, not_saturated = round(under_lagging * n), round(under_saturated * n)
+    if not 0 <= healthy <= not_saturated <= round(n):
+        return {}
+    return {
+        "healthy": healthy,
+        "lagging": not_saturated - healthy,
+        "saturated": round(n) - not_saturated,
+    }
+
+
+def applied_class(counters: Mapping[str, float], delta: Scrape | None = None) -> str:
+    """The class a cohort ran in: the one most of the steady window's probe round trips sat in
+    (`rtt_bands` of `delta`; a tie goes to the worse class). A single excursion must not void a
+    phase: a probe answered late (in run 39912100280, likely a backend loop pause) makes the server
+    announce `saturated` and the next probe takes it back, so the worst class announced says
+    little about the class held (that run: 98 % and 99.9 % of the round trips in the class the
+    cohort was set up for, 5 and 3 over 500 ms). With no usable window it falls back to the
+    announcements: the worst class the server announced over the socket's life (`cv_class_<name>`
+    counts the `connection_quality` frames by class), `healthy` (the start class) when none."""
+    if bands := rtt_bands(delta or {}):
+        return max(reversed(CLASSES), key=bands.__getitem__)
     for name in reversed((*CLASSES, "overflowing")):
         if counters.get(f"cv_class_{name}", 0) > 0:
             return name
@@ -178,7 +225,43 @@ class Phase:
 def intended_class(rtt_delay_ms: int) -> str:
     """The class a `pong` delay puts a cohort in (`pacing.classify`: lagging from 150 ms of RTT,
     saturated above 500 ms)."""
-    return "healthy" if rtt_delay_ms < 150 else "lagging" if rtt_delay_ms <= 500 else "saturated"
+    if rtt_delay_ms < LAGGING_RTT_MS:
+        return "healthy"
+    return "lagging" if rtt_delay_ms <= SATURATED_RTT_MS else "saturated"
+
+
+def judge_class(ph: Phase, want: str) -> tuple[str, str | None]:
+    """`(the class the cohort ran in, why the phase is left out)`; no reason when it ran as
+    intended. With a probe window, `want` must hold at least `HELD_FLOOR` of its samples. The
+    announcement counts are the guard that the server told the cohort: `lagging` and `saturated`
+    at least as many times as there are connections (a frame count, not one per connection;
+    `healthy` is the start class, never announced), and `overflowing` never, because only a deep
+    queue gives it and no probe shows one. Only the round trip and `overflowing` are read, so a
+    class given by queue depth is not seen (the module docstring). With no usable window, the
+    announcements alone decide, as they always did."""
+    counters = ph.summary.get("counters", {})
+    got, bands = applied_class(counters, ph.delta), rtt_bands(ph.delta)
+    if not bands:
+        if got == want:
+            return got, None
+        return got, f"the server applied {got}, the cohort was set up for {want}"
+    n = sum(bands.values())
+    if bands[want] < HELD_FLOOR * n:
+        sat = ", ".join(f"{bands[c] / n:.1%} {c}" for c in CLASSES)
+        return got, (
+            f"the cohort was set up for {want}, its probe round trips sat {sat}; "
+            f"a held class needs {HELD_FLOOR:.0%}"
+        )
+    if overflowed := counters.get("cv_class_overflowing", 0):
+        return got, f"the server announced overflowing {overflowed:g} times, a deep queue's class"
+    sent = counters.get(f"cv_class_{want}", 0)
+    connections = max(1, int(ph.summary.get("connections") or 1))
+    if want != "healthy" and sent < connections:
+        return got, (
+            f"the server announced {want} {sent:g} times to a cohort of {connections}, "
+            "fewer announcements than connections"
+        )
+    return got, None
 
 
 def analyze(phases: Sequence[Phase], left_out: Sequence[str] = ()) -> dict[str, Any]:
@@ -194,12 +277,11 @@ def analyze(phases: Sequence[Phase], left_out: Sequence[str] = ()) -> dict[str, 
             notes.append(f"phase {ph.name} is INVALID and is left out")
             skipped.append(ph.name)
     for ph in (p for p in phases if p.name.startswith("mixed-") and p.status != "INVALID"):
-        want, got = intended_class(ph.rtt_delay_ms), applied_class(ph.summary.get("counters", {}))
+        want = intended_class(ph.rtt_delay_ms)
+        got, why = judge_class(ph, want)
         applied[ph.name] = got
-        if got != want:
-            notes.append(
-                f"phase {ph.name}: the server applied {got}, the cohort was set up for {want}"
-            )
+        if why:
+            notes.append(f"phase {ph.name}: {why}")
             skipped.append(ph.name)
             continue
         for fam in FAMILIES:

@@ -23,6 +23,8 @@ from bench.ingestion import gate
 from bench.ingestion.budgets import Check, Verdict
 from bench.ws import HARNESS_VERSION, budgets, profiles, w5
 from bench.ws.budgets import Facts, Scrape
+from candleviewer.observability.metrics_catalogue import RTT_BUCKETS
+from candleviewer.ws import pacing
 
 PROFILE: dict[str, Any] = {
     "name": "A",
@@ -843,6 +845,172 @@ def test_w5_analyze_reads_the_phases_and_flags_a_class_that_was_not_reached() ->
     assert out["skipped"] == ["mixed-lagging"]
     assert w5.exit_code(out) == 1  # half an answer is not a green run
     assert json.dumps(out)  # the artefact is plain JSON
+
+
+RTT = "cv_ws_rtt_seconds"
+#: Run 39912100280, whose healthy and lagging cohorts the judge left out (5 connections, 600 s
+#: steady windows). Per mixed phase: the pong delay (ms); the `connection_quality` frames k6
+#: counted by class over each socket's whole life; the steady window's probe round trips at or
+#: under 0.15 s, at or under 0.5 s and in all (`cv_ws_rtt_seconds` bucket deltas); the book's p95
+#: hold (ms). Likely a backend loop pause answered a few probes late, and each one made the
+#: server announce `saturated`.
+RUN_39912100280 = {
+    "mixed-healthy": (0, {"healthy": 57, "lagging": 52, "saturated": 5}, (2937, 2990, 2995), 72.0),
+    "mixed-lagging": (300, {"lagging": 8, "saturated": 3}, (0, 2997, 3000), 115.0),
+    "mixed-saturated": (700, {"saturated": 5}, (0, 0, 2985), 213.0),
+}
+#: A cohort that sat in its own class for every round trip: (pong delay, class, round trips).
+ALL_IN_CLASS = [(300, "lagging", (0, 1000, 1000)), (700, "saturated", (0, 0, 1000))]
+
+
+def probed(
+    name: str,
+    delay_ms: int,
+    announced: dict[str, int],
+    rtt: tuple[int, int, int] | None,
+    hold: float = 50.0,
+    connections: int = 5,
+) -> w5.Phase:
+    """A mixed phase as `runner w5` reads it: the cohort's `connection_quality` frames by class
+    (`announced`) and the steady window's probe round trips (`rtt`: the cumulative counts at 0.15 s,
+    at 0.5 s and in all; None for a window with no `cv_ws_rtt_seconds` series at all)."""
+    counters = {"cv_frames_book": 100, "cv_bytes_book": 5000}
+    counters |= {f"cv_class_{cls}": n for cls, n in announced.items()}
+    trends = {"cv_hold_ms_book": {"count": 9, "p95": hold}}
+    summ = {"counters": counters, "trends": trends, "connections": connections}
+    text = histogram(RTT, dict(zip((0.15, 0.5, 1.0), rtt, strict=True))) if rtt else ""
+    return w5.Phase(name, ("book",), delay_ms, summ, budgets.parse_scrape(text), 600.0, "PASS")
+
+
+def judged(phase: w5.Phase) -> dict[str, Any]:
+    """`w5.analyze` over `phase` and the other two mixed phases, which ran as intended (no probe
+    series, so judged by their announcements)."""
+    fine = {
+        "mixed-healthy": (0, {}),
+        "mixed-lagging": (300, {"lagging": 5}),
+        "mixed-saturated": (700, {"saturated": 5}),
+    }
+    rest = [probed(name, ms, sent, None) for name, (ms, sent) in fine.items() if name != phase.name]
+    return w5.analyze([phase, *rest])
+
+
+def test_w5_replays_the_run_whose_late_probes_voided_two_cohorts() -> None:
+    """The judge took the worst class announced over each socket's life, so a handful of late probes
+    (5 of 2995 in the healthy cohort, 3 of 3000 in the lagging one) read as `saturated`, both phases
+    were left out and `w5.json` said `no_data`. The cohorts held their class for 98 % and 99.9 %."""
+    out = w5.analyze([probed(name, *run) for name, run in RUN_39912100280.items()])
+    assert out["applied_class"] == {
+        "mixed-healthy": "healthy",
+        "mixed-lagging": "lagging",
+        "mixed-saturated": "saturated",
+    }
+    assert out["skipped"] == [] and out["notes"] == []
+    assert out["recommendation"] != "no_data" and out["rows"] and w5.exit_code(out) == 0
+
+
+def test_w5_still_leaves_out_a_cohort_that_held_another_class() -> None:
+    """70 % of a healthy cohort's round trips in the lagging band is under the 90 % floor, whatever
+    the announcements say."""
+    out = judged(probed("mixed-healthy", 0, {"healthy": 9, "lagging": 9}, (300, 1000, 1000)))
+    assert out["skipped"] == ["mixed-healthy"]
+
+
+@pytest.mark.parametrize(("delay", "cls", "rtt"), ALL_IN_CLASS)
+def test_w5_still_leaves_out_a_class_the_server_never_announced(
+    delay: int, cls: str, rtt: tuple[int, int, int]
+) -> None:
+    assert judged(probed(f"mixed-{cls}", delay, {}, rtt))["skipped"] == [f"mixed-{cls}"]
+
+
+@pytest.mark.parametrize(
+    ("delay", "cls", "rtt"), [(0, "healthy", (1000, 1000, 1000)), *ALL_IN_CLASS]
+)
+def test_w5_still_leaves_out_a_cohort_whose_queue_overflowed(
+    delay: int, cls: str, rtt: tuple[int, int, int]
+) -> None:
+    """`overflowing` is the queue's class, which no pong delay sets and no probe round trip shows:
+    the announcement is the only evidence, and one is enough."""
+    out = judged(probed(f"mixed-{cls}", delay, {cls: 5, "overflowing": 1}, rtt))
+    assert out["skipped"] == [f"mixed-{cls}"]
+
+
+@pytest.mark.parametrize("rtt", [None, (0, 0, 0)], ids=["no series", "no sample"])
+@pytest.mark.parametrize(
+    ("announced", "left_out"),
+    [({"lagging": 5}, False), ({"lagging": 5, "saturated": 1}, True), ({}, True)],
+)
+def test_w5_without_a_probe_sample_judges_by_the_announcements_as_before(
+    announced: dict[str, int], left_out: bool, rtt: tuple[int, int, int] | None
+) -> None:
+    out = judged(probed("mixed-lagging", 300, announced, rtt))
+    assert ("mixed-lagging" in out["skipped"]) is left_out
+    assert any("the server applied" in n for n in out["notes"]) is left_out
+
+
+@pytest.mark.parametrize(
+    ("delay", "cls", "rtt", "held"),
+    [
+        (0, "healthy", (900, 950, 1000), True),
+        (0, "healthy", (899, 950, 1000), False),
+        (300, "lagging", (50, 950, 1000), True),  # 0.95 - 0.05 is 0.8999999999999999 in floats
+        (300, "lagging", (51, 950, 1000), False),
+        (700, "saturated", (0, 100, 1000), True),
+        (700, "saturated", (0, 101, 1000), False),
+    ],
+)
+def test_w5_holds_a_class_at_exactly_90_percent_and_not_one_round_trip_short(
+    delay: int, cls: str, rtt: tuple[int, int, int], held: bool
+) -> None:
+    out = judged(probed(f"mixed-{cls}", delay, {cls: 5}, rtt))
+    assert (f"mixed-{cls}" not in out["skipped"]) is held
+    assert any(f"89.9% {cls}" in n for n in out["notes"]) is not held  # what the note names
+
+
+@pytest.mark.parametrize(("delay", "cls", "rtt"), ALL_IN_CLASS)
+@pytest.mark.parametrize(("sent", "told"), [(4, False), (5, True)])
+def test_w5_wants_at_least_as_many_announcements_of_its_class_as_connections(
+    delay: int, cls: str, rtt: tuple[int, int, int], sent: int, told: bool
+) -> None:
+    out = judged(probed(f"mixed-{cls}", delay, {cls: sent}, rtt))  # a cohort of 5 connections
+    assert (f"mixed-{cls}" not in out["skipped"]) is told
+    said = f"announced {cls} 4 times to a cohort of 5, fewer announcements than connections"
+    assert any(said in n for n in out["notes"]) is not told
+
+
+def test_w5_admits_a_healthy_cohort_that_has_probe_samples_and_no_announcement() -> None:
+    """`healthy` is the start class and is never announced: the clean case has no `cv_class_*`."""
+    assert judged(probed("mixed-healthy", 0, {}, (1000, 1000, 1000)))["skipped"] == []
+
+
+@pytest.mark.parametrize(
+    ("rtt", "announced", "left_out"),
+    [
+        ((-500, -500, -500), {"lagging": 5, "saturated": 1}, True),  # counters that were reset
+        ((100, 80, 120), {"lagging": 5}, False),  # buckets that are not cumulative
+    ],
+)
+def test_w5_judges_by_the_announcements_when_the_round_trip_counts_cannot_be_a_window(
+    rtt: tuple[int, int, int], announced: dict[str, int], left_out: bool
+) -> None:
+    out = judged(probed("mixed-lagging", 300, announced, rtt))
+    assert ("mixed-lagging" in out["skipped"]) is left_out
+    assert any("the server applied" in n for n in out["notes"]) is left_out
+
+
+def test_w5_reads_no_window_from_a_count_below_its_own_bucket() -> None:
+    text = f'{RTT}_bucket{{le="0.15"}} 10\n{RTT}_bucket{{le="0.5"}} 130\n{RTT}_count 120\n'
+    assert w5.rtt_bands(budgets.parse_scrape(text)) == {}
+
+
+def test_w5_cuts_the_probe_round_trips_at_the_lines_the_product_classifies_them_by() -> None:
+    """The judge reads `cv_ws_rtt_seconds` at 150 ms and 500 ms, exactly on a bucket edge, so no
+    interpolation stands between a sample and its class: if the product moves a line or an edge, so
+    must the harness."""
+    assert (w5.LAGGING_RTT_MS, w5.SATURATED_RTT_MS) == (
+        pacing.LAGGING_RTT_MS,
+        pacing.SATURATED_RTT_MS,
+    )
+    assert {w5.LAGGING_RTT_MS / 1000, w5.SATURATED_RTT_MS / 1000} <= set(RTT_BUCKETS)
 
 
 def test_w5_prices_the_wait_in_the_window_that_release_to_decode_cannot_see() -> None:

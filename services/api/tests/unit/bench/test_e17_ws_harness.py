@@ -1340,6 +1340,82 @@ def test_w5_gives_every_phase_the_cli_window_and_refuses_a_pong_delay(
     assert code == 0 and "W5: per_family" in capsys.readouterr().out
 
 
+def saved_w5(root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A whole W5 directory as a dry run of `runner w5` leaves it (`execute` stands in)."""
+    monkeypatch.setattr(runner, "execute", lambda p, k6: w5_phase(p))
+    monkeypatch.setattr(runner, "k6_binary", lambda: "k6")
+    runner.cmd_w5(args(out_dir=root, duration_s=30.0, warmup_s=10.0))
+    return root
+
+
+def test_w5_judge_rereads_a_saved_directory_to_the_answer_w5_wrote_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def tree() -> dict[Path, bytes]:
+        return {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+    saved_w5(tmp_path, monkeypatch)
+    saved = tree()
+    capsys.readouterr()
+    assert runner.cmd_w5_judge(argparse.Namespace(dir=str(tmp_path))) == 0
+    assert capsys.readouterr().out == saved[tmp_path / "w5.json"].decode() and tree() == saved
+
+
+@pytest.mark.parametrize("kind", ["symlink", "fifo", "oversized"])
+def test_w5_judge_refuses_a_symlink_a_fifo_or_an_oversized_file_before_it_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kind: str
+) -> None:
+    saved = saved_w5(tmp_path, monkeypatch)
+    capsys.readouterr()
+    bad = saved / "mixed-healthy" / "extra"
+    if kind == "symlink":
+        bad.symlink_to(saved / "w5.json")
+    elif kind == "fifo":
+        os.mkfifo(bad)  # neither a directory nor a regular file: a read would wait for a writer
+    else:
+        with bad.open("wb") as f:
+            f.truncate((64 << 20) + 1)  # sparse: nothing is written
+    with pytest.raises(SystemExit) as refused:
+        runner.cmd_w5_judge(argparse.Namespace(dir=str(saved)))
+    assert str(refused.value) == f"{bad}: a symlink or over 64 MiB: not read"
+    assert capsys.readouterr().out == ""  # the clean phases around it were not judged either
+
+
+def test_w5_judge_reads_a_file_of_exactly_64_mib(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (saved_w5(tmp_path, monkeypatch) / "mixed-healthy" / "extra").open("wb") as f:
+        f.truncate(64 << 20)  # sparse: the limit itself is read, one byte more is not
+    capsys.readouterr()
+    assert runner.cmd_w5_judge(argparse.Namespace(dir=str(tmp_path))) == 0
+
+
+def test_w5_judge_refuses_a_symlinked_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    link = tmp_path / "link"
+    link.symlink_to(saved_w5(tmp_path / "saved", monkeypatch), target_is_directory=True)
+    with pytest.raises(SystemExit) as refused:
+        runner.cmd_w5_judge(argparse.Namespace(dir=str(link)))
+    assert str(refused.value) == f"{link}: a symlink or over 64 MiB: not read"
+
+
+def test_w5_judge_of_a_missing_dir_gives_no_data(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert runner.cmd_w5_judge(argparse.Namespace(dir=str(tmp_path / "absent"))) == 1
+    assert json.loads(capsys.readouterr().out)["recommendation"] == "no_data"
+
+
+def test_w5_judge_names_a_mixed_phase_its_directory_lacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    shutil.rmtree(saved_w5(tmp_path, monkeypatch) / "mixed-lagging")
+    capsys.readouterr()
+    assert runner.cmd_w5_judge(argparse.Namespace(dir=str(tmp_path))) == 1
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["skipped"] == ["mixed-lagging"]
+    assert any("mixed-lagging is not in the plan" in n for n in answer["notes"])
+
+
 LOST_T1, LATE_T0 = {"missing": ["t1"]}, {"timed_out_ms": [15000, 15000], "retried": ["t0"]}
 OUT, KEPT = "a boundary scrape timed out, left out", "scrapes timed out"
 ONE_TIMEOUT = {"timed_out_ms": [15000]}
@@ -1380,6 +1456,10 @@ def test_a_w5_phase_that_had_a_scrape_time_out_is_left_out_if_a_boundary_was_los
     assert answer["skipped"] == skipped and note in answer["notes"]
     assert f"  {note}" in capsys.readouterr().out
     assert not any("not in the plan" in n for n in answer["notes"])  # noted once
+    again = runner.cmd_w5_judge(argparse.Namespace(dir=str(tmp_path)))  # the saved directory
+    rejudged = json.loads(capsys.readouterr().out)
+    assert (again, rejudged["skipped"]) == (code, skipped)
+    assert (note in rejudged["notes"]) is (code == 1)  # a kept note is not repeated
 
 
 def feeder_skips(out: Path) -> None:  # the 15 s gap made the feeder skip 5 of its 100 slots
@@ -1418,6 +1498,8 @@ def test_a_w5_mixed_phase_with_a_scrape_timeout_and_a_guard_is_left_out_and_note
     said = [n for n in answer["notes"] if "mixed-saturated" in n]
     assert said == ["phase mixed-saturated is INVALID and is left out"]  # not "kept" as well
     assert capsys.readouterr().out.count("mixed-saturated") == 1
+    assert runner.cmd_w5_judge(argparse.Namespace(dir=str(tmp_path))) == 1
+    assert json.loads(capsys.readouterr().out) == answer  # the saved directory says the same
 
 
 def test_w5_divides_a_phases_cpu_by_the_seconds_its_deltas_span_when_it_recorded_them() -> None:
