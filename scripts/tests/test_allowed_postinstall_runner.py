@@ -201,6 +201,66 @@ def test_runner_refuses_a_bin_that_links_outside_the_package(tmp_path: Path) -> 
 
 
 @needs_posix
+def test_runner_refuses_a_bin_that_names_a_directory(tmp_path: Path) -> None:
+    root = _repo(tmp_path, [ELECTRON, ESBUILD], {"install-electron": "lib"}, stub=None)
+    (root / "apps" / "desktop" / "node_modules" / "electron" / "lib").mkdir()
+    proc, calls = _run(root, tmp_path)
+    assert proc.returncode == 1
+    assert 'bin "install-electron" names lib, which is not a file' in proc.stderr
+    assert calls == []
+
+
+@needs_posix
+def test_runner_refuses_a_package_json_that_links_in_another_directory(tmp_path: Path) -> None:
+    # The package root is the real `<from>/node_modules/<name>` directory: a manifest linked in
+    # from elsewhere must not move it, or the bin would run from the other directory.
+    root = _repo(tmp_path, [ELECTRON, ESBUILD])
+    manifest = root / "apps" / "desktop" / "node_modules" / "electron" / "package.json"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "package.json").write_text(manifest.read_text(encoding="utf-8"), encoding="utf-8")
+    (elsewhere / "install.js").write_text(STUB, encoding="utf-8")
+    manifest.unlink()
+    manifest.symlink_to(elsewhere / "package.json")
+    proc, calls = _run(root, tmp_path)
+    assert proc.returncode == 1
+    shown = "apps/desktop/node_modules/electron/package.json"
+    assert f"electron: {shown} is a link, not a file of the package" in proc.stderr
+    assert calls == []
+    assert not (elsewhere / MARKER).exists() and not _marker(root).exists()
+
+
+@needs_posix
+def test_runner_runs_the_bin_in_the_real_directory_of_a_linked_package(tmp_path: Path) -> None:
+    # pnpm links `<from>/node_modules/<name>` into its virtual store; the bin runs there.
+    root = _repo(tmp_path, [ELECTRON, ESBUILD], installed_in=None)
+    store = root / "node_modules" / ".pnpm" / "electron@45.0.0" / "node_modules" / "electron"
+    store.mkdir(parents=True)
+    manifest = {"name": "electron", "version": "45.0.0", "bin": {"install-electron": "install.js"}}
+    (store / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (store / "install.js").write_text(STUB, encoding="utf-8")
+    link = root / "apps" / "desktop" / "node_modules" / "electron"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(store, target_is_directory=True)
+    proc, _ = _run(root, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert (store / MARKER).read_text(encoding="utf-8") == str(store.resolve())
+
+
+@needs_posix
+def test_runner_names_the_package_json_it_cannot_parse(tmp_path: Path) -> None:
+    root = _repo(tmp_path, [ELECTRON, ESBUILD])
+    manifest = root / "apps" / "desktop" / "node_modules" / "electron" / "package.json"
+    manifest.write_text('{"name": ', encoding="utf-8")
+    proc, calls = _run(root, tmp_path)
+    assert proc.returncode == 1
+    shown = "apps/desktop/node_modules/electron/package.json"
+    assert f"electron: {shown} cannot be read as JSON" in proc.stderr
+    assert calls == []
+    assert not _marker(root).exists()
+
+
+@needs_posix
 def test_runner_reads_the_package_only_from_the_workspaces_own_node_modules(
     tmp_path: Path,
 ) -> None:

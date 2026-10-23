@@ -17,7 +17,7 @@
 //
 // Usage: node tools/ci/run-allowed-postinstall.mjs
 
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -112,10 +112,11 @@ export function loadAllowlist(root) {
 
 /**
  * The file a `run` entry executes: the pinned bin of the package's own package.json, read from
- * exactly `<from>/node_modules/<name>/package.json` with its link resolved, never found by walking
- * up the tree or through NODE_PATH (so an `exports` map does not apply). Throws, naming the
- * package, when it is not installed there, no longer ships that bin (a later release can move its
- * install step), or the bin, its links resolved, lies outside the package.
+ * exactly `<from>/node_modules/<name>` with its link resolved (that real directory is the package
+ * root), never found by walking up the tree or through NODE_PATH (so an `exports` map does not
+ * apply). Throws, naming the package, when it is not installed there, its package.json is a link or
+ * not JSON, it no longer ships that bin (a later release can move its install step), or the bin,
+ * its links resolved, lies outside the package.
  */
 export function resolvePinnedBin(root, entry) {
   const { name } = entry;
@@ -123,14 +124,24 @@ export function resolvePinnedBin(root, entry) {
   if (!existsSync(path.join(root, from, "package.json"))) {
     refuse(`${name}: run.from names no workspace (${from}/package.json is missing)`);
   }
-  const linked = path.join(root, from, "node_modules", ...name.split("/"), "package.json");
-  if (!existsSync(linked)) {
-    const missing = path.relative(root, linked).split(path.sep).join("/");
-    refuse(`${name} is not installed for ${from} (${missing} is missing); run pnpm install`);
+  const installed = path.join(root, from, "node_modules", ...name.split("/"));
+  const shown = `${path.relative(root, installed).split(path.sep).join("/")}/package.json`;
+  if (!existsSync(path.join(installed, "package.json"))) {
+    refuse(`${name} is not installed for ${from} (${shown} is missing); run pnpm install`);
   }
-  const manifestPath = realpathSync(linked);
-  const packageDir = path.dirname(manifestPath);
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  // The package root is the real `<from>/node_modules/<name>` directory, and its package.json a
+  // file of it: a manifest linked in from elsewhere would move the root, and with it the bin.
+  const packageDir = realpathSync(installed);
+  const manifestPath = path.join(packageDir, "package.json");
+  if (lstatSync(manifestPath).isSymbolicLink()) {
+    refuse(`${name}: ${shown} is a link, not a file of the package`);
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch (error) {
+    refuse(`${name}: ${shown} cannot be read as JSON: ${error.message}`);
+  }
   const target = isRecord(manifest.bin) ? manifest.bin[bin] : undefined;
   if (typeof target !== "string") {
     refuse(
@@ -146,7 +157,7 @@ export function resolvePinnedBin(root, entry) {
     refuse(`${name}@${manifest.version}: bin "${bin}" names ${target}, which the package lacks`);
   }
   const realFile = realpathSync(file);
-  if (!isInside(realpathSync(packageDir), realFile)) {
+  if (!isInside(packageDir, realFile)) {
     refuse(`${name}: bin "${bin}" points outside the package through a link (${target})`);
   }
   if (!statSync(realFile).isFile()) {
