@@ -767,8 +767,8 @@ def ribbon() -> Ribbon:
     line2_gap = f"{gap_bars} bars (gap) {MID} {span_min} min"
     chars = max(len(line1), len(line2_gap))
     chip_w = math.ceil(chars * SC["label_pt"] * 0.6) + 16  # type.num.sm mono at 0.6 em, 8 px pads
-    chip_h = 2 * LINE_BOX + 8
-    chip_h_comfortable = chip_h - 4  # D06 :134's direction for canvas chips: 24 -> 20, so 36 -> 32
+    chip_h = 2 * LINE_BOX + 4  # E11-D02's chip height at compact (C10): 20 for one line, 32 for two
+    chip_h_comfortable = chip_h + 4  # E11-D02: 20 -> 24 comfortable, so 32 -> 36; dense = compact
     name = (
         f"Measure {TIMES['anchor1']} {name_price(p1)} {ARROW} {TIMES['anchor2']} {name_price(p2)}"
     )
@@ -786,6 +786,7 @@ MARKER_CAPTION = (
     "(estimated)"  # the word beside the CMP-227 marker (15:2669: a label beside the mark)
 )
 TAIL_CHIP_W = width_px(TAIL_CHIP) + 16  # the chip box: the glyph run plus 8 px pads
+TAIL_CHIP_H = LINE_BOX + 6  # E11-D02's one-line chip at compact (C10): 20; 24 comfortable
 VWAP_CLAMP = {  # the follow-viewport rule (spec section 5.1 / section 6.2): pane px
     "chip_x": PLOT_W
     - SC["inset"]
@@ -797,7 +798,7 @@ ANCHORS = (
     f"{TIMES['anchor1']} {name_price(PRICES['anchor1'])} {ARROW} "
     f"{TIMES['anchor2']} {name_price(PRICES['anchor2'])}"
 )
-# D07's templates (if PR 4270 merges as is) rendered for the scenario; the tree row = the name
+# D07's templates (merged in 3c8b7f630, #4270) rendered for the scenario; the tree row = the name
 NAMES_D07 = {
     "fib_retracement": f"Fib retracement {ANCHORS} {MID} {len(LEVELS)} levels",
     "fib_timezone": f"Fib time zones {ANCHORS} {MID} {len(TIMEZONE_SET)} levels",
@@ -883,7 +884,7 @@ def density() -> Density:
     band_zone = min(field, 6 * VWAP.sigma_px * PLOT_W)
     rib_outline = 2 * (RIBBON.box_w + RIBBON.box_h)
     chip = RIBBON.chip_w * RIBBON.chip_h
-    tail = TAIL_CHIP_W * 24
+    tail = TAIL_CHIP_W * TAIL_CHIP_H
     caption_ink = (width_px(MARKER_CAPTION) + 2) * H  # the word beside the marker, with its outline
     rib_fill = RIBBON.box_w * RIBBON.box_h
     per = {
@@ -906,9 +907,8 @@ DENSITY = density()
 
 
 # ---- the two theme decisions the spec states per theme (Q7; the lesser default on the label ink --
-def label_ink() -> (
-    dict[str, str]
-):  # the drawing colour if it reads as text on the canvas, else text
+def label_ink() -> dict[str, str]:
+    # the drawing colour if it reads as text on the canvas, else text
     out: dict[str, str] = {}
     for t in THEMES:
         ok = ratio(col(t, "drawing.default"), col(t, "surface.canvas")) >= BAR["text"]
@@ -1339,9 +1339,8 @@ GREY_TOKENS = (
 )
 
 
-def grey_rows() -> (
-    list[tuple[str, str, str, str, float]]
-):  # token, theme, hex, grey, grey on grey canvas
+def grey_rows() -> list[tuple[str, str, str, str, float]]:
+    # token, theme, hex, grey, grey on grey canvas
     rows: list[tuple[str, str, str, str, float]] = []
     for t in THEMES:
         gc = grey(col(t, "surface.canvas"))
@@ -1835,7 +1834,8 @@ def report(p: Callable[[str], None]) -> None:  # the plain text sections 1 to 9
     p(f"approximated prefix {VWAP.prefix_bars} bars = {VWAP.prefix_px:g} px")
     p(f"(anchor {TIMES['vwap']} → first recorded print {TIMES['ticks']})")
     p(
-        f'tail chip "{TAIL_CHIP}" ({TAIL_CHIP_W} px); marker caption "{MARKER_CAPTION}"; '
+        f'tail chip "{TAIL_CHIP}" ({TAIL_CHIP_W} by {TAIL_CHIP_H} px); '
+        f'marker caption "{MARKER_CAPTION}"; '
         f'legend "{VWAP.legend}"'
     )
     p(f"follow-viewport clamps (pane px): {VWAP_CLAMP}\n")
@@ -1936,6 +1936,7 @@ def summary(
         "last": fmt_price(VWAP.last_price),
         "chip": TAIL_CHIP,
         "chip_w": TAIL_CHIP_W,
+        "chip_h": TAIL_CHIP_H,
         "caption": MARKER_CAPTION,
         "legend": VWAP.legend,
     }
