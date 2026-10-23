@@ -5,7 +5,7 @@ registry and the E27-D01 memo as text and runs no repository code. A: every stat
 the eight screens (CATALOGUE; each phrase must occur in the screen's entry and cover its "States"
 line) is quoted by a row of the spec's section 7 inventory, and no row quotes another phrase.
 B: section 0's boards list exactly section 7's frames, each once, on the same board; every frame
-name in the spec is an inventory frame; at most 16 boards, each PENDING with its export path.
+name in the spec is an inventory frame; at most 16 boards, each PENDING, exported by its slug.
 C: each row names a `22` operation or `23` topic, a `24` section 15.2 permission (or `self`) and
 an event a source names (or "no event"). D: no 16+ hex or mixed 18+ alphanumeric run, key ids are
 `...` plus 4, IPv4 only from RFC 5737, 7+ digit numbers only the catalogue's placeholder UIDs.
@@ -171,10 +171,11 @@ def check_frames(spec: str, inv: list[list[str]], misses: list[str]) -> tuple[in
     on_board: dict[str, str] = {}
     for b in boards:
         num = b[0]
-        if not b[1].startswith(f"`E27-D02 / {num} "):
+        name = re.fullmatch(rf"`E27-D02 / {num} ([a-z0-9-]+)`", b[1])
+        if not name:
             misses.append(f"board {num}: name {b[1]!r}")
-        if not re.fullmatch(rf"`docs/design/E27/img/E27-D02-{num}-[a-z0-9-]+\.png`", b[3]):
-            misses.append(f"board {num}: export {b[3]!r}")
+        elif b[3] != f"`docs/design/E27/img/E27-D02-{num}-{name.group(1)}.png`":
+            misses.append(f"board {num}: export {b[3]!r} is not named by the board's slug")
         if b[4] != "PENDING":
             misses.append(f"board {num}: state {b[4]!r}, PENDING expected")
         for f in FRAME_RE.findall(b[2]):
