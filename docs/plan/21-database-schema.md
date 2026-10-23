@@ -4910,6 +4910,7 @@ Env switching has **no** hotkey by design (digest 23: must be a deliberate click
 | ------------------------------------------------------------------------ | ------- | ------- | --------------------------------------------- | ------------ |
 | `trading.live_enabled`                                                   | boolean | `false` | Master gate; flipped only after pen-test (R4) | `all_roles`  |
 | `trading.one_click`                                                      | boolean | `false` | Requires explicit arm                         | `all_roles`  |
+| `trading.oms_enabled`                                                    | boolean | `false` | New OMS orders; owner @basiltt, removal #4227 | `all_roles`  |
 | `engine.webgl_v2`                                                        | boolean | `false` | Custom engine rollout                         | `all_roles`  |
 | `engine.fallback_lightweight_charts`                                     | boolean | `false` | Spike-failure fallback path                   | `all_roles`  |
 | `rules.graph_editor`                                                     | boolean | `true`  | Node-graph editor                             | `all_roles`  |
@@ -4922,6 +4923,8 @@ Env switching has **no** hotkey by design (digest 23: must be a deliberate click
 | `maintenance.mode`                                                       | boolean | `false` | `is_killswitch=true`; blocks order entry      | `all_roles`  |
 | `maintenance.keep_recorder`                                              | boolean | `true`  | Recorder keeps running in maintenance         | `owner_only` |
 | `desktop.backend_connection`                                             | boolean | `false` | ADR-0038 CORS; owner @basiltt, removal #3931  | `owner_only` |
+
+`trading.oms_enabled` (E29-T04 slice 3, C-4.13) gates new admissions on `placeOrder` only: a replay, a create a restart resumes and a cancel never meet it, and while it is off a new order is `403 trading_disabled` with no `reason` (`22-api-openapi.yaml`). It is read process-wide, with no per-user override. Its default stays `false`; the insert-only `ensure` of a demo process seeds it `true`, and that of a live or testnet process `false`, so an Owner's later write sticks. `feature_flags` holds one row per key, so where processes of two environments share a database the first `ensure` decides; a live order still needs both live preconditions (`20-architecture.md` §6.2).
 
 ### 10.8 Demo/dev fixtures (never in production)
 
@@ -5148,10 +5151,11 @@ Each row: the screen/job that issues the query, the query shape, the serving ind
 | 46  | Stop order and fill pairing   | `recorded_stops WHERE exchange_account_id = $1 AND exchange_order_id = $2`             | `ix_rs_exch_id` (partial)                                               | < 2 ms                                |
 | 47  | Order step settle             | `recorded_stops WHERE exchange_account_id = $1 AND order_id = $2`                      | `ix_rs_order` (partial)                                                 | < 2 ms                                |
 | 48  | Startup sweep (once)          | pending entry-attach `recorded_stops`, each with its order and its events              | `ix_rs_live` (partial), `orders` PK, `ix_oe_order_time`                 | < 50 ms                               |
+| 49  | OMS startup hydration (once)  | `orders WHERE exchange_account_id = ANY($1) AND state IN (open set, held, untracked)`  | `ix_orders_open`, `ix_orders_untracked` (partial); none for `held`      | once per boot, scans for `held`       |
 
 **Why partial indexes dominate:** the hot predicates in this system are almost all "the small live subset of a large historical table" (open orders, open positions, unacked alerts, unprocessed outbox, live recordings, in-flight submits). Partial indexes keep those indexes a few pages large and permanently cache-resident, which is what makes the 1 s safety loop and the per-tick rule scheduler affordable. Full indexes are reserved for time-ordered history browsing (`*_time` descending) where the planner needs a backwards scan.
 
-**Deliberately absent indexes:** no index on `order_events.payload`, `rule_runs.input_snapshot`, `audit_log.before_state/after_state` (JSONB, write-heavy, only read by id or time); no index on `executions.exec_type`; no per-column index on soft-delete flags alone (always combined into partial predicates). Any new index must come with the query it serves and an `EXPLAIN (ANALYZE, BUFFERS)` before/after in the PR.
+**Deliberately absent indexes:** no index on `order_events.payload`, `rule_runs.input_snapshot`, `audit_log.before_state/after_state` (JSONB, write-heavy, only read by id or time); no index on `executions.exec_type`; no per-column index on soft-delete flags alone (always combined into partial predicates); no index for `held` orders, which row 49 reads once per boot, at most `MAX_MACHINES` rows, by scanning the environment's accounts' orders while `held` stays rare (E29-T04 slice 3, #913 ruling Q16). Any new index must come with the query it serves and an `EXPLAIN (ANALYZE, BUFFERS)` before/after in the PR.
 
 ### 13.2 QuestDB
 

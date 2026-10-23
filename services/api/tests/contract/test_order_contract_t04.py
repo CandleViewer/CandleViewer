@@ -166,8 +166,10 @@ def test_place_order_accepts_with_every_created_order_and_its_state() -> None:
     accepted = _PLACE["responses"]["202"]["content"]["application/json"]["schema"]
     assert accepted == {"$ref": "#/components/schemas/OrderAcceptance"}
     schema = _SCHEMAS["OrderAcceptance"]
-    assert (schema["additionalProperties"], schema["required"]) == (False, ["trade_group", "order"])
-    assert schema["properties"] == {
+    required = ["trade_group", "order", "reconciling"]  # slice 3's Q2 member has its own test
+    assert (schema["additionalProperties"], schema["required"]) == (False, required)
+    assert set(schema["properties"]) == set(required)
+    assert {name: schema["properties"][name] for name in required[:2]} == {
         "trade_group": {"oneOf": [{"$ref": "#/components/schemas/TradeGroup"}, {"type": "null"}]},
         "order": {"oneOf": [{"$ref": "#/components/schemas/Order"}, {"type": "null"}]},
     }

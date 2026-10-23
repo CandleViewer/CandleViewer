@@ -66,6 +66,7 @@ class ErrorCode(StrEnum):
     EXCHANGE_ERROR = "exchange_error"
     EXCHANGE_UNAVAILABLE = "exchange_unavailable"
     CLOCK_DRIFT = "clock_drift"
+    OMS_NOT_READY = "oms_not_ready"
     STORE_UNAVAILABLE = "store_unavailable"
     AUDIT_UNAVAILABLE = "audit_unavailable"
     PURGE_UNAVAILABLE = "purge_unavailable"
@@ -164,6 +165,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.EXCHANGE_ERROR: ErrorMeta(("rest",), None, True, None, None, "Bybit returned a non-zero exchange refusal code"),
     ErrorCode.EXCHANGE_UNAVAILABLE: ErrorMeta(("rest", "ws",), "any", True, None, None, "Exchange connectivity lost (WS down and REST failing)"),
     ErrorCode.CLOCK_DRIFT: ErrorMeta(("rest",), None, True, None, None, "Order entry halted until the server clock is back in sync with the exchange"),
+    ErrorCode.OMS_NOT_READY: ErrorMeta(("rest",), None, True, None, None, "Order entry is not open yet; the order service is starting or a dependency it needs is not ready"),
     ErrorCode.STORE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "QuestDB / Postgres / Parquet tier unavailable"),
     ErrorCode.AUDIT_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)"),
     ErrorCode.PURGE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "No purge reaper is running, so no purge is scheduled; nothing would anonymise the user"),
