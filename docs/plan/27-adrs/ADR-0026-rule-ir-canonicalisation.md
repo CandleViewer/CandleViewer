@@ -5,7 +5,8 @@
 - Deciders: Owner (`@basiltt`) — owner approval pending.
 - Numbering note: the ticket text says "ADR-0016 / ADR-0025"; both are taken, so this is the next free
   number, 0026 (delivery adaptations).
-- Amended: 2026-10-23, §5 (the editor's display-only hash mirror, E37-T01).
+- Amended: 2026-10-23, §4 (the top-level strip the code does) and §5 (the editor's display-only hash mirror,
+  E37-T01).
 - Related: E35-K01 (this spike), E35-T01 (consumer), ADR-0007, `24-internal-schemas.md` §11.4,
   `21-database-schema.md` §3.4, `docs/plan/spikes/E35-K01.md`.
 
@@ -36,8 +37,9 @@ renumbering vs `rule_events.node_ref`, and what the fuzz generator must cover.
    (events carry `rule_version_id`). When viewing a newer version, a node is highlighted only if the same
    `node_id` still exists there; otherwise the UI shows "node no longer in this version" and never
    highlights a different node. Author ids are immutable once assigned and never reused after deletion.
-4. **Presentation boundary (excluded from hash):** `presentation` (incl. `graph_layout` x/y, `editor`),
-   `comment`, `collapsed`, stripped at any depth by key name. Everything else, including `name`, is hashed.
+4. **Presentation boundary (excluded from hash):** `graph_layout` (x/y, `collapsed`, comments), `editor` and the
+   save metadata (`created_by`, `created_at`, `updated_at`), stripped at the top level only, as `canonical.py:29-34`
+   does. Everything else, including `name`, is hashed.
 5. **Authoritative server-side only** (amended 2026-10-23 for E37-T01, by the 2026-10-22 ruling): the server
    computes the `ir_hash` that is stored, audited and compared. The TS editor's mirror (`packages/rule-graph`)
    computes the same canonical form and hash for display only: it never stores that hash or sends it as

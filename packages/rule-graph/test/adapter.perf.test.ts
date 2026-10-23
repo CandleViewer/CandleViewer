@@ -1,7 +1,9 @@
 // E37-T01's budget: toGraph, toIr and canonicalise each take <= 20 ms on a 200-node graph (the
 // ticket's performance notes: they run on save and on a mode switch, inside SCR-082's 500 ms). The
-// median of 9 runs of 5 calls after a warm-up holds it, with a wide margin; a 400:200 ratio holds
-// the scaling (packages/protocol/test/cvwb-decode.perf.test.ts). The perf project: no coverage.
+// median of 9 runs of 5 calls after a warm-up holds it, with a wide margin. The scaling is the best
+// run's ratio from 200 nodes to toIr's cap of 1 000, a 5x size: linear is x5 and quadratic x25, and
+// the bound keeps protocol's 2.5x slack on linear (packages/protocol/test/cvwb-decode.perf.test.ts,
+// its bestMs). The perf project: no coverage.
 import type { RuleIr } from "@candleviewer/protocol/rule-ir";
 import { describe, expect, it } from "vitest";
 import { toGraph } from "../src/adapter/toGraph.js";
@@ -25,15 +27,15 @@ function rule(gates: number, leaves: number): RuleIr {
   return { ...envelope, ...settings, trigger, conditions, actions } as unknown as RuleIr;
 }
 
-/** A call's time: the median of 9 timed runs of 5 calls each, after 20 untimed calls. */
-function medianMs(run: () => unknown): number {
+/** A call's times, fastest first: 9 timed runs of 5 calls each, after 20 untimed calls. */
+function timesMs(run: () => unknown): number[] {
   for (let i = 0; i < 20; i++) run();
   const times = Array.from({ length: 9 }, () => {
     const start = performance.now();
     for (let i = 0; i < 5; i++) run();
     return (performance.now() - start) / 5;
   });
-  return times.sort((a, b) => a - b)[4] as number;
+  return times.sort((a, b) => a - b);
 }
 
 const STEPS = ["toGraph", "toIr", "canonicalise"] as const;
@@ -46,23 +48,24 @@ function steps(doc: RuleIr): Record<(typeof STEPS)[number], () => unknown> {
     canonicalise: () => canonicalise(ir),
   };
 }
-const [SMALL, LARGE] = [rule(7, 95), rule(13, 192)];
+const [SMALL, LARGE] = [rule(7, 95), rule(33, 482)]; // 1 000 nodes, about 7 400 values
 
 describe("the adapter's budget: 20 ms per step on a 200-node graph (E37-T01)", () => {
-  it("builds rules of 200 and 400 graph nodes", () => {
-    expect([toGraph(SMALL).nodes.length, toGraph(LARGE).nodes.length]).toEqual([200, 400]);
+  it("builds rules of 200 and 1 000 graph nodes", () => {
+    expect([toGraph(SMALL).nodes.length, toGraph(LARGE).nodes.length]).toEqual([200, 1_000]);
   });
 
   it.each(STEPS)("%s on 200 nodes: the median of 9 runs is at most 20 ms", (step) => {
-    const ms = medianMs(steps(SMALL)[step]);
+    const ms = timesMs(steps(SMALL)[step])[4] as number; // the median
     console.info(`${step}, 200 nodes: ${ms.toFixed(3)} ms (median of 9)`);
     expect(ms).toBeGreaterThan(0);
     expect(ms).toBeLessThanOrEqual(20);
   });
 
-  it.each(STEPS)("%s scales linearly: 400 nodes take under 5 times as long as 200", (step) => {
-    const ratio = medianMs(steps(LARGE)[step]) / medianMs(steps(SMALL)[step]);
-    console.info(`${step}, 400:200 nodes: x${ratio.toFixed(2)} time`);
-    expect(ratio).toBeLessThan(5); // 2.5 times linear, as protocol's x8 records < x20 time
+  it.each(STEPS)("%s scales linearly: 1 000 nodes take under 12.5 times as long as 200", (step) => {
+    const best = (doc: RuleIr) => timesMs(steps(doc)[step])[0] as number; // protocol's bestMs
+    const ratio = best(LARGE) / best(SMALL);
+    console.info(`${step}, 1 000:200 nodes: x${ratio.toFixed(2)} time (best of 9)`);
+    expect(ratio).toBeLessThan(12.5); // linear x5, quadratic x25
   });
 });

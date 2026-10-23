@@ -38,10 +38,10 @@ and compiles the rule and returns the `ir_hash` that is stored.
 - Unit, under coverage: each adapter branch, the vectors' canonical bytes and hashes, the ports and
   the analysis.
 - Property (`test/property.test.ts`): 10 000 documents per run from a seeded port of the server's
-  generator (`test/support/generate.ts`) through `toGraph` then `toIr`. The seed is printed, and
-  `CV_RULE_GRAPH_SEED` replays a run.
+  generator (`test/support/generate.ts`) through `toGraph` then `toIr`. The seed is printed on
+  failure (or with `--reporter=verbose`), and `CV_RULE_GRAPH_SEED` replays a run.
 - Perf (`test/adapter.perf.test.ts`, the `perf` project, no coverage): `toGraph`, `toIr` and
-  `canonicalise` on a 200-node graph take at most 20 ms each.
+  `canonicalise` on a 200-node graph take at most 20 ms each, and scale linearly to 1 000 nodes.
 - Contract (`services/api/tests/contract/test_rule_graph_hash_contract.py`): the compile route
   answers each vector's `ir_hash`.
 

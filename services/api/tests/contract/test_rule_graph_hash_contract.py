@@ -32,10 +32,14 @@ SENT = [v for v in json.loads(VECTORS.read_text("utf-8"))["vectors"] if v["js"] 
 ACCOUNTS = frozenset(
     UUID(a) for v in SENT for a in json.loads(v["ir"])["scope"].get("account_ids", [])
 )
-#: The caller may use every account the vectors name: scope is not what this test checks. No vector
-#: names the live environment, so compile's scope check reads only these two.
+#: The caller may use every account the vectors name, in any environment, live included: scope is
+#: not what this test checks. Each of the ScopeState protocol's five reads answers.
 GRANTS = SimpleNamespace(
-    granted_accounts=lambda _: ACCOUNTS, account=lambda *_: AccountState("demo")
+    granted_accounts=lambda _: ACCOUNTS,
+    account=lambda *_: AccountState("demo"),
+    owner_frozen=lambda _: False,
+    live_gate_open=lambda: True,
+    can_arm_live=lambda _: True,
 )
 
 
