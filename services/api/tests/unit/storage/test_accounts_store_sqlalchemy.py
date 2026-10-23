@@ -558,11 +558,13 @@ def test_an_account_patch_carries_no_environment() -> None:
     assert "env" not in {f.name for f in dataclasses.fields(ExchangeAccountPatch)}
 
 
-@pytest.mark.parametrize("trigger", ["trg_ea_env_write_once", "trg_ea_env_in_use"])
+@pytest.mark.parametrize(
+    "trigger", ["trg_ea_env_write_once", "trg_ea_env_in_use", "trg_ea_env_parent"]
+)
 async def test_an_environment_guard_refusal_is_a_typed_rule_error(trigger: str) -> None:
-    """Both `env` guards refuse with SQLSTATE 23514 naming themselves as the constraint (0039,
-    0041), so an update that met one is the store's rule error, raised `from None` (the driver
-    text carries P1 parameters), and nothing commits."""
+    """The `env` guards refuse with SQLSTATE 23514 naming themselves as the constraint (0039,
+    0041, and 0017's parent guard since 0049, #3962), so a write that met one is the store's rule
+    error, raised `from None` (the driver text carries P1 parameters), and nothing commits."""
     rel = _Rel(_Result(), raises=_integrity("23514", trigger))
     with pytest.raises(AccountsStoreRuleError) as ei:
         await _store(rel).update_account(

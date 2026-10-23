@@ -1064,7 +1064,7 @@ ALTER TABLE exchange_accounts
   );
 ```
 
-Additional invariant, enforced by trigger `trg_ea_env_parent`: a sub-account's `env` must equal its parent's `env`. Cross-env parenting is a data-integrity bug that would let a demo key fan out into a live group. Once an account is a member of a trade-group definition or has a leg, `trg_ea_env_in_use` (§3.3.3a, revision `0039_trade_groups`) refuses any change of its `env`; since #2333, `trg_ea_env_write_once` (below) refuses it for every account.
+Additional invariant, enforced by trigger `trg_ea_env_parent` (`ENABLE ALWAYS` since #3962, below): a sub-account's `env` must equal its parent's `env`. Cross-env parenting is a data-integrity bug that would let a demo key fan out into a live group. Once an account is a member of a trade-group definition or has a leg, `trg_ea_env_in_use` (§3.3.3a, revision `0039_trade_groups`) refuses any change of its `env`; since #2333, `trg_ea_env_write_once` (below) refuses it for every account.
 
 **`env` is write-once (#2333, revision `0041_account_env_write_once`).** A demo account that became live, or the reverse, would let a key, a profile or a group of one environment act in the other (C-2.11), so `trg_ea_env_write_once` (BEFORE UPDATE, per row, `ENABLE ALWAYS`; function `ea_env_write_once()`) refuses any change of `env` once the row exists, with SQLSTATE 23514, naming itself as the constraint and never a value. It compares with `IS DISTINCT FROM`, so setting `env` to its own value passes, and like the other write-once triggers it fires on every UPDATE, not only one that names `env`. Postgres fires BEFORE triggers in name order: `trg_ea_env_in_use` (§3.3.3a, revision `0039_trade_groups`), which refuses the change for an account in a trade group or a definition, and `trg_ea_env_parent` keep their narrower refusals, and this one must stay the last BEFORE UPDATE row trigger on `exchange_accounts` (tested). The application never changes `env` after the INSERT: no UPDATE or upsert under `candleviewer/` assigns it, neither `ExchangeAccountPatch` nor the PATCH body `UpdateExchangeAccountRequest` carries it, and the accounts store maps either trigger's refusal to `AccountsStoreRuleError` (unit-tested). What the trigger does not cover: it refuses UPDATEs only, so deleting an account and inserting its id again in another environment would step around it; `cv_app` can no longer delete one (revision `0044_account_no_hard_delete`, #2758, below). The owner role and superusers can still disable or drop the trigger, or rename an `exchange_env` value.
 
@@ -1097,6 +1097,30 @@ ALTER TABLE exchange_accounts
   ADD COLUMN default_binding_version integer NOT NULL DEFAULT 1,
   ADD CONSTRAINT ea_default_binding_version CHECK (default_binding_version >= 1);
 ```
+
+**`trg_ea_env_parent` fires whatever the replication role (#3962, revision `0049_ea_env_parent_always`).** The parent invariant above was a plain `ENABLE` trigger, so a session under `session_replication_role = replica` could insert a sub-account in another environment than its parent's (C-2.11; SEC-2333-04 of #2333's review). The revision sets it `ENABLE ALWAYS` and replaces its function in place with the shape of the other guards: `search_path` pinned, the table schema-qualified, the environments compared as text, and the refusal SQLSTATE 23514 naming the trigger as the constraint, never a value (the message keeps its `trg_ea_env_parent:` prefix). The rule is unchanged: a sub-account whose parent's environment differs, or whose parent does not exist, is refused, on an INSERT and on an UPDATE of `env` or `parent_account_id`. The accounts store maps the refusal to `AccountsStoreRuleError`, as it does the two write-once guards'.
+
+```sql
+CREATE OR REPLACE FUNCTION ea_env_parent_check() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE parent_env text;
+BEGIN
+  IF NEW.parent_account_id IS NOT NULL THEN
+    SELECT p.env::text INTO parent_env FROM public.exchange_accounts p
+      WHERE p.id = NEW.parent_account_id;
+    IF parent_env IS DISTINCT FROM NEW.env::text THEN
+      RAISE EXCEPTION 'trg_ea_env_parent: a sub-account is outside its parent account environment'
+        USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ea_env_parent';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $BODY$;
+ALTER TABLE exchange_accounts ENABLE ALWAYS TRIGGER trg_ea_env_parent;
+```
+
+> **Landed:** `0049_ea_env_parent_always` (#3962). `lock_timeout` (5 s) bounds the `ENABLE` in both directions
+> (SHARE ROW EXCLUSIVE). The downgrade restores 0017's function verbatim and the plain `ENABLE`, which re-opens
+> the replica-role hole: use it only to roll back.
 
 #### 3.2.2 `api_keys`
 
@@ -4651,6 +4675,7 @@ NAMING_CONVENTION = {
 | `0043_order_submission`         | `idempotency_anchors` (§3.3.10), `recorded_stops` (§3.3.11) and `orders.provenance` (§3.3.4), their guard and TRUNCATE triggers; no `DELETE` or `TRUNCATE` for `cv_app` — **E29-T04 #913**; the downgrade refuses while an anchor, a recorded stop or an order not `placed` exists; on `0046_audit_signing_keys` by merge order (C-5.3) |
 | `0047_system_events_recipient`  | `system_events.recipient_user_id` (nullable, `REFERENCES users(id) ON DELETE SET NULL`) and the partial index `ix_se_recipient` (§3.10.2): a row addressed to one user, the view-as start's notice — **#3085 S13a**; the downgrade refuses while a row is addressed; on `0043_order_submission` by merge order (C-5.3)                  |
 | `0048_account_default_binding`  | `exchange_accounts.default_binding_version` (§3.2.1), trigger `trg_ap_default_binding` (§3.2.4): the default binding's version, one more each time a profile becomes the default — **#906 0d**; the downgrade (rollback only) drops both                                                                                                |
+| `0049_ea_env_parent_always`     | trigger `trg_ea_env_parent` (§3.2.1) fires under the replica role (`ENABLE ALWAYS`), its function pins `search_path` and names itself on a refusal — **#3962**; the downgrade (rollback only) restores 0017's function and the plain `ENABLE`                                                                                           |
 
 ---
 
