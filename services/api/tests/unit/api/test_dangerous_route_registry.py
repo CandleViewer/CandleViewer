@@ -54,6 +54,11 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     # changes retention or deletes recorded data (addRecordedSymbol can: it is handler-gated).
     ("POST", "/admin/recorder/compact"): "compactRecorder: merges cold-tier files (04 row 51)",
     ("POST", "/admin/recorder/import"): "importTradeArchive: adds archive trades (04 row 51)",
+    # #492 (E16-T08, 04 §7.2.2 row 8): a stop changes no retention and deletes nothing.
+    ("DELETE", "/recording/symbols/{recordedSymbolId}"): (
+        "removeRecordedSymbol: ends the manual reason only; a pinned stop keeps its pin; "
+        "purge_data=true is refused (purgeRecordedData deletes)"
+    ),
     # #3083: mounted operations the contract sweep flags that nothing step-up gates.
     ("GET", "/auth/session"): "authGetSession: reads the session's own `step_up_expires_at`",
     # #2300: the lock lift is no elevation. The password alone lifts the idle lock and the contract
@@ -587,23 +592,33 @@ def test_recorder_purge_is_handler_gated_not_middleware_gated() -> None:
     [
         ("POST", "/recording/symbols"),
         ("PATCH", "/recording/symbols/{recordedSymbolId}"),
-        ("DELETE", "/recording/symbols/{recordedSymbolId}"),
     ],
 )
 def test_recorded_symbol_writes_are_handler_gated(method: str, path: str) -> None:
-    """#2738 (04 §7.2.2 rows 8, 9, 9a): only the body or query tells whether an add, PATCH or
-    DELETE changes retention or deletes data (`pinned`, `retention_days`, `purge_data=true`),
-    so the handler gates that branch with `recorder` and the guard lets the rest through."""
+    """#2738 (04 §7.2.2 rows 8, 9): only the body tells whether an add or a PATCH changes
+    retention (`pinned`, `retention_days`), so the handler gates that branch with `recorder`
+    and the guard lets the rest through."""
     assert DANGEROUS_PATH_PATTERN.match(path)
     assert dangerous_action_class(method, _concrete(path)) is None
     assert (method, path, "recorder") in HANDLER_GATED_ROUTES
     assert (method, path) not in _NOT_DANGEROUS
 
 
-def test_the_add_is_served_with_its_handler_gate() -> None:
-    """#492 S7: `test_recording_writes.py` proves the add's `recorder` step-up (403)."""
+def test_the_add_and_the_update_are_served_with_their_handler_gates() -> None:
+    """#492: their `recorder` branch is proven by `test_recording_writes.py` (`pinned` or
+    `retention_days` without the step-up is `403 step_up_required`)."""
     served = served_operations(create_app()) - _PENDING_HANDLER_GATES
-    assert ("POST", "/recording/symbols") in served
+    assert {
+        ("POST", "/recording/symbols"),
+        ("PATCH", "/recording/symbols/{recordedSymbolId}"),
+    } <= served
+
+
+def test_the_stop_is_served_and_allow_listed_not_handler_gated() -> None:
+    path = "/recording/symbols/{recordedSymbolId}"
+    assert DANGEROUS_PATH_PATTERN.match(path) and ("DELETE", path) in _NOT_DANGEROUS
+    assert not any((m, p) == ("DELETE", path) for m, p, _ in HANDLER_GATED_ROUTES)
+    assert ("DELETE", path) in served_operations(create_app())
 
 
 @pytest.mark.parametrize("path", ["/admin/recorder/compact", "/admin/recorder/import"])
@@ -614,16 +629,14 @@ def test_recording_writes_without_step_up_are_swept_and_allow_listed(path: str) 
 
 
 #: Handler-gated rows whose handler is not mounted yet (#2738): declarations nothing enforces.
-#: The E16-T08 (#492) PR that mounts one removes it here and adds the handler test proving its
-#: body- or query-aware `recorder` branch, and that the rest of the route passes; the restore
-#: ticket (`restoreBackup`) adds the test that its handler gates the request it validated.
+#: The ticket that mounts one removes it here and adds its handler test, as E16-T08 (#492) did
+#: for the recorded-symbol add and update; the restore ticket (`restoreBackup`) adds the test
+#: that its handler gates the request it validated.
 #: #3083: likewise the E42-T03 (#964) PR for the flag write (the class each branch demands,
 #: decided under the row lock). The export download (`audit`, after the requester check) is
 #: mounted with its handler test since #889 S9 (`test_audit_export_download.py`).
 _PENDING_HANDLER_GATES = {
     ("POST", "/admin/backups/{backupId}/restore"),
-    ("PATCH", "/recording/symbols/{recordedSymbolId}"),
-    ("DELETE", "/recording/symbols/{recordedSymbolId}"),
 }
 
 
@@ -639,13 +652,13 @@ def test_pending_handler_gates_are_registered_and_not_mounted() -> None:
 
 def test_mounting_a_pending_handler_gate_is_caught() -> None:
     app = FastAPI()
-    router = APIRouter(prefix="/recording")
+    router = APIRouter(prefix="/admin")
 
-    @router.delete("/symbols/{recordedSymbolId}")
+    @router.post("/backups/{backupId}/restore")
     async def stand_in() -> None: ...
 
     app.include_router(router)
-    assert _mounted_pending(app) == [("DELETE", "/recording/symbols/{recordedSymbolId}")]
+    assert _mounted_pending(app) == [("POST", "/admin/backups/{backupId}/restore")]
 
 
 #: Every recording and recorder write in `22-api-openapi.yaml` -> how it is gated (#2738).
@@ -653,8 +666,8 @@ _RECORDING_WRITES: dict[str, tuple[str, str | None]] = {
     "setRetentionPolicies": ("path", "recorder"),  # 04 §7.2.2 row 9
     "pinRecordedSymbol": ("path", "recorder"),  # row 9
     "updateRecordedSymbol": ("handler", "recorder"),  # row 9 for pin / retention, else row 8
-    # Stopping a pinned symbol may need it too: an open E16-T08 decision (see `step_up.py`).
-    "removeRecordedSymbol": ("handler", "recorder"),  # row 9a with purge_data=true, else row 8
+    # A stop keeps the pin and refuses purge_data=true (#492 rulings Q3, Q4): row 8 only.
+    "removeRecordedSymbol": ("allow-listed", None),
     "purgeRecordedData": ("handler", "recorder"),  # row 9a, owner-only before step-up
     "addRecordedSymbol": ("handler", "recorder"),  # row 9 for pin / retention, else row 8
     "compactRecorder": ("allow-listed", None),  # row 51
