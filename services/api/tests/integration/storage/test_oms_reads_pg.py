@@ -1,8 +1,10 @@
-"""Integration (E29-T04 #913 slice 3C): the OMS's account read on real Postgres 16.
+"""Integration (E29-T04 #913 slice 3C): the OMS's system reads on real Postgres 16.
 
 The account read answers an account whatever its status, with only its `active`, unrevoked key
-(21 Sec.3.2.2). `load_trade_grants` is `test_trade_grants_pg.py`'s. Not run locally (no docker);
-CI `integration` runs it.
+(21 Sec.3.2.2); `list_unfinished` reads the open, `held` and `untracked` orders of one
+environment's accounts, a disabled or soft-deleted one's too, oldest first, at most `limit`
+(21 Sec.13.1 row 49). `load_trade_grants` is `test_trade_grants_pg.py`'s. Not run locally (no
+docker); CI `integration` runs it.
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ import subprocess
 import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -19,6 +23,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.storage.repositories.orders import NewOrder, NewOrderEvent, OrderState
+from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -42,6 +48,9 @@ _KEY = sa.text(
     "CAST(:snapshot AS jsonb), CAST(:status AS key_status), CASE WHEN :revoked THEN now() END)"
 )
 _SNAPSHOT = '{"uid": "1", "permissions": {"ContractTrade": ["Order"]}}'
+_EVENT = NewOrderEvent(
+    kind="local_create", source="local", event_ts=datetime(2026, 10, 23, tzinfo=UTC)
+)
 
 
 @pytest.fixture(scope="module")
@@ -103,3 +112,29 @@ async def test_the_account_read_answers_its_status_and_its_one_active_unrevoked_
         "live", True, None
     )  # fmt: skip
     assert await reads.read_account(uuid.uuid4()) is None
+
+
+async def test_list_unfinished_reads_one_environments_unfinished_orders_oldest_first(
+    db: tuple[SqlAlchemyRelationalRepository, AsyncEngine],
+) -> None:
+    rel, engine = db
+    live, off, gone = [await _account(engine, "testnet", on=on) for on in (True, False, True)]
+    other, store = await _account(engine, "live"), SqlAlchemyOrderStore(rel)
+    placed: list[tuple[uuid.UUID, OrderState]] = [
+        (live, "submitted"), (off, "held"), (gone, "untracked"), (live, "filled"),
+        (other, "unknown"), (live, "new"), (gone, "quarantined"),
+    ]  # fmt: skip
+    for account, state in placed:  # in this order: `created_ts` is each insert's now()
+        order_id = uuid.uuid4()
+        new = NewOrder(
+            id=order_id, exchange_account_id=account, order_link_id=f"ext-{order_id.hex}",
+            symbol="BTCUSDT", side="Buy", intent="entry", order_type="Market",
+            qty=Decimal("0.01"), state=state,
+        )  # fmt: skip
+        await store.create(new, _EVENT)
+    await _exec(engine, _DELETE, id=str(gone))
+    rows = await store.list_unfinished("testnet", limit=10)  # this test's are the only testnet ones
+    expected = [(live, "submitted"), (off, "held"), (gone, "untracked"), (gone, "quarantined")]
+    assert [(row.exchange_account_id, row.state) for row in rows] == expected
+    two = await store.list_unfinished("testnet", limit=2)
+    assert [row.state for row in two] == ["submitted", "held"]

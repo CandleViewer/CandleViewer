@@ -8,8 +8,10 @@ implementation and `oms.repository` the M14 facade over it. Values use the colum
 
 Account scoping (C-12.4, #845 security notes): every read, and every write to an existing order,
 takes the exchange account and the implementation re-checks it in SQL, so another account's order
-reads as missing. The one unscoped call is `link_id_taken`: a yes/no over the global
-`ux_orders_link`, which the 24 Sec.8.3 rule 5 collision check needs (#846 ruling Q1).
+reads as missing. Two calls are unscoped: `link_id_taken`, a yes/no over the global
+`ux_orders_link`, which the 24 Sec.8.3 rule 5 collision check needs (#846 ruling Q1); and
+`list_unfinished`, which only the OMS runtime's startup hydration reads (E29-T04), behind a callers
+fence (`tests/unit/architecture/test_oms_system_reads_callers.py`).
 
 Money (AGENTS.md Sec.5.2: `Decimal`, never `float`): every numeric(38,18) value is a finite
 `Decimal` that the column holds exactly. `require_money` refuses a float, an int, NaN (which numeric
@@ -43,6 +45,7 @@ from types import MappingProxyType
 from typing import Final, Literal, Protocol, get_args, get_type_hints
 from uuid import UUID
 
+from candleviewer.domain.primitives import Environment
 from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, redact_exchange_text
 
 OrderState = Literal[
@@ -115,6 +118,9 @@ OPEN_STATES: Final[frozenset[OrderState]] = frozenset(
         "quarantined",
     }
 )
+#: What `list_unfinished` returns (21 Sec.13.1 row 49): the open set, `held` and `untracked`, every
+#: state of an order that is not final but `new` (B1's `draft`, which is never stored).
+UNFINISHED_STATES: Final = OPEN_STATES | frozenset[OrderState]({"held", "untracked"})
 #: The sources of a step the exchange reported, which carries the exchange's message (OM-R02).
 EXCHANGE_SOURCES: Final = frozenset[OrderEventSource]({"rest", "ws_private", "reconcile"})
 #: The kinds of a fill's event, which only a fill's step writes, with its execution (OM-R02).
@@ -152,6 +158,12 @@ def require_money(column: str, value: Decimal, precision: int = 38, scale: int =
 def require_aware(column: str, value: datetime) -> None:
     if not isinstance(value, datetime) or value.utcoffset() is None:
         raise ValueError(f"{column} must be a timezone-aware datetime")
+
+
+def require_limit(limit: int) -> None:
+    """A read's bound on its rows (C-2.18): an int of at least 1, never a bool."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be an int of at least 1")
 
 
 def check_fields(
@@ -497,4 +509,16 @@ class OrderEventStore(Protocol):
         self, account_id: UUID, order_id: UUID, *, after_seq: int = -1, limit: int = MAX_EVENT_PAGE
     ) -> tuple[OrderEventRow, ...]:
         """Events with `seq > after_seq`, in `seq` order; empty outside the account."""
+        ...
+
+
+class UnfinishedOrders(Protocol):
+    """The OMS runtime's startup hydration read (E29-T04 #913, 20 Sec.6.2), kept apart from
+    `OrderStore`'s account-scoped surface (module docstring)."""
+
+    async def list_unfinished(
+        self, environment: Environment, *, limit: int
+    ) -> tuple[OrderRow, ...]:
+        """The orders in `UNFINISHED_STATES` of every account of `environment`, a disabled or
+        soft-deleted one's too, oldest first, at most `limit` (`require_limit`, before any read)."""
         ...

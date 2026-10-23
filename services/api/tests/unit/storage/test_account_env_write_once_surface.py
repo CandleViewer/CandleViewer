@@ -7,9 +7,9 @@ database, and `trg_ea_identity_write_once` (`0050_ea_identity_write_once`) any c
 test_write_once_surface.py` does for `api_keys`: after the INSERT that creates an account, no SQL
 string under `candleviewer/` assigns an identity column in an UPDATE or upsert of
 `exchange_accounts`, and none MERGEs into it; the `exchange_accounts` Table is named in code only
-where it is defined, to read it by the modules in `_READERS` (the profiles and trade-group stores),
-and, in the pinned table of guarded privileges (#3998), as a `str` key of the dict display it
-assigns to `GUARDED_PRIVILEGES` (any other reference there, a second dict's key included, is
+where it is defined, to read it by the modules in `_READERS` (the profiles, trade-group and order
+stores), and, in the pinned table of guarded privileges (#3998), as a `str` key of the dict display
+it assigns to `GUARDED_PRIVILEGES` (any other reference there, a second dict's key included, is
 flagged); and the PATCH body of `/exchange-accounts/{accountId}` carries no identity column. The
 store's own patch and its typed error for a refusal are pinned in
 `test_accounts_store_sqlalchemy.py`. They stop an honest regression, not a deliberate bypass: the
@@ -46,11 +46,14 @@ _SQL_WRITE = re.compile(r"\b(?:update|insert\s+into|merge\s+into)\b", re.IGNOREC
 #: Where the Table is defined; and the modules that name it in code, to read it only (each one
 #: added here with its reason): the profiles store scopes a profile to a live account with
 #: `exchange_accounts.c` and `select_from`; the trade-group store selects a group's accounts
-#: FOR SHARE (`exchange_accounts.c`) to require them live while it inserts the legs (#905).
+#: FOR SHARE (`exchange_accounts.c`) to require them live while it inserts the legs (#905); the
+#: order store selects the ids of an environment's accounts (`exchange_accounts.c`) for the OMS's
+#: startup hydration (#913).
 _DEFINITION = Path("db/models.py")
 _READERS = frozenset(
     {
         Path("storage/repositories/account_profiles_sqlalchemy.py"),
+        Path("storage/repositories/orders_sqlalchemy.py"),
         Path("storage/repositories/trade_groups_sqlalchemy.py"),
     }
 )

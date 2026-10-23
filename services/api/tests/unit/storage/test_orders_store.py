@@ -274,6 +274,8 @@ _STATEMENTS: dict[str, Any] = {
     "transition_statement": mod.transition_statement(_STEP),
     "fill_statement": mod.fill_statement(_FILL),
     "settle_entry_stops_statement": mod.settle_entry_stops_statement(ACCOUNT, ORDER, "void", T0),
+    "environment_accounts_statement": mod.environment_accounts_statement("demo"),
+    "list_unfinished_statement": mod.list_unfinished_statement([ACCOUNT], 4097),
 }
 
 
@@ -292,9 +294,31 @@ def test_every_statement_but_create_and_the_id_check_is_account_scoped(name: str
     assert scoped is (name not in mod.UNSCOPED)
 
 
-def test_only_the_insert_and_the_rule_5_id_check_are_unscoped() -> None:
-    assert mod.UNSCOPED == {"create_statement", "link_taken_statement"}
+def test_only_the_insert_the_id_check_and_the_hydration_read_are_unscoped() -> None:
+    """E29-T04's hydration read takes an environment (`test_oms_system_reads_callers.py`)."""
+    hydration = {"environment_accounts_statement", "list_unfinished_statement"}
+    assert mod.UNSCOPED == {"create_statement", "link_taken_statement"} | hydration
     assert _sql(_STATEMENTS["link_taken_statement"]).startswith("SELECT EXISTS (SELECT")
+
+
+def test_the_hydration_read_takes_the_environments_accounts_and_the_unfinished_states() -> None:
+    accounts = _sql(_STATEMENTS["environment_accounts_statement"])
+    assert accounts.startswith("SELECT exchange_accounts.id \nFROM exchange_accounts \nWHERE")
+    assert accounts.endswith("WHERE exchange_accounts.env = $1::exchange_env")  # no other filter
+    sql = _sql(_STATEMENTS["list_unfinished_statement"])
+    states = ", ".join(f"'{state}'" for state in sorted(port.UNFINISHED_STATES))
+    assert f"orders.state IN ({states})" in sql and "'held'" in sql and "'untracked'" in sql
+    assert "orders.exchange_account_id = ANY (CAST($1::TEXT[] AS UUID[]))" in sql
+    assert sql.endswith("ORDER BY orders.created_ts, orders.id \n LIMIT $2::INTEGER")
+
+
+async def test_list_unfinished_reads_no_orders_for_no_account_and_nothing_for_no_limit() -> None:
+    rel = _Rel(_Result([]))
+    assert await _store(rel).list_unfinished("live", limit=10) == ()
+    assert len(rel.statements) == 1  # the accounts only
+    with pytest.raises(ValueError, match="limit"):
+        await _store(rel).list_unfinished("demo", limit=0)
+    assert len(rel.units) == 1
 
 
 def test_create_writes_the_order_and_its_first_event_in_one_statement() -> None:
@@ -734,6 +758,10 @@ _CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]],
         [_Result(scalar=LINK), _Result([_event_row()])],
     ),
     "list_for_order": (lambda st: st.list_for_order(ACCOUNT, ORDER), [_Result()]),
+    "list_unfinished": (
+        lambda st: st.list_unfinished("demo", limit=10),
+        [_Result([{"id": ACCOUNT}]), _Result([_order_row(state="held")])],
+    ),
     "transition": (lambda st: st.transition(_STEP), [_LOCKED, _CAS, _EVENT]),
 }
 
@@ -846,7 +874,8 @@ async def test_any_other_database_error_keeps_only_its_sqlstate(
 
 
 @pytest.mark.parametrize(
-    "read", ["get", "get_by_link_id", "link_id_taken", "list_for_order", "list_open"]
+    "read",
+    ["get", "get_by_link_id", "link_id_taken", "list_for_order", "list_open", "list_unfinished"],
 )
 async def test_a_failed_read_keeps_only_its_sqlstate_like_a_write(read: str) -> None:
     """One error family for the OMS (24 Sec.8.2 S7): the allocator's lookup and every other read
