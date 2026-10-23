@@ -52,11 +52,11 @@ SUPERSEDED = (
     r"This rule may wid[e]n the stop — owner-only, audited\.",
     r"Only the owner can loos[e]n a stop\.",
 )
-# Private paths and hosts that never belong in a public file; the patterns are split so this
-# file never contains the literals it forbids.
+# Private paths and hosts that never belong in a public file: generic patterns only — no personal
+# word and no hostname, whole or split (the opener's gate owns those); the path literal is split so
+# this file never contains the string it forbids.
 FORBIDDEN = (
     r"/ho[m]e/",
-    r"wt-note[s]",
     r"penpot\.[a-z0-9-]+\.[a-z]+",
     r"team-i[d]=",
     r"file-i[d]=",
