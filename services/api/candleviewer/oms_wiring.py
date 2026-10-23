@@ -9,7 +9,7 @@ table comes in as a callable, as `key_selfcheck_wiring` takes it.
 Part 2: the reads and adapters that bind the OMS's ports to the modules that own them, as `oms`
 imports no `audit`, `ws` or storage driver (C-3.1, C-3.3, ADR-0003).
 
-Part 3: the OMS runtime (`OmsRuntime`), which composes the OMS for the process's environment.
+Part 3: the OMS runtime (`build_oms_runtime`, `OmsRuntime`), which the lifespan starts and stops.
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ import math
 import re
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import Any, ClassVar, Final, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Protocol, cast
 from uuid import UUID
 
 import structlog
@@ -40,6 +40,7 @@ from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId, Environment, Px, Symbol
 from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsErrorCode
 from candleviewer.exchange.base.models import AccountRef, RateLane, TickerEvent
+from candleviewer.observability import spawn
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.clock_halt import ClockHalt
@@ -127,6 +128,9 @@ from candleviewer.storage.repositories.trading_accounts import (
 from candleviewer.storage.repositories.trading_accounts_sqlalchemy import (
     SqlAlchemyTradingAccountReads,
 )
+
+if TYPE_CHECKING:
+    from candleviewer.app import AppContext
 
 #: The stop request's bound (21 Sec.3.3.11, [LANE-25]), in seconds: how long an unanswered stop
 #: request holds its key before it waits for the complete read (`RefuseWhileWaiting`); above an
@@ -671,6 +675,10 @@ class OrderStateFeed:
 
 # --- part 3: the runtime (#913 slice 3E) ---
 
+#: The runtime's state, as `/readyz`'s `oms` check gives it (20 Sec.6.2).
+OmsState = Literal["starting", "ok", "degraded"]
+#: How often the startup's bounded wait looks at the clock guard and the key standing, in seconds.
+STARTUP_POLL_S: Final = 0.25
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _US: Final = timedelta(microseconds=1)
 
@@ -681,6 +689,14 @@ class FlagRead(Protocol):
     def __call__(self) -> bool: ...
 
     async def first_read(self) -> None: ...
+
+
+class KeyStandingRead(KeyStandingReactions, Protocol):
+    """`accounts.key_standing.KeyStandings` as the runtime takes it: whether its first good
+    tracking read has landed (20 Sec.6.2 step 1)."""
+
+    @property
+    def read_once(self) -> bool: ...
 
 
 class OwnedPort(RoutedPort, Protocol):
@@ -811,6 +827,14 @@ class _Parts:
     closers: tuple[_Closer, ...]
 
 
+async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
+    """The tasks still running once `timeout_s` has passed, or none."""
+    if not tasks:
+        return set()
+    _, pending = await asyncio.wait(tasks, timeout=timeout_s)
+    return set(pending)
+
+
 def _page(pager: Pager, summary: str) -> None:
     try:
         pager.raise_alert("page", summary, machine_kind="order")
@@ -819,21 +843,28 @@ def _page(pager: Pager, summary: str) -> None:
 
 
 async def _closed(closers: Sequence[_Closer], deadline: float) -> None:
-    """Each closer by the loop's `deadline`, isolated: one that fails or runs out is logged, and
-    the next still runs; a cancellation propagates."""
-    for name, close in closers:
+    """Each closer within an equal share of what is left until the loop's `deadline`, as
+    `StorageService.stop` shares its own, so one that hangs (the sink's drain) cannot starve the
+    next; isolated: one that fails or runs out is logged, and the next still runs; a cancellation
+    propagates."""
+    loop = asyncio.get_running_loop()
+    for index, (name, close) in enumerate(closers):
+        share = max(0.0, deadline - loop.time()) / (len(closers) - index)
         try:
-            async with asyncio.timeout_at(deadline):
+            async with asyncio.timeout(share):
                 await close()
         except Exception as exc:  # TimeoutError included
             _log().error("oms_stop_step_failed", step=name, error=type(exc).__name__)
 
 
 class OmsRuntime:
-    """The OMS of this process (20 Sec.6.2), composed by `start()` on the serving loop: the order
-    facade wires B1's process-wide ports and refuses a second one, so it lives from `start()` to
-    `stop()`, never in `create_app()`. What `start()` cannot compose fails the runtime closed:
-    logged by step (`phase`) and paged, and it serves no order, while market data stays up."""
+    """The OMS of this process (20 Sec.6.2). `build_oms_runtime` builds it with no I/O, and
+    `start()`, which the lifespan awaits after the account health runtime's, composes it on the
+    serving loop: the order facade wires B1's process-wide ports and refuses a second one, so it
+    lives from `start()` to `stop()`, never in `create_app()`. A task it tracks runs the startup
+    sweep, which sets `ready` at its end only. What `start()` cannot compose fails the runtime
+    closed: logged by step (`phase`) and paged, `degraded` and never ready, while market data
+    stays up. `run` tracks the route's submits, which `stop()` drains."""
 
     def __init__(
         self,
@@ -845,7 +876,8 @@ class OmsRuntime:
         metrics: Metrics,
         audit: AuditWriterPort,
         gate: OrderEntryCheck,
-        standings: KeyStandingReactions,
+        standings: KeyStandingRead,
+        oms_enabled: FlagRead,
         live_enabled: FlagRead,
         profiles: Profiles | None,
         persistence: Bundle | None,
@@ -854,6 +886,7 @@ class OmsRuntime:
         pager: Pager | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         max_machines: int = MAX_MACHINES,
         registry: Registry | None = None,
     ) -> None:
@@ -861,19 +894,39 @@ class OmsRuntime:
         self._env: Environment = settings.environment.value
         self._venue, self._ingestion, self._read_only = venue, ingestion, read_only
         self._audit, self._gate, self._standings = audit, gate, standings
-        self._live_enabled = live_enabled
+        self._oms_enabled, self._live_enabled = oms_enabled, live_enabled
         self._persistence, self._feed = persistence, feed
         #: The process's one effective-profile cache (finding 6), `profiles_wiring`'s, which its
         #: owner closes: the pipeline reads it, and E28-T02's writes invalidate the same one.
         self.profiles = profiles
         self._stores = stores or (lambda: pg_stores(settings, metrics))
         self._pager: Pager = LogPager() if pager is None else pager
-        self._now, self._monotonic = now, monotonic
+        self._now, self._monotonic, self._sleep = now, monotonic, sleep
         self._max, self._registry = max_machines, registry
+        self._ready = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._parts: _Parts | None = None
-        self._failed = False
+        self._startup: asyncio.Task[None] | None = None
+        self._running: set[asyncio.Task[Any]] = set()
+        self._failed = self._stopping = False
         #: The step `_compose` has reached, which a failed start logs and pages.
         self._phase = "settings"
+
+    @property
+    def started(self) -> bool:
+        """Between `start()` and `stop()`: `/readyz` carries the `oms` check meanwhile only, as a
+        stopped module reports none."""
+        return self._loop is not None and not self._stopping
+
+    @property
+    def state(self) -> OmsState:
+        """`ok` once ready; `degraded` once it will not get ready (it failed closed, its sweep
+        refused, or its startup task ended without it); else `starting` (20 Sec.6.2)."""
+        if self._ready.is_set():
+            return "ok"
+        startup = self._startup
+        failed = self._failed or (startup is not None and startup.done())
+        return "degraded" if failed else "starting"
 
     @property
     def submission(self) -> OrderSubmission:
@@ -891,25 +944,100 @@ class OmsRuntime:
             raise OmsNotReady
         return self._parts
 
+    async def wait_ready(self) -> None:
+        """Until the startup sweep has set `ready` (E29-T05's consumer waits on it)."""
+        await self._ready.wait()
+
+    def run[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
+        """The route's submit, as a task the runtime tracks and the route shields (24 Sec.8.4 step
+        12): `stop()` drains it. Before anything is composed, or once the stop has begun,
+        `OmsNotReady`. On the loop that started the runtime only, the facade's and the state
+        feed's (CR-S3C2-01): another is a `RuntimeError`. Refused either way, the coroutine is
+        closed."""
+        if self._stopping or self._parts is None:
+            coro.close()
+            raise OmsNotReady
+        if self._loop is not asyncio.get_running_loop():
+            coro.close()
+            raise RuntimeError("the OMS runs on the event loop that started it (CR-S3C2-01)")
+        task = spawn(coro, name="oms-submit")
+        self._running.add(task)
+        task.add_done_callback(self._ended)
+        return task
+
+    def _ended(self, task: asyncio.Task[Any]) -> None:
+        self._running.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            _log().error("oms_submit_task_failed", error=type(error).__name__)
+
+    def _startup_ended(self, task: asyncio.Task[None]) -> None:
+        """An error out of the startup task (a flag view or the guard raising) leaves the state
+        `degraded` and never ready: logged, not left for asyncio's "never retrieved" at GC."""
+        if not task.cancelled() and (error := task.exception()) is not None:
+            _log().critical("oms_startup_failed", error=type(error).__name__)
+
     async def start(self) -> None:
-        """Compose the OMS on this loop (20 Sec.6.2); a second call does nothing until `stop()`.
-        What cannot be composed fails the runtime closed (`oms_runtime_failed_closed`)."""
-        if self._parts is not None or self._failed:
+        """Compose the OMS on this loop, then spawn the startup task (20 Sec.6.2). A second call
+        does nothing until `stop()`. What cannot be composed fails the runtime closed."""
+        if self._loop is not None and not self._stopping:
             return
+        self._loop, self._stopping, self._failed = asyncio.get_running_loop(), False, False
         try:
             self._parts = await self._compose()
-        except Exception as exc:  # fail closed (C-2.21): no order is admitted
+        except Exception as exc:  # fail closed (C-2.21): never ready, no order admitted
             self._failed, phase = True, self._phase
             _log().critical("oms_runtime_failed_closed", phase=phase, error=type(exc).__name__)
             _page(self._pager, f"oms_runtime_failed_closed: {phase}")
+            return
+        self._startup = spawn(self._started(), name="oms-startup")
+        self._startup.add_done_callback(self._startup_ended)
 
     async def stop(self) -> None:
-        """Close what `start()` composed: the facade (which unwires B1's ports), the command port,
-        the sink it owns, the trading port and its pool, each isolated and all within
-        `OMS_STOP_RESERVE_S` (20 Sec.6.2)."""
-        parts, self._parts, self._failed = self._parts, None, False
-        if parts is not None:
-            await _closed(parts.closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
+        """Clear `ready`; give the submits in flight at most `CV_OMS_DRAIN_S`; cancel what remains
+        and the startup task; then close the facade (it unwires B1's ports), the command port, the
+        sink it owns, the trading port and its pool, each isolated, within its share of what is
+        left, and all by `OMS_STOP_RESERVE_S` after the drain, inside the OMS module's 15 s grace
+        (20 Sec.6.2). The shared profile cache is its owner's to close."""
+        self._ready.clear()
+        self._stopping = True
+        pending = await _drained(set(self._running), self._settings.oms_drain_s)
+        startup, self._startup = self._startup, None
+        if startup is not None:
+            pending.add(startup)
+        for task in pending:
+            task.cancel()
+        deadline = asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S
+        parts, self._parts = self._parts, None
+        cancelled: list[_Closer] = [("cancelled", lambda: asyncio.wait(pending))] if pending else []
+        await _closed([*cancelled, *(() if parts is None else parts.closers)], deadline)
+        self._failed = False
+
+    async def _started(self) -> None:
+        """The startup sweep (20 Sec.6.2); this slice runs its step 1."""
+        await self._waited()
+
+    async def _waited(self) -> None:
+        """Step 1: at most `CV_OMS_STARTUP_WAIT_S` for the clock guard's first measurement and the
+        key standing's first good read, then on (a resumed create meets the halt and the switches
+        as they stand, 24 Sec.8.3 rule 6); a guard not composed never measures, so it is not
+        waited for. Then the two flag views' first read, however long it takes."""
+        deadline = self._monotonic() + self._settings.oms_startup_wait_s
+        while not (self._measured() and self._standings.read_once):
+            if self._monotonic() >= deadline:
+                break
+            await self._sleep(STARTUP_POLL_S)
+        for flag in (self._oms_enabled, self._live_enabled):
+            await flag.first_read()
+        clock = self._ingestion.clock
+        _log().info(
+            "oms_startup_waited",
+            clock="none" if clock is None else "measured" if self._measured() else "unmeasured",
+            keys_read=self._standings.read_once,
+        )
+
+    def _measured(self) -> bool:
+        clock = self._ingestion.clock
+        return clock is None or math.isfinite(clock.offset_age_s())
 
     async def _compose(self) -> _Parts:
         """The C6 rig's composition, for the process's environment only (C-2.11): the switches,
@@ -1029,3 +1157,29 @@ def _histogram(metrics: Metrics, name: str) -> BoundedMetric:
     return metrics.histogram(
         spec.name, spec.help, spec.labels, buckets=spec.buckets or (), max_series=spec.max_series
     )
+
+
+def build_oms_runtime(
+    ctx: AppContext,
+    settings: Settings,
+    *,
+    metrics: Metrics,
+    audit: AuditWriterPort,
+    gate: OrderEntryCheck,
+    standings: KeyStandingRead,
+    oms_enabled: FlagRead,
+    live_enabled: FlagRead,
+    profiles: Profiles | None,
+    persistence: Bundle | None,
+    feed: MachineStatePort,
+) -> OmsRuntime | None:
+    """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
+    `placeOrder` answers `501 not_implemented` there (20 Sec.6.2)."""
+    if settings.storage_backend != "real":
+        return None
+    return OmsRuntime(
+        settings, venue=ctx.exchange_bybit, ingestion=ctx.ingestion,
+        read_only=ctx.oms_read_only_gate, metrics=metrics, audit=audit, gate=gate,
+        standings=standings, oms_enabled=oms_enabled, live_enabled=live_enabled,
+        profiles=profiles, persistence=persistence, feed=feed,
+    )  # fmt: skip

@@ -726,10 +726,9 @@ class Settings(BaseSettings):
     # The startup sweep's wait for the clock guard's first measurement and the key standing's
     # first read; the sweep must fit a deploy's 60 s `/readyz` smoke window.
     oms_startup_wait_s: float = Field(default=30.0, ge=5.0, le=45.0, allow_inf_nan=False)
-    # On stop, submits in flight get this long, then are cancelled. The runtime's stop (slice 3E)
-    # will be the lifespan's, outside `_refuse_unfittable_stop_budget`'s sum as the account health
-    # runtime's is; with `OMS_STOP_RESERVE_S` it keeps within the supervised OMS module's grace
-    # (20 Sec.6.2).
+    # On stop, submits in flight get this long, then are cancelled. With `OMS_STOP_RESERVE_S` the
+    # runtime's stop keeps within the supervised OMS module's grace (20 Sec.6.2); it is the
+    # lifespan's first stop after the gateway's, which `_refuse_unfittable_stop_budget` counts.
     oms_drain_s: float = Field(
         default=10.0, ge=1.0, le=TEARDOWN_BUDGET_S - OMS_STOP_RESERVE_S, allow_inf_nan=False
     )
@@ -1076,13 +1075,17 @@ class Settings(BaseSettings):
         it: most are short, but `BarsRuntime.stop` (up to 30 s with bars on) and the metrics
         listener's unbounded drain can use the whole budget alone (#2878); the account health
         runtime's stop is bounded, at 25 s in three steps: `STOP_TIMEOUT_S` (11 s) for the loops
-        and for the drain, `RELEASE_TIMEOUT_S` (3 s) for its pool. The OMS runtime's stop (#913;
-        slice 3E builds it) will be listed beside `account_health.stop`, before `stop_all`, at
-        the OMS module's grace: `CV_OMS_DRAIN_S` and `OMS_STOP_RESERVE_S`. This sum cannot see it:
-        at the defaults, 5 + 2 + 5 s and an OMS stop of up to 15 s make 27 of the 30 s budget. A
-        sum exactly at the budget passes and leaves the other modules' normal stop time nothing,
-        so the largest grace is a limit, not a recommendation. Integer milliseconds, so a
-        boundary is not a float error.
+        and for the drain, `RELEASE_TIMEOUT_S` (3 s) for its pool. The OMS runtime's stop (#913
+        slice 3E, SEC-S3B1-02) runs first after the gateway's, so only this sum's terms before
+        the teardown come before it, and it is the one stop the sum lets run to its bound:
+        `CV_OMS_DRAIN_S` plus `OMS_STOP_RESERVE_S`, at most `TEARDOWN_BUDGET_S`, inside
+        `TEARDOWN_STOP_CAP_S`. Every config this accepts therefore leaves it its whole bound, its
+        journal included: at the defaults it ends by 27.2 of the 30 s. An OMS stop that uses its
+        whole bound leaves `stop_all`, the KEK zeroing included, about 2.8 s at the defaults: it
+        is the one hung module the sum covers, so a second one would outrun the budget. A sum
+        exactly at the budget passes and leaves the other modules' normal stop time nothing, so
+        the largest grace is a limit, not a recommendation. Integer milliseconds, so a boundary is
+        not a float error.
 
         That cut is cooperative (#3361): `asyncio.timeout` cancels the stop once. A stop that
         swallows that cancellation and keeps waiting, or that blocks the event loop, holds

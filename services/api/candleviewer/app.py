@@ -294,6 +294,7 @@ from candleviewer.observability.support_bundle import filter_config
 from candleviewer.observability.support_bundle_wiring import build_support_bundle_service
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 from candleviewer.oms.service import OmsService
+from candleviewer.oms_wiring import OmsRuntime, build_oms_runtime
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHistory
@@ -522,6 +523,11 @@ class AppContext:
     # (`23-ws-protocol.md` §6) so the mandatory blocking banner is actually
     # published, not merely mechanically possible via `ReadOnlyGate.subscribe`.
     mesh_system_topic_publisher: SystemTopicPublisher
+
+
+def _oms_state(runtime: OmsRuntime | None) -> str | None:
+    """`/readyz`'s `oms` check: the runtime's state while it runs, else no check."""
+    return runtime.state if runtime is not None and runtime.started else None
 
 
 def _same_user(value: object, user: uuid.UUID) -> bool:
@@ -1532,6 +1538,8 @@ def create_app(
             accounts_health=ctx.accounts.health,
             # #3874: the real tiers' probes; the fake backend's tiers are not checked
             storage_health=ctx.storage.tier_health if resolved.storage_backend == "real" else None,
+            # #913 slice 3E: the OMS runtime's state while it runs (real backend only)
+            oms_state=lambda: _oms_state(getattr(app.state, "oms_runtime", None)),
         )
     )
     # E04-T04: cached component health. Unbuilt modules register `not_deployed`
@@ -2198,6 +2206,22 @@ def create_app(
     # `app.state` serve this one.
     app.state.order_entry_gate = feature_flags.compose_order_entry_gate(
         account_health.order_entry_check
+    )
+    # #913 slice 3E (20 Sec.6.2): the OMS runtime over that gate, the shared profile cache above
+    # and the persistence bundle's sink when there is one; the lifespan starts it after the
+    # account health runtime and stops it right after the gateway. None on the fake backend.
+    app.state.oms_runtime = build_oms_runtime(
+        ctx,
+        resolved,
+        metrics=metrics_facade,
+        audit=_LazyAuditEmitter(ctx.audit),
+        gate=app.state.order_entry_gate,
+        standings=account_health.standings,
+        oms_enabled=feature_flags.oms_enabled,
+        live_enabled=feature_flags.live_enabled,
+        profiles=None if profiles is None else profiles.effective,
+        persistence=persistence,
+        feed=machine_feed,
     )
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). #2966: the real
     # backend runs it with the real runner (an injected one, a test's, wins); the fake backend has

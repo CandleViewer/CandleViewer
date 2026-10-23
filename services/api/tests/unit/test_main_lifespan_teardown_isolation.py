@@ -33,6 +33,7 @@ from candleviewer.settings import TEARDOWN_BUDGET_S
 #: under that name, except for the eight tasks in `_ALERT_TASKS`.
 _STEPS = (
     "ws_runtime",
+    "oms_runtime",
     "user_disable",
     "support_bundle",
     "feature_flags",
@@ -67,7 +68,7 @@ _STEPS = (
     "profiles",
 )
 #: The steps whose `start()` the lifespan awaits.
-_ASYNC_START = ("feature_flags", "bars_runtime")
+_ASYNC_START = ("feature_flags", "bars_runtime", "oms_runtime")
 #: The eight tasks the lifespan starts and stops as one list: a failed stop is logged under the
 #: task's class name, so each fake is a class of its own, named like the real one.
 _ALERT_TASKS = {
@@ -430,5 +431,6 @@ async def test_lifespan_teardown_with_a_held_exception_then_a_generator_exit_rer
     assert raised.value is first
     assert isinstance(raised.value.__context__, GeneratorExit)
     modules = [f"module:{name}" for name in reversed(_SUPERVISOR_ORDER)]
-    assert ran == ["ws_runtime", "user_disable", "support_bundle", "feature_flags", *modules]
+    before = ["ws_runtime", "oms_runtime", "user_disable", "support_bundle", "feature_flags"]
+    assert ran == [*before, *modules]
     assert _failed_steps(logs) == [("ws_runtime", "KeyboardInterrupt", "error", True)]
