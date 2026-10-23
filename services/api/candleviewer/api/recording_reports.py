@@ -92,7 +92,7 @@ def make_recording_reports_router(
         scope = f"{q.symbol}|{q.since}|{q.until}|{restricted}"
         after = None
         if q.cursor is not None:
-            key, last = common.decode_cursor(q.cursor, scope, now)
+            key, last = common.decode_cursor(q.cursor, scope, now, key_shape=common.TIMESTAMP_KEY)
             try:
                 after = (datetime.fromisoformat(key), last)
             except ValueError:

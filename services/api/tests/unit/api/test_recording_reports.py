@@ -16,6 +16,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from candleviewer.api import recording_common as common
 from candleviewer.api import recording_reports as reports
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.recorder import control as rc
@@ -251,4 +252,13 @@ async def test_an_owner_cursor_replayed_by_a_non_owner_is_invalid() -> None:
     cursor = (await env.get("/recording/sessions", limit=2))[1]["meta"]["next_cursor"]
     env.caller = AuditPrincipal(env.caller.user_id, "u", env.caller.permissions, is_owner=False)
     status, body = await env.get("/recording/sessions", limit=2, cursor=cursor)
+    assert (status, body["code"]) == (400, "invalid_cursor")
+
+
+@pytest.mark.parametrize("key", ["x\x00", "BTCUSDT", "2026-10-23", "\ud800"])
+async def test_a_cursor_key_that_is_not_a_timestamp_is_invalid(key: str) -> None:
+    env = _Env("recording:read")
+    env.sessions.add("BTCUSDT", 1)
+    cursor = common.encode_cursor("None|None|None|False", (key, str(uuid.uuid4())), 1_000)
+    status, body = await env.get("/recording/sessions", cursor=cursor)
     assert (status, body["code"]) == (400, "invalid_cursor")
