@@ -1,7 +1,7 @@
 # E35-D01 — UX research: how a trader decides to trust an automated rule with real orders
 
-- **Ticket:** E35-D01 (issue #860) · **Status:** PR pending — **owner approval pending** (Agent-delivery adaptations,
-  owner decision 2026-09-25); Penpot boards planned, not drawn · **Method:** heuristic evaluation of the locked plan
+- **Ticket:** E35-D01 (issue #860) · **Status:** text first — **owner approval pending** (Agent-delivery adaptations,
+  owner decision 2026-09-25); Penpot boards PENDING (boards PR) · **Method:** heuristic evaluation of the locked plan
   texts and the repository's competitor research; **no sessions were run** · **Protocol and owner walkthrough
   checklist:** `e35-d01-session-protocol.md` (this folder), which owns the session script, probe order and scoring.
 - **Scope:** SCR-080–089, weighted to SCR-084 simulation, SCR-085 arming and SCR-086 conflicts, with SCR-058, 059,
@@ -64,11 +64,11 @@ the owner run · **open** = needs sessions or an owner decision.
 
 ## Research boards (Penpot)
 
-Per `docs/design/README.md` ("Approval rule") research ships boards and PNG exports, journeys drawn as frames. **None
-is drawn yet:** page `E35-D01`, semantic tokens from `packages/ui/tokens`, exports via
-`docs/design/_tools/penpot_export.py` to `docs/design/E35/img/E35-D01-NN-<board>.png`, cited by page name and id once
-the page exists: `01-arming-journey` (§6) · `02-probe-stimuli` (the protocol's ST1–ST7) · `03-copy-annex` (§9b) ·
-`04-terms-matrix` (§7) · `05-findings-decision-map` (§8, §9a) · `06-source-conflicts` (§1; SC-14 settled by #3920).
+Per `docs/design/README.md` ("Approval rule") research ships boards and PNG exports, journeys drawn as frames.
+**PENDING (text first):** drawn on page `E35-D01` with semantic tokens from `packages/ui/tokens`; the boards PR (which
+completes #860) exports them to `docs/design/E35/img/E35-D01-NN-<board>.png`, cited by page name and id:
+`01-arming-journey` (§6) · `02-probe-stimuli` (the protocol's ST1–ST7) · `03-copy-annex` (§9b) · `04-terms-matrix`
+(§7) · `05-findings-decision-map` (§8, §9a) · `06-source-conflicts` (§1; SC-14 settled by #3920).
 
 ## Method note (Agent-delivery adaptation, owner decision 2026-09-25)
 
