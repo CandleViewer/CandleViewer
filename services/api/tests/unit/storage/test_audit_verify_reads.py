@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -190,6 +191,22 @@ async def test_export_count_statement_carries_limit_cap() -> None:
     assert "statement_timeout" in budget and budget_params == {"v": "10000ms"}
     assert "WHERE id >= :first_id AND id <= :last_id LIMIT :cap) s" in read
     assert params == {"first_id": 1, "last_id": 9, "cap": 3}
+
+
+async def test_export_span_reads_the_window_up_to_the_head_on_the_time_index() -> None:
+    """#889 S10: one statement under the statement budget, its window and head bound; the
+    least and greatest id and the first one's `prev_hash`, or None for a row of NULLs."""
+    start, end = datetime(2026, 10, 21, 12, tzinfo=UTC), datetime(2026, 10, 21, 13, tzinfo=UTC)
+    rel = _Rel(rows=[(2, 4, "p" * 64)])
+    span = await _repo(rel).export_span(from_ts=start, to_ts=end, head_id=9)
+    (_, budget_params), (read, params) = rel.calls
+    assert span == (2, 4, "p" * 64) and budget_params == {"v": "10000ms"}
+    assert params == {"from_ts": start, "to_ts": end, "head_id": 9}
+    window = "WHERE event_ts >= :from_ts AND event_ts < :to_ts AND id <= :head_id OFFSET 0"
+    assert window in read and "LEFT JOIN audit_log a ON a.id = s.first_id" in read
+    assert await _repo(_Rel(rows=[(None, None, None)])).export_span(
+        from_ts=start, to_ts=end, head_id=9
+    ) is None  # fmt: skip
 
 
 async def test_a_failed_export_read_names_its_statement_in_the_shared_warning() -> None:

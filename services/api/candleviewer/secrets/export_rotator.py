@@ -183,3 +183,24 @@ class SigningKeyRotator:
         else `ExportKeyRotationError`: a refusal rotated nothing, and a `503` may be sent again."""
         call = (reason, actor_user_id, client_ref, client_body_sha256, export_running)
         return await self.__rotate(*call)
+
+
+@final
+class RotationRunning:
+    """Whether a rotation of the environment's signing key is under way (#889 S10), so that
+    `exportAuditLog` answers its own `409`, as the rotation answers its own while an export runs:
+    minted once by `mint_rotation_running` in `admin.wiring`. It holds a closure only (C-3.2) and
+    answers a bool, never M2's state."""
+
+    def __init_subclass__(cls, **kw: Any) -> None:
+        _m2_only(cls)
+        super().__init_subclass__(**kw)
+
+    __slots__ = ("__running",)
+
+    def __init__(self, running: Callable[[], bool]) -> None:
+        self.__running = running
+
+    def running(self) -> bool:
+        """True from a rotation's single-flight claim until its answer, a refusal or a failure."""
+        return self.__running()

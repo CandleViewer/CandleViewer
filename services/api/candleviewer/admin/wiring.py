@@ -50,6 +50,7 @@ from candleviewer.secrets import (
     ExportKeyStore,
     ExportSigner,
     KcvStore,
+    RotationRunning,
     SecretsError,
     SecretsLifecycle,
     SecretsLifecycleFacade,
@@ -62,6 +63,7 @@ from candleviewer.secrets import (
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
+    mint_rotation_running,
     mint_signing_key_rotator,
     mint_signing_keys,
 )
@@ -77,8 +79,9 @@ SecretsMeta = SecretsMetadata
 @dataclass(frozen=True)
 class SecretsBundle:
     """The narrow capabilities of one `SecretsService` (built once, in wiring); the export signer
-    and its key directory are `audit`'s ports, for S10's export job (#889, ADR-0039), the directory
-    also for `listAuditSigningKeys`, and the rotator is `admin`'s, for `rotateAuditSigningKey`."""
+    and its key directory are `audit`'s ports, for the export job (#889, ADR-0039), the directory
+    also for `listAuditSigningKeys` and the export's own `503`, the rotator is `admin`'s, for
+    `rotateAuditSigningKey`, and the running rotation the export route's, for its own `409`."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
@@ -87,6 +90,7 @@ class SecretsBundle:
     export_signer: Signer
     signing_keys: SigningKeyDirectory
     signing_key_rotator: SigningKeyRotator
+    rotation_running: RotationRunning
 
 
 __all__ = [
@@ -241,6 +245,7 @@ def secrets_bundle(svc: SecretsService) -> SecretsBundle:
         _AuditExportSigner(mint_export_signer(svc)),
         _SigningKeyDirectory(mint_signing_keys(svc)),
         mint_signing_key_rotator(svc),
+        mint_rotation_running(svc),
     )
 
 

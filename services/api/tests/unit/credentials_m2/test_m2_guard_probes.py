@@ -64,6 +64,10 @@ PROBES: dict[str, str] = {
     "mint_signing_key_rotator_elsewhere": (
         "from candleviewer.secrets import mint_signing_key_rotator\nmint_signing_key_rotator(s)"
     ),
+    # #889 S10: the running-rotation read, minted for the export route in wiring alone
+    "mint_rotation_running_elsewhere": (
+        "from candleviewer.secrets import mint_rotation_running\nmint_rotation_running(s)"
+    ),
     "export_unwrap": "dek = kek.unwrap_export_dek(row['dek_ref'], key_id=row['key_id'])",
     # boundary review: R1 literal-name reflection
     "getattr_closure": "x = getattr(ctx.secrets.health, '__closure__')",

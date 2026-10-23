@@ -20,9 +20,10 @@ from candleviewer.secrets import _metrics as m
 from candleviewer.secrets import export_rotator as rot
 from candleviewer.secrets import export_signer
 from candleviewer.secrets.errors import CredentialUnavailable, ExportKeyRotationError
-from candleviewer.secrets.export_rotator import SigningKeyRotator
+from candleviewer.secrets.export_rotator import RotationRunning, SigningKeyRotator
 from candleviewer.secrets.service import (
     mint_export_signer,
+    mint_rotation_running,
     mint_signing_key_rotator,
     mint_signing_keys,
 )
@@ -34,7 +35,7 @@ from candleviewer.secrets.store import (
 from tests.unit.credentials_m2._service_fakes import _ctx, _Src, _svc
 from tests.unit.credentials_m2._vectors import KEK_V1, AuditLog
 from tests.unit.credentials_m2.test_export_key_boot import _down
-from tests.unit.credentials_m2.test_export_signer import DIGEST, MESSAGE, _made
+from tests.unit.credentials_m2.test_export_signer import DIGEST, MESSAGE, _made, _unwraps
 
 OWNER, BODY = UUID(int=1), "b" * 64
 _HOUR = 3600.0
@@ -574,6 +575,27 @@ async def test_a_read_that_overlaps_a_rotation_here_logs_no_unchecked_key(
     assert (_unchecked(overlapping), _unchecked(settled)) == ([], [(v2, rig.v1["key_id"])])
 
 
+async def test_the_signer_refuses_an_active_row_m2_did_not_check_before_any_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#889 S10 (S7's re-check, A7): decision 4 holds for the signer too. A sound row swapped in
+    out of band and named by its own id is refused as `export_key_unavailable` before any decrypt
+    or record, as the directory names nothing; the key M2 checked is no longer the active one."""
+    rig = await _rig()
+    kek = rig.svc._require()._held_keks()[0]
+    record = custody.new_key(kek, 2) | {"created_by": UUID(int=9), "client_ref": str(uuid4())}
+    record["client_body_sha256"] = "d" * 64
+    swap = rig.keys.rotate(record, retire=rig.v1["key_id"], reason="compromise",
+                           audit=(rot.ROTATED, {}))  # fmt: skip
+    assert await swap is not None
+    unwrapped, signer, v2 = _unwraps(monkeypatch), mint_export_signer(rig.svc), rig.keys.rows[1]
+    for key_id, code in ((v2["key_id"], "export_key_unavailable"),
+                         (rig.v1["key_id"], "signing_key_rotated")):  # fmt: skip
+        with pytest.raises(CredentialUnavailable, match=f"^{code}$"):
+            await signer.sign_audit_export(key_id, DIGEST, uuid4(), OWNER)
+    assert (unwrapped, rig.written(), rig.svc._export_reason) == ([], [], None)
+
+
 async def test_a_malformed_request_is_refused_before_any_read_or_record() -> None:
     rig = await _rig()
     for call in ({"reason": "weekly"}, {"body": "B" * 64}):
@@ -592,6 +614,44 @@ async def test_the_rotator_holds_a_closure_only_and_is_m2s() -> None:
         type("Sub", (SigningKeyRotator,), {})
     with pytest.raises((TypeError, AttributeError, pickle.PicklingError)):
         pickle.dumps(rotator)
+
+
+async def test_the_running_rotation_read_is_true_only_while_a_rotation_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#889 S10: `RotationRunning`, the export route's own `409`, minted as wiring mints it: true
+    from a rotation's single-flight claim to its answer, false before and after one, after one
+    that failed and after a refusal, which claims nothing."""
+    rig = await _rig()
+    running, seen, store_rotate = mint_rotation_running(rig.svc), list[bool](), rig.keys.rotate
+
+    async def watched(*args: Any, **kw: Any) -> Any:
+        seen.append(running.running())  # inside the rotation's own store call
+        return await store_rotate(*args, **kw)
+
+    monkeypatch.setattr(rig.keys, "rotate", watched)
+    assert not running.running()
+    await rig.rotate()
+    assert seen == [True] and not running.running()
+    rig.keys.audit_fails = True  # its record fails, so the rotation fails
+    with pytest.raises(ExportKeyRotationError, match=r"^audit_unavailable$"):
+        await rig.rotate()
+    assert seen == [True, True] and not running.running()
+    rig.exporting = True
+    await rig.refused("conflict")
+    assert seen == [True, True] and not running.running()
+
+
+async def test_the_running_rotation_read_holds_a_closure_only_and_is_m2s() -> None:
+    running = mint_rotation_running((await _rig()).svc)
+    assert type(running) is RotationRunning and not hasattr(running, "__dict__")
+    assert {n for n in dir(running) if not n.startswith("__")} == {
+        "running", "_RotationRunning__running"
+    }  # fmt: skip
+    with pytest.raises(TypeError, match="may not be subclassed"):
+        type("Sub", (RotationRunning,), {})
+    with pytest.raises((TypeError, AttributeError, pickle.PicklingError)):
+        pickle.dumps(running)
 
 
 async def test_no_seed_or_dek_is_in_an_answer_a_log_or_a_record(

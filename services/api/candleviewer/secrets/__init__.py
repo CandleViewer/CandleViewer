@@ -13,7 +13,8 @@ its `CandidateSigner`, a `SigningCapability`, and stores it only after the check
 `admin.wiring` also mints the audit export's `ExportSigner` and `SigningKeys` and adapts them to
 `audit`'s ports (#889, ADR-0039 decision 3): a signature and public key material, never a seed.
 It mints `SigningKeyRotator` for `admin` too (#889 S7): the signing key's rotation, which answers
-with public key material, or `ExportKeyRotationError`.
+with public key material, or `ExportKeyRotationError`; and `RotationRunning` for the export route
+(#889 S10): whether a rotation runs, a bool.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from candleviewer.secrets.errors import (
     SecretsError,
     WithdrawPermissionRejected,
 )
-from candleviewer.secrets.export_rotator import SigningKeyRotator
+from candleviewer.secrets.export_rotator import RotationRunning, SigningKeyRotator
 from candleviewer.secrets.export_signer import ExportSigner, SigningKeys
 from candleviewer.secrets.metrics import export_secrets_metrics
 from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
@@ -45,6 +46,7 @@ from candleviewer.secrets.service import (
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
+    mint_rotation_running,
     mint_signing_key_rotator,
     mint_signing_keys,
     prove_kek_possession,
@@ -78,6 +80,7 @@ __all__ = [
     "Purpose",
     "RequestSignature",
     "RewrapReport",
+    "RotationRunning",
     "Secret",
     "SecretsError",
     "SecretsLifecycle",
@@ -94,6 +97,7 @@ __all__ = [
     "mint_borrower",
     "mint_candidate_keys",
     "mint_export_signer",
+    "mint_rotation_running",
     "mint_signing_key_rotator",
     "mint_signing_keys",
     "prove_kek_possession",

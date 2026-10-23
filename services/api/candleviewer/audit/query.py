@@ -18,6 +18,7 @@ import functools
 import hashlib
 import json
 import math
+import uuid
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -26,6 +27,8 @@ from typing import Any, NoReturn
 
 from candleviewer.audit.cursor import AuditCursor, encode_cursor
 from candleviewer.audit.errors import AuditError
+from candleviewer.audit.export_job import ExportRequest, ExportSettings, SignedExport, run_export
+from candleviewer.audit.export_signing import Signer, SigningKeyDirectory
 from candleviewer.audit.hashing import ChainHasher
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
@@ -498,6 +501,22 @@ class AuditQueryService:
         elif to_id is None:
             hi = min(head, from_id + max_span - 1)
         return VerifyPlan(from_id, hi, head, full_chain=from_id <= first and hi == head)
+
+    async def export(
+        self,
+        request: ExportRequest,
+        signer: Signer,
+        keys: SigningKeyDirectory,
+        *,
+        job_id: uuid.UUID,
+        owner: uuid.UUID,
+        settings: ExportSettings,
+    ) -> SignedExport:
+        """`exportAuditLog`'s job over this service's repository (#889 S10): `run_export`, which
+        reads the span as verify reads its range, then signs through the injected `signer`."""
+        return await run_export(
+            self._repository, signer, keys, request, job_id=job_id, owner=owner, settings=settings
+        )
 
     async def run_verify(
         self,

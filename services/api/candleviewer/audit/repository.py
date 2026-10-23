@@ -65,6 +65,14 @@ class AuditExportReader(Protocol):
         entry over it."""
         ...
 
+    async def export_span(
+        self, *, from_ts: datetime, to_ts: datetime, head_id: int
+    ) -> tuple[int, int, str] | None:
+        """The span `exportAuditLog` exports (#889 S10): the least and the greatest id, up to
+        `head_id`, of the entries with `from_ts <= event_ts < to_ts`, and the first one's
+        `prev_hash`, its anchor; None when no entry up to `head_id` is in the window."""
+        ...
+
 
 class AuditRepository(AuditExportReader, Protocol):
     """Everything the audit module needs from the relational tier, expressed

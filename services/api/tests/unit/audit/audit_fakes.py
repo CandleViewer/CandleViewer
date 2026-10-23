@@ -220,6 +220,17 @@ class FakeAuditRepository:
     async def count_export_span(self, *, first_id: int, last_id: int, cap: int) -> int:
         return min(cap, sum(1 for r in self.rows if first_id <= r["id"] <= last_id))
 
+    async def export_span(
+        self, *, from_ts: datetime, to_ts: datetime, head_id: int
+    ) -> tuple[int, int, str] | None:
+        """As the repository (#889 S10): the least and greatest id up to `head_id` of the entries
+        in `[from_ts, to_ts)`, and the first one's `prev_hash`."""
+        rows = [r for r in self.rows if r["id"] <= head_id and from_ts <= _ts(r) < to_ts]
+        if not rows:
+            return None
+        first = min(rows, key=lambda r: r["id"])
+        return first["id"], max(r["id"] for r in rows), first["prev_hash"]
+
     async def fetch_export_batch(
         self, *, after_id: int, to_id: int, limit: int
     ) -> list[tuple[Any, ...]]:
