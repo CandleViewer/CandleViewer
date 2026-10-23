@@ -10,11 +10,11 @@ imports nothing from the `candleviewer` package. Every section names its source 
 compared unrounded against its bar (4 decimals printed where a value would round onto a bar).
 
 Usage: python3 -I docs/design/_tools/e22_d03_bubble_hifi_audit.py [--json] [--check]
-       [--spec P] [--draft P]
+       [--spec P] [--handoff P] [--draft P]
 Exit 1 on a gated contrast FAIL, a law that no longer reproduces E22-D02 / the memo, a derived
 constant that no longer reproduces the anchors, a changed MISSING set, a lost `pairs.mjs`
 registration or a failed string gate; `--check` also gates the printed numbers against the spec's
-own sentences (section I) and exits 1 on drift. Reported rows (aged bands, scrim) and rejected
+own sentences and the counted phrases of the spec and the handoff (section I) and exits 1 on drift. Reported rows (aged bands, scrim) and rejected
 pairs (the validity-look label among them) never gate. Stdout is UTF-8.
 """
 
@@ -252,7 +252,7 @@ color.data-confidence.stale.text color.data-confidence.stale.indicator
 color.data-confidence.disconnected.text color.data-confidence.disconnected.indicator
 size.row.compact size.row.comfortable size.control.compact size.control.comfortable size.icon.sm
 size.target.min space.1 space.2 space.3 space.inset.xs space.inset.sm space.inset.md radius.badge
-radius.card radius.pill border.hairline border.thick border.focus elevation.popover
+radius.card size.control.height border.hairline border.thick border.focus elevation.popover
 font.family.mono font.family.ui font.weight.regular font.weight.medium font.weight.bold
 type.num.xs type.num.sm type.num.base type.ui.caption type.ui.label opacity.muted opacity.disabled
 opacity.scrim motion.duration.instant motion.duration.fast motion.duration.normal
@@ -458,6 +458,10 @@ def drift_phrases(out: dict[str, Any]) -> list[str]:
     return phr
 
 
+# the counted phrases the handoff carries (its checklist and QA lines): each must be present there
+HANDOFF_COUNTED = ("gated rows", f"pairs {X} 3 themes", "FAIL", "rows;", "states (spec §4.8)")
+
+
 def count_drift(out: dict[str, Any], text: str) -> list[str]:
     """`--check`: every occurrence of a counted phrase ("N gated rows", ...) must carry the computed
     N, so editing one copy of a repeated headline cannot pass on the strength of the others."""
@@ -465,15 +469,28 @@ def count_drift(out: dict[str, Any], text: str) -> list[str]:
     fams = (
         (m["gated"], "gated rows"),
         (m["rows_total"], f"pairs {X} 3 themes"),
+        (m["fail"], "FAIL"),
+        (m["rows_total"], "rows;"),
         (c["states"], "tape states"),
         (c["cmp_states"], "CMP-112 states"),
+        (c["cmp_states"], "states (spec §4.8)"),
         (c["amendments"], "A-rows"),
     )
     bad: list[str] = []
     for want, suffix in fams:
         found = re.findall(rf"\b(\d+) {re.escape(suffix)}", text)
+        found += re.findall(rf"\b{re.escape(suffix)} (\d+)\b", text) if suffix == "FAIL" else []
         bad += [f"{n} {suffix} (computed {want})" for n in found if int(n) != want]
     return bad
+
+
+def handoff_counted(text: str) -> list[str]:
+    """`--check`: the handoff's counted phrases must stay present, so deleting one cannot pass."""
+    return [
+        f"the handoff lacks a counted {s!r}"
+        for s in HANDOFF_COUNTED
+        if not re.search(rf"\b\d+ {re.escape(s)}|\b{re.escape(s)} \d+\b", text)
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -483,6 +500,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--check", action="store_true", help="fail on drift vs the spec's sentences")
     ap.add_argument("--spec", default=str(ROOT / "docs" / "design" / "E22" / "E22-D03.md"))
+    ap.add_argument(
+        "--handoff", default=str(ROOT / "docs" / "design" / "E22" / "E22-D03-handoff.md")
+    )
     ap.add_argument("--draft", default=None)
     a = ap.parse_args(argv)
     quiet, problems, out = bool(a.json), [], {}  # type: bool, list[str], dict[str, Any]
@@ -715,7 +735,13 @@ def main(argv: list[str] | None = None) -> int:
         for d in stale_counts:
             say(f"- DRIFT (a counted phrase): {d}")
         problems += [f"drift: the spec says {d}" for d in stale_counts]
-        out["drift"] = {"phrases": len(drift), "missing": missing_drift}
+        hp = Path(a.handoff)
+        ho_text = hp.read_text(encoding="utf-8") if hp.exists() else ""
+        ho_bad = count_drift(out, ho_text) + handoff_counted(ho_text)
+        for d in ho_bad:
+            say(f"- DRIFT (the handoff): {d}")
+        problems += [f"drift: the handoff says {d}" for d in ho_bad]
+        out["drift"] = {"phrases": len(drift), "missing": missing_drift, "handoff": ho_bad}
     out["problems"] = problems
     if quiet:
         print(json.dumps(out, indent=1, ensure_ascii=False))
