@@ -13,6 +13,7 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 
+import argon2
 import pytest
 from sqlalchemy import CheckConstraint
 
@@ -34,6 +35,8 @@ from tests.fixtures.admin.handles import (
 from tests.fixtures.admin.seed import is_test_database
 
 _README = Path(__file__).resolve().parents[1] / "fixtures" / "admin" / "README.md"
+#: Each defeats one loosening of the rule: `endswith("test")`, `"_test" in`, `.lower()`.
+_REFUSE = "candleviewer testdb test_candleviewer prod latest candleviewer_test_backup Test".split()
 
 
 def _values() -> list[str]:
@@ -63,8 +66,9 @@ def test_no_readme_line_is_secret_shaped() -> None:
 
 
 async def test_the_placeholder_hash_verifies_no_password() -> None:
-    hasher = Hasher(pepper="fixture-pepper")
-    assert await hasher.verify(PLACEHOLDER_HASH, "fixture") is False
+    with pytest.raises(argon2.exceptions.VerificationError, match="Decoding failed"):
+        argon2.low_level.verify_secret(PLACEHOLDER_HASH.encode(), b"fixture", argon2.Type.ID)
+    assert await Hasher(pepper="fixture-pepper").verify(PLACEHOLDER_HASH, "fixture") is False
 
 
 def test_a_fixture_id_is_the_same_on_every_run() -> None:
@@ -119,6 +123,6 @@ def test_a_database_named_for_tests_is_seeded(name: str) -> None:
     assert is_test_database(name)
 
 
-@pytest.mark.parametrize("name", ["candleviewer", "testdb", "test_candleviewer", "prod"])
+@pytest.mark.parametrize("name", _REFUSE)
 def test_any_other_database_is_refused(name: str) -> None:
     assert not is_test_database(name)
