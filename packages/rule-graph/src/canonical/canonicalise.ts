@@ -14,7 +14,7 @@ const STRIPPED = ["graph_layout", "editor", "created_by", "created_at", "updated
 const OPAQUE = new Set(["params", "const"]); // canonical.py:75: never renumbered
 
 /** Code point order, as Python sorts keys: lifting the surrogates above U+E000-U+FFFF does it. */
-function byCodePoint(a: string, b: string): number {
+export function byCodePoint(a: string, b: string): number {
   const lift = (u: number) => (u < 0xd800 ? u : u < 0xe000 ? u + 0x2000 : u - 0x800);
   for (let i = 0; i < a.length && i < b.length; i++) {
     const d = lift(a.charCodeAt(i)) - lift(b.charCodeAt(i));
