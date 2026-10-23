@@ -192,15 +192,16 @@ def luma(h: str) -> int:
 
 
 # --------------------------------------------------------------------------- 1. clauses (R1)
-# The review's clause ids: `05` section 6 (23) + the ticket's extra clauses (16) + two NFRs + two
-# `06` rows = 43. The wording is derived from `05` at the base, never from this list.
+# The review's clause ids: `05` section 6 (23) + the ticket's extra clauses (18 — section 3.4
+# item 6 is split into its SC 2.4.11 half and its ring half, and section 5 item 1 is a clause) +
+# two NFRs + two `06` rows = 45. The wording is derived from `05` at the base, never from this list.
 CLAUSES: list[str] = (
     [f"6.1{c}" for c in "abcdefgh"]
     + [f"6.2{c}" for c in "abcd"]
     + [f"6.3{c}" for c in "abcdefghi"]
     + ["6.4a", "6.4b"]
-    + ["3.1.6", "3.1.7", "3.4.2", "3.4.3", "3.4.6", "3.4.7", "3.4.8"]
-    + ["4.1", "4.3", "5.2", "5.4", "5.7", "7.1", "7.2", "7.3", "7.4"]
+    + ["3.1.6", "3.1.7", "3.4.2", "3.4.3", "3.4.6a", "3.4.6b", "3.4.7", "3.4.8"]
+    + ["4.1", "4.3", "5.1", "5.2", "5.4", "5.7", "7.1", "7.2", "7.3", "7.4"]
     + ["US-CHART-008 NFR", "US-CHART-014 NFR", "06 §4.3", "06 §4.4"]
 )
 VERDICTS = (
@@ -224,7 +225,7 @@ E06 = "docs/design/E06/E06-D03.md"
 P26 = "docs/plan/26-chart-engine-design.md"
 P05 = "docs/plan/05-accessibility-standard.md"
 P14 = "docs/plan/14-screens-catalogue.md"
-E14 = "docs/design/E14/E14-D02.md (head a12cb2ac, in flight)"
+E14 = "docs/design/E14/E14-D02.md (merged after the base at d15000496; first read at a12cb2ac)"
 D01 = "docs/design/research/e11-chart-navigation-research.md"
 SRC = {
     "D01": D01,
@@ -357,12 +358,12 @@ Space | Dialog | * | toggle a segment / press a button | D03 | 476
 Esc | Dialog | * | close the calendar, then the dialog | D03 | 477
 PageUp | Dialog | * | calendar: by month | D03 | 474
 PageDown | Dialog | * | calendar: by month | D03 | 474
-Alt+L | Chart | * | E14: trendline (in flight) | E14 | 62
-Alt+H | Chart | * | E14: horizontal line (in flight) | E14 | 62
-Alt+O | Chart | * | E14: Fibonacci (in flight; (b) Alt+F) | E14 | 62
-Alt+R | Chart | * | E14: rectangle (in flight) | E14 | 62
-Alt+D | Chart | * | E14: measure (in flight) | E14 | 62
-Ctrl+M | Chart | * | E14: magnet toggle (in flight) | E14 | 62
+Alt+L | Chart | * | E14: trendline (merged after the base) | E14 | 62
+Alt+H | Chart | * | E14: horizontal line (merged after the base) | E14 | 62
+Alt+O | Chart | * | E14: Fibonacci (merged after the base; (b) Alt+F) | E14 | 62
+Alt+R | Chart | * | E14: rectangle (merged after the base) | E14 | 62
+Alt+D | Chart | * | E14: measure (merged after the base) | E14 | 62
+Ctrl+M | Chart | * | E14: magnet toggle (merged after the base) | E14 | 62
 """
 
 
@@ -1008,9 +1009,9 @@ table expander cell / header button / chip / Kbd / segment | compact | size.targ
 view switch segment (Chart / Table) | compact / comfortable | pill | size.control.height
   | D04:140 | a density-resolved semantic alias: semantic-dark :390 binds size.control.compact,
   themes.json :23 lists it under density.resolves (the lens round 1 corrected r1's reading)
-E14 drawing-rail tool button (in flight) | compact / dense | size.control.compact
+E14 drawing-rail tool button (E14-D02) | compact / dense | size.control.compact
   | size.control.compact | E14:132 | E14's; Info
-E14 drawing-rail tool button (in flight) | comfortable | size.control.comfortable
+E14 drawing-rail tool button (E14-D02) | comfortable | size.control.comfortable
   | size.control.comfortable | E14:132 | E14's; Info
 D10 cursor column (not a target: a focus-visible mark) | every density | 2 | pane | E06:176
   | >= 2 px core + 1 px halos; informational
