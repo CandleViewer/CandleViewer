@@ -48,7 +48,7 @@ MarginMode = Literal["cross", "isolated"]
 PositionMode = Literal["one_way", "hedge"]
 TimeInForce = Literal["GTC", "IOC", "FOK", "PostOnly"]
 #: A listed symbol, or an anchored suffix pattern (`*USDT`) expanded at evaluation time against the
-#: instrument cache, never at write time (E28-T04; SR-E28-06). A bare `*` is refused.
+#: instrument cache, never stored expanded (E28-T04; SR-E28-06). A bare `*` is refused.
 SymbolPattern = Annotated[str, StringConstraints(pattern=r"^\*?[A-Z0-9]{4,20}$")]
 
 _FROZEN = ConfigDict(frozen=True, extra="forbid")

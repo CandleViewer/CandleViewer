@@ -30,7 +30,8 @@ _C6: Final = re.compile(r"-?[0-9]+(?:\.[0-9]+)?")
 
 @dataclass(frozen=True, slots=True)
 class ProfileFieldError:
-    """One entry of `ProfileRejected`'s `errors[]`. Its message names no value from the body."""
+    """One entry of `ProfileRejected`'s `errors[]`. Its message names no value from the body,
+    save the profile's own validated figure or allow entry in a second-pass message."""
 
     field: str  # the JSON path of the body member: `allowed_symbols[2]`, `sizing.qty`
     rule: str  # the contract's rule name
@@ -201,7 +202,9 @@ def map_profile_input(
     )
 
 
-# -- The first pass (slice B1b). Rulings (a) to (c) and P14 are #906's, of 2026-10-22 13:26Z -----
+# -- The first pass (slice B1b). Rulings (a) to (c) are #906's, of 2026-10-22 13:26Z; P14 is #906's,
+# rulings of 2026-10-22 13:26Z (C0) and 2026-10-23 01:46Z (lone surrogate; recorded as
+# issuecomment-6357453369) ---------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +265,8 @@ _LOSS_BOUNDS: Final = (
     ("concurrent orders", ("max_concurrent_orders",)),
     ("leverage", ("max_leverage_cap",)),
 )
-#: P14 (#906, ruling of 2026-10-22 13:26Z): `name` holds no C0 control and no lone surrogate.
+#: P14 (#906, rulings of 2026-10-22 13:26Z (C0) and 2026-10-23 01:46Z (lone surrogate; recorded
+#: as issuecomment-6357453369)): `name` holds no C0 control and no lone surrogate.
 #: A U+0000 or a lone surrogate (no UTF-8 form; see `domain.text`) would be a driver 500, not a 422.
 _C0: Final = re.compile(r"[\x00-\x1f]")
 _OWN_OPERATION: Final = ProfileFieldError(
@@ -347,7 +351,8 @@ def check_profile_input(
 ) -> list[ProfileFieldError]:
     """The first pass over the `exclude_unset` dump of a body the schema phase passed: every
     failure, none cut, in this order. P1 `is_default` (a create counts as false); P14 `name`
-    (#906, ruling of 2026-10-22 13:26Z); P2 and P3 `range` and `precision`, member by member in
+    (#906, rulings of 2026-10-22 13:26Z (C0) and 2026-10-23 01:46Z (lone surrogate; recorded as
+    issuecomment-6357453369)); P2 and P3 `range` and `precision`, member by member in
     the order of `_DECIMALS` and then each rung; P4 to P6 the sizing amounts; P7 to P9 the stop;
     P10 `all_symbols` with a list; P11 `ladder_sum`; P12 `above_leverage_cap`; P13 `cap_unbounded`.
     `stored_is_default` is `None` on a create and the stored profile's `is_default` on a replace.

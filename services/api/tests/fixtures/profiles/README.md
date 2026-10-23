@@ -12,3 +12,8 @@ placeholders. Every one is trading-enabled, so each bounds every cap (SR-E28-01)
 | `fixed_qty.json`      | 0.01 contracts        | 1 %; TP at 2R                | BTCUSDT              |
 | `pct_equity.json`     | 5 % of equity         | 1.5 × ATR(14), 2 % fallback  | all, DOGEUSDT denied |
 | `fixed_notional.json` | 1 000 USDT            | 50 ticks                     | `*USDT` pattern      |
+
+The SOLUSDT 20x row (ruling B9, #906) is derived in code by `test_profile_validator.py`, never
+stored: the recorded SOLUSDT row of `packages/fixtures/bybit/2026-10-05/rest/instruments_before.json`
+(C-13.5) with one field patched, `leverageFilter.maxLeverage` from `100.00` to `20.00`. That file's
+`_LISTED` derives its other rows from the same capture, each patched field named in `_PATCHES`.

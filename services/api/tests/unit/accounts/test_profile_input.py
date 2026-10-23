@@ -29,7 +29,6 @@ from candleviewer.accounts.profile_input import (
 from candleviewer.accounts.profiles import AccountProfile, profile_values
 from candleviewer.api._generated.openapi_models import AccountProfileInput
 from candleviewer.audit.actions import PROFILE_SAVE_REFUSED_REASONS
-from candleviewer.domain.text import unpaired_surrogate
 
 _PID = UUID("0b5f6d0e-28a1-4c1e-9e01-000000000001")
 _AID = UUID("0b5f6d0e-28a1-4c1e-9e01-000000000002")
@@ -362,7 +361,9 @@ def test_native_stop_mandatory_is_the_only_audited_schema_rule() -> None:
     assert SCHEMA_RULES & PROFILE_SAVE_REFUSED_REASONS == {"native_stop_mandatory"}
 
 
-# -- B1b: the first pass. Rulings (a) to (c) and P14 are #906's, of 2026-10-22 13:26Z -------------
+# -- B1b: the first pass. Rulings (a) to (c) are #906's, of 2026-10-22 13:26Z; P14 is #906's,
+# rulings of 2026-10-22 13:26Z (C0) and 2026-10-23 01:46Z (lone surrogate; recorded as
+# issuecomment-6357453369) -------------------------------------------------------------------------
 
 _E20 = "1" + "0" * 20  # a numeric(38,18) member, or a rung's `r`, is below it (rulings (a), (b))
 #: Each member's bounds, copied here and not imported: (low, above, high, below, places). `above`
@@ -773,7 +774,7 @@ _TAKEN = ["a b", "del\x7f", "Alice — 0.5R", "\U0001f600"]
 @pytest.mark.parametrize("name", [*_REFUSED, *_TAKEN])
 def test_a_name_with_a_control_character_or_lone_surrogate_is_not_allowed(name: str) -> None:
     got = check_profile_input(_with(name=name), stored_is_default=None)
-    refused = min(name) < " " or unpaired_surrogate(name)  # a 422, never a 500
+    refused = name in _REFUSED  # a 422, never a 500
     assert got == ([_NO_C0] if refused else [])
 
 
