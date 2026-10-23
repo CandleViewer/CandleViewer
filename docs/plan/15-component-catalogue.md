@@ -188,28 +188,29 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-015 Skeleton
 
 - **Tier**: Atom · **Purpose**: loading placeholder for panels/rows/cards.
-- **Props**: `shape: "text"|"row"|"card"|"chart"` · `count?: number`.
-- **A11y**: `aria-hidden="true"` (the loading state is announced once by the parent container's `aria-busy`, not per-skeleton).
-- **Tokens**: `color.surface.skeleton`, `motion.shimmer` (motion-reduce: static tone, no shimmer).
-- **Storybook**: AllShapes, Count.
+- **Props**: `shape: "text"|"row"|"card"|"chart"` · `count?: number`. `shape="chart"` is a plain block for a chart-sized slot in a card, a row or a tile; a chart pane uses CMP-029.
+- **States**: shimmer (a band sweeping the fill to `color.surface.raised` and back, one sweep per 1,200 ms, stopped at 5 s, after which the host's slow-path words carry the wait); static (the two-tone fill, under reduced motion from the first frame and after the stop).
+- **A11y**: `aria-hidden="true"` (the loading state is announced once by the parent container's `aria-busy`, not per-skeleton). The host's own words (CMP-038 or a table caption) carry the wait.
+- **Tokens**: blocks `color.surface.hover` (`color.surface.selected` on an overlay host); the shimmer's band `color.surface.raised` (`color.surface.hover` on an overlay host), a 1,200 ms period (3 × `motion.duration.slow`) (motion-reduce: static tone, no shimmer); `radius.control` (text and row blocks), `radius.card` (card and chart); rows `size.row.height`; `space.stack.xs`, `space.inset.sm`, `space.inset.md`. (Replaces `color.surface.skeleton` and `motion.shimmer`, which are not shipped tokens.)
+- **Storybook**: AllShapes, Count, Static, OnOverlay.
 - **Tests**: unit, visual, reduced-motion snapshot.
 
 ### CMP-016 Tooltip
 
 - **Tier**: Atom · **Purpose**: contextual help / disabled-reason / estimated-methodology text.
-- **Props**: `content: ReactNode` · `side` · `delay?: number` (default 300ms) · `triggerOnFocus?: boolean` (true always, for keyboard parity).
-- **A11y**: Radix Tooltip primitive — appears on hover AND focus, dismissible via `Esc`, does not trap focus, `role="tooltip"` + `aria-describedby` linking trigger.
-- **Tokens**: `color.surface.overlay`, `elevation.3`, `radius.sm`.
-- **Storybook**: Default, LongContent, KeyboardTriggered.
+- **Props**: `content: string` (text only; a link or a control needs CMP-017 Popover) · `mode?: "describes"|"echo"` (default `describes`; `echo` duplicates a name or a reason that lives elsewhere) · `side` · `delay?: number` (default 300ms) · `triggerOnFocus?: boolean` (true always, for keyboard parity).
+- **A11y**: Radix Tooltip primitive — appears on hover AND focus, dismissible via `Esc`, does not trap focus, `role="tooltip"` + `aria-describedby` linking trigger. In `describes` mode the tooltip node is in the DOM at mount (`hidden` until shown), so the description is there when focus lands; in `echo` mode it is `aria-hidden="true"` and the trigger keeps its own `aria-label` or its `aria-describedby` → the always-rendered reason (`docs/design/E09/E09-D09.md` §9.2), so nothing is read twice; it is never the only copy of a reason and never the `title` attribute. Hover shows it after `delay`; keyboard focus (`:focus-visible`) shows it at once; it stays while the pointer is on the trigger or the tooltip (WCAG 1.4.13) and hides on leave after a 100 ms grace, on blur and on `Esc`, which stops there; never on a timer.
+- **Tokens**: `color.surface.overlay`, `elevation.popover`, `radius.card`, a 1 px `color.border.default` edge; `type.ui.caption` + `color.text.primary`; padding `space.inset.xs` (block) and `space.inset.sm` (inline); `space.inset.xs` from the trigger; at most 320 px wide. (Replaces `elevation.3` and `radius.sm`, which are primitives.)
+- **Storybook**: Default, LongContent, KeyboardTriggered, Echo.
 - **Tests**: unit, visual, axe, keyboard show/dismiss.
 
 ### CMP-017 Popover
 
 - **Tier**: Atom · **Purpose**: base floating panel for menus/pickers (underlies CMP-041 Menu, CMP-047 DatePicker etc.).
-- **Props**: `open` · `onOpenChange` · `anchor` · `placement` · `modal?: boolean`.
-- **A11y**: focus-trap when `modal`, returns focus to trigger on close, `Esc` closes, click-outside closes (with `pointerdown` guard to avoid mis-fire on drag).
-- **Tokens**: `elevation.3`, `radius.md`.
-- **Storybook**: Default, Modal, NonModal.
+- **Props**: `open` · `onOpenChange` · `anchor` · `placement` · `modal?: boolean` · `aria-label?/aria-labelledby?` (one required) · `initialFocusRef?`.
+- **A11y**: focus-trap when `modal`, returns focus to trigger on close, `Esc` closes, click-outside closes (with `pointerdown` guard to avoid mis-fire on drag). It is a `role="dialog"` (`aria-modal="true"` only when `modal`) named by its heading or `aria-label`; focus moves into it on open (its first control, `initialFocusRef` or its heading); in a non-modal popover Tab past its last control closes it and moves on from the trigger, and `Shift+Tab` before its first returns to the trigger; an outside press closes it only when it starts and ends outside; the trigger carries `aria-haspopup="dialog"`, `aria-expanded` and `aria-controls`.
+- **Tokens**: `color.surface.overlay`, `elevation.popover`, `radius.card`, a 1 px `color.border.default` edge; padding `space.inset.sm`; `space.inset.xs` from the anchor. (Replaces `elevation.3` and `radius.md`, which are primitives.)
+- **Storybook**: Default, Modal, NonModal, Flipped, Scrolling.
 - **Tests**: unit, visual, axe, focus-trap/return test.
 
 ### CMP-018 Divider
@@ -261,10 +262,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-023 Progress Bar
 
 - **Tier**: Atom · **Purpose**: determinate progress (recorder disk usage, replay load, TWAP slice progress).
-- **Props**: `value: number` (0-100) · `label?` · `tone`.
-- **A11y**: `role="progressbar"` `aria-valuenow/min/max`.
-- **Tokens**: `color.action.primary`, `color.track`.
-- **Storybook**: Default, WithLabel, AllTones.
+- **Props**: `value: number` (0-100) · `label?` (or `aria-labelledby`; one is required) · `valueText?` (`aria-valuetext`, e.g. "page 3 of ~9") · `kind?: "progress"|"meter"` (default `progress`; `meter` for a gauge such as disk usage or a budget share) · `tone: "default"|"success"|"warning"|"danger"`.
+- **States**: determinate only (an unknown total uses CMP-038, never an indeterminate loop); empty, partial and complete; the value text always shown, led by the tone's glyph on warning and danger.
+- **A11y**: `role="progressbar"` `aria-valuenow/min/max`. `role="meter"` when `kind="meter"`; `aria-valuetext` from `valueText`; the value text and the glyph are `aria-hidden`; never a live region: the host announces the start, the completion or a failure once.
+- **Tokens**: track `color.surface.hover`, 8 px from `space.inset.xs` padding, `radius.badge`; fill `color.action.primary.default` (default), `color.status.success.default`, `color.status.warning.strong`, `color.status.danger.default`; label `type.ui.label` and value `type.num.sm`, both `color.text.secondary`; `space.stack.xs`, `space.inset.xs`; a new value moves the fill over `motion.duration.normal` (motion-reduce: a step). (Replaces `color.track`, which is not a shipped token; `color.action.primary` read as `.default`.)
+- **Storybook**: Default, WithLabel, AllTones, Meter, Unlabelled.
 - **Tests**: unit, visual, axe.
 
 ### CMP-024 Sparkline
@@ -288,30 +290,33 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-026 EmptyState
 
 - **Tier**: Atom (composed) · **Purpose**: designed empty/zero-data state (recorder-dependent emptiness per `14-screens-catalogue.md` §0.5.3).
-- **Props**: `icon` · `title` · `description` · `cta?: {label,onClick}` · `variant: "no-data"|"recording-not-started"|"backfill-in-progress"|"filtered-empty"|"error"`.
+- **Props**: `icon` · `title` · `description` · `cta?: {label,onClick}` · `link?: {label,href}` (one secondary link) · `headingLevel?` (default 3) · `variant: "no-data"|"recording-not-started"|"backfill-in-progress"|"filtered-empty"|"error"`. `variant="error"` renders CMP-027's panel form with `live="polite"`.
 - **E08-D04**: `variant="backfill-in-progress"` (data-confidence `backfilling` state) pairs a determinate/indeterminate progress affordance with the description text (e.g. "Loading history — page 3 of ~9"); it is informational, not an error, and never uses `color.status.danger.*`. `variant="recording-not-started"` is confirmed unchanged for `SCR-151`.
+- **States**: no-data, recording-not-started, backfill-in-progress, filtered-empty and error, each with its CTA; the sentence form (`docs/design/E09/E09-D09.md` §8): when the sole CTA is gated, `cta` is omitted and `description` carries the host's reason, with no button.
 - **A11y**: heading semantics preserved (`h3` inside panel context), CTA is a real focusable button.
-- **Tokens**: `color.text.secondary`, `space.emptystate.*`.
-- **Storybook**: AllVariants.
+- **Tokens**: glyph CMP-019 `size="lg"` in `color.text.tertiary`; heading `type.ui.heading-sm` + `color.text.primary`; description `type.ui.body` + `color.text.secondary`; padding `space.inset.xl`; gaps `space.stack.sm` and `space.stack.md`; actions `space.inset.sm` apart. (Replaces `space.emptystate.*`, which is not a shipped token.)
+- **Storybook**: AllVariants, SentenceForm.
 - **Tests**: unit, visual, axe.
 
 ### CMP-027 ErrorState / InlineError
 
 - **Tier**: Atom (composed) · **Purpose**: panel-level or field-level error surface (WS disconnect, order rejection).
-- **Props**: `message` · `severity: "warning"|"error"` · `retry?: {label,onClick}` · `details?: string` (collapsible technical detail).
-- **A11y**: `role="alert"` for severity `error` (assertive live region), `role="status"` for `warning` (polite).
-- **Tokens**: `color.status.warning/danger`.
-- **Storybook**: Warning, Error, WithRetry, WithDetails.
+- **Props**: `message` · `severity: "warning"|"error"` · `form?: "panel"|"inline"` (default `panel`) · `live?: "assertive"|"polite"|"off"` (default by severity) · `retry?: {label,onClick}` · `action?: {label,onClick}` · `details?: string` (collapsible technical detail).
+- **States**: panel and inline; error and warning; details closed and open.
+- **A11y**: `role="alert"` for severity `error` (assertive live region), `role="status"` for `warning` (polite). `live` overrides it: `polite` for an in-panel load failure, `off` (no live role) when another node already announced it; the region is mounted with its host and its text inserted when the failure begins; the message never carries raw exchange or server text; `details` sit behind a "Technical details" disclosure (`aria-expanded`), selectable and never in the live region.
+- **Tokens**: glyph CMP-019 `danger` / `warning` in `color.status.danger.strong` / `color.status.warning.strong`; message `type.ui.body` + `color.text.primary`; details `type.num.sm` + `color.text.secondary` on `color.surface.raised`, `radius.control`, `space.inset.sm`; inline gap `space.inset.xs`; the panel form lays out as CMP-026. (Replaces the bare `color.status.warning/danger`.)
+- **Storybook**: Warning, Error, WithRetry, WithDetails, Inline, Polite.
 - **Tests**: unit, visual, axe, live-region announcement test.
 
 ### CMP-028 Callout / Banner (inline, non-global)
 
-- **Tier**: Atom (composed) · **Purpose**: inline informational/warning block inside a panel or form (distinct from the global EnvBanner CMP-078).
-- **Props**: `tone: "info"|"warning"|"danger"|"success"|"connection-reconnecting"|"connection-disconnected"` · `icon?` · `dismissible?` · `retry?: {label,onClick}`.
+- **Tier**: Atom (composed) · **Purpose**: inline informational/warning block inside a panel or form (distinct from the global EnvBanner CMP-074).
+- **Props**: `tone: "info"|"warning"|"danger"|"success"|"connection-reconnecting"|"connection-disconnected"` · `placement?: "inline"|"band"` (default `inline`; `band` is full width under the TopBar, in the shell's slot) · `live?: "assertive"|"polite"|"off"` (default by tone) · `icon?` · `dismissible?` · `retry?: {label,onClick}`.
 - **E08-D04 — `connection` severity variants** (used by `SCR-152`, data-confidence vocabulary `docs/design/E08/E08-D01.md`): `tone="connection-disconnected"` renders `role="alert"` (assertive) with `color.data-confidence.disconnected.indicator` accent and a `[ Retry now ]` action; `tone="connection-reconnecting"` renders `role="status"` (polite) with `color.data-confidence.reconnecting.indicator`. Neither tone ever renders raw exchange error text — only the mapped state label plus an optional `details` string supplied by the caller (never a passthrough of the wire error). Flapping reconnect attempts within 5s collapse into a single "Connection unstable" announcement (no per-attempt re-announce).
-- **A11y**: `role="status"` (info/success/connection-reconnecting) or `role="alert"` (warning/danger/connection-disconnected).
-- **Tokens**: `color.callout.*`, `color.data-confidence.reconnecting.indicator`, `color.data-confidence.disconnected.indicator`.
-- **Storybook**: AllTones, Dismissible, ConnectionReconnecting, ConnectionDisconnected.
+- **States**: the six tones; inline and band; dismissible (a close button named "Dismiss {title}"); content at 0 ms.
+- **A11y**: `role="status"` (info/success/connection-reconnecting) or `role="alert"` (warning/danger/connection-disconnected). `live` overrides the default (`off` renders no live role, for a banner whose announcement another region makes); each state entry is announced once; the region is mounted with its host and its text inserted when the state begins.
+- **Tokens**: fill `color.status.{tone}.subtle`, a 2 px `border.thick` start edge and the glyph in `color.status.{tone}.strong`; the two connection tones on `color.status.danger.subtle` and `.strong` (the `color.data-confidence.*.indicator` accents measure 2.88:1 dark and 2.81:1 light on that fill and stay on `color.surface.*`); title `type.ui.body-strong` + `color.text.primary`; body `type.ui.body` + `color.text.secondary`; `radius.card` (inline), `space.inset.sm`, `space.inset.md`. (Replaces `color.callout.*`, which is not a shipped token.)
+- **Storybook**: AllTones, Dismissible, ConnectionReconnecting, ConnectionDisconnected, Band, LivePolite.
 - **Tests**: unit, visual, axe, live-region announcement test (assertive vs polite, flap-collapse).
 - **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the `connection-*` tones appear at 0 ms and dismiss with a `fast` opacity fade; fill and announcements are debounced on the clearing side only — PROPOSED).
 
@@ -319,9 +324,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 - **Tier**: Atom · **Purpose**: chart-shaped loading placeholder distinct from generic Skeleton (candlestick silhouette).
 - **Props**: `paneCount?: number`.
-- **A11y**: `aria-hidden`, parent panel carries `aria-busy="true"`.
-- **Tokens**: `color.surface.skeleton`.
-- **Storybook**: SinglePane, MultiPane.
+- **States**: shimmer (CMP-015's sweep, stopped at 5 s); static (under reduced motion, and after the stop).
+- **A11y**: `aria-hidden`, parent panel carries `aria-busy="true"`. The host's CMP-038 words ("Loading 5,000 bars…") sit over it, outside the hidden node.
+- **Tokens**: candle, wick and axis blocks `color.surface.hover` on `color.surface.canvas`; CMP-015's sweep. (Replaces `color.surface.skeleton`, which is not a shipped token.)
+- **Storybook**: SinglePane, MultiPane, Static.
 - **Tests**: unit, visual, reduced-motion snapshot.
 
 ### CMP-030 Divider-Label ("section rule with caption")
@@ -403,10 +409,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-038 InlineSpinnerText ("Loading…" text+spinner pairing)
 
 - **Tier**: Atom · **Purpose**: standard "loading X" composite used in buttons/rows/panels needing a text+spinner pairing without re-deriving CMP-014 usage each time.
-- **Props**: `label: string`.
-- **A11y**: single `role="status"` wrapping both icon and text (avoids double-announcement bug class).
-- **Tokens**: inherits CMP-014/CMP-020.
-- **Storybook**: Default.
+- **Props**: `label: string` · `slowLabel?: string` (replaces `label` after 5 s) · `onCancel?` and `cancelLabel?` (a load, an export or a replay only; never an order submit).
+- **States**: waiting; slow (after 5 s, the slow-path text: an order submit says "Checking with the exchange…" and stays busy); slow with Cancel.
+- **A11y**: single `role="status"` wrapping both icon and text (avoids double-announcement bug class). It is mounted empty with its host and its text inserted when the wait begins; the label is announced once and the slow text once, with no time cap and no elapsed counter.
+- **Tokens**: CMP-014 `sm` (its arc `color.action.primary.default`); text `type.ui.body` + `color.text.secondary`; gap `space.inset.xs`; Cancel a CMP-001 `ghost` `sm`, `space.inset.sm` apart. (Replaces "inherits CMP-014/CMP-020".)
+- **Storybook**: Default, SlowPath, SlowPathWithCancel.
 - **Tests**: unit, visual, axe.
 
 ### CMP-039 FocusRing (utility, non-visual export)
@@ -437,10 +444,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-041 Menu (dropdown/context menu)
 
 - **Tier**: Molecule · **Purpose**: action list triggered by button/right-click (row actions, panel overflow menu).
-- **Props**: `trigger: ReactNode` · `items: {label,icon?,shortcut?,onSelect,danger?,disabled?}[]` · `onOpenChange`.
-- **A11y**: WAI-ARIA "Menu Button" pattern, arrow-key nav, type-ahead, `Esc` closes + returns focus, danger items get `aria-describedby` "destructive action" hint.
-- **Tokens**: `elevation.3`, `color.surface.overlay`.
-- **Storybook**: Default, WithShortcuts, ContextMenu(right-click), Nested submenu.
+- **Props**: `trigger: ReactNode` · `items: {label,icon?,shortcut?,onSelect,danger?,disabled?,disabledReason?,kind?: "action"|"radio"|"checkbox",checked?,group?: {id,label},description?}[]` · `contextTarget?` (opened by a right-click, `Shift+F10` or the Menu key) · `onOpenChange`.
+- **States**: items: default, hover, focus-visible (the CMP-039 ring drawn 2 px inside the item), active, checked (the `check` glyph), disabled (`opacity.disabled`; reached by the arrows, never activated), disabled-with-reason (`docs/design/E09/E09-D09.md` §2.2 T2: the CMP-019 `lock`, the full label in `color.text.tertiary`, the reason as its second line), danger (the last group, after a separator); a submenu open.
+- **A11y**: WAI-ARIA "Menu Button" pattern, arrow-key nav, type-ahead, `Esc` closes + returns focus, danger items get `aria-describedby` "destructive action" hint. `Enter` activates an item and closes the menu; `Space` toggles a checkbox or radio item and keeps it open; `Tab` closes every open menu and moves on from the trigger; disabled and T2 items are reached by the arrows and never activated (a T2 item takes `aria-disabled` + `aria-describedby` → its second line and re-shows its reason with one polite announcement); a danger item's label ends with "…" when it opens CMP-044.
+- **Tokens**: `color.surface.overlay`, `elevation.popover`, `radius.card`, a 1 px `color.border.default` edge and separators; items `size.row.height`, `space.inset.sm`, `space.inset.xs`, `type.ui.body` + `color.text.primary`; hover `color.surface.hover`, active `color.surface.selected`; second lines `type.ui.caption` + `color.text.secondary`; shortcuts `type.num.sm` + `color.text.tertiary`; a danger item's glyph `color.status.danger.strong`; the inset ring `color.focus.ring`; `opacity.disabled`. (Replaces `elevation.3`, a primitive.)
+- **Storybook**: Default, WithShortcuts, ContextMenu(right-click), Nested submenu, Checkable, DisabledWithReason, Danger.
 - **Tests**: unit, visual, axe, keyboard nav + Esc/return-focus.
 
 ### CMP-042 Tabs
@@ -455,37 +463,41 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-043 Dialog (Modal)
 
 - **Tier**: Molecule · **Purpose**: base modal wrapper (confirm dialogs, settings dialogs, indicator config).
-- **Props**: `open` · `onOpenChange` · `title` · `description?` · `size` · `children` · `initialFocusRef?`.
-- **A11y**: `role="dialog"` `aria-modal="true"` `aria-labelledby`/`aria-describedby`, focus-trap, `Esc` closes (unless a destructive-confirm variant disables Esc-as-cancel-shortcut deliberately, documented per instance), focus returns to trigger on close.
-- **Tokens**: `elevation.4`, `color.surface.overlay`, `radius.lg`.
-- **Storybook**: Default, Small, Large, NoEscClose.
+- **Props**: `open` · `onOpenChange` · `title` · `description?` · `size: "sm"|"md"|"lg"` (default `md`; at most 420 / 560 / 960 px wide) · `role?: "dialog"|"alertdialog"` (default `dialog`) · `children` · `initialFocusRef?`.
+- **States**: default; scrolls (the card at most 80 % of the viewport, its body scrolling between a fixed header and footer); busy (the primary action `loading`); reflow (at 200 % zoom the dialog fills the viewport).
+- **A11y**: `role="dialog"` `aria-modal="true"` `aria-labelledby`/`aria-describedby`, focus-trap, `Esc` always cancels before the confirmed send (once it is sent, `Esc` closes the view and cancels nothing), focus returns to trigger on close. Initial focus: `initialFocusRef`, else the first field, else the heading; an `alertdialog` focuses Cancel and has no close button; a press on the scrim cancels a `dialog` and does nothing for an `alertdialog`; the TopBar (the env band, CMP-211) and the shell's live regions stay outside the inert page; when the trigger has gone, focus returns to the host's named fallback.
+- **Tokens**: card `color.surface.overlay`, `elevation.dialog`, `radius.dialog`, a 1 px `color.border.default` edge, `space.dialog.padding`, `space.stack.md`; title `type.ui.heading-sm`; description `type.ui.body` + `color.text.secondary`; the scrim black at `opacity.scrim` (`palette.black`; PROPOSED `color.surface.scrim`, `docs/design/E09/E09-D08.md` A-2), fading in over `motion.duration.normal` while the card appears at once. (Replaces `elevation.4` and `radius.lg`, which are primitives.)
+- **Storybook**: Default, Small, Large, AlertDialog, Scrolling, Busy.
 - **Tests**: unit, visual, axe, focus-trap/return test.
 
 ### CMP-044 ConfirmDialog
 
 - **Tier**: Molecule (composed on CMP-043) · **Purpose**: destructive/irreversible action gate (flatten all, cancel all, Demo→Live switch, delete API key).
-- **Props**: `title` · `message` · `confirmLabel` · `cancelLabel` · `variant: "standard"|"typed"|"hold"` · `typedConfirmValue?: string` (must match, e.g. symbol name) · `holdDurationMs?` (with discrete keyboard fallback per `05-accessibility-standard.md` §3.1.4) · `onConfirm` · `onCancel`.
-- **A11y**: `variant="hold"` always ships a keyboard-operable discrete alternative (press-and-hold OR two sequential `Enter` presses within a visible countdown) — never a mouse-only/timing-only gate.
-- **Tokens**: `color.status.danger`, `elevation.4`.
-- **Storybook**: Standard, TypedConfirm, HoldToConfirm(with keyboard fallback demo).
+- **Props**: `title` · `message` · `consequences?` (the "What this does" group) · `confirmLabel` (names the effect, never "Confirm") · `cancelLabel` · `variant: "standard"|"typed"|"hold"` · `typedConfirmValue?: string` (must match, e.g. symbol name; the object's own name, or a fixed word where the scope has none: `FLATTEN`, `LIVE`) · `holdDurationMs?` (with discrete keyboard fallback per `05-accessibility-standard.md` §3.1.4; default 800 ms, PROPOSED `motion.duration.hold-confirm`, within a 300–2,000 ms setting) · `busy?` · `onConfirm` · `onCancel`.
+- **States**: standard; typed (Confirm natively disabled until the summary has loaded and the field matches exactly: form validity, not a gate); hold (idle, holding with its ring and percentage, armed by a first key press); busy (after Confirm); partial failure (a CMP-027 inline error with Retry); a gated Confirm (`docs/design/E09/E09-D09.md` §2.2 T2, in place, when the session loses its leg while the dialog is open).
+- **A11y**: `variant="hold"` always ships a keyboard-operable discrete alternative (press-and-hold OR two sequential `Enter` presses within a visible countdown) — never a mouse-only/timing-only gate. `role="alertdialog"`; focus starts on Cancel; Confirm ignores an activation in the first 400 ms after the dialog opens and ignores key repeats; `Enter` in the typed field never confirms; the hold keyboard paths are a held `Enter` or two non-repeat presses at least 250 ms apart within 5 s (the first arms and renames the button "Press again to …"), and `Esc` or blur disarms; under reduced motion the ring does not sweep and its percentage text carries the progress; a gated Confirm keeps focus and announces once.
+- **Tokens**: CMP-043's; Confirm a CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`); the consequence box `color.surface.raised`, `radius.card`, `space.inset.md`; the hold ring `color.status.danger.default` over `color.border.strong`, its percentage `type.num.sm` + `color.text.secondary`. (Replaces `color.status.danger`, read as `.default`, and `elevation.4`, a primitive.)
+- **Storybook**: Standard, TypedConfirm, HoldToConfirm(with keyboard fallback demo), Busy, PartialFailure, ConfirmGated.
 - **Tests**: unit, visual, axe, keyboard-only path for hold-variant (explicit CI gate per a11y standard §3.1.4).
 
 ### CMP-045 Toast / Notification
 
 - **Tier**: Molecule · **Purpose**: transient system feedback (order acked, rule fired, connection restored).
-- **Props**: `title` · `description?` · `tone` · `action?: {label,onClick}` · `durationMs?` · `dismissible?`.
-- **A11y**: `role="status"` (polite) default, `role="alert"` (assertive) for `tone="danger"`; never auto-dismisses content the user hasn't had a chance to perceive — pauses on hover/focus, and provides a persistent-log fallback (Notification Center) so nothing is lost if missed (WCAG 2.2.1 no timing loss of info).
-- **Tokens**: `elevation.3`, `color.status.*`.
-- **Storybook**: AllTones, WithAction, PersistentLogLink.
+- **Props**: `title` · `description?` · `kicker?` (the tone's word and the kind) · `tone` (`info`|`success`|`warning`|`danger`) · `action?: {label,onClick}` · `durationMs?` · `persistent?` · `politeness?: "polite"|"assertive"` · `dismissible?`. By default a toast with an `action`, a `danger` tone or an error is persistent, and any other follows the user's toast duration (5 / 10 / 20 s / until dismissed).
+- **States**: the four tones; timed and persistent; focused (every timer in the stack paused); a gated action (`docs/design/E09/E09-D09.md` §2.2 T2, one reason line under the actions); an Undo and its outcome line.
+- **A11y**: a toast is never its own live region: its sentence is written once into CMP-212's polite region, or its assertive region for `tone="danger"`, and `politeness` overrides; never auto-dismisses content the user hasn't had a chance to perceive — pauses on hover/focus, and provides a persistent-log fallback (Notification Center) so nothing is lost if missed (WCAG 2.2.1 no timing loss of info). A toast never takes focus; `Esc` on a focused toast dismisses it; an order cancel offers no Undo.
+- **Tokens**: `color.surface.overlay`, `elevation.popover`, `radius.card`, `space.inset.md`, `space.stack.sm`; a 2 px `border.thick` start edge in `color.status.{tone}.default` and the glyph in `color.status.{tone}.strong`; kicker `type.ui.caption` + `color.text.secondary`, title `type.ui.body-strong` + `color.text.primary`, body `type.ui.body` + `color.text.secondary`, meta `type.num.sm` + `color.text.tertiary`; 360 px wide. (Replaces `elevation.3`, a primitive, and the bare `color.status.*`.)
+- **Storybook**: AllTones, WithAction, PersistentLogLink, Persistent, Focused, ActionGated, Undo.
 - **Tests**: unit, visual, axe, live-region announcement test, pause-on-hover/focus test.
 
 ### CMP-046 Drawer (side panel)
 
 - **Tier**: Molecule · **Purpose**: slide-in panel (footprint cell detail, rule node inspector, symbol info).
-- **Props**: `open` · `onOpenChange` · `side: "left"|"right"` · `title` · `children`.
-- **A11y**: same contract as Dialog (focus-trap, `Esc`, return focus) but non-modal option available (`modal?: boolean`) for drawers meant to coexist with chart interaction.
-- **Tokens**: `elevation.3`, `motion.slide`.
-- **Storybook**: Modal, NonModal, LeftSide, RightSide.
+- **Props**: `open` · `onOpenChange` · `side: "left"|"right"` · `title` · `modal?: boolean` (default `true`; `false` beside a live chart) · `initialFocusRef?` · `children`; the width is host data (480 px for detail, 320 / 360 px for docked inspectors; full width at a viewport of 720 CSS px or less).
+- **States**: default; loading (CMP-015 rows, `aria-busy`); narrow (full width).
+- **A11y**: same contract as Dialog (focus-trap, `Esc`, return focus) but non-modal option available (`modal?: boolean`) for drawers meant to coexist with chart interaction. A non-modal drawer is a `role="dialog"` without `aria-modal`: Tab moves through it and on to the page after its opener; focus returns to the opener, or to the host's fallback when the opener has gone; a modal drawer's scrim leaves the TopBar and the shell's live regions outside the inert page.
+- **Tokens**: `color.surface.overlay`; `elevation.dialog` (modal, over the scrim) or `elevation.popover` (non-modal); a 1 px `color.border.default` inner edge and header rule; `space.panel.padding`, `space.stack.md`; title `type.ui.heading-sm`; it slides over `motion.duration.normal` with `motion.easing.decelerate` (closing `accelerate`; motion-reduce: instant). (Replaces `elevation.3`, a primitive, and `motion.slide`, which is not a shipped token.)
+- **Storybook**: Modal, NonModal, LeftSide, RightSide, Loading, Narrow.
 - **Tests**: unit, visual, axe, focus-trap test.
 
 ### CMP-047 DatePicker / DateRangePicker
@@ -889,28 +901,29 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### CMP-089 ForbiddenState (403)
 
-- **Tier**: Organism · **Purpose**: full-page state for a route disallowed at the server (defence in depth alongside hidden-nav per §0.5.5).
-- **Props**: `reason?`.
-- **A11y**: `h1` "Access denied", explanatory text, link home.
-- **Tokens**: inherits CMP-026.
-- **Storybook**: Default.
+- **Tier**: Organism · **Purpose**: full-page state for a route disallowed at the server (defence in depth alongside hidden-nav per §0.5.5). It renders `docs/design/E09/E09-D09.md`'s T4 route landing and the step-3 never-had landing, never a T2 lock.
+- **Props**: `code` · `requiredPermissions?` · `instance?` · `variant: "never-had"|"withdrawn"` · `backHref` · `copyDetails` (`docs/design/E09/E09-D09.md` §8 DS-3).
+- **A11y**: `h1` per `docs/design/E09/E09-D09.md` §10 ("You don't have access to this" / "Your access changed"), never "Access denied"; the vocabulary sentence; "Back to your workspace" and "Copy details"; "Ref {instance}", selectable, only when a 403 body was received; focus moves to the `h1` on navigation and, after an in-place replacement, only to restore focus the replacement unmounted; the replacement is announced once (§4.4).
+- **Tokens**: inherits CMP-026, plus `type.ui.heading-lg` (the `h1`), `type.num.base` (the account echo) and `type.num.sm` (the Ref).
+- **Storybook**: Default, Withdrawn, AccountVariant, NoRef.
 - **Tests**: unit, visual, axe.
 
 ### CMP-090 NotFoundState (404)
 
 - **Tier**: Organism · **Purpose**: unmatched route fallback.
-- **Props**: `path?`.
-- **Tokens**: inherits CMP-026.
-- **Storybook**: Default.
+- **Props**: `path` (echoed as text) · `tryRoutes` (the session's permitted top-level routes) · `variant?: "unknown"|"deleted"`.
+- **A11y**: `h1` "Page not found"; "There's nothing at {route}." with the route as plain text; "Try:" with the links as a list; identical copy, title and analytics for an admin route without `admin:read` and for an unknown route (`docs/design/E09/E09-D09.md` §6); focus to the `h1` on navigation.
+- **Tokens**: inherits CMP-026, plus `type.ui.heading-lg` and `type.num.sm` (the route).
+- **Storybook**: Default, Deleted.
 - **Tests**: unit, visual, axe.
 
 ### CMP-091 GlobalErrorBoundaryFallback
 
 - **Tier**: Organism · **Purpose**: React error-boundary fallback screen (uncaught render error), offers reload/report.
-- **Props**: `error` · `onReload` · `onReport`.
-- **A11y**: `role="alert"`, focus moves to the fallback heading on mount.
-- **Tokens**: inherits CMP-027.
-- **Storybook**: Default.
+- **Props**: `error` · `scope: "panel"|"app"` · `correlationId` · `onReload` · `onReport` · `onRemovePanel?` (panel) · `onSafeMode?` (app) · `repeated?` · `protectionNote?` (the host's sentence where true).
+- **A11y**: one assertive announcement per crash — a panel's through the shell's pre-rendered region, the app scope as its own `role="alert"`; focus moves to the fallback heading only when the crash unmounted the focused element (a restoration, `docs/design/E09/E09-D09.md` §9.4); the stack sits behind a "Technical details" disclosure; the Ref is selectable.
+- **Tokens**: inherits CMP-027, plus `type.ui.heading-sm` (panel), `type.ui.heading-lg` (app), `type.num.sm` (the Ref) and `color.surface.raised` (the details).
+- **Storybook**: Default, App, Details, Repeated.
 - **Tests**: unit, visual, axe.
 
 ### CMP-092 DegradedModeBanner
