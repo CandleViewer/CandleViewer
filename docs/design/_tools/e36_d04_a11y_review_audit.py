@@ -566,15 +566,15 @@ def keymap_matrix(cat14: str) -> dict[str, Any]:
     screens, _groups, perr = kl.parse_catalogue(cat14)
     cov = kl.check_coverage(km, cat14)
     marker = "`Ctrl+S` save draft; `Ctrl+Enter` validate"
-    line_1764 = next((ln for ln in cat14.splitlines() if marker in ln), "")
+    line_1779 = next((ln for ln in cat14.splitlines() if marker in ln), "")
     a01 = (
         "- **Interactions/hotkeys:** `Ctrl+S` / `Ctrl+Enter` save draft (the commit chord); "
         "`Alt+G` switch to graph; reorder, duplicate and remove through the row menu (Shift+F10); "
         "Alt+Shift+↑/↓ reorder — a candidate, pending the keymap owner."
     )
-    cov_a01 = kl.check_coverage(km, cat14.replace(line_1764, a01)) if line_1764 else ["no :1764"]
+    cov_a01 = kl.check_coverage(km, cat14.replace(line_1779, a01)) if line_1779 else ["no :1779"]
     a01_bad = a01.replace("(Shift+F10)", "(`Shift+F10`)")
-    cov_bad = kl.check_coverage(km, cat14.replace(line_1764, a01_bad)) if line_1764 else []
+    cov_bad = kl.check_coverage(km, cat14.replace(line_1779, a01_bad)) if line_1779 else []
     chord_rows = [
         _chord_row(k, p, by_bind, screens, map05, sr_hits, reserved_all) for k, p in rows(CHORDS)
     ]
