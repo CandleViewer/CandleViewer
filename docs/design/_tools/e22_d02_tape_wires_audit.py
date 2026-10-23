@@ -10,9 +10,12 @@ tape and bubble geometry is re-derived from the px literals of `docs/design/E22/
 engine constants are quoted as text and the spec's strings are gated. Every section names its
 source.
 
-Usage: python3 -I docs/design/_tools/e22_d02_tape_wires_audit.py [--json] [--spec P] [--draft P]
+Usage: python3 -I docs/design/_tools/e22_d02_tape_wires_audit.py [--json] [--check]
+       [--spec P] [--draft P]
 Exit 1 only on a gated contrast FAIL, a radii or memo 3.9 mismatch, a changed quoted constant or a
-failed string gate; the E13-D02 13 reproduction is reported, never adjusted. Stdout is UTF-8.
+failed string gate; the E13-D02 13 reproduction is reported, never adjusted. `--check` also gates
+the printed numbers against the spec's own sentences (section I) and exits 1 on drift. Stdout is
+UTF-8.
 """
 
 from __future__ import annotations
@@ -69,7 +72,7 @@ def rows_of(txt: str, sep: str = "|") -> list[list[str]]:
     return [ln.split(sep) for ln in txt.strip().splitlines()]
 
 
-TOK = dict(rows_of("""canvas|color.surface.canvas
+TOK_TXT = """canvas|color.surface.canvas
 raised|color.surface.raised
 sunken|color.surface.sunken
 hover|color.surface.hover
@@ -84,7 +87,8 @@ buy|color.buy.default
 sell|color.sell.default
 buy.subtle|color.buy.subtle
 sell.subtle|color.sell.subtle
-warn.subtle|color.status.warning.subtle"""))
+warn.subtle|color.status.warning.subtle"""
+TOK = dict(rows_of(TOK_TXT))
 
 
 def rgb(h: str) -> tuple[int, int, int]:
@@ -302,6 +306,114 @@ def consts_ring(limits: Path) -> str:
     return v
 
 
+UNITS: tuple[str, ...] = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight")
+UNITS += ("nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen")
+UNITS += ("seventeen", "eighteen", "nineteen")
+TENS = ("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+
+
+def words(n: int) -> str:
+    """A count as the spec's prose spells it (0-99): "seventeen", "twenty-three"."""
+    if n < 20:
+        return UNITS[n]
+    t, u = divmod(n, 10)
+    return TENS[t - 2] + (f"-{UNITS[u]}" if u else "")
+
+
+def sp(n: float) -> str:
+    """A number as the spec spells it: thousands with a space, no trailing .0 ("1 244", "12.5")."""
+    i = int(n)
+    return f"{i:,}".replace(",", " ") if float(n) == i else f"{n:g}"
+
+
+X, NDASH = "\u00d7", "\u2013"  # the spec's multiplication sign and en dash, spelled as escapes
+
+
+def tenths(vals: list[float]) -> str:
+    return " / ".join(f"{v:.1f}" for v in vals)
+
+
+def hundredths(vals: list[float]) -> str:
+    return " / ".join(f"{v:.2f}" for v in vals)
+
+
+def drift_phrases(
+    tape: dict[str, Any],
+    fill: dict[str, dict[str, float]],
+    rad: dict[str, dict[str, float]],
+    side: dict[str, float],
+    p80: float,
+    p99: float,
+    sep: dict[str, list[float]],
+    sim: dict[str, list[float]],
+    rows: list[dict[str, Any]],
+    cnt: dict[str, int],
+) -> list[str]:
+    """`--check`: the printed numbers spelled as the spec's own sentences spell them (2, 5, 8,
+    14, 15, 21). A sentence the spec no longer carries is drift and fails the run (the 15 row-count
+    drift the text round 1 found passed the plain run, which prints these numbers and gates
+    none)."""
+    f1, f2 = tape["frames"]["1280x800"], tape["frames"]["2560x1440"]
+    rc, rf = f1["rows"]["compact"], f1["rows"]["comfortable"]
+    rc2, rf2 = f2["rows"]["compact"], f2["rows"]["comfortable"]
+    oc, of_, oc2, of2 = (
+        f1["overscan"]["compact"],
+        f1["overscan"]["comfortable"],
+        f2["overscan"]["compact"],
+        f2["overscan"]["comfortable"],
+    )
+    mw, notice = tape["min_width_px"], f1["rows_with_notice"]
+    dark = {(r["fg"], r["bg"]): float(r["ratio"][0]) for r in rows if r["role"] != "scrim"}
+    scrim = [float(r["ratio"][0]) for r in rows if r["role"] == "scrim"]
+    canvas = [dark[(TOK[t], TOK["canvas"])] for t in ("t1", "t2", "t3")]
+    raised = [dark[(TOK[t], TOK["raised"])] for t in ("t1", "t2", "t3")]
+    rates = [str(r) for r in RATES]
+    return [
+        (
+            f"{sp(f1['log_px']['compact'])} px at 1280{X}800 → {rc} rows; "
+            f"{sp(f2['log_px']['compact'])} px at 2560{X}1440 → {rc2}"
+        ),
+        (
+            f"(comfortable: {sp(f1['log_px']['comfortable'])} → {rf}; "
+            f"{sp(f2['log_px']['comfortable'])} → {rf2})"
+        ),
+        f"{oc} compact / {of_} comfortable at 1280{X}800; {oc2} / {of2} at 2560{X}1440",
+        f"{notice['compact']} rows at 1280{X}800 (comfortable {notice['comfortable']}; tool)",
+        f"{mw['compact']} px minimum width compact",
+        f"{mw['comfortable']} px",
+        f"{tape['min_width_one_size_px']} px",
+        f"{tape['rows_600']['comfortable']} rows per 600 px",
+        (
+            f"{rc} visible + {DIVIDERS} dividers + {oc} overscan at 1280{X}800 compact; "
+            f"{rc2} + {DIVIDERS} + {oc2} at 2560{X}1440"
+        ),
+        "fills in "
+        + " / ".join(sp(fill[r]["ring_default_s"]) for r in rates)
+        + " s at 50 / 500 / 2 000 prints/s (50 000: "
+        + " / ".join(sp(fill[r]["ring_max_s"]) for r in rates)
+        + " s)",
+        " / ".join(sp(fill[r]["park_prints"]) for r in rates) + " prints",
+        " / ".join(f"{tape['rates'][r]['prints_per_frame']:.2f}" for r in rates)
+        + " prints per 60 Hz frame",
+        " / ".join(sp(tape["rates"][r]["dwell_ms"]["compact"]) for r in rates) + " ms compact",
+        tenths([rad[k]["sqrt"] for k in ("1", "1.5", "2", "3", "4")]),
+        tenths([side["r3"], side["r10"], side["r24"]]),
+        f"{sp(round(p80))} USDT",
+        f"eff. {p99 / 1000:.0f}k USDT",
+        hundredths(sep["hue"]),
+        hundredths(sep["fill"]),
+        f"{min(sim['glyph on raised']):.2f} / {min(sim['mark on canvas']):.2f}",
+        hundredths(sim["sell glyph on sell.subtle"]),
+        hundredths(canvas),
+        hundredths(raised),
+        hundredths(scrim),
+        f"P1{NDASH}P{cnt['pause_transitions']}",
+        f"{words(cnt['states'])} states",
+        f"{words(cnt['c_own'])} own C-rows",
+        f"{words(cnt['g_own'])} own G-rows",
+    ]
+
+
 def gates(text: str, label: str, constitution: str, problems: list[str]) -> dict[str, Any]:
     missing = [s for s in MUST if s not in text]
     problems += [f"{label}: missing {s!r}" for s in missing]
@@ -328,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--check", action="store_true", help="fail on drift vs the spec's sentences")
     ap.add_argument("--spec", default=str(ROOT / "docs" / "design" / "E22" / "E22-D02.md"))
     ap.add_argument("--draft", default=None)
     a = ap.parse_args(argv)
@@ -596,6 +709,15 @@ def main(argv: list[str] | None = None) -> int:
     cnt: dict[str, int] = {k: len(re.findall(rx, spec_text, re.MULTILINE)) for k, rx in COUNT_RX}
     cnt.update({"tiers": 3, "radii": 5, "pairs_rows": len(rows), "pairs_fail": fails})
     say("- " + "; ".join(f"{k} {v}" for k, v in cnt.items()))
+    if a.check:  # section I: the printed numbers must still read as the spec's sentences
+        say("\n## I. Drift check (--check): the printed numbers as the spec's own sentences\n")
+        drift = drift_phrases(tape, fill, rad, side, p80, p99, sep, sim, rows, cnt)
+        low = spec_text.lower()
+        missing_drift = [d for d in drift if d.lower() not in low]
+        for d in drift:
+            say(f"- {'DRIFT' if d in missing_drift else 'OK'}: {d}")
+        problems += [f"drift: the spec lacks {d!r}" for d in missing_drift]
+        out["drift"] = {"phrases": len(drift), "missing": missing_drift}
     out["counts"], out["problems"] = cnt, problems
     if quiet:
         print(json.dumps(out, indent=1, ensure_ascii=False))
