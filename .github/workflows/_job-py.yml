@@ -325,6 +325,9 @@ jobs:
       # when the daemon lacks it, a cold pull mid-test. Pull it here, with retries and a pinned mirror.
       - name: Pre-pull postgres:16-alpine (CI-INFRA-001)
         working-directory: ${{ github.workspace }}
+        env:
+          # 8 pulls x 45 s + 220 s of waits = 580 s, inside this job's 10-minute timeout.
+          PREPULL_PULL_TIMEOUT: "45"
         run: tools/ci/prepull_images.sh postgres
 
       - name: pytest perf budgets (C-13.9, no coverage tracing, isolated)

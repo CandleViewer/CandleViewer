@@ -470,7 +470,11 @@ index alone, removing nothing.
   no digest, the pins in `infra/images/prepull.txt` and `infra/images/PINS.md` disagree: fix them
   in one PR. QuestDB and Grafana have no mirror, so only a re-run helps there. A green run's
   step summary lists which registry served each image and its digest. A `429` or `Rate exceeded` from
-  the mirror is a re-run case too. Each pull is bounded to 120 s.
+  the mirror is a re-run case too. Each pull is bounded to 120 s
+  (`PREPULL_PULL_TIMEOUT`; `py-perf` sets 45 s to fit its job timeout). For the compose Postgres
+  the mirror holds only where the daemon records a digest on `docker tag` (the containerd image
+  store); on a daemon that does not, the step fails with the code, naming the compose reference
+  that does not resolve, and a re-run is the answer.
 
 ### CI-E2E-* / CI-A11Y-* — Playwright + accessibility
 

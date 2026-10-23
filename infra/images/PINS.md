@@ -31,8 +31,9 @@ All 15 pins are verified present in their registry by `--check` (with 3x backoff
 
 Two sources, one image (#4301): `postgres:16-alpine`, which the test jobs pull before their tests
 (`tools/ci/prepull_images.sh`), is pinned on Docker Hub and on the Public ECR mirror at the same
-digest; the script fails unless both pins agree. `postgres:16.4` (compose) has the same two sources. QuestDB and Grafana have no official mirror and
-are retried on Docker Hub only.
+digest; the script fails unless both pins agree. `postgres:16.4` (compose) has the same two sources, but its mirror serves the compose step only
+where the daemon records a digest on `docker tag`; the script checks that and fails with the code
+otherwise. QuestDB and Grafana have no official mirror and are retried on Docker Hub only.
 
 minio: `minio/minio:RELEASE.2024-09-13T20-26-02Z` is no longer anonymously served on Docker Hub or
 quay.io (#1586). Nearest published equivalent is the same-date build `bitnamilegacy/minio:2024.9.13`

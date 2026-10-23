@@ -67,8 +67,9 @@ jobs:
         run: uv sync --frozen --all-groups
 
       # #4301: testcontainers pulls postgres:16-alpine mid-test when the daemon lacks it, and the
-      # compose steps below pull QuestDB, Grafana and postgres:16.4. Pull them all here, with retries; Postgres
-      # also has a pinned mirror (tools/ci/prepull_images.sh, infra/images/prepull.txt).
+      # compose steps below pull QuestDB, Grafana and postgres:16.4. Pull them all here, with
+      # retries; Postgres also has a pinned mirror (tools/ci/prepull_images.sh,
+      # infra/images/prepull.txt).
       - name: Pre-pull postgres, compose postgres, questdb and grafana images (CI-INFRA-001)
         run: tools/ci/prepull_images.sh postgres postgres-compose questdb grafana
 

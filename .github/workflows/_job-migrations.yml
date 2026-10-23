@@ -70,6 +70,10 @@ jobs:
       - name: uv sync --frozen (fails if pyproject.toml drifted from uv.lock)
         run: uv sync --frozen --all-groups
 
+      - name: Pre-pull postgres:16-alpine (CI-INFRA-001)
+        working-directory: ${{ github.workspace }}
+        run: tools/ci/prepull_images.sh postgres
+
       - name: Migration lockfile integrity (#1556, rule 9 — forward-only in production)
         working-directory: .
         env:
@@ -148,10 +152,6 @@ jobs:
 
       - name: Concurrent-boot advisory-lock integration test
         run: uv run pytest -p no:cacheprovider -m "integration and not flaky" tests/integration/migrations/test_boot_advisory_lock_integration.py --no-cov
-
-      - name: Pre-pull postgres:16-alpine (CI-INFRA-001)
-        working-directory: ${{ github.workspace }}
-        run: tools/ci/prepull_images.sh postgres
 
       - name: cv_app has no DDL privilege (integration, testcontainers, #1556)
         run: uv run pytest -p no:cacheprovider -m "integration and not perf and not flaky" tests/integration/auth tests/integration/storage --no-cov
