@@ -1,5 +1,11 @@
 # hcl-worker-2's board sheets, drawn by the hpe lanes
 
+**HOLD (02:2xZ, 2026-10-23): draw nothing from this folder until the orchestrator names a batch for your window.**
+
+- #4138 (E42-D03) and #4178 (E32-D02) are back in their standing-T2 gate (orchestrator, 01:38Z). The sheets of any
+  board the fold changes will be regenerated here.
+- #4070's and #4046's research boards are being drawn in hcl-worker-2's own window (since 01:5xZ, after [PENPOT-BACK]).
+
 ## What this is
 
 RelayRoom part hcl-worker-2 (Anvil) prepared these Penpot board sheets for three design PRs:
