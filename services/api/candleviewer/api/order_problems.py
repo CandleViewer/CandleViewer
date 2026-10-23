@@ -9,7 +9,8 @@ SR-E29-09). A row that pages pages the operator and answers the redacted 500, it
 only, as does an error no row names, unpaged; an error that is no `OrderRefused` answers its code
 and title only too, as its text may name an id. `outcome_problem(outcome)` renders a recorded 429
 or 502 (`SubmitOutcome`): `Retry-After` on a first 429 only (22 `placeOrder`), a 502's return
-code alone.
+code alone. The repeat of either answers `Idempotency-Replayed: true` (22, Idempotency), and a
+repeated 429, which is not retryable under its key, says to send the order again under a new one.
 
 A plain module, like `api/exchange_keys.py`'s problems, with no router (the composition guard
 fails an `api` module whose router `create_app` leaves out): slice 3's route calls it. Every
@@ -72,18 +73,25 @@ def outcome_problem(outcome: SubmitOutcome) -> JSONResponse:
     """A recorded 429 or 502 (module docstring); a 202 is an acceptance, never a problem."""
     if outcome.status == 429:
         rate = PROBLEMS[RateBudgetExceeded]
+        if outcome.replayed:  # recorded under the key: no `Retry-After`, a new key is the way on
+            return _response(rate, replayed=True, detail=RateBudgetExceeded.replayed_detail)
         detail = RateBudgetExceeded.default_detail
         return _response(rate, detail=detail, retry_after_seconds=outcome.retry_after_s)
     if outcome.status == 502:
         exchange = None if outcome.ret_code is None else {"ret_code": outcome.ret_code}
         rejected = PROBLEMS[ExchangeRejected]
-        return _response(rejected, detail=ExchangeRejected.default_detail, exchange=exchange)
+        return _response(
+            rejected,
+            replayed=outcome.replayed,
+            detail=ExchangeRejected.default_detail,
+            exchange=exchange,
+        )
     raise ValueError("a 202 is an acceptance, never a problem")
 
 
-def _response(problem: Problem, **members: object) -> JSONResponse:
+def _response(problem: Problem, *, replayed: bool = False, **members: object) -> JSONResponse:
     """The body of `problem`'s code with each member that is set; `retry_after_seconds` sets the
-    `Retry-After` header too."""
+    `Retry-After` header too, and a repeat of a recorded answer `Idempotency-Replayed: true`."""
     code = problem.code
     body: dict[str, object] = {
         "type": f"{_TYPE}{code}",
@@ -94,6 +102,8 @@ def _response(problem: Problem, **members: object) -> JSONResponse:
     body |= {name: value for name, value in members.items() if value is not None}
     retry = members.get("retry_after_seconds")
     headers = {} if retry is None else {"Retry-After": str(retry)}
+    if replayed:
+        headers["Idempotency-Replayed"] = "true"
     return JSONResponse(body, problem.status, headers, media_type=_MEDIA)
 
 

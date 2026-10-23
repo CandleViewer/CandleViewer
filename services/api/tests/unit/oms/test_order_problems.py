@@ -264,6 +264,15 @@ def test_every_refusal_the_table_answers_has_its_detail_pinned() -> None:
     assert {cls for cls in PROBLEMS if issubclass(cls, OrderRefused)} <= set(_DETAILS)
 
 
+def test_a_repeated_429_has_its_own_fixed_detail_sending_the_order_again_under_a_new_key() -> None:
+    """22 `placeOrder`: the 429 at the send is recorded under the key and is not retryable under
+    it, so its repeat's detail, written out independently of the class, is no "retry later"."""
+    assert RateBudgetExceeded.replayed_detail == (
+        "The exchange rate budget was spent, so the order was not sent; "
+        "send it again under a new Idempotency-Key."
+    )
+
+
 def test_environment_mismatch_names_both_environments() -> None:
     mismatch = EnvironmentMismatch(order_environment="demo", route_environment="live")
     assert (mismatch.order_environment, mismatch.route_environment) == ("demo", "live")

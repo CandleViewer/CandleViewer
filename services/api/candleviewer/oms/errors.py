@@ -369,9 +369,15 @@ class OrderNotAmendable(OrderRefused):
 
 class RateBudgetExceeded(OrderRefused):
     """`RATE_BUDGET_EXCEEDED` (24 Sec.8.7): the per-UID budget gave no token within its bounded
-    wait, so nothing was sent. `retry_after_s` is the answer's `Retry-After`."""
+    wait, so nothing was sent. `retry_after_s` is the answer's `Retry-After`. The refusal at the
+    send is recorded under the request's key and is not retryable under it (22 `placeOrder`), so
+    its repeat answers `replayed_detail`: send the order again under a new key."""
 
     default_detail = "The exchange rate budget is spent; retry later."
+    replayed_detail: ClassVar[str] = (
+        "The exchange rate budget was spent, so the order was not sent; "
+        "send it again under a new Idempotency-Key."
+    )
 
     def __init__(self, *, retry_after_s: int) -> None:
         super().__init__()

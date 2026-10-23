@@ -270,18 +270,54 @@ def test_a_first_429_renders_as_the_refusal_before_the_persist_does() -> None:
     assert response.headers["retry-after"] == "3"
 
 
-def test_a_repeated_429_carries_no_retry_after() -> None:
-    """22 `placeOrder`: the 429 at the send is not retryable under its key."""
+def test_a_repeated_429_is_not_retryable_under_its_key_and_says_to_use_a_new_one() -> None:
+    """22 `placeOrder`: the 429 at the send is recorded under its key, so the repeat carries no
+    `Retry-After`, in the header or the body, and its detail names the way on, a new key, rather
+    than telling the client to retry."""
     response = outcome_problem(_outcome(429, replayed=True))
     body = _body(response)
     _validate(_schema(429), body)
     assert "retry_after_seconds" not in body and "retry-after" not in response.headers
+    assert body["detail"] == RateBudgetExceeded.replayed_detail != RateBudgetExceeded.default_detail
+    assert "new Idempotency-Key" in body["detail"] and "retry" not in body["detail"].lower()
 
 
 @pytest.mark.parametrize("ret_code", [110007, None])
 def test_a_recorded_502_renders_as_the_business_rejection_does(ret_code: int | None) -> None:
     response = outcome_problem(_outcome(502, ret_code=ret_code))
     assert bytes(response.body) == bytes(order_problem(ExchangeRejected(ret_code=ret_code)).body)
+
+
+@pytest.mark.parametrize(
+    ("status", "fields"),
+    [(429, {"retry_after_s": 3}), (502, {"ret_code": 110007})],
+    ids=["429", "502"],
+)
+def test_a_first_answer_is_no_replay(status: Literal[429, 502], fields: dict[str, Any]) -> None:
+    assert "idempotency-replayed" not in outcome_problem(_outcome(status, **fields)).headers
+
+
+@pytest.mark.parametrize(
+    ("status", "fields"),
+    [(429, {}), (502, {"ret_code": 110007}), (502, {})],
+    ids=["429", "502", "502_no_ret_code"],
+)
+def test_a_repeated_429_or_502_says_it_is_a_replay_and_has_no_retry_after(
+    status: Literal[429, 502], fields: dict[str, Any]
+) -> None:
+    """22 (Idempotency, `placeOrder`): the 429 and the 502 a request recorded are replayed from
+    the anchor with `Idempotency-Replayed: true` and no `Retry-After`."""
+    response = outcome_problem(_outcome(status, **fields, replayed=True))
+    _validate(_schema(status), _body(response))
+    assert response.headers["idempotency-replayed"] == "true"
+    assert "retry-after" not in response.headers
+
+
+@pytest.mark.parametrize("ret_code", [110007, None])
+def test_a_repeated_502_is_its_first_answers_body(ret_code: int | None) -> None:
+    first = outcome_problem(_outcome(502, ret_code=ret_code))
+    repeat = outcome_problem(_outcome(502, ret_code=ret_code, replayed=True))
+    assert bytes(repeat.body) == bytes(first.body)
 
 
 def test_an_acceptance_is_never_a_problem() -> None:
