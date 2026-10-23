@@ -42,7 +42,7 @@ What it computes (each section names its source so a reviewer can re-grep it):
    pack's section 13; counts (total, answered, routed, unowned = 0); the owner histogram.
 8. The glyph union from the GL-string literal, compared both ways with ``26`` section 3.7's set.
 9. The asset counts: E11-D05 section 7's pattern rows, CR-6's icon names, the fonts by token,
-   files at the base, the A / C / G / Q / hand-off / walkthrough counts.
+   files at the base, the A / C / G / Q / hand-off / walkthrough counts and the RULED Q count.
 10. String gates: no fabricated-session phrase, no local path, no Penpot host (a generic pattern
     that names no domain), the ``Partial:`` line and no closing keyword in the draft (``--draft``).
 
@@ -1006,10 +1006,14 @@ Menu | * | ↓ | item name, state ("checked" / "not checked"), description or re
   §12.1 :459
 Menu | * | Home | none (silent by design — "—") | E11-D03 §12.1 :460
 Menu | * | End | none (silent by design — "—") | E11-D03 §12.1 :460
-Menu | * | Enter | the state change in the "Price scale: …" grammar, or nothing for a disabled item
-  | E11-D03 §12.1 :462
-Menu | * | Space | the state change in the "Price scale: …" grammar, or nothing for a disabled item
-  | E11-D03 §12.1 :462
+Menu | * | Enter | the state change in the "Price scale: …" grammar; nothing for a data-state
+  disabled item (E11-D03 §3.5); on a T2 item (T2-01…T2-04) nothing changes and the reason is
+  re-shown as its second line, announced once, politely (§8.1; E09-D09 §9.3 :238) | E11-D03 §12.1
+  :462
+Menu | * | Space | the state change in the "Price scale: …" grammar; nothing for a data-state
+  disabled item (E11-D03 §3.5); on a T2 item (T2-01…T2-04) nothing changes and the reason is
+  re-shown as its second line, announced once, politely (§8.1; E09-D09 §9.3 :238) | E11-D03 §12.1
+  :462
 Menu | * | Esc | none (silent by design — "—"); focus returns to the opening stop | E11-D03 §12.1
   :463
 Menu | * | Tab | the next stop's name | E11-D03 §12.1 :464
@@ -1018,8 +1022,9 @@ Dialog | * | Tab | none specified — the focused field's name (AT) inside the t
 Dialog | * | Enter | one polite announcement: "Jumped to 15 Sep 13:42 UTC — close 64,210, delta
   \u2212128. Following paused." (a gap landing: "No data at 02:12 — landed on 02:15, close …") |
   E11-D03 §7.5 :360
-Dialog | * | Space | none specified — a segment toggles / a button presses (AT reads the state) |
-  E11-D03 §12.2 :476
+Dialog | * | Space | none specified — a segment toggles / a button presses (AT reads the state); on
+  a T2 quick jump (T2-08 / T2-09) nothing presses and the reason is re-shown in its target line,
+  announced once, politely (§8.1) | E11-D03 §12.2 :476
 Dialog | * | Esc | none — chart and cursor unchanged; the live region says nothing | E11-D03 §7.5
   :356; §12.2 :477
 Dialog | * | PageUp | none specified — the calendar moves by month (AT reads the day) | E11-D03
@@ -1417,7 +1422,8 @@ SCR-044 error block and primary action | DOM | `color.text.primary` on `color.st
   :301\u2013304; §14.2 :670
 SCR-044 T2 quick jumps (T2-08, T2-09) | DOM | label + lock glyph `color.text.tertiary`; reason
   `color.text.secondary`; fill `color.surface.raised` + `color.border.default` hairline — never
-  `color.text.disabled` | CSS | text | E11-D07 §9.5 :447\u2013448; E09-D09 §2.2 :46
+  `color.text.disabled`, never `opacity.disabled` | CSS | text | E11-D07 §9.5 :447\u2013448; E09-D09
+  §2.2 :46
 SCR-031 Scales tab (CMP-043 lg) | DOM | `color.surface.overlay`; `elevation.dialog`;
   `radius.dialog`; helper `color.text.tertiary`; toggles `CR:color.border.field` (D03-CR-5) | CSS |
   text / surface | E11-D03 §6.1 :209\u2013245; §14.2 :663
@@ -1444,7 +1450,8 @@ SCR-048 card | DOM | `color.surface.raised`; rule + glyph `color.status.danger.s
 imbalance flag bar | DOM | `color.footprint.imbalance` | CSS | non-text | E11-D04 §20 :803
 T2 row-menu write items (CMP-079 + CMP-019 `lock`) | DOM | label + lock glyph `color.text.tertiary`;
   reason `color.text.secondary`; fill `color.surface.raised` + `color.border.default` hairline —
-  never `opacity.disabled` | CSS | text | E11-D07 §9.5 :440\u2013443; E09-D09 §2.2 :46
+  never `color.text.disabled`, never `opacity.disabled` | CSS | text | E11-D07 §9.5 :440\u2013443;
+  E09-D09 §2.2 :46
 SCR-047 block (CMP-026) | DOM | `color.surface.canvas`; heading `type.ui.heading-sm`; cause
   `color.text.secondary`; timestamp `font.family.mono` `color.text.primary`; link `color.text.link`
   | CSS | text | E11-D04 §11.1 :336
@@ -1626,10 +1633,12 @@ SCR-030 chassis | empty / error | toolbar and status rows kept; CMP-029 placehol
   SCR-047 / SCR-048 content (E11-D04) | same | same | see S-112 / S-117 (SCR-047's and SCR-048's
   edge-density rows) | E11-D04's words | E11-D04-08-empty-reasons-dark.png;
   E11-D04-10-error-engine.png | E11-D02 §10 :420
-SCR-030 chassis | empty history (SCR-047 1a / 1b) | heading + cause + the `14` §0.5 rule 3 stem; CTA
-  only for `recording:write` (sentence form otherwise) | same | same | long symbol names wrap at 200
-  % | the heading and the timestamp | E11-D04-08-empty-reasons-dark.png | `14` :684; E11-D04 §11.2
-  :338
+SCR-030 chassis | empty history (SCR-047 1a / 1b; T2-06) | heading + cause + the `14` §0.5 rule 3
+  stem; CTA "Record this symbol" for the Owner only (`recording:write`, Owner-only by the 2026-10-20
+  ruling); Manager / Viewer: the T2-06 sentence form, `rbac.owner_only` "Only the owner can start
+  recording." (`rbac.view_as` first while viewing as) — T2 per §8.1 | same | same | long symbol
+  names wrap at 200 % | the heading and the timestamp | E11-D04-08-empty-reasons-dark.png (F-27 /
+  F-28 re-draw the sentence) | `14` :684; E11-D04 §11.2 :338, :347; E11-D07 §9.5 T2-06 :445
 SCR-030 chassis | symbol delisted / paused (SCR-047 3) | heading "instrument not trading" + cause;
   live-data sentence only where true | same | same | long `status_reason` wraps at 200 % | the
   heading | E11-D04-08-empty-reasons-dark.png | `14` :684; E11-D04 §11.2 :338
@@ -1694,9 +1703,9 @@ SCR-043 price-scale menu | empty | n/a (fixed items); "Merge indicator scales" a
   edge-density row) | the reason lines | E11-D03-01-price-scale-menu.png | E11-D03 §10 :401
 SCR-043 price-scale menu | loading | none (synchronous) | n/a | n/a | n/a | n/a | text-only —
   E11-D03 :401 | E11-D03 §10 :401
-SCR-043 price-scale menu | error | the disabled Logarithmic item with its inline D4 reason; after a
-  D5 fallback the one-shot announcement | same | same | the reason line always visible | the reason
-  sentence | E11-D03-01-price-scale-menu.png | E11-D03 §10 :401
+SCR-043 price-scale menu | error | the disabled Logarithmic item with its inline E11-D03 D4 reason
+  (a data state, not T2); after a D5 fallback the one-shot announcement | same | same | the reason
+  line always visible | the reason sentence | E11-D03-01-price-scale-menu.png | E11-D03 §10 :401
 SCR-043 price-scale menu | populated | Linear ✓ · Lock ☑ · Invert ☐ · Merge ☐ · Scale price only ☐ ·
   Reset · Move scale · Scale settings…; focused / hover rows | board 02 | board 02 | comfortable
   rows 32 with the Lock description; compact / dense 24, descriptions on focus; min 280 px | glyph
@@ -1710,8 +1719,8 @@ SCR-043 time-scale menu | empty | no preset checked when the spacing matches non
 SCR-043 time-scale menu | loading | none | n/a | n/a | n/a | n/a | text-only — E11-D03 :402 |
   E11-D03 §10 :402
 SCR-043 time-scale menu | error | "Go to date…" disabled with the inline reason (never recorded / no
-  symbol) | same | same | see S-043 | the reason sentence | E11-D03-03-time-scale-menu.png | E11-D03
-  §10 :402
+  symbol; a data state, not T2 — E11-D07 F-29) | same | same | see S-043 | the reason sentence |
+  E11-D03-03-time-scale-menu.png | E11-D03 §10 :402
 SCR-043 time-scale menu | populated | Standard ✓ · dividers ☑ · maintenance ☑ · UTC ✓ | board 02 /
   03 | board 02 / 03 | the Local item's IANA name ellipsises after 24 characters | glyph shapes |
   E11-D03-03-time-scale-menu.png | E11-D03 §10 :402
@@ -1734,12 +1743,14 @@ SCR-031 Scales tab | loading | none in the tab (live apply); the dialog's open i
   `motion.duration.normal`, instant under reduce | same | same | see S-053 | n/a — nothing is shown
   in the tab (E11-D03 §10 :404) | text-only — E11-D03 :404 | E11-D03 §10 :404
 SCR-031 Scales tab | error | preview "Preview unavailable — chart error; settings still apply";
-  Logarithmic disabled with the D4 reason; a stepper out of range shows CMP-007's invalid state (the
-  validity look) | same | same | see S-053 | the sentences; the field's error text |
-  E11-D03-06-scales-tab-states.png | E11-D03 §10 :404
-SCR-031 Scales tab | populated | every field at its value; the preview live; "Apply to: This panel"
-  | board 06 | board 06 | comfortable default; compact rows 24; columns side by side above 720 px |
-  the state words beside toggles | E11-D03-05-scales-tab.png | E11-D03 §10 :404
+  Logarithmic disabled with the E11-D03 D4 reason (a data state, not T2); a stepper out of range
+  shows CMP-007's invalid state (red border + icon + "Enter 0 to 25"; the field stays enabled —
+  neither T2 nor the validity look) | same | same | see S-053 | the sentences; the field's error
+  text | E11-D03-06-scales-tab-states.png | E11-D03 §10 :404; `15` :109
+SCR-031 Scales tab | populated | every field at its value; the preview live; "Apply to: This panel";
+  Save T2 for a session without `workspaces:write` — C-14 (PROPOSED) | board 06 | board 06 |
+  comfortable default; compact rows 24; columns side by side above 720 px | the state words beside
+  toggles | E11-D03-05-scales-tab.png | E11-D03 §10 :404; E11-D03 §6.3 :272 (C-14)
 SCR-031 Scales tab | edge density | at 200 % the columns stack and the preview goes below the fields
   | same | same | compact when the app is compact | as S-052 (the state words beside toggles) |
   E11-D03-06-scales-tab-states.png | E11-D03 §10 :404
@@ -1758,8 +1769,9 @@ SCR-044 go-to-date | populated | fields + twin-zone line + hint; five quick jump
   enabled | board 10 | board 10 | 420 px at every density | the resolved target under each button |
   E11-D03-07-go-to-date-default.png; E11-D03-10-go-to-date-themes.png | E11-D03 §10 :405
 SCR-044 go-to-date | edge density | at 200 % the quick jumps wrap one per row and keep their reason
-  lines; never taller than the viewport \u2212 32 px | same | same | scrolls inside | as S-057 (the
-  resolved target under each button) | E11-D03-11-keyboard-and-landing.png | E11-D03 §10 :405
+  lines; never taller than the viewport \u2212 32 px | same | same | scrolls inside (the footer row
+  at 200 %: not stated — G-19) | as S-057 (the resolved target under each button) |
+  E11-D03-11-keyboard-and-landing.png | E11-D03 §10 :405
 SCR-044 RBAC variants | empty | viewer without `journal:read`: "Last journal entry" is T2 (T2-08) —
   `color.text.tertiary` label + `lock`, reason `rbac.permission` "Your role can't see the journal."
   under it, CMP-079 | same | same | same slot, same layout | the lock glyph and the reason sentence
@@ -1825,10 +1837,11 @@ SCR-045 bar table | loading | header row kept; twelve CMP-015 row skeletons `col
 SCR-045 bar table | error | the SCR-048 card in the shell, header row kept | same | same | see S-083
   | the card's heading | E11-D04-07-table-states.png | E11-D04 §15 :452
 SCR-045 bar table | populated | caption, header, zebra (`color.surface.canvas` / `.raised`), focused
-  row ring, selected row `color.surface.selected` + ✓, forming row | E11-D04-03-table-light.png |
-  E11-D04-04-table-hc.png | 100k rows virtualised; 200 % at 640 CSS px; stacked reflow at 320;
-  comfortable → compact step | ✓ glyph; `aria-current`; `aria-selected` | E11-D04-02-table-dark.png
-  | E11-D04 §15 :452
+  row ring, selected row `color.surface.selected` + ✓, forming row | E11-D04-03-table-light.png
+  (F-25 — the same) | E11-D04-04-table-hc.png (F-25 — the same) | 100k rows virtualised; 200 % at
+  640 CSS px; stacked reflow at 320; comfortable → compact step | ✓ glyph; `aria-current`;
+  `aria-selected` | E11-D04-02-table-dark.png (F-25 removes the footer's Export CSV and its "Export
+  arrives with E15" reason — an absence, R-67) | E11-D04 §15 :452; E11-D07 §9.5 T2-07 :446
 SCR-045 bar table | edge density | 100k rows virtualised (≤ 60 in the DOM); 200 % at 640 CSS px;
   stacked reflow at 320 CSS px with the F11 hint | same | same | the fit ladder of §5.2 | the hint
   sentence | E11-D04-05-table-200-zoom.png | E11-D04 §15 :452; §10 :329
@@ -1894,10 +1907,11 @@ loading-older / before-history bands | populated | n/a | n/a | n/a | n/a | n/a |
 loading-older / before-history bands | edge density | n/a | n/a | n/a | n/a | n/a | text-only —
   E11-D04 :456 | E11-D04 §15 :456
 SCR-047 pane | empty | reasons 1a / 1b / 2 / 3 \u00d7 CTA (owner, `recording:write`) / explanatory
-  sentence (sentence-form T2, T2-06); in situ | E11-D04-09-empty-reasons-light-hc.png |
-  E11-D04-09-empty-reasons-light-hc.png | long symbol names and long `status_reason` at 200 % | the
-  heading, the cause, the timestamp | E11-D04-08-empty-reasons-dark.png | E11-D04 §15 :457; E11-D07
-  §9.5 T2-06 :445
+  sentence (sentence-form T2, T2-06); in situ | E11-D04-09-empty-reasons-light-hc.png (F-27 / F-28 —
+  the same) | E11-D04-09-empty-reasons-light-hc.png (F-27 / F-28 — the same) | long symbol names and
+  long `status_reason` at 200 % | the heading, the cause, the timestamp |
+  E11-D04-08-empty-reasons-dark.png (F-27 / F-28 re-draw the sentence: `rbac.owner_only` "Only the
+  owner can start recording.", `rbac.view_as` first) | E11-D04 §15 :457; E11-D07 §9.5 T2-06 :445
 SCR-047 pane | loading | n/a (the fetch's loading is the chart's skeleton) | n/a | n/a | n/a | n/a |
   text-only — E11-D04 :457 | E11-D04 §15 :457
 SCR-047 pane | error | a timed-out fetch → SCR-048 | same | same | see S-117 (SCR-048's edge-density
@@ -1928,9 +1942,11 @@ row-action menu | loading | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 
 row-action menu | error | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :459 | E11-D04 §15 :459
 row-action menu | populated | five items; the write items T2 for a role without the grant
   (T2-01…T2-04: `lock`, full label `color.text.tertiary`, `rbac.permission` second line, CMP-079);
-  view-as leg first | E11-D04-06-sort-filter-copy.png strip | E11-D04-06-sort-filter-copy.png strip
-  | 200 % menu height | the lock glyph and the reason line | E11-D04-06-sort-filter-copy.png (F-27 /
-  F-28 re-draw the T2 items) | E11-D04 §15 :459; E11-D07 §9.5 :440\u2013443
+  view-as leg first — one `rbac.view_as` notice in the status-row / caption slot (F-27), every write
+  item's `aria-describedby` on it | E11-D04-06-sort-filter-copy.png strip |
+  E11-D04-06-sort-filter-copy.png strip | 200 % menu height | the lock glyph and the reason line |
+  E11-D04-06-sort-filter-copy.png (F-27 / F-28 re-draw the T2 items) | E11-D04 §15 :459; E11-D07
+  §9.5 :440\u2013443
 row-action menu | edge density | 200 % menu height scrolls | same | same | as the dark cell (this
   row is the surface's edge-density state) | as S-121 (the lock glyph and the reason line) |
   E11-D04-05-table-200-zoom.png | E11-D04 §15 :459
@@ -1982,7 +1998,7 @@ SOURCE_STATE_MAP: dict[str, dict[str, str]] = {
         "streaming": "streaming",
         "stale": "stale",
         "disconnected": "disconnected",
-        "empty history": "empty history (SCR-047 1a / 1b)",
+        "empty history": "empty history (SCR-047 1a / 1b; T2-06)",
         "symbol delisted/paused": "symbol delisted / paused (SCR-047 3)",
         "replay mode": "replay",
         "demo vs live badge": "demo / live badge",
@@ -2232,35 +2248,41 @@ E11-D07 §15.5 | Q-05 | the 200-row cap vs the 1 ms slice | routed | E06-T02 | E
   E06-T02
 E11-D07 §15.5 | Q-06 | SCR-046's values: a live region or on-demand text | routed | E11-T07 owner |
   E11-T07 | before E11-T07 starts (Sprint 09)
-this pack | Q1 | the deliverable path (`docs/design/E11/`) | routed | main-orchestrator (default
-  built: PROPOSED) | the lane thread; this PR's text round | before the pre-PR lens
-this pack | Q2 | the branch name (recorded) | routed | main-orchestrator (recorded; rename only if
-  `pr-metadata` refuses) | this PR | at push
-this pack | Q3 | the hand-off file's form (b-lite) | routed | main-orchestrator (default built:
-  PROPOSED) | the lane thread; this PR's text round | before the pre-PR lens
-this pack | Q4 | the `14` / `15` edit set (two `14` lines) | routed | main-orchestrator (default
-  built: PROPOSED) | the lane thread; this PR's text round | before the pre-PR lens
-this pack | Q5 | the motion table verbatim by tool | routed | main-orchestrator (default built:
-  PROPOSED) | the lane thread; this PR's text round | before the pre-PR lens
-this pack | Q6 | the key map's source: the E11-D07 import | routed | main-orchestrator (default
-  built: PROPOSED) | the lane thread; #4228 merged — rebase onto it first | before push
-this pack | Q7 | the walkthrough's form: protocol + agent dry run + owner items | routed |
-  main-orchestrator (default built: PROPOSED) | the lane thread; the dry run after the writer |
-  before this PR opens
-this pack | Q8 | three boards + figure A | routed | main-orchestrator (default built: PROPOSED) |
-  the lane thread; the boards PR | before the boards PR
-this pack | Q9 | assets: enumerate and route | routed | main-orchestrator (default built: PROPOSED)
-  | the lane thread | before the pre-PR lens
-this pack | Q10 | routed = closed for the open-question log | routed | main-orchestrator (default
-  built: PROPOSED) | the lane thread | before the pre-PR lens
-this pack | Q11 | the sibling boundaries | routed | main-orchestrator (default built: PROPOSED) |
-  the lane thread | before the pre-PR lens
-this pack | Q12 | `13` flows and CG-1…6 as A- / G-rows | routed | main-orchestrator (default built:
-  PROPOSED) | the lane thread; #2701 docs-PR request | before the pre-PR lens
-this pack | Q13 | the magnet rule (B-4) PROPOSED | routed | main-orchestrator; E11-S07 #388 owns the
-  radius | the lane thread; E11-S07 #388 | before E11-S07 starts (Sprint 06)
-this pack | Q14 | no hex anywhere | routed | main-orchestrator (default built: PROPOSED) | the lane
-  thread | before the pre-PR lens
+this pack | Q1 | the deliverable path (`docs/design/E11/`) | answered | RULED as the default built —
+  the orchestrator's comment 6364610269 on #331 (2026-10-23; the design delegation C-10.1 v1.1.0) |
+  — | —
+this pack | Q2 | the branch name (recorded) | answered | RULED (6364610269):
+  `design/chart-engine-handoff` kept with one deviation line; renamed only if `pr-metadata` refuses
+  it (it has not on #4279) | — | —
+this pack | Q3 | the hand-off file's form (b-lite) | answered | RULED (6364610269) as the default
+  built | — | —
+this pack | Q4 | the `14` / `15` edit set (two `14` lines) | answered | RULED (6364610269) as the
+  default built | — | —
+this pack | Q5 | the motion table verbatim by tool | answered | RULED (6364610269) as the default
+  built | — | —
+this pack | Q6 | the key map's source: the E11-D07 import | answered | RULED (6364610269):
+  `DESIGN_BINDINGS` imported from `main` (#4228 merged `de9a676…`), never a literal copy; `--check`
+  exits 0 at the base; the K-row resolutions stay PROPOSED to their owners (§4.2) | — | —
+this pack | Q7 | the walkthrough's form: protocol + agent dry run + owner items | answered | RULED
+  (6364610269): (a) + (b) + (c); the dry run is a fold input, not a gate — its NOT FOUND rows become
+  G-rows with owners (G-17); nothing is claimed as a session; no recording exists (C-6) | — | —
+this pack | Q8 | three boards + figure A | answered | RULED (6364610269) as the default built; the
+  boards PR draws them | — | —
+this pack | Q9 | assets: enumerate and route | answered | RULED (6364610269) as the default built |
+  — | —
+this pack | Q10 | routed = closed for the open-question log | answered | RULED (6364610269): routed
+  = closed only with owner and target both named; the tool asserts `oq_unowned = 0` and every
+  upstream row present once | — | —
+this pack | Q11 | the sibling boundaries | answered | RULED (6364610269) as the default built | — |
+  —
+this pack | Q12 | `13` flows and CG-1…6 as A- / G-rows | answered | RULED (6364610269): A-1 and
+  G-3…G-8 addressed to #2701; no `13` / `22` edit in this PR | — | —
+this pack | Q13 | the magnet rule (B-4) PROPOSED | routed | E11-S07 #388 (the radius, G-1); the form
+  RULED by comment 6364610269 — B-4 built as the PROPOSED rule, nothing in it RULED | E11-S07 #388;
+  the lane thread | before E11-S07 starts (Sprint 06)
+this pack | Q14 | no hex anywhere | answered | RULED (6364610269): the strict form — no hex anywhere
+  in the pack or the hand-off file; the tool's hex gate is 0; a gap becomes a CR row for D05's CR
+  table owner, never an invented token | — | —
 """
 SOURCE_LOGS: list[tuple[str, Path, str, str, str]] = [
     ("E11-D02 §20", D02, "## 20. Open questions", "## 21. Hand-offs", r"O-[A-K]"),
@@ -2653,6 +2675,19 @@ def id_rows(text: str, key: str, rx: str) -> int:
     return sum(1 for ln in body.splitlines() if re.match(rf"^\|\s*{rx}\s*\|", ln))
 
 
+def ruled_q_rows(text: str) -> int:
+    """The Q-rows of section 14.3 stamped with the orchestrator's ruling comment id."""
+    start, end = SECTIONS["cgq"]
+    if start not in text:
+        return 0
+    body = text.split(start, 1)[1].split(end, 1)[0]
+    return sum(
+        1
+        for ln in body.splitlines()
+        if re.match(r"^\|\s*Q\d+\s*\|", ln) and "RULED (6364610269)" in ln
+    )
+
+
 def compare_keymap(pack: list[list[str]], computed: list[dict[str, Any]]) -> dict[str, Any]:
     want = {(r["key"], r["context"], r["stop"]) for r in computed}
     have: set[tuple[str, str, str]] = set()
@@ -2887,6 +2922,7 @@ def build(spec_path: Path | None, handoff_path: Path | None) -> dict[str, Any]:
         "c_rows": id_rows(spec_text, "cgq", r"C-\d+"),
         "g_rows": id_rows(spec_text, "cgq", r"G-\d+"),
         "q_rows": id_rows(spec_text, "cgq", r"Q\d+"),
+        "q_ruled": ruled_q_rows(spec_text),
         "handoffs": id_rows(spec_text, "handoffs", r"H-\d+"),
         "walkthrough_tasks": id_rows(spec_text, "walkthrough", r"W-T\d"),
         "dryrun_rows": id_rows(spec_text, "dryrun", r"\d{4}-\d{2}-\d{2}"),
@@ -3367,7 +3403,8 @@ def render_report(d: dict[str, Any]) -> str:
         f"targets {c['d07_targets']} · hand-offs {c['d07_handoffs']}"
     )
     put(
-        f"pack rows: A {c['a_rows']} · C {c['c_rows']} · G {c['g_rows']} · Q {c['q_rows']} · "
+        f"pack rows: A {c['a_rows']} · C {c['c_rows']} · G {c['g_rows']} · Q {c['q_rows']} "
+        f"(RULED {c['q_ruled']}) · "
         f"hand-offs {c['handoffs']} · W-T {c['walkthrough_tasks']} · "
         f"dry-run log rows {c['dryrun_rows']} · owner items {c['owner_items']} · "
         f"perf rows {c['perf_rows']}"
