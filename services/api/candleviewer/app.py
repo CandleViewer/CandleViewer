@@ -149,6 +149,7 @@ from candleviewer.api.openapi_publish import install_contract_openapi
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.recorder_purge import make_recorder_purge_router
 from candleviewer.api.recording_reports import make_recording_reports_router
+from candleviewer.api.recording_retention import make_recording_retention_router
 from candleviewer.api.recording_symbols import make_recording_symbols_router
 from candleviewer.api.response_headers import NoSniff
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
@@ -386,6 +387,9 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 )
 from candleviewer.storage.repositories.replay_sessions_sqlalchemy import (
     SqlAlchemyReplaySessionRepository,
+)
+from candleviewer.storage.repositories.retention_policies_sqlalchemy import (
+    SqlAlchemyRetentionPolicies,
 )
 from candleviewer.storage.repositories.rows import (
     BookDeltaRow,
@@ -2468,6 +2472,21 @@ def create_app(
             lambda: app.state.recording_sessions,
             lambda: app.state.disk_budget,
             resolved.environment.value,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
+        )
+    )
+    # The retention policy set, replaced whole behind the `recorder` step-up; `apply_now` runs
+    # one sweep through the admin jobs (409 while `retention_enabled` is off).
+    app.state.retention_policies = (
+        SqlAlchemyRetentionPolicies(_kb_pg) if _kb_pg is not None else None
+    )
+    app.include_router(
+        make_recording_retention_router(
+            lambda: app.state.retention_policies,
+            admin_jobs,
+            lambda: app.state.retention_manager,
+            resolved.retention_enabled,
             audit_resolver,
             _LazyAuditEmitter(ctx.audit),
         )
