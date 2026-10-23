@@ -510,6 +510,9 @@ class Settings(BaseSettings):
     # and deleted once found expired; each user downloads at most this many files in an hour.
     audit_export_ttl_s: int = Field(default=86_400, ge=1)
     audit_download_rate_per_hour: int = Field(default=20, ge=1)
+    # #889 S7 (22 `rotateAuditSigningKey`): the signing-key rotations the environment may start in
+    # a rolling hour; past it `429 rate_limited`. Only a rotation that starts counts.
+    audit_signing_rotate_rate_per_hour: int = Field(default=3, ge=1)
     # Structure one Owner audit page serves, as the `{`, `[` and `,` of its states'
     # renderings; past it the remaining states are withheld (`detail.elided`). The page is
     # serialized on the event loop (C-2.17): the costliest page measured, 4-byte UTF-8

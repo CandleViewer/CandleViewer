@@ -213,6 +213,8 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "SigningKeys",  # #889: the active export key's public material, the same way
         "mint_export_signer",  # #889: their mints, pinned to admin/wiring.py by the M2 guard
         "mint_signing_keys",
+        "SigningKeyRotator",  # #889 S7: the signing key's rotation, `admin`'s capability
+        "mint_signing_key_rotator",  # #889 S7: its mint, pinned to admin/wiring.py likewise
     },
     # E26-T02: the replay read path's request, in-stream gap marker, storage ports, typed
     # errors and bounded read-ahead source (docs/plan/24-internal-schemas.md Sec.13.7).

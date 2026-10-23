@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -14,7 +15,9 @@ from candleviewer.admin.wiring import _secrets_audit_columns, secrets_audit_row,
 from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.redact import REDACTION_MARKER, redact
 from candleviewer.observability.context import bind_context
+from candleviewer.secrets import export_rotator as rot
 from candleviewer.settings import Environment, Settings
+from tests.unit.credentials_m2.test_export_key_rotation import _rig
 
 T0 = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
 ACTION = "security.credential_rewrapped"
@@ -149,9 +152,13 @@ def test_a_boolean_member_is_true_or_false_and_nothing_else() -> None:
 
 
 def test_the_signing_key_record_members_survive_the_audit_redactor() -> None:
-    """Security F6: what verifiers and the Owner's chain cross-check read (24 §15.7)."""
+    """Security F6: what verifiers and the Owner's chain cross-check read (24 §15.7), the
+    rotation's pin among them (#889 S7, code C2-2)."""
     members: dict[str, Any] = {"key_id": _SIGNING_KEY["key_id"], "sha256": "c" * 64}
     members |= {"fingerprint_sha256": "b" * 64, "retired_material_destroyed": True}
+    members |= {"active_key_id": "cv-audit-export-v2:" + "d" * 16, "retired_key_id": "x"}
+    members |= {"active_fingerprint_sha256": "d" * 64, "retired_fingerprint_sha256": "e" * 64}
+    members |= {"reason": "compromise", "requested_reason": "scheduled"}
     assert redact(members) == members
 
 
@@ -161,3 +168,45 @@ def test_a_signing_key_rotation_refusal_is_stored_as_denied_at_warning() -> None
     assert (columns["object_kind"], columns["outcome"], columns["severity"]) == (
         "audit_signing_key", "denied", "warning"
     )  # fmt: skip
+
+
+async def _rotation_records() -> dict[str, tuple[str, dict[str, str]]]:
+    """#889 S7: each rotation record's real fields, as M2 hands them to its audit port: a
+    rotation's (the store commits it), a refusal's and a failed rotation's (M2's own sink)."""
+    rig = await _rig()
+    await rig.rotate("compromise")
+    rig.exporting = True
+    await rig.refused("conflict")
+    rig.exporting = False
+
+    async def down(*_: object, **__: object) -> Any:
+        raise RuntimeError("store down")
+
+    setattr(rig.keys, "rotate", down)  # noqa: B010 -- a rotation that does not commit
+    await rig.refused("store_unavailable")
+    refused, failed = rig.written()
+    return {"rotated": rig.keys.audit[-1], "refused": refused, "failed": failed}
+
+
+@pytest.mark.parametrize(
+    ("made", "action", "outcome", "severity"),
+    [
+        ("rotated", rot.ROTATED, "success", "info"),
+        ("refused", rot.REFUSED, "denied", "warning"),
+        ("failed", rot.FAILED, "success", "error"),  # as `security.kek_rotation_failed` is
+    ],
+)
+async def test_each_rotation_record_is_built_whole_by_the_real_row_builder(
+    made: str, action: str, outcome: str, severity: str
+) -> None:
+    """Code C2-2 (#889 S7): a rotation's, a refusal's and a failed rotation's record, each as M2
+    makes it, through `secrets_audit_row`: about the signing key (the rotated one names its new
+    key), at its severity, and every member kept as M2 gave it, the boolean a JSON boolean and
+    nothing redacted, so the Owner pins from the rotated one (24 §15.7)."""
+    named, fields = (await _rotation_records())[made]
+    row = secrets_audit_row("demo")(named, fields)
+    assert (row["action"], row["outcome"], row["severity"]) == (action, outcome, severity)
+    new_key = fields.get("active_key_id")
+    assert (row["object_kind"], row["object_id"]) == ("audit_signing_key", new_key)
+    booleans = {"retired_material_destroyed": True} if made == "rotated" else {}
+    assert row["after_state"] == fields | booleans and "<redacted" not in json.dumps(row)

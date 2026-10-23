@@ -17,38 +17,45 @@ It returns a MAC and the key id, never the API secret (C-2.7, #2339). The offlin
 proof (`prove_kek_possession`, admin only, #2119) shares the custody path but never enrols.
 Key import's `CandidateKeys` (#836, `SecretsBundle.candidate_keys`) is minted in wiring too, as
 are the audit export's `ExportSigner` and `SigningKeys` (#889): a signature and public key
-material, never a seed.
+material, never a seed. So is `SigningKeyRotator` (#889 S7), the signing key's rotation for
+`admin`, which answers with public key material and, once its new key passes the check, makes
+export available again with no restart.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import math
 import time
-from collections.abc import Awaitable, Callable
+from collections import deque
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, final
+from typing import TYPE_CHECKING, Any, NoReturn, Protocol, final
 from uuid import UUID
 
 import structlog
 
 from candleviewer.observability.context import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
-from candleviewer.secrets import _export_custody, _kek, _source, export_signer
+from candleviewer.secrets import _export_custody, _kek, _source, export_rotator, export_signer
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.broker import ALLOWED_CALLERS, Purpose, _m2_only
 from candleviewer.secrets.candidate import CANDIDATE_HOLD_S, CandidateKeys, hold_candidate
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
+    ExportKeyRotationError,
     KekLoadError,
     KekRotationError,
     KekSourceNotPermitted,
     KekUnavailable,
     RotationCode,
 )
+from candleviewer.secrets.export_rotator import SigningKeyRotator
 from candleviewer.secrets.export_signer import ExportSigner, SigningKeys
 from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
-from candleviewer.secrets.signing import RequestSignature, SigningMessage
+from candleviewer.secrets.signing import RequestSignature, SigningMessage, scrub_frames
 from candleviewer.secrets.store import AuditSink, AuthKeyStore, CredentialStore, KcvStore
 
 if TYPE_CHECKING:
@@ -101,6 +108,8 @@ REASONS = (
 )
 _LOAD_MARGIN_S = 5.0
 _AUDIT_TIMEOUT_S = 2.0
+#: The window of `audit_signing_rotate_rate_per_hour` (#889 S7, 22 `rotateAuditSigningKey`).
+_HOUR_S = 3600.0
 
 
 def _log() -> Any:
@@ -236,6 +245,7 @@ class SecretsService:
         load_timeout_s: float = 10.0 + _LOAD_MARGIN_S,
         auth_keys: AuthKeyStore | None = None,
         export_keys: ExportKeyStore | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store, self._kcv, self._audit_sink = store, kcv_store, audit
         self._sources, self._harden = sources, harden
@@ -247,6 +257,16 @@ class SecretsService:
         self._export_keys = export_keys
         #: Why the signing key cannot be used while the KEK is up; None when it opens (ADR-0039).
         self._export_reason: str | None = None
+        #: #889 S7: the id of the key M2 last checked, at boot or after a rotation; the directory
+        #: names, and the listing marks `verified`, no other (decision 4).
+        self._export_checked: str | None = None
+        self._export_unchecked: str | None = None  # the last unchecked active key logged
+        #: #889 S7: the `(owner, Idempotency-Key)` a running rotation serves (single-flight), the
+        #: environment's rotation starts in the last hour by `clock`, and their cap, which
+        #: `start()` reads (`audit_signing_rotate_rate_per_hour`); no rotation runs before it.
+        self._export_rotating: tuple[str, str] | None = None
+        self._export_rotations: deque[float] = deque()
+        self._rotate_rate, self._clock = 1, clock
         self._broker: RotatingBroker | None = None
         self._kek_version: int | None = None
         self._reason: str | None = None
@@ -365,6 +385,7 @@ class SecretsService:
         srcs = self._sources(settings)  # KekSourceNotPermitted propagates: fatal
         self._started = True
         self._gate, self._env = ctx.oms_read_only_gate, env_name
+        self._rotate_rate = settings.audit_signing_rotate_rate_per_hour
         if self._store is None or self._kcv is None:
             self._reason = "no_credential_store"
             if live:
@@ -432,13 +453,14 @@ class SecretsService:
     ) -> None:
         """#889 (ADR-0039 decision 2), once the KEK is published. A failure degrades `secrets`
         and pages, as a keyring failure does (Amendment 4), then records it at error, as `_degrade`
-        does; it latches no order entry: export alone is unavailable."""
+        does; it latches no order entry: export alone is unavailable. M2 remembers the key the
+        check passed for (S7)."""
         try:
-            reason = await _export_custody.open_at_boot(keys, kek, prev)
+            reason, checked = await _export_custody.open_at_boot(keys, kek, prev)
         except Exception as exc:  # a record M2 cannot read: never a reason to stop the boot
             _log().error("secrets.export_key_open_failed", error=type(exc).__name__)
-            reason = "export_key_unopenable"
-        self._export_reason = None
+            reason, checked = "export_key_unopenable", None
+        self._export_reason, self._export_checked = None, checked
         m.export_key_unavailable_state.set(0)
         if reason is not None:
             await self._export_unavailable(reason)
@@ -446,7 +468,7 @@ class SecretsService:
     async def _export_unavailable(self, reason: str) -> None:
         """Export alone unavailable from now on (ADR-0039 decision 2): `secrets` degraded, the
         page's gauge, a critical log, then the record at error; no order entry is latched."""
-        self._export_reason = reason
+        self._export_reason, self._export_checked = reason, None
         m.export_key_unavailable_state.set(1)
         text = EXPORT_REMEDIATION.format(reason=reason)
         _log().critical("secrets.export_key_unavailable", reason=reason, remediation=text)
@@ -460,7 +482,8 @@ class SecretsService:
     ) -> bytes:
         """`mint_export_signer`'s call: `export_signer`'s checks in their order (#889, ADR-0039). A
         key found unusable at signing time is latched as at boot (decision 4: refused and paged),
-        so neither the signer nor the directory offers it again before a restart."""
+        so neither the signer nor the directory offers it again before a restart, or a rotation
+        whose new key passes the check (#889 S7)."""
         checked = export_signer.request(key_id, digest, job_id, actor_user_id)
         keks, keys = self._require()._held_keks(), self._export_keys
         if keys is None or self._export_reason is not None:
@@ -473,11 +496,145 @@ class SecretsService:
             raise
 
     async def _active_export_key(self) -> export_signer.PublicKey | None:
-        """`mint_signing_keys`' call: None while no KEK is held or export is unavailable (22)."""
+        """`mint_signing_keys`' call: None while no KEK is held or export is unavailable (22), or
+        while the active key is not the one M2 last checked (#889 S7, decision 4): a row swapped
+        out of band is named, and marked `verified`, by nothing until a check passes for it. A read
+        that overlaps a rotation here logs nothing: the rotation's own check settles it."""
         broker, keys = self._broker, self._export_keys
         if broker is None or keys is None or self._export_reason is not None:
             return None
-        return await export_signer.active_key(keys, broker._held_keks())
+        checked = self._export_checked  # a rotation here may move it during the read (A2-a)
+        named = await export_signer.active_key(keys, broker._held_keks())
+        if named is None or named[0] == self._export_checked:
+            return named
+        settled = checked == self._export_checked and self._export_rotating is None
+        if settled and named[0] != self._export_unchecked:  # once a key: the gap (re-check A2)
+            self._export_unchecked = named[0]
+            _log().error(
+                "secrets.export_key_not_checked",
+                active_key_id=named[0],
+                checked_key_id=self._export_checked,
+            )
+        return None
+
+    async def _marked(self, made: export_rotator.Rotation) -> export_rotator.Rotation:
+        named = await self._active_export_key()
+        return {k: export_rotator.marked(rec, named and named[0]) for k, rec in made.items()}
+
+    async def _rotate_export_key(
+        self, reason: object, owner: object, ref: object, body_sha256: object,
+        export_running: Callable[[], bool],
+    ) -> tuple[export_rotator.Rotation, bool]:  # fmt: skip
+        """`mint_signing_key_rotator`'s call: `export_rotator`'s steps in 22's order (#889 S7). The
+        rotation's answer and whether it is a repeat; else `ExportKeyRotationError`."""
+        req, keys = export_rotator.request(reason, owner, ref, body_sha256), self._export_keys
+        made = await export_rotator.replayed(keys, self._env, req)
+        if made is not None:
+            return await self._marked(made), True
+        if self._export_rotating == (req.owner, req.ref):
+            raise ExportKeyRotationError("idempotency_in_flight")
+        broker = self._broker
+        if broker is None:
+            await self._refuse_rotation(export_rotator.NO_KEK, req)
+        if (wait := self._rotation_wait()) is not None:
+            raise ExportKeyRotationError("rate_limited", wait)  # counted by the caller, unrecorded
+        if self._export_rotating is not None or export_running():
+            busy = export_rotator.ROTATING if self._export_rotating else export_rotator.EXPORTING
+            await self._refuse_rotation(busy, req)
+        self._export_rotating = (req.owner, req.ref)  # no await since the checks: single-flight
+        try:
+            return await self._rotation(broker, keys, req)
+        finally:
+            self._export_rotating = None
+
+    async def _rotation(
+        self, broker: RotatingBroker, keys: ExportKeyStore | None, req: export_rotator.Request
+    ) -> tuple[export_rotator.Rotation, bool]:
+        """Steps 3 and 4 of `export_rotator`, single-flight: the active key retired for the next."""
+        old, failed = None, False
+        try:
+            old = None if keys is None else await _export_custody._io(keys.active(self._env))
+        except Exception as exc:
+            _log().error("secrets.export_key_rotation_active_read_failed", error=type(exc).__name__)
+            failed = True
+        if failed:  # after the handler: nothing chained
+            raise ExportKeyRotationError(export_rotator.STORE_DOWN)
+        if keys is None or old is None:
+            await self._refuse_rotation(export_rotator.NO_KEY, req)
+        self._export_rotations.append(self._clock())  # a rotation that starts counts, failed too
+        made, code = None, ""
+        try:
+            made = await export_rotator.rotate(keys, broker._held_keks()[0], req, old)
+        except Exception as exc:
+            scrub_frames(exc)  # the frames below held the KEK, the DEK and the seed
+            code = export_rotator.outcome(exc)
+            stopped = {"error": type(exc).__name__, "code": code}
+            _log().warning("secrets.export_key_rotation_stopped", **stopped)
+        if code == export_rotator.STORE_DOWN:  # its COMMIT may have landed, the answer lost
+            with contextlib.suppress(ExportKeyRotationError):  # unread: recorded as failed
+                made = await export_rotator.replayed(keys, self._env, req)
+            if made is not None:  # it committed: this request's own 200, never a failure
+                _log().info("secrets.export_key_rotation_read_back", found=True)
+                code = ""
+        if code and code != "taken":
+            await self._rotation_failed(code, req, old)
+        if made is None:  # a retry that raced its first try, or the key retired meanwhile
+            again = await export_rotator.replayed(keys, self._env, req)
+            if again is None:
+                await self._refuse_rotation(export_rotator.ROTATING, req)
+            return await self._marked(again), True
+        await self._rotated(keys, broker)
+        return await self._marked(made), False
+
+    async def _rotated(self, keys: ExportKeyStore, broker: RotatingBroker) -> None:
+        """Step 4: export available again, with no restart, once the active key read back passes
+        `check_key`: M2 remembers it, the gauge falls to 0 and the health reason clears; else it
+        is latched as at boot. A `stop()` before or during the check, its KEK closed, is no
+        verdict on the key: the next boot checks it."""
+        if self._broker is not broker:
+            return
+        reason, checked = await export_rotator.checked(keys, broker._held_keks())
+        if self._broker is not broker:  # stop() ran during the check
+            return
+        if reason is not None:
+            await self._export_unavailable(reason)
+            return
+        self._export_reason, self._export_checked = None, checked
+        m.export_key_unavailable_state.set(0)
+
+    def _rotation_wait(self) -> int | None:
+        """Seconds until the environment may start another rotation, or None: at most
+        `audit_signing_rotate_rate_per_hour` start in a rolling hour (22)."""
+        now, starts = self._clock(), self._export_rotations
+        while starts and now - starts[0] >= _HOUR_S:
+            starts.popleft()
+        if len(starts) < self._rotate_rate:
+            return None
+        return max(1, math.ceil(starts[0] + _HOUR_S - now))
+
+    async def _refuse_rotation(self, code: str, req: export_rotator.Request) -> NoReturn:
+        """A refusal's record, written before it leaves (C-2.9), else `audit_unavailable`; then
+        `kek_unavailable`, or `conflict` with why in the record. Nothing is rotated or latched."""
+        answer = export_rotator.NO_KEK if code == export_rotator.NO_KEK else "conflict"
+        fields = req.fields(env=self._env, reason=code, requested_reason=req.reason)
+        try:
+            await self._audit(export_rotator.REFUSED, fields)
+        except KekLoadError:
+            answer = export_rotator.UNRECORDED
+        raise ExportKeyRotationError(answer)  # after the handler: nothing chained
+
+    async def _rotation_failed(
+        self, code: str, req: export_rotator.Request, old: Mapping[str, Any]
+    ) -> NoReturn:
+        """A rotation that did not commit: its record, naming why, the Owner's reason and the key
+        it would have retired, then `code`; `audit_unavailable` when that record is lost too."""
+        fields = req.fields(env=self._env, reason=code, requested_reason=req.reason)
+        try:
+            await self._audit(export_rotator.FAILED, fields | {"retired_key_id": old["key_id"]})
+        except KekLoadError:
+            m.credential_outcome_audit_failures_total.inc()
+            code = export_rotator.UNRECORDED
+        raise ExportKeyRotationError(code)  # after the handler: nothing chained
 
     @staticmethod
     def _close(*keks: _kek.LoadedKek) -> None:
@@ -683,6 +840,16 @@ def mint_signing_keys(service: SecretsService) -> SigningKeys:
         return await service._active_export_key()
 
     return SigningKeys(active)
+
+
+def mint_signing_key_rotator(service: SecretsService) -> SigningKeyRotator:
+    """Wiring-time capability of `rotateAuditSigningKey` (#889 S7, ADR-0039 decision 5), for `admin`
+    alone: public key material only. Called once, in `admin.wiring.secrets_bundle`."""
+
+    async def rotate(*call: Any) -> tuple[export_rotator.Rotation, bool]:
+        return await service._rotate_export_key(*call)
+
+    return SigningKeyRotator(rotate)
 
 
 async def prove_kek_possession(

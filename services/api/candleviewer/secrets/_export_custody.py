@@ -1,8 +1,9 @@
 """The audit export signing key at boot (#889 S6a-2b; ADR-0039 decisions 2, 4, 6 and Q3). M2 only.
 
-`open_at_boot` runs once the KEK is published and answers None when the environment's active key
-opens to its public key, else why export is unavailable; the caller degrades `secrets` and pages,
-and latches no order entry (decision 2). A store, unwrap or check failure is a reason; anything
+`open_at_boot` runs once the KEK is published and answers the id of the environment's active key
+once it opens to its public key, which the caller remembers as the key it checked (#889 S7), else
+why export is unavailable; the caller degrades `secrets` and pages, and latches no order entry
+(decision 2). A store, unwrap or check failure is a reason; anything
 else it raises, a record M2 cannot read say, the caller reads as `export_key_unopenable`, and a
 cancellation propagates. In order:
 1. Q3: a retired key still holding its seed is a finding; its destroy is retried with its record.
@@ -103,20 +104,27 @@ def _check(holder: LoadedKek, rec: Mapping[str, Any]) -> None:
     raise CredentialUnavailable("credential_unavailable")  # after the handler: nothing chained
 
 
-async def _generate(store: ExportKeyStore, kek: LoadedKek) -> None:
-    """Step 2: version 1, stored with its generation record, or nothing stored."""
+def new_key(kek: LoadedKek, version: int) -> dict[str, Any]:
+    """A key of `version` for the KEK's environment, its seal proven to open (`generate`), its DEK
+    wrapped under `kek` and proven to open, then zeroed: the store's record, without a request.
+    Boot's first key (step 2) and a rotation's next key (#889 S7) are made here."""
     dek = env.new_dek()
     try:
-        key = generate(dek, env_name=kek.env_name, version=1)
+        key = generate(dek, env_name=kek.env_name, version=version)
         ref = _wrap_verified(kek, dek, key.key_id)
     except BaseException as exc:
         scrub_frames(exc)  # the frames below held the KEK, the DEK and the seed
         raise
     finally:
         env.zero(dek)
-    record = {"id": uuid4(), "env": key.env_name, "version": 1, "key_id": key.key_id}
+    record = {"id": uuid4(), "env": key.env_name, "version": version, "key_id": key.key_id}
     record |= {"public_key": key.public_key, "sealed_seed": key.sealed_seed, "dek_ref": ref}
-    record["kek_version"] = kek.version
+    return record | {"kek_version": kek.version}
+
+
+async def _generate(store: ExportKeyStore, kek: LoadedKek) -> None:
+    """Step 2: version 1, stored with its generation record, or nothing stored."""
+    record = new_key(kek, 1)
     audit = (GENERATED, _fields(record, version="1"))
     if not await _io(store.insert_first(record, audit=audit)):
         _log().debug("secrets.export_key_generation_lost")  # another boot's key: read next
@@ -162,10 +170,12 @@ def _failed(step: str, exc: Exception) -> None:
     _log().error("secrets.export_key_boot_step_failed", step=step, error=error, code=code)
 
 
-async def open_at_boot(store: ExportKeyStore, kek: LoadedKek, prev: LoadedKek | None) -> str | None:
-    """None when the environment's active key opens and matches, else why export is unavailable:
-    `export_key_` and `store_unavailable`, `generation_failed`, `inactive`, `stranded`,
-    `unopenable` or `mismatch`. Steps 1 to 4 of the module docstring."""
+async def open_at_boot(
+    store: ExportKeyStore, kek: LoadedKek, prev: LoadedKek | None
+) -> tuple[str | None, str | None]:
+    """`(None, its key id)` when the environment's active key opens and matches, else `(why export
+    is unavailable, None)`: `export_key_` and `store_unavailable`, `generation_failed`,
+    `inactive`, `stranded`, `unopenable` or `mismatch`. Steps 1 to 4 of the module docstring."""
     name, reason = kek.env_name, "export_key_store_unavailable"
     try:
         await _destroy_retired(store, name)
@@ -180,9 +190,9 @@ async def open_at_boot(store: ExportKeyStore, kek: LoadedKek, prev: LoadedKek | 
             rec = await _io(store.active(name))
     except Exception as exc:
         _log().error("secrets.export_key_open_failed", reason=reason, error=type(exc).__name__)
-        return reason
+        return reason, None
     if rec is None:
-        return "export_key_inactive"
+        return "export_key_inactive", None
     if prev is not None and rec["kek_version"] == prev.version:
         try:
             rec = await _rewrap(store, rec, prev, kek)  # proven to open before it is stored
@@ -191,10 +201,10 @@ async def open_at_boot(store: ExportKeyStore, kek: LoadedKek, prev: LoadedKek | 
     version = rec["kek_version"]
     holder = next((k for k in (kek, prev) if k is not None and k.version == version), None)
     if holder is None:  # below the KEK's version stranded, above it a mismatch, as `_auth_keyring`
-        return "export_key_stranded" if version < kek.version else "export_key_mismatch"
+        return ("export_key_stranded" if version < kek.version else "export_key_mismatch"), None
     try:
         _check(holder, rec)
     except CredentialUnavailable as exc:
         mismatch = str(exc) == "export_key_mismatch"
-        return "export_key_mismatch" if mismatch else "export_key_unopenable"
-    return None
+        return ("export_key_mismatch" if mismatch else "export_key_unopenable"), None
+    return None, rec["key_id"]

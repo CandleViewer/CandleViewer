@@ -62,6 +62,7 @@ def test_the_adapters_copies_of_m2s_rules_have_not_drifted() -> None:
     assert m._rotation(dict(new), dict(old)) == m2._rotation(new, old)
     assert m._KEY == tuple(k for k in m2.EXPORT_KEY_SEALED if k != "fingerprint_sha256")
     assert m2._RequestTaken.code == ExportKeyRequestTaken.code  # the fake's error is M10's
+    assert m2._AuditNotWritten.code == ExportKeyAuditNotWritten.code  # so is this one (#889 S7)
     gone = [(m1.key_id(1), "a" * 64), (m1.key_id(2), "b" * 64)]
     assert m._destroyed({"env": "demo"}, gone) == m2._destroyed({"env": "demo"}, gone)  # S6b, F3
     ref = "0193F2BB-0000-4000-8000-0000000000A1"
