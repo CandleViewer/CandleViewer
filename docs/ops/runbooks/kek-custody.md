@@ -108,7 +108,9 @@ trading is not, and nothing latches order entry. Signals: `cv_audit_signing_key_
 `secrets` check; `/health/report` shows the `secrets` component `down`, as for a KEK failure, since
 its probe reads every M2 degrade as `down`; a critical `secrets.export_key_unavailable` log; and
 `security.audit_signing_key_unavailable` at error. The page has its own component,
-`audit_signing`, so it hides no `secrets` ticket while it stands.
+`audit_signing`, so it hides no `secrets` ticket while it stands. A signing attempt can raise it too:
+the `security.audit_export_sign_failed` record just before it names the key and the reason, and a
+restart runs the boot check again.
 
 | reason                                         | Check                                                                                                                                                                                        |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

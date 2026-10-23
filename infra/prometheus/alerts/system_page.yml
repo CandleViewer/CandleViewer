@@ -101,7 +101,8 @@ groups:
       - alert: AuditSigningKeyUnavailable
         # #889 S6b-2 (ADR-0039 decision 2): the audit export signing key cannot be used with the
         # KEK up, so export alone is refused and trading is not. A state gauge, as KekUnavailable
-        # is: boot sets it before the first scrape and it holds for the life of the process. Its
+        # is: boot sets it before the first scrape, or a signature that finds the key unusable sets
+        # it mid-process (S6b-3), and it holds for the life of the process. Its
         # own component, as NetBindingUnsafe's is: it may stand for days (ADR-0039 Q4), and a page
         # hides its component's tickets, so no `secrets` ticket is hidden behind it.
         expr: max by (env) (cv_audit_signing_key_unavailable_state) == 1

@@ -44,7 +44,8 @@ class Signer(Protocol):
         self, key_id: str, digest: bytes, job_id: UUID, actor_user_id: UUID
     ) -> bytes:
         """The 64-byte Ed25519 signature over `cv.audit.export.v1:` and the hex of `digest`, the
-        file's SHA-256, with the active key `key_id`, recorded ahead; else `ExportSigningFailed`."""
+        file's SHA-256, with the active key `key_id`, recorded ahead; else `ExportSigningFailed`,
+        an `AuditError` that S10's job catches before any handler of a refused audit write."""
         ...
 
 

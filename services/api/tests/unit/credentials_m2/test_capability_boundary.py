@@ -68,6 +68,8 @@ def test_only_public_m2_surface_imported(path: Path) -> None:
         "from ..secrets import _kek",
         "from candleviewer.secrets import mint_borrower",
         "from candleviewer.secrets import mint_candidate_keys",
+        "from candleviewer.secrets import mint_export_signer",  # #889: wiring mints both
+        "from candleviewer.secrets import mint_signing_keys",
     ],
 )
 def test_import_rule_rejects_private_m2_imports(src: str) -> None:

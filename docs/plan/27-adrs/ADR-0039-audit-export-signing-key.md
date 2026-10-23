@@ -149,6 +149,13 @@ Option (a), with Ed25519.
    record that cannot be written `audit_unavailable`, and any other (no KEK, no usable key, a failed signature)
    `signing_unavailable`. The directory reads the store and opens no seed, and names no key while export is
    unavailable.
+   2026-10-23 (#889 S6b-3): the signer reads the active key again after its record and refuses one no longer active
+   as `signing_key_rotated`, as the HMAC signer re-checks its row (ADR-0009 Amendment 2). The fence narrows the
+   window and does not close it, so the 409 between export and rotation (decision 5, S7 and S10) stays in front of
+   the signer. A key found unusable at signing time is latched, paged and recorded as at boot (decision 4: refused
+   and paged), as `export_key_unopenable` (its wrap or seal does not open) or `export_key_mismatch`, and the
+   directory names no key until a restart. Another environment's row, or a row missing its wrap or its seal, is
+   refused before the record.
 
 4. **Verification.** `GET /admin/audit/signing-keys`, read-only, for `audit:read` (the Owner and Managers;
    `auth/rbac_seed.json:237`), lists the environment's keys, active and retired, each with its validity window, its
