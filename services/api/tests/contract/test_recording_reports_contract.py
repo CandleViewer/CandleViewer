@@ -81,6 +81,11 @@ def test_each_problem_body_is_its_declared_response(world: World) -> None:
     world.app.state.disk_budget = _Budget(None)  # before the first sample: 503
     answers["503"] = world.client.get(_STORAGE, headers=owner)
     world.app.state.disk_budget = budget
+    held = world.app.state.recording_sessions
+    world.app.state.recording_sessions = None  # no session store: the same declared 503
+    no_store = world.client.get(_SESSIONS, headers=owner)
+    world.app.state.recording_sessions = held
+    assert (no_store.status_code, no_store.json()["code"]) == (503, "store_unavailable")
     for status, resp in answers.items():
         assert (str(resp.status_code), resp.headers["content-type"]) == (
             status, "application/problem+json")  # fmt: skip

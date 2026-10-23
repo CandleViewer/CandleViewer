@@ -224,3 +224,31 @@ async def test_the_restricted_view_is_the_recorder_s_own() -> None:
     kept = sorted(e.symbol for e in page.items if rc.restricted_view(e) is not None)
     env = _Env("recording:read", owner=False, budget=_Budget(_usage()), control=fake)
     assert sorted(s["symbol"] for s in (await env.get("/recording/storage"))[1]["symbols"]) == kept
+
+
+async def test_a_non_owner_storage_view_fails_closed_when_the_set_is_over_one_page() -> None:
+    fake = FakeRecorder()
+    for n in range(501):
+        fake.put(f"S{n:03d}USDT")
+    env = _Env("recording:read", owner=False, budget=_Budget(_usage()), control=fake)
+    status, body = await env.get("/recording/storage")
+    assert (status, body["code"]) == (503, "store_unavailable")
+    owner = _Env("recording:read", budget=_Budget(_usage()), control=fake)
+    assert (await owner.get("/recording/storage"))[0] == 200  # the Owner needs no filter
+
+
+async def test_sessions_are_503_without_a_session_store() -> None:
+    env = _Env("recording:read")
+    env.sessions = None  # type: ignore[assignment]  # the fake backend holds no session store
+    status, body = await env.get("/recording/sessions")
+    assert (status, body["code"]) == (503, "store_unavailable")
+
+
+async def test_an_owner_cursor_replayed_by_a_non_owner_is_invalid() -> None:
+    env = _Env("recording:read")
+    for hours in (3, 2, 1):
+        env.sessions.add("BTCUSDT", hours)
+    cursor = (await env.get("/recording/sessions", limit=2))[1]["meta"]["next_cursor"]
+    env.caller = AuditPrincipal(env.caller.user_id, "u", env.caller.permissions, is_owner=False)
+    status, body = await env.get("/recording/sessions", limit=2, cursor=cursor)
+    assert (status, body["code"]) == (400, "invalid_cursor")
