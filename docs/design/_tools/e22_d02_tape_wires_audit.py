@@ -14,8 +14,9 @@ Usage: python3 -I docs/design/_tools/e22_d02_tape_wires_audit.py [--json] [--che
        [--spec P] [--draft P]
 Exit 1 only on a gated contrast FAIL, a radii or memo 3.9 mismatch, a changed quoted constant or a
 failed string gate; the E13-D02 13 reproduction is reported, never adjusted. `--check` also gates
-the printed numbers against the spec's own sentences (section I) and exits 1 on drift. Stdout is
-UTF-8.
+the printed numbers against the spec's own sentences (section I) and exits 1 on drift; a phrase the
+spec quotes more than once is gated on its exact count, so one live sentence never hides a stale
+one. Stdout is UTF-8.
 """
 
 from __future__ import annotations
@@ -348,11 +349,13 @@ def drift_phrases(
     sim: dict[str, list[float]],
     rows: list[dict[str, Any]],
     cnt: dict[str, int],
-) -> list[str]:
+) -> list[tuple[str, int | None]]:
     """`--check`: the printed numbers spelled as the spec's own sentences spell them (2, 5, 8,
-    14, 15, 21). A sentence the spec no longer carries is drift and fails the run (the 15 row-count
-    drift the text round 1 found passed the plain run, which prints these numbers and gates
-    none)."""
+    14, 15, 21), each with the number of sentences that quote it, or None for a phrase gated on
+    presence alone. A sentence the spec no longer carries is drift and fails the run (the 15
+    row-count drift the text round 1 found passed the plain run, which prints these numbers and
+    gates none); a counted phrase fails on any other count, since a substring match passes while
+    one of its eight "34 723 USDT" sentences is stale (the round-1 fold confirm, Mi-C)."""
     f1, f2 = tape["frames"]["1280x800"], tape["frames"]["2560x1440"]
     rc, rf = f1["rows"]["compact"], f1["rows"]["comfortable"]
     rc2, rf2 = f2["rows"]["compact"], f2["rows"]["comfortable"]
@@ -368,7 +371,7 @@ def drift_phrases(
     canvas = [dark[(TOK[t], TOK["canvas"])] for t in ("t1", "t2", "t3")]
     raised = [dark[(TOK[t], TOK["raised"])] for t in ("t1", "t2", "t3")]
     rates = [str(r) for r in RATES]
-    return [
+    once = [
         (
             f"{sp(f1['log_px']['compact'])} px at 1280{X}800 → {rc} rows; "
             f"{sp(f2['log_px']['compact'])} px at 2560{X}1440 → {rc2}"
@@ -380,7 +383,6 @@ def drift_phrases(
         f"{oc} compact / {of_} comfortable at 1280{X}800; {oc2} / {of2} at 2560{X}1440",
         f"{notice['compact']} rows at 1280{X}800 (comfortable {notice['comfortable']}; tool)",
         f"{mw['compact']} px minimum width compact",
-        f"{mw['comfortable']} px",
         f"{tape['min_width_one_size_px']} px",
         f"{tape['rows_600']['comfortable']} rows per 600 px",
         (
@@ -398,8 +400,6 @@ def drift_phrases(
         " / ".join(sp(tape["rates"][r]["dwell_ms"]["compact"]) for r in rates) + " ms compact",
         tenths([rad[k]["sqrt"] for k in ("1", "1.5", "2", "3", "4")]),
         tenths([side["r3"], side["r10"], side["r24"]]),
-        f"{sp(round(p80))} USDT",
-        f"eff. {p99 / 1000:.0f}k USDT",
         hundredths(sep["hue"]),
         hundredths(sep["fill"]),
         f"{min(sim['glyph on raised']):.2f} / {min(sim['mark on canvas']):.2f}",
@@ -412,6 +412,17 @@ def drift_phrases(
         f"{words(cnt['c_own'])} own C-rows",
         f"{words(cnt['g_own'])} own G-rows",
     ]
+    # the phrases the spec quotes in several sentences (0, 2, 4, 7, 12, 13, 21): every one must
+    # carry the computed number, so the gate is the exact count, never one substring hit
+    pairs: list[tuple[str, int | None]] = [(s, None) for s in once]
+    pairs.extend(
+        [
+            (f"{mw['comfortable']} px", 3),
+            (f"{sp(round(p80))} USDT", 8),
+            (f"eff. {p99 / 1000:.0f}k USDT", 3),
+        ]
+    )
+    return pairs
 
 
 def gates(text: str, label: str, constitution: str, problems: list[str]) -> dict[str, Any]:
@@ -713,11 +724,28 @@ def main(argv: list[str] | None = None) -> int:
         say("\n## I. Drift check (--check): the printed numbers as the spec's own sentences\n")
         drift = drift_phrases(tape, fill, rad, side, p80, p99, sep, sim, rows, cnt)
         low = spec_text.lower()
-        missing_drift = [d for d in drift if d.lower() not in low]
-        for d in drift:
-            say(f"- {'DRIFT' if d in missing_drift else 'OK'}: {d}")
-        problems += [f"drift: the spec lacks {d!r}" for d in missing_drift]
-        out["drift"] = {"phrases": len(drift), "missing": missing_drift}
+        found = {phrase: low.count(phrase.lower()) for phrase, _ in drift}
+        missing_drift = [
+            phrase
+            for phrase, want in drift
+            if (found[phrase] == 0 if want is None else found[phrase] != want)
+        ]
+        for phrase, want in drift:
+            tally = "" if want is None else f" ({X}{want} exact; {found[phrase]} found)"
+            say(f"- {'DRIFT' if phrase in missing_drift else 'OK'}: {phrase}{tally}")
+        for phrase, want in drift:
+            if phrase in missing_drift:
+                problems.append(
+                    f"drift: the spec lacks {phrase!r}"
+                    if want is None
+                    else f"drift: the spec carries {phrase!r} {found[phrase]} times, not {want}"
+                )
+        exact: dict[str, dict[str, int]] = {
+            phrase: {"expected": want, "found": found[phrase]}
+            for phrase, want in drift
+            if want is not None
+        }
+        out["drift"] = {"phrases": len(drift), "missing": missing_drift, "exact": exact}
     out["counts"], out["problems"] = cnt, problems
     if quiet:
         print(json.dumps(out, indent=1, ensure_ascii=False))
