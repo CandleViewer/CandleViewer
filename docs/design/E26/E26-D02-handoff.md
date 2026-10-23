@@ -22,7 +22,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — PENDING E26-D05: `15` CMP-170 lists `color.action.primary` and `font.mono`; in context the track binds `color.surface.sunken`, `color.neutral.default`, `color.text.tertiary`, `color.text.primary`, `color.text.secondary`, `color.surface.raised`, `color.surface.overlay`, `color.focus.ring`, `type.num.xs` / `.sm` and `radius.pill`, never the primary blue (spec D-7); the coverage-state tokens and the groove hatch (E11-D02 CR-6's geometry with a 2 px `color.neutral.default` stroke, spec §11) are E26-D05's to define, the hatch with E11-D05
 - [x] **Data contract confirmed** — `GET /market/data-coverage` (`DataCoverage`, spec §6.1), `ReplaySession` `from`, `to`, `state`, the control actions of spec §5.1, the `replay_seek` snaps (`23` §11) and `machines.replay:{id}.state` (`23` §6.4); the gaps are spec §15.1 (CC-1, CC-3, CC-4, CC-9, CC-15, CC-20), and the step rows depend on CC-16 (no step reaches the clock today)
-- [ ] **Contrast and CVD** — computed (spec §12.2); PENDING (BLOCKED-PENPOT): the `cvd_sim.py` renders and the pairs in `tools/contrast/pairs.mjs` come with the boards' later PR
+- [ ] **Contrast and CVD** — computed (spec §12.2); the pairs in `tools/contrast/pairs.mjs` are on `main` (#4122, `8ccfbae06`); PENDING (BLOCKED-PENPOT): only the `cvd_sim.py` renders still come with the boards' later PR
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — at the end
 - [ ] **Sign-off** — PENDING: the owner's `approved` on #509 or the merge of the later PR that closes it
 
@@ -34,7 +34,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 | transport | seeking: the four rungs, landed, cancelled, a held second target                                                            | B07      | `Seeking` (E26-D05 list)           | spec §6.3, D-16                                           |
 | transport | gap ahead: the stop callout; the skipped notice                                                                             | B08      | `GapAhead` (E26-D05 list)          | spec D-13; the callout's actions come first in Tab order  |
 | transport | end of range (`Play` becomes `Restart`, T1; `>` T2, `replay.end_of_range`); restart refused by the quota                    | B11      | `EndOfRange` (E26-D05 list)        | spec D-18                                                 |
-| transport | session expiring (9:58 left); closed with `Resume`, the transport T2 on `replay.ended`                                      | B12      | `SessionExpired` (E26-D05 list)    | spec D-20, §5.3                                           |
+| transport | session expiring (9:58 left); closed with `Resume`, the whole transport T2 on `replay.ended`                                | B12      | `SessionExpired` (E26-D05 list)    | spec D-20, §5.3                                           |
 | transport | error with a mapped cause; `Play` (2a) and `>` (2b) T2 on `replay.error`                                                    | B13      | `Error` (new)                      | spec D-23, §7.1, §5.3                                     |
 | transport | high speed; speed-limited                                                                                                   | B09      | `HighSpeed` (catalogued)           | spec D-8                                                  |
 | transport | viewing as (one `rbac.view_as` notice, every write T2); on hold (`replay.degraded`, the starting controls T2)               | B22, B23 | `ViewingAs`, `OnHold` (new)        | spec §5.3; 2b badges with the echo, `Play` 2a             |
@@ -79,7 +79,7 @@ the native activation wins.
 | bookmark marker    | `button`                | "Bookmark 1, 13:41:07, <label>"                                   | the note as plain text in its description (threat model RP-T03)                                                                                      |
 | clock              | `timer`                 | "Replay clock"                                                    | `aria-live="off"`; text at most once a second (spec D-19)                                                                                            |
 | transport status   | `status` / `alert`      | "Replay status"                                                   | polite for discrete events; `alert` once for a gap stop, expiry, error, the hold (spec §12.1)                                                        |
-| transport notice   | `status` / `alert`      | the notice's sentence (spec §5.3)                                 | one node for viewing as, the hold, no session and an ended session; every gated control's `aria-describedby` points at it                            |
+| transport notice   | `status` / `alert`      | the notice's sentence (spec §5.3)                                 | one node for viewing as, the hold, no session and an ended session (no live role); every gated control's `aria-describedby` points at it             |
 
 ## Handoff checklist — CMP-171 ReplaySpeedPicker (E26-D02 in context, #509)
 
@@ -156,7 +156,7 @@ No Table 4: nothing animates (each block's Motion line).
 | CMP-170 · thumb value text        | none while playing     | on a user action or on pause                     | the latest position             | spec §12.1                                         |
 | CMP-170 · transport status        | polite                 | once per discrete event                          | none needed                     | play, pause, step, seek landed, end of range       |
 | CMP-170 · gap stop, expiry, error | assertive (`alert`)    | once per event                                   | none                            | spec §7                                            |
-| CMP-170 · transport notice        | polite / `alert` once  | once on entry                                    | none                            | spec §5.3: viewing as polite, the hold `alert`     |
+| CMP-170 · transport notice        | polite / `alert` once  | once on entry; an ended session: none            | none                            | spec §5.3: viewing as polite, the hold `alert`     |
 | CMP-171 · achieved rate           | polite                 | once on entering and once on leaving the warning | two 1 s windows, 3 s to recover | spec D-8                                           |
 
 ### Density
@@ -248,4 +248,5 @@ Screen readers: NVDA by E26-D06 and E26-Q05; no exception is claimed.
   9. End of range, expiry with resume, error and disconnected as spec §7 draws them.
   10. The keyboard layer of spec §10 in each region; `Esc` cancels a seek only from the transport or the thumb.
   11. Viewing as, the hold and an ended session: one notice on the transport, every gated control pointing at it
-      (boards 22, 23 and 12).
+      (boards 22, 23 and 12); at expiry the whole transport is T2 and the notice has no live role, so the closed
+      state's alert is the one announcement.
