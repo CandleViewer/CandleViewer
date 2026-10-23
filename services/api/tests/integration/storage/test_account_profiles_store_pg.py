@@ -833,8 +833,9 @@ async def test_a_relaxing_replace_commits_its_notice_with_it(
 async def test_a_hook_that_refuses_leaves_neither_the_change_nor_a_notice(
     repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
 ) -> None:
-    """The notices wait for every hook: a move whose first hook answers one and whose second
-    refuses rolls back both rows, the binding and the notice."""
+    """A refusal rolls everything back together: a move whose first hook answers a notice and
+    whose second refuses leaves both profiles, the binding and the notices as they were (T12's
+    log pins that the notices follow every hook)."""
     account = _account(pg_dsn)
     (bootstrap,) = await repo.list_profiles(owner, account)
     target = await repo.create_profile(owner, account, _profile(account))

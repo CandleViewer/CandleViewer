@@ -90,12 +90,14 @@ def test_no_previous_default_bounds_nothing_above_zero() -> None:
         (_BLOCKS, _BLOCKS, False),
         (_BLOCKS, _set(_ALL, trading_enabled=False), False),
         (_set(_BLOCKS, trading_enabled=False), _BLOCKS, True),
+        (_set(_BLOCKS, trading_enabled=False), _ALL, True),
         (_ALL, _set(_ALL, blocked_symbols=None), True),
         (_ALL, _set(_BLOCKS, allowed_symbols=("BTCUSDT",)), False),
     ],
     ids=[
         "entry-added", "pattern-added", "flag-set", "block-removed", "entry-removed",
-        "block-added", "unchanged", "inert-after", "inert-before", "all-symbols-block-removed",
+        "block-added", "unchanged", "inert-after", "inert-before", "inert-before-all-symbols",
+        "all-symbols-block-removed",
         "all-symbols-narrowed",
     ],
 )  # fmt: skip

@@ -3643,8 +3643,9 @@ A relaxing profile write (E28-T02, #906 D2, SR-E28-01) writes `api`/`profile_rel
 (no incident, §3.10.2a), unresolved, with `exchange_account_id`, in the write's own transaction:
 after its write-ahead audit hooks and before its commit, so the row commits with the change and
 never without it. `details` holds only the profile's id, the replaced default's id on a move, the
-`PROFILE_CAPS` columns the write loosened and whether it widened the symbols (any other value is
-refused, so these rows need no redaction serializer, §12); `message` is one fixed sentence, and
+profile columns the write loosened (the judgement passes `PROFILE_CAPS` names) and whether it
+widened the symbols (any other value is refused, so these rows need no redaction serializer,
+§12); `message` is one fixed sentence, and
 `correlation_id` the request's id. `recipient_user_id` stays NULL: the Owner reads the whole
 stream, so `GET /notifications` on the account's environment (C-2.11) serves the row to every
 Owner, as a `system` notification of the account, and to no Manager or Viewer.
@@ -5062,7 +5063,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `recorded_stops`                                       | `actor_user_id`                         | P0         | plaintext                                       | A user id (0043), never a name, email or IP; `ON DELETE RESTRICT` keeps the attribution, as `trade_groups.created_by`                           |
 | `system_events`                                        | `details`                               | P0         | jsonb                                           | Same redaction serializer as audit                                                                                                              |
 | `system_events` (`dms_hook_owed` rows)                 | `details`                               | P0         | jsonb                                           | Only the closed `from_state` and `reason` codes (E27-T04, §3.10.2); any other value is refused, so these rows need no redaction serializer      |
-| `system_events` (`profile_relaxed` rows)               | `details`                               | P0         | jsonb                                           | Ids, `PROFILE_CAPS` column names and one flag only (#906 D2, §3.10.2); any other value is refused, so these rows need no redaction serializer   |
+| `system_events` (`profile_relaxed` rows)               | `details`                               | P0         | jsonb                                           | Ids, profile column names and one flag only (#906 D2, §3.10.2); any other value is refused, so these rows need no redaction serializer          |
 | `system_events` (addressed rows)                       | `recipient_user_id`                     | P0         | uuid                                            | An internal user id, the row's one reader besides the Owner (#3085); the row's `message` names the viewer and the window, never the reason      |
 | `system_events` (addressed rows)                       | `message`                               | P1         | plaintext                                       | Names the viewer by username (22 `startViewAs`); kept with its row: no purge rewrites it (residual UL4-I1, `e42-user-lifecycle.md`)             |
 | `backups`                                              | `encryption_ref`                        | S          | keyring handle                                  | opaque keyring alias only; key material (restic password, age identity) never enters the DB (§8.1); not in the `Backup` contract; never logged  |

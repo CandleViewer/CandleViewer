@@ -1025,6 +1025,7 @@ async def test_a_hook_that_answers_no_notice_adds_no_row(write: str) -> None:
     [
         {"looser_caps": ("max_leverage_cap", "10x")},
         {"looser_caps": "max_leverage_cap"},
+        {"looser_caps": ["max_leverage_cap"]},
         {"widened_symbols": "BTCUSDT"},
         {"profile_id": str(_PROFILE)},
         {"previous_profile_id": "Default"},
