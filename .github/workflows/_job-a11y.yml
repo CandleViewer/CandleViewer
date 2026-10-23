@@ -6,7 +6,8 @@ name: _job-a11y
 # error (A11Y-INFRA). Break-glass: CV_A11Y_INFRA_WAIVER_UNTIL (repo variable,
 # ISO-8601 UTC, max 24h ahead) waives infra errors only, never violations.
 # E05-T03 (#269): the `storybook` job runs beside it and fails the same check: play functions and
-# axe per story (CI-A11Y-002), a fail-closed fixture (CI-A11Y-003), a 10 min budget (CI-A11Y-004).
+# axe per story (CI-A11Y-002), a fail-closed fixture (CI-A11Y-003), a 10 min budget (CI-A11Y-004); both jobs cache
+# the Playwright browsers and bound their download (CI-A11Y-005, #4305).
 # storybook-nightly.yml sets `storybook_only` to run that job alone on `main` every night; pr.yml
 # keeps the default and runs both.
 
@@ -106,9 +107,9 @@ jobs:
         working-directory: apps/web
         run: '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" version'
 
-      - name: Cache the Playwright browsers
+      - name: Restore the Playwright browsers
         id: pwcache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
@@ -120,6 +121,15 @@ jobs:
           PW_CACHE_HIT: ${{ steps.pwcache.outputs.cache-hit }}
           PW_VERSION: ${{ steps.pwver.outputs.version }}
         run: '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" install'
+
+      # Saved here, right after a green install, not in the post step of a combined cache action:
+      # that one is skipped when a later step fails, so a cold run over the budget never seeded it.
+      - name: Save the Playwright browsers
+        if: steps.pwcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
 
       - name: Collect axe + keyboard + tree + flash (Playwright)
         # Collectors emit JSON/text under reports/a11y/. They fail only when
@@ -202,9 +212,9 @@ jobs:
         working-directory: apps/web
         run: '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" version'
 
-      - name: Cache the Playwright browsers
+      - name: Restore the Playwright browsers
         id: pwcache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
@@ -216,6 +226,15 @@ jobs:
           PW_CACHE_HIT: ${{ steps.pwcache.outputs.cache-hit }}
           PW_VERSION: ${{ steps.pwver.outputs.version }}
         run: '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" install'
+
+      # Saved here, right after a green install, not in the post step of a combined cache action:
+      # that one is skipped when a later step fails, so a cold run over the budget never seeded it.
+      - name: Save the Playwright browsers
+        if: steps.pwcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
 
       - name: Run play functions and axe on every story (CI-A11Y-002)
         # bash adds pipefail: a summary that cannot read the report, or counts no passed story,

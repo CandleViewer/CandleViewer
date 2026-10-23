@@ -522,7 +522,8 @@ index alone, removing nothing.
   job and never change a budget. Both a11y jobs cache `~/.cache/ms-playwright` under the key
   `pw-browsers-<runner OS>-<Playwright version from the lockfile>`, with no `restore-keys`, so a
   Playwright bump starts a cold cache. The step summary names the key and says hit or miss: a hit
-  runs `install-deps` only, a miss the full `install --with-deps` (the first run seeds the cache).
+  runs `install-deps` only, a miss the full `install --with-deps` and then saves the cache in its own
+  step, so a cold run that later fails or runs long still seeds it.
   The step sits after `pnpm install` because the version is read from the installed lockfile, so
   it is also after "Start the budget clock": the Storybook budget counts the whole job and stays
   600 s, which the cached install is what keeps it inside. The same code is raised when the version

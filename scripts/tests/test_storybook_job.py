@@ -65,7 +65,7 @@ def test_storybook_job_runs_beside_a11y_hardened_and_uploads_only_the_a11y_repor
     assert conditions == ["always()"] == [steps[-1].get("if")]
     assert not any("continue-on-error" in step for step in steps)
     uses = [step["uses"] for step in steps if "uses" in step]
-    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", use) for use in uses), uses
+    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+(?:/[\w.-]+)?@[0-9a-f]{40}", use) for use in uses), uses
     checkouts = [s["with"] for s in steps if "checkout@" in s.get("uses", "")]
     assert checkouts == [{"persist-credentials": False}]
     assert all("${{" not in step.get("run", "") for step in steps)

@@ -182,7 +182,7 @@ def test_each_attempt_is_bounded_and_the_bound_is_a_whole_number(
 
 # --- the workflow: both jobs restore the cache before the install, keyed by OS + version ---
 
-PINNED = re.compile(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}")
+PINNED = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w.-]+)?@[0-9a-f]{40}")
 
 
 def _steps(job: str) -> list[dict[str, Any]]:
