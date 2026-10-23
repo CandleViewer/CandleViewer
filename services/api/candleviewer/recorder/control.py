@@ -113,12 +113,14 @@ class RecordingReads(Protocol):  # a lookup answers `None` for no such entry
 
 
 class RecordingControl(RecordingReads, Protocol):  # `add` also says if it created the entry
+    # A pin keeps forever; an unpin takes `retention_days` (`None`: the global default).
     async def add(self, symbol: str, spec: EntrySpec,
                   actor: Actor) -> tuple[RecordedEntry, bool]: ...  # fmt: skip
     async def update(self, entry_id: str, spec: EntrySpec,
                      actor: Actor) -> RecordedEntry | None: ...  # fmt: skip
     async def remove(self, entry_id: str, actor: Actor) -> RecordedEntry | None: ...
-    async def pin(self, entry_id: str, pinned: bool, actor: Actor) -> RecordedEntry | None: ...
+    async def pin(self, entry_id: str, pinned: bool, actor: Actor, *,
+                  retention_days: int | None = None) -> RecordedEntry | None: ...  # fmt: skip
     async def status(self) -> ControlStatus: ...
 
 

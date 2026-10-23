@@ -595,6 +595,13 @@ def test_recorded_symbol_writes_are_handler_gated(method: str, path: str) -> Non
     assert (method, path) not in _NOT_DANGEROUS
 
 
+def test_the_add_is_served_with_its_handler_gate() -> None:
+    """#492 S7: the add's `recorder` branch is proven by `test_recording_writes.py`
+    (`pinned` or `retention_days` without the step-up is `403 step_up_required`)."""
+    served = served_operations(create_app()) - _PENDING_HANDLER_GATES
+    assert ("POST", "/recording/symbols") in served
+
+
 @pytest.mark.parametrize("path", ["/admin/recorder/compact", "/admin/recorder/import"])
 def test_recording_writes_without_step_up_are_swept_and_allow_listed(path: str) -> None:
     assert DANGEROUS_PATH_PATTERN.match(path)
@@ -611,7 +618,6 @@ def test_recording_writes_without_step_up_are_swept_and_allow_listed(path: str) 
 #: mounted with its handler test since #889 S9 (`test_audit_export_download.py`).
 _PENDING_HANDLER_GATES = {
     ("POST", "/admin/backups/{backupId}/restore"),
-    ("POST", "/recording/symbols"),
     ("PATCH", "/recording/symbols/{recordedSymbolId}"),
     ("DELETE", "/recording/symbols/{recordedSymbolId}"),
 }

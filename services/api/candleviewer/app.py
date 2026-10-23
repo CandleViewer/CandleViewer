@@ -152,6 +152,7 @@ from candleviewer.api.recording_reports import make_recording_reports_router
 from candleviewer.api.recording_retention import make_recording_retention_router
 from candleviewer.api.recording_status import make_recording_status_router
 from candleviewer.api.recording_symbols import make_recording_symbols_router
+from candleviewer.api.recording_writes import make_recording_writes_router
 from candleviewer.api.response_headers import NoSniff
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
@@ -2527,6 +2528,19 @@ def create_app(
     app.include_router(
         make_recording_status_router(recording_status, audit_resolver, _LazyAuditEmitter(ctx.audit))
     )
+    # The recorded-set writes: no control has them until the recorder runtime is bound (#2188),
+    # so `recording_writer` stays `None` and every write answers `503` until then.
+    app.state.recording_writer = None
+
+    async def _recording_elevation(session_id: uuid.UUID | None) -> JSONResponse | None:
+        return await require_session_elevation(ctx.auth, session_id, "recorder")
+
+    app.include_router(
+        make_recording_writes_router(
+            lambda: app.state.recording_writer, audit_resolver, _LazyAuditEmitter(ctx.audit),
+            _recording_elevation, lambda symbol: _catalogue_listed(ctx, symbol),
+        )
+    )  # fmt: skip
     # E16-T05: nightly roll-off composition (constructed only; scheduling is flag-gated).
     app.state.rolloff_job = build_rolloff_job(
         resolved,
