@@ -2185,6 +2185,60 @@ The `jsonb` keys, closed sets each:
 the allowance and the override's grace window are E39-S02's. A lockout's `released_at` is written when the release
 happens, never scheduled ahead.
 
+### 8.12 The private-stream consumer (E29-T05)
+
+_Added for E29-T05 (#848), contract first: nothing runs it yet._ The consumer reads each account's private stream (§14.1 `subscribe_private`, §14.2 rule 13) and drives what it reports into the OMS: order and execution rows into the order's B1 machine through the one facade (`OrderMachines`, §8.2), position rows into the position projection, wallet rows into E27-T04's wallet cache, and each status into account health, reconciliation and the key standing. The stream, never the REST acknowledgement, is the source of truth for an order's fills and end (ADR-0006, §8.4). The client topics that publish this truth (`orders`, `executions`, `positions`) are E29-T10's (#4207). How it starts and stops is `20-architecture.md` §6.2's.
+
+**Its ports (`oms.ports`).** `StreamedAccounts` lists the accounts to subscribe: each enabled and not deleted, holding an active key, of an environment the router has a port for. Each is resolved through `TradingAccounts.trading_account` (its active key, SR-E27-21) and subscribed on `TradingRouter.port_for(environment)`: one stream and one consumer per account (SR-E29-02), whose rows and statuses it takes one at a time in arrival order. `ReconciliationRequests`, `AccountNotices` and `ExecutionHandovers` (a sibling of `OrderHandovers`, never a widening of it) are its own; `CredentialRejections` and `ForeignOrderLockout` are E29-T04's, and `NoHandoverStore` refuses both hand-overs until E29-T06. No feature flag gates the consumer (C-4.14): it carries SR-E27-19's detection and C-2.6's hand-offs, so it stays off only while the composition root does not wire it, and `trading.oms_enabled` is not added.
+
+**Stream rows to B1 events.** Each row of the stream (`PrivateEvent.kind`, §14.4) has one effect:
+
+| Row              | When                                                                                                                                            | Effect                                                                                                                                                                                         |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `order`          | status `triggered`                                                                                                                              | `TRIGGERED`                                                                                                                                                                                    |
+| `order`          | status `cancelled` or `partially_filled_canceled`, time in force `ioc` or `fok`                                                                 | `EXPIRE`                                                                                                                                                                                       |
+| `order`          | status `cancelled` or `partially_filled_canceled` otherwise, `deactivated`, or `rejected` (after the acceptance: only a bound row takes a push) | `REMOTE_CANCELLED`                                                                                                                                                                             |
+| `order`          | status `new`, `untriggered`, `partially_filled` or `filled`                                                                                     | none: a fill moves the order through `EXEC`, never through its order row                                                                                                                       |
+| `order`          | a TP/SL order no row is bound to that matches a recorded side (§8.8 rule 6)                                                                     | `OrderMachines.materialise` (`MATERIALISED` from `ws_private`), then its status's row above                                                                                                    |
+| `order`          | the order of a `recorded_stop` row, its trigger price or quantity changed in place                                                              | the terms step of §8.3 rule 7's sixth item, which B1 gains in its own contract change before this code                                                                                         |
+| `execution`      | `exec_type` `trade`                                                                                                                             | `EXEC`, to the row bound to its `exchange_order_id`, with that row's `order_id` and `order_link_id` (below)                                                                                    |
+| `execution`      | any other `exec_type`                                                                                                                           | none, and no finding: a venue's own close fills no order (§8.5 step 2); `funding` never reaches the consumer (§14.2 rules 12 and 13)                                                           |
+| `execution_fast` | always                                                                                                                                          | never B1: it has no fee, fee rate or `exec_type`, which `EXEC` carries, so the `execution` row of the same `exec_id` is the one applied; like every row, it is evidence of the stream's health |
+| `position`       | always                                                                                                                                          | the position projection (`positions`, and a `position_snapshots` row with the reason `ws_push`), and the protection readings (below)                                                           |
+| `wallet`         | always                                                                                                                                          | E27-T04's wallet cache (`AccountHealth.wallet_pushed`), never B1                                                                                                                               |
+
+**The end (the orchestrator's Q4 ruling, 2026-10-22).** `EXPIRE` exactly when the order's time in force is `ioc` or `fok` and it ended `cancelled` or `partially_filled_canceled`; `REMOTE_CANCELLED` for every other end, `deactivated` and a rejection after the acceptance included. The venue's status is kept verbatim on the step's `order_events` row (the push's `order_status`) and in its audit record, and an end waits for the fills it reports (INV-B1-k). No row maps to `AMEND_REJECTED`: an amend the venue refuses is answered by its own call, an `amend` result that is not `ret_code_ok` (INV-B1-c).
+
+**Pairing (§8.3 rule 7, SR-E29-03), in this order.**
+
+1. The order row bound to the push's exchange order id (`ux_orders_exch_id`, in any state: a final row's push is S6's anomaly) takes it.
+2. Else a live row of the account that is unbound and not held, named by the push's normalised `order_link_id`, takes it into its S5 reorder buffer until it is bound, held or final; it then goes to the row bound to its own exchange order id, the waiting row only when that row's bind named it.
+3. Else an order push is offered to the recorded stops, and an execution's order is read by its `orderId` and matched as §8.5 step 3c matches (`[O-4]`): a match materialises its row, which takes the push.
+4. Else the push has no OMS intent, once that is decided: a trade execution is kept for the next pass (`ExecutionHandovers`), an order push leaves the row path (the pass reads the order afresh), and the account's lockout opens (§8.10), keyed by the order's `orderId` or the fill's `exec_id`, except for an exchange-placed order and its fills, which page without it (`Order.exchange_placed`). A read that fails decides nothing, and neither does a first read that finds no order (§8.3 rule 7).
+
+A push the facade answers `OrderStepUnknown` is delivered once more, as §8.2 "An unknown outcome" asks of its caller, and then left to reconciliation.
+
+**The hand-over bound.** The reads of steps 1 to 3 that decide whether a row or a recorded stop takes a push are bounded at 5 s in all from the push's arrival; a read the bound cuts short decides nothing, as one that fails. So an order or a fill with no OMS intent opens the lockout within about 5 s of its arrival while the store and the venue answer (SR-E27-19: within seconds). A push waiting in a row's reorder buffer (step 2) has OMS intent and is not under this bound. The bound is a fixed value, not a setting; E29-K01's measurements may tune it, a follow-up and no precondition.
+
+**Statuses (§14.2 rule 13).**
+
+| Status                                   | Effect                                                                                                                                                                                                                                                            |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `heartbeat`                              | `AccountHealth.ws_heartbeat`; every row is evidence too                                                                                                                                                                                                           |
+| `resyncing`                              | `ReconciliationRequests.request_reconciliation` with its reason: private topics send no snapshot (C-2.5)                                                                                                                                                          |
+| `down`                                   | `AccountHealth.ws_dropped`, and the account notice `oms.account_resyncing` (`AccountNotices`, `23-ws-protocol.md` §15.9), which reconciliation's `oms.account_synced` clears (E29-T06)                                                                            |
+| `closed`, `auth_refused`, `key_unusable` | `CredentialRejections.refused(account_id, error_code="AUTH_ERROR", exchange_ret_code=None)`: a status carries no venue code, and E29-T04's wiring reads the absent code as the key standing's `unknown_key`, which leaves the account no active key (fail closed) |
+| `closed`, `key_rotated`                  | the account is resolved again through `TradingAccounts.trading_account`, for its new active key, and subscribed again                                                                                                                                             |
+| `closed`, `key_revoked`, `shutdown`      | the stream has ended, and nothing is reported: the route that revoked the key told the standing itself (§8.4.1)                                                                                                                                                   |
+
+A closed stream is down (rule 13), so each `closed` status also calls `AccountHealth.ws_dropped`.
+
+**Protection readings (the orchestrator's Q3 ruling, 2026-10-22).** E29-T05 emits `SL_OBSERVED` and `SL_LOST`, B1's protection reading (the position's exchange time, stop and size), from the stream's position rows; E32-T02's protection machine, B8 (`position_protection`), is their consumer.
+
+**The foreign order or fill (SR-E27-19).** The lockout opens through `ForeignOrderLockout.open(account_id, *, finding, key)`: an order keyed by its exchange `orderId`, a fill by its `exec_id`. E39-T04 (#4208) binds the setter to §8.10's `reconciliation_foreign_order` freeze. Until it lands the composition root binds a paging stand-in, a P1 page and an audit record with no freeze, and SR-E27-19 stays open in the E27 threat model.
+
+**Its metric (the orchestrator's Q7 ruling, 2026-10-22).** `oms_stream_event_lag_seconds{topic}`, a row's lag from its creation (`PrivateEvent.ts_event`) to its handling, by the row's kind, is the consumer's one series, and none is labelled by account (`.semgrep/cv-obs-metric-label-allowlist.yml`): the stream's own health is the adapter's series (§14.2 rule 9) and `cv_account_health_state`, a slow client's close is E17's, and a missed execution E29-T06's.
+
 ---
 
 ## 9. Trade groups and fan-out
@@ -4415,6 +4469,8 @@ class Order(BaseModel):                    # a read's row (§8.5); the OMS aggre
                         "partial_stop_loss","trailing_stop","mm_rate_close"] = "order"
     position_idx: Literal[0,1,2] = 0
     time_in_force: Literal["gtc","ioc","fok","post_only","rpi"] = "gtc"
+    exchange_placed: bool = False          # the exchange placed it (§8.10); only the change that
+                                           # maps createType sets it, after E29-K01
 
 class Execution(BaseModel):                # a read's row: §8.1's fields, order_id aside
     exec_id: str
@@ -5758,3 +5814,10 @@ This number follows G-8b's §19.25 (#4135), open when this was written; whicheve
 ### 19.27 2026-10-23 — §9.2 the default binding (E28-T02, #906)
 
 - §9.2: `DefaultBinding` and `ProfilesRepository.get_default_binding` read an account's default binding, `AccountDefaultBinding` in `22-api-openapi.yaml`: its default profile and `exchange_accounts.default_binding_version` (21 §3.2.1, revision `0048_account_default_binding`), which `trg_ap_default_binding` (21 §3.2.4) raises once per move. `set_default_profile` compares the binding's version, which it requires, where it compared the target profile's, under the account row locked `FOR NO KEY UPDATE` instead of an advisory lock, and answers the version after the move (`DefaultProfileMove.version`).
+
+### 19.28 2026-10-23 — §8.12, §14.4: the private-stream consumer's contract (E29-T05, #848)
+
+- New §8.12, contract first: the consumer's ports (`StreamedAccounts`, `ReconciliationRequests`, `AccountNotices` and `ExecutionHandovers`, a sibling of `OrderHandovers`, in `oms.ports`; `NoHandoverStore` refuses both hand-overs until E29-T06); each private row's B1 event, `execution_fast` never one; the end (the orchestrator's Q4 ruling: `EXPIRE` exactly for an `ioc` or `fok` order that ended cancelled, `REMOTE_CANCELLED` otherwise, the venue's status kept verbatim); §8.3 rule 7's pairing, in order; the hand-over bound rule 7 leaves to E29-T05, 5 s; each status's effect, rule 13's four duties, with an `auth` refusal or an unusable key reported as `AUTH_ERROR` and no venue code, which E29-T04's wiring reads as `unknown_key`; the protection readings E29-T05 emits and B8 consumes (Q3); the lockout's paging stand-in until E39-T04 (#4208); its one metric (Q7); and no feature flag (Q6).
+- §14.4: `Order` gains `exchange_placed`, false by default, which §8.10 has the first contract-first change to need it add (`exchange/base/models.py` with it).
+- `20-architecture.md` §6.2: when the consumer starts and stops, and its one member on the composite `MachinePublisher`.
+- E29-K01 (#843) is not a precondition (the orchestrator's ruling, 2026-10-22 21:30Z): its numbers can only tune the consumer's thresholds, the hand-over bound among them, as a follow-up.
