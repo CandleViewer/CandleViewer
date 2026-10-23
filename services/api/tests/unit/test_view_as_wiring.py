@@ -17,6 +17,7 @@ from pydantic import SecretStr, ValidationError
 
 from candleviewer.admin.view_as import ViewAsService
 from candleviewer.admin.view_as_sweeper import ViewAsSweeper
+from candleviewer.api.rules_actor import SessionRulesActorResolver
 from candleviewer.api.view_as import make_view_as_start_router
 from candleviewer.app import _LazyAuditEmitter, create_app
 from candleviewer.auth.service import AuthService
@@ -188,6 +189,29 @@ def test_create_app_puts_the_service_and_its_sweeper_on_app_state() -> None:
     assert isinstance(state.view_as, ViewAsService)
     assert isinstance(state.view_as_sweeper, ViewAsSweeper)
     assert state.view_as_sweeper._service is state.view_as
+
+
+def test_create_app_gives_the_notifications_read_the_subject_resolving_rules_actor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3085 (#4139's carry, M-4): `GET /notifications` takes its actor from the session rules
+    actor, which answers as the stamped subject (S8, `test_view_as_sites.py`), and its scope is
+    pure over the actor (`test_scope_is_pure_over_the_actor`). So an Owner viewing as T reads T's
+    notices, T's addressed `view_as_started` among them, never the Owner's system stream."""
+    import candleviewer.app as appmod
+
+    seen: list[tuple[Any, ...]] = []
+    real = appmod.make_notifications_router
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(appmod, "make_notifications_router", spy)
+    create_app(_real())
+    ((_, resolve, _),) = seen
+    assert isinstance(resolve.__self__, SessionRulesActorResolver)
+    assert resolve.__func__ is SessionRulesActorResolver.resolve
 
 
 def _spy_on_the_ws_router(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
