@@ -180,6 +180,20 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-14"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/3672"
+  # #4215: the same venv's opentelemetry-api (alert 68). Every Semgrep release from 1.80.0 to
+  # 1.182.1 (the newest) caps opentelemetry-api below 1.45.1 (~=1.37.0 since 1.137.0), and 1.173.0
+  # onward pin mcp==1.29.0. The newest release without the cap is 1.79.0, which cannot parse
+  # PEP 695 and would skip code. The alert was published 2026-10-22, so 2026-11-20 ends inside
+  # C-12.3's 30 days and needs no exception; it is EX-09's date, so one re-decision covers both.
+  # Re-check both alerts on each Semgrep release; move the pins the day Semgrep accepts the
+  # patched versions.
+  - id: "GHSA-xcq7-p3pf-p88h"
+    tool: dependabot
+    severity: MEDIUM
+    reason: "opentelemetry-api 1.37.0 in CI's Semgrep venv only, held below the fix (1.45.1) by semgrep's own declared range (>=1.37,<1.38). The flaw is unbounded parsing of a tracestate value: the venv imports opentelemetry-api only as Semgrep's dependency, and the security lane's `semgrep scan` runs no server and never parses a tracestate (Semgrep builds its own trace carrier, without one, and only under `--trace`, which the lane never passes). Move the pin once a Semgrep release accepts 1.45.1"
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
+    expires: "2026-11-20"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/3672"
   # E03 #1755 review round 4 (#1778 B5-b forbids file-level excludes): applied migration
   # 0004_instruments.py is immutable (C-5.4), so its three legacy `nosemgrep` markers
   # cannot gain reason/owner/review fields. The `exchange_code` enum value names the one
