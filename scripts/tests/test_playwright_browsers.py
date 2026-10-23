@@ -19,10 +19,10 @@ REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "tools" / "ci" / "playwright_browsers.sh"
 VERSION = "1.64.1"
 
-FAKE_NPX = r"""#!/bin/bash
+FAKE_PNPM = r"""#!/bin/bash
 echo "$*" >> "$FAKE/calls.log"
-[ "$1" = playwright ] || { echo "unexpected npx call: $*" >&2; exit 99; }
-shift
+[ "$1 $2" = "exec playwright" ] || { echo "unexpected pnpm call: $*" >&2; exit 99; }
+shift 2
 case "$1" in
   --version) echo "Version ${FAKE_VERSION:-1.64.1}" ;;
   install | install-deps)
@@ -39,9 +39,12 @@ def env(tmp_path: Path) -> dict[str, str]:
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for name, body in {
-        "npx": FAKE_NPX,
+        "pnpm": FAKE_PNPM,
         "sleep": '#!/bin/bash\necho "$*" >> "$FAKE/sleeps.log"\n',
-        "timeout": '#!/bin/bash\necho "$1" >> "$FAKE/timeouts.log"\nshift\nexec "$@"\n',
+        "timeout": (
+            '#!/bin/bash\nwhile [[ "$1" == --* ]]; do echo "$1" >> "$FAKE/timeout-flags.log"; shift; done\n'
+            'echo "$1" >> "$FAKE/timeouts.log"\nshift\nexec "$@"\n'
+        ),
     }.items():
         tool = bindir / name
         tool.write_text(body, encoding="utf-8")
@@ -75,7 +78,7 @@ def _calls(env: dict[str, str]) -> list[str]:
 
 
 def _installs(env: dict[str, str]) -> list[str]:
-    return [c for c in _calls(env) if c.startswith("playwright install")]
+    return [c for c in _calls(env) if c.startswith("exec playwright install")]
 
 
 def _summary(env: dict[str, str]) -> str:
@@ -102,21 +105,21 @@ def test_miss_runs_the_full_install_with_deps_and_says_miss(
 ) -> None:
     r = _run(env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="false", PW_VERSION=VERSION)
     assert r.returncode == 0, r.stderr
-    assert _installs(env) == ["playwright install --with-deps chromium"]
+    assert _installs(env) == ["exec playwright install --with-deps chromium"]
     assert f"`{KEY}`" in _summary(env) and "miss" in _summary(env)
 
 
 def test_hit_runs_only_install_deps_and_says_hit(env: dict[str, str]) -> None:
     r = _run(env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="true", PW_VERSION=VERSION)
     assert r.returncode == 0, r.stderr
-    assert _installs(env) == ["playwright install-deps chromium"]
+    assert _installs(env) == ["exec playwright install-deps chromium"]
     assert f"`{KEY}`" in _summary(env) and "hit" in _summary(env)
 
 
 def test_an_empty_hit_flag_counts_as_a_miss(env: dict[str, str]) -> None:
     r = _run(env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="", PW_VERSION=VERSION)
     assert r.returncode == 0, r.stderr
-    assert _installs(env) == ["playwright install --with-deps chromium"]
+    assert _installs(env) == ["exec playwright install --with-deps chromium"]
 
 
 def test_hit_for_another_playwright_version_is_refused(env: dict[str, str]) -> None:
@@ -168,7 +171,7 @@ def test_each_attempt_is_bounded_and_the_bound_is_a_whole_number(
     )
     assert ok.returncode == 0 and (
         Path(env["FAKE"]) / "timeouts.log"
-    ).read_text().split() == ["300"]
+    ).read_text().split() == ["120"]
     bad = _run(
         env,
         "install",
@@ -178,6 +181,57 @@ def test_each_attempt_is_bounded_and_the_bound_is_a_whole_number(
         PW_INSTALL_TIMEOUT="soon",
     )
     assert bad.returncode == 1 and "CI-A11Y-005" in bad.stderr
+
+
+def test_the_lockfile_binary_is_run_never_fetched_from_a_registry() -> None:
+    text = SCRIPT.read_text()
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    assert "npx" not in code and "pnpm exec playwright" in code
+
+
+def test_a_stuck_download_is_killed_after_its_bound(env: dict[str, str]) -> None:
+    r = _run(env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="false", PW_VERSION=VERSION)
+    assert r.returncode == 0
+    flags = (Path(env["FAKE"]) / "timeout-flags.log").read_text().split()
+    assert flags == ["--kill-after=10"]
+
+
+def test_failed_apt_install_on_a_hit_does_not_blame_the_download(
+    env: dict[str, str],
+) -> None:
+    r = _run(
+        env,
+        "install",
+        PW_CACHE_KEY=KEY,
+        PW_CACHE_HIT="true",
+        PW_VERSION=VERSION,
+        INSTALL_FAILS="99",
+    )
+    assert r.returncode == 1 and "CI-A11Y-005" in r.stderr
+    assert "dependency" in r.stderr and "download" not in r.stderr
+
+
+def test_empty_backoff_list_ends_with_the_code(env: dict[str, str]) -> None:
+    r = _run(
+        env,
+        "install",
+        PW_CACHE_KEY=KEY,
+        PW_CACHE_HIT="false",
+        PW_VERSION=VERSION,
+        PW_BACKOFF="",
+        INSTALL_FAILS="1",
+    )
+    assert r.returncode == 1 and "CI-A11Y-005" in r.stderr and "PW_BACKOFF" in r.stderr
+
+
+def test_failure_is_annotated_for_the_run_page(env: dict[str, str]) -> None:
+    r = _run(env, "version", FAKE_VERSION="x")
+    assert r.stderr.startswith("::error::CI-A11Y-005")
+
+
+def test_pr_workflow_runs_the_e2e_filter_for_the_script() -> None:
+    text = (REPO / ".github" / "workflows" / "pr.yml").read_text()
+    assert "- 'tools/ci/playwright_browsers.sh'" in text
 
 
 # --- the workflow: both jobs restore the cache before the install, keyed by OS + version ---
