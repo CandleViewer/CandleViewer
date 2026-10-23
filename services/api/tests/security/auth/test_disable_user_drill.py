@@ -9,9 +9,8 @@ the close, with no frame after the `bye` (23-ws-protocol.md §9.5, never the `44
 #2493); a pending step-up challenge is gone; the revoked token opens no socket; a second disable
 changes nothing; and the wall time from the `DELETE` to the `bye`, measured, under the 5 s bound.
 The dev-stack drill that a person-or-agent runs (#2494) is recorded in
-`docs/security/reviews/e09-auth-review.md` section 4 with #300's second PR. The #2911 cases (a
-stray session no disable swept) keep their own harness: they drive the session service's refusal,
-not the route.
+`docs/security/reviews/e09-auth-review.md` section 4. The #2911 cases (a stray session no disable
+swept) keep their own harness: they drive the session service's refusal, not the route.
 """
 
 from __future__ import annotations
