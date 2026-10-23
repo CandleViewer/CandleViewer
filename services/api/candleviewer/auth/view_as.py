@@ -243,9 +243,10 @@ ViewAsStartHook = Callable[["SessionRecord"], Awaitable[None]]
 
 class ViewAsSessionStore(Protocol):
     """The storage contract of the view-as columns of `sessions`, apart from `SessionRepository`
-    until every repository implements it. Each write is one conditional write: `None` if unmet. A
-    refresh carries a context to the successor row and the rotated row keeps its copy, so a context
-    may sit on several rows: `admin.view_as_ended` is keyed by `context_id`, so it has one."""
+    until every repository implements it. Each write is one conditional write (`None` if unmet),
+    but the start's, several statements in one transaction (`start_view_as_unit`). A refresh
+    carries a context to the successor row and the rotated row keeps its copy, so a context may
+    sit on several rows: `admin.view_as_ended` is keyed by `context_id`, so it has one."""
 
     async def start_view_as(
         self, session_id: str, state: ViewAsState, *, now: datetime

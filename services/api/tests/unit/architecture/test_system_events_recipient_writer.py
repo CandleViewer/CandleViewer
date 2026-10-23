@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import ast
 import re
+import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
 
 import candleviewer
 
 _ROOT = Path(candleviewer.__file__).parent
-_TABLE = r'(?:"?\w+"?\s*\.\s*)?"?SYSTEM_EVENTS\b"?'
+_TABLE = r'(?:"?\w+"?\s*\.\s*)?"?SYSTEM_EVENTS\b"?+'
 _WRITE = re.compile(rf"\b(?:INSERT\s+INTO|UPDATE|MERGE\s+INTO|COPY)\s+{_TABLE}")
 _POSITIONAL = re.compile(rf"\b(?:INSERT\s+INTO|COPY)\s+{_TABLE}\s*+(?!\()|\bINSERT\s+VALUES\b")
 _ONE_WRITER = ("storage/repositories/sessions_sqlalchemy.py",)
@@ -68,11 +69,12 @@ def _writes(source: str) -> list[int]:
 
 
 def _sources() -> Iterator[tuple[str, str]]:
-    """Each production module naming the table or the column: no other can write the column, so
-    no other is parsed."""
+    """Each production module naming the table or the column, read NFKC-normalised as Python reads
+    its identifiers: no other can write the column, so no other is parsed. A name split across
+    string literals is out of the guard's reach, as any obfuscated name is (C-10.2 review)."""
     for path in sorted(_ROOT.rglob("*.py")):
         text = path.read_text(encoding="utf-8")
-        named = text.lower()
+        named = unicodedata.normalize("NFKC", text).lower()
         if "migrations" in path.parts or not (
             "system_events" in named or "recipient_user_id" in named
         ):

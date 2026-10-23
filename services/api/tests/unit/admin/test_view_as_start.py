@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import unicodedata
 import warnings
 from pathlib import Path
 from typing import Any
@@ -185,8 +186,8 @@ async def test_a_cleared_context_owing_its_record_gets_it_late_then_the_start_la
 
 
 async def test_a_start_closes_the_sessions_sockets_bound_to_no_context() -> None:
-    """Every socket of the session ends `view_as_changed` and re-`auth`s into the target's scope
-    (22, 23 section 9.6); before a start none is bound to a context."""
+    """The session's sockets bound to no context end `view_as_changed` and re-`auth` into the
+    target's scope (22, 23 section 9.6); before a start, none is bound to one."""
     rig = _Rig()
     record = await _session_of(rig)
     await rig.service.start(record, _TARGET, reason=_REASON, now=_T0)
@@ -276,7 +277,7 @@ def test_only_the_start_calls_the_stores_start() -> None:
     callers = {
         (path.relative_to(root).as_posix(), *use)
         for path in sorted(root.rglob("*.py"))
-        if "start_view_as" in (text := path.read_text(encoding="utf-8"))  # parse only these
+        if "start_view_as" in unicodedata.normalize("NFKC", text := path.read_text("utf-8"))
         for use in _uses_of_the_stores_start(text)
     }
     assert callers == {("admin/view_as.py", "start", "start_view_as_unit")}

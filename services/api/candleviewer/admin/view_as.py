@@ -11,7 +11,8 @@ A context ends exactly once: of concurrent ends only the call whose conditional 
 (`end_view_as`, or `leave_view_as`, which also clears it) ended it closes the session's sockets
 and writes `admin.view_as_ended`. That record is never waited on: the app's refusal-audit tracker
 runs it, and one that fails, outlasts its bound or finds the tracker full leaves the end pending
-on the row until the sweeper writes it late (`recorded_late`). It is keyed by its context id
+on the row until the sweeper writes it late (`recorded_late`), or a start on the session writes
+it late first, inside its own unit of work. It is keyed by its context id
 (`AuditWriter.emit_keyed`), so writing it again, after a crash too, stores no second row. Its
 actor is the viewer and the viewer's session; the target is only its object (Q2), and no state
 dict holds a session id (the redactor masks one).
@@ -300,9 +301,10 @@ class ViewAsService:
         a fresh context (`uuid4`, so no two starts share one) on `record`'s session, the target's
         notice and `admin.view_as_started` written ahead, in one unit of work under the row's lock
         (`ViewAsSessionStore.start_view_as_unit`); a cleared context whose end is unrecorded gets
-        its record late, first. Answers `started` (every socket of the session then closes
-        `view_as_changed` and re-`auth`s into the target's scope), `held` (409 `view_as_active`)
-        or neither (the session is gone). Nothing starts when a record cannot be written:
+        its record late, first. Answers `started` (the session's sockets bound to no context then
+        close `view_as_changed` and re-`auth` into the target's scope), `held` (409
+        `view_as_active`) or neither (the session is gone). Nothing starts when a record cannot be
+        written:
         `ViewAsStartUnavailable`, `audit_unavailable` or `store_unavailable`. A self-targeting
         start is a caller error (`ValueError`): the route refuses it first."""
         state = ViewAsState.start(uuid4(), target_user_id, now=now)
@@ -365,11 +367,12 @@ class ViewAsService:
         return ViewAsStartResult(started=started, held=held)
 
     async def _close_unbound(self, row: SessionRecord) -> None:
-        """After a start, every socket of the session closes `view_as_changed` and re-`auth`s into
-        the target's scope: before a start the session holds no context, so they are its sockets
-        bound to none (a socket an earlier close failed to reach may still be bound to an old
-        context; its next `auth` closes it, S10). Bounded; a failed close is logged, never raised:
-        the start stands, and an open socket closes at its next `auth`, which reads the context."""
+        """After a start, the session's sockets bound to no context close `view_as_changed` and
+        re-`auth` into the target's scope: before a start the session holds no context, so that is
+        every socket of the session (one an earlier close failed to reach may still be bound to an
+        old context; its next `auth` closes it, S10). Bounded; a failed close is logged, never
+        raised: the start stands, and an open socket closes at its next `auth`, which reads the
+        context."""
         try:
             async with asyncio.timeout(self._close_timeout_s):
                 await self._sockets.close_family(
