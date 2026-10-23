@@ -5,7 +5,8 @@ ignored it: every `pnpm install` ran the root `prepare` and each workspace packa
 scripts, and `pnpm config get` printed `undefined` for every key. These cases run the pinned pnpm,
 offline, in a scratch workspace built from COPIES of the repo's `.npmrc` and `pnpm-workspace.yaml`
 (`packages:` pointed at one scratch package), and assert what pnpm does, not what the files say.
-`.npmrc` keeps `ignore-scripts=true` for npm, which still reads it; one case pins that.
+`.npmrc` keeps `ignore-scripts=true` for npm run at the repo root, which still reads it; one case
+pins that.
 
 CI must run them: `governance-tests` sets up the pinned pnpm (governance.yml), so without it they
 fail there, and skip only on a developer machine. A pnpm other than the pin answers for another
@@ -41,35 +42,41 @@ POLICY = {
     "save-exact": "true",
     "strict-peer-dependencies": "false",
 }
-#: What `.npmrc` keeps for npm, not pnpm: the CI steps that run `npm install -g corepack@latest`
-#: run npm inside the checkout, and npm reads this file. pnpm 12 reads `ignoreScripts` from the
-#: workspace file instead.
+#: What `.npmrc` keeps for npm, not pnpm: npm run at the repo root, for example an accidental
+#: `npm install`, reads this file (not in global mode, `-g`, and not inside a workspace package).
+#: pnpm 12 reads `ignoreScripts` from the workspace file instead.
 NPM_ONLY = {"ignore-scripts": "true"}
 #: A dependency whose postinstall writes `built.txt` beside itself, installed from a local tarball.
 DEP = "dep-with-script"
 TARBALL = f"{DEP}-1.0.0.tgz"
 
 
-def _env(tmp_path: Path) -> dict[str, str]:
-    """The environment pnpm runs in: pnpm 12 takes settings from `pnpm_config_*` variables, so
-    none of the caller's may carry over."""
+def _env(tmp_path: Path, *, dead_registry: bool = True) -> dict[str, str]:
+    """The environment pnpm and npm run in: pnpm 12 takes settings from `pnpm_config_*` variables,
+    so none of the caller's may carry over, and the store and both caches live under `tmp_path`,
+    so no case writes into the user's home."""
     settings = ("npm_config_", "pnpm_config_")
     env = {k: v for k, v in os.environ.items() if not k.lower().startswith(settings)}
     env.update(
         COREPACK_ENABLE_NETWORK="0",  # a pnpm that is not cached fails here, it does not download
         COREPACK_ENABLE_DOWNLOAD_PROMPT="0",
-        pnpm_config_registry="http://127.0.0.1:9/",  # nothing listens: registry calls fail at once
         pnpm_config_store_dir=str(tmp_path / "store"),
+        pnpm_config_cache_dir=str(tmp_path / "pnpm-cache"),
+        npm_config_cache=str(tmp_path / "npm-cache"),
     )
+    if dead_registry:  # nothing listens: a registry call fails at once
+        env["pnpm_config_registry"] = "http://127.0.0.1:9/"
     return env
 
 
-def _run(cmd: list[str], cwd: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run(
+    cmd: list[str], cwd: Path, tmp_path: Path, *, dead_registry: bool = True
+) -> subprocess.CompletedProcess[str]:
     exe = shutil.which(cmd[0]) or cmd[0]
     return subprocess.run(
         [exe, *cmd[1:]],
         cwd=cwd,
-        env=_env(tmp_path),
+        env=_env(tmp_path, dead_registry=dead_registry),
         capture_output=True,
         text=True,
         timeout=120,
@@ -81,7 +88,10 @@ def _run(cmd: list[str], cwd: Path, tmp_path: Path) -> subprocess.CompletedProce
 def _pnpm_problem() -> str | None:
     """Why this machine cannot run the cases (None when the pinned pnpm answers)."""
     if shutil.which("pnpm") is None or shutil.which("node") is None:
-        return "pnpm and node run the install-policy cases"
+        return (
+            "pnpm or node is not on PATH: set Node up (setup-node) and run corepack enable and "
+            f"corepack prepare pnpm@{PINNED_VERSION} --activate, as governance.yml does"
+        )
     with tempfile.TemporaryDirectory() as scratch:  # no package.json: corepack's default pnpm
         got = _run(["pnpm", "--version"], Path(scratch), Path(scratch))
     version = got.stdout.strip()
@@ -101,7 +111,9 @@ def _need_pnpm() -> None:
 
 def _need_npm() -> None:
     if shutil.which("npm") is None:  # CI sets Node up and npm comes with it: fail there, skip here
-        (pytest.fail if os.environ.get("CI") else pytest.skip)("npm reads the setting .npmrc keeps")
+        (pytest.fail if os.environ.get("CI") else pytest.skip)(
+            "npm is not on PATH: setup-node brings it (governance.yml sets Node up)"
+        )
 
 
 def _manifest(name: str, dependencies: dict[str, str] | None = None) -> str:
@@ -173,10 +185,13 @@ def test_install_is_frozen_by_the_workspace_file_alone(tmp_path: Path) -> None:
     assert not (root / "pnpm-lock.yaml").exists()
 
 
-def _npmrc_settings() -> dict[str, str]:
-    lines = (ROOT / ".npmrc").read_text(encoding="utf-8").splitlines()
-    settings = (ln.partition("=") for ln in lines if ln.strip() and ln.lstrip()[0] not in "#;")
-    return {key.strip(): value.strip() for key, sep, value in settings if sep and key[:2] != "//"}
+def _npmrc_settings(npmrc: Path = ROOT / ".npmrc") -> dict[str, str]:
+    """The settings in `npmrc` that pnpm 12 would have to read: not its auth entries (`//host/:...`)
+    or registries (`registry`, `@scope:registry`), which it still takes from that file."""
+    lines = npmrc.read_text(encoding="utf-8").splitlines()
+    pairs = (ln.partition("=") for ln in lines if ln.strip() and ln.lstrip()[0] not in "#;")
+    settings = {key.strip(): value.strip() for key, sep, value in pairs if sep}
+    return {k: v for k, v in settings.items() if k[:2] != "//" and k.split(":")[-1] != "registry"}
 
 
 def test_every_other_npmrc_setting_is_one_pnpm_reads(tmp_path: Path) -> None:
@@ -190,12 +205,27 @@ def test_every_other_npmrc_setting_is_one_pnpm_reads(tmp_path: Path) -> None:
     assert got == wanted, "pnpm 12 ignores these .npmrc settings: set them in pnpm-workspace.yaml"
 
 
-def test_npm_reads_the_script_setting_the_npmrc_keeps_for_it(tmp_path: Path) -> None:
+def test_npm_at_the_repo_root_reads_ignore_scripts_from_the_npmrc(tmp_path: Path) -> None:
+    """npm run at the root (an accidental `npm install`) reads the line `.npmrc` keeps for it."""
     _need_npm()
     root = _workspace(tmp_path)  # the repo's .npmrc, copied
     got = {k: _run(["npm", "config", "get", k], root, tmp_path).stdout.strip() for k in NPM_ONLY}
     # `false` once the line is gone: npm then runs the install scripts of what it installs.
     assert got == NPM_ONLY
+
+
+def test_a_registry_line_is_one_pnpm_reads_so_the_guard_leaves_it_alone(tmp_path: Path) -> None:
+    _need_pnpm()
+    npmrc = tmp_path / ".npmrc"
+    lines = [
+        "registry=https://registry.example.invalid/",
+        "@scope:registry=https://scope.example.invalid/",
+    ]
+    npmrc.write_text("\n".join([*lines, "save-exact=true"]) + "\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"name": "npmrc", "private": true}', encoding="utf-8")
+    got = _run(["pnpm", "config", "get", "registry"], tmp_path, tmp_path, dead_registry=False)
+    assert got.stdout.strip() == "https://registry.example.invalid/"  # pnpm 12 reads it from .npmrc
+    assert _npmrc_settings(npmrc) == {"save-exact": "true"}  # so only the other line is checked
 
 
 def _pack_dependency(tarball: Path) -> None:

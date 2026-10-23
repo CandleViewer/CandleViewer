@@ -27,7 +27,7 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │  │                spike-containment (CI-SPIKE-001/002),
 │  │                changelog-fragment (CI-REL-001)*, licence-header, docs-link-check (GOV-002),
 │  │                backlog-twin-eol (each docs/plan/backlog/*.json blob is LF, #3495);
-│  │                last, as their installs run PR scripts: commitlint*, then gen (generated-code
+│  │                last, as they run PR scripts: commitlint*, then gen (generated-code
 │  │                freshness, CI-GEN-001..006)
 │  │                (* pull requests only: they read PR metadata, so a merge group skips them, #3433)
 │  ├─ infra filter: pin-check (SR-132)     (CI-GATE-003, CI-PIN-*, CI-IMG-002, CI-IMG-007..009)

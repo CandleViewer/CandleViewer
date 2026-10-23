@@ -12,8 +12,10 @@
 // exactly `<from>/node_modules/<name>` (its link resolved; no walk up the tree, no NODE_PATH), and
 // the runner executes that file with node and no shell: Electron 42 and later ship their binary
 // fetch as the `install-electron` bin, not as a postinstall (#1819). Every entry is checked, and
-// every pinned bin found, before anything runs; a field the runner does not run, or a pinned bin
-// the installed package no longer ships or that resolves outside it, fails the run.
+// every pinned bin found, before anything runs; a field the runner does not run, a package that
+// resolves outside the repository or whose package.json is a link, not an object or named for
+// another package, or a pinned bin the installed package no longer ships or that resolves outside
+// it, fails the run, and so does an allowlist file that is a link.
 //
 // Usage: node tools/ci/run-allowed-postinstall.mjs
 
@@ -75,9 +77,13 @@ function checkRun(name, run) {
 
 /** The allowlist's entries, each checked against the reviewed shape. */
 export function loadEntries(root) {
+  const file = path.join(root, ALLOWLIST);
+  if (existsSync(file) && lstatSync(file).isSymbolicLink()) {
+    refuse("is a link, not a file of the repository");
+  }
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync(path.join(root, ALLOWLIST), "utf8"));
+    parsed = JSON.parse(readFileSync(file, "utf8"));
   } catch (error) {
     refuse(`cannot be read as JSON: ${error.message}`);
   }
@@ -113,9 +119,10 @@ export function loadAllowlist(root) {
 /**
  * The file a `run` entry executes: the pinned bin of the package's own package.json, read from
  * exactly `<from>/node_modules/<name>` with its link resolved (that real directory is the package
- * root), never found by walking up the tree or through NODE_PATH (so an `exports` map does not
- * apply). Throws, naming the package, when it is not installed there, its package.json is a link or
- * not JSON, it no longer ships that bin (a later release can move its install step), or the bin,
+ * root and must lie inside the repository), never found by walking up the tree or through
+ * NODE_PATH (so an `exports` map does not apply). Throws, naming the package, when it is not
+ * installed there, its package.json is a link, not JSON, not an object or named for another
+ * package, it no longer ships that bin (a later release can move its install step), or the bin,
  * its links resolved, lies outside the package.
  */
 export function resolvePinnedBin(root, entry) {
@@ -132,6 +139,9 @@ export function resolvePinnedBin(root, entry) {
   // The package root is the real `<from>/node_modules/<name>` directory, and its package.json a
   // file of it: a manifest linked in from elsewhere would move the root, and with it the bin.
   const packageDir = realpathSync(installed);
+  if (!isInside(realpathSync(root), packageDir)) {
+    refuse(`${name}: ${shown} resolves outside the repository`);
+  }
   const manifestPath = path.join(packageDir, "package.json");
   if (lstatSync(manifestPath).isSymbolicLink()) {
     refuse(`${name}: ${shown} is a link, not a file of the package`);
@@ -141,6 +151,12 @@ export function resolvePinnedBin(root, entry) {
     manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   } catch (error) {
     refuse(`${name}: ${shown} cannot be read as JSON: ${error.message}`);
+  }
+  if (!isRecord(manifest)) {
+    refuse(`${name}: ${shown} is not a JSON object`);
+  }
+  if (manifest.name !== name) {
+    refuse(`${name}: ${shown} names ${JSON.stringify(manifest.name)}, not ${name}`);
   }
   const target = isRecord(manifest.bin) ? manifest.bin[bin] : undefined;
   if (typeof target !== "string") {

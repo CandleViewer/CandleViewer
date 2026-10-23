@@ -114,6 +114,10 @@ install policy of C-12.3; pnpm 12 does not read it from `.npmrc`), so `prepare` 
 again in each new clone or worktree. Hooks are a convenience; the same
 rules are enforced server-side by CI and cannot be weakened by `--no-verify`.
 
+To change a dependency, use `pnpm add` or `pnpm update` (or `pnpm install --no-frozen-lockfile` after
+editing a manifest): with `frozenLockfile: true` a plain `pnpm install` refuses a lockfile that no
+longer matches the manifests.
+
 ### Generated-code freshness (`packages/protocol`)
 
 `packages/protocol` is regenerated from `docs/plan/22-api-openapi.yaml` and the WS schema in
