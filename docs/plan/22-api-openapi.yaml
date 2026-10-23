@@ -5383,9 +5383,10 @@ paths:
           refuses a new admission that opens or increases exposure with `403 trading_disabled`
           and no `reason`, after the idempotency lookup and before the checks below. It is
           narrower than the order-entry gate (`24-internal-schemas.md` section 8.10): an order
-          whose body says `reduce_only` passes it, since a rollout flag gates no protective path
+          whose body says `reduce_only` passes it, read from the one parsed body the strict read
+          validates and only as a JSON `true`, since a rollout flag gates no protective path
           (C-4.14, C-2.6), while the gate and the switches below still take that order and the
-          server still classifies it by its effect (SR-E29-01, below). The route is mounted
+          server still classifies it by its effect (SR-E29-01, above). The route is mounted
           whatever the flag says: the flag gates admission, not mounting. It gates new
           admissions only: an exact repeat is answered as above, and neither a create a restart
           resumes nor a cancel is refused by it (#913 slice 3 rulings Q3, Q18).

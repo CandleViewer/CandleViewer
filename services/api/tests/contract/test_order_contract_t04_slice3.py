@@ -352,9 +352,10 @@ def test_the_flag_is_narrower_than_the_gate_and_the_security_lens_nits_are_writt
     assert not _missing(
         _PLACE_TEXT,
         "It is narrower than the order-entry gate (`24-internal-schemas.md` section 8.10): an "
-        "order whose body says `reduce_only` passes it, since a rollout flag gates no protective "
-        "path (C-4.14, C-2.6), while the gate and the switches below still take that order and "
-        "the server still classifies it by its effect (SR-E29-01, below).",
+        "order whose body says `reduce_only` passes it, read from the one parsed body the strict "
+        "read validates and only as a JSON `true`, since a rollout flag gates no protective path "
+        "(C-4.14, C-2.6), while the gate and the switches below still take that order and the "
+        "server still classifies it by its effect (SR-E29-01, above).",
         "The route is mounted whatever the flag says: the flag gates admission, not mounting.",
     )
     forbidden = _words(_RESPONSES["Forbidden"]["description"])
@@ -368,6 +369,10 @@ def test_the_flag_is_narrower_than_the_gate_and_the_security_lens_nits_are_writt
         "C-2.6), while the gate (§8.10) and step 10's switches still take that order and the "
         "pipeline still classifies it by its effect (SR-E29-01)." in step
     )
+    assert (
+        "The flag reads `reduce_only` from the one parsed body that step 11 validates, and only "
+        "a JSON `true` passes it." in step
+    )
     section = _words(_SCHEMA_DOC.split("### 10.7 Feature flags", 1)[1].split("### 10.8 ", 1)[0])
     assert not _missing(
         section,
@@ -376,8 +381,10 @@ def test_the_flag_is_narrower_than_the_gate_and_the_security_lens_nits_are_writt
         "though the order-entry gate still takes that order",
         "A replay, a create a restart resumes and a cancel never meet it",
         "The route is mounted whatever the flag says.",
-        "A write reaches the process that makes it at once, through the writer's hook, and every "
-        "other process sharing the database within `FLAG_POLL_S` (5 s) plus one read",
+        "and off again whenever a read fails, until one answers",
+        "A write reaches the process that makes it at once, through the writer's hook (else on its "
+        "own poll), and every other process sharing the database within `FLAG_POLL_S` (5 s) plus "
+        "one read",
     )
     architecture = _words(_ARCH)
     assert (
