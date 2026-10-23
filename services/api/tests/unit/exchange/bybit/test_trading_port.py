@@ -422,6 +422,15 @@ async def test_the_service_factory_hands_the_port_its_clock_offset_and_entry_wai
     await port.aclose()
 
 
+@pytest.mark.parametrize("entry_wait_s", [trading.DEFAULT_ENTRY_WAIT_S, 0.2])
+def test_the_service_names_the_lane_waits_of_the_port_it_builds(entry_wait_s: float) -> None:
+    """#913 ruling Q19: the OMS router's lane bounds are the port's own, read off the service."""
+    svc = ExchangeBybitService(credentials=fake_capability(), environment="demo")
+    port = svc.trading_port("demo", entry_wait_s=entry_wait_s)
+    assert svc.lane_waits(entry_wait_s) == port._waits
+    assert ExchangeBybitService.lane_waits() == svc.trading_port("demo")._waits
+
+
 # -- 3. one governor per process (OM-D08, R5) ---------------------------------------------------
 
 

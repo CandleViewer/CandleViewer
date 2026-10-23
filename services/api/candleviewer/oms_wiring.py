@@ -1,5 +1,5 @@
 """Composition-root wiring (not a module) of the OMS (E29-T04, #913 slice 3; 24 Sec.8.4, 20
-Sec.6.2), pure: nothing is started or mounted here.
+Sec.6.2). Parts 1 and 2 are pure: nothing is started or mounted there.
 
 Part 1: the OMS's time bounds from the settings (`OmsBounds`, 20 Sec.7.2), refused together so a
 bad set fails the runtime's start, never a request, and the bindings of the ports `oms.ports`
@@ -8,6 +8,8 @@ table comes in as a callable, as `key_selfcheck_wiring` takes it.
 
 Part 2: the reads and adapters that bind the OMS's ports to the modules that own them, as `oms`
 imports no `audit`, `ws` or storage driver (C-3.1, C-3.3, ADR-0003).
+
+Part 3: the OMS runtime (`OmsRuntime`), which composes the OMS for the process's environment.
 """
 
 from __future__ import annotations
@@ -15,24 +17,33 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import time
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, fields
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import Any, ClassVar, Final, Literal, Protocol
+from typing import Any, ClassVar, Final, Literal, Protocol, cast
 from uuid import UUID
 
 import structlog
 
+from candleviewer.accounts.trade_group_repository import TradeGroupRepository
 from candleviewer.accounts.verification import Refusal
-from candleviewer.admin.wiring import keyed_record_id
+from candleviewer.admin.wiring import (
+    MachineEventSinkMetrics,
+    build_machine_event_sink,
+    keyed_record_id,
+)
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId, Environment, Px, Symbol
 from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsErrorCode
-from candleviewer.exchange.base.models import AccountRef, TickerEvent
-from candleviewer.observability.metrics import Metrics
-from candleviewer.oms.commands import NEVER_SENT_ALERT
+from candleviewer.exchange.base.models import AccountRef, RateLane, TickerEvent
+from candleviewer.observability.metrics import BoundedMetric, Metrics
+from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.oms.clock_halt import ClockHalt
+from candleviewer.oms.commands import NEVER_SENT_ALERT, OmsCommandPort
 from candleviewer.oms.errors import (
     AccountScopeDenied,
     OmsNotReady,
@@ -40,30 +51,81 @@ from candleviewer.oms.errors import (
     StoreUnavailable,
     TradingDisabled,
 )
-from candleviewer.oms.order_machine import MAX_MACHINES, OrderAuditRecord, OrderNotice
+from candleviewer.oms.idempotency import AnchorService
+from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator
+from candleviewer.oms.order_machine import (
+    MAX_MACHINES,
+    CompositePublisher,
+    OrderAuditRecord,
+    OrderMachinePorts,
+    OrderMachines,
+    OrderNotice,
+)
+from candleviewer.oms.order_steps import OrderStepWriter
 from candleviewer.oms.ports import (
     ClockHealth,
     Interim,
     KeyedRecord,
+    NoHandoverStore,
+    Profiles,
+    RefuseWhileWaiting,
     RequestRecord,
     RuntimePortName,
+    SubmissionPorts,
     SubmitActor,
     announce_interim_port,
+    announce_interim_ports,
 )
-from candleviewer.oms.submit import RESULT_WAIT_S, STORE_TIMEOUT_S
-from candleviewer.settings import OMS_INFLIGHT_STUCK_MAX_S, Settings
+from candleviewer.oms.repository import (
+    ExecutionRepository,
+    IdempotencyAnchorRepository,
+    OrderEventRepository,
+    OrderRepository,
+    RecordedStopRepository,
+    SubmissionRepository,
+    WriteTimer,
+)
+from candleviewer.oms.routing import RoutedPort, TradingRouter
+from candleviewer.oms.submit import RESULT_WAIT_S, STORE_TIMEOUT_S, OrderSubmission, SubmissionDeps
+from candleviewer.oms.validator import ReadOnlyCheck, Validator
+from candleviewer.settings import OMS_INFLIGHT_STUCK_MAX_S, OMS_STOP_RESERVE_S, Settings
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
-from candleviewer.statechart.plugins import LogPager, Pager
+from candleviewer.statechart.persistence import ChainTripLatch
+from candleviewer.statechart.plugins import LogPager, MachineEventSink, Pager
 from candleviewer.statechart.plugins.state_feed import (
     FeedBinding,
     MachineStateHandle,
     MachineStatePort,
 )
+from candleviewer.statechart.registry import Registry
+from candleviewer.statechart_wiring import EventFramesAdapter, EventsAdapter, PersistOps
 from candleviewer.storage.errors import StorageError
-from candleviewer.storage.repositories.orders import OrderStoreError
+from candleviewer.storage.repositories.executions import ExecutionStore
+from candleviewer.storage.repositories.executions_sqlalchemy import SqlAlchemyExecutionStore
+from candleviewer.storage.repositories.idempotency_anchors import IdempotencyAnchorStore
+from candleviewer.storage.repositories.idempotency_anchors_sqlalchemy import (
+    SqlAlchemyIdempotencyAnchorStore,
+)
+from candleviewer.storage.repositories.orders import OrderEventStore, OrderStore, OrderStoreError
+from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
+from candleviewer.storage.repositories.recorded_stops import RecordedStopStore
+from candleviewer.storage.repositories.recorded_stops_sqlalchemy import (
+    SqlAlchemyRecordedStopStore,
+)
+from candleviewer.storage.repositories.relational_sqlalchemy import (
+    SqlAlchemyRelationalRepository,
+)
+from candleviewer.storage.repositories.statechart_sqlalchemy import SqlAlchemyEventStore
+from candleviewer.storage.repositories.submissions import SubmissionStore
+from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
+from candleviewer.storage.repositories.trade_groups import TradeGroupStore
+from candleviewer.storage.repositories.trade_groups_sqlalchemy import SqlAlchemyTradeGroupStore
 from candleviewer.storage.repositories.trading_accounts import (
     TradingAccountReads,
     TradingAccountRow,
+)
+from candleviewer.storage.repositories.trading_accounts_sqlalchemy import (
+    SqlAlchemyTradingAccountReads,
 )
 
 #: The stop request's bound (21 Sec.3.3.11, [LANE-25]), in seconds: how long an unanswered stop
@@ -590,3 +652,365 @@ class OrderStateFeed:
             if len(self._handles) > self._max:
                 self._handles.popitem(last=False)
         handle.publish(payload, last=last)
+
+
+# --- part 3: the runtime (#913 slice 3E) ---
+
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+_US: Final = timedelta(microseconds=1)
+
+
+class FlagRead(Protocol):
+    """A process-wide flag view (`flags_wiring.FlagView`): its value, and its first read."""
+
+    def __call__(self) -> bool: ...
+
+    async def first_read(self) -> None: ...
+
+
+class OwnedPort(RoutedPort, Protocol):
+    """The trading port the runtime owns: `stop()` closes its account clients."""
+
+    async def aclose(self) -> None: ...
+
+
+class Venue(Protocol):
+    """The exchange adapter's service as the root composes it (C-2.2): the trading port of the
+    process's environment, the waits of its lanes (ruling Q19) and its key-verdict table."""
+
+    def trading_port(
+        self, env: str, *, clock_offset_ms: Callable[[], int | None] | None = None
+    ) -> OwnedPort: ...
+
+    def lane_waits(self) -> Mapping[RateLane, float]: ...
+
+    def key_refusal(self, error: ExchangeError) -> tuple[str, int] | None: ...
+
+
+class Ingestion(Protocol):
+    """`ingestion.service.IngestionService` as the order path reads it at `start()`: the clock
+    guard, the ticker stream and the instrument catalogue, each None until composed, and the
+    clock's measured offset, None while unmeasured."""
+
+    @property
+    def clock(self) -> ClockHealth | None: ...
+
+    @property
+    def tickers(self) -> Tickers | None: ...
+
+    @property
+    def instruments(self) -> InstrumentCatalogue | None: ...
+
+    def clock_offset_ms(self) -> int | None: ...
+
+
+class Bundle(Protocol):
+    """The statechart persistence bundle's sink and chain-trip latch (E50-T63)."""
+
+    @property
+    def sink(self) -> MachineEventSink: ...
+
+    @property
+    def latch(self) -> ChainTripLatch: ...
+
+
+class OwnedSink(MachineEventSink, Protocol):
+    """The standalone `machine_events` WAL sink the runtime builds and owns with no bundle."""
+
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
+class OrderStores(OrderStore, OrderEventStore, Protocol):
+    """The order rows and their events, in one adapter (`SqlAlchemyOrderStore`)."""
+
+
+@dataclass(frozen=True, slots=True)
+class OmsStores:
+    """The runtime's stores, on one pool of its own that `release` disposes of, and the builder of
+    the standalone sink over it. They take no principal: no route reaches them (C-12.4)."""
+
+    orders: OrderStores
+    executions: ExecutionStore
+    submissions: SubmissionStore
+    anchors: IdempotencyAnchorStore
+    stops: RecordedStopStore
+    groups: TradeGroupStore
+    accounts: TradingAccountReads
+    sink: Callable[[], OwnedSink]
+    release: Callable[[], Awaitable[None]]
+
+
+def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
+    """The stores over the runtime's own pool (`oms` in `pg_stat_activity`). Lazy: building them
+    connects nothing."""
+    pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "oms")
+    events, ops = EventFramesAdapter(EventsAdapter(SqlAlchemyEventStore(pool))), PersistOps(metrics)
+    counts = MachineEventSinkMetrics(flushed=ops.flushed, pending=ops.pending)
+    return OmsStores(
+        orders=SqlAlchemyOrderStore(pool),
+        executions=SqlAlchemyExecutionStore(pool),
+        submissions=SqlAlchemySubmissionStore(pool),
+        anchors=SqlAlchemyIdempotencyAnchorStore(pool),
+        stops=SqlAlchemyRecordedStopStore(pool),
+        groups=SqlAlchemyTradeGroupStore(pool),
+        accounts=SqlAlchemyTradingAccountReads(pool),
+        sink=lambda: build_machine_event_sink(settings, events, metrics=counts),
+        release=pool.dispose,
+    )
+
+
+class StandaloneSink(Interim):
+    """No persistence bundle serves B1's `machine_events` (20 Sec.6.2): the startup announces it
+    as it does an interim port, `oms_interim_ports{port="machine_event_sink"}` at 1 with a
+    WARNING."""
+
+    port: ClassVar[RuntimePortName] = "machine_event_sink"
+    replaced_by: ClassVar[str] = "#2701"
+    serves: ClassVar[str] = (
+        "the standalone machine_events WAL sink, with no HMAC'd journal; on a live process with "
+        "CV_TRADING_LIVE_ENABLED on, none, and the OMS is never ready"
+    )
+
+
+class NoMachineEventSink(RuntimeError):
+    """A live process with `CV_TRADING_LIVE_ENABLED` on and no persistence bundle: no sink, so the
+    runtime is never ready and no live order is admitted (CV-C53)."""
+
+
+class NoProfileCache(RuntimeError):
+    """The process composed no shared effective-profile cache (`profiles_wiring`)."""
+
+
+type _Closer = tuple[str, Callable[[], Awaitable[object]]]
+
+
+@dataclass(frozen=True, slots=True)
+class _Parts:
+    """What `start()` composed; `stop()` runs the `closers` after its drain, in their order."""
+
+    submission: OrderSubmission
+    anchors: AnchorService
+    machines: OrderMachines
+    closers: tuple[_Closer, ...]
+
+
+def _page(pager: Pager, summary: str) -> None:
+    try:
+        pager.raise_alert("page", summary, machine_kind="order")
+    except Exception as exc:  # the page is lost, never what it pages on
+        _log().critical("oms_pager_failed", summary=summary, error=type(exc).__name__)
+
+
+async def _closed(closers: Sequence[_Closer], deadline: float) -> None:
+    """Each closer by the loop's `deadline`, isolated: one that fails or runs out is logged, and
+    the next still runs; a cancellation propagates."""
+    for name, close in closers:
+        try:
+            async with asyncio.timeout_at(deadline):
+                await close()
+        except Exception as exc:  # TimeoutError included
+            _log().error("oms_stop_step_failed", step=name, error=type(exc).__name__)
+
+
+class OmsRuntime:
+    """The OMS of this process (20 Sec.6.2), composed by `start()` on the serving loop: the order
+    facade wires B1's process-wide ports and refuses a second one, so it lives from `start()` to
+    `stop()`, never in `create_app()`. What `start()` cannot compose fails the runtime closed:
+    logged by step (`phase`) and paged, and it serves no order, while market data stays up."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        venue: Venue,
+        ingestion: Ingestion,
+        read_only: ReadOnlyCheck,
+        metrics: Metrics,
+        audit: AuditWriterPort,
+        gate: OrderEntryCheck,
+        standings: KeyStandingReactions,
+        live_enabled: FlagRead,
+        profiles: Profiles | None,
+        persistence: Bundle | None,
+        feed: MachineStatePort,
+        stores: Callable[[], OmsStores] | None = None,
+        pager: Pager | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        monotonic: Callable[[], float] = time.monotonic,
+        max_machines: int = MAX_MACHINES,
+        registry: Registry | None = None,
+    ) -> None:
+        self._settings, self._metrics = settings, metrics
+        self._env: Environment = settings.environment.value
+        self._venue, self._ingestion, self._read_only = venue, ingestion, read_only
+        self._audit, self._gate, self._standings = audit, gate, standings
+        self._live_enabled = live_enabled
+        self._persistence, self._feed = persistence, feed
+        #: The process's one effective-profile cache (finding 6), `profiles_wiring`'s, which its
+        #: owner closes: the pipeline reads it, and E28-T02's writes invalidate the same one.
+        self.profiles = profiles
+        self._stores = stores or (lambda: pg_stores(settings, metrics))
+        self._pager: Pager = LogPager() if pager is None else pager
+        self._now, self._monotonic = now, monotonic
+        self._max, self._registry = max_machines, registry
+        self._parts: _Parts | None = None
+        self._failed = False
+        #: The step `_compose` has reached, which a failed start logs and pages.
+        self._phase = "settings"
+
+    @property
+    def submission(self) -> OrderSubmission:
+        """The pipeline, once composed; `OmsNotReady` before."""
+        return self._composed().submission
+
+    @property
+    def anchors(self) -> AnchorService:
+        """The anchor service the pipeline was built with, which the route's lookup reads
+        (SEC-S3D-02); `OmsNotReady` before it is composed."""
+        return self._composed().anchors
+
+    def _composed(self) -> _Parts:
+        if self._parts is None:
+            raise OmsNotReady
+        return self._parts
+
+    async def start(self) -> None:
+        """Compose the OMS on this loop (20 Sec.6.2); a second call does nothing until `stop()`.
+        What cannot be composed fails the runtime closed (`oms_runtime_failed_closed`)."""
+        if self._parts is not None or self._failed:
+            return
+        try:
+            self._parts = await self._compose()
+        except Exception as exc:  # fail closed (C-2.21): no order is admitted
+            self._failed, phase = True, self._phase
+            _log().critical("oms_runtime_failed_closed", phase=phase, error=type(exc).__name__)
+            _page(self._pager, f"oms_runtime_failed_closed: {phase}")
+
+    async def stop(self) -> None:
+        """Close what `start()` composed: the facade (which unwires B1's ports), the command port,
+        the sink it owns, the trading port and its pool, each isolated and all within
+        `OMS_STOP_RESERVE_S` (20 Sec.6.2)."""
+        parts, self._parts, self._failed = self._parts, None, False
+        if parts is not None:
+            await _closed(parts.closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
+
+    async def _compose(self) -> _Parts:
+        """The C6 rig's composition, for the process's environment only (C-2.11): the switches,
+        bindings and announcements, the sink and latch (20 Sec.6.2), the trading port and router,
+        then over the pool the stores, the command port, the facade, the anchors and the pipeline.
+        A failure once the port exists closes what was built before it goes on."""
+        self._phase = "settings"
+        settings, env, metrics = self._settings, self._env, self._metrics
+        ingestion = self._ingestion
+        bounds = OmsBounds.from_settings(settings)
+        ports = SubmissionPorts.interim(now=self._now)
+        announce_interim_ports(ports, metrics=metrics)
+        switches = TradingSwitchesBinding(
+            live_enabled=settings.trading_live_enabled,
+            live_flag=self._live_enabled,
+            kill_switch=InterimKillSwitch(),
+            gate=self._gate,
+        )
+        switches.announce(metrics=metrics)
+        self._phase = "sink"
+        bundle = self._persistence
+        sunk = StandaloneSink() if bundle is None else bundle.sink
+        announce_interim_port("machine_event_sink", sunk, metrics=metrics)
+        if bundle is None and env not in _NOT_LIVE and settings.trading_live_enabled:
+            raise NoMachineEventSink
+        self._phase = "profiles"
+        if self.profiles is None:
+            raise NoProfileCache
+        self._phase = "port"
+        port = self._venue.trading_port(env, clock_offset_ms=ingestion.clock_offset_ms)
+        closers: list[_Closer] = [("trading_port", port.aclose)]
+        try:
+            router = TradingRouter({env: port}, lane_waits=self._venue.lane_waits())
+            self._phase = "stores"
+            stores = self._stores()
+            closers.append(("pool", stores.release))
+            self._phase = "commands"
+            timer = WriteTimer(_histogram(metrics, "oms_db_write_seconds"))
+            orders = OrderRepository(stores.orders, timer)
+            stops = RecordedStopRepository(stores.stops, timer)
+            audit, notices = OmsAudit(self._audit, environment=env), OrderNoticesRouter(self._pager)
+            accounts = TradingAccountsBinding(stores.accounts, environment=env)
+            halt = ClockHalt(
+                ClockHealthBinding(ingestion.clock), monotonic=self._monotonic, metrics=metrics
+            )
+            gate = RefuseWhileWaiting(stops, now=self._now, bound_s=bounds.stop_request_s)
+            rejections = CredentialRejectionsBinding(
+                self._standings, key_refusal=self._venue.key_refusal, pager=self._pager
+            )
+            commands = OmsCommandPort(
+                router=router, accounts=accounts, orders=orders, stops=stops,
+                handovers=NoHandoverStore(), credentials=rejections, clock_halt=halt,
+                switches=switches, audit=audit, submit_audit=audit, gate=gate, notices=notices,
+                now_us=self._now_us, submit_timeout_s=bounds.submit_timeout_s,
+            )  # fmt: skip
+            steps = OrderStepWriter(
+                orders,
+                ExecutionRepository(stores.executions, timer),
+                clock=self._now,
+                submissions=SubmissionRepository(stores.submissions, timer),
+            )
+            owned = stores.sink() if bundle is None else None
+            sink: MachineEventSink = bundle.sink if bundle is not None else cast(OwnedSink, owned)
+            feed = CompositePublisher(OrderStateFeed(self._feed, max_orders=self._max))
+            self._phase = "facade"
+            machines = OrderMachines(
+                OrderMachinePorts(
+                    steps, orders, commands, audit, feed, notices, sink,
+                    OrderEventRepository(stores.orders, timer),
+                ),
+                metrics=metrics, pager=self._pager,
+                latch=ChainTripLatch() if bundle is None else bundle.latch,
+                now_us=self._now_us, registry=self._registry, max_machines=self._max,
+            )  # fmt: skip
+            closers[:0] = [("machines", machines.stop), ("commands", commands.aclose)]
+            self._phase = "pipeline"
+            anchors = AnchorService(
+                IdempotencyAnchorRepository(stores.anchors, timer),
+                clock=self._now,
+                timeout_s=bounds.store_timeout_s,
+                stuck_after_s=bounds.stuck_after_s,
+            )
+            deps = SubmissionDeps(
+                accounts=accounts,
+                instruments=InstrumentsBinding(ingestion.instruments),
+                prices=ReferencePricesBinding(ingestion.tickers),
+                profiles=self.profiles,
+                switches=switches,
+                gate=gate,
+                audit=audit,
+                groups=TradeGroupRepository(stores.groups),
+            )
+            submission = OrderSubmission(
+                ports, deps, machines=machines, commands=commands,
+                allocator=OrderLinkIdAllocator(orders),
+                validator=Validator(read_only_gate=self._read_only), router=router,
+                anchors=anchors, clock_halt=halt, metrics=metrics, now=self._now,
+                monotonic=self._monotonic, pager=self._pager,
+                store_timeout_s=bounds.store_timeout_s, place_wait_s=bounds.place_wait_s,
+                result_wait_s=bounds.result_wait_s,
+            )  # fmt: skip
+            if owned is not None:
+                self._phase = "sink_start"
+                await owned.start()
+                closers.insert(2, ("sink", owned.stop))
+        except BaseException:
+            await _closed(closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
+            raise
+        return _Parts(submission, anchors, machines, tuple(closers))
+
+    def _now_us(self) -> int:
+        return (self._now() - _EPOCH) // _US
+
+
+def _histogram(metrics: Metrics, name: str) -> BoundedMetric:
+    spec = next(spec for spec in CATALOGUE if spec.name == name)
+    return metrics.histogram(
+        spec.name, spec.help, spec.labels, buckets=spec.buckets or (), max_series=spec.max_series
+    )

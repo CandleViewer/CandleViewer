@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
@@ -18,6 +19,7 @@ import httpx
 import structlog
 
 from candleviewer.domain.primitives import AccountId, Environment
+from candleviewer.exchange.base.models import RateLane
 from candleviewer.exchange.base.reconnect import ConnectionBudget
 from candleviewer.exchange.bybit.archive import (
     DEFAULT_ARCHIVE_BASE,
@@ -58,7 +60,12 @@ from candleviewer.exchange.bybit.trades import (
     recent_trades_fetcher,
     trade_topic,
 )
-from candleviewer.exchange.bybit.trading import DEFAULT_ENTRY_WAIT_S, BybitTradingPort
+from candleviewer.exchange.bybit.trading import (
+    CRITICAL_WAIT_S,
+    DEFAULT_ENTRY_WAIT_S,
+    POLL_WAIT_S,
+    BybitTradingPort,
+)
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.secrets import WithdrawPermissionRejected
 
@@ -274,6 +281,18 @@ class ExchangeBybitService:
             entry_wait_s=entry_wait_s,
             private_streams=streams,
         )
+
+    @staticmethod
+    def lane_waits(entry_wait_s: float = DEFAULT_ENTRY_WAIT_S) -> Mapping[RateLane, float]:
+        """#913 ruling Q19: how long each rate lane of a port `trading_port` builds with
+        `entry_wait_s` waits for its token (24 §8.7), for the OMS router's rate step, so the
+        composition root reads them here and imports no venue module (C-2.2)."""
+        waits: dict[RateLane, float] = {
+            "critical": CRITICAL_WAIT_S,
+            "entry": entry_wait_s,
+            "poll": POLL_WAIT_S,
+        }
+        return MappingProxyType(waits)
 
     async def close_private_streams(
         self, key_ref: str, *, reason: Literal["key_revoked", "key_rotated"] = "key_revoked"
