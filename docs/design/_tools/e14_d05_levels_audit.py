@@ -1462,6 +1462,8 @@ REG_QUOTES = (
     "`fib_retracement`, `fib_timezone` and `measure` exactly 2",
 )
 GATED_STRINGS = ("never persists", "until pinned", "deferred", "(estimated)", "`rbac.view_as`")
+LOCKED_FRAMES = ("SCR-037/fib-locked", "SCR-037/vwap-locked", "SCR-037/vwap-estimated-locked")
+REFUSALS = ('"Read-only while viewing as {user}."', '"Your role can\'t save workspaces."')
 # 26 section 3.7's SDF glyph set, parsed from its line (the lens round 1 F-2): every string drawn
 # on the canvas by these tools is checked against it; a glyph outside the set must be named in
 # the spec's A-row to 26 section 3.7 (section 16.2) until the atlas gains it
@@ -1581,6 +1583,24 @@ def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
     t2_pin = [r for r in pin_rows if any("T2" in c for c in r)]
     if len(t2_pin) < 2:
         FAILS.append(f"Pin has {len(t2_pin)} T2 rows (view-as and viewer expected)")
+    # the standing T2 pre-check's fold: every locked frame row carries D02 section 5.1's two
+    # refusal reasons for a Viewer / view-as session, the view-as leg first, named T2; the two
+    # strings sit in the section 9.4 table as cited rows
+    locked_t2 = 0
+    for fr in LOCKED_FRAMES:
+        rows = [" ".join(r) for r in rows_of(spec) if r and fr in r[0]]
+        good = [
+            r for r in rows if all(k in r for k in ("`rbac.view_as`", "`rbac.permission`", "T2"))
+        ]
+        if not rows or len(good) != len(rows):
+            FAILS.append(f"the locked frame row {fr} lacks the Viewer / view-as T2 refusal legs")
+        locked_t2 += len(good)
+    say = section(spec, "### 9.4", "### 9.5")
+    for s_ in REFUSALS:
+        if say.count(s_) != 1:
+            FAILS.append(
+                f"the section 9.4 table names the refusal {s_!r} {say.count(s_)} times, not once"
+            )
     s14 = (PLAN / "14-screens-catalogue.md").read_text(encoding="utf-8").splitlines()
     if sum(ln.startswith(POINTER) for ln in s14) != 1:
         FAILS.append("the 14 pointer line is not present exactly once")
@@ -1592,6 +1612,7 @@ def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
         "fallback_rows": len(fallback_rows),
         "estimated_frames": len(est_frames),
         "pin_t2_rows": len(t2_pin),
+        "locked_t2_rows": locked_t2,
         "frames_named": len(frames),
         "rule_ids": len(ids),
     }
