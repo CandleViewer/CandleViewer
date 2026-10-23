@@ -6,7 +6,8 @@ Standalone, offline, stdlib only; it executes no repo code. It reads the token J
 `themes.json` (the `verify_tokens.py` loader shape: dark = primitives + semantic-dark; light and
 high-contrast layer their file over dark), `tools/contrast/pairs.mjs` and `encodings.json`, `14`,
 `15`, `22`, `23`, `28`, `rules/manager.py`, `rules/validator.py`, `rules/ir/canonical.py`,
-`api/rules_crud.py`, the spec and the handoff as text, and prints with a source label on every row:
+`api/rules_crud.py`, `api/rules.py`, `rules/vocabulary/catalogue.py`, the spec and the handoff as
+text, and prints with a source label on every row:
 (1) the WCAG 2.x ratio of every fg / bg pair the three screens render, dark / light /
 high-contrast, compared UNROUNDED against the role's bar (text 4.5, non-text 3.0, hc-text 7.0 in
 the high-contrast theme only; `tools/contrast/generate.mjs`: `ratio >= threshold`); a value within
@@ -59,10 +60,12 @@ ENTRIES = (
     "234",
     "235",
 )
+#: The validator's issue codes the spec quotes; `stop_loosening` is PR 4246's (22 registers it at
+#: its head 17b21251) and counts only once `validator.py` carries it - eleven today, twelve then.
 _CODES = (
     "unknown_metric schema_error operator_not_applicable type_mismatch missing_action_param "
     "unreachable_branch permission_required native_stop_violation feedback_loop "
-    "guard_missing high_frequency"
+    "guard_missing high_frequency stop_loosening"
 )
 CODES = _CODES.split()
 COLUMNS = "name|scope|trigger summary|state|environment|last fired|author|version"
@@ -76,7 +79,10 @@ IMPORT_REASONS = (
     "name_taken | A rule named '{name}' already exists.",
     "system_rule_reserved | The 'sys.' name prefix is reserved.",
     "forbidden | Only the Owner can raise a rule's action budget above the default.",
-    "rule_ir_invalid | the validator's issues, a field each (a loosening reads 'Not available')",
+    (
+        "rule_ir_invalid | the validator's issues, a field each (a loosening reads 'Not "
+        "available'; stop_loosening under PR 4246, if it merges as is)"
+    ),
     "payload_too_large (rule_body.py) | Request body or batch exceeds the operation's size ceiling",
     "not checked | Service unavailable - rule engine vocabulary unavailable (the call refused)",
 )
@@ -331,7 +337,9 @@ def contract() -> dict[str, object]:
     b9 = t28[t28.index("### B9.2") : t28.index("### B9.3")]
     validator, canonical = read(RULES / "validator.py"), read(RULES / "ir" / "canonical.py")
     hv = re.search(r"^IR_HASH_VERSION = (\d+)", canonical, re.MULTILINE)
-    crud = read(ROOT / "services" / "api" / "candleviewer" / "api" / "rules_crud.py")
+    api = ROOT / "services" / "api" / "candleviewer" / "api"
+    crud, api_rules = read(api / "rules_crud.py"), read(api / "rules.py")
+    catalogue = read(RULES / "vocabulary" / "catalogue.py")
     t15 = read(PLAN / "15-component-catalogue.md")
     con: dict[str, object] = {"rule_paths": paths}
     con["no_export_import_path"] = not any("port" in p for p in paths)
@@ -347,6 +355,12 @@ def contract() -> dict[str, object]:
     con["b9_tags_present"] = "needs_human_rearm" in b9 and "once_satisfied" in b9
     con["audit_keys"] = sorted(set(re.findall(r'"(rule\.[a-z_]+)"', manager)))
     con["validator_codes"] = [c for c in CODES if f'"{c}"' in validator]
+    # PR 4246 (stop_loosening) probes, read from text on whichever side of its merge this runs:
+    # the code in the validator, widen_stop retired from the catalogue, and D03-G18 - open while
+    # the validate / compile routes still read the retired loosen-stop permission.
+    con["stop_loosening_shipped"] = '"stop_loosening"' in validator
+    con["widen_stop_retired"] = "RETIRED_ACTIONS" in catalogue
+    con["validate_reads_loosen_permission"] = "LOOSEN_STOP_PERMISSION" in api_rules
     msgs = ("is not in the vocabulary.", "Unknown action '")
     con["import_messages_present"] = all(m in validator for m in msgs) and (
         "The bundle references an account you cannot access." in manager
@@ -414,7 +428,9 @@ def gates(files: list[Path]) -> list[str]:
             "Not available — rules never loosen a stop.", "Native stops are unaffected.",
             "no screen of this ticket offers a loosening or stop-clearing control",
             "no account ids, no keys, no armed state",
-            "System rules cannot be changed.", "from the IR itself")  # fmt: skip
+            "System rules cannot be changed.", "from the IR itself",
+            "stop_loosening", "if #4246 merges as is",
+            "could loosen a stop. Not available — rules never loosen a stop.")  # fmt: skip
     cons, bad = read(ROOT / "CONSTITUTION.md"), []
     for f in files:
         t = read(f)
