@@ -1,0 +1,22 @@
+{
+  "overall": "degraded",
+  "version": "fixture",
+  "git_sha": "fixture",
+  "environment": "demo",
+  "uptime_seconds": 86400,
+  "server_time": "2026-10-22T12:00:00Z",
+  "clock_offset_ms": null,
+  "components": [
+    { "name": "ws.public", "state": "healthy", "latency_ms": 12, "latency_unit": "ms" },
+    {
+      "name": "ws.private.sub_002",
+      "state": "down",
+      "detail": "fixture: the private stream for sub_002 is disconnected and reconnecting",
+      "last_good_at": "2026-10-22T11:58:00Z"
+    },
+    { "name": "recorder", "state": "healthy" },
+    { "name": "postgres", "state": "healthy", "latency_ms": 3, "latency_unit": "ms" },
+    { "name": "questdb", "state": "healthy", "latency_ms": 5, "latency_unit": "ms" }
+  ],
+  "alerts_active": 1
+}

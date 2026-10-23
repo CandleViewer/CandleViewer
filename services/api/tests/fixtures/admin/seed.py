@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from candleviewer.db import models as m
 from tests.fixtures.admin.handles import (
     ACCOUNTS,
+    BACKUPS,
     FLAGS,
     GRANTS,
     KEY_RESTRICTION,
@@ -39,6 +40,9 @@ from tests.fixtures.admin.handles import (
 
 #: How long INVITED-I's invite stays open after the seed's `now`.
 _INVITE_OPEN: Final = timedelta(days=7)
+#: A fixture backup's size and how long its run, and then its verification, took.
+_BACKUP_BYTES: Final = 1_073_741_824
+_BACKUP_RUN: Final = timedelta(minutes=10)
 
 
 class FixtureRefused(RuntimeError):
@@ -212,6 +216,47 @@ async def check_admin_world(conn: AsyncConnection, *, now: datetime) -> None:
     stored = {r["key"]: r["default_value"] for r in found}
     failed += [
         f"{k}: is {stored.get(k)!r}, not {v!r}" for k, v in FLAGS.items() if stored.get(k) is not v
+    ]
+    if failed:
+        raise FixtureCheckError("; ".join(failed))
+
+
+async def seed_backups(conn: AsyncConnection, *, now: datetime) -> None:
+    """BACKUP-VERIFY-FAILED as of `now`; a second run with the same `now` changes nothing."""
+    await refuse_unless_test_database(conn)
+    for b in BACKUPS:
+        started = now - b.age
+        verified = b.status == "verified"
+        await conn.execute(
+            pg_insert(m.backups)
+            .values(
+                id=b.id,
+                kind="pg_basebackup",
+                status=b.status,
+                target_path=b.target_path,
+                size_bytes=_BACKUP_BYTES,
+                started_at=started,
+                finished_at=started + _BACKUP_RUN,
+                verified_at=started + 2 * _BACKUP_RUN if verified else None,
+                verify_method="checksum" if verified else None,
+                error_message=b.error,
+                triggered_by="schedule",
+            )
+            .on_conflict_do_nothing(index_elements=["id"])
+        )
+
+
+async def check_backups(conn: AsyncConnection) -> None:
+    """Raise `FixtureCheckError` unless each backup holds its status and its failure code."""
+    await refuse_unless_test_database(conn)
+    rows = await conn.execute(
+        sa.select(m.backups.c.id, m.backups.c.status, m.backups.c.error_message).where(
+            m.backups.c.id.in_([b.id for b in BACKUPS])
+        )
+    )
+    seen = {(i, str(status), error) for i, status, error in rows.tuples()}
+    failed = [
+        f"{b.handle}: not {b.status}" for b in BACKUPS if (b.id, b.status, b.error) not in seen
     ]
     if failed:
         raise FixtureCheckError("; ".join(failed))

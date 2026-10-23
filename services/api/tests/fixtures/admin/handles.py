@@ -119,6 +119,33 @@ FLAGS: Final[dict[str, bool]] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class FixtureBackup:
+    handle: str
+    status: Literal["verified", "failed"]
+    #: How long before the seed's `now` the backup started.
+    age: timedelta
+    #: The verification's failure code, as the backup store records one.
+    error: str | None = None
+
+    @property
+    def id(self) -> uuid.UUID:
+        return fixture_id(self.handle)
+
+    @property
+    def target_path(self) -> str:
+        return f"fixture/backups/{self.handle.lower()}"
+
+
+#: BACKUP-VERIFY-FAILED: the latest backup failed its verification, and the last verified one is
+#: three days older, so the page can say how old it is. A world seeded without them is
+#: BACKUPS-NONE.
+BACKUPS: Final[tuple[FixtureBackup, ...]] = (
+    FixtureBackup("BACKUP-VERIFIED", "verified", timedelta(days=3)),
+    FixtureBackup("BACKUP-VERIFY-FAILED", "failed", timedelta(hours=1), error="checksum_mismatch"),
+)
+
+
 def user(handle: str) -> FixtureUser:
     return next(u for u in USERS if u.handle == handle)
 

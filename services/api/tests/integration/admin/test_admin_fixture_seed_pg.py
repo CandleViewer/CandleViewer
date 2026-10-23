@@ -16,7 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 
 from candleviewer.db import models as m
 from tests.fixtures.admin.handles import ACCOUNTS, FLAGS, USERS
-from tests.fixtures.admin.seed import FixtureRefused, check_admin_world, seed_admin_world
+from tests.fixtures.admin.seed import (
+    FixtureRefused,
+    check_admin_world,
+    check_backups,
+    seed_admin_world,
+    seed_backups,
+)
 from tests.integration import _refused
 
 pytestmark = pytest.mark.integration
@@ -93,3 +99,13 @@ async def test_a_database_not_named_for_tests_is_refused(pg_dsn: str) -> None:
                 await seed_admin_world(conn, now=_NOW)
     finally:
         await other.dispose()
+
+
+async def test_the_backups_seed_twice_passes_its_checks(engine: AsyncEngine) -> None:
+    """BACKUP-VERIFY-FAILED: seeded twice, the rows hold their states."""
+    async with engine.begin() as conn:
+        await seed_backups(conn, now=_NOW)
+    async with engine.begin() as conn:  # the second run changes nothing
+        await seed_backups(conn, now=_NOW)
+    async with engine.connect() as conn:
+        await check_backups(conn)

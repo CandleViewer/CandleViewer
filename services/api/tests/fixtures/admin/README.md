@@ -66,6 +66,23 @@ async with engine.begin() as conn:
 
 `tests/integration/admin/test_admin_fixture_seed_pg.py` runs the seed twice on Postgres 16 and checks it.
 
+## The backups and the health payloads
+
+- **BACKUP-VERIFY-FAILED** (`seed_backups`, `check_backups` in `seed.py`): the latest backup failed its
+  verification (`checksum_mismatch`), and the last verified one is three days older. A world seeded
+  without it is **BACKUPS-NONE**.
+- **The payloads** (`payloads/`), each a body of the contract's model that validates and dumps back to
+  itself, served by a harness in place of the real read:
+
+  | File                          | Handle                | Model                                                             |
+  | ----------------------------- | --------------------- | ----------------------------------------------------------------- |
+  | `health_degraded.json`        | HEALTH-SUB002-WS-DOWN | `HealthReport`: `sub_002`'s private stream down                   |
+  | `health_outage.json`          | the outage            | `HealthReport`: down overall                                      |
+  | `overview_recorder_down.json` | HEALTH-RECORDER-DOWN  | `AdminOverview`: the recorder slice unavailable, every other `ok` |
+
+  HEALTH-TIMEOUT and OVERVIEW-503 are behaviours of a harness (a read that times out, an answer of `503`),
+  not payloads.
+
 ## The corrupted chain (AUDIT-CORRUPT)
 
 Into a migrated test database, from `services/api`:

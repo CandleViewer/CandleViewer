@@ -1,0 +1,26 @@
+{
+  "overall": "down",
+  "version": "fixture",
+  "git_sha": "fixture",
+  "environment": "demo",
+  "uptime_seconds": 3600,
+  "server_time": "2026-10-22T12:00:00Z",
+  "clock_offset_ms": null,
+  "components": [
+    {
+      "name": "ws.public",
+      "state": "down",
+      "detail": "fixture: the public stream is down",
+      "last_good_at": "2026-10-22T11:50:00Z"
+    },
+    {
+      "name": "postgres",
+      "state": "down",
+      "detail": "fixture: the relational store does not answer",
+      "last_good_at": "2026-10-22T11:50:00Z"
+    },
+    { "name": "recorder", "state": "warning", "detail": "fixture: recording paused" },
+    { "name": "questdb", "state": "healthy", "latency_ms": 5, "latency_unit": "ms" }
+  ],
+  "alerts_active": 3
+}
