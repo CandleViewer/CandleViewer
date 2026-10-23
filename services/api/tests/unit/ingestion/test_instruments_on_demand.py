@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from typing import Any
 
 import httpx
@@ -28,6 +28,7 @@ from candleviewer.exchange.bybit.instruments import parse_instruments
 from candleviewer.ingestion import instruments_refresh
 from candleviewer.ingestion.instruments import CatalogueSnapshot
 from candleviewer.ingestion.metrics import instruments_refresh_total
+from candleviewer.observability import spawn
 from tests._corpus import rest
 from tests.unit.ingestion._fakes import settle
 
@@ -390,9 +391,19 @@ async def test_ensure_fresh_concurrent_callers_join_one_refresh_task_and_cost_on
     assert fetch.calls == 1
 
 
-async def test_ensure_fresh_callers_in_one_loop_turn_cost_one_refresh_even_when_it_fails() -> None:
+async def test_ensure_fresh_callers_in_one_loop_turn_cost_one_refresh_even_when_it_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Callers started in one loop turn share one task (no await between the slot's read and
-    write). A failing fetch shows it: a second task would find no loaded copy to skip, and retry."""
+    write). A failing fetch shows it: a second task would find no loaded copy to skip, and retry.
+    The spawns are counted too, so this does not rest on that re-check alone (#4238 R2-01)."""
+    spawned: list[str] = []
+
+    def counted[T](coro: Coroutine[Any, Any, T], *, name: str) -> asyncio.Task[T]:
+        spawned.append(name)
+        return spawn(coro, name=name)
+
+    monkeypatch.setattr(instruments_refresh, "spawn", counted)
 
     async def down(_now_us: Callable[[], int]) -> InstrumentsFetchResult:
         raise RuntimeError("exchange down")
@@ -404,7 +415,7 @@ async def test_ensure_fresh_callers_in_one_loop_turn_cost_one_refresh_even_when_
         *(sched.ensure_fresh(_MAX_AGE_S, _NO_DEADLINE_S) for _ in range(5)), return_exceptions=True
     )
     assert all(isinstance(o, instruments_refresh.InstrumentRefreshError) for o in outcomes)
-    assert _count("error") == errors + 1
+    assert _count("error") == errors + 1 and spawned == ["instruments-refresh-on-demand"]
 
 
 async def test_ensure_fresh_raises_pending_at_the_deadline_and_the_refresh_runs_on() -> None:
@@ -511,6 +522,22 @@ async def test_ensure_fresh_stop_cancels_the_shared_refresh_and_answers_its_wait
     assert fetch.calls == 1 and sched._on_demand is None
 
 
+async def test_ensure_fresh_waiter_cancelled_with_its_refresh_ends_cancelled() -> None:
+    """#4238 R1C-03 (a): a waiter cancelled together with the shared refresh (both, in one turn)
+    propagates its own cancellation; only a refresh cancelled under it is a 503."""
+    sched = _scheduler(HangingFetch())
+    _warm(sched, "BTCUSDT", age_s=1000.0)
+    waiter = asyncio.create_task(sched.ensure_fresh(_MAX_AGE_S, _NO_DEADLINE_S))
+    await settle()
+    refresh = sched._on_demand
+    assert refresh is not None and not refresh.done()
+    refresh.cancel()
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert refresh.cancelled()
+
+
 async def test_ensure_fresh_joins_the_refresh_an_unknown_symbol_lookup_started() -> None:
     fetch = HangingFetch()
     sched = _scheduler(fetch)
@@ -544,6 +571,32 @@ async def test_ensure_fresh_queued_behind_a_loading_refresh_does_not_fetch_again
     fresh = await caller
     assert fresh is not None and fresh.stale_since_us is None
     assert fetch.calls == 1  # the re-check after the lock found the catalogue loaded
+
+
+async def test_ensure_fresh_queued_behind_a_failing_refresh_fetches_again() -> None:
+    """#4238 R1C-03 (b): a failed refresh only marks the copy stale, so a save queued behind it is
+    not moot: its own fetch runs, and answers (the re-check's stale clause)."""
+    gate, calls = asyncio.Event(), 0
+
+    async def down_then_up(_now_us: Callable[[], int]) -> InstrumentsFetchResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await gate.wait()
+            raise RuntimeError("exchange down")
+        return _parsed()
+
+    sched = _scheduler(down_then_up, max_retries=1)
+    _warm(sched, "BTCUSDT", age_s=1000.0)
+    scheduled = asyncio.create_task(sched.refresh_now())  # e.g. the schedule's refresh
+    await settle()
+    caller = asyncio.create_task(sched.ensure_fresh(_MAX_AGE_S, _NO_DEADLINE_S))  # queues
+    await settle()
+    gate.set()
+    with pytest.raises(instruments_refresh.InstrumentRefreshError):
+        await scheduled
+    fresh = await caller
+    assert fresh is not None and fresh.stale_since_us is None and calls == 2
 
 
 async def test_ensure_fresh_neither_reads_nor_arms_the_lookup_cooldown() -> None:

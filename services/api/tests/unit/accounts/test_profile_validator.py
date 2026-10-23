@@ -1,11 +1,13 @@
-"""The profile's second validation pass (E28-T02 #906, slices B2a and B2b): its warnings,
-`all_symbols` and `no_symbols`, and its refusals against the exchange's limits.
+"""The profile's second validation pass (E28-T02 #906, slices B2a to B2c): its warnings,
+`all_symbols` and `no_symbols`, its refusals against the exchange's limits, and when it reads them.
 
 A read judges the symbol lists alone; a write also judges what the exchange lists, through the
 matcher the order path uses (PF-T07), and is refused only for what it introduces (#906, rulings of
-2026-10-22 14:22Z and 14:39Z). No I/O beyond the recorded corpus, the contract and the T01 profile
-fixtures. The generated model, the contract and the audit registry are imported here because tests
-are not import-linted; the module under test imports none of them.
+2026-10-22 14:22Z and 14:39Z, recorded as issuecomment-6360499465). It reads the catalogue of the
+account's environment (C-2.11), here a fake port, only when some listing could refuse it. No I/O
+beyond the recorded corpus, the contract and the T01 profile fixtures. The generated model, the
+contract and the audit registry are imported here because tests are not import-linted; the module
+under test imports none of them.
 """
 
 from __future__ import annotations
@@ -13,21 +15,28 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
+from collections.abc import Mapping
 from decimal import Decimal
 from itertools import groupby
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final
+from uuid import UUID
 
 import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
+from candleviewer.accounts.errors import AccountNotFoundError, AccountsError
 from candleviewer.accounts.profile_input import ProfileFieldError
 from candleviewer.accounts.profile_validator import (
+    INSTRUMENT_DEADLINE_S,
+    INSTRUMENT_MAX_AGE_S,
     SECOND_PASS_RULES,
+    InstrumentLimitsUnavailable,
     ProfileWarning,
     SecondPassResult,
+    check_exchange_limits,
     judge_exchange_limits,
     profile_warnings,
 )
@@ -36,6 +45,7 @@ from candleviewer.api._generated.openapi_models import ProfileWarning as Profile
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.audit.actions import PROFILE_SAVE_REFUSED_REASONS
 from candleviewer.domain.events import Instrument
+from candleviewer.domain.primitives import Environment
 from candleviewer.exchange.bybit.instruments import parse_instrument, parse_instruments
 from tests._corpus import rest
 
@@ -200,7 +210,7 @@ def test_the_matcher_and_the_answers_are_frozen(value: object, member: str) -> N
         setattr(value, member, None)
 
 
-# -- B2b: the refusals against the exchange's limits (spec B2 sections 3, 4 and 9) ---------------
+# -- B2b: the refusals against the exchange's limits (#906, `ProfileRejected`'s second pass) ----
 
 _N, _Q = "fixed_notional", "fixed_qty"
 _SOL, _ETH, _BTC, _LUNA, _XRP = "SOLUSDT", "ETHUSDT", "BTCUSDT", "LUNAUSDT", "XRPUSDT"
@@ -214,8 +224,8 @@ def _instrument(symbol: str, **limits: Any) -> Instrument:
 
 
 def _refusals(result: SecondPassResult) -> str:
-    """The refusals as spec B2's matrix writes them, in order: `rule SYM limit, SYM limit; rule
-    ...`, a symbol without its `USDT` and a limit as rendered; an unlisted entry by its index."""
+    """The refusals in order, written short: `rule SYM limit, SYM limit; rule ...`, a symbol
+    without its `USDT` and a limit as rendered; an unlisted entry by its index."""
 
     def entry(error: ProfileFieldError) -> str:
         if error.symbol is None:  # `symbol_not_listed`
@@ -231,7 +241,7 @@ _EVERY_RULE = (
     "max_leverage ETH 50, SOL 20; min_order_qty ETH 0.01, SOL 0.1; qty_step ETH 0.01, SOL 0.1; "
     "min_notional BTC 5, ETH 5, SOL 10; symbol_not_listed [1]"
 )
-#: Test 8, a create: (id, changes, the refusals). A row that sets `fixed_qty` sizes by it; the rest
+#: A create: (id, changes, the refusals). A row that sets `fixed_qty` sizes by it; the rest
 #: size by notional (10x and a 20 000 USDT cap, or 2x and 5 000 USDT).
 _MATRIX = [
     ("leverage_at_an_entrys_maximum", {_ALLOW: [_SOL], _LEV: "20"}, ""),
@@ -306,15 +316,19 @@ _MATRIX = [
 
 @pytest.mark.parametrize(("changes", "expected"), [pytest.param(*r[1:], id=r[0]) for r in _MATRIX])
 def test_the_second_pass_matrix(changes: dict[str, Any], expected: str) -> None:
-    """Test 8, a create: each listed, trading USDT perpetual the profile allows, judged once a
-    rule, rule by rule and then by symbol; then each allow entry naming none, by its index."""
+    """A create: each listed, trading USDT perpetual the profile allows, judged once a rule, rule
+    by rule and then by symbol; then each allow entry naming none, by its index. Every rule it
+    answers is one of `SECOND_PASS_RULES`, the audited set (#4263 R1S-02)."""
     profile = _profile(_Q if _QTY in changes else _N, **changes)
-    assert _refusals(judge_exchange_limits(profile, _LISTED, stored=None)) == expected
+    result = judge_exchange_limits(profile, _LISTED, stored=None)
+    assert _refusals(result) == expected
+    assert {error.rule for error in result.errors} <= SECOND_PASS_RULES
 
 
 def test_each_refusal_reads_as_the_editors_copy() -> None:
-    """Test 9, SCR-131's copy: the instrument, its limit and the profile's own figure, plain."""
-    changes = {_ALLOW: [_SOL, _XRP], _LEV: "25", _QTY: "0.05", _CAP: "9.5"}
+    """SCR-131's copy: the instrument, its limit and the profile's own figure, written plainly
+    (a 25.00x leverage reads 25x, #4263 R1C-04)."""
+    changes = {_ALLOW: [_SOL, _XRP], _LEV: "25.00", _QTY: "0.05", _CAP: "9.5"}
     errors = judge_exchange_limits(_profile(_Q, **changes), _LISTED, stored=None).errors
     assert [(e.field, e.message) for e in errors] == [
         ("leverage", "SOLUSDT allows at most 20x — your 25x would be rejected."),
@@ -334,9 +348,22 @@ def test_each_refusal_reads_as_the_editors_copy() -> None:
     }
 
 
+def test_the_quantity_refusals_each_name_their_own_limit() -> None:
+    """#4263 R1C-01: where an instrument's minimum and step differ, `min_order_qty` names the
+    minimum and `qty_step` the step, in the entry and in its copy."""
+    listed = {_SOL: _instrument(_SOL, min_order_qty=Decimal("0.2"), qty_step=Decimal("0.05"))}
+    profile = _profile(_Q, **{_ALLOW: [_SOL], _QTY: "0.12"})
+    errors = judge_exchange_limits(profile, listed, stored=None).errors
+    rejected = "— your 0.12 would be rejected."
+    assert [(e.rule, e.to_dict()["limit"], e.message) for e in errors] == [
+        ("min_order_qty", "0.2", f"SOLUSDT takes at least 0.2 per order {rejected}"),
+        ("qty_step", "0.05", f"SOLUSDT takes quantities in steps of 0.05 {rejected}"),
+    ]
+
+
 def test_the_contract_example_is_what_the_second_pass_answers() -> None:
-    """Test 10, ruling B9: the recorded SOLUSDT row with one field patched (the fixture README's
-    provenance line) answers `ProfileRejected`'s `leverageAboveExchangeMax`, entry for entry."""
+    """Ruling B9: the recorded SOLUSDT row with one field patched (the fixture README's provenance
+    line) answers `ProfileRejected`'s `leverageAboveExchangeMax`, entry for entry."""
     rows = rest("rest/instruments_before.json")["result"]["list"]
     row = copy.deepcopy(next(r for r in rows if r["symbol"] == _SOL))
     assert row["leverageFilter"]["maxLeverage"] == "100.00"
@@ -352,23 +379,23 @@ def test_the_contract_example_is_what_the_second_pass_answers() -> None:
 
 
 def test_a_step_too_fine_to_divide_by_counts_as_off_the_step() -> None:
-    """Test 11: 1 over a step of 1E-300 is a 301-digit quotient, past `_EXACT`'s 200, so the
-    remainder is NaN, which is off the step: a refusal, never an exception."""
+    """1 over a step of 1E-300 is a 301-digit quotient, past `_EXACT`'s 200, so the remainder is
+    NaN, which is off the step: a refusal, never an exception."""
     listed = {_SOL: _instrument(_SOL, qty_step=Decimal("1E-300"))}
     result = judge_exchange_limits(_profile(_Q, **{_ALLOW: [_SOL], _QTY: "1"}), listed, stored=None)
     assert [(e.rule, e.limit) for e in result.errors] == [("qty_step", Decimal("1E-300"))]
 
 
 def test_a_writes_warnings_come_with_the_pass() -> None:
-    """Test 12: the write's warnings, which see these entries together allow every listed symbol;
-    a read's would not."""
+    """The write's warnings, which see these entries together allow every listed symbol; a read's
+    would not."""
     profile = _profile(allowed_symbols=["*CUSDT", "*HUSDT", "*LUSDT"])
     warnings = judge_exchange_limits(profile, _LISTED, stored=None).warnings
     assert [w.code for w in warnings] == ["all_symbols"]
 
 
 def test_every_second_pass_rule_is_an_audited_reason() -> None:
-    """Test 13: every refusal of the second pass is audited, beside the first pass's three."""
+    """Every refusal of the second pass is audited, beside the first pass's three."""
     assert SECOND_PASS_RULES <= PROFILE_SAVE_REFUSED_REASONS
     first = {"native_stop_mandatory", "above_leverage_cap", "cap_unbounded"}
     assert PROFILE_SAVE_REFUSED_REASONS - SECOND_PASS_RULES == first
@@ -379,6 +406,7 @@ def test_every_second_pass_rule_is_an_audited_reason() -> None:
 @example(n=37, p=2, k=1, e=2)  # 0.37 on a step of 0.01
 @example(n=15, p=2, k=1, e=1)  # 0.15 off a step of 0.1
 @example(n=5, p=0, k=1, e=18)  # a whole quantity on the finest step a profile can hold
+@example(n=10**20 - 1, p=0, k=1, e=18)  # a 38-digit quotient: 28 digits would not do (#4263 R1C-05)
 def test_qty_step_is_refused_exactly_off_the_step(n: int, p: int, k: int, e: int) -> None:
     """H1: `n`E-`p` against a step of `k`E-`e`, judged by integers on a common scale."""
     scale = max(p, e)
@@ -408,30 +436,35 @@ def test_a_minimum_is_refused_exactly_below_it(
     assert (limit in rules) is (value < bound)
 
 
-# -- Q4: a replace is judged for what it introduces (#906, rulings of 2026-10-22 14:22Z, 14:39Z) --
+# -- Q4: a replace is judged for what it introduces ---------------------------------------------
+# #906, rulings of 2026-10-22 14:22Z and 14:39Z and of 2026-10-23 07:04Z (issuecomment-6360499465).
 
 #: A stored profile `_LISTED` now refuses on every rule: SOL and ETH on each limit, LUNA (closed
 #: since) and XRP (never listed) as entries.
 _BREACHING: Final = {_ALLOW: [_SOL, _ETH, _LUNA, _XRP], _LEV: "60", _QTY: "0.001", _CAP: "4"}
+#: Writes that introduce no scope and move no figure toward a limit: (stored, write) changes over
+#: `_BREACHING`. Turning trading or the profile back on is one (07:04Z; #4263 R1C-02).
+_REDUCTIONS: Final = [
+    pytest.param({}, {"trading_enabled": False}, id="trading_off"),
+    pytest.param({}, {"enabled": False}, id="disabled"),
+    pytest.param({}, {_ALLOW: [_SOL, _LUNA, _XRP]}, id="an_allow_list_shrink"),
+    pytest.param({}, {_BLOCK: [_ETH]}, id="a_block_list_grow"),
+    pytest.param({}, {_LEV: "50"}, id="leverage_lowered"),
+    pytest.param({}, {_CAP: "9"}, id="a_cap_raised"),
+    pytest.param({}, {}, id="an_unchanged_re_save"),
+    pytest.param({"trading_enabled": False}, {"trading_enabled": True}, id="trading_turned_on"),
+    pytest.param({"enabled": False}, {"enabled": True}, id="enabled_turned_on"),
+]
 
 
-@pytest.mark.parametrize(
-    "changes",
-    [
-        pytest.param({"trading_enabled": False}, id="trading_off"),
-        pytest.param({"enabled": False}, id="disabled"),
-        pytest.param({_ALLOW: [_SOL, _LUNA, _XRP]}, id="an_allow_list_shrink"),
-        pytest.param({_BLOCK: [_ETH]}, id="a_block_list_grow"),
-        pytest.param({_LEV: "50"}, id="leverage_lowered"),
-        pytest.param({_CAP: "9"}, id="a_cap_raised"),
-        pytest.param({}, id="an_unchanged_re_save"),
-    ],
-)
-def test_a_pure_reduction_judges_nothing(changes: dict[str, Any]) -> None:
+@pytest.mark.parametrize(("stored_changes", "changes"), _REDUCTIONS)
+def test_a_pure_reduction_judges_nothing(
+    stored_changes: dict[str, Any], changes: dict[str, Any]
+) -> None:
     """Q1: a write that allows nothing new and moves no figure toward a limit is never refused,
     though the same profile would be refused as a create."""
-    stored = _profile(_Q, **_BREACHING)
-    profile = _profile(_Q, **{**_BREACHING, **changes})
+    stored = _profile(_Q, **{**_BREACHING, **stored_changes})
+    profile = _profile(_Q, **{**_BREACHING, **stored_changes, **changes})
     assert judge_exchange_limits(profile, _LISTED, stored=None).errors
     assert judge_exchange_limits(profile, _LISTED, stored=stored).errors == ()
 
@@ -450,6 +483,10 @@ _SOL_RULES = "max_leverage SOL 20; min_order_qty SOL 0.1; qty_step SOL 0.1; min_
         pytest.param({_ALLOW: [_BTC, _LUNA, _SOL, "*HUSDT"]}, _ETH_RULES, id="a_new_pattern"),
         pytest.param(
             {_ALLOW: [_XRP, _BTC, _LUNA, _SOL]}, "symbol_not_listed [0]", id="a_new_unlisted_entry"
+        ),
+        # #4263 R1C-03: the index in the new list, not among the new entries.
+        pytest.param(
+            {_ALLOW: [_BTC, _XRP, _LUNA, _SOL]}, "symbol_not_listed [1]", id="one_inserted_after"
         ),
         pytest.param({**_ALL, _ALLOW: []}, _ETH_RULES, id="all_symbols_turned_on"),
         pytest.param({_BLOCK: []}, _SOL_RULES, id="a_block_entry_removed"),
@@ -543,3 +580,231 @@ def test_a_write_is_refused_only_for_what_it_introduces(
     got = judge_exchange_limits(profile, _LISTED, stored=stored).errors
     assert got == tuple(filter(judged, create))
     assert judge_exchange_limits(stored, _LISTED, stored=stored).errors == ()
+
+
+# -- B2c: the catalogue of the account's environment, read only when a listing could refuse ------
+
+_BOUNDS: Final = (900.0, 1.5)  # `ProfileRejected`'s 15 minutes; the save's deadline
+
+
+@dataclasses.dataclass
+class _Limits:
+    """`InstrumentLimitsPort` double: records each read's bounds, then answers `listing` or raises
+    `failure`."""
+
+    environment: Environment
+    listing: Mapping[str, Instrument] = dataclasses.field(default_factory=dict)
+    failure: Exception | None = None
+    calls: list[tuple[float, float]] = dataclasses.field(default_factory=list)
+
+    async def listed(self, *, max_age_s: float, deadline_s: float) -> Mapping[str, Instrument]:
+        self.calls.append((max_age_s, deadline_s))
+        if self.failure is not None:
+            raise self.failure
+        return self.listing
+
+
+def _unread(environment: Environment = "demo") -> _Limits:
+    """A port that must never be read: a read raises, and is recorded."""
+    return _Limits(environment, failure=AssertionError("the catalogue was read"))
+
+
+async def test_the_limits_are_the_accounts_environments() -> None:
+    """C-2.11: each account is judged by its own environment's catalogue. SOLUSDT allows 20x on
+    the demo one (`_LISTED`) and 100x on the live one, as recorded."""
+    rows = rest("rest/instruments_before.json")["result"]["list"]
+    recorded = {i.symbol: i for i in parse_instruments(rows, fetched_at_us=0).instruments}
+    profile = _profile(_N, **{_ALLOW: [_SOL], _LEV: "25"})
+    demo, live = _Limits("demo", _LISTED), _Limits("live", recorded)
+    refused = await check_exchange_limits(
+        profile, environment="demo", instruments=demo, stored=None
+    )
+    passed = await check_exchange_limits(profile, environment="live", instruments=live, stored=None)
+    assert _refusals(refused) == "max_leverage SOL 20" and passed.errors == ()
+    assert demo.calls == live.calls == [_BOUNDS]
+
+
+@pytest.mark.parametrize("changes", [{_ALLOW: [_SOL]}, {}], ids=["reads", "reads_nothing"])
+async def test_another_environments_catalogue_is_never_read(changes: dict[str, Any]) -> None:
+    """C-2.11: a demo account checked against the live catalogue is refused first, before any
+    read, even by a write that would read nothing."""
+    port = _unread("live")
+    with pytest.raises(AccountNotFoundError) as refused:
+        await check_exchange_limits(
+            _profile(**changes), environment="demo", instruments=port, stored=None
+        )
+    assert refused.value.entity == "account" and port.calls == []
+
+
+@pytest.mark.parametrize("stored", [None, {_LEV: "1"}], ids=["a_create", "leverage_raised"])
+async def test_a_profile_that_allows_nothing_needs_no_catalogue(
+    stored: dict[str, Any] | None,
+) -> None:
+    """D11: a profile that allows nothing reads no catalogue, so it always saves, even with a
+    figure raised; it warns `no_symbols`."""
+    profile, before = _profile(**{_LEV: "50"}), None if stored is None else _profile(**stored)
+    port = _unread()
+    result = await check_exchange_limits(
+        profile, environment="demo", instruments=port, stored=before
+    )
+    assert result.errors == () and _codes(result.warnings) == _NONE_BY_LIST and port.calls == []
+
+
+async def test_the_catalogue_is_at_most_15_minutes_old_within_the_deadline() -> None:
+    """One read, for a listing fetched at most 900 s ago and within 1.5 s, judged as it answers."""
+    profile, port = _profile(_N, **_ALL), _Limits("demo", _LISTED)
+    result = await check_exchange_limits(profile, environment="demo", instruments=port, stored=None)
+    assert port.calls == [_BOUNDS] == [(INSTRUMENT_MAX_AGE_S, INSTRUMENT_DEADLINE_S)]
+    assert result == judge_exchange_limits(profile, _LISTED, stored=None)
+
+
+async def test_an_unavailable_catalogue_judges_nothing() -> None:
+    """The port's 503 passes through untouched: nothing is judged or answered."""
+    unavailable = InstrumentLimitsUnavailable("no fetch has confirmed the instrument catalogue")
+    port = _Limits("demo", failure=unavailable)
+    with pytest.raises(InstrumentLimitsUnavailable) as caught:
+        await check_exchange_limits(
+            _profile(_N, **_ALL), environment="demo", instruments=port, stored=None
+        )
+    assert caught.value is unavailable and port.calls == [_BOUNDS]
+
+
+def test_the_catalogues_503_is_an_accounts_error() -> None:
+    """The write edge maps it with the accounts errors, ahead of the generic one (#906, B2c code
+    lens R1C-02)."""
+    assert issubclass(InstrumentLimitsUnavailable, AccountsError)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        pytest.param({_ALLOW: [_BTC, _LUNA, _SOL, _ETH]}, id="a_new_symbol"),
+        pytest.param({_ALLOW: [_BTC, _LUNA, _SOL, "*HUSDT"]}, id="a_new_pattern"),
+        pytest.param({**_ALL, _ALLOW: []}, id="all_symbols_turned_on"),
+        pytest.param({_BLOCK: []}, id="a_block_entry_removed"),
+    ],
+)
+async def test_a_write_that_introduces_scope_reads_the_catalogue(changes: dict[str, Any]) -> None:
+    """(a): a new allow entry, `all_symbols` turned on, or a block entry removed reads the
+    catalogue once, and what the write introduces is refused."""
+    stored, profile = _profile(_Q, **_BEFORE), _profile(_Q, **{**_BEFORE, **changes})
+    port = _Limits("demo", _LISTED)
+    result = await check_exchange_limits(
+        profile, environment="demo", instruments=port, stored=stored
+    )
+    assert port.calls == [_BOUNDS] and result.errors
+    assert result == judge_exchange_limits(profile, _LISTED, stored=stored)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        pytest.param({}, {_LEV: "25"}, id="leverage_raised"),
+        pytest.param({}, {_QTY: "0.15"}, id="qty_changed"),
+        pytest.param(
+            _BY_NOTIONAL,
+            {"sizing_mode": _Q, _QTY: "0.05", "fixed_notional": None},
+            id="qty_newly_set",
+        ),
+        pytest.param({}, {_CAP: "4"}, id="a_cap_lowered"),
+        pytest.param({_CAP: None}, {_CAP: "9.99"}, id="a_cap_newly_set"),
+    ],
+)
+async def test_a_figure_moved_toward_a_limit_reads_the_catalogue(
+    before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    """(b): leverage raised, `fixed_qty` changed or set, or the position cap lowered or set reads
+    the catalogue once, and every allowed instrument is judged on the rule it moved."""
+    stored = _profile(_Q, **{**_CLEAN, **before})
+    profile = _profile(_Q, **{**_CLEAN, **before, **after})
+    port = _Limits("demo", _LISTED)
+    result = await check_exchange_limits(
+        profile, environment="demo", instruments=port, stored=stored
+    )
+    assert port.calls == [_BOUNDS] and result.errors
+    assert result == judge_exchange_limits(profile, _LISTED, stored=stored)
+
+
+async def test_unsetting_fixed_qty_still_reads_the_catalogue() -> None:
+    """Fail closed (#906, the ruling of 2026-10-23 16:29Z, issuecomment-6371879028): a write that
+    only unsets `fixed_qty` reads the catalogue, though no listing can refuse it; a 503 during a
+    catalogue outage is the right cost (B2c code lens R1C-01)."""
+    stored = _profile(_Q, **_CLEAN)
+    profile = _profile(_Q, **{**_CLEAN, "sizing_mode": _N, _QTY: None, "fixed_notional": "1000"})
+    port = _Limits("demo", _LISTED)
+    result = await check_exchange_limits(
+        profile, environment="demo", instruments=port, stored=stored
+    )
+    assert port.calls == [_BOUNDS] and result.errors == ()
+
+
+@pytest.mark.parametrize(("stored_changes", "changes"), _REDUCTIONS)
+async def test_a_pure_reduction_reads_no_catalogue(
+    stored_changes: dict[str, Any], changes: dict[str, Any]
+) -> None:
+    """A write that introduces no scope and moves no figure toward a limit never reads the
+    catalogue, so it is never a 503: no refusal, and the read's warnings."""
+    stored = _profile(_Q, **{**_BREACHING, **stored_changes})
+    profile = _profile(_Q, **{**_BREACHING, **stored_changes, **changes})
+    port = _unread()
+    result = await check_exchange_limits(
+        profile, environment="demo", instruments=port, stored=stored
+    )
+    assert result == SecondPassResult((), profile_warnings(profile)) and port.calls == []
+
+
+@pytest.mark.parametrize("member", ["profile_id", "account_id"])
+async def test_a_stored_profile_other_than_the_one_replaced_is_refused_unread(member: str) -> None:
+    """#4263 R1S-01: `stored` must be the profile this write replaces. Another profile, or another
+    account's, would lend the write scope it never held, so it is refused before any read, even
+    where the write, against it, is a re-save that reads nothing."""
+    profile = _profile(_Q, **_BREACHING)
+    stored = profile.model_copy(update={member: UUID("0b5f6d0e-28a1-4c1e-9e01-0000000000ff")})
+    port = _unread()
+    with pytest.raises(AccountNotFoundError) as refused:
+        await check_exchange_limits(profile, environment="demo", instruments=port, stored=stored)
+    assert refused.value.entity == "profile" and port.calls == []
+
+
+async def test_the_environment_is_checked_before_the_stored_profile() -> None:
+    """C-2.11 first (#906, B2c code lens R1C-02): a write judged against another environment's
+    catalogue and naming a foreign `stored` is refused for the account, before any read."""
+    profile = _profile(_Q, **_BREACHING)
+    stored = profile.model_copy(update={"profile_id": UUID("0b5f6d0e-28a1-4c1e-9e01-0000000000ff")})
+    port = _unread("live")
+    with pytest.raises(AccountNotFoundError) as refused:
+        await check_exchange_limits(profile, environment="demo", instruments=port, stored=stored)
+    assert refused.value.entity == "account" and port.calls == []
+
+
+#: Each symbol `_POOL` names, a trading USDT perpetual whose limits every drawn figure breaks
+#: (leverage 1 aside). With it, `{}`, which leaves every entry unlisted, and `_LISTED`.
+_STRICT: Final = MappingProxyType(
+    {
+        s: Instrument.model_validate({**_LISTED[_BTC].model_dump(), "symbol": s, **_TIGHT})
+        for s in (_BTC, _ETH, _SOL, _LUNA, _XRP, "BTCPERP")
+    }
+)
+
+
+@settings(max_examples=300, deadline=None)
+@given(stored=st.none() | _profiles(), profile=_profiles())
+async def test_a_write_reads_the_catalogue_unless_no_listing_could_refuse_it(
+    stored: AccountProfile | None, profile: AccountProfile
+) -> None:
+    """#4263's hand-off: a write is judged on the listing it reads, and one that reads none is
+    refused by none, of the recorded listing, an empty one and one breaking every limit."""
+    if stored is not None:  # the same profile, replaced
+        same = {"profile_id": stored.profile_id, "account_id": stored.account_id}
+        profile = profile.model_copy(update=same)
+    port = _Limits("demo", _LISTED)
+    result = await check_exchange_limits(
+        profile, environment="demo", instruments=port, stored=stored
+    )
+    if port.calls:
+        assert result == judge_exchange_limits(profile, _LISTED, stored=stored)
+    else:
+        assert result == SecondPassResult((), profile_warnings(profile))
+        listings: list[Mapping[str, Instrument]] = [_LISTED, {}, _STRICT]
+        for listed in listings:
+            assert judge_exchange_limits(profile, listed, stored=stored).errors == ()
