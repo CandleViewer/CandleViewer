@@ -7,7 +7,8 @@
 accessibility and CVD sign-off is E05-D04's**, and this document does not replace it.
 
 Covers the 11 components of slice 1 (CMP-001, 002, 003, 004, 005, 006, 010, 014, 019 with the 47-glyph icon set,
-031 and 039) as specified in `E05-D02.md` §8 and drawn on Penpot page `10 Components — Atoms`.
+031 and 039) as specified in `E05-D02.md` §8 and drawn on Penpot page `10 Components — Atoms`. Their board exports
+are PENDING (text-first merge, 2026-10-23); the boards PR completes slice 1 (`E05-D02.md` §8).
 
 **Method.** Contrast ratios are the component specs' measurements on the shipped tokens in `packages/ui/tokens`
 (dark, light and high contrast; WCAG 2.x relative luminance). Every figure was recomputed from the token files for
@@ -124,7 +125,7 @@ an RBAC, environment or risk denial, which is always the gated state measured he
 
 ## 5. CVD (colour-vision deficiency)
 
-No CVD simulation is reviewed here: the CVD renders of CMP-001 and CMP-004 come with the boards commit (`E05-D02.md`
+No CVD simulation is reviewed here: the CVD renders of CMP-001 and CMP-004 come with the boards PR (`E05-D02.md`
 §8), and the formal CVD review is E05-D04's (05 §4.2, brief §13.3 item 3). Structurally, no slice-1 state depends on
 hue alone:
 
