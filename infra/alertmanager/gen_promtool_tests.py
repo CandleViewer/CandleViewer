@@ -64,6 +64,11 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
     "KekUnavailable": (
         'cv_kek_degraded_state{env="live"}', "1+0x20", "0+0x20", "5m", {"env": "live"}
     ),
+    # #889 S6b-2: as KekUnavailable, set at boot and held for the life of the process.
+    "AuditSigningKeyUnavailable": (
+        'cv_audit_signing_key_unavailable_state{env="live"}', "1+0x20", "0+0x20", "5m",
+        {"env": "live"},
+    ),
     # #2496: safe, then the hourly re-check finds an unsafe bind; pages with no hold time.
     "NetBindingUnsafe": (
         'net_binding_safe{env="live"}',
@@ -459,8 +464,18 @@ BY_RULE: dict[str, tuple[tuple[str, dict[str, str], tuple[str, ...]], ...]] = {
 
 _DAILY = 'cv_backup_last_success_age_seconds{env="live",kind="pg_dump"}'
 _CONFIG = 'cv_backup_last_success_age_seconds{env="live",kind="config_bundle"}'
+_BOOT_STEP = 'cv_audit_signing_key_boot_failures_total{{env="live",step="{}"}}'
 # alert -> cases of (series, values, eval_time, fires, labels the alert keeps from its series).
 LABELLED: dict[str, tuple[tuple[str, str, str, bool, dict[str, str]], ...]] = {
+    # #889 S6b-2: a failed step fires at the first evaluation after it, by its `step`, and is held
+    # as UserLifecycleStepFailed is (firing at 9 h 49 m, resolved at 9 h 52 m); an old failure
+    # (a flat count) never fires.
+    "AuditSigningKeyBootStepFailed": (
+        (_BOOT_STEP.format("destroy"), _RISE, "6m", True, {"env": "live", "step": "destroy"}),
+        (_BOOT_STEP.format("rewrap"), _RISE, "9h49m", True, {"env": "live", "step": "rewrap"}),
+        (_BOOT_STEP.format("rewrap"), _RISE, "9h52m", False, {"env": "live", "step": "rewrap"}),
+        (_BOOT_STEP.format("destroy"), _FLAT, "6m", False, {"env": "live", "step": "destroy"}),
+    ),
     # #966 Q16: over 26 h (93600 s) for a daily kind, over 8 days (691200 s) for config_bundle,
     # held 15 min. Each age starts 20 min under its line and grows 60 s a minute, so it is over
     # from 21 min: silent at 35 min, firing at 36. config_bundle there is over 26 h, and silent.

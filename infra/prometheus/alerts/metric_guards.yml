@@ -31,6 +31,26 @@ groups:
         annotations:
           summary: "Expected metric cv_kek_degraded_state is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #889 S6b-2: the audit export signing key's page reads this gauge, bound at 0 from import.
+      - alert: ExpectedMetricMissingCvAuditSigningKeyUnavailableState
+        expr: absent(cv_audit_signing_key_unavailable_state)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_audit_signing_key_unavailable_state is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #889 S6b-2: the boot-step ticket's counter, both `step` values bound at 0 from import.
+      - alert: ExpectedMetricMissingCvAuditSigningKeyBootFailuresTotal
+        expr: absent(cv_audit_signing_key_boot_failures_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_audit_signing_key_boot_failures_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       # #836: the key self-check alerts' series. The first appears with a run, so its guard stands
       # where no self-check is wired (the fake backend: dev until #3180); the others are bound at 0.
       - alert: ExpectedMetricMissingCvKeysFailingPolicy

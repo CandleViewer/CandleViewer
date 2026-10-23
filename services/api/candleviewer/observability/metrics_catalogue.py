@@ -571,7 +571,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "state",
         (),
         "1 while the audit export signing key cannot be used with the KEK up (#889, ADR-0039).",
-        "1 = export unavailable, trading unaffected; secrets health degraded",
+        "1 = export unavailable, trading unaffected; pages AuditSigningKeyUnavailable",
         _L,
         "E42",
         max_series=8,
@@ -583,7 +583,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "failures",
         ("step",),
         "Signing-key boot steps that failed and degrade nothing: Q3's destroy, the re-wrap (#889).",
-        "any increase = a retired seed kept or a key left under the previous KEK",
+        "an increase = a retired seed kept or a key left under the previous KEK; tickets "
+        "AuditSigningKeyBootStepFailed",
         _L,
         "E42",
         max_series=8,

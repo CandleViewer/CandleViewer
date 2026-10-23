@@ -330,10 +330,25 @@ async def test_a_retired_key_holding_its_seed_counts_until_its_destroy(keys: Sto
     keys.rows[0]["sealed_seed"] = SEED  # a retire that kept the seed, which the table admits
     assert await keys.count_retired_with_seed("demo") == 1  # Q3's `retired_with_seed`
     assert await keys.count_at_kek_version(1, "demo") == 2  # a KEK re-wrap waits for it (I2)
-    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == 1
+    gone = [(key_id(1), keys.rows[0]["fingerprint_sha256"])]
+    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == gone
     assert await keys.count_retired_with_seed("demo") == 0
-    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == 0  # nothing left
+    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == []  # nothing left
+    named = {"destroyed": "1", "key_ids": gone[0][0], "fingerprints_sha256": gone[0][1]}
+    assert keys.audit[-1] == (DESTROYED[0], DESTROYED[1] | named)  # S6b, F3: it names them
     assert [r["sealed_seed"] for r in keys.rows] == [None, SEED]  # the active key keeps its own
+
+
+async def test_the_destroy_names_each_key_it_destroyed_in_key_id_order(keys: Store) -> None:
+    """S6b, F3: two retired keys holding their seeds, and one record naming both, in order."""
+    await _rotate(keys, 2)
+    await _rotate(keys, 3)
+    for row in keys.rows[:2]:
+        row["sealed_seed"] = SEED
+    keys.rows.reverse()  # the store's order is not key-id order, so the sort is what orders them
+    gone = await keys.destroy_retired_seeds("demo", audit=DESTROYED)
+    assert [k for k, _ in gone] == [key_id(1), key_id(2)]
+    assert keys.audit[-1][1]["key_ids"] == f"{key_id(1)},{key_id(2)}"
 
 
 async def test_a_stale_rotation_is_none_before_its_inserts_checks(keys: Store) -> None:
@@ -355,9 +370,9 @@ async def test_a_rewrap_and_a_destroy_commit_with_their_record_or_not_at_all(key
     assert (keys.rows, keys.audit) == before
     keys.audit_fails = False
     assert await keys.rewrap(key_id(2), **MOVE) is True
-    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == 1
-    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == 0  # no record for none
-    assert keys.audit[-2:] == [REWRAPPED, DESTROYED]
+    assert [k for k, _ in await keys.destroy_retired_seeds("demo", audit=DESTROYED)] == [key_id(1)]
+    assert await keys.destroy_retired_seeds("demo", audit=DESTROYED) == []  # no record for none
+    assert [a for a, _ in keys.audit[-2:]] == [REWRAPPED[0], DESTROYED[0]]
     assert [(r["sealed_seed"], r["dek_ref"]) for r in keys.rows] == [
         (None, WRAP),
         (SEED, NEXT_WRAP),

@@ -180,9 +180,12 @@ class ExportKeyStore(Protocol):
         """Retired keys of `env` still holding a seed: Q3's `retired_with_seed` finding (I2)."""
         ...
 
-    async def destroy_retired_seeds(self, env: str, *, audit: tuple[str, dict[str, str]]) -> int:
-        """Q3's retried destroy: every retired key of `env` loses its seed, the `audit` record,
-        which is required, committed with it when any did (C-2.9). How many did."""
+    async def destroy_retired_seeds(
+        self, env: str, *, audit: tuple[str, dict[str, str]]
+    ) -> list[tuple[str, str]]:
+        """Q3's retried destroy: every retired key of `env` loses its seed and, when any did, the
+        `audit` record, which is required, is committed with it (C-2.9), naming what the change
+        returned (`_destroyed`, #889 S6b). Those keys' `(key_id, fingerprint_sha256)`, in order."""
         ...
 
 
@@ -339,6 +342,13 @@ def _key_id(value: object) -> str:
 
 def _public(row: Mapping[str, Any]) -> dict[str, Any]:
     return {k: row[k] for k in EXPORT_KEY_PUBLIC}
+
+
+def _destroyed(fields: Mapping[str, str], gone: list[tuple[str, str]]) -> dict[str, str]:
+    """Q3's destroy record: `fields`, with how many keys lost their seed and, comma-separated in
+    key-id order, their `key_ids` and `fingerprints_sha256` (#889 S6b, security F3)."""
+    named = {"destroyed": str(len(gone)), "key_ids": ",".join(k for k, _ in gone)}
+    return {**fields, **named, "fingerprints_sha256": ",".join(f for _, f in gone)}
 
 
 def _rotation(new: Mapping[str, Any], old: Mapping[str, Any]) -> dict[str, Any]:
@@ -516,9 +526,12 @@ class InMemoryExportKeyStore:
     async def count_retired_with_seed(self, env: str) -> int:
         return sum(r["status"] == "retired" for r in self._seeded(env))
 
-    async def destroy_retired_seeds(self, env: str, *, audit: tuple[str, dict[str, str]]) -> int:
-        held = {id(r) for r in self._seeded(env) if r["status"] == "retired"}
-        if held:
-            gone = [r | {"sealed_seed": None} if id(r) in held else r for r in self.rows]
-            self._commit(gone, audit)
-        return len(held)
+    async def destroy_retired_seeds(
+        self, env: str, *, audit: tuple[str, dict[str, str]]
+    ) -> list[tuple[str, str]]:
+        held = {id(r): r for r in self._seeded(env) if r["status"] == "retired"}
+        gone = sorted((r["key_id"], r["fingerprint_sha256"]) for r in held.values())
+        if gone:
+            rows = [r | {"sealed_seed": None} if id(r) in held else r for r in self.rows]
+            self._commit(rows, (audit[0], _destroyed(audit[1], gone)))
+        return gone

@@ -298,6 +298,23 @@ groups:
         annotations:
           summary: "The break-glass state cannot be read: its pages are blind"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authbreakglassstatereadfailing"
+      - alert: AuditSigningKeyBootStepFailed
+        # #889 S6b-2 (S6a-2's security F1): a boot step on the audit export signing key failed and
+        # degraded nothing: Q3's retried destroy of a retired key's seed (`step="destroy"`), or the
+        # rotation boot's re-wrap (`step="rewrap"`); the KEK re-wrap stays incomplete until a boot
+        # moves the key. Both series are bound at import, so a failure after a clean boot is an
+        # increase when the last sample before it is under 15 m old; the same failure at the next
+        # boot, or after a longer outage, is not, so the runbook reads the boot log after each
+        # restart. Held past the quiet-hours mute as UserLifecycleStepFailed is.
+        expr: sum by (env, step) (increase(cv_audit_signing_key_boot_failures_total[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: secrets
+        annotations:
+          summary: "An audit export signing key boot step failed: a retired seed kept, or a key left under the previous KEK"
+          runbook_url: "docs/ops/runbooks/kek-custody.md#alert-auditsigningkeybootstepfailed"
       - alert: UserLifecycleStepFailed
         # #965 R7: a step of the user disable cascade after its commit (socket close, session
         # sweep, B16 revoke, rule scope refresh, rule disarm, invite revoke) failed, or the

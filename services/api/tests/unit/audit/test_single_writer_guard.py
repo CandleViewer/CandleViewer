@@ -46,7 +46,7 @@ _HELPER = "insert_audit_row_locked"
 _CALLERS = {
     _WRITER: ["insert"],
     Path("storage/repositories/credentials_sqlalchemy.py"): ["record_kcv", "rewrap"],
-    # #889 S4b-2; reviewed again in S6a, whose re-wrap and destroy run it through `_update`
+    # #889 S4b-2; reviewed again in S6a and S6b, whose re-wrap and destroy run it through `_record`
     Path("storage/repositories/export_keys_sqlalchemy.py"): ["_record"],
 }
 

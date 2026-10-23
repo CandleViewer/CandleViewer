@@ -265,10 +265,14 @@ async def test_a_retired_key_holding_its_seed_counts_until_its_destroy(
     )
     assert await store.count_retired_with_seed("demo") == 1
     assert await store.count_at_kek_version(1, "demo") == 1  # a KEK re-wrap waits for it (I2)
-    assert await store.destroy_retired_seeds("demo", audit=DESTROYED) == 1
+    [(fp,)] = _exec(pg, "SELECT fingerprint_sha256 FROM audit_signing_keys WHERE env = 'demo'")
+    assert await store.destroy_retired_seeds("demo", audit=DESTROYED) == [(key_id(1), fp)]
     assert await store.count_retired_with_seed("demo") == 0
-    assert await store.destroy_retired_seeds("demo", audit=DESTROYED) == 0  # nothing left
-    assert [bool(_event_ts(pg, r)) for r in records.built[1:]] == [True, False]  # S6a's record
+    assert await store.destroy_retired_seeds("demo", audit=DESTROYED) == []  # nothing left
+    # Each call builds its record before any I/O; the destroy's again, naming what RETURNING gave.
+    assert [bool(_event_ts(pg, r)) for r in records.built[1:]] == [False, True, False]
+    named = {"destroyed": "1", "key_ids": key_id(1), "fingerprints_sha256": fp}
+    assert records.built[2]["after_state"] == DESTROYED[1] | named  # S6b, security F3
     q = "SELECT env::text, sealed_seed IS NULL FROM audit_signing_keys ORDER BY 1"
     assert _exec(pg, q) == [("demo", True), ("live", False)]  # the process environment's only
 

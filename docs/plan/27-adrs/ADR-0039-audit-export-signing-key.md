@@ -319,6 +319,8 @@ Q1 and Q2 are tracked here and on #889; any still open when S10 opens is filed t
   knows which rows changed, so the record carries the count read just before, in its own transaction, and names no
   key. S6b has `destroy_retired_seeds` return the changed rows' key ids and fingerprints
   (`UPDATE … RETURNING`) for the record to name, and the count taken from them.
+  2026-10-22 (#889 S6b-2): built. The record names them as `key_ids` and `fingerprints_sha256`, comma-separated in
+  key-id order, and `destroyed` is their number; the store builds it before any I/O and again in the transaction.
 - **Q4, S6a-2b's (code lens m4): recovering a signing key that cannot be used.** A stranded key recovers with
   `CV_KEK_PREV_HANDLE` at a restart (decision 6). A key that does not open or does not match (`export_key_unopenable`,
   `export_key_mismatch`) recovers only through S7's rotation, which has not shipped, so export stays unavailable until
