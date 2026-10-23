@@ -11,7 +11,10 @@ its source so a reviewer can re-grep it:
 2. The rail model: E14-D02's formula (``rail_height`` / ``rail_fit``, imported) re-run for the
    compact rail (gated equal to E14-D02's heights) and for the comfortable 32 px rail (new numbers),
    the groups drawn at the 728 and 600 px pane stacks, and the icon-grid arithmetic from the
-   primitive tokens (button, glyph, padding, badge, inset bar, separator block, focus ring).
+   primitive tokens (button, glyph, padding, badge, inset bar, separator block, focus ring); plus
+   the ``[Draw]`` menu's list (section 5.4): every registry row as one item and "Show tool rail",
+   at the compact item height of section 5.2, gated against the spec's sentence, the 800 px
+   viewport and twice the 200 % budget (the reason the list scrolls).
 3. The hotkey lint: E14-D02's ``lint_report`` reproduced (SCR-037's own set, scheme (a) gated at 0,
    scheme (b) reported) plus the E11-D07 screen-reader fixture (``e11_d07_sr_reserved_keys.json``,
    on ``main`` since PR 4228 merged: found beside this tool, or passed with ``--sr-fixture`` from
@@ -77,6 +80,8 @@ d02 = _load(TOOLS / "e14_d02_interaction_audit.py", "e14_d02_interaction_audit")
 THEMES = ("dark", "light", "high-contrast")
 RAIL_GROUPS: tuple[str, ...] = tuple(d02.RAIL_GROUPS)
 PANE_STACKS = (728, 600)
+VIEWPORT_H = 800  # the 1280 x 800 reference viewport (spec section 5.4)
+ZOOM_200_CSS_H = VIEWPORT_H // 2  # the CSS px budget at 200 % zoom
 
 # --- 1. the icon set (spec section 2), one row per glyph: registry id | IconName (PROPOSED unless
 # noted) | rail group | tooltip label = accessible name | Kbd hint (interim, OQ-1a) or how it arms |
@@ -379,7 +384,48 @@ def fit(pane_h: int, s: int) -> int:
     return groups
 
 
-def rail_report(fails: list[str]) -> dict[str, Any]:
+def draw_menu(fails: list[str], spec: str, item_c: int, item_f: int) -> dict[str, Any]:
+    """The ``[Draw]`` menu's list (spec section 5.4): every registry row is one item -- the tools,
+    the controls (the magnet submenu counts once), the deferred rows and delete-all (apart) --
+    plus "Show tool rail" at the top; the headings are not counted. Items are 24 (32) px tall
+    (section 5.2), so the compact list is taller than the 800 px viewport and than twice the
+    200 % budget, which is why it scrolls; the spec's sentence must quote the computed numbers."""
+    reg: list[list[str]] = list(d02.REG)
+    tools = sum(1 for r in reg if r[4] in RAIL_GROUPS)
+    controls = sum(1 for r in reg if r[4] == "controls")
+    apart = sum(1 for r in reg if r[4] == "controls (apart)")
+    deferred = sum(1 for r in reg if r[4] == "overflow")
+    items = tools + controls + deferred + apart + 1
+    height = items * item_c
+    if apart != 1:
+        fails.append(f"delete-all rows in the registry: {apart} (one, apart)")
+    if items != len(reg) + 1:
+        fails.append(f"Draw menu items {items} are not every registry row plus Show tool rail")
+    if not (height > VIEWPORT_H and height > 2 * ZOOM_200_CSS_H):
+        fails.append(f"Draw menu list {height} px fits the viewport; section 5.4 says it scrolls")
+    s54 = section(spec, "### 5.4", "### 5.5")
+    sentence = (
+        f"its {items} items ({tools} tools, {controls} controls, {deferred} deferred, delete-all "
+        f'and "Show tool rail") are {height} px at {item_c} px each before the headings'
+    )
+    quotes = (
+        sentence,
+        f"taller than the {VIEWPORT_H} px viewport",
+        f"more than twice the {ZOOM_200_CSS_H} CSS px of 200 %",
+    )
+    if spec:
+        fails += [
+            f"spec section 5.4 lacks the Draw menu arithmetic: {q[:48]!r}"
+            for q in quotes
+            if q not in s54
+        ]
+    out: dict[str, Any] = {"tools": tools, "controls": controls, "apart": apart}
+    out |= {"deferred": deferred, "show_rail": 1, "items": items, "item_px": [item_c, item_f]}
+    out |= {"height_px": height, "height_comfortable_px": items * item_f}
+    return out | {"viewport_px": VIEWPORT_H, "zoom_200_css_px": ZOOM_200_CSS_H}
+
+
+def rail_report(fails: list[str], spec: str) -> dict[str, Any]:
     compact = [int(d02.rail_height(g, 24)) for g in (6, 5, 4)]
     comfortable = [int(d02.rail_height(g, 32)) for g in (6, 5, 4)]
     if compact != list(d02.GEOM["rail_heights"]):
@@ -444,6 +490,7 @@ def rail_report(fails: list[str]) -> dict[str, Any]:
     }
     out["drawn_height_compact"] = [int(d02.rail_height(fit(h, 24), 24)) for h in PANE_STACKS]
     out["drawn_height_comfortable"] = [int(d02.rail_height(fit(h, 32), 32)) for h in PANE_STACKS]
+    out["draw_menu"] = draw_menu(fails, spec, btn_c, btn_f)
     return out
 
 
@@ -761,7 +808,7 @@ def main(argv: list[str] | None = None) -> int:
     spec = SPEC.read_text(encoding="utf-8") if SPEC.exists() else ""
     handoff = HANDOFF.read_text(encoding="utf-8") if HANDOFF.exists() else ""
     fails: list[str] = []
-    icons, rail = icon_report(fails, spec), rail_report(fails)
+    icons, rail = icon_report(fails, spec), rail_report(fails, spec)
     lint, matrix = lint_report(fails, spec, a.sr_fixture), matrix_report(fails)
     cvdr, toks = cvd_report(fails, spec), token_report(fails, spec)
     strings = (
@@ -772,6 +819,10 @@ def main(argv: list[str] | None = None) -> int:
     counts: dict[str, Any] = {"boards": 9, "light_twins": 3, "themes": len(THEMES)}
     counts |= {k: v for k, v in icons.items() if isinstance(v, int)}
     counts |= {"rail_compact": rail["compact"], "rail_comfortable": rail["comfortable"]}
+    counts |= {
+        "draw_menu_items": rail["draw_menu"]["items"],
+        "draw_menu_px": rail["draw_menu"]["height_px"],
+    }
     counts |= {
         "groups_drawn_compact": rail["groups_drawn_compact"],
         "groups_drawn_comfortable": rail["groups_drawn_comfortable"],
