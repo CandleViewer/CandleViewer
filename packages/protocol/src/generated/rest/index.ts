@@ -3778,10 +3778,13 @@ export interface paths {
      *       `unknown` or `quarantined`) the answer says `reconciling` (`OrderAcceptance.reconciling`,
      *       which a first answer carries too).
      *     * The `trading.oms_enabled` flag (`21-database-schema.md` section 10.7), while off,
-     *       refuses a new admission with `403 trading_disabled` and no `reason`, after the
-     *       idempotency lookup and before the checks below. It gates new admissions only: an exact
-     *       repeat is answered as above, and neither a create a restart resumes nor a cancel is
-     *       refused by it (#913 slice 3 rulings Q3, Q18).
+     *       refuses a new admission that opens or increases exposure, the order-entry gate's scope
+     *       (`24-internal-schemas.md` section 8.10), with `403 trading_disabled` and no `reason`,
+     *       after the idempotency lookup and before the checks below. A reduce-only order passes
+     *       it, since a rollout flag gates no protective path (C-4.14, C-2.6), and the route is
+     *       mounted whatever the flag says: the flag gates admission, not mounting. It gates new
+     *       admissions only: an exact repeat is answered as above, and neither a create a restart
+     *       resumes nor a cancel is refused by it (#913 slice 3 rulings Q3, Q18).
      *     * Live trading not enabled, the B18 kill switch (engaged for the account or globally) and
      *       the order-entry gate refuse with `403 trading_disabled` before anything reaches the
      *       exchange. They come after the idempotency lookup (the order of the checks under
@@ -10989,7 +10992,7 @@ export interface components {
         "application/problem+json": components["schemas"]["OpenExposureProblem"];
       };
     };
-    /** @description The exchange refused an order or position call. `exchange` holds `ret_code` only (`OrderExchangeProblem`, SR-E29-09): the exchange's text is served only by the audited diagnostics read (`getOrderDiagnostics`). Every route that answers it takes an `Idempotency-Key`, so a repeat answered from the key's record carries `Idempotency-Replayed: true` (Idempotency, above; for `placeOrder`, its anchor). */
+    /** @description The exchange refused an order or position call. `exchange` holds `ret_code` only (`OrderExchangeProblem`, SR-E29-09): the exchange's text is served only by the audited diagnostics read (`getOrderDiagnostics`). Every route that answers it takes an `Idempotency-Key`, so where a `502` is stored under the key, today only by `placeOrder`'s anchor (Idempotency, above), its repeat carries `Idempotency-Replayed: true`. */
     OrderExchangeError: {
       headers: {
         "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
