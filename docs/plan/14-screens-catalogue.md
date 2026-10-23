@@ -236,6 +236,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-098 SessionTimeoutWarning, CMP-201 PasswordField.
 - **Stories:** US-ONB-004.
 - **Hi-fi (E09-D06):** idle-lock and absolute-expiry variants drawn over a live workspace (UI frozen; private panels masked; public data streaming; nothing unsubscribed; armed 1-click disarmed and not auto-restored; draft retained on idle lock, discarded on absolute expiry and sign-out). Pre-lock warning is CMP-098 (60 s). Spec: `docs/design/E09/E09-D06.md`.
+- **Motion (E09-D08):** `docs/design/E09/E09-D08.md` — the lock-in / unlock-out transitions, the frame-0 mask rule, CMP-098's arrival and dismissal, the reduced-motion variants and the measured cost register.
 - **Design sign-off acceptance checklist:** [ ] underlying screen state is preserved and visibly frozen, not destroyed [ ] 'sign out instead' escape drawn [ ] expiry-during-order-entry case drawn (idle lock: draft retained, unarmed; absolute expiry: not sent, discarded, disarmed) [ ] focus moves to the modal and returns on close
 
 ### SCR-006 — Step-up authentication modal (S)
@@ -261,6 +262,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-043 Dialog, CMP-201 PasswordField, CMP-204 OtpInput.
 - **Stories:** US-ONB-005.
 - **Hi-fi (E09-D06):** code-only, code+typed confirmation, valid-grace (server expiry), failures 1-2, 3rd-failure read-only downgrade (5 min), no-grace variant for Live enablement / kill-switch disable. Spec: `docs/design/E09/E09-D06.md`.
+- **Motion (E09-D08):** `docs/design/E09/E09-D08.md` — open / close, the one-frame failure feedback, the grace indicator's cadence, the input-opacity rule and the reduced-motion variants.
 - **Design sign-off acceptance checklist:** [ ] the exact action being authorised is restated verbatim in the dialog [ ] remaining-TTL indicator for an already-valid step-up token [ ] failure/lockout state drawn [ ] cancel returns the caller to a safe no-op state
 
 ### SCR-010 — App shell (global chrome)
