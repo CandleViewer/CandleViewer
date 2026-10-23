@@ -22,7 +22,9 @@ in this order:
    found is adopted and nothing is sent (C-2.10);
 2. the synchronous switches, then the clock halt, are asked (C-2.21): a refusal is
    `ResendRefused`, nothing sent, so no create is re-sent under a clock a `10002` tripped
-   (SEC-2B1-01);
+   (SEC-2B1-01). A clock not composed or not measured yet is a third outcome: the halt lets
+   `OmsNotReady` through (ruling Q8), logged as a refusal is (`oms_resend_refused`, with its
+   code) and raised as it is, nothing sent, so B1 lands the order in `unknown` all the same;
 3. where history never expires (`order_retention_days` None: live), a create older than
    `LIVE_RESEND_MAX_AGE_S` is never re-sent. Within the venue's history span
    (`LIVE_HISTORY_SPAN_S`, 24 h) the miss means it never landed: it ends `rejected` with
@@ -121,7 +123,14 @@ from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, Re
 
 from .classify import REDUCING_INTENTS
 from .clock_halt import ClockHalt
-from .errors import AckWithoutOrderId, HandoverUnavailable, OrderRefused, ResendRefused
+from .errors import (
+    AckWithoutOrderId,
+    HandoverUnavailable,
+    OmsNotReady,
+    OrderRefused,
+    ResendRefused,
+    problem_for,
+)
 from .order_link_resolution import (
     Adopted,
     HistoryRetentionPolicy,
@@ -237,6 +246,16 @@ type StoredOrder = NewOrder | OrderRow
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+def _log_resend_refused(link: str, refusal: OrderRefused) -> None:
+    """A resumed create that was not re-sent, and why: the refusal's class and its problem code."""
+    _log().warning(
+        "oms_resend_refused",
+        order_link_id=link,
+        refusal=type(refusal).__name__,
+        code=problem_for(refusal).code,
+    )
 
 
 def order_id_kept(raw: object) -> str | None:
@@ -589,7 +608,8 @@ class OmsCommandPort:
         """[LANE-26]'s order: the lookup whatever the switches say, the switches and the clock
         halt, the live bounds, then `adopt_or_resend`, which looks once more just before its one
         re-send (SR-E29-15) and applies rule 6 from the port's own retention (24 Sec.8.3: demo's 6
-        days)."""
+        days). A refusal is `ResendRefused`; a clock not measured yet raises `OmsNotReady` as it
+        is (`ClockHalt.refusal`): both are logged `oms_resend_refused`, and nothing is sent."""
         link = request.order_link_id
         try:
             found = await find_by_link_id(port, request)
@@ -604,9 +624,13 @@ class OmsCommandPort:
             account.account_id, account.environment
         )
         if refusal is None:  # SEC-2B1-01: never a re-send under a clock a `10002` tripped
-            refusal = self._clock_halt.refusal()
+            try:
+                refusal = self._clock_halt.refusal()
+            except OmsNotReady as not_ready:  # no clock composed, or none measured yet (Q8)
+                _log_resend_refused(link, not_ready)
+                raise  # as it is: B1 lands the order in `unknown` (S1), nothing was sent
         if refusal is not None:
-            _log().warning("oms_resend_refused", order_link_id=link, refusal=type(refusal).__name__)
+            _log_resend_refused(link, refusal)
             raise ResendRefused(refusal)
         retention = HistoryRetentionPolicy.from_capabilities(port.capabilities)
         created, now = _us(row.created_ts), self._now_us()

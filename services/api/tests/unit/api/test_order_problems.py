@@ -35,6 +35,7 @@ from candleviewer.oms.errors import (
     IdempotencyKeyReuse,
     LotSizeViolation,
     OmsError,
+    OmsNotReady,
     OrderEntryRefused,
     OrderInvalid,
     OrderLinkIdExhausted,
@@ -91,6 +92,7 @@ _ROWS: dict[type[OmsError], OmsError] = {
     ExchangeRejected: ExchangeRejected(ret_code=110007),
     ClockDriftBlocked: ClockDriftBlocked(retry_after_s=5),
     StoreUnavailable: StoreUnavailable(),
+    OmsNotReady: OmsNotReady(),
     ExchangeUnavailable: ExchangeUnavailable(retry_after_s=3),
     AuditNotDurable: AuditNotDurable("the order's write-ahead audit did not land"),
 }
@@ -100,6 +102,7 @@ _DELAYS: dict[type[OmsError], int] = {
     StopRequestPending: 5,
     RateBudgetExceeded: 2,
     ClockDriftBlocked: 5,
+    OmsNotReady: 5,
     ExchangeUnavailable: 3,
 }
 _PAGING = [cls for cls, problem in PROBLEMS.items() if problem.pages]

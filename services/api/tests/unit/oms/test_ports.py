@@ -62,6 +62,7 @@ from candleviewer.oms.fakes import (
 )
 from candleviewer.oms.ports import (
     FAILED,
+    INTERIM_PORT_LABELS,
     INTERIM_PORTS_METRIC,
     PASSED,
     PORT_NAMES,
@@ -102,6 +103,7 @@ from candleviewer.oms.ports import (
     SubmitActor,
     TradingAccounts,
     Verdict,
+    announce_interim_port,
     announce_interim_ports,
     refuse_live_without_reconciliation,
 )
@@ -584,9 +586,27 @@ def test_announce_counts_a_real_port_as_zero_and_logs_nothing_for_it() -> None:
     assert _gauge(metrics, "arm_records") == 1.0
 
 
+@pytest.mark.parametrize("name", INTERIM_PORT_LABELS)
+def test_announce_one_port_takes_every_label_of_the_closed_set(name: str) -> None:
+    metrics = Metrics("demo")
+    assert announce_interim_port(cast(Any, name), object(), metrics=metrics) is False
+    assert _gauge(metrics, name) == 0.0
+
+
+def test_announce_one_port_refuses_a_label_outside_the_closed_set_before_any_series() -> None:
+    """CR-S3B2-06: `INTERIM_PORT_LABELS` is the gauge's closed set, so a mistyped label raises,
+    instead of a series the cap drops without a word."""
+    metrics = Metrics("demo")
+    with capture_logs() as logs, pytest.raises(ValueError, match="kill_swtich"):
+        announce_interim_port(cast(Any, "kill_swtich"), object(), metrics=metrics)
+    assert logs == []  # no warning, and the gauge was never registered
+    assert not [f for f in metrics.registry.collect() if f.name == INTERIM_PORTS_METRIC]
+
+
 def test_announce_registers_the_gauge_from_its_catalogue_entry() -> None:
     [spec] = [s for s in CATALOGUE if s.name == INTERIM_PORTS_METRIC]
-    assert (spec.kind, spec.labels, spec.max_series) == ("gauge", ("port",), len(PORT_NAMES))
+    assert (spec.kind, spec.labels, spec.max_series) == ("gauge", ("port",), 6)
+    assert INTERIM_PORT_LABELS == (*PORT_NAMES, "kill_switch", "machine_event_sink")
     assert (spec.status, spec.owner_epic) == ("planned", "E29")
     metrics = Metrics("demo")
     announce_interim_ports(SubmissionPorts.interim(now=lambda: NOW), metrics=metrics)

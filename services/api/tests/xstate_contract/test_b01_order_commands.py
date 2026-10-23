@@ -13,7 +13,7 @@ gives lands the order where 24-internal-schemas.md Sec.8.3, Sec.8.4 and Sec.8.6 
   one older than `LIVE_RESEND_MAX_AGE_S` is never sent: within the venue's 24 h history it ends
   `rejected` with `EXPIRED_UNSENT` ([LANE-26]), and at or past it, where a miss proves nothing,
   `unknown` (SEC-2B1-02); a re-send met by a duplicate is bound through B1's lookup, never a new
-  id.
+  id. One under a clock no measurement has answered for is `unknown` too, nothing sent (ruling Q8).
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.errors import RateBudgetExceededError
@@ -33,10 +34,11 @@ from candleviewer.exchange.base.models import Order, OrderAck, PlaceOrderRequest
 from candleviewer.oms import ExecutionRepository
 from candleviewer.oms.commands import found_view
 from candleviewer.oms.execution import apply_fields
-from candleviewer.oms.fakes import InMemoryExecutionStore
+from candleviewer.oms.fakes import FakeClockHealth, InMemoryExecutionStore
 from candleviewer.oms.order_machine import _order_fields
 from candleviewer.oms.order_steps import OrderStepWriter, entry_stop_settle
 from candleviewer.oms.ports import NoHandoverStore, OrderHandovers
+from candleviewer.oms_wiring import ClockHealthBinding
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.registry import Registry
 from candleviewer.storage.repositories.orders import LifecycleState, NewOrder
@@ -94,9 +96,12 @@ def _settles(step: b01.Step) -> str | None:
     return entry_stop_settle(frm, to, Decimal(0), trigger=step.event)
 
 
-def _book(monkeypatch: pytest.MonkeyPatch, handovers: OrderHandovers | None = None) -> Book:
+def _book(
+    monkeypatch: pytest.MonkeyPatch, handovers: OrderHandovers | None = None, **rig_kwargs: Any
+) -> Book:
     trail: list[tuple[str, str]] = []
-    rig = build_rig(handovers=handovers if handovers is not None else TrailHandovers(trail=trail))
+    handed = handovers if handovers is not None else TrailHandovers(trail=trail)
+    rig = build_rig(handovers=handed, **rig_kwargs)
     executions = ExecutionRepository(InMemoryExecutionStore(rig.store))
     book = Book(rig, OrderStepWriter(rig.orders, executions, clock=lambda: T0), trail)
     ports = b01.OrderPorts(persist=book.persist, commands=rig.port, now_us=rig.now)
@@ -306,6 +311,27 @@ async def test_a_live_create_past_the_venues_history_is_unknown_never_rejected(
     assert book.rig.audits.written == [] and book.rig.notices.got == []
     step = book.steps[-1]
     assert (step.from_state, step.to_state, _settles(step)) == ("submitting", "unknown", None)
+
+
+async def test_a_resumed_create_under_an_unmeasured_clock_is_unknown_with_nothing_sent(
+    monkeypatch: pytest.MonkeyPatch, charts: Charts
+) -> None:
+    """Ruling Q8 (CR-S3B2-02): the binding answers a clock no measurement has answered for with
+    `OmsNotReady`, raised by the port as it is after its lookup and before any send, so B1 lands
+    the order in `unknown` for the next reconciliation, as for the venue's outage: no `rejected`,
+    no record, no alert, and a log line that says why."""
+    book = _book(monkeypatch, clock=ClockHealthBinding(FakeClockHealth(lambda: 0.0)))
+    order = new_order()
+    async with _machine(charts) as interp:
+        with capture_logs() as logs:
+            assert await _sent_unregistered(book, interp, order) == "unknown"
+        assert interp.context.get("reject_code") is None
+    row = await book.rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and (row.lifecycle_state, row.reject_code) == ("unknown", None)
+    assert book.rig.calls() == ["open_orders", "order_history"]
+    assert book.rig.audits.written == [] and book.rig.notices.got == []
+    [line] = [log for log in logs if log["event"] == "oms_resend_refused"]
+    assert (line["refusal"], line["code"]) == ("OmsNotReady", "oms_not_ready")
 
 
 async def test_a_resend_met_by_a_duplicate_is_bound_through_b1s_lookup(

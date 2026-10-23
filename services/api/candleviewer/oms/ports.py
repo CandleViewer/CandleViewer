@@ -23,7 +23,8 @@ live:
 The native stop depends on none of them: `classify.NativeStopGuard` judges whatever the stop
 resolver answers, so C-2.6 holds on every path whatever the port (C-4.14).
 `announce_interim_ports` logs one WARNING per interim port at startup and sets
-`oms_interim_ports{port}`, so nobody runs them on live unknowingly.
+`oms_interim_ports{port}`, so nobody runs them on live unknowingly; `announce_interim_port` does the
+same for a port outside the slots (slice 3: the B18 kill switch, B1's machine-event sink).
 
 The rate step has no port of its own here. #2877's G-8 rulings (item 4) have the trading port take
 the rate token once per call, and B1's `rate` verdict read a non-consuming headroom figure until
@@ -121,6 +122,15 @@ SizingMode = Literal[
 OrderType = Literal["market", "limit"]
 PortName = Literal["sizer", "stop_resolver", "risk_gate", "arm_records"]
 PORT_NAMES: Final[tuple[PortName, ...]] = get_args(PortName)
+#: The interim ports the OMS runtime announces beside the `SubmissionPorts` slots (#913 slice 3):
+#: the B18 kill switch until E39-S03 (ruling Q5), and B1's `machine_events` sink while no statechart
+#: persistence bundle serves it (20 Sec.6.2). Their binders announce them (`announce_interim_port`).
+RuntimePortName = Literal["kill_switch", "machine_event_sink"]
+#: `oms_interim_ports{port}`'s closed label set, one series each.
+INTERIM_PORT_LABELS: Final[tuple[PortName | RuntimePortName, ...]] = (
+    *PORT_NAMES,
+    *get_args(RuntimePortName),
+)
 INTERIM_PORTS_METRIC: Final = "oms_interim_ports"
 #: R4: the one environment the interim risk gate admits, unevaluated.
 _UNEVALUATED: Final[frozenset[Environment]] = frozenset({"demo"})
@@ -302,7 +312,8 @@ class ClockHealth(Protocol):
 
     def assert_healthy(self) -> None:
         """`ClockDriftError` when no measurement has succeeded yet, or the measured offset is past
-        the hard threshold."""
+        the hard threshold. Slice 3's binding answers an unmeasured clock, and one not composed,
+        with `OmsNotReady` instead (ruling Q8): only a measured halt is `clock_drift`."""
         ...
 
     def offset_age_s(self) -> float:
@@ -490,8 +501,9 @@ class CredentialRejections(Protocol):
     """24 Sec.8.6 `AUTH_ERROR`: the exchange refused a request for its key (an invalid key, a bad
     signature, a missing permission). The OMS passes the code and the exchange's return code on as
     they came (the orchestrator's Q-I ruling); slice 3's binding maps the return code through the
-    adapter's public key-verdict table, disables the account's key and alerts the Owner, so `oms`
-    holds no exchange code (C-2.2)."""
+    adapter's public key-verdict table (a code outside it, or none, is `unknown_key`), flips the
+    account's key standing in memory and pages the Owner (ruling Q10; the durable reaction is
+    #4243), so `oms` holds no exchange code (C-2.2)."""
 
     async def refused(
         self, account_id: AccountId, *, error_code: str, exchange_ret_code: int | None
@@ -722,7 +734,7 @@ class Interim:
     """An interim port (R4): `port` is the slot it fills, `replaced_by` the ticket whose port
     replaces it, and `serves` what it serves and refuses, for the startup log."""
 
-    port: ClassVar[PortName]
+    port: ClassVar[PortName | RuntimePortName]
     replaced_by: ClassVar[str]
     serves: ClassVar[str]
 
@@ -895,17 +907,27 @@ class SubmissionPorts:
 
 
 def announce_interim_ports(ports: SubmissionPorts, *, metrics: Metrics) -> tuple[PortName, ...]:
-    """At startup: one WARNING per slot an interim port fills, and `oms_interim_ports{port}` set
-    to 1 for it and to 0 for a real port (R4). Returns the slots interim ports fill."""
+    """At startup: `announce_interim_port` for each slot (R4); returns the slots interims fill."""
+    return tuple(
+        name
+        for name in PORT_NAMES
+        if announce_interim_port(name, getattr(ports, name), metrics=metrics)
+    )
+
+
+def announce_interim_port(
+    name: PortName | RuntimePortName, port: object, *, metrics: Metrics
+) -> bool:
+    """At startup, for one port: `oms_interim_ports{port}` at 1 with one WARNING while an interim
+    serves it, else 0; returns whether one does. A `name` outside `INTERIM_PORT_LABELS`, the
+    gauge's closed set, is a `ValueError` before any series (the cap would drop it silently)."""
+    if name not in INTERIM_PORT_LABELS:
+        raise ValueError(f"{name!r} is not a label of {INTERIM_PORTS_METRIC}")
     spec = next(spec for spec in CATALOGUE if spec.name == INTERIM_PORTS_METRIC)
     gauge = metrics.gauge(spec.name, spec.help, spec.labels, max_series=spec.max_series)
-    interim: list[PortName] = []
-    for name in PORT_NAMES:
-        port = getattr(ports, name)
-        gauge.labels(name).set(1 if isinstance(port, Interim) else 0)
-        if isinstance(port, Interim):
-            interim.append(name)
-            _log().warning(
-                "oms_interim_port", port=name, replaced_by=port.replaced_by, serves=port.serves
-            )
-    return tuple(interim)
+    gauge.labels(name).set(1 if isinstance(port, Interim) else 0)
+    if isinstance(port, Interim):
+        _log().warning(
+            "oms_interim_port", port=name, replaced_by=port.replaced_by, serves=port.serves
+        )
+    return isinstance(port, Interim)

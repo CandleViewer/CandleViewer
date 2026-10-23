@@ -18,6 +18,7 @@ from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openap
 from candleviewer.exchange.bybit.key_info import refusal
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.oms import submit
+from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms_wiring import OmsBounds
 from candleviewer.settings import (
     OMS_AFTER_ANCHOR_S,
@@ -144,6 +145,7 @@ def test_every_not_ready_case_answers_one_503_and_the_fake_backend_a_501() -> No
     body = body["omsNotReady"]["value"]
     _validator("Problem").validate(body)
     assert (body["code"], body["title"], body["retry_after_seconds"]) == (*code_title, 5)
+    assert OmsNotReady().retry_after_s == body["retry_after_seconds"]  # the code's default
     assert _PLACE["responses"]["501"] == {"$ref": "#/components/responses/NotImplemented"}
     assert not _missing(
         _PLACE_TEXT,

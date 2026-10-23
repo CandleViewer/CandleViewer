@@ -230,6 +230,9 @@ class ResendRefused(OmsError):
 
 # --- The order path's refusals and their answers (E29-T04, #913) --------------------------------
 
+#: `OmsNotReady`'s `Retry-After`, in seconds (22 `omsNotReady`): a startup or a dependency, so
+#: a retry a few seconds later most likely meets an open order entry.
+OMS_NOT_READY_RETRY_AFTER_S: Final = 5
 #: The `errors[]` rules of `validation_failed` that 22-api-openapi.yaml `placeOrder` names.
 RULE_NATIVE_STOP_REQUIRED: Final = "native_stop_required"
 RULE_INTENT_MISMATCH: Final = "intent_mismatch"
@@ -426,6 +429,20 @@ class StoreUnavailable(OrderRefused):
     default_detail = "Orders cannot be recorded right now, so none is sent."
 
 
+class OmsNotReady(OrderRefused):
+    """`oms_not_ready` (#913 slice 3 ruling Q8): order entry is not open yet, so nothing was
+    recorded or sent and no key is bound. The runtime has not finished its startup sweep, or a
+    dependency the pipeline needs is not composed or not measured yet: the instrument catalogue,
+    the exchange clock. A measured clock halt is `ClockDriftBlocked`. `retry_after_s` is the
+    answer's `Retry-After`."""
+
+    default_detail = "Order entry is not open yet."
+
+    def __init__(self, *, retry_after_s: int = OMS_NOT_READY_RETRY_AFTER_S) -> None:
+        super().__init__()
+        self.retry_after_s = _positive_delay(retry_after_s)
+
+
 class ExchangeUnavailable(OrderRefused):
     """A read the order needs before it is recorded failed or did not answer in time (a
     reduce-only order's position, SR-E29-01), so nothing was recorded or sent; `retry_after_s` is
@@ -497,6 +514,7 @@ PROBLEMS: Final[Mapping[type[OmsError], Problem]] = MappingProxyType(
         ExchangeRejected: Problem(502, "exchange_error"),
         ClockDriftBlocked: Problem(503, "clock_drift", retry_after=True),
         StoreUnavailable: Problem(503, "store_unavailable"),
+        OmsNotReady: Problem(503, "oms_not_ready", retry_after=True),
         ExchangeUnavailable: Problem(503, "exchange_unavailable", retry_after=True),
         AuditNotDurable: Problem(503, "audit_unavailable"),
     }
