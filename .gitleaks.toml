@@ -32,6 +32,9 @@ paths = [
   # E05 threat model prose mentions "API key labels"; documentation, no credential.
   '''docs/plan/threat-models/E05-design-system\.md''',
   '''scripts/tests/test_check_secrets_hygiene\.py''',
+  # E11-D07: public screen-reader vendor reserved-key fixture; its `keys` field names chords
+  # ("SHIFT+SEMICOLON"), not credentials. Data only, never source.
+  '''docs/design/_tools/e11_d07_sr_reserved_keys\.json''',
 ]
 regexes = [
   '''REDACTED''',
