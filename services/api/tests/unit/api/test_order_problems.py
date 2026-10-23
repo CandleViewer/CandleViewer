@@ -20,7 +20,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.order_problems import order_problem, outcome_problem
-from candleviewer.domain.order_entry import OrderEntryRefusal
+from candleviewer.domain.order_entry import _ID_SHAPED, OrderEntryRefusal
 from candleviewer.oms.errors import (
     PROBLEMS,
     AccountScopeDenied,
@@ -169,6 +169,7 @@ def test_each_row_renders_a_body_its_22_schema_takes(cls: type[OmsError]) -> Non
     assert body["type"] == f"https://candleviewer.local/errors/{problem.code}"
     title = ERROR_META[ErrorCode(problem.code)].title
     assert body["title"] == title == _CODES[problem.code]["title"]
+    assert problem.status == _CODES[problem.code]["status"]  # SEC-S3D2-01
     assert len(pager.pages) == int(problem.pages)
 
 
@@ -180,6 +181,15 @@ def test_retry_after_is_in_the_body_and_the_header_where_the_row_says_so(
     delay = _DELAYS.get(cls)
     assert _body(response).get("retry_after_seconds") == delay
     assert response.headers.get("retry-after") == (None if delay is None else str(delay))
+
+
+@pytest.mark.parametrize("cls", list(_ROWS), ids=[cls.__name__ for cls in _ROWS])
+def test_no_answer_carries_an_id_shaped_value(cls: type[OmsError]) -> None:
+    """SEC-S3D2-02: every detail is a fixed sentence (C-12.6), as the gate's own tripwire holds
+    its refusals (`order_entry._ID_SHAPED`); the repeated 429's too."""
+    replayed = outcome_problem(_outcome(429, replayed=True))
+    for response in (order_problem(_ROWS[cls], pager=_Pager()), replayed):
+        assert _ID_SHAPED.search(bytes(response.body).decode()) is None
 
 
 def test_a_refusal_carries_its_own_detail_and_every_rule_that_failed() -> None:
