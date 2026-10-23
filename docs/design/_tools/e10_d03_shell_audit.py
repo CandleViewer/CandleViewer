@@ -32,7 +32,7 @@ its source so a reviewer can re-grep it:
    gated row, the view-as leg first, the SCR-157 phrase, no "same as dark", no placeholders, no
    chrome trading word, no local path, no Penpot host (a generic pattern; no host named), no
    pageLink, no closing keyword with an issue number, every planned board PENDING, the nine
-   catalogue pointer lines).
+   catalogue pointer lines, every ``US-…`` id cited exists in ``docs/plan/11-user-stories.md``).
 9. The counts the boards and the PR draft quote (``--json`` feeds the local check-nums).
 
 Usage: python3 -I docs/design/_tools/e10_d03_shell_audit.py [--json] [--check]
@@ -57,6 +57,7 @@ SPEC = ROOT / "docs" / "design" / "E10" / "E10-D03.md"
 D02_SPEC = ROOT / "docs" / "design" / "E10" / "E10-D02.md"
 E15_SPEC = ROOT / "docs" / "design" / "E15" / "E15-D02.md"
 CATALOGUE = ROOT / "docs" / "plan" / "14-screens-catalogue.md"
+USER_STORIES = ROOT / "docs" / "plan" / "11-user-stories.md"
 API = ROOT / "docs" / "plan" / "22-api-openapi.yaml"
 WS = ROOT / "docs" / "plan" / "23-ws-protocol.md"
 PAIRS_MJS = ROOT / "tools" / "contrast" / "pairs.mjs"
@@ -488,7 +489,8 @@ warning toast body; stillWorks line | color.text.secondary | color.status.warnin
   ~ | text | §7 §9
 success toast body | color.text.secondary | color.status.success.subtle | text | §7
 info toast body | color.text.secondary | color.status.info.subtle | text | §7
-error toast 2 px edge on the host | color.status.danger.strong | color.surface.overlay | ui | §7
+error toast 2 px edge; Delete… glyph | color.status.danger.strong | color.surface.overlay
+  ~ | ui | §7 §5
 toast subtle fill against the stack | color.status.danger.subtle | color.surface.overlay
   ~ | structure | §7
 dialog hairline on overlay | color.border.default | color.surface.overlay | structure | §9
@@ -503,6 +505,9 @@ title bar more and close glyphs | color.text.secondary | color.surface.raised | 
 REJECTED: text.disabled on raised | color.text.disabled | color.surface.raised | rejected-text | §10
 REJECTED: text.disabled on canvas | color.text.disabled | color.surface.canvas | rejected-text | §10
 REJECTED: text.disabled on app | color.text.disabled | color.surface.app | rejected-text | §10
+Delete… menu label (CMP-041 danger item) | color.text.primary | color.surface.overlay | text | §5
+REJECTED: danger.default as the Delete… label | color.status.danger.default
+  ~ | color.surface.overlay | rejected-text | §5
 """
 # fg | bg | dark | light | hc | source  (merged specs' values; gated equal to the hundredth)
 REPRO_TXT = """
@@ -1004,6 +1009,7 @@ CLOSING_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s*#
 TRADE_WORD_RE = re.compile(r"^(?:Buy|Sell|Place)\b")
 D02_PAGE_ID_RE = re.compile(r"page id `([0-9a-f-]{36})`")
 HEX_RE = re.compile(r"#[0-9A-Fa-f]{6}\b")
+US_ID_RE = re.compile(r"\bUS-[A-Z]+-(\d{3})(?:\.\.(\d{3}))?\b")
 NINE = (
     "SCR-010",
     "SCR-011",
@@ -1021,9 +1027,23 @@ def table_rows(block: str) -> list[str]:
     return [ln for ln in block.splitlines() if ln.startswith("| ") and not re.match(r"^\| -", ln)]
 
 
+def us_ids(spec: str) -> list[str]:
+    """Every ``US-…`` id the spec cites, a ``001..006`` range expanded to its members."""
+    out: list[str] = []
+    for m in US_ID_RE.finditer(spec):
+        prefix, lo, hi = m.group(0).split("-")[1], int(m.group(1)), m.group(2)
+        for n in range(lo, (int(hi) if hi else lo) + 1):
+            out.append(f"US-{prefix}-{n:03d}")
+    return sorted(set(out))
+
+
 def string_report(fails: list[str], spec: str) -> dict[str, Any]:
     g: dict[str, bool] = {}
     cat = read(CATALOGUE)
+    stories = read(USER_STORIES)
+    cited = us_ids(spec)
+    us_missing = [i for i in cited if not re.search(rf"(?m)^#### {re.escape(i)} ", stories)]
+    g["us_ids_exist_in_11"] = bool(cited) and not us_missing  # the pre-PR lens round 1 (F-1)
     g["badge_contract_once"] = spec.count(BADGE_SENTENCE) == 1
     g["no_weakening_clause"] = not WEAKEN_RE.search(spec)
     g["t2_rule_once"] = spec.count(T2_SENTENCE) == 1
@@ -1073,6 +1093,8 @@ def string_report(fails: list[str], spec: str) -> dict[str, Any]:
         "catalogue_lines": nine,
         "catalogue_under": under,
         "bad_copy_cells": bad_copy,
+        "us_ids_cited": len(cited),
+        "us_ids_missing": us_missing,
         "hex_literals_in_spec": len(HEX_RE.findall(spec)),
         "spec_lines": len(spec.splitlines()),
     }
