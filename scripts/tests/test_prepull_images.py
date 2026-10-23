@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -33,6 +34,7 @@ case "$1 $2" in
       n=$(count hub_pulls)
       [ "$n" -gt "${HUB_FAILS:-0}" ] || { echo "token service timed out" >&2; exit 1; }
       echo "${HUB_SERVES:-${ref##*@sha256:}}" > "$FAKE/served"
+      echo "${ref%%:*}@${ref##*@}" >> "$FAKE/digests"
       echo "${ref%%@*}" > "$FAKE/served_repo"
     fi
     echo "$ref"
@@ -40,12 +42,13 @@ case "$1 $2" in
   "tag "*)
     [ "${TAG_FAILS:-0}" = 0 ] || exit 1
     echo "$3" >> "$FAKE/tagged"
+    [ "${DIGEST_ON_TAG:-0}" = 0 ] || echo "${3%%:*}@sha256:$(cat "$FAKE/served")" >> "$FAKE/digests"
     ;;
   "image inspect")
     if [ "$3" = "--format" ]; then
       echo "$(cat "$FAKE/served_repo" | sed 's/:[^:/]*$//')@sha256:$(cat "$FAKE/served")"
     else
-      grep -qx "$3" "$FAKE/tagged" 2>/dev/null
+      grep -qx "$3" "$FAKE/tagged" 2>/dev/null || grep -qx "${3%%:*}@${3##*@}" "$FAKE/digests" 2>/dev/null
     fi
     ;;
   *) echo "unexpected docker call: $*" >&2; exit 99 ;;
@@ -64,14 +67,17 @@ def env(tmp_path: Path) -> dict[str, str]:
     nap.write_text('#!/bin/bash\necho "$*" >> "$FAKE/sleeps.log"\n', encoding="utf-8")
     nap.chmod(nap.stat().st_mode | stat.S_IXUSR)
     tmo = bindir / "timeout"
-    tmo.write_text('#!/bin/bash\necho "$1" >> "$FAKE/timeouts.log"\nshift\nexec "$@"\n', encoding="utf-8")
+    tmo.write_text(
+        '#!/bin/bash\necho "$1" >> "$FAKE/timeouts.log"\nshift\nexec "$@"\n',
+        encoding="utf-8",
+    )
     tmo.chmod(tmo.stat().st_mode | stat.S_IXUSR)
     state = tmp_path / "state"
     state.mkdir()
     return {
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "FAKE": str(state),
-                "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
     }
 
 
@@ -107,7 +113,9 @@ def _summary(env: dict[str, str]) -> str:
 PG = f"postgres {HUB} {ECR}:16-alpine@sha256:{DIGEST}\n"
 
 
-def test_hub_succeeds_first_try_and_tags_locally(tmp_path: Path, env: dict[str, str]) -> None:
+def test_hub_succeeds_first_try_and_tags_locally(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
     r = _run(tmp_path, env, PG, "postgres")
     assert r.returncode == 0, r.stderr
     assert _count(env, "hub_pulls") == 1 and _count(env, "ecr_pulls") == 0
@@ -115,7 +123,9 @@ def test_hub_succeeds_first_try_and_tags_locally(tmp_path: Path, env: dict[str, 
     assert "Docker Hub" in _summary(env) and f"sha256:{DIGEST}" in _summary(env)
 
 
-def test_hub_fails_then_works_within_five_attempts(tmp_path: Path, env: dict[str, str]) -> None:
+def test_hub_fails_then_works_within_five_attempts(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
     r = _run(tmp_path, env, PG, "postgres", HUB_FAILS="4")
     assert r.returncode == 0, r.stderr
     assert _count(env, "hub_pulls") == 5 and _count(env, "ecr_pulls") == 0
@@ -130,7 +140,9 @@ def test_hub_always_fails_mirror_serves(tmp_path: Path, env: dict[str, str]) -> 
     assert "Public ECR mirror" in _summary(env) and f"sha256:{DIGEST}" in _summary(env)
 
 
-def test_mirror_pin_with_another_digest_is_refused(tmp_path: Path, env: dict[str, str]) -> None:
+def test_mirror_pin_with_another_digest_is_refused(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
     bad = f"postgres {HUB} {ECR}:16-alpine@sha256:{OTHER}\n"
     r = _run(tmp_path, env, bad, "postgres", HUB_FAILS="99")
     assert r.returncode == 1
@@ -138,14 +150,18 @@ def test_mirror_pin_with_another_digest_is_refused(tmp_path: Path, env: dict[str
     assert _count(env, "ecr_pulls") == 0
 
 
-def test_mirror_serving_another_digest_is_refused(tmp_path: Path, env: dict[str, str]) -> None:
+def test_mirror_serving_another_digest_is_refused(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
     r = _run(tmp_path, env, PG, "postgres", HUB_FAILS="99", MIRROR_SERVES=OTHER)
     assert r.returncode == 1
     assert "CI-INFRA-001" in r.stderr
     assert not (Path(env["FAKE"]) / "tagged").exists()
 
 
-def test_both_sources_fail_ends_with_the_code(tmp_path: Path, env: dict[str, str]) -> None:
+def test_both_sources_fail_ends_with_the_code(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
     r = _run(tmp_path, env, PG, "postgres", HUB_FAILS="99", MIRROR_OK="0")
     assert r.returncode == 1
     assert "CI-INFRA-001" in r.stderr and "postgres" in r.stderr
@@ -158,14 +174,19 @@ def test_image_without_mirror_retries_hub_only_and_resolves_the_compose_pin(
     listing = "questdb compose:questdb/questdb -\n"
     ok = _run(tmp_path, env, listing, "questdb", HUB_FAILS="2")
     assert ok.returncode == 0, ok.stderr
-    assert f"questdb/questdb:8.1.1@sha256:{DIGEST}" in (Path(env["FAKE"]) / "calls.log").read_text()
+    assert (
+        f"questdb/questdb:8.1.1@sha256:{DIGEST}"
+        in (Path(env["FAKE"]) / "calls.log").read_text()
+    )
     assert _count(env, "hub_pulls") == 3 and _count(env, "ecr_pulls") == 0
 
 
 def test_image_without_mirror_fails_with_the_code_after_five_attempts(
     tmp_path: Path, env: dict[str, str]
 ) -> None:
-    r = _run(tmp_path, env, "questdb compose:questdb/questdb -\n", "questdb", HUB_FAILS="99")
+    r = _run(
+        tmp_path, env, "questdb compose:questdb/questdb -\n", "questdb", HUB_FAILS="99"
+    )
     assert r.returncode == 1 and "CI-INFRA-001" in r.stderr
     assert _count(env, "hub_pulls") == 5 and _count(env, "ecr_pulls") == 0
 
@@ -195,7 +216,9 @@ def test_every_lane_that_collects_a_postgres_module_pre_pulls() -> None:
         if "postgres:16" in (tests / f).read_text(encoding="utf-8", errors="ignore")
     ]
     assert pg
-    workflow = (REPO / ".github" / "workflows" / "_job-py.yml").read_text(encoding="utf-8")
+    workflow = (REPO / ".github" / "workflows" / "_job-py.yml").read_text(
+        encoding="utf-8"
+    )
     cond = "startsWith(matrix.lane, 'db-chaos') || matrix.lane == 'contract-security-3'"
     assert cond in workflow
     need = {
@@ -203,7 +226,11 @@ def test_every_lane_that_collects_a_postgres_module_pre_pulls() -> None:
         for lane in [*manifest.lanes, manifest.rest_lane]
         if any(lanes.collects(lanes.pytest_args(manifest, lane), f) for f in pg)
     }
-    covered = {lane for lane in need if lane.startswith("db-chaos") or lane == "contract-security-3"}
+    covered = {
+        lane
+        for lane in need
+        if lane.startswith("db-chaos") or lane == "contract-security-3"
+    }
     assert need == covered
 
 
@@ -220,7 +247,9 @@ def test_backoff_waits_between_hub_attempts_and_not_after_the_last(
     assert _sleeps(env)[:4] == ["10", "20", "40", "60"]
 
 
-def test_mirror_gets_three_attempts_with_a_wait_between(tmp_path: Path, env: dict[str, str]) -> None:
+def test_mirror_gets_three_attempts_with_a_wait_between(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
     r = _run(tmp_path, env, PG, "postgres", HUB_FAILS="99", MIRROR_FAILS="2")
     assert r.returncode == 0, r.stderr
     assert _count(env, "ecr_pulls") == 3
@@ -259,7 +288,15 @@ def test_the_compose_postgres_image_resolves_to_its_pinned_tag(
     lst = tmp_path / "l.txt"
     lst.write_text(listing)
     r = subprocess.run(
-        ["bash", str(SCRIPT), "--list", str(lst), "--compose", str(compose), "postgres-compose"],
+        [
+            "bash",
+            str(SCRIPT),
+            "--list",
+            str(lst),
+            "--compose",
+            str(compose),
+            "postgres-compose",
+        ],
         env=env,
         capture_output=True,
         text=True,
@@ -272,9 +309,15 @@ def test_the_compose_postgres_image_resolves_to_its_pinned_tag(
 
 def test_the_real_list_names_every_image_the_jobs_pull() -> None:
     rows = (REPO / "infra/images/prepull.txt").read_text(encoding="utf-8")
-    names = {ln.split()[0] for ln in rows.splitlines() if ln.strip() and not ln.startswith("#")}
+    names = {
+        ln.split()[0]
+        for ln in rows.splitlines()
+        if ln.strip() and not ln.startswith("#")
+    }
     assert {"postgres", "postgres-compose", "questdb", "grafana"} <= names
-    integ = (REPO / ".github/workflows/_job-integration.yml").read_text(encoding="utf-8")
+    integ = (REPO / ".github/workflows/_job-integration.yml").read_text(
+        encoding="utf-8"
+    )
     assert "prepull_images.sh postgres postgres-compose questdb grafana" in integ
 
 
@@ -291,4 +334,69 @@ def test_every_job_that_builds_a_postgres_container_pre_pulls() -> None:
     ):
         text = (REPO / ".github/workflows" / wf).read_text(encoding="utf-8")
         head = text.rpartition(marker)[0]
-        assert head.rstrip().rsplit("prepull_images.sh", 1)[-1].startswith(" postgres"), wf
+        assert (
+            head.rstrip().rsplit("prepull_images.sh", 1)[-1].startswith(" postgres")
+        ), wf
+    text = (REPO / ".github/workflows/_job-integration.yml").read_text(encoding="utf-8")
+    plan_job = text.partition("  audit-query-plan:")[2].partition(
+        "Audit query-plan measurement"
+    )[0]
+    assert "prepull_images.sh postgres" in plan_job
+
+
+def test_the_pull_bound_is_a_knob_with_a_default_of_120(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
+    r = _run(tmp_path, env, PG, "postgres", PREPULL_PULL_TIMEOUT="45")
+    assert r.returncode == 0, r.stderr
+    assert (Path(env["FAKE"]) / "timeouts.log").read_text().split() == ["45"]
+
+
+def test_py_perf_sets_a_pull_bound_that_fits_its_job_timeout() -> None:
+    text = (REPO / ".github/workflows/_job-py.yml").read_text(encoding="utf-8")
+    job = text.partition("  py-perf:")[2]
+    bound = int(re.search(r'PREPULL_PULL_TIMEOUT: "(\d+)"', job).group(1))  # type: ignore[union-attr]
+    minutes = int(re.search(r"timeout-minutes: (\d+)", job).group(1))  # type: ignore[union-attr]
+    # 5 source attempts + 3 mirror attempts, plus the waits (10+20+40+60 and 30+60).
+    assert 8 * bound + 220 < minutes * 60
+
+
+def _compose_row(
+    tmp_path: Path, env: dict[str, str], **extra: str
+) -> subprocess.CompletedProcess[str]:
+    compose = tmp_path / "compose.yml"
+    compose.write_text(f"services:\n  p:\n    image: postgres:16.4@sha256:{DIGEST}\n")
+    lst = tmp_path / "l.txt"
+    lst.write_text(f"postgres-compose compose:postgres {ECR}:16.4@sha256:{DIGEST}\n")
+    return subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--list",
+            str(lst),
+            "--compose",
+            str(compose),
+            "postgres-compose",
+        ],
+        env={**env, **extra},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+def test_a_compose_mirror_ref_the_compose_file_cannot_resolve_fails_closed(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
+    r = _compose_row(tmp_path, env, HUB_FAILS="99")
+    assert r.returncode == 1
+    assert "CI-INFRA-001" in r.stderr and "does not resolve locally" in r.stderr
+
+
+def test_a_compose_mirror_ref_resolves_when_the_daemon_records_digests_on_tag(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
+    r = _compose_row(tmp_path, env, HUB_FAILS="99", DIGEST_ON_TAG="1")
+    assert r.returncode == 0, r.stderr
+    assert "Public ECR mirror" in _summary(env)
