@@ -3676,7 +3676,7 @@ class RuleAction(BaseModel):
             "enable_rule",
         ],
         Field(
-            description="Order-sending actions (`place_order`, `flatten_*`, `reverse_position`,\n`scale_in`, `scale_out`, `modify_*`, `cancel_*`, `reduce_leverage`,\n`arm_chase_limit`, `start_*`) require the rule to be `armed` and the author to\nhold `orders:write` on every bound account. `widen_stop` additionally requires\nan owner with an elevated session - it is the only action that can increase\nrisk, so it is gated separately from the rest.\n"
+            description="Order-sending actions (`place_order`, `flatten_*`, `reverse_position`,\n`scale_in`, `scale_out`, `modify_*`, `cancel_*`, `reduce_leverage`,\n`arm_chase_limit`, `start_*`) require the rule to be `armed` and the author to\nhold `orders:write` on every bound account. An action that could loosen a stop\nis refused for every role (`stop_loosening`, 24-internal-schemas.md section 8.8\nrule 5): `widen_stop` is retired and stays in this enum only so stored documents\nkeep their hashes.\n"
         ),
     ]
     params: Annotated[
@@ -3805,6 +3805,7 @@ class RuleValidationIssue(BaseModel):
             "feedback_loop",
             "native_stop_violation",
             "high_frequency",
+            "stop_loosening",
         ]
         | None
     ) = None
@@ -5972,7 +5973,7 @@ class Action1(BaseModel):
     loosens_risk: Annotated[
         bool,
         Field(
-            description="Actions that can widen or remove a stop are flagged so the editors can warn and the engine can gate them behind the owner-only permission.\n"
+            description="Always false: no rule may loosen a stop, and an action that could is refused for every role (`stop_loosening`, 24-internal-schemas.md section 8.8 rule 5). The field stays until the 24-internal-schemas.md section 19.26 follow-up retires it.\n"
         ),
     ] = False
 

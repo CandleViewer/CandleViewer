@@ -49,8 +49,8 @@ RULES = {
     p.name: json.loads(p.read_text(encoding="utf-8"), parse_float=Decimal)
     for p in sorted(CORPUS.glob("[0-9][0-9]_*.json"))
 }
-#: The one corpus rule the save step refuses, bounds or not: it needs an Owner-only permission.
-OWNER_ONLY = "20_widen_stop_through_funding_owner.json"
+#: The one corpus rule the save step refuses, bounds or not: no rule loosens a stop (24 §8.8).
+LOOSENS = "20_widen_stop_through_funding_owner.json"
 KINDS = pytest.mark.parametrize("kind", ["values", "depth"])
 BOUNDS = [("$", "schema_error", "syntax")]
 LIMITS = f"(limit {MAX_ITEMS} values, {MAX_DEPTH} levels)"
@@ -255,10 +255,10 @@ async def test_save_corpus_rule_within_the_bounds_keeps_its_golden_hash(name: st
     """No `ir_hash` moves: the step every save runs, bounds first, hashes each corpus rule to its
     golden, and each one the reserved names allow is stored."""
     doc, (m, _, _) = RULES[name], _mgr()
-    if name == OWNER_ONLY:  # refused by the validator for a permission, never by the bounds
+    if name == LOOSENS:  # refused by the validator for every role, never by the bounds
         with pytest.raises(RuleError) as refused:
             m._validated(doc, doc["rule_id"])
-        assert [i["code"] for i in refused.value.extra["issues"]] == ["permission_required"]
+        assert [i["code"] for i in refused.value.extra["issues"]] == ["stop_loosening"]
         return
     assert m._validated(doc, doc["rule_id"])[1] == GOLDEN[name]
     if not is_reserved_name(doc["name"]):

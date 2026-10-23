@@ -1,6 +1,7 @@
 """Semantic validator for the rule IR (E35-T04) - a safety gate, not a convenience.
 
-Pure and synchronous: ``validate_rule(rule, registry, permissions)`` -> ``RuleValidationResult``.
+Pure and synchronous: ``validate_rule(rule, registry)`` -> ``RuleValidationResult``, alike for every
+caller: no permission changes what it refuses, so no rule loosens a stop (24 §8.8 rule 5).
 Errors block saving; warnings do not, but *safety-class* warnings block arming
 (``PUT /rules/{id}/mode``). The IR is data: nothing here evaluates or parses expressions.
 """
@@ -10,7 +11,6 @@ Errors block saving; warnings do not, but *safety-class* warnings block arming
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -25,10 +25,13 @@ from candleviewer.rules.ir import (
 )
 from candleviewer.rules.issues import Issue
 from candleviewer.rules.limits import above_cap, cap_message
-from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS
+from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, RETIRED_ACTIONS
 from candleviewer.rules.vocabulary.registry import MetricRegistry
 
-LOOSEN_STOP_PERMISSION = "rules.loosen_stop"
+#: The issue a rule that could loosen a stop is refused with (`22-api-openapi.yaml`
+#: `RuleValidationIssue.code`), and the reason it gives.
+_STOP_LOOSENING = "stop_loosening"
+_NEVER_LOOSENS = "Not available — rules never loosen a stop."
 _ACTION_SPECS = {a.type: a for a in ACTIONS}
 _HIGH_FREQUENCY = frozenset({"on_price_update", "on_book_update", "on_position_update",
                              "on_metric_change"})  # fmt: skip
@@ -37,7 +40,7 @@ _ORDER_ACTIONS = frozenset({"place_order", "scale_in", "scale_out", "reverse_pos
                             "start_iceberg_slice", "start_twap"})  # fmt: skip
 _ORDER_TRIGGERS = frozenset({"on_order_fill", "on_position_open", "on_position_close",
                              "on_position_update"})  # fmt: skip
-_STOP_ACTIONS = frozenset({"modify_stop_loss", "widen_stop", "tighten_stop", "move_to_breakeven"})
+_STOP_ACTIONS = frozenset({"modify_stop_loss", "tighten_stop", "move_to_breakeven"})
 _TF = re.compile(r"^(\d+)([smhdw])$")
 _TF_MS = {"s": 1_000, "m": 60_000, "h": 3_600_000, "d": 86_400_000, "w": 604_800_000}
 _MAX_PRICE_RATE = 600  # evaluations/min ceiling for per-trade triggers (10 Hz throttle)
@@ -103,10 +106,8 @@ def _const_unit(c: Literal_) -> str:
 
 
 class _Validator:
-    def __init__(
-        self, rule: Rule, registry: MetricRegistry, permissions: Collection[str], limit_caps: bool
-    ) -> None:
-        self.rule, self.registry, self.perms = rule, registry, permissions
+    def __init__(self, rule: Rule, registry: MetricRegistry, limit_caps: bool) -> None:
+        self.rule, self.registry = rule, registry
         self.limit_caps = limit_caps
         self.out = RuleValidationResult()
         self.metrics: set[str] = set()
@@ -181,6 +182,9 @@ class _Validator:
         for i, a in enumerate(r.actions):
             base = f"actions[{i}]"
             self.out.referenced_actions.append(a.type)
+            if a.type in RETIRED_ACTIONS:  # parsed, never offered: it only loosens a stop
+                self.loosens(f"{base}.type", i)
+                continue
             spec = _ACTION_SPECS.get(a.type)
             if spec is None:
                 self.err(base, "schema_error", f"Unknown action '{a.type}'.", "syntax")
@@ -188,10 +192,8 @@ class _Validator:
             for req in spec.params_schema.get("required", []):
                 if a.params.get(req) is None:
                     self.err(f"{base}.params.{req}", "missing_action_param", f"Action {i + 1} ({spec.title}) is missing '{req}'.")  # fmt: skip
-            only_tighten = a.params.get("only_tighten", True)
-            if (a.type == "widen_stop" or only_tighten is False) and a.type in _STOP_ACTIONS:
-                if LOOSEN_STOP_PERMISSION not in self.perms and "*" not in self.perms:
-                    self.err(f"{base}.params.only_tighten", "permission_required", f"Loosening a stop needs the {LOOSEN_STOP_PERMISSION} permission (owner only).", "safety")  # fmt: skip
+            if a.type in _STOP_ACTIONS and a.params.get("only_tighten", True) is not True:
+                self.loosens(f"{base}.params.only_tighten", i)
             if (a.type in _STOP_ACTIONS and (a.params.get("remove") or a.params.get("cancel"))) or (
                 a.type == "place_order"
                 and (("stop_loss" in a.params and not a.params["stop_loss"])
@@ -199,6 +201,10 @@ class _Validator:
             ):  # fmt: skip
                 self.err(base, "native_stop_violation", f"Action {i + 1} would leave a position without its native exchange stop-loss, which is never allowed.", "safety")  # fmt: skip
             self.feedback(a, base)
+
+    def loosens(self, path: str, i: int) -> None:
+        """24 §8.8 rule 5: whatever permission the caller holds, the Owner and `*` included."""
+        self.err(path, _STOP_LOOSENING, f"Action {i + 1} could loosen a stop. {_NEVER_LOOSENS}", "safety")  # fmt: skip
 
     def feedback(self, a: Any, base: str) -> None:
         t = self.rule.trigger.type
@@ -244,16 +250,12 @@ class _Validator:
 
 
 def validate_rule(
-    rule: Rule,
-    registry: MetricRegistry,
-    permissions: Collection[str] = (),
-    *,
-    limit_caps: bool = False,
+    rule: Rule, registry: MetricRegistry, *, limit_caps: bool = False
 ) -> RuleValidationResult:
     """Validate one rule in isolation (conflicts between rules are E35-S07). `limit_caps` holds
     its action budget to the hard caps of `rules.limits`: the rule paths pass it, and alerts (E40),
     which share `RuleLimits`, do not."""
-    return _Validator(rule, registry, permissions, limit_caps).run()
+    return _Validator(rule, registry, limit_caps).run()
 
 
 __all__ = ["RuleValidationResult", "estimate_evaluations_per_minute", "validate_rule"]

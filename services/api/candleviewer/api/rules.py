@@ -27,7 +27,7 @@ from candleviewer.rules.ir.canonical import IrValueError
 from candleviewer.rules.ir.schema import to_json_schema
 from candleviewer.rules.issues import RuleCompileError
 from candleviewer.rules.scope import ScopeResolver
-from candleviewer.rules.validator import LOOSEN_STOP_PERMISSION, validate_rule
+from candleviewer.rules.validator import validate_rule
 from candleviewer.rules.vocabulary import (
     MetricRegistry,
     VocabularyUnavailableError,
@@ -37,9 +37,9 @@ from candleviewer.rules.vocabulary import (
 from candleviewer.rules.vocabulary.catalogue import ARM_LIVE_PERMISSION
 
 _REQUIRED = "rules:read"
-#: Probed on the caller to annotate the vocabulary and feed the validator. Named constants,
-#: never literals: they must match what the catalogue and the validator check (#2624).
-_ADVISORY_PERMISSIONS = ("orders:write", LOOSEN_STOP_PERMISSION, ARM_LIVE_PERMISSION)
+#: Probed on the caller to annotate the vocabulary. Named constants, never literals: they must
+#: match what the catalogue declares (#2624). The validator takes none (24 §8.8 rule 5).
+_ADVISORY_PERMISSIONS = ("orders:write", ARM_LIVE_PERMISSION)
 _CACHE = "private, max-age=60"
 _Counter = Callable[[str], None]
 
@@ -216,7 +216,6 @@ def make_rules_router(
             return body
         if body is None or not isinstance(body.get("ir"), dict) or set(body) - {"ir", "scope"}:
             return _problem(400, "Bad request", "body must be an object with an 'ir' object")
-        perms = frozenset(p for p in _ADVISORY_PERMISSIONS if principal.has(p))
         try:
             check_bounds(body["ir"], "rule")
             rule = build_rule(body["ir"])
@@ -230,7 +229,7 @@ def make_rules_router(
         forbidden = await _authorize_scope(principal, rule)
         if forbidden is not None:
             return forbidden
-        result = validate_rule(rule, registry, perms, limit_caps=True)
+        result = validate_rule(rule, registry, limit_caps=True)
         return JSONResponse(result.to_dict())
 
     @router.post("/rules/{ruleId}/compile")
@@ -248,7 +247,6 @@ def make_rules_router(
         model = body.get("model") if body else None
         if body is None or editor not in ("form", "graph") or not isinstance(model, dict):
             return _problem(400, "Bad request", "body needs 'editor' (form|graph) and 'model'")
-        perms = frozenset(p for p in _ADVISORY_PERMISSIONS if principal.has(p))
         compile_fn = compile_form if editor == "form" else compile_graph
         try:
             rule = compile_fn(model, ruleId)
@@ -259,7 +257,7 @@ def make_rules_router(
         forbidden = await _authorize_scope(principal, rule)
         if forbidden is not None:
             return forbidden
-        result = validate_rule(rule, registry, perms, limit_caps=True)
+        result = validate_rule(rule, registry, limit_caps=True)
         on_compile(editor, "ok" if result.valid else "issues")
         issues = [*result.errors, *result.warnings]
         payload: dict[str, Any] = {

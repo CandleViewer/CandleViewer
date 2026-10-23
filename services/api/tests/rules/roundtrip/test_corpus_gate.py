@@ -72,12 +72,15 @@ def _walk(node: Any, out: dict[str, set[Any]], parents: dict[str, int]) -> None:
             _walk(o, out, parents)
 
 
-def test_corpus_has_at_least_thirty_semantically_valid_rules() -> None:
+def test_corpus_rules_are_valid_but_the_one_that_would_loosen_a_stop() -> None:
+    """Rule 20 keeps its round trip and golden hash, and is refused for every caller: no rule
+    loosens a stop (24-internal-schemas.md section 8.8 rule 5)."""
     assert len(RULES) >= 30
     reg = default_registry()
+    loosens = {"20_widen_stop_through_funding_owner.json": [("actions[0].type", "stop_loosening")]}
     for p in RULES:
-        res = validate_rule(load(p), reg, ["*"])
-        assert not res.errors, f"{p.name}: {[e.code for e in res.errors]}"
+        res = validate_rule(load(p), reg)
+        assert [(e.path, e.code) for e in res.errors] == loosens.get(p.name, []), p.name
 
 
 def test_corpus_covers_the_whole_vocabulary() -> None:

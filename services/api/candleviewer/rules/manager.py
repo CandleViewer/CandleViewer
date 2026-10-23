@@ -1016,7 +1016,7 @@ class RulesManager:
         version is held to its action budget again (#3232): a hard cap is a validation error
         for every role, and a raise above a default needs this actor to be the Owner."""
         rule = Rule.model_validate(v.ir)
-        res = validate_rule(rule, self._reg, actor.perms, limit_caps=True)
+        res = validate_rule(rule, self._reg, limit_caps=True)
         types = {a.type for a in rule.actions}
         sims = v.ir_hash in row.simulated_hashes
         facts = ArmingFacts(

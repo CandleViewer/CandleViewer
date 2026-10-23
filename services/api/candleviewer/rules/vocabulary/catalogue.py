@@ -3,6 +3,8 @@
 Every `ActionType` / `TriggerType` / `ComparisonOp` literal in the IR must be
 described here; the completeness tests enforce it. Permissions are advisory
 for the UI - the authoritative check happens at execution time (E35-S03/S04).
+The exception is `RETIRED_ACTIONS`: the IR still parses them, nothing here
+offers them, and the validator refuses them for every caller.
 """
 
 # ruff: noqa: E501
@@ -56,9 +58,12 @@ _OW = ("orders:write",)
 #: Declared permission for arming a rule live, surfaced on the catalogue: the seeded RBAC code
 #: (migration 0015). `rules` may not import `auth` (M15); tests pin it to `Permission` (#2624).
 ARM_LIVE_PERMISSION = "rules:arm_live"
+#: `widen_stop` only loosens a stop, which no rule does (24 §8.8 rule 5); its removal from the
+#: contract is a 24 §19.26 follow-up. A stored rule holding it still parses and keeps its hash.
+RETIRED_ACTIONS = frozenset({"widen_stop"})
 ACTIONS: tuple[ActionSpec, ...] = (
     ActionSpec("place_order", "Place order", _obj(["side", "order_type", "qty_mode"], {"side": _SIDE, "order_type": _ORDER_TYPE, "qty_mode": {"type": "string"}, "qty": _QTY, "profile": {"type": "string"}, "price": {"type": "number"}, "stop_loss": {"type": "object"}, "take_profits": {"type": "array"}, "algo": {"type": "object"}}), _OW, True, False, True, "Full trade-group path including sizing and native SL."),
-    ActionSpec("modify_stop_loss", "Modify stop loss", _STOP_PARAMS, _OW, False, True, True, "only_tighten=false needs rules.loosen_stop.", True),
+    ActionSpec("modify_stop_loss", "Modify stop loss", _STOP_PARAMS, _OW, False, True, True, "Never loosens: only_tighten=false is refused."),
     ActionSpec("modify_take_profit", "Modify take profit", _STOP_PARAMS, _OW, False, True, True),
     ActionSpec("move_to_breakeven", "Move stop to breakeven", _obj([], {"offset_ticks": {"type": "integer", "default": 2}}), _OW, False, True, True, "Never loosens."),
     ActionSpec("scale_out", "Scale out", _obj(["order_type"], {"qty_pct": _PCT, "qty": _QTY, "order_type": _ORDER_TYPE}), _OW, False, False, True, "Reduce-only."),
@@ -71,7 +76,6 @@ ACTIONS: tuple[ActionSpec, ...] = (
     ActionSpec("halt_new_orders", "Halt new orders", _obj(["scope", "until"], {"scope": {"type": "string"}, "until": {"type": "string", "enum": ["next_utc_day", "duration_ms", "manual"]}}), (), False, True, False, "Circuit breaker."),
     ActionSpec("resume_new_orders", "Resume new orders", _obj([], {"scope": {"type": "string"}}), (ARM_LIVE_PERMISSION,), False, True, True),
     ActionSpec("reduce_leverage", "Reduce leverage", _obj([], {"target": {"type": "number"}, "by": {"type": "number"}}), _OW, False, True, True),
-    ActionSpec("widen_stop", "Widen stop", _STOP_PARAMS, (*_OW, "rules.loosen_stop"), False, False, True, "Loosens risk; owner-only permission.", True),
     ActionSpec("tighten_stop", "Tighten stop", _STOP_PARAMS, _OW, False, True, True, "Never loosens."),
     ActionSpec("arm_chase_limit", "Arm chase limit", _obj([], {"params": {"type": "object"}}), _OW, True, False, True),
     ActionSpec("start_iceberg_slice", "Start iceberg slice", _obj([], {"params": {"type": "object"}}), _OW, True, False, True),

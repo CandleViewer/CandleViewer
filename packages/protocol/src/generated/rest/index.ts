@@ -4507,6 +4507,14 @@ export interface paths {
      *     above its hard cap, in `x-cv-limit-caps` on `RuleIr`, is refused for every role with
      *     `422 rule_ir_invalid` (issue code `schema_error`, class `safety`). Each value is compared
      *     with its default and its cap, never with an earlier version.
+     *
+     *     **No rule loosens a stop (24-internal-schemas.md section 8.8 rule 5).** A `widen_stop`
+     *     action, or a `modify_stop_loss`, `tighten_stop` or `move_to_breakeven` action whose
+     *     `only_tighten` is anything but `true`, is refused for every role, the Owner included,
+     *     whatever permission the caller holds: `422 rule_ir_invalid`, issue code `stop_loosening`,
+     *     class `safety`, at `actions[i].type` or `actions[i].params.only_tighten`, with the reason
+     *     "Not available — rules never loosen a stop." `validateRule` and `compileRule` report the
+     *     same issue, and an imported rule is refused with it.
      */
     post: operations["createRule"];
     delete?: never;
@@ -4544,7 +4552,7 @@ export interface paths {
      *     live-enablement step-up bound to that request). Activating a different version of an
      *     armed rule returns it to `simulate`; it acts again only after `setRuleMode` arms it, with
      *     the live step-up where the scope includes `live`. Every save is held to the action budget
-     *     of `createRule`, also a save that matches an existing version.
+     *     and the stop rule of `createRule`, also a save that matches an existing version.
      */
     put: operations["updateRule"];
     post?: never;
@@ -9372,9 +9380,10 @@ export interface components {
        * @description Order-sending actions (`place_order`, `flatten_*`, `reverse_position`,
        *     `scale_in`, `scale_out`, `modify_*`, `cancel_*`, `reduce_leverage`,
        *     `arm_chase_limit`, `start_*`) require the rule to be `armed` and the author to
-       *     hold `orders:write` on every bound account. `widen_stop` additionally requires
-       *     an owner with an elevated session - it is the only action that can increase
-       *     risk, so it is gated separately from the rest.
+       *     hold `orders:write` on every bound account. An action that could loosen a stop
+       *     is refused for every role (`stop_loosening`, 24-internal-schemas.md section 8.8
+       *     rule 5): `widen_stop` is retired and stays in this enum only so stored documents
+       *     keep their hashes.
        * @enum {string}
        */
       type:
@@ -9695,7 +9704,8 @@ export interface components {
         | "multiple_sinks"
         | "feedback_loop"
         | "native_stop_violation"
-        | "high_frequency";
+        | "high_frequency"
+        | "stop_loosening";
       message?: string;
       path?: string;
       /** @enum {string} */
@@ -9741,7 +9751,7 @@ export interface components {
         id: string;
         idempotent?: boolean;
         /**
-         * @description Actions that can widen or remove a stop are flagged so the editors can warn and the engine can gate them behind the owner-only permission.
+         * @description Always false: no rule may loosen a stop, and an action that could is refused for every role (`stop_loosening`, 24-internal-schemas.md section 8.8 rule 5). The field stays until the 24-internal-schemas.md section 19.26 follow-up retires it.
          * @default false
          */
         loosens_risk: boolean;

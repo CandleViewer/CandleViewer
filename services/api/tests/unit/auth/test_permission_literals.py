@@ -48,13 +48,7 @@ _ALLOWED_DOT_TWINS: dict[tuple[str, str], str] = {}
 #: x-rbac change, `tools/rbac/generate.py` and a migration, so each is its own ticket. This
 #: list only shrinks: drop an entry in the PR that seeds its code (the stale-entry test fails
 #: until you do), and give every new permission constant a seeded code instead of a row here.
-_KNOWN_UNSEEDED: dict[tuple[str, str], str] = {
-    ("rules/validator.py", "rules.loosen_stop"): (
-        "#2698: LOOSEN_STOP_PERMISSION, also declared by the widen_stop action and probed by "
-        "api/rules.py: until rules:loosen_stop is seeded, only_tighten=false is a save-blocking "
-        "safety error for everyone"
-    ),
-}
+_KNOWN_UNSEEDED: dict[tuple[str, str], str] = {}
 
 _Literal = tuple[int, str]  # (line, value)
 _Declared = tuple[int, str, str]  # (line, constant name, value)
