@@ -77,7 +77,7 @@ IMPORT_REASONS = (
     "system_rule_reserved | The 'sys.' name prefix is reserved.",
     "forbidden | Only the Owner can raise a rule's action budget above the default.",
     "rule_ir_invalid | the validator's issues, a field each (a loosening reads 'Not available')",
-    "payload_too_large (#4186) | Request body or batch exceeds the operation's size ceiling",
+    "payload_too_large (rule_body.py) | Request body or batch exceeds the operation's size ceiling",
     "not checked | Service unavailable - rule engine vocabulary unavailable (the call refused)",
 )
 TESTS = ("abuse/test_abuse_cases.py", "abuse/test_security_review_fixes.py", "test_rule_limits.py")
