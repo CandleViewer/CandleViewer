@@ -414,7 +414,8 @@ _MODULE = re.compile(r"\bpython3?\s+-m\s+((?:tools|scripts)(?:\.\w+)+)")
 #: `make <target>` as a command, not inside an echoed hint.
 _MAKE = re.compile(r"(?:^|[;(]|&&|\|\|)\s*make\s+([\w-]+)", re.MULTILINE)
 _REQUIREMENTS = re.compile(r"\bpip3?\s+install\b[^\n]*?\s-[rc]\s*([\w./-]+)")
-#: pnpm reads the repo's .npmrc on every install, though no run line names it.
+#: pnpm reads the repo's .npmrc and pnpm-workspace.yaml on every install, though no run line names
+#: them.
 _PNPM_INSTALL = re.compile(r"\bpnpm\s+install\b")
 #: `with:` keys that name a cache key or an artifact path, not a file the action reads.
 _WITH_UNREAD = frozenset({"cache-dependency-glob", "cache-dependency-path", "path"})
@@ -460,7 +461,8 @@ def _imports(file: str, source: str) -> list[str | None]:
 
 def _executed(cwd: str, run: str) -> set[str]:
     """Repo files a `run:` executes: the scripts it calls (also through `make` and `bash`), the
-    modules those import, the files `pip install -r` reads and the .npmrc `pnpm install` reads.
+    modules those import, the files `pip install -r` reads and the .npmrc and pnpm-workspace.yaml
+    `pnpm install` reads.
     Shell comments are skipped."""
     files: set[str] = set()
     shells = [(cwd, run)]
@@ -472,7 +474,7 @@ def _executed(cwd: str, run: str) -> set[str]:
             shells.append((".", _recipe(target)))
         files.update(p for p in (_repo_file(where, r) for r in _REQUIREMENTS.findall(text)) if p)
         if _PNPM_INSTALL.search(text):
-            files.add(".npmrc")
+            files.update((".npmrc", "pnpm-workspace.yaml"))
         modules = [module.replace(".", "/") + ".py" for module in _MODULE.findall(text)]
         pending = [_repo_file(where, call) for call in _CALL.findall(text) + modules]
         while pending:
@@ -547,6 +549,7 @@ def test_pr_yml_each_lane_filter_covers_what_its_steps_run(lane: str) -> None:
         ("security", "scripts/requirements-ci.txt"),  # `pip install -r`
         ("js", ".nvmrc"),  # `node-version-file`
         ("e2e", ".npmrc"),  # `pnpm install` reads it; no run line names it
+        ("e2e", "pnpm-workspace.yaml"),  # likewise: the install policy of C-12.3 lives there
     ],
 )
 def test_pr_yml_lane_inputs_are_derived_through_each_way_a_step_runs_a_file(

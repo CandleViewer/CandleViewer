@@ -1,7 +1,7 @@
 """#3076: ten gates are steps of one `gates` job, each judged under its old `ci-required` lane
 (#2988 semantics); `architecture` mirrors `py` from pr.yml; PRs skip `xstate-sync-parity`.
 #3104: `xstate-contract` is an eleventh step, running the one script the nightly runs too, and
-`gen` the twelfth, last of all: its full install runs the PR's build scripts.
+`gen` the twelfth, last of all: it runs the PR's generators (its install runs no lifecycle script).
 #3385: `secret-scan` is the thirteenth, first of all and on every PR: gitleaks and trufflehog over
 the PR's commits, then the credential-hygiene gate, so a docs-only PR gets the secret scans too.
 #3495: `backlog-twin-eol` is the fourteenth, on every PR: each backlog twin blob is LF."""
@@ -57,7 +57,7 @@ SCRIPT_COMMANDS = [
     "cd ../..",
     "python tools/statechart/suite_budget.py services/api/xstate-contract-junit.xml",
 ]
-# Steps that install toolchains or run the PR's own build and lifecycle scripts.
+# Steps that install toolchains or run the PR's own build scripts.
 LIFECYCLE = ("pnpm install", "corepack", "actions/setup-node@")
 INSTALLERS = ("uv sync", "astral-sh/setup-uv@", SCRIPT, *LIFECYCLE)
 FAIL = "CI-GATE-001: %s required and not successful (result: %s)"
@@ -308,7 +308,7 @@ def test_gates_runs_the_script_on_the_nightly_toolchain_before_any_lifecycle_ins
     (nightly_uv,) = [s for s in nightly if "astral-sh/setup-uv@" in s.get("uses", "")]
     assert (uv["uses"], uv["with"]) == (nightly_uv["uses"], nightly_uv["with"])
     assert uv["with"]["python-version"] == "3.12"
-    # No PR lifecycle script (node, corepack, pnpm install) has run before it.
+    # No installer (node, corepack, pnpm install) has run before it.
     texts = [json.dumps(step) for step in steps]
     lifecycle = [i for i, text in enumerate(texts) if any(word in text for word in LIFECYCLE)]
     assert lifecycle and min(lifecycle) > at

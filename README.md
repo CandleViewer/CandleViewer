@@ -118,6 +118,7 @@ Target environment is **WSL Ubuntu** with Docker Desktop's WSL2 integration enab
 ```bash
 git clone <repo-url> && cd CandleViewer
 pnpm install
+pnpm run prepare     # the git hooks: pnpm install runs no lifecycle script (CONTRIBUTING.md)
 uv sync --frozen --project services/api
 pnpm verify          # the full local gate (lint/typecheck/tests/arch) — AGENTS.md §4
 make up              # docker compose stack (Postgres, QuestDB, API, Prometheus, Grafana)

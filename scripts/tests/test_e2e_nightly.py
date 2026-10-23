@@ -16,9 +16,10 @@ run waits in a pending slot that a later one can take (two manual runs used to d
 scheduled run and that night's report). A red night comments on the one tracker issue that the
 repository variable `CV_E2E_NIGHTLY_TRACKER_ISSUE` names, as `xstate-nightly.yml` does, and opens a
 P1 while it is unset; a value that is not an issue number files nothing and fails the job. The e2e
-and a11y lanes' checkouts keep no git credential (ADR-0013 rule 6) while `pnpm install` runs
-dependency lifecycle scripts, and no step fetches: the a11y lane checks out the PR base's baseline
-file instead, so it works whether the repository is public or private."""
+and a11y lanes' checkouts keep no git credential (ADR-0013 rule 6): `pnpm install` runs no
+lifecycle script, but builds and tests run dependency code, and no step fetches: the a11y lane
+checks out the PR base's baseline file instead, so it works whether the repository is public or
+private."""
 
 from __future__ import annotations
 
@@ -267,8 +268,9 @@ def test_e2e_nightly_report_fails_closed_when_the_tracker_is_not_an_issue_number
 
 
 def test_e2e_and_a11y_lanes_keep_no_git_credential_after_checkout() -> None:
-    # #3449 (ADR-0013 rule 6): `pnpm install` runs dependency lifecycle scripts, so no checkout in
-    # these lanes leaves its token in the git config, as in pr.yml and xstate-nightly.yml.
+    # #3449 (ADR-0013 rule 6): the builds and tests run dependency code (`pnpm install` runs no
+    # lifecycle script), so no checkout in these lanes leaves its token in the git config, as in
+    # pr.yml and xstate-nightly.yml.
     checkouts: list[tuple[str, str, Any]] = []
     remote: list[str] = []
     for name in (LANE_FILE, A11Y_LANE):

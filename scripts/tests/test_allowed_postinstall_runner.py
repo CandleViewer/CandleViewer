@@ -103,6 +103,7 @@ def _run(
         env=env,
         capture_output=True,
         text=True,
+        timeout=120,
         check=False,
     )
     return proc, calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
@@ -120,7 +121,7 @@ def test_runner_rebuilds_esbuild_and_runs_electrons_pinned_bin_in_its_package(
     proc, calls = _run(root, tmp_path)
     assert proc.returncode == 0, proc.stderr
     # esbuild's handling is unchanged; electron is no longer handed to `pnpm rebuild`.
-    assert calls == ["rebuild esbuild"]
+    assert calls == ["rebuild --no-ignore-scripts esbuild"]
     package = root / "apps" / "desktop" / "node_modules" / "electron"
     assert _marker(root).read_text(encoding="utf-8") == str(package.resolve())
     assert "running electron@45.0.0's install-electron bin" in proc.stdout
@@ -155,7 +156,7 @@ def test_runner_runs_nothing_that_is_not_on_the_allowlist(tmp_path: Path) -> Non
     root = _repo(tmp_path, [ESBUILD])
     proc, calls = _run(root, tmp_path)
     assert proc.returncode == 0, proc.stderr
-    assert calls == ["rebuild esbuild"]
+    assert calls == ["rebuild --no-ignore-scripts esbuild"]
     assert not _marker(root).exists()
 
 
@@ -198,6 +199,115 @@ def test_runner_refuses_a_bin_that_links_outside_the_package(tmp_path: Path) -> 
     assert "points outside the package through a link" in proc.stderr
     assert calls == []
     assert not (tmp_path / MARKER).exists()
+
+
+@needs_posix
+def test_runner_refuses_a_bin_that_names_a_directory(tmp_path: Path) -> None:
+    root = _repo(tmp_path, [ELECTRON, ESBUILD], {"install-electron": "lib"}, stub=None)
+    (root / "apps" / "desktop" / "node_modules" / "electron" / "lib").mkdir()
+    proc, calls = _run(root, tmp_path)
+    assert proc.returncode == 1
+    assert 'bin "install-electron" names lib, which is not a file' in proc.stderr
+    assert calls == []
+
+
+@needs_posix
+def test_runner_refuses_a_package_json_that_links_in_another_directory(tmp_path: Path) -> None:
+    # The package root is the real `<from>/node_modules/<name>` directory: a manifest linked in
+    # from elsewhere must not move it, or the bin would run from the other directory.
+    root = _repo(tmp_path, [ELECTRON, ESBUILD])
+    manifest = root / "apps" / "desktop" / "node_modules" / "electron" / "package.json"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "package.json").write_text(manifest.read_text(encoding="utf-8"), encoding="utf-8")
+    (elsewhere / "install.js").write_text(STUB, encoding="utf-8")
+    manifest.unlink()
+    manifest.symlink_to(elsewhere / "package.json")
+    proc, calls = _run(root, tmp_path)
+    assert proc.returncode == 1
+    shown = "apps/desktop/node_modules/electron/package.json"
+    assert f"electron: {shown} is a link, not a file of the package" in proc.stderr
+    assert calls == []
+    assert not (elsewhere / MARKER).exists() and not _marker(root).exists()
+
+
+@needs_posix
+def test_runner_runs_the_bin_in_the_real_directory_of_a_linked_package(tmp_path: Path) -> None:
+    # pnpm links `<from>/node_modules/<name>` into its virtual store; the bin runs there.
+    root = _repo(tmp_path, [ELECTRON, ESBUILD], installed_in=None)
+    store = root / "node_modules" / ".pnpm" / "electron@45.0.0" / "node_modules" / "electron"
+    store.mkdir(parents=True)
+    manifest = {"name": "electron", "version": "45.0.0", "bin": {"install-electron": "install.js"}}
+    (store / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (store / "install.js").write_text(STUB, encoding="utf-8")
+    link = root / "apps" / "desktop" / "node_modules" / "electron"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(store, target_is_directory=True)
+    proc, _ = _run(root, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert (store / MARKER).read_text(encoding="utf-8") == str(store.resolve())
+
+
+@needs_posix
+def test_runner_refuses_a_package_root_that_resolves_outside_the_repository(
+    tmp_path: Path,
+) -> None:
+    # A `link:` dependency or a tampered tree can point `<from>/node_modules/<name>` out of the
+    # repository; pnpm's own layout never does (its store is `<root>/node_modules/.pnpm`).
+    root = _repo(tmp_path, [ELECTRON, ESBUILD], installed_in=None)
+    outside = tmp_path / "outside" / "electron"
+    outside.mkdir(parents=True)
+    manifest = {"name": "electron", "version": "45.0.0", "bin": {"install-electron": "install.js"}}
+    (outside / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (outside / "install.js").write_text(STUB, encoding="utf-8")
+    link = root / "apps" / "desktop" / "node_modules" / "electron"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(outside, target_is_directory=True)
+    proc, calls = _run(root, tmp_path)
+    assert proc.returncode == 1
+    shown = "apps/desktop/node_modules/electron/package.json"
+    assert f"electron: {shown} resolves outside the repository" in proc.stderr
+    assert calls == []
+    assert not (outside / MARKER).exists()
+
+
+@needs_posix
+def test_runner_names_the_package_json_it_cannot_parse(tmp_path: Path) -> None:
+    root = _repo(tmp_path, [ELECTRON, ESBUILD])
+    manifest = root / "apps" / "desktop" / "node_modules" / "electron" / "package.json"
+    manifest.write_text('{"name": ', encoding="utf-8")
+    proc, calls = _run(root, tmp_path)
+    assert proc.returncode == 1
+    shown = "apps/desktop/node_modules/electron/package.json"
+    assert f"electron: {shown} cannot be read as JSON" in proc.stderr
+    assert calls == []
+    assert not _marker(root).exists()
+
+
+@needs_posix
+@pytest.mark.parametrize("text", ["null", "[]", '"electron"'], ids=["null", "array", "string"])
+def test_runner_names_a_package_json_that_is_not_an_object(tmp_path: Path, text: str) -> None:
+    root = _repo(tmp_path, [ELECTRON, ESBUILD])
+    manifest = root / "apps" / "desktop" / "node_modules" / "electron" / "package.json"
+    manifest.write_text(text, encoding="utf-8")
+    proc, calls = _run(root, tmp_path)
+    assert proc.returncode == 1
+    shown = "apps/desktop/node_modules/electron/package.json"
+    assert f"electron: {shown} is not a JSON object" in proc.stderr
+    assert calls == []
+    assert not _marker(root).exists()
+
+
+@needs_posix
+def test_runner_refuses_a_package_json_named_for_another_package(tmp_path: Path) -> None:
+    # The entry names electron; whatever sits at its path must say it is electron.
+    root = _repo(tmp_path, [ELECTRON, ESBUILD], manifest_extra={"name": "not-electron"})
+    proc, calls = _run(root, tmp_path)
+    assert proc.returncode == 1
+    shown = "apps/desktop/node_modules/electron/package.json"
+    assert f'electron: {shown} names "not-electron", not electron' in proc.stderr
+    assert calls == []
+    assert not _marker(root).exists()
 
 
 @needs_posix
@@ -291,6 +401,23 @@ def test_runner_names_the_allowlist_it_cannot_read(tmp_path: Path, text: str, sa
     assert calls == []
 
 
+@needs_posix
+def test_runner_refuses_an_allowlist_that_is_a_link(tmp_path: Path) -> None:
+    root = _repo(tmp_path, [ELECTRON, ESBUILD])
+    allowlist = root / "tools" / "ci" / ALLOWLIST.name
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_text(allowlist.read_text(encoding="utf-8"), encoding="utf-8")
+    allowlist.unlink()
+    allowlist.symlink_to(elsewhere)
+    proc, calls = _run(root, tmp_path)
+    assert proc.returncode == 1
+    assert "tools/ci/allowed-postinstall.json: is a link, not a file of the repository" in (
+        proc.stderr
+    )
+    assert calls == []
+    assert not _marker(root).exists()
+
+
 def test_repo_allowlist_pins_electrons_install_bin_and_keeps_esbuild_on_rebuild() -> None:
     entries = {e["name"]: e for e in json.loads(ALLOWLIST.read_text(encoding="utf-8"))["packages"]}
     assert entries["electron"]["run"] == {"bin": "install-electron", "from": "apps/desktop"}
@@ -306,7 +433,11 @@ def test_repo_runner_accepts_the_repo_allowlist() -> None:
         f" console.log(JSON.stringify(m.loadEntries({json.dumps(str(ROOT))})));"
     )
     out = subprocess.run(
-        ["node", "--input-type=module", "-e", js], capture_output=True, text=True, check=True
+        ["node", "--input-type=module", "-e", js],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
     )
     entries = json.loads(out.stdout.strip().splitlines()[-1])
     assert {"name": "electron", "run": ELECTRON["run"]} in entries

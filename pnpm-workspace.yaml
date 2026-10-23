@@ -2,11 +2,30 @@ packages:
   - "apps/*"
   - "packages/*"
 
-# Supply-chain hardening (C-12.3): .npmrc sets ignore-scripts=true globally.
+# Install policy (C-12.3). pnpm 12 reads these settings here and ignores them in .npmrc, where they
+# had no effect until #3277; scripts/tests/test_pnpm_effective_policy.py runs pnpm to prove each one.
+# - ignoreScripts: `pnpm install` runs no lifecycle script, whether a dependency's, a workspace
+#   package's or the root's. Husky's `prepare` is therefore the explicit `pnpm run prepare`
+#   (CONTRIBUTING.md). `pnpm rebuild` obeys the setting too, so tools/ci/run-allowed-postinstall.mjs,
+#   the one deliberate build path (allowlist: tools/ci/allowed-postinstall.json), passes
+#   --no-ignore-scripts.
+# - frozenLockfile: a plain `pnpm install` refuses a lockfile that no longer matches the manifests
+#   (`pnpm add` and --no-frozen-lockfile still change it); CI passes the flag as well.
+# - saveExact: `pnpm add` records an exact version, not a ^range.
+# - strictPeerDependencies: false keeps a peer-dependency mismatch a warning.
+# engine-strict is not carried over from .npmrc: applied, pnpm refuses the pinned Node 20, because
+# dependencies (Electron 45, @testing-library/jest-dom) declare Node 22 or later; .nvmrc and the root
+# "engines" pin Node (CI-JS-001).
+ignoreScripts: true
+frozenLockfile: true
+saveExact: true
+strictPeerDependencies: false
+
 # esbuild (a transitive dev-dependency of vitest and vite, and since #3422 a
 # direct devDependency of @candleviewer/ui) ships a legitimate, widely audited
-# postinstall script that fetches its platform binary; it is explicitly
-# allowlisted here rather than disabling ignore-scripts repo-wide. electron
+# postinstall script that fetches its platform binary; it is approved here so
+# the runner's `pnpm rebuild --no-ignore-scripts esbuild` may run it, rather
+# than turning ignoreScripts off repo-wide. electron
 # (E02-T04, apps/desktop) has shipped no install script since Electron 42, so
 # its entry runs nothing; it stays to mirror tools/ci/allowed-postinstall.json,
 # whose runner fetches the binary through electron's own install-electron bin
