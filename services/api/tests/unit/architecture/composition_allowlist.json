@@ -38,10 +38,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "DELETE /recording/symbols/{recordedSymbolId}": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "DELETE /replay/sessions/{replayId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -291,10 +287,6 @@
       "ticket": "E49-K01-F4-baseline"
     },
     "PATCH /orders/{orderId}": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "PATCH /recording/symbols/{recordedSymbolId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
