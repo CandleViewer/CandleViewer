@@ -124,7 +124,8 @@ def test_hash_encode_backstop_answers_ir_value_error_never_unicode_encode_error(
     assert (caught.value.loc, caught.value.reason) == ((), REASON)
 
 
-_CHAR = st.characters(exclude_categories=()) | st.characters(categories=["Cs"])
+_CHAR = st.characters(exclude_categories=(), exclude_characters=chr(0))  # U+0000: the model's
+_CHAR |= st.characters(categories=["Cs"])
 _TEXT = st.lists(_CHAR, max_size=6).map("".join)  # st.text() merges the two, drawing few Cs
 
 

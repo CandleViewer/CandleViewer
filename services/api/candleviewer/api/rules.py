@@ -17,6 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
+from candleviewer.api.rule_body import read_object
 from candleviewer.domain.text import escape_unpaired
 from candleviewer.rules.compiler import compile_form, compile_graph
 from candleviewer.rules.compiler.common import build_rule, check_bounds, value_issues
@@ -177,12 +178,10 @@ def make_rules_router(
         if inspect.isawaitable(res):
             await res
 
-    async def _json_body(request: Request) -> dict[str, Any] | None:
-        try:
-            body = await request.json()
-        except ValueError:
-            return None
-        return body if isinstance(body, dict) else None
+    async def _json_body(request: Request) -> dict[str, Any] | JSONResponse | None:
+        """Read as the rule write routes read (`api/rule_body.py`): the 413 past the ceiling, a 400
+        for a body nested too deep, None for anything but a JSON object."""
+        return await read_object(request, lambda detail: _problem(400, "Bad request", detail))
 
     def _invalid(exc: RuleCompileError) -> JSONResponse:
         n = len(exc.issues)
@@ -213,6 +212,8 @@ def make_rules_router(
         if registry is None:
             return _problem(503, "Service unavailable", "rule engine vocabulary unavailable")
         body = await _json_body(request)
+        if isinstance(body, JSONResponse):
+            return body
         if body is None or not isinstance(body.get("ir"), dict) or set(body) - {"ir", "scope"}:
             return _problem(400, "Bad request", "body must be an object with an 'ir' object")
         perms = frozenset(p for p in _ADVISORY_PERMISSIONS if principal.has(p))
@@ -240,6 +241,8 @@ def make_rules_router(
         if registry is None:
             return _problem(503, "Service unavailable", "rule engine vocabulary unavailable")
         body = await _json_body(request)
+        if isinstance(body, JSONResponse):
+            return body
         editor = body.get("editor") if body else None
         model = body.get("model") if body else None
         if body is None or editor not in ("form", "graph") or not isinstance(model, dict):

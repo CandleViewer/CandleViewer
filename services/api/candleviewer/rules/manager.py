@@ -22,10 +22,12 @@ from pydantic import ValidationError
 
 from candleviewer.observability import spawn
 from candleviewer.rules.arming import ArmingFacts, check_arming
+from candleviewer.rules.compiler.common import check_bounds
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.ir.accounts import collect_account_ids, redact_account_ids
 from candleviewer.rules.ir.canonical import IrValueError
+from candleviewer.rules.issues import Issue, RuleCompileError
 from candleviewer.rules.lifecycle import MODES, LifecycleError, RuleLifecycle, mode_of
 from candleviewer.rules.limits import (
     LIMIT_CAPS,
@@ -92,6 +94,14 @@ class RuleAuditUnavailable(RuleError):
 
     def __init__(self, message: str = "audit unavailable", **extra: Any) -> None:
         super().__init__(503, "audit_unavailable", message, **extra)
+
+
+def _ir_invalid(issues: list[Issue]) -> RuleError:
+    """422 `rule_ir_invalid` naming every issue, the first one's message as the detail: how a save
+    answers the document bounds and the validator alike."""
+    return RuleError(
+        422, "rule_ir_invalid", issues[0].message, issues=[i.to_dict() for i in issues]
+    )
 
 
 @dataclass
@@ -382,6 +392,7 @@ class RulesManager:
     async def import_rule(self, bundle: dict[str, Any], actor: Actor) -> dict[str, Any]:
         """Always lands disabled. Every account id anywhere in the bundle must be granted to
         the importer (refused + audited otherwise); they are then dropped, never remapped."""
+        self.check_document(bundle.get("ir", {}))  # the bounds, before the copy and walks below
         raw = copy.deepcopy(bundle.get("ir", {}))
         refs = collect_account_ids(raw)
         denied = [] if actor.is_owner else [a for a in refs if a not in actor.granted_accounts]
@@ -504,7 +515,17 @@ class RulesManager:
             out["ir"] = copy.deepcopy(v.ir)
         return out
 
+    @staticmethod
+    def check_document(doc: Any) -> None:
+        """The bounds compile and validate apply (`check_bounds`), first on every save and for any
+        caller about to walk the document itself: the same 422 `rule_ir_invalid` as `_validated`."""
+        try:
+            check_bounds(doc, "rule")
+        except RuleCompileError as exc:
+            raise _ir_invalid(exc.issues) from exc
+
     def _validated(self, ir: dict[str, Any], rule_id: str) -> tuple[Rule, str]:
+        self.check_document(ir)  # before the schema walks the document
         try:
             rule = Rule.model_validate({**ir, "rule_id": rule_id})
         except ValidationError as exc:
@@ -517,12 +538,7 @@ class RulesManager:
             ) from exc
         res = validate_rule(rule, self._reg, limit_caps=True)
         if res.errors:
-            raise RuleError(
-                422,
-                "rule_ir_invalid",
-                res.errors[0].message,
-                issues=[i.to_dict() for i in res.errors],
-            )
+            raise _ir_invalid(res.errors)
         try:
             return rule, ir_hash(rule)
         except IrValueError as exc:  # NaN / Infinity in an untyped params: 422, never a 500

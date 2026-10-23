@@ -15,6 +15,8 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
+from candleviewer.alerts.models import AlertCondition
+from candleviewer.domain.text import UNSTORABLE_TEXT
 from candleviewer.rules.ir import Rule, canonicalize, ir_hash, to_json_schema
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -76,6 +78,20 @@ def test_structurally_invalid_document_is_rejected_loudly(
     assert any(loc in [str(p) for p in e["loc"]] for e in ei.value.errors()), name
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(doc, to_json_schema())
+
+
+@pytest.mark.parametrize("model", [Rule, AlertCondition], ids=["rule", "alert-condition"])
+def test_ir_model_unstorable_text_in_any_key_or_value_is_a_schema_error(model: Any) -> None:
+    """Postgres cannot store U+0000: each document root refuses it at any depth, keys too."""
+    doc = load("form_simple_0")
+    if model is AlertCondition:
+        doc = {k: doc[k] for k in ("ir_version", "trigger", "conditions")}
+    doc["conditions"]["left"]["params"][f"k{chr(0)}"] = 1
+    with pytest.raises(ValidationError) as ei:
+        model.model_validate(doc)
+    assert [(e["type"], e["msg"]) for e in ei.value.errors()] == [
+        ("unstorable_text", UNSTORABLE_TEXT)
+    ]
 
 
 def test_trigger_validators_and_schema_agree() -> None:

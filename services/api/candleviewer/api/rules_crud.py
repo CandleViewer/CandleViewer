@@ -5,7 +5,8 @@ Thin HTTP adapter over `rules.manager.RulesManager` (`22-api-openapi.yaml`
 `actor_resolver` returns the caller's `Actor` (permissions, granted accounts, owner flag,
 fresh step-up) or `None` (401). `rules:read` gates reads, `rules:write` gates writes;
 live arming additionally needs `rules:arm_live` + a fresh one-shot step-up, enforced by the
-manager's synchronous arming check (statecharts record, code enforces - C-2.21).
+manager's synchronous arming check (statecharts record, code enforces - C-2.21). Bodies are read
+through `api/rule_body.py` (413 `payload_too_large`) before anything parses them.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from candleviewer.api.rule_body import read_object
+from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.ir.models import RuleScope
 from candleviewer.rules.manager import Actor, RuleError, RulesManager
@@ -113,12 +116,21 @@ def make_rules_crud_router(
             return _problem(503, "service_unavailable", "Unavailable", "rule engine unavailable")
         return actor, mgr
 
-    async def _body(request: Request) -> dict[str, Any] | None:
+    async def _body(request: Request) -> dict[str, Any] | JSONResponse | None:
+        """The JSON object sent (else None), or the 413 or 400 for a body too large or too deep."""
+        return await read_object(request, _bad)
+
+    def _unstorable(body: dict[str, Any], field: str) -> JSONResponse | None:
+        """400 when `field` is not a string or holds text Postgres cannot store, naming the field,
+        never its value."""
+        value = body.get(field, "")
+        if not isinstance(value, str):
+            return _bad(f"'{field}' must be a string")
         try:
-            body = await request.json()
-        except ValueError:
-            return None
-        return body if isinstance(body, dict) else None
+            refuse_unstorable_text(value)
+        except ValueError as exc:
+            return _bad(f"'{field}' {exc}")
+        return None
 
     def _bad(detail: str) -> JSONResponse:
         return _problem(400, "validation_failed", "Bad request", detail)
@@ -154,9 +166,17 @@ def make_rules_crud_router(
             return g
         actor, mgr = g
         body = await _body(request)
+        if isinstance(body, JSONResponse):
+            return body
         doc = _doc(body) if body is not None else None
         if body is None or doc is None:
             return _bad("body needs an 'ir' object")
+        if (refused := _unstorable(body, "note")) is not None:
+            return refused
+        try:
+            mgr.check_document(doc)  # the bounds first: the scope check below reads the scope
+        except RuleError as exc:
+            return _from_error(exc)
         denied = await _scope_check(actor, doc.get("scope"), arming=False)
         if denied is not None:
             return denied
@@ -183,6 +203,8 @@ def make_rules_crud_router(
             return g
         actor, mgr = g
         body = await _body(request)
+        if isinstance(body, JSONResponse):
+            return body
         doc = _doc(body) if body is not None else None
         raw = request.headers.get("if-match", "").strip().strip('"')
         if raw == "" and body is not None:
@@ -191,9 +213,13 @@ def make_rules_crud_router(
             return _bad("body needs an 'ir' object")
         if not raw.isdigit():
             return _bad("send the version you edited in If-Match (or expected_version)")
+        if (refused := _unstorable(body, "note")) is not None:
+            return refused
         try:
-            # The stored rule first (owner, every version's accounts), then the submitted scope.
+            # The stored rule first (owner, every version's accounts), then the bounds, then the
+            # submitted scope.
             await mgr.require_visible(str(ruleId), actor, "update")
+            mgr.check_document(doc)
             denied = await _scope_check(actor, doc.get("scope"), arming=False)
             if denied is not None:
                 return denied
@@ -248,8 +274,12 @@ def make_rules_crud_router(
             return g
         actor, mgr = g
         body = await _body(request)
+        if isinstance(body, JSONResponse):
+            return body
         if body is None or not isinstance(body.get("version_id"), str):
             return _bad("body needs 'version_id'")
+        if (refused := _unstorable(body, "note")) is not None:
+            return refused
         try:
             # Visibility first (#2574): on a rule the caller cannot see, a real version and a
             # missing rule or version are one 404, never the scope pre-check's 403 (04 §7.3).
@@ -273,6 +303,8 @@ def make_rules_crud_router(
             return g
         actor, mgr = g
         body = await _body(request)
+        if isinstance(body, JSONResponse):
+            return body
         if (
             body is None
             or not isinstance(body.get("mode"), str)
@@ -284,6 +316,8 @@ def make_rules_crud_router(
             }
         ):
             return _bad("body must be {mode, reason?, acknowledge_flatten_all?}")
+        if (refused := _unstorable(body, "mode") or _unstorable(body, "reason")) is not None:
+            return refused
         try:
             if body["mode"] == "armed":
                 denied = await _scope_check(

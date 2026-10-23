@@ -5111,6 +5111,7 @@ tracker).
 
 ### Security
 
+- **rule-engine**: saving, validating or compiling a rule now applies the document bounds and caps the request body, and text a rule cannot store is refused with a 4xx instead of a 500 (#4186) (#4197)
 - **backend-platform**: a request body whose money or size member is not a plain decimal string is now refused with a 422 instead of failing with a 500 or growing the response, and a member the contract defaults refuses an explicit `null` (#906) (#4147)
 - **rule-engine**: creating or editing an alert needs a grant on every account the alert names, including the accounts in its condition; a refusal is audited (#1204) (#4123)
 - **frontend-platform**: the test runner moves from vitest 3.2 to 4.1.12, which has the fixes for the Medium findings in 3.2; it is a development tool, so the shipped app is unchanged (#1819) (#4120)

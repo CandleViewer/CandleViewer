@@ -50,6 +50,9 @@ _scalars = st.one_of(
     st.booleans(), st.integers(-(10**9), 10**9), _decimals, st.text("abcxyz_ ", max_size=6)
 )
 _keys = st.sampled_from(("n", "anchor", "source", "window_ms", "z", "mode", "k"))
+#: Text a stored rule can hold: no U+0000 (the model refuses it), and no lone surrogate.
+_STORABLE = st.characters(codec="utf-8", exclude_characters=chr(0))
+_note = st.text(_STORABLE, max_size=8)
 #: Params also take JSON floats (#4132): a metric param's becomes a Decimal, an action param's
 #: hashes through the canonicaliser's float arm.
 _params = st.dictionaries(
@@ -66,7 +69,7 @@ _layout = st.one_of(
                 max_size=3,
             )
         },
-        optional={"zoom": st.sampled_from((1, 2, Decimal("0.5"))), "note": st.text(max_size=8)},
+        optional={"zoom": st.sampled_from((1, 2, Decimal("0.5"))), "note": _note},
     ),
 )
 
@@ -263,8 +266,8 @@ def rule_doc(draw: st.DrawFn, form_only: bool = False) -> Doc:
     doc: Doc = {
         "rule_id": RULE_ID,
         "version": draw(st.integers(1, 1000)),
-        "name": draw(st.text(min_size=1, max_size=20).filter(str.strip)),
-        "description": draw(st.text(max_size=30)),
+        "name": draw(st.text(_STORABLE, min_size=1, max_size=20).filter(str.strip)),
+        "description": draw(st.text(_STORABLE, max_size=30)),
         "enabled": draw(st.booleans()),
         "mode": draw(st.sampled_from(("disabled", "simulate", "armed"))),
         "scope": draw(scope()),
