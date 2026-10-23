@@ -323,8 +323,9 @@ class BackupDownloads:
     @audited("backup.downloaded")
     async def audit_serve(self, record: ServeRecord) -> None:
         """`backup.downloaded` at `stage: served`, severity `error`: the `link_id`, and `bearer`
-        `matched` (the issuing user's bearer came: its session and name) or `absent`; with no
-        link, the address alone (the per-source refusal), and a bearer's user if one came."""
+        `matched` (a bearer came: its actor, session and name, the viewer's while viewing) or
+        `absent` (the link's user and session); with no link, the address alone (the per-source
+        refusal), and the bearer's actor if one came."""
         ask, link, who = record.ask, record.link, record.ask.bearer
         state: dict[str, Any] = {"stage": "served"}
         user, session = (None, None) if who is None else (who.actor_id, who.session_id)
@@ -332,8 +333,9 @@ class BackupDownloads:
         if link is not None:
             bearer = "absent" if who is None else "matched"
             state |= {"link_id": str(link.link_id), "bearer": bearer}
-            user, kind, target = link.user_id, "backup", str(link.backup_id)
-            session = link.session_id if who is None else session
+            kind, target = "backup", str(link.backup_id)
+            if who is None:
+                user, session = link.user_id, link.session_id
         label = str(user or "anonymous") if who is None else who.actor_name  # the viewer acts
         await self._audit.emit(
             "backup.downloaded", actor_label=label, actor_user_id=user, actor_ip=ask.source,

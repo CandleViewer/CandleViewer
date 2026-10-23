@@ -575,6 +575,20 @@ async def test_a_cancelled_rate_limited_write_leaves_the_record_to_the_next_refu
     assert [r["reason"] for r in fx.served()] == ["rate_limited"]
 
 
+async def test_a_links_served_record_pairs_the_bearers_actor_with_its_name() -> None:
+    """#3085 (I-9): a matched bearer's served record names the bearer's actor beside its name, so
+    a viewing bearer is the viewer throughout. Unreachable today (only an Owner issues a link, and
+    an Owner is never a viewed user), it keeps the pair from splitting if that changes."""
+    fx = await _fx()
+    _, link = await fx.issue()
+    viewer = UUID(int=0x3085)
+    viewing = replace(WHO, actor_user_id=viewer, actor_username="owner-anna")
+    ask = Fetch(BID, None, viewing, SOURCE, WHO.request_id)
+    await fx.w.downloads.audit_serve(ServeRecord(ask, link, AuditOutcome.SUCCESS))
+    (record,) = fx.served()
+    assert (record["actor_user_id"], record["actor_label"]) == (viewer, "owner-anna")
+
+
 async def test_a_viewing_bearers_refusal_is_recorded_as_the_viewers() -> None:
     """#3085 (Q2): a bearer viewing as another user is the viewer acting, so the per-source
     refusal's record names the viewer, never the user viewed."""
