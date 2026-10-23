@@ -376,8 +376,20 @@ def test_rotation_and_export_store_only_their_2xx_as_the_global_rule_excepts() -
     assert f"Only the `200` is stored under the key, {committed} twice; {afresh}" in _ROT_DESC
     exception = "Exception (ADR-0039): `rotateAuditSigningKey` stores only its `200` under the key;"
     export = "`exportAuditLog` stores only its `202`: a `503`, `429` or `409` is evaluated afresh."
-    assert f"{exception} {afresh} {export}" in text(SPEC["info"]["description"])
+    info, head = text(SPEC["info"]["description"]), f"{exception} {afresh} "
+    assert head in info and export in info.split(head, 1)[1]  # both sentences, in this order
+    rotation = info.split(head, 1)[1].split(export, 1)[0]  # the rotation's paragraph between
     assert SPEC["paths"]["/admin/audit/export"]["post"]["x-idempotency"] == "optional"
+    # #889 S7: the `200` is durable, as `placeOrder`'s anchor is, read with its own Owner only.
+    for rule in (
+        "That `200` is durable, as `placeOrder`'s anchor is",
+        "read only with the Owner who sent them (`21-database-schema.md` section 3.1.5b)",
+        "the same key and body reach the rotation's own `200` at any age, the 24 h gone too",
+        "each `verified` mark as M2 gives it at the repeat (`Idempotency-Replayed: true`)",
+        "Another Owner's key is answered as one never seen",
+        "the same key with another body is `409 idempotency_key_reuse`.",
+    ):
+        assert rule in rotation, rule
 
 
 @pytest.mark.parametrize(
