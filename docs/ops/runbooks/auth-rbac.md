@@ -338,9 +338,11 @@ of the break-glass trust boundary (`docs/security/threat-models/e09-auth-rbac.md
 resets the named Owner's MFA and nothing else: it mints no login, session, token or recovery code
 (decision O2). It has been rehearsed on a local throwaway database (dry-run transcript below in
 this section), and on 2026-10-23 a non-author ran it cold on a dev compose stack on the real backend
-(#2494, E09-X04: the Owner was recovered in 7 min 41 s); not on staging (#1778 item A). U10 is the
-lockout case of `docs/security/threat-models/e09-auth-rbac.md`; O1 to O3 and R8 are #2119's decisions
-(the possession proof, the reset's scope, live gating and the alert routing); FU-1 is #2151.
+(#2494, E09-X04: steps 1 to 5, from the handoff to cv-api restarted, took 7 min 41 s, or about
+5 min 47 s without a terminal detour; step 6, the Owner's re-enrolment, was not drilled); not on
+staging (#1778 item A). U10 is the lockout case of `docs/security/threat-models/e09-auth-rbac.md`;
+O1 to O3 and R8 are #2119's decisions (the possession proof, the reset's scope, live gating and the
+alert routing); FU-1 is `docs/plan/spikes/e27-kek.md`'s follow-up, #2151.
 
 **When.** The sole Owner cannot sign in: the TOTP device is lost and no unused recovery code is at
 hand (U10). An Owner who still holds an unused recovery code signs in with it instead (§1), which
@@ -400,8 +402,9 @@ logged.
   bytes of hex in it the CLI exits 2 before it runs anything (the `live` rule checks the code with
   it). Never put its value, or any other secret, on a command line or in this file.
 - A terminal, on your side too: `docker compose run` allocates the container's only when the shell
-  it runs from has one, and never with `-T`. Over ssh use `ssh -t`; from automation, run it under a
-  pty. Without one the run ends `no_tty` (11), and still writes its attempt and refusal records.
+  it runs from has one, and never with `-T` or with its output piped (`| tee` included). Over ssh
+  use `ssh -t`; from automation, run it under a pty. Without one the run ends `no_tty` (11), and
+  still writes its attempt and refusal records.
 - In `live`: `--live`, and one unused Owner recovery code from the SR-023 sealed envelope.
 
 **Procedure (compose).** Use the compose files (`-f`) and project (`-p`) of the running stack, as
@@ -417,8 +420,9 @@ The repository's compose files (`infra/compose/`) run the fake backend and set n
 `CV_AUTH_RECOVERY_HMAC_KEY_HEX` nor a KEK for `api`: with them alone the run exits 2, and no boot
 ever enrolled a KEK check value, so the stack must add both and run the real backend (its own
 override file or environment). The #2494 drill's stack also needed `CV_STORAGE_BACKEND=real`, the
-auth keys and pepper, a writable volume at `/data` owned by uid 10001 (the cold tier's Parquet root:
-the real backend's storage refuses to start without it), `CV_MESH_CIDRS_CSV` naming the compose
+auth keys and pepper, a volume at `/data` holding a `parquet` directory owned and writable by uid
+10001 (the cold tier's root, `/data/parquet`: the real backend's storage creates nothing and refuses
+to start without it), `CV_MESH_CIDRS_CSV` naming the compose
 network (without it the healthcheck itself gets `403`), and `CV_ALLOWED_ORIGINS` for a client's
 WebSocket. Every compose command then warns that the secrets' `uid`, `gid` and `mode` are not
 supported outside Swarm mode: expected, since the host files carry them (the audit lane key, below).
@@ -449,8 +453,9 @@ supported outside Swarm mode: expected, since the host files carry them (the aud
    is the expected end (exit 0). `Audit: records waiting in the host journal: N` means Postgres did
    not take them: they reach `audit_log` at the next cv-api boot. A refusal names its reason (table
    above): fix it and run again; each run is a new attempt with records of its own. The run's id is
-   the `run_id` of its `breakglass.run_ended` JSON line (`breakglass.refused_unjournaled` for 4 and
-   5), and the `request_id` of its records. A `host_fs_unavailable` (4) shows its cause as
+   the `run_id` of its `breakglass.run_ended` JSON line (`breakglass.refused_unjournaled` when the
+   journal could not be opened: a 4, or a 5 for a held run lock), and the `request_id` of its
+   records. A `host_fs_unavailable` (4) shows its cause as
    `[redacted:key-shape]`: check `CV_AUDIT_WAL_PATH` and the volume (The audit volume, below). Its
    attempt and refusal still reach `audit_log`, written straight to Postgres. With no usable
    journal and Postgres unreachable too, a 4 or 5 ends
@@ -489,7 +494,8 @@ main-orchestrator ruled this routing (page, page, ticket) on 2026-10-17 under th
 delegation; it awaits the owner's confirmation on #2119. A severity is one label in
 `infra/prometheus/alerts`.
 
-**Drilling the refusals (#2494).** Run each injection with `-T`, so that a run which passes the
+**Drilling the refusals (#2494).** Outside `live` only, since every run pages (R8). Run each
+injection with `-T`, so that a run which passes the
 check under test stops at `no_tty` (11) and never reaches the prompt. Leaving the KEK variables
 unset is not "no KEK": they default to the compose secret's path, so a mounted KEK still loads and
 the proof passes. Point the handle at an absent path instead; a relative audit path drills 4. Each
@@ -1514,8 +1520,9 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 
 ## Execution record
 
-Not executed on staging by a non-author: no staging host exists (#1778 item A); the run is tracked
-in #2298. Security review of §3/§5 exists as an agent review on #2115; Ops review is recorded on #2343.
+§3 was run cold by a non-author on 2026-10-23, on a dev compose stack on the real backend (#2494;
+the record goes into `docs/security/reviews/e09-auth-review.md` section 4 with #300's second PR).
+Not executed on staging: no staging host exists (#1778 item A); the staging run is tracked in #2298. Security review of §3/§5 exists as an agent review on #2115; Ops review is recorded on #2343.
 
 The audit lane's drill (§12, §13; ADR-0037 S4b-2a, #3009) is an in-process test, not a non-author's walk of those
 sections on a staging host: `services/api/tests/unit/audit/test_lane_drill.py` runs the real `AuditService` over an

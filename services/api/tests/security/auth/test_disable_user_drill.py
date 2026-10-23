@@ -180,6 +180,7 @@ def _disable_a_subscribed_manager() -> tuple[int, list[dict[str, Any]], int, flo
             assert (answer["t"], answer["p"]["results"][0]["ok"]) == ("sub_ok", True)
             started = time.monotonic()
             status = e2e.delete_disable(client, str(e2e._M), headers, ack=True).status_code
+            assert status == 204, f"the disable answered {status}"  # fail here, not at a read's 5 s
             frames = _until_bye(ws)
             elapsed = time.monotonic() - started
             with pytest.raises(WebSocketDisconnect) as close:  # §9.5: no frame after the `bye`
