@@ -19,9 +19,9 @@ in section 1.
   section 9; where only the contract and the server differ, it asserts what both hold.
 - **Environment and credentials:** demo or staging, on the seeded fixtures only, or testnet where a case
   moves the server's clock (Time). Never live (`02-definition-of-ready-done.md` §8). No fixture or step holds
-  a real credential, Bybit key or user data: every password, TOTP seed, invite link and bearer a run uses is
-  synthetic, generated per run and never committed, and defects, notes, screenshots, Playwright traces and
-  videos, and HARs are scrubbed of them before they are filed.
+  a real credential, Bybit key or user data: every password, TOTP seed, invite link, backup or export
+  download link and bearer a run uses is synthetic, generated per run and never committed, and defects,
+  notes, screenshots, Playwright traces and videos, and HARs are scrubbed of them before they are filed.
 - **Each case starts from a fresh seed** of section 1's handles, so no case depends on another's end state.
 - **"Elevated"** means the actor holds a live step-up grace for the case's action class.
 - **Time:** a case that moves the server's clock (`CV_TEST_CLOCK`: testnet only, no exchange key) runs on
@@ -57,36 +57,48 @@ in section 1.
 ## 1. Seeded actors and data
 
 The handles below are fixed here. The fixture slices define each one as an idempotent seed script under
-`services/api/tests/fixtures/admin/`, with a README line saying how to load it.
+`services/api/tests/fixtures/admin/`, with a README line saying how to load it. A handle that writes audit
+rows or sealed snapshots (AUDIT-10M, AUDIT-CORRUPT, AUDIT-SECRET-MARKER, SC-FORGED-SEAL) loads only into a
+database named for tests: audit tables are append-only (C-5.7), so rows loaded anywhere else could never be
+removed. E42-X03's threat model asks this plan for the seeds that need state outside the API: AC-ADM-09
+(FLAG-OVERRIDE-ROWS), AC-ADM-15 (any audit rows: AUDIT-10M), AC-ADM-16 (AUDIT-CONCURRENT), AC-ADM-24
+(BACKUP-THEN-REVOKED), AC-ADM-25 (BACKUP-TAMPERED) and AC-ADM-31 (OOB-WRITES).
 
-| Handle                                | What it is                                                                                   |
-| ------------------------------------- | -------------------------------------------------------------------------------------------- |
-| OWNER                                 | The Owner, TOTP enrolled                                                                     |
-| OWNER-2                               | A second Owner, for concurrent edits                                                         |
-| MGR-M                                 | A Manager with an active session, one armed rule and a grant on SUB-S                        |
-| MGR-N                                 | A Manager with no grants                                                                     |
-| MGR-MANY                              | A Manager with grants on SUB-S, SUB-T and SUB-U                                              |
-| MGR-U                                 | A Manager with an active session and no grants: MGR-M for the stack that moves the clock     |
-| VIEWER-V                              | A Viewer                                                                                     |
-| INVITED-I, DISABLED-D, LOCKED-L       | A user in each non-active status                                                             |
-| SUB-S, SUB-T, SUB-U                   | Demo sub-accounts                                                                            |
-| SUB-K                                 | An account under the 48-hour key restriction                                                 |
-| TIER-FULL                             | The account tier `regular`, recorded, with 5 of 5 sub-accounts in use                        |
-| HEALTH-RECORDER-DOWN                  | The overview's `recorder` slice unreachable, every other slice healthy                       |
-| HEALTH-RECORDER-HANG                  | The overview's `recorder` slice never answering, every other slice healthy                   |
-| POS-M-S                               | An open position of MGR-M's on SUB-S, its exposure above the tightened cap AD-S03-04 saves   |
-| PROFILE-S                             | The profile bound to SUB-S                                                                   |
-| OVERVIEW-503                          | `GET /api/v1/admin/overview` answering `503`                                                 |
-| AUDIT-10M                             | 10 million generated audit entries, from the generator E42-K01 shares                        |
-| AUDIT-CORRUPT                         | A chain with one altered entry at a known `first_bad_id`; it loads only into a test database |
-| AUDIT-KEY-ENTRY                       | An entry whose before and after states referenced key material, by fingerprint               |
-| FLAG-UI                               | A catalogued UI flag, `rules.graph_editor`, on (see Q-9)                                     |
-| FLAG-LIVE-BLOCKED                     | `trading.live_enabled` off, with the pen-test sign-off outstanding                           |
-| RULES-ON-FLAG                         | Two armed rules that depend on a flag being disabled                                         |
-| HEALTH-SUB002-WS-DOWN, HEALTH-TIMEOUT | Health payloads: `sub_002`'s private WebSocket down; the health read timing out              |
-| BACKUP-VERIFY-FAILED, BACKUPS-NONE    | The latest backup failing verification; no backup at all                                     |
-| GROUP-G                               | An enabled trade group with an open group trade                                              |
-| SC-CHAIN-TRIPS                        | A machine restored with `chain_trips` above 0                                                |
+| Handle                                | What it is                                                                                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| OWNER                                 | The Owner, TOTP enrolled                                                                                                                   |
+| OWNER-2                               | A second Owner, for concurrent edits                                                                                                       |
+| MGR-M                                 | A Manager with an active session, one armed rule and a grant on SUB-S                                                                      |
+| MGR-N                                 | A Manager with no grants                                                                                                                   |
+| MGR-MANY                              | A Manager with grants on SUB-S, SUB-T and SUB-U                                                                                            |
+| MGR-U                                 | A Manager with an active session and no grants: MGR-M for the stack that moves the clock                                                   |
+| VIEWER-V                              | A Viewer                                                                                                                                   |
+| INVITED-I, DISABLED-D, LOCKED-L       | A user in each non-active status                                                                                                           |
+| SUB-S, SUB-T, SUB-U                   | Demo sub-accounts                                                                                                                          |
+| SUB-K                                 | An account under the 48-hour key restriction                                                                                               |
+| TIER-FULL                             | The account tier `regular`, recorded, with 5 of 5 sub-accounts in use                                                                      |
+| HEALTH-RECORDER-DOWN                  | The overview's `recorder` slice unreachable, every other slice healthy                                                                     |
+| HEALTH-RECORDER-HANG                  | The overview's `recorder` slice never answering, every other slice healthy                                                                 |
+| POS-M-S                               | An open position of MGR-M's on SUB-S, its exposure above the tightened cap AD-S03-04 saves                                                 |
+| PROFILE-S                             | The profile bound to SUB-S                                                                                                                 |
+| OVERVIEW-503                          | `GET /api/v1/admin/overview` answering `503`                                                                                               |
+| AUDIT-10M                             | 10 million generated audit entries, from the generator E42-K01 shares; test database only                                                  |
+| AUDIT-CORRUPT                         | A chain with one altered entry at a known `first_bad_id`; it loads only into a test database                                               |
+| AUDIT-KEY-ENTRY                       | An entry whose before and after states referenced key material, by fingerprint                                                             |
+| AUDIT-SECRET-MARKER                   | A synthetic secret-shaped marker written through the real audit writer; test database only                                                 |
+| AUDIT-CONCURRENT                      | Two connections inserting 1,000 audit rows, one outside the app's insert path (AC-ADM-16)                                                  |
+| OOB-WRITES                            | As `cv_app`, outside the API: an Owner role row, MGR-M's grant widened, `trading.live_enabled` set and a backup digest changed (AC-ADM-31) |
+| FLAG-UI                               | A catalogued UI flag, `rules.graph_editor`, on (see Q-9)                                                                                   |
+| FLAG-LIVE-BLOCKED                     | `trading.live_enabled` off, with the pen-test sign-off outstanding                                                                         |
+| RULES-ON-FLAG                         | Two armed rules that depend on a flag being disabled                                                                                       |
+| FLAG-OVERRIDE-ROWS                    | An override row on a safety flag, and an unreadable flag row (AC-ADM-09)                                                                   |
+| HEALTH-SUB002-WS-DOWN, HEALTH-TIMEOUT | Health payloads: `sub_002`'s private WebSocket down; the health read timing out                                                            |
+| BACKUP-VERIFY-FAILED, BACKUPS-NONE    | The latest backup failing verification; no backup at all                                                                                   |
+| BACKUP-THEN-REVOKED                   | A backup, then later revocations it predates (AC-ADM-24; with #3084)                                                                       |
+| BACKUP-TAMPERED                       | A backup whose artefact digest differs from its bound record (AC-ADM-25)                                                                   |
+| GROUP-G                               | An enabled trade group with an open group trade                                                                                            |
+| SC-CHAIN-TRIPS                        | A machine of a kind with a public entity id, restored with `chain_trips` above 0                                                           |
+| SC-FORGED-SEAL                        | A persisted snapshot whose seal fails; it loads only into a test database                                                                  |
 
 ## 2. Cases by story group
 
@@ -404,8 +416,10 @@ UL3-T1)
 - **AD-S03-N04 The key restriction on SCR-122** (`e2e`; D02 D8): SUB-K's row shows the 48-hour restriction
   with its absolute unlock time.
 - **AD-S03-N05 A stale grant set re-grants a revoked account** (`integration`, `e2e`; 22
-  `setUserAccountAccess`; E42-S03 technical notes; Q-16): OWNER loads MGR-MANY's grants (SUB-S, SUB-T,
-  SUB-U); OWNER-2 then removes SUB-S and saves; OWNER, whose page still lists SUB-S, changes SUB-U's level
+  `setUserAccountAccess`; E42-S03 technical notes; Q-16): OWNER and OWNER-2 each hold a live `users`
+  grace, and MGR-MANY's open-position state is readable (else a grant save answers `409
+positions_unknown`). OWNER loads MGR-MANY's grants (SUB-S, SUB-T, SUB-U); OWNER-2 then removes SUB-S and
+  saves; OWNER, whose page still lists SUB-S, changes SUB-U's level
   and saves, the payload being the complete set (replace semantics). The route takes no `If-Match`, so the
   save answers `200` with the stored set, SUB-S included, and SUB-S is a live grant again (its soft-revoked
   row is revived, its freeze state and caps as they were). Nothing refuses it. Audit: `users.access_change`
@@ -440,14 +454,17 @@ UL3-T1)
   - ending the live context (`DELETE /auth/session/view-as`) closes S1's sockets with `view_as_changed` and
     `4401` again, and S2's stay unaffected;
   - once the server has ended the context (AD-S03-N02), an `auth` or re-`auth` on S1 is refused with
-    `bye view_as_expired` and `4403`, and does not count as a failed `auth`.
+    `bye view_as_expired` and `4403`, and does not count as a failed `auth`;
+  - after a refresh rotation, a re-`auth` with S1's successor token keeps the socket and its scope; a
+    re-`auth` whose session's view-as state differs from the socket's (no context, or another one) gets
+    `bye view_as_changed` and `4401` instead of `auth_ok` (`23` §9.6, "In-place re-`auth`").
 - **AD-S03-N09 An unwritable audit record leaves a role change unchanged** (`integration`; 22
   `setUserRoles`; UL-AC05): OWNER, elevated; VIEWER-V; the role records unwritable. The request
   `PUT /users/{userId}/roles` with `[manager]` answers `503 audit_unavailable`, and VIEWER-V's roles are
   as before. Audit: no `roles.grant` or `roles.revoke`.
 - **AD-S03-N10 An unwritable audit record leaves a grant change unchanged** (`integration`; 22
-  `setUserAccountAccess`; UL-AC05): OWNER, elevated; MGR-MANY subscribed to SUB-S; the
-  `users.access_change` record unwritable. Removing the SUB-S grant answers `503 audit_unavailable`: the
+  `setUserAccountAccess`; UL-AC05): OWNER, elevated; MGR-MANY subscribed to SUB-S, its open-position state
+  readable; the `users.access_change` record unwritable. Removing the SUB-S grant answers `503 audit_unavailable`: the
   grant set is as before and MGR-MANY's subscription carries on, with no `revoked` frame. Audit: no
   `users.access_change` and no `ws.subscription.revoked`.
 - **AD-S03-N11 An unwritable audit record stops a view-as start** (`integration`; 22 `startViewAs`;
@@ -468,12 +485,14 @@ UL3-T1)
 - Audit: `admin.audit_read`.
 
 **AD-S04-02 No mutation affordance exists [R]** (`e2e`, `security`; E42-S04 "No mutation affordance
-exists"; D11)
+exists"; D11; AC-ADM-15)
 
-- Steps: inspect every row, the detail drawer and the page chrome; then send every non-read HTTP verb to
-  each `/admin/audit*` path.
+- Steps: inspect every row, the detail drawer and the page chrome; then send `PUT`, `PATCH` and `DELETE`
+  to each `/admin/audit*` path. (The served `POST`s on `/verify` and `/export` write records of their
+  own: AD-S04-03 and AD-S04-05.)
 - Expected: no edit, delete or correct control anywhere. The page says the log is append-only and kept
-  indefinitely. No verb changes a record (AC-ADM-15 holds the API half).
+  indefinitely. Each of those verbs answers `404` or `405`, and no record changes.
+- Audit: none for those verbs (AC-ADM-15).
 
 **AD-S04-03 Integrity verification [R]** (`e2e`, `integration`; E42-S04 "Integrity verification"; D11;
 22 `verifyAuditChain`)
@@ -481,40 +500,68 @@ exists"; D11)
 - Pre: AUDIT-CORRUPT, the corrupted-chain fixture, on a test database.
 - Steps: run the tamper check over the full range; then over a range that ends before the break.
 - Expected: the first run reports the break at the fixture's `first_bad_id`, as a critical banner naming
-  a security incident, not a UI error. The second reports the range verified. The page footer's tamper
-  line shows its three states across the runs.
-- Audit: `admin.audit_verify` per run.
+  a security incident, not a UI error; the banner cannot be dismissed (D02 D11). The second run reports
+  its range verified, and the break stays shown: a passing partial range never clears a known break (the
+  page's banner and SCR-120's strip; `cv_audit_chain_verified_state` stays 0, `api/audit_verify.py`).
+  The page footer's tamper line shows its three states across the runs.
+- Audit: at most two `admin.audit_verify` records per run, a write-ahead `started` then the result:
+  `success` at `info` when verified, `failure` at `critical` with reason `<kind>@<first_bad_id>` on a
+  break (22 `verifyAuditChain`). A break also raises the critical `audit_chain_break` system event.
 
-**AD-S04-04 A manager sees only their own actions [R]** (`e2e`, `contract`; E42-S04 "Manager scope"; D11)
+**AD-S04-04 A manager sees only their own actions [R]** (`e2e`, `contract`; E42-S04 "Manager scope"; D11;
+AC-ADM-17)
 
 - Pre: MGR-M, with actions of its own and of others in the log.
-- Steps: open the audit log; then ask the API for another actor's events.
+- Steps: open MGR-M's own-actions log, which D02 renders on the non-admin "My activity" route (D6,
+  OQ-15; see Q-19); then ask the API (`GET /admin/audit`) for another actor's events with
+  `actor_user_id`; then filter on `q` and on `ip`.
 - Expected: only MGR-M's own actions, enforced server-side, under the header "Showing your actions only".
-  The request for another actor's events answers `403 forbidden`.
-- Audit: `admin.audit_read`; the refusal, `admin.audit_denied`.
+  The request naming another actor answers `200` with MGR-M's own entries only and no row of another
+  actor's: the data layer narrows the filter (22 `queryAuditLog`). A filter on `q` or `ip` answers
+  `403 forbidden`.
+- Audit: `admin.audit_read`; the narrowed request, `admin.audit_denied` with reason
+  `cross_actor_filter_narrowed`.
 
 **AD-S04-05 Export is signed and audited [R]** (`e2e`, `contract`; E42-S04 "Export is signed and
-audited"; D11; 22 `exportAuditLog`)
+audited"; D11; 22 `exportAuditLog`; 24 "Verification"; AC-ADM-20)
 
+- **Blocked:** export is a deliberate `501 not_implemented` stub on this `main` until #889 S10 serves it
+  (22 `exportAuditLog`, ADR-0039), so no job is created. Until then AD-S04-N07 is the case that runs.
 - Pre: OWNER, with the `audit` class's step-up.
-- Steps: export the filtered set; follow the job; download the file; verify its signature.
+- Steps: export the filtered set; follow the job; download the file; verify it offline by the five
+  steps of 24 "Verification" (the file's SHA-256 against the manifest; the header's key and
+  environment against the pin held out of band for that environment; the Ed25519 signature; the key's
+  validity window; the row count and every entry's hash and link); then the Owner's cross-check
+  against `security.audit_export_signed` (24 "Chain cross-check").
 - Expected: an async job with visible progress produces a signed NDJSON file, and redaction is kept in it.
-  The export control names the real format.
-- Audit: `admin.audit_export` for the request and again, with reason `downloaded`, for the download. See
-  Q-5.
+  The export control names the real format. Every verification step passes; the same file with one byte
+  altered, or checked against another environment's pin, fails.
+- Audit: `admin.audit_export` for the request, written before the job exists; `security.audit_export_signed`
+  before it signs; the completion record (job id, window, span, row count, digest, actor); and
+  `admin.audit_export` with reason `downloaded`, written before any byte is streamed (22
+  `exportAuditLog`). See Q-5.
 
 **AD-S04-06 A failed export offers no partial file** (`e2e`; E42-S04 "Export job fails")
 
+- **Blocked** with AD-S04-05.
 - Pre: an export job that ends `failed`.
 - Expected: the failure shows its reason and a retry action, and no partial file is offered.
 
 **AD-S04-07 A secret-bearing entry shows fingerprints only [R]** (`e2e`, `security`; E42-S04 "Secret-bearing
-entry")
+entry"; C-12.6)
 
-- Pre: AUDIT-KEY-ENTRY, an entry whose before and after states referenced key material.
-- Expected: the diff renders fingerprints only, never a secret value, in the drawer and in the export.
+- Pre: AUDIT-KEY-ENTRY, an entry whose before and after states referenced key material; and
+  AUDIT-SECRET-MARKER, a synthetic secret-shaped marker written through the real audit writer, so the
+  redactor is what keeps it out.
+- Expected: the diff renders fingerprints only, never a secret value, in the drawer and in the export. A
+  scan of the drawer's DOM and of the exported file finds no marker. What the export holds for a row of
+  redaction class P0 is ADR-0039's open Q2: see Q-20.
 
 **Negative and boundary cases**
+
+Each of N01 to N04, N08 and N09 needs the OWNER's live `audit` grace in its Pre: the step-up guard runs
+first, so without it each answers `403 step_up_required` instead (22 `exportAuditLog`). They are
+**blocked** with AD-S04-05.
 
 - **AD-S04-N01 An export over the range limit** (`contract`; 22 `exportAuditLog`): a window longer than
   `audit_export_max_range_days` (31 by default) answers `422 validation_failed`, with `errors[].rule`
@@ -523,11 +570,20 @@ entry")
   with `Retry-After`.
 - **AD-S04-N03 One export at a time** (`contract`): a second export while one is queued or running answers
   `409 conflict`.
-- **AD-S04-N04 An expired download** (`contract`): a download after `expires_at` answers `410 gone`.
+- **AD-S04-N04 An expired download** (`contract`): a download after `expires_at` answers `410 gone`; the
+  download's `audit` grace is checked after the requester check (22 `downloadAuditExport`).
 - **AD-S04-N05 Export without the step-up** (`contract`): `403 step_up_required` with `action_class`
   `audit`, and no job.
 - **AD-S04-N06 The detail's fetch** (`perf`; SCR-136): one record in ≤300 ms; the raw payload loads only
   when expanded.
+- **AD-S04-N07 Export is not implemented yet** (`contract`; 22 `exportAuditLog`): an Owner with the
+  `audit` step-up gets `501 not_implemented`, no job and no record; a Manager gets `403 forbidden`;
+  without the step-up, `403 step_up_required` comes first. D02 draws the "Not available yet" state.
+- **AD-S04-N08 Another user's download** (`contract`, `security`; 22 `downloadAuditExport`; AC-ADM-21):
+  the download fetched by anyone but the requester, another Owner included, answers `404 not_found`,
+  and no byte is streamed.
+- **AD-S04-N09 The download rate limit** (`contract`): past `audit_download_rate_per_hour` (20 by
+  default) a download answers `429`.
 
 ### S05: feature flags and maintenance mode (US-ADMIN-001, 007, 011, 012; SCR-145, SCR-148; D02 D13, D15)
 
@@ -535,18 +591,22 @@ entry")
 US-ADMIN-007)
 
 - Pre: OWNER, elevated; FLAG-UI, on; MGR-M and VIEWER-V connected. See Q-9.
-- Steps: disable the flag through its dialog.
+- Steps: disable the flag through its dialog; then change an `owner_only` flag.
 - Expected: the feature disappears for every connected user within **≤10 s** of the `flags.change`
-  record, through the `system` topic.
+  record, through the `system` topic (`23` §8.1 pushes within 2 s: see Q-21). The `owner_only` flag's
+  frame reaches neither MGR-M nor VIEWER-V (AC-ADM-11).
 - Audit: `flags.change`, with the before and after values and OWNER as the actor.
 
 **AD-S05-02 A safety flag needs a fresh step-up** (`e2e`, `contract`; E42-S05 "Safety flags require
 step-up"; D13)
 
-- Pre: OWNER, with no live grace for the flag's class.
-- Steps: change a trading-capability flag.
-- Expected: the gate appears, and the write does not happen until the step-up succeeds.
-- Audit: `auth.step_up_required`, `auth.step_up_granted`, then one `flags.change`.
+- Pre: OWNER, with no live `flags` grace (an ordinary flag write is the `flags` class, with a 5-minute
+  grace; a kill-switch-class release is `killswitch`, no grace, and needs a fresh code every time).
+- Steps: change a trading-capability flag of the `flags` class; then release a kill-switch-class flag.
+- Expected: the gate appears, and the write does not happen until the step-up succeeds; the release asks
+  for a fresh code even inside a `flags` grace.
+- Audit: `auth.step_up_required` (and no `flags.change` for the challenged request), `auth.step_up_granted`,
+  then one `flags.change` per write.
 
 **AD-S05-03 Each flag's state is visible** (`e2e`; E42-S05 "Flag state visibility"; D13)
 
@@ -558,9 +618,14 @@ step-up"; D13)
 stays blocked here"; 22 `setFeatureFlag`)
 
 - Pre: FLAG-LIVE-BLOCKED: `trading.live_enabled` off, the pen-test sign-off outstanding.
-- Steps: look at the flag's row; then write it directly through the API.
+- Steps: look at the flag's row; then write it directly through the API, without evidence and then with
+  evidence.
 - Expected: the toggle is disabled, with the blocking reason and a link to the security centre. The direct
-  write answers `422 validation_failed` with rule `gate_evidence_required`, and nothing is written.
+  write without evidence answers `422 validation_failed` with rule `gate_evidence_required` before any
+  step-up, and nothing is written; the write with evidence meets the no-grace `live_enablement`
+  challenge (AC-ADM-06).
+- Audit: `flags.change` for the refused write (every attempt past RBAC is recorded, its `422`s included;
+  22 `setFeatureFlag`); the challenge, `auth.step_up_required`.
 
 **AD-S05-05 Maintenance mode's consequences are explicit [R]** (`e2e`; E42-S05 "Maintenance mode
 consequences are explicit"; SCR-148; D15)
@@ -578,6 +643,7 @@ mid-flight")
 
 - Pre: the server answers the flag write `422`.
 - Expected: the toggle returns to the server's value, with an inline error naming the reason.
+- Audit: `flags.change` for the refused write.
 
 **AD-S05-07 Armed rules that depend on a flag are listed** (`e2e`; E42-S05 "Armed rule depends on the
 flag")
@@ -587,12 +653,20 @@ flag")
 
 **Negative and boundary cases**
 
-- **AD-S05-N01 A flag changed twice in one second** (`e2e`, `integration`; US-ADMIN-007; 23 §8.1 and §15.9): two `flags.change` records, in order. The `system` topic does not throttle flag
-  frames, so every connected client receives both, in order, and ends on the second value within ≤10 s.
-- **AD-S05-N02 Two owners change one flag** (`contract`; D13): the second write, made on a stale version,
-  answers `409 conflict`, and nothing of it is applied.
+- **AD-S05-N01 A flag changed twice in one second** (`e2e`, `integration`; US-ADMIN-007; 23 §8.1 and §15.9):
+  the second write carries the first's `updated_at` as its version. Two `flags.change` records, in order.
+  A flag key is last-write-wins on the `system` topic (`23` §15.9), so every connected client ends on
+  the second value within ≤10 s, whether or not it saw the first.
+- **AD-S05-N02 Two owners change one flag** (`contract`; D13): both owners hold a live `flags` grace (the
+  order is RBAC, validation, step-up, then the precondition). The second write, made on a stale version,
+  answers `409 conflict`, nothing of it is applied, and it is recorded as `flags.change`.
 - **AD-S05-N03 A safety flag ignores overrides** (`security`; AC-ADM-09): an override row never changes a
-  safety flag's resolved value, and an unreadable row fails closed.
+  safety flag's resolved value, and an unreadable row fails closed. Pre: FLAG-OVERRIDE-ROWS (see §1).
+- **AD-S05-N04 A credential in the reason or the evidence URL** (`contract`, `security`; 22
+  `setFeatureFlag`; C-12.6): a write whose `reason` carries a credential answers `422` with rule
+  `credential_in_reason`, and one whose `evidence_url` does, rule `credential_in_url`; nothing is
+  written, the response never echoes the text, and the `flags.change` record holds the reason as
+  `<redacted:credential>`.
 
 ### S06: system health, incidents and backups (US-ADMIN-001, 011; SCR-143, SCR-144, SCR-146; D02 D12, D14)
 
@@ -601,7 +675,8 @@ flag")
 - Steps: open `/admin/health`.
 - Expected: WebSocket connection states, ingest rates and lag, the rate-limit budget per account, queue
   depths, database sizes and latency, error rates and process uptime. Each tile shows a number with its
-  unit, a state word and "as of"; never colour alone.
+  unit, a state word and "as of"; never colour alone. No health payload or drill-down carries a hostname,
+  a connection string or a stack trace (E42-D05; `04` row 48).
 
 **AD-S06-02 Drill down** (`e2e`; E42-S06 "Drill down"; D12)
 
@@ -623,23 +698,50 @@ reports"; D4)
 - Expected: the shell and navigation stay usable. Each tile keeps its last-known value, marked "stale
   since", rather than an empty page.
 
-**AD-S06-05 Restore is gated [R]** (`e2e`, `contract`; E42-S06 "Restore is gated"; D14)
+**AD-S06-05 Restore is gated [R]** (`e2e`, `contract`; E42-S06 "Restore is gated"; D14; 22
+`restoreBackup`; AC-ADM-23, AC-ADM-25)
 
-- Pre: OWNER with 2 open positions.
-- Steps: start the restore wizard and go through to the confirmation.
-- Expected:
-  - the wizard leads with "Bybit is not affected", and the owner must acknowledge that a restore changes
-    nothing on Bybit before continuing;
+- **Blocked:** `POST /admin/backups/{backupId}/restore` is `not_mounted` on this `main`
+  (`tests/contract/rbac/matrix.yaml`); the route waits on #3084. The service's preconditions are
+  already pinned by unit tests (AC-ADM-23, AC-ADM-25). Run it on a disposable stack: a restore
+  overwrites state.
+- Pre: OWNER with 2 open positions; maintenance mode on; a backup in status `verified`; a fresh
+  `backups` code for every attempt (`backups` is a no-grace class).
+- Steps: go through the restore wizard to the confirmation and submit it; then repeat the submission with
+  each precondition below broken in turn, stepping up again before each attempt.
+- Expected, the client:
+  - the wizard leads with "Bybit is not affected" (D02 §6.12 step 2), and the owner must acknowledge
+    that a restore changes nothing on Bybit before continuing;
   - the impact preview says trading halts during the restore and market history is not restored;
   - completion is rung 4: the backup's timestamp as the typed token, and a fresh `backups` code.
-- Audit: `backup.restore`, at high severity.
+- Expected, the server, whatever the client did, checked in this order and each refusal creating no job:
+  1. maintenance mode off: `409 conflict`, rule `maintenance_mode_required` (D14's maintenance gate);
+  2. a backup or restore running: `409 conflict`, rule `backup_or_restore_running`;
+  3. a backup not `ok`, `verified` or `restored`: `409 conflict`, rule `backup_not_usable` (a backup
+     whose digest differs from its bound record is not usable, AC-ADM-25);
+  4. the open-position state unreadable without `acknowledge_unknown_positions: true`:
+     `409 positions_unknown`;
+  5. open positions without `acknowledge_open_positions: true`: `409 conflict`, rule
+     `open_positions_unacknowledged`.
+
+  A refusal has already spent the step-up code, so the next attempt needs a fresh one; without one the
+  answer is `403 step_up_required` with `action_class: backups`. A refusal is not stored under the
+  `Idempotency-Key`, so the same key and body succeed once the cause clears. After an accepted restore
+  trading is force-disabled until it is turned back on.
+
+- Audit: `backup.restore` at severity `error` for every attempt past RBAC and the step-up, written before
+  the response: a refusal with `outcome: failure` and its rule (or `positions_unknown`) as `reason`, the
+  accepted restore with `outcome: success` (22 `restoreBackup`). E42-S06 says "high", which the audit
+  scale lacks: see Q-18. AC-ADM-24 (a restore that rolls back later security changes) waits on #3084
+  and the Owner's decision D7.
 
 **AD-S06-06 A failed verification is shown with its reason [R]** (`e2e`; E42-S06 "Backup verification
 fails")
 
 - Pre: BACKUP-VERIFY-FAILED, the most recent backup having failed verification.
 - Expected: its row shows the failed-verification state and its reason, and a warning states how old the
-  last verified backup is.
+  last verified backup is. Restore is disabled for it, with the reason; a restore of it sent to the API
+  answers `409 conflict` with rule `backup_not_usable` (blocked with AD-S06-05).
 
 **AD-S06-07 No backups yet** (`e2e`; E42-S06 "No backups yet")
 
@@ -651,16 +753,23 @@ fails")
 - **AD-S06-N01 An acknowledged incident stays open** (`e2e`, `contract`; D12; 22 `listIncidents`):
   acknowledging never resolves; the system resolves it, and a new occurrence reopens it. Audit:
   `incident.acknowledged`.
-- **AD-S06-N02 A backup's download and delete always need a fresh code** (`contract`; D14): rung 4, no
-  grace. Audit: `backup.downloaded`, `backup.deleted`.
+- **AD-S06-N02 A backup's download and delete always need a fresh code** (`contract`, `security`; D14;
+  AC-ADM-26): rung 4, no grace. The download link serves once: a second use, or one after its expiry, answers `410 gone` for an
+  hour and then as an unknown link, and the link's token appears in no log, record or answer. D02's handling warning
+  shows before the download. Audit: `backup.downloaded`, `backup.deleted`.
 
 ### S07: manager onboarding and governance (US-ADMIN-001, 005, 006, 013; SCR-140, SCR-141)
 
 **AD-S07-01 The guided steps** (`e2e`; E42-S07 "Guided steps")
 
+- Pre: the dev-only fixture exchange transport (`account_fixture_wiring.py`), whose synthetic keys the
+  key step can verify; never a real Bybit key (§0), since the server verifies a candidate key with the
+  exchange first (22 `createApiKey`).
 - Steps: start the manager onboarding flow and complete it.
 - Expected: it walks through sub-account creation, the 48-hour key restriction, key creation with 2FA,
   permission scoping, IP whitelisting, profile creation and limits, marking each completed step.
+- Audit: each step's own record (the key's, the profile's, the grant's); the onboarding records E42-S07
+  names are not registered: see Q-22.
 
 **AD-S07-02 A blocked step does not halt the flow [R]** (`e2e`; E42-S07 "Blocked step does not halt the
 flow"; D02 D8)
@@ -679,7 +788,9 @@ flow"; D02 D8)
 
 - Pre: GROUP-G, enabled, with an open group trade.
 - Steps: disable G.
-- Expected: G leaves the ticket's targets, and the positions opened through G stay fully manageable.
+- Expected: G leaves the ticket's targets, and the positions opened through G stay fully manageable. The
+  contract has no group-level enable or disable (`enabled` is per member, 22 trade groups), so this case
+  checks the ticket's targets only, with no server refusal to assert: see Q-22.
 
 **AD-S07-05 A membership change keeps the open trade's snapshot** (`integration`; E42-S07 "Membership change
 during an open trade")
@@ -691,24 +802,40 @@ during an open trade")
 **AD-S07-06 A secret is never shown again [R]** (`e2e`, `security`; E42-S07 "Secret never re-displayed";
 C-2.7)
 
+- Pre: as AD-S07-01, a synthetic key from the fixture transport.
 - Steps: enter an API secret at the key step; go back to that step.
 - Expected: only the key's fingerprint and status are shown. No secret value was written outside the
   encrypted store: not in a log, a record, the page state or local storage.
 
 **AD-S07-07 A recorder purge meets the gate first** (`e2e`; E42-S07 "Recorder purge from the admin area")
 
-- Pre: OWNER with no live grace.
-- Steps: open `/admin/recorder`; purge.
-- Expected: the gate appears before any destructive control is reachable. The purge shows its impact
-  preview and is rung 3: the object's own name as the typed token. See Q-8.
+- Pre: OWNER with no live `recorder` grace.
+- Steps: open `/admin/recorder`; purge; then, elevated, send a purge whose `confirm_symbol` differs from
+  the symbol, and one while a purge is queued; and send a purge as MGR-M.
+- Expected: the gate appears before any destructive control is reachable: without the grace the API
+  answers `403 step_up_required` with `action_class: recorder`, before the body is parsed. The purge
+  shows its impact preview and is rung 3: the object's own name as the typed token. A mismatched echo
+  answers `422` with code `purge_confirmation_mismatch`; a second purge while one is queued or running,
+  `409 job_running`; MGR-M, a `403` with no step-up prompt, the handler checking owner-only before the
+  step-up (audited `purge_owner_only`, `api/recorder_purge.py`).
+- Audit: `retention.purge` with the exact window, partition count, rows and bytes, written before the job
+  exists (22 `purgeRecordedData`; Q-8).
+
+**Negative and boundary cases**
+
+- **AD-S07-N01 A key with withdrawal rights is refused [R]** (`contract`, `security`; 22 `createApiKey`;
+  C-2.8): a synthetic key that holds a right whose name carries `withdraw` or `transfer` answers
+  `422 validation_failed` with code `key_withdraw_permission`; nothing is stored, and no secret is echoed
+  in the answer, a log or a record.
 
 ### E42-T07 and E42-S08: the statechart inspector
 
 **AD-T07-01 List the live machines** (`contract`; E42-T07 "List live machines"; 22 `listStatecharts`)
 
-- Pre: several machines running.
-- Expected: one row per machine, with its kind, state, `machine_hash`, `chain_trips` and
-  `dropped_receipts`.
+- Pre: several machines running, among them one of a kind with no public entity id (B8, B9, B13 or B15).
+- Expected: one row per live machine of a kind that has a public entity id, with its kind, state,
+  `machine_hash`, `chain_trips` and `dropped_receipts`; a kind with none gets no row and appears only in
+  `kinds`' counters-only summary (22 `listStatecharts`).
 
 **AD-T07-02 No live interpreter is queried** (`unit`, `integration`; E42-T07 "No hot-path interpreter
 query"; C-2.20)
@@ -722,13 +849,26 @@ registered chart")
 - Expected: the export for a registered `machine_hash` round-trips through the Stately schema the chart
   was authored in.
 
-**AD-T07-N01 A snapshot whose seal fails is left out** (`security`; 22 `listStatecharts`): it is left out of
-the list, `snapshots` says `error` with a fixed reason, and a critical event is raised once per machine,
-environment and snapshot.
+**AD-T07-N01 A snapshot whose seal fails is left out** (`security`; 22 `listStatecharts`): Pre:
+SC-FORGED-SEAL (see §1), on a test database. It is left out of the list, `snapshots` says `error` with a
+fixed reason, and a critical event is raised once per machine, environment and snapshot.
+
+**AD-T07-N02 A machine the caller may not see is invisible** (`contract`, `security`; 22 `listStatecharts`,
+`getStatechart`; C-12.4): the inspector is the Owner's (`admin:read`), so a Manager or Viewer gets
+`403 forbidden` on both reads. The Owner sees an `alert`, `replay` or `session` machine only if it is its
+own; a row it may not see is omitted, never redacted. `GET` of a machine the Owner may not see answers
+`404 not_found`, as an unknown machine does, even when that machine's seal fails (the visibility check
+comes first).
+
+**AD-T07-N03 The context summary is redacted** (`contract`, `security`; 22 `getStatechart`; C-12.6): a
+machine's `context_summary` holds only the keys its kind's `machines.{entity}.state` topic allows, and
+never a secret, a user id, free text, a deadline, an exchange id, a price, a quantity, a balance or a
+limit.
 
 **AD-S08-01 See a degraded machine [R]** (`e2e`; E42-S08 "See a degraded machine")
 
-- Pre: SC-CHAIN-TRIPS, a machine restored with `chain_trips` above 0.
+- Pre: SC-CHAIN-TRIPS, a machine of a kind that has a public entity id (so it has a row), restored with
+  `chain_trips` above 0.
 - Expected: it is listed as degraded, with its `chain_trips` and `dropped_receipts` counts shown.
 
 **AD-S08-02 Acknowledge a latch [R]** (`e2e`, `integration`; E42-S08 "Acknowledge a latch")
@@ -736,12 +876,17 @@ environment and snapshot.
 - Pre: SC-CHAIN-TRIPS.
 - Steps: acknowledge the latch with step-up.
 - Expected: the latch clears, and the machine serves order-path commands again. The acknowledgement is
-  audited with the owner's identity. See Q-7.
+  audited with the owner's identity, the machine and its prior `chain_trips` count. Its operation, step-up
+  class and action are not in `22` yet: see Q-7.
 
-**AD-S08-03 Acknowledging without elevation is refused** (`contract`; E42-S08 "Acknowledge without
-elevation is refused")
+**AD-S08-03 Acknowledging without elevation is refused [R]** (`contract`, `security`; E42-S08 "Acknowledge
+without elevation is refused")
 
-- Expected: the server refuses, the gate appears, and the latch stays set.
+- Pre: OWNER without the acknowledgement's step-up (its class is Q-7's question; under a no-grace class,
+  a live grace of any other class does not count).
+- Expected: the server answers `403 step_up_required` with the acknowledgement's `action_class`, the gate
+  appears, and the latch stays set.
+- Audit: `auth.step_up_required`; no acknowledgement record.
 
 **AD-S08-04 The diagram matches the running chart** (`e2e`; E42-S08 "State diagram matches the running
 chart")
@@ -774,8 +919,9 @@ catalogue's, and it is measured between server timestamps.
 **AD-X-02 The owner revokes a grant while the manager is subscribed [R]** (`e2e`; 22
 `setUserAccountAccess`; 23 §16.4 "Grant revocation mid-stream")
 
-- B: MGR-MANY, subscribed to SUB-S's and SUB-T's private topics.
-- A: OWNER removes MGR-MANY's grant on SUB-S.
+- B: MGR-MANY, subscribed to SUB-S's and SUB-T's private topics, its open-position state readable (else
+  the grant save answers `409 positions_unknown`).
+- A: OWNER, elevated (`users`), removes MGR-MANY's grant on SUB-S.
 - Expected: B receives `revoked` for SUB-S's subscriptions within **≤2 s** of the `users.access_change`
   record (22 `setUserAccountAccess`; `23` §16.4's matrix asks ≤1 s, see Q-14), and the SUB-T topics carry
   on. B's next read of SUB-S answers as for an account it was never granted, and resubscribing to SUB-S
@@ -848,11 +994,11 @@ changed there would permanently break an append-only, hash-chained log.
 | E42-S04 | No mutation affordance exists                         | AD-S04-02, CH-AD-2                                                 |
 | E42-S04 | Integrity verification                                | AD-S04-03                                                          |
 | E42-S04 | Manager scope                                         | AD-S04-04, CH-AD-1                                                 |
-| E42-S04 | Export is signed and audited                          | AD-S04-05, AD-S04-N01 to AD-S04-N05                                |
+| E42-S04 | Export is signed and audited                          | AD-S04-05, AD-S04-N01 to AD-S04-N05, AD-S04-N07 to AD-S04-N09      |
 | E42-S04 | (failure) Export job fails                            | AD-S04-06                                                          |
 | E42-S04 | (edge) Secret-bearing entry                           | AD-S04-07                                                          |
 | E42-S05 | Toggle a flag                                         | AD-S05-01, AD-S05-N01                                              |
-| E42-S05 | Safety flags require step-up                          | AD-S05-02, AD-S05-N03                                              |
+| E42-S05 | Safety flags require step-up                          | AD-S05-02, AD-S05-N03, AD-S05-N04                                  |
 | E42-S05 | Flag state visibility                                 | AD-S05-03, AD-S05-N02                                              |
 | E42-S05 | Live enablement stays blocked here                    | AD-S05-04                                                          |
 | E42-S05 | Maintenance mode consequences are explicit            | AD-S05-05, AD-X-03                                                 |
@@ -871,9 +1017,9 @@ changed there would permanently break an append-only, hash-chained log.
 | E42-S07 | Resume                                                | AD-S07-03                                                          |
 | E42-S07 | Disable a trade group                                 | AD-S07-04                                                          |
 | E42-S07 | Membership change during an open trade                | AD-S07-05                                                          |
-| E42-S07 | (failure) Secret never re-displayed                   | AD-S07-06                                                          |
+| E42-S07 | (failure) Secret never re-displayed                   | AD-S07-06, AD-S07-N01                                              |
 | E42-S07 | (edge) Recorder purge from the admin area             | AD-S07-07                                                          |
-| E42-T07 | List live machines                                    | AD-T07-01, AD-T07-N01                                              |
+| E42-T07 | List live machines                                    | AD-T07-01, AD-T07-N01 to AD-T07-N03                                |
 | E42-T07 | No hot-path interpreter query                         | AD-T07-02                                                          |
 | E42-T07 | Stately export matches the registered chart           | AD-T07-03                                                          |
 | E42-S08 | See a degraded machine                                | AD-S08-01                                                          |
@@ -921,9 +1067,12 @@ order is placed after a disable in AD-X-01; and the view-as entry criterion in s
 
 ## 7. The regression pack
 
-- **Members:** every case marked **[R]**. They cover each story group's headline behaviour, every
-  cross-session scenario, every case whose failure is a security or money incident (view-as, live
-  enablement, maintenance, the tamper check, the secret display), and each "survives the outage" case.
+- **Members:** every case marked **[R]**, and every security refusal case: AD-S02-N06, AD-S02-N08,
+  AD-S02-N09, AD-S03-N06 to AD-S03-N11, AD-S04-N05, AD-S04-N08, AD-S05-02, AD-S05-N04, AD-S07-07,
+  AD-S07-N01, AD-T07-N01 to AD-T07-N03 and AD-S08-03. They cover each story group's headline behaviour,
+  every cross-session scenario, every case whose failure is a security or money incident (view-as, live
+  enablement, maintenance, the tamper check, the secret display, "no record, no action"), and each
+  "survives the outage" case.
 - **When:** every sprint after the group's exit, and on any change to the admin routes, the auth and RBAC
   modules, the audit writer or reader, the flag service, the health feed or the backup engine.
 - **How:** the automated members run in CI's E2E and contract jobs (E42-Q02); the manual members run in the
@@ -1002,10 +1151,15 @@ guess.
   contract writes for the request and, with reason `downloaded`, for the download. AD-S04-05 expects those.
 - **Q-6:** E42-S05 requires a typed confirmation to enter maintenance mode. D02 D15 drops it, since it has no
   server counterpart, and leaves the choice open (O-E). AD-S05-05 asserts the rungs and not a typed word.
-- **Q-7:** E42-S08's latch acknowledgement has no operation in `22` and no registered audit action. AD-S08-02
-  expects a record with the owner's identity, under the action the story's contract slice registers.
-- **Q-8:** E42-S07 does not name the recorder purge's action. The registry has `retention.purge` and
-  `data.deleted`. AD-S07-07 expects the one the purge's operation documents.
+- **Q-7:** E42-S08's latch acknowledgement has no operation in `22`, no registered audit action and no
+  step-up class: `auth/step_up.py` has none for it. The story asks for a `killswitch`-equivalent class
+  (`is_dangerous`), yet also says "without step-up recently", which fits a grace class, not a no-grace
+  one; and it wants the record "at high severity" with the actor, the machine and the prior `chain_trips`
+  count, while the audit scale has no "high". AD-S08-02 and AD-S08-03 assert a refusal without the
+  step-up and a record with those fields, under the operation, class and action the story's contract
+  slice registers.
+- **Q-8 (answered):** E42-S07 names `retention.purge`, which the registry holds and `22`
+  `purgeRecordedData` writes before the job exists; AD-S07-07 expects it, gated by the `recorder` class.
 - **Q-9:** E42-S05's examples use a liquidation-heat estimate flag, and its scope asks for flags of every kind
   (boolean, percentage and variant). The flag catalogue (`admin/flags/catalogue.py`, `21` §10.7) holds no
   such flag and only boolean ones, and a flag outside it cannot be written. AD-S05-01 uses a catalogued UI
@@ -1034,7 +1188,8 @@ guess.
   it, with its freeze state and caps, and nothing refuses or flags it. `getUser`'s `ETag` covers the
   `User` representation, which holds no grants, and the user-lifecycle model's account-access threats
   (UL2) name no such race. AD-S03-N05 records the end state and asks the story whether the save takes a
-  precondition, as the `PATCH` does.
+  precondition, as the `PATCH` does. It is a lost update on the isolation boundary between managers (`22`
+  `setUserAccountAccess`), so the Security engineer should see it too.
 - **Q-17:** E42-S02's scope has the invite carry initial `account_access` grants, and `22`'s `createUser`
   example carries a `trade` grant. SR-027 (a new user has no grants), D02 D9 (AM-4) and the server
   (`InviteCreateRequest`: `account_access` must be empty, else `422` and `users.invite_refused`) refuse it.
@@ -1043,3 +1198,23 @@ guess.
   §13.2: a contract gap, routed to #889 and #2701). AD-S02-N06 asserts that gate. The server also gates
   re-issue and revoke (`POST` and `DELETE /users/{userId}/invite`) on `users`, which D02 §5 draws with no
   step-up, so no case asserts either until this is settled.
+- **Q-18:** E42-S06 expects `backup.restore` "at high severity". The contract writes it at `error` for every
+  attempt past RBAC and the step-up (22 `restoreBackup`; `critical` is kept for security events), and the
+  audit scale (`audit/models.py`) has no "high". AD-S06-05 expects `error`.
+- **Q-19:** E42-S04's manager-scope scenario opens "the audit log". D02 renders a manager's own actions on
+  the non-admin "My activity" route (D6, OQ-15), and `/admin/**` answers a Manager with the 404 surface.
+  AD-S04-04 opens that route; which ticket mounts it is OQ-15's to settle.
+- **Q-20:** ADR-0039's open Q2 (and `24`'s export section) leave what an export holds for a row of
+  redaction class P0 undecided. AD-S04-07 asserts that no secret value reaches the file; the P0 row's
+  exact content waits on that decision.
+- **Q-21:** US-ADMIN-007 bounds a flag change's reach at 10 s; `23` §8.1 pushes the `feature_flags` frame
+  within 2 s of the commit. AD-S05-01 asserts the story's ≤10 s until they agree.
+- **Q-22:** E42-S07's scope names actions the registry does not hold: `user.onboarding_started`,
+  `user.onboarding_resumed`, `user.onboarding_completed`, `trade_group.enabled`, `trade_group.disabled`,
+  `trade_group.renamed`, `trade_group.reordered` and `trade_group.membership_changed`. And `22` has no
+  group-level enable or disable and no per-user allowlist (`enabled` is per member). AD-S07-01 to
+  AD-S07-05 assert the records the steps' own operations write, and AD-S07-04 the ticket's targets only,
+  until the story's contract slice registers them.
+- **Q-23:** C-12.4 calls a Viewer "read-only, including audit", and E42-S04's context gives viewers
+  `audit:read`. The contract (22 `queryAuditLog`: a Viewer holds no `audit:read` and gets `403`), `04`
+  §7.2, D02 AM-5 and the server refuse a Viewer (owner decision on #2083). AD-S01-02 follows the refusal.
