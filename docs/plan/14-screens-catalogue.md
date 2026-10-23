@@ -2624,6 +2624,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 ### SCR-140 — Admin: recorder & storage
 
 - **UX research (E16-D01):** [recorder mental model, auto-record disclosure and disk framing](../design/research/e16-recorder-mental-model.md) — heuristic research, recommendations pending confirmation: owner decisions on the linger default and toast vs silent auto-record, a state-first disk headline, and the recorder contract asks (`lingering`, disk level and gate, `cap_bytes`).
+- **Design (E16-D02):** [hi-fi states, CMP-177 contract, copy, motion and redlines](../design/E16/E16-D02.md) (#323), owner approval pending.
 - **Type:** Page. **Route:** `/admin/recorder`.
 
 ```
@@ -2635,20 +2636,21 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 | ETHUSDT  2026-09-04  200    0.52 GB/d 5.2 GB  no   30 d       |
 | SOLUSDT  2026-09-13  50     0.11 GB/d 0.1 GB  no   30 d (auto)|
 |   auto-recorded: chart open / position open                   |
-| Disk: [#########-------] 41 / 200 GB   projection 60 d: 118 GB|
-| [ Retention policy ]  [ Compact now ]  [ Purge expired ]      |
+| Growing - auto-record pauses in about 104 days                |
+| Disk: [####------------] 41 / 200 GB  in 30 d: about 81 GB    |
+| [ Retention policy ]  [ Compact now ]  [ Purge data... ]      |
 +---------------------------------------------------------------+
 ```
 
-- **Data:** `GET /api/v1/recording/status`, `POST /api/v1/recording/symbols`, `DELETE /api/v1/recording/symbols/{recordedSymbolId}`, `PATCH /api/v1/recording/symbols/{recordedSymbolId}` (pin, retention, depth), `POST /api/v1/admin/recorder/compact`, `POST /api/v1/admin/recorder/purge`; live via WS `recorder`.
-- **Interactions:** start/stop recording, pin (keep forever), change depth tier, set per-symbol retention, purge expired data, compact cold storage.
-- **States:** running · starting (initial snapshot) · degraded (WS gaps recorded in a gap table with timestamps) · paused · disk warning at 80 % ("Disk 80 % full — recording stops at 95 % to protect the database") · disk critical (recording stopped, banner) · purge in progress.
-- **Validation:** stopping a recording warns that history stops accumulating and existing data is retained per policy; purging requires a typed confirm and lists exactly which ranges and how many GB will be deleted irreversibly; a symbol with an open position cannot be un-recorded ("SOLUSDT has an open position and is auto-recorded.").
+- **Data:** `GET /api/v1/recording/symbols`, `GET /api/v1/recording/status`, `GET /api/v1/recording/storage`, `GET /api/v1/recording/sessions`, `POST /api/v1/recording/symbols`, `DELETE /api/v1/recording/symbols/{recordedSymbolId}`, `PATCH /api/v1/recording/symbols/{recordedSymbolId}` (pin, retention, depth), `PUT /api/v1/recording/symbols/{recordedSymbolId}/pin`, `POST /api/v1/admin/recorder/compact`, `POST /api/v1/admin/recorder/purge` (one symbol per call), `GET /api/v1/admin/jobs/{jobId}`; live via WS `recorder`; the recording-status amendment's fields (E16-D02 §2).
+- **Interactions:** start/stop recording, pin (keep forever), change depth tier, set per-symbol retention, purge data (per symbol), compact cold storage.
+- **States:** running · starting (initial snapshot) · degraded (WS gaps recorded in a gap table with timestamps) · paused (disk level 2: auto-record paused at 90 %) · disk warning at 80 % ("Near limit · auto-record pauses in about 20 days"; "Recording budget 80.5 % used (161.0 GB of 200 GB)") · disk critical (recording stopped, banner) · purge in progress · empty (no symbols recorded yet).
+- **Validation:** stopping a recording warns that history stops accumulating and existing data is retained per policy; purging is per symbol, requires step-up, a reason and the typed symbol, and states the window and about how many GB will be deleted irreversibly; a symbol with an open position cannot be un-recorded: its Stop is T2 with a `recorder.stop_blocked.position_*` reason (E16-D02 §8.5, §10.5).
 - **A11y:** the disk meter has numeric text; gaps are a table with start/end/duration.
 - **Performance:** status updates at 1 Hz; the page never blocks ingestion.
 - **Audit:** `recorder.started|stopped|pinned|retention_changed|purged` (purge is high severity).
 - **Sign-off:** [ ] disk projection formula shown [ ] purge is irreversible and says so [ ] auto-record triggers explained [ ] gap visualisation. **Stories:** US-REC-001..008.
-- **Components:** CMP-001 Button, CMP-004 Toggle, CMP-023 Progress Bar, CMP-049 Table, CMP-055 FilterBar, CMP-087 AdminLayout, CMP-177 RecorderStatusRow.
+- **Components:** CMP-001 Button, CMP-002 IconButton, CMP-004 Toggle, CMP-005 Checkbox, CMP-006 RadioGroup, CMP-007 TextInput, CMP-008 NumericStepperInput, CMP-009 Select, CMP-011 Tag, CMP-012 Badge, CMP-014 Spinner, CMP-015 Skeleton, CMP-016 Tooltip, CMP-017 Popover, CMP-019 Icon, CMP-020 Typography, CMP-023 Progress Bar, CMP-026 EmptyState, CMP-028 Callout / Banner, CMP-040 FormField, CMP-043 Dialog, CMP-044 ConfirmDialog, CMP-046 Drawer, CMP-047 DatePicker / DateRangePicker, CMP-048 Combobox, CMP-049 Table, CMP-050 Card, CMP-054 SearchBox, CMP-055 FilterBar, CMP-079 RbacGate, CMP-087 AdminLayout, CMP-088 PageHeader, CMP-093 AuditActionTrigger, CMP-177 RecorderStatusRow.
 - **Stories:** US-REC-001, US-REC-002, US-REC-005, US-REC-008.
 - **Design sign-off acceptance checklist:** [ ] the user-managed recorded-symbols list with add/remove drawn [ ] auto-record triggers (chart open, position open) shown as explicit, labelled rules with the ability to review what they added [ ] per-symbol state (recording / paused / stopped / backfilling), start timestamp and disk used [ ] the disk-budget display (~0.5-0.75 GB/day/symbol at 200 depth) with a projection [ ] retention per symbol incl. 'pin = keep forever' [ ] the 'nothing is recorded by default' statement [ ] stop-recording confirmation explaining that history stops accruing but existing data is kept [ ] empty state (no symbols recorded yet)
 
