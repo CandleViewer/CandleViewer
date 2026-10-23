@@ -5111,6 +5111,7 @@ tracker).
 
 ### Security
 
+- **electron-shell**: the desktop shell moves from Electron 41.10.7 to 45.0.0 (Chromium 156), a supported major that carries the fix for the Medium finding in 41; the shell's hardening settings are unchanged (#1819) (#4168)
 - **rule-engine**: no rule may loosen a stop, for any role: saving, validating, compiling or importing a rule with a `widen_stop` action, or a stop action whose `only_tighten` is not `true`, is now refused with the `stop_loosening` issue, and a stored version holding one cannot be armed; the `rules.loosen_stop` permission, which no role held, is removed (#2698) (#4246)
 - **rule-engine**: saving, validating or compiling a rule now applies the document bounds and caps the request body, and text a rule cannot store is refused with a 4xx instead of a 500 (#4186) (#4197)
 - **backend-platform**: a request body whose money or size member is not a plain decimal string is now refused with a 422 instead of failing with a 500 or growing the response, and a member the contract defaults refuses an explicit `null` (#906) (#4147)

@@ -4,11 +4,13 @@ packages:
 
 # Supply-chain hardening (C-12.3): .npmrc sets ignore-scripts=true globally.
 # esbuild (a transitive dev-dependency of vitest and vite, and since #3422 a
-# direct devDependency of @candleviewer/ui) and electron (E02-T04,
-# apps/desktop) ship legitimate, widely audited postinstall scripts that
-# fetch their platform binary; both are explicitly allowlisted here rather
-# than disabling ignore-scripts repo-wide. Any future addition to this list
-# needs the same review note.
+# direct devDependency of @candleviewer/ui) ships a legitimate, widely audited
+# postinstall script that fetches its platform binary; it is explicitly
+# allowlisted here rather than disabling ignore-scripts repo-wide. electron
+# (E02-T04, apps/desktop) has shipped no install script since Electron 42, so
+# its entry runs nothing; it stays to mirror tools/ci/allowed-postinstall.json,
+# whose runner fetches the binary through electron's own install-electron bin
+# (#1819). Any future addition to this list needs the same review note.
 allowBuilds:
   electron: true
   esbuild: true

@@ -17,7 +17,8 @@ The rules follow C-10.2 verbatim (scripts/tests/test_security_review_label.py pa
   directory under apps/web/src/, so a new slice counts before the list names it;
 - dependency manifests in any directory: MANIFESTS (package and lock files, and the pnpm and npm
   configs and hooks that set overrides, install scripts and the registry), pip's
-  `requirements*.txt`, and POSTINSTALL, the packages whose install scripts CI runs (SR-138);
+  `requirements*.txt`, and POSTINSTALL, the list of packages whose install steps CI runs and
+  the runner that runs them (SR-138);
 - a path with `key`, `secret`, `token` or `crypt` in any case in a file or directory name (`*key*`
   and the rest, matched as CODEOWNERS matches a slash-less glob; camelCase TS names count).
   Verbatim, so the keymap and the design tokens match too.
@@ -71,7 +72,8 @@ WEB_AUTH_PATHS = (
 )
 MANIFESTS: tuple[str, ...] = ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc")
 MANIFESTS += (".pnpmfile.cjs", "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock")
-POSTINSTALL = "tools/ci/allowed-postinstall.json"
+# SR-138: the allowlist of install steps CI runs, and the runner that runs them (#1819).
+POSTINSTALL = ("tools/ci/allowed-postinstall.json", "tools/ci/run-allowed-postinstall.mjs")
 GATE = ("tools/ci/security_review_label.py", "scripts/tests/test_security_review_label.py")
 WORDS = ("key", "secret", "token", "crypt")
 API_ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, http.client.HTTPException)
@@ -96,7 +98,7 @@ RULES = (
     (
         "dependency manifest",
         rf"^(([^/]+/)*({'|'.join(map(_literal, MANIFESTS))}|requirements[^/]*\.txt$)|"
-        rf"{_literal(POSTINSTALL)})",
+        rf"{'|'.join(map(_literal, POSTINSTALL))})",
     ),
     ("CI workflow file", rf"^(\.github/(workflows|actions)/|{'|'.join(map(_literal, GATE))})"),
     ("name glob", rf"^.*({'|'.join(map(_any_case, WORDS))})"),  # a directory's name counts too

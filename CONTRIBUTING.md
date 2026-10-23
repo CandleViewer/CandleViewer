@@ -136,7 +136,7 @@ the whole thing exactly as CI does with:
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts
-node tools/ci/run-allowed-postinstall.mjs   # SR-138 exception list (electron, esbuild)
+node tools/ci/run-allowed-postinstall.mjs   # SR-138: esbuild's postinstall, electron's binary fetch
 pnpm turbo run lint typecheck test:cov build --filter='...[origin/main]'
 ```
 

@@ -275,13 +275,11 @@ function installAppProtocol(csp: string): void {
  * Denies every Electron permission the app does not need. Nothing in
  * CandleViewer's scope needs camera, microphone, geolocation, MIDI or OS
  * notifications from the renderer's own request path (notifications are
- * surfaced via `ShellPort.notifications`, main-process initiated) — every
+ * for the main process to raise; it raises none yet) — every
  * request is therefore explicitly denied rather than left to Electron's
  * default (which varies by permission). Device access (WebHID, WebUSB, Web
  * Serial) goes through a separate check, which is denied the same way: the app
- * uses no device. The denial stays after the Electron upgrade; until then it
- * also covers Electron 41's check, which can attribute a device permission to
- * the wrong origin (GHSA-fw47-9c62-h3vw, #3639).
+ * uses no device.
  */
 function installPermissionHandler(): void {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {

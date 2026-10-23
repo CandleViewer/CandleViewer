@@ -185,7 +185,7 @@ def test_electron_toolchain_past_high_advisories() -> None:
     dev = json.loads((ROOT / "apps/desktop/package.json").read_text(encoding="utf-8"))[
         "devDependencies"
     ]
-    assert dev["electron"] == "^41.10.7"
+    assert dev["electron"] == "^45.0.0"
     assert dev["electron-builder"] == "^26.15.3"
 
 
