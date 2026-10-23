@@ -22,7 +22,7 @@ from candleviewer.accounts.errors import (
     AccountsError,
     AccountVersionConflictError,
 )
-from candleviewer.accounts.profile_repository import ProfilesRepository
+from candleviewer.accounts.profile_repository import DefaultBinding, ProfilesRepository
 from candleviewer.accounts.profiles import AccountProfile, profile_values
 from candleviewer.storage.repositories.account_profiles import (
     DEFAULT_MOVES_ALONE,
@@ -33,6 +33,7 @@ from candleviewer.storage.repositories.account_profiles import (
     AccountProfileStoreRuleError,
     AccountProfileStoreScopeDeniedError,
     AccountProfileStoreStaleError,
+    DefaultBindingRow,
     DefaultMove,
 )
 from candleviewer.storage.repositories.accounts import OwnerScope
@@ -122,7 +123,9 @@ async def test_reads_map_rows_to_the_domain_model() -> None:
         lambda r: r.get_profile(_OWNER, _P.account_id, _P.profile_id),
         lambda r: r.update_profile(_OWNER, _P.account_id, _P.profile_id, _P, expected_version=3),
         lambda r: r.delete_profile(_OWNER, _P.account_id, _P.profile_id, expected_version=3),
-        lambda r: r.set_default_profile(_OWNER, _P.account_id, _P.profile_id, expected_version=3),
+        lambda r: r.set_default_profile(
+            _OWNER, _P.account_id, _P.profile_id, expected_binding_version=3
+        ),
         lambda r: r.get_revision(_OWNER, _P.account_id, _P.profile_id, 2),
         lambda r: r.create_profile(_OWNER, _P.account_id, _P),
     ],
@@ -216,8 +219,12 @@ _WRITES: dict[str, tuple[Any, object]] = {
         _row(version=4),
     ),
     "set_default": (
-        lambda r: r.set_default_profile(_OWNER, _P.account_id, _P.profile_id, expected_version=3),
-        DefaultMove(profile=_row(version=4, is_default=True), previous=None, written=True),
+        lambda r: r.set_default_profile(
+            _OWNER, _P.account_id, _P.profile_id, expected_binding_version=3
+        ),
+        DefaultMove(
+            profile=_row(version=4, is_default=True), previous=None, written=True, version=4
+        ),
     ),
 }
 
@@ -234,7 +241,7 @@ async def _write(repo: ProfilesRepository, write: str, **kw: Any) -> object:
             _OWNER, _P.account_id, _P.profile_id, expected_version=3, **kw
         )
     return await repo.set_default_profile(
-        _OWNER, _P.account_id, _P.profile_id, expected_version=3, **kw
+        _OWNER, _P.account_id, _P.profile_id, expected_binding_version=3, **kw
     )
 
 
@@ -302,20 +309,60 @@ async def test_a_refusal_is_logged_by_its_name_and_never_a_value() -> None:
 
 async def test_moving_the_default_counts_both_bumps_and_returns_both_profiles() -> None:
     old = _row(_profile(profile_id=str(uuid4()), name="Old"), version=5, is_default=False)
-    move = DefaultMove(profile=_row(version=4, is_default=True), previous=old, written=True)
+    move = DefaultMove(
+        profile=_row(version=4, is_default=True), previous=old, written=True, version=4
+    )
     repo, _, cache, bumps = _repo(move)
-    moved = await repo.set_default_profile(_OWNER, _P.account_id, _P.profile_id, expected_version=3)
+    moved = await repo.set_default_profile(
+        _OWNER, _P.account_id, _P.profile_id, expected_binding_version=3
+    )
     assert moved.profile.is_default and moved.previous is not None and moved.previous.name == "Old"
     assert bumps.total == 2 and cache.invalidated == [_P.account_id]
 
 
 async def test_setting_the_default_again_writes_and_counts_nothing() -> None:
-    move = DefaultMove(profile=_row(is_default=True), previous=None, written=False)
+    move = DefaultMove(profile=_row(is_default=True), previous=None, written=False, version=3)
     repo, _, _, bumps = _repo(move)
     moved = await repo.set_default_profile(
-        _OWNER, _P.account_id, _P.profile_id, expected_version=None
+        _OWNER, _P.account_id, _P.profile_id, expected_binding_version=3
     )
-    assert moved.previous is None and bumps.total == 0
+    assert moved.previous is None and moved.version == 3 and bumps.total == 0
+
+
+async def test_a_move_answers_the_binding_version_after_it() -> None:
+    """The binding's `ETag` after the move (#906 0d) is the store's version, never the tag sent."""
+    move = DefaultMove(
+        profile=_row(version=4, is_default=True), previous=None, written=True, version=8
+    )
+    repo, store, _, _ = _repo(move)
+    moved = await repo.set_default_profile(
+        _OWNER, _P.account_id, _P.profile_id, expected_binding_version=7
+    )
+    assert moved.version == 8 and moved.profile.is_default
+    assert store.calls[0][2] == {"expected_binding_version": 7, "write_ahead": None}
+
+
+async def test_the_binding_reads_as_its_default_profile_and_version() -> None:
+    row = DefaultBindingRow(account_id=_P.account_id, profile_id=_P.profile_id, version=5)
+    repo, store, cache, _ = _repo(row)
+    binding = await repo.get_default_binding(_OWNER, _P.account_id)
+    assert binding == DefaultBinding(account_id=_P.account_id, profile_id=_P.profile_id, version=5)
+    assert store.calls == [("get_default_binding", (_OWNER, _P.account_id), {})]
+    assert cache.invalidated == []
+
+
+async def test_a_binding_out_of_scope_or_missing_is_the_accounts_not_found() -> None:
+    """The store reads an account that is missing, soft-deleted or out of the grants as `None`,
+    all alike (no existence oracle); a binding names the account, so its miss does too. An owner
+    scope held by anyone else is the uniform 403, unchained."""
+    repo, _, _, _ = _repo(None)
+    with pytest.raises(AccountNotFoundError) as ei:
+        await repo.get_default_binding(_OWNER, _P.account_id)
+    assert ei.value.entity == "account" and str(ei.value) == "not found"
+    denied, _, _, _ = _repo(AccountProfileStoreScopeDeniedError())
+    with pytest.raises(AccountScopeDeniedError) as refused:
+        await denied.get_default_binding(_OWNER, _P.account_id)
+    assert refused.value.__cause__ is None and refused.value.__suppress_context__
 
 
 async def test_delete_counts_one_bump_and_returns_the_deleted_profile() -> None:

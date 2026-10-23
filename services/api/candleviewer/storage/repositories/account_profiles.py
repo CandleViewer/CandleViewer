@@ -111,11 +111,23 @@ class AccountProfileRevision:
 @dataclass(frozen=True, slots=True)
 class DefaultMove:
     """`set_default_profile`'s answer: the new default, the profile it replaced (`None` when the
-    account had none) and whether anything was written (not when it already was the default)."""
+    account had none), whether anything was written (not when it already was the default) and the
+    binding's version after the move: unchanged when nothing was written, otherwise one more."""
 
     profile: AccountProfileRow
     previous: AccountProfileRow | None
     written: bool
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
+class DefaultBindingRow:
+    """An account's default binding: its live default profile and the binding's version
+    (`exchange_accounts.default_binding_version`, 21 Sec.3.2.1)."""
+
+    account_id: UUID
+    profile_id: UUID
+    version: int
 
 
 #: Awaited inside a write's transaction, before it commits, once per profile row the write
@@ -170,7 +182,8 @@ class AccountProfileStoreRuleError(AccountProfileStoreError):
 
 
 class AccountProfileStoreStaleError(AccountProfileStoreError):
-    """`expected_version` no longer matches the live row (problem code `version_conflict`)."""
+    """`expected_version`, or a default move's `expected_binding_version`, no longer matches the
+    live row (problem code `version_conflict`)."""
 
 
 class AccountProfileStore(Protocol):
@@ -186,6 +199,12 @@ class AccountProfileStore(Protocol):
     async def get_profile(
         self, scope: AccountScope, account_id: UUID, profile_id: UUID
     ) -> AccountProfileRow | None: ...
+
+    async def get_default_binding(
+        self, scope: AccountScope, account_id: UUID
+    ) -> DefaultBindingRow | None:
+        """The binding of a live account in scope; `None` otherwise."""
+        ...
 
     async def create_profile(
         self,
@@ -219,11 +238,13 @@ class AccountProfileStore(Protocol):
         account_id: UUID,
         profile_id: UUID,
         *,
-        expected_version: int | None,
+        expected_binding_version: int,
         write_ahead: ProfileWriteAhead | None = None,
     ) -> DefaultMove | None:
-        """Unset the account's default and set this profile's, in one transaction; `write_ahead`
-        sees the previous default first, then the new one."""
+        """Unset the account's default and set this profile's, in one transaction, at the
+        binding's version, which is required (the binding has no last-write-wins): a stale one
+        raises `AccountProfileStoreStaleError` before the profile is read. `write_ahead` sees the
+        previous default first, then the new one."""
         ...
 
     async def delete_profile(

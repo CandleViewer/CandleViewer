@@ -41,6 +41,7 @@ from candleviewer.storage.repositories.account_profiles import (
     AccountProfileStoreScopeDeniedError,
     AccountProfileStoreStaleError,
     AccountProfileValues,
+    DefaultBindingRow,
     DefaultMove,
     LadderRung,
 )
@@ -154,6 +155,8 @@ def _store(rel: _Rel) -> mod.SqlAlchemyAccountProfileStore:
 
 
 _GATE_OK = _Result(scalar=True)
+#: The account row a move locks first, at binding version 3.
+_BIND3 = _Result([{"default_binding_version": 3}])
 
 
 # -- the statements -------------------------------------------------------------------------------
@@ -184,9 +187,12 @@ def test_the_ladder_is_read_as_text_so_its_numbers_stay_exact() -> None:
         mod.revision_statement(_OWNER, _ACCOUNT, _PROFILE, 2),
         mod.lock_account_statement(_OWNER, _ACCOUNT),
         mod.default_statement(_OWNER, _ACCOUNT),
+        mod.binding_lock_statement(_OWNER, _ACCOUNT),
+        mod.binding_statement(_OWNER, _ACCOUNT),
     ],
     ids=[
         "list", "get", "update", "lock", "unset", "set", "delete", "revision", "account", "default",
+        "binding-lock", "binding",
     ],
 )  # fmt: skip
 def test_every_owner_statement_carries_the_live_account_and_the_owner_predicate(stmt: Any) -> None:
@@ -232,6 +238,25 @@ def test_the_default_read_locks_the_live_default_of_this_account_only() -> None:
     assert _params(stmt)["exchange_account_id_1"] == _ACCOUNT
 
 
+@pytest.mark.parametrize("scope", [_OWNER, _GRANT], ids=["owner", "grant"])
+def test_the_binding_read_joins_the_live_default_in_scope(scope: OwnerScope | GrantScope) -> None:
+    """#906 0d: the account's live default beside its binding version, under the caller's own
+    predicate (SR-051), and with no lock: a read never waits for a move."""
+    stmt = mod.binding_statement(scope, _ACCOUNT)
+    sql, where = _sql(stmt), _where(stmt)
+    assert sql.startswith(
+        "SELECT account_profiles.id, exchange_accounts.default_binding_version "
+        "FROM exchange_accounts JOIN account_profiles "
+        "ON account_profiles.exchange_account_id = exchange_accounts.id WHERE "
+    )
+    assert "account_profiles.exchange_account_id = $" in where
+    assert "account_profiles.is_default IS true" in where
+    assert "account_profiles.deleted_at IS NULL" in where
+    owner = "r.name = 'owner' AND u.deleted_at IS NULL AND u.status = 'active'"
+    assert ("uaa.can_view AND NOT uaa.frozen" if scope is _GRANT else owner) in where
+    assert " FOR " not in sql
+
+
 def test_a_list_reads_live_profiles_the_default_first_and_is_bounded() -> None:
     """#905: soft delete is honoured in every read; the default leads (D7), then names."""
     sql = _sql(mod.list_statement(_OWNER, _ACCOUNT))
@@ -273,12 +298,14 @@ def test_the_account_subquery_is_never_correlated_away() -> None:
     for stmt in (
         mod.get_statement(_OWNER, _ACCOUNT, _PROFILE),
         mod.effective_statement(_ACCOUNT, None),
+        mod.binding_statement(_OWNER, _ACCOUNT),
     ):
         assert re.search(r"EXISTS \(SELECT \S+ AS anon_\d+\s+FROM exchange_accounts", _sql(stmt))
 
 
 def test_writes_set_updated_by_and_never_version_or_updated_at() -> None:
-    """`trg_ap_version` and the touch trigger own those columns (SR-E28-07)."""
+    """`trg_ap_version` and the touch trigger own those columns (SR-E28-07), and
+    `trg_ap_default_binding` the binding's version (#906 0d): no write names it."""
     for stmt in (
         mod.update_statement(_OWNER, _ACCOUNT, _PROFILE, _VALUES, None),
         mod.set_default_statement(_OWNER, _ACCOUNT, _PROFILE),
@@ -288,10 +315,12 @@ def test_writes_set_updated_by_and_never_version_or_updated_at() -> None:
         assignments = _assignments(stmt)
         assert "updated_by=" in assignments
         assert "version=" not in assignments and "updated_at=" not in assignments
+        assert "default_binding_version" not in _sql(stmt)
     insert = _sql(mod.insert_statement(_OWNER, _ACCOUNT, _PROFILE, _VALUES))
     columns = insert.split("(", 1)[1].split(")", 1)[0]
     assert "version" not in columns.split(", ") and "updated_at" not in columns.split(", ")
     assert "created_by" in columns and "updated_by" in columns
+    assert "default_binding_version" not in insert
 
 
 def test_update_never_moves_the_default_and_checks_the_expected_version() -> None:
@@ -564,20 +593,29 @@ async def test_delete_returns_the_deleted_row_and_commits() -> None:
     assert row is not None and row.deleted_at == _T and rel.commits == 1
 
 
-async def test_set_default_moves_it_under_the_account_lock_unsetting_first() -> None:
+async def test_set_default_moves_it_under_the_account_row_lock_unsetting_first() -> None:
+    """#906 0d: the account row first, `FOR NO KEY UPDATE` and before any profile row (21
+    Sec.3.2.4), so moves on one account run one at a time; the database bumps the binding."""
     old = _mapping(id=str(uuid4()), version=2, is_default=True)
     rel = _Rel(
         _GATE_OK,
-        _Result(),
+        _BIND3,
         _Result([_mapping(version=3)]),
         _Result([old | {"version": 3, "is_default": False}]),
         _Result([_mapping(version=4, is_default=True)]),
     )
-    move = await _store(rel).set_default_profile(_OWNER, _ACCOUNT, _PROFILE, expected_version=3)
-    assert move is not None and move.written and move.profile.values.is_default
+    move = await _store(rel).set_default_profile(
+        _OWNER, _ACCOUNT, _PROFILE, expected_binding_version=3
+    )
+    assert move is not None and move.written and move.version == 4
+    assert move.profile.id == _PROFILE and move.profile.values.is_default
     assert move.previous is not None and not move.previous.values.is_default and rel.commits == 1
+    assert len(rel.calls) == 5
     lock, select, unset, set_ = (_sql(c) for c in rel.calls[1:5])
-    assert "pg_advisory_xact_lock(hashtextextended('cv.profiles.default:'" in lock
+    assert lock.startswith(
+        "SELECT exchange_accounts.default_binding_version FROM exchange_accounts"
+    )
+    assert lock.endswith(" FOR NO KEY UPDATE OF exchange_accounts")
     assert "FOR UPDATE OF account_profiles" in select
     assert unset.startswith("UPDATE account_profiles SET is_default=$1::BOOLEAN")
     assert set_.startswith("UPDATE account_profiles SET is_default=$1::BOOLEAN")
@@ -632,7 +670,7 @@ async def test_a_default_move_hands_the_hook_the_old_default_then_the_new_one() 
     old = _mapping(id=str(uuid4()), version=2, is_default=True)
     rel = _Rel(
         _GATE_OK,
-        _Result(),
+        _BIND3,
         _Result([_mapping(version=3)]),
         _Result([old]),
         _Result([old | {"version": 3, "is_default": False}]),
@@ -640,7 +678,7 @@ async def test_a_default_move_hands_the_hook_the_old_default_then_the_new_one() 
     )
     ahead = _Ahead(rel)
     await _store(rel).set_default_profile(
-        _OWNER, _ACCOUNT, _PROFILE, expected_version=3, write_ahead=ahead
+        _OWNER, _ACCOUNT, _PROFILE, expected_binding_version=3, write_ahead=ahead
     )
     assert ahead.seen == [(2, 3, 0), (3, 4, 0)] and rel.commits == 1
     assert "FOR UPDATE OF account_profiles" in _sql(rel.calls[3])
@@ -649,7 +687,7 @@ async def test_a_default_move_hands_the_hook_the_old_default_then_the_new_one() 
 async def test_a_default_move_without_a_previous_default_hands_the_hook_the_new_one_only() -> None:
     rel = _Rel(
         _GATE_OK,
-        _Result(),
+        _BIND3,
         _Result([_mapping(version=3)]),
         _Result([]),
         _Result([]),
@@ -657,7 +695,7 @@ async def test_a_default_move_without_a_previous_default_hands_the_hook_the_new_
     )
     ahead = _Ahead(rel)
     move = await _store(rel).set_default_profile(
-        _OWNER, _ACCOUNT, _PROFILE, expected_version=3, write_ahead=ahead
+        _OWNER, _ACCOUNT, _PROFILE, expected_binding_version=3, write_ahead=ahead
     )
     assert move is not None and move.written and move.previous is None
     assert ahead.seen == [(3, 4, 0)] and rel.commits == 1
@@ -675,7 +713,7 @@ async def _refusable(
             _OWNER, _ACCOUNT, _PROFILE, expected_version=3, write_ahead=ahead
         )
     return await store.set_default_profile(
-        _OWNER, _ACCOUNT, _PROFILE, expected_version=3, write_ahead=ahead
+        _OWNER, _ACCOUNT, _PROFILE, expected_binding_version=3, write_ahead=ahead
     )
 
 
@@ -692,13 +730,15 @@ _DEFAULT = _Result([_mapping(version=3, is_default=True)])
         ("delete", [_V4, _Result([]), _V4], AccountProfileStoreStaleError),
         ("delete", [_DEFAULT, _Result([]), _DEFAULT], AccountProfileStoreConflictError),
         ("delete", [_Result([]), _Result([]), _Result([])], None),
-        ("default", [_Result(), _V4], AccountProfileStoreStaleError),
-        ("default", [_Result(), _Result([])], None),
-        ("default", [_Result(), _DEFAULT], None),
+        ("default", [_Result([{"default_binding_version": 4}])], AccountProfileStoreStaleError),
+        ("default", [_Result([])], None),
+        ("default", [_BIND3, _Result([])], None),
+        ("default", [_BIND3, _DEFAULT], None),
     ],
     ids=[
         "stale-update", "missing-update", "default-moves-alone", "stale-delete",
-        "delete-the-default", "missing-delete", "stale-move", "missing-move", "already-default",
+        "delete-the-default", "missing-delete", "stale-move", "missing-account-move",
+        "missing-move", "already-default",
     ],
 )  # fmt: skip
 async def test_a_write_that_changes_no_row_never_calls_the_hook(
@@ -756,22 +796,43 @@ async def test_without_a_hook_a_write_reads_nothing_first() -> None:
     assert len(rel.calls) == 2 and _sql(rel.calls[1]).startswith("UPDATE account_profiles")
 
 
-async def test_set_default_of_the_default_writes_nothing() -> None:
-    rel = _Rel(_GATE_OK, _Result(), _Result([_mapping(version=3, is_default=True)]))
-    move = await _store(rel).set_default_profile(_OWNER, _ACCOUNT, _PROFILE, expected_version=None)
-    assert move is not None and not move.written and move.previous is None
-    assert rel.commits == 0 and len(rel.calls) == 3
-
-
-async def test_set_default_at_an_old_version_is_stale_and_of_a_missing_one_none() -> None:
-    stale = _Rel(_GATE_OK, _Result(), _Result([_mapping(version=4)]))
+async def test_a_move_at_an_old_binding_version_is_stale_before_the_profile_is_read() -> None:
+    """No last-write-wins on the binding (#906 0d): a stale version is refused under the account
+    row lock, before the profile the move names is read, so it tells nothing about that profile."""
+    stale = _Rel(_GATE_OK, _Result([{"default_binding_version": 4}]))
     with pytest.raises(AccountProfileStoreStaleError):
-        await _store(stale).set_default_profile(_OWNER, _ACCOUNT, _PROFILE, expected_version=3)
-    missing = _Rel(_GATE_OK, _Result(), _Result([]))
-    assert (
-        await _store(missing).set_default_profile(_OWNER, _ACCOUNT, _PROFILE, expected_version=None)
-        is None
+        await _store(stale).set_default_profile(
+            _OWNER, _ACCOUNT, _PROFILE, expected_binding_version=3
+        )
+    assert len(stale.calls) == 2 and stale.commits == 0
+    for script in ([_Result([])], [_BIND3, _Result([])]):  # no live account, then no profile
+        missing = _Rel(_GATE_OK, *script)
+        moved = await _store(missing).set_default_profile(
+            _OWNER, _ACCOUNT, _PROFILE, expected_binding_version=3
+        )
+        assert moved is None and missing.commits == 0 and len(missing.calls) == 1 + len(script)
+    current = _Rel(_GATE_OK, _BIND3, _Result([_mapping(version=3, is_default=True)]))
+    again = await _store(current).set_default_profile(
+        _OWNER, _ACCOUNT, _PROFILE, expected_binding_version=3
     )
+    assert again is not None and not again.written and again.version == 3
+    assert again.previous is None and current.commits == 0 and len(current.calls) == 3
+
+
+async def test_get_default_binding_answers_the_row_or_none_and_an_empty_grant_runs_no_sql() -> None:
+    found = _Rel(_GATE_OK, _Result([{"id": str(_PROFILE), "default_binding_version": 7}]))
+    binding = await _store(found).get_default_binding(_OWNER, _ACCOUNT)
+    assert binding == DefaultBindingRow(account_id=_ACCOUNT, profile_id=_PROFILE, version=7)
+    assert len(found.calls) == 2 and found.commits == 0
+    assert _sql(found.calls[1]) == _sql(mod.binding_statement(_OWNER, _ACCOUNT))
+    hidden = _Rel(_Result([]))  # a grant read runs without the owner gate
+    assert await _store(hidden).get_default_binding(_GRANT, _ACCOUNT) is None
+    assert len(hidden.calls) == 1
+    empty = _Rel()
+    assert (
+        await _store(empty).get_default_binding(GrantScope(_CALLER, frozenset()), _ACCOUNT) is None
+    )
+    assert empty.calls == []
 
 
 async def test_a_revision_reads_back_the_profile_it_recorded() -> None:
