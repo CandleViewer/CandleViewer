@@ -24,8 +24,7 @@ from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRe
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from tests.fixtures.admin.seed import (
     FixtureCheckError,
-    FixtureRefused,
-    is_test_database,
+    connect_test_database,
     refuse_unless_test_database,
 )
 
@@ -40,17 +39,6 @@ FORGED: Final = "fixture: altered behind the chain"
 WAL_NAME: Final = "fixture-chain.wal"
 
 
-def _connect(dsn: str) -> psycopg.Connection[Any]:
-    """A connection to a database named for tests, or `FixtureRefused` before any read."""
-    conn = psycopg.connect(dsn, autocommit=True)
-    row = conn.execute("SELECT current_database()").fetchone()
-    name = "" if row is None else str(row[0])
-    if not is_test_database(name):
-        conn.close()
-        raise FixtureRefused(f"refusing database {name!r}: not a test database")
-    return conn
-
-
 def _entries(conn: psycopg.Connection[Any]) -> list[tuple[int, str | None]]:
     """The fixture's own entries in chain order: each one's id and reason."""
     rows = conn.execute(
@@ -60,7 +48,7 @@ def _entries(conn: psycopg.Connection[Any]) -> list[tuple[int, str | None]]:
 
 
 def _count(dsn: str) -> int:
-    with _connect(dsn) as conn:
+    with connect_test_database(dsn) as conn:
         return len(_entries(conn))
 
 
@@ -87,7 +75,7 @@ def _alter(conn: psycopg.Connection[Any]) -> int:
 
 
 def _alter_in(dsn: str) -> int:
-    with _connect(dsn) as conn:
+    with connect_test_database(dsn) as conn:
         return _alter(conn)
 
 
