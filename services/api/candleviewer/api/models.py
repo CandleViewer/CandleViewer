@@ -9,12 +9,17 @@ class BuildInfo(BaseModel):
     """Build/version metadata returned by health probes.
 
     Deliberately minimal (C-2.9 / security notes in E02-T05): no datastore
-    versions or internal hostnames are exposed to an unauthenticated caller.
+    versions or internal hostnames are exposed to an unauthenticated caller,
+    and nor is the git sha (E09-X02 F-8, #4222): a probe gives the build label
+    (`version`) and the environment, and the exact build is read after
+    authentication (`GET /admin/health`, the WS `auth_ok`; `/metrics` still
+    exports it until #4206). `extra="forbid"`
+    makes a sha handed to a probe model without a member for it an error, not
+    a response.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    git_sha: str
     version: str
     environment: str
 

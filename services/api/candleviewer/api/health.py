@@ -5,6 +5,11 @@ checks array with real probes (Postgres, QuestDB, exchange connectivity).
 Neither route touches a datastore or the network — `create_app()` must be
 constructible and servable with fakes only.
 
+Both are served with no credential, inside the C-12.9 mesh boundary, so they give the build
+label (`version`) and the `environment` and never the git sha (E09-X02 F-8, #4222): the exact
+build is read after authentication (`GET /admin/health`, the WS `auth_ok`); `/metrics` still
+exports it until #4206.
+
 QA defect #1578 blocker 2: `/readyz` also exposes the mesh guard's current
 `ReadOnlyGate` state (`mesh_binding_safe`/`mesh_reason_code`) so SCR-137
 (Admin security centre) and SCR-016 (first-run wizard) have a data source,
@@ -52,8 +57,10 @@ class WriteBehindStatus(Protocol):
 
 
 def _build_info(settings: Settings) -> dict[str, str]:
+    """What a caller with no credential may read: the build label and the environment, never the
+    git sha (E09-X02 F-8, #4222). The sha is read after authentication (`GET /admin/health`, the
+    WS `auth_ok`); `/metrics` still exports it until #4206."""
     return {
-        "git_sha": settings.git_sha,
         "version": settings.version,
         "environment": settings.environment.value,
     }
