@@ -1,6 +1,6 @@
 """`0050_ea_identity_write_once` (#3968, SR-E27-13): offline render, two-way plan-doc parity, the
-trigger's shape, and the downgrade. The application side (no UPDATE or upsert assigns
-`exchange_uid` or `kind` after the INSERT, no patch or PATCH body carries either, the store's
+trigger's shape, and the downgrade. The application side (no UPDATE or upsert assigns `id`,
+`exchange_uid` or `kind` after the INSERT, no patch or PATCH body carries one, the store's
 typed error): `tests/unit/storage/test_account_env_write_once_surface.py` and
 `tests/unit/storage/test_accounts_store_sqlalchemy.py`.
 Real Postgres: `tests/integration/storage/test_ea_identity_write_once_migration.py`."""

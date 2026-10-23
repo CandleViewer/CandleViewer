@@ -1,8 +1,8 @@
 """`exchange_accounts.env` is write-once in the application as well (#2333, C-2.11), and so are
-`exchange_uid` and `kind` (#3968, SR-E27-13): an account's identity.
+`id`, `exchange_uid` and `kind` (#3968, SR-E27-13): an account's identity.
 
 `trg_ea_env_write_once` (revision `0041_account_env_write_once`) refuses any change of `env` in the
-database, and `trg_ea_identity_write_once` (`0050_ea_identity_write_once`) any change of
+database, and `trg_ea_identity_write_once` (`0050_ea_identity_write_once`) any change of `id`,
 `exchange_uid` or `kind`. These tests hold the same premise in code, as `tests/unit/credentials_m2/
 test_write_once_surface.py` does for `api_keys`: after the INSERT that creates an account, no SQL
 string under `candleviewer/` assigns an identity column in an UPDATE or upsert of

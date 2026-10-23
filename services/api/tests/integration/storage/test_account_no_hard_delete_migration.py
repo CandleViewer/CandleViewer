@@ -1,15 +1,15 @@
 """Integration: `0044_account_no_hard_delete` (#2758 item 1) on real Postgres 16.
 
-`cv_app`, the role every request handler runs as, cannot hard-delete an account, so it cannot
-delete one and insert its id again, in another environment (`trg_ea_env_write_once`, 0041) or with
-an older key row (`trg_api_keys_write_once`, 0024), neither of which fires on DELETE or INSERT. It
-cannot TRUNCATE either, and `cv_ro` can do neither. Rewriting the id (`UPDATE ... SET id`) is the
-other way to free one, and no trigger guards that column: the foreign keys of the account's default
-profile and keys refuse it (SQLSTATE 23503). The owner's delete, the purge path, still
-removes the account and cascades to its keys and profiles. The downgrade lets `cv_app` delete
-again and the upgrade refuses it again, with the ACL as it was. Bootstrapped with the shipped
-`infra/scripts/pg_bootstrap.sql` and migrated as `cv_owner` (the CI `migrations` order), so every
-write runs as the real role. `testcontainers` in CI; the offline render is
+`cv_app`, the role every request handler runs as, cannot hard-delete an account, so it cannot delete
+one and insert its id again, in another environment (`trg_ea_env_write_once`, 0041) or with an older
+key row (`trg_api_keys_write_once`, 0024), neither of which fires on DELETE or INSERT. It cannot
+TRUNCATE either, and `cv_ro` can do neither. Rewriting the id (`UPDATE ... SET id`) is the other way
+to free one: since #3968 `trg_ea_identity_write_once` refuses it (SQLSTATE 23514), and the foreign
+keys of the account's default profile and keys still would (SQLSTATE 23503). The owner's delete, the
+purge path, still removes the account and cascades to its keys and profiles. The downgrade lets
+`cv_app` delete again and the upgrade refuses it again, with the ACL as it was. Bootstrapped with
+the shipped `infra/scripts/pg_bootstrap.sql` and migrated as `cv_owner` (the CI `migrations` order),
+so every write runs as the real role. `testcontainers` in CI; the offline render is
 `tests/unit/migrations/test_0044_account_no_hard_delete.py`.
 """
 

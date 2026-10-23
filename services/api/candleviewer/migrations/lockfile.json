@@ -244,7 +244,7 @@
     },
     "0050_ea_identity_write_once": {
       "path": "services/api/candleviewer/migrations/versions/0050_ea_identity_write_once.py",
-      "sha256": "b0b1fc011e49a55b21c732618cec957b9468bf61ba0aaf752d6e1df4f4e1fb6d",
+      "sha256": "29106e6ccc7ae81bfc5ad39cb69b432ffe7ae87615c7f0083f98efb9752712cf",
       "down_revision": "0049_ea_env_parent_always"
     }
   }

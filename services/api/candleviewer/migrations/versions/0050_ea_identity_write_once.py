@@ -15,7 +15,7 @@ directly instead of through the children's foreign keys.
 * `trg_ea_identity_write_once` (BEFORE UPDATE, per row, like 0041's guard) refuses any change of
   `id`, `exchange_uid` or `kind` once the row exists. It compares with IS DISTINCT FROM, so it refuses
   changes, not writes (`SET kind = kind` passes), and it fires on every UPDATE, not only one that
-  names either column, so a trigger that rewrote NEW behind another column would still meet it.
+  names one of them, so a trigger that rewrote NEW behind another column would still meet it.
   `ENABLE ALWAYS` keeps it firing under `session_replication_role = replica`; its function pins
   `search_path` and refuses with SQLSTATE 23514 naming the trigger as the constraint (`USING
   CONSTRAINT`), and the column, never a value. An insert takes any UID and kind, under the table's
@@ -25,8 +25,8 @@ directly instead of through the children's foreign keys.
 * Postgres fires same-event BEFORE triggers in name order. This one sorts after
   `trg_ea_env_write_once` and becomes the last; neither guard rewrites NEW, so both judge NEW as
   every trigger that could rewrite it left it (the integration test pins the order).
-* The application never changes either column after the INSERT: no UPDATE or upsert under
-  `candleviewer/` assigns one, the store's patch and the API's PATCH body carry neither, and the
+* The application never changes any of them after the INSERT: no UPDATE or upsert under
+  `candleviewer/` assigns one, the store's patch and the API's PATCH body carry none, and the
   accounts store maps a refusal to its typed rule error (unit tests pin all three).
 * Residuals, as for `env`: the guard covers UPDATE only, and `cv_app` can neither delete an
   account (0044) nor free its id by rewriting it: this guard refuses that first (23514), under the
