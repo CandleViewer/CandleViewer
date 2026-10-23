@@ -8,6 +8,7 @@ import copy
 import dataclasses
 import re
 from collections.abc import Iterator
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
 
@@ -17,7 +18,14 @@ from pydantic import ValidationError
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from candleviewer.accounts import profile_input
 from candleviewer.accounts import profiles as domain
+from candleviewer.accounts.profile_input import (
+    ProfileFieldError,
+    check_profile_input,
+    field_path,
+    schema_errors,
+)
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.storage.repositories import account_profiles as store
@@ -30,6 +38,7 @@ _REGISTRY = Registry().with_resource(
     _BASE, Resource.from_contents(_SPEC, default_specification=DRAFT202012)
 )
 _DOCS = Path(__file__).resolve().parents[4] / "docs" / "plan"
+_DOC_11 = (_DOCS / "11-user-stories.md").read_text(encoding="utf-8")
 _DOC_21 = (_DOCS / "21-database-schema.md").read_text(encoding="utf-8")
 _DOC_24 = (_DOCS / "24-internal-schemas.md").read_text(encoding="utf-8")
 #: `account_profiles` in 21 section 3.2.4: its columns, defaults and CHECKs.
@@ -52,10 +61,12 @@ _BOUNDED: dict[str, tuple[Any, int]] = {
     "blocked_symbols": ("ETHUSDT", 500),
 }
 #: A listed symbol and an anchored suffix are entries; the others are not: `*` and `**`, another
-#: quote, a suffix not in front, lowercase, a 17-letter stem, a stray letter before and after.
+#: quote, a suffix not in front, lowercase, a 17-letter stem bare and behind a `*` (#4098 R2-04
+#: N2), a stray letter before and after.
 _LONGEST = "A" * 16 + "USDT"  # the longest stem the contract takes, on its own and behind a `*`
 _LISTED = ["BTCUSDT", "1000PEPEUSDT", "*USDT", "*PEPEUSDT", _LONGEST, f"*{_LONGEST}"]
 _UNLISTED = "* **USDT BTCUSDC *BTC btcusdt ABCDEFGHIJKLMNOPQUSDT xBTCUSDT BTCUSDTx".split()
+_UNLISTED.append("*" + "A" * 17 + "USDT")
 #: What each schema requires, in the order `22-api-openapi.yaml` lists it: a body (an answer, for
 #: `AccountProfile`) without one is invalid, so a list that shrinks or grows is a contract change.
 _REQUIRED = {
@@ -64,7 +75,9 @@ _REQUIRED = {
     "ProfileTakeProfit": "unit value",
     "ProfileTakeProfitRung": "qty_pct r",
     "AccountProfileInput": "name leverage sizing",
-    "AccountProfile": "id exchange_account_id version created_at updated_at warnings profile",
+    "AccountProfile": (
+        "id exchange_account_id environment version created_at updated_at warnings profile"
+    ),
 }
 #: (the edits to the create example, whether the body is still valid); an edit key is a dotted path.
 _CASES: dict[str, tuple[dict[str, object], bool]] = {
@@ -85,6 +98,7 @@ _CASES: dict[str, tuple[dict[str, object], bool]] = {
     "stop_in_r_multiple": ({"stop_loss": {"unit": "r_multiple", "value": "2"}}, False),
     "take_profit_in_price": ({"take_profit": {"unit": "price", "value": "70000"}}, False),
     "fixed_qty_without_qty": ({"sizing": {"mode": "fixed_qty"}}, False),
+    "fixed_qty_with_qty": ({"sizing": {"mode": "fixed_qty", "qty": "1"}}, True),  # #4098 N7
     "fixed_notional_without_its_amount": ({"sizing": {"mode": "fixed_notional"}}, False),
     "fixed_notional_with_its_amount": (
         {"sizing": {"mode": "fixed_notional", "notional_usd": "100"}},
@@ -100,9 +114,16 @@ _CASES: dict[str, tuple[dict[str, object], bool]] = {
     "request_time_sizing_mode": ({"sizing": {"mode": "pct_position", "pct": "5"}}, False),
     "portfolio_margin": ({"margin_mode": "portfolio"}, False),
     "native_stop_off": ({"require_native_stop": False}, False),
+    # R1C-03: only the schema phase refuses these three, which the generated model takes; each body
+    # breaks no other rule (a fixed-quantity sizing, a profile that cannot trade), so a pipeline
+    # that skipped `schema_errors` would take it
+    "native_stop_as_the_number_one": ({"require_native_stop": 1}, False),
+    "null_stop_loss": ({"sizing": {"mode": "fixed_qty", "qty": "1"}, "stop_loss": None}, False),
+    "null_risk_caps": ({"trading_enabled": False, "risk_caps": None}, False),
     "all_symbols_with_a_list": ({"all_symbols": True}, False),
     "no_open_positions_allowed": ({"risk_caps.max_open_positions": 0}, False),
     "too_many_open_positions": ({"risk_caps.max_open_positions": 51}, False),
+    "name_with_a_control_character": ({"name": "Alice\tB"}, False),  # #906 D2-c, the pattern
 }
 for _name, (_entry, _bound) in _BOUNDED.items():  # each list at its bound, and one past it
     _CASES[f"{_bound}_{_name}"] = ({_name: [_entry] * _bound}, True)
@@ -229,6 +250,35 @@ def _enums(pattern: str, text: str) -> dict[str, list[str]]:  # name -> the quot
     return {m[1]: re.findall(r"'(\w+)'", m[2]) for m in re.finditer(pattern, text)}
 
 
+def _note(member: str) -> str:
+    """The `Note` cell of the projection row of the REST member `member`."""
+    table = _DOC_24.split("**REST projection (E28-T02, #906).**", 1)[1].split("\n\n", 2)[1]
+    (row,) = [line for line in table.splitlines() if line.startswith(f"| `{member}`")]
+    return row.strip("|").split("|")[3].strip()
+
+
+def _low(bound: profile_input._Bound) -> str:
+    """24's words for a bound's low end: `above 0`, or `at least 0.1`."""
+    return f"{'above' if bound.above else 'at least'} {bound.low}"
+
+
+def _words(bound: profile_input._Bound) -> str:
+    """24's words for a bound: `above 0 and below 1E+20, at 18 places` (a `Decimal` prints so)."""
+    high = f"{'below' if bound.below else 'at most'} {bound.high}"
+    return f"{_low(bound)} and {high}, at {bound.places} places"
+
+
+def _held_by(bound: profile_input._Bound) -> list[str]:
+    """The members the first pass holds to `bound`, in its order."""
+    return [path for path, held in profile_input._DECIMALS if held == bound]
+
+
+def _listed(paths: list[str]) -> str:
+    """`a`, `b` and `c`: the paths as 24 lists them."""
+    named = [f"`{path}`" for path in paths]
+    return named[0] if len(named) == 1 else f"{', '.join(named[:-1])} and {named[-1]}"
+
+
 @pytest.mark.parametrize("name", _BODY)
 def test_every_profile_body_schema_refuses_unknown_members(name: str) -> None:
     assert _SCHEMAS[name]["additionalProperties"] is False
@@ -252,6 +302,7 @@ def test_the_create_example_is_a_body_and_its_defaults_make_a_stored_profile() -
     assert _unset(_SCHEMAS["AccountProfileInput"], profile) == []  # a default or a null, each
     stored = dict(id=_ID, exchange_account_id=_ID, version=1, warnings=[], profile=profile)
     stored |= dict.fromkeys(("created_at", "updated_at"), "2026-10-21T09:30:00Z")
+    stored["environment"] = "demo"  # the account's (#906 D2-c), required in every answer
     assert _valid("AccountProfile", stored)
     assert not _valid("AccountProfile", {**stored, "profile": {**profile, "is_active": True}})
 
@@ -261,6 +312,31 @@ def test_the_body_schema_takes_exactly_the_documented_shapes(
     edits: dict[str, object], valid: bool
 ) -> None:
     assert _valid("AccountProfileInput", _changed(edits)) is valid
+
+
+def _refusals(raw: dict[str, Any]) -> list[ProfileFieldError]:
+    """What the router refuses `raw` with (B1 spec section 3): the generated model's entries with
+    B1's schema phase, then, only when those are none, B1's first pass on the dump."""
+    try:
+        model, rendered = api.AccountProfileInput.model_validate(raw), []
+    except ValidationError as exc:
+        found = exc.errors(include_url=False, include_input=False, include_context=False)
+        model = None
+        rendered = [ProfileFieldError(field_path(e["loc"]), e["type"], e["msg"]) for e in found]
+    if errors := schema_errors(raw, rendered):
+        return errors
+    assert model is not None  # no entry at all means the model took the body
+    body = model.model_dump(mode="json", exclude_unset=True)
+    return check_profile_input(body, stored_is_default=None)
+
+
+@pytest.mark.parametrize("edits", [edits for edits, _ in _CASES.values()], ids=list(_CASES))
+def test_the_schema_phase_and_first_pass_refuse_exactly_what_the_schema_refuses(
+    edits: dict[str, object],
+) -> None:
+    """C1, moved out of B1b (#906): the generated model enforces none of the conditionals."""
+    body = _changed(edits)
+    assert (_refusals(body) == []) is _valid("AccountProfileInput", body)
 
 
 @pytest.mark.parametrize("name", _BOUNDED)
@@ -288,6 +364,7 @@ def test_every_rest_member_is_one_domain_field_and_one_column() -> None:
     renamed = {f for _, f, c, _ in rows if f and c and f not in c and c not in f}
     assert renamed == {"tp_ladder[].qty_pct", "denied_symbols"}  # a column is named for its field
     assert [row[:3] for row in rows if None in row[:3]] == [
+        ("environment", None, None),  # the account's, not the profile's (#906 D2-c)
         ("created_at", None, "created_at"),
         ("warnings", None, None),
         (None, "qty_rounding", None),
@@ -354,7 +431,8 @@ def test_the_name_length_and_the_version_floor_are_the_columns() -> None:
     name = _SCHEMAS["AccountProfileInput"]["properties"]["name"]
     length = re.search(r"char_length\(name\) BETWEEN (\d+) AND (\d+)", _DDL)
     assert length and (name["minLength"], name["maxLength"]) == tuple(map(int, length.groups()))
-    assert _SCHEMAS["AccountProfile"]["properties"]["version"]["minimum"] == 1  # `ap_version`
+    floor = re.search(r"ap_version\s+CHECK \(version >= (\d+)\)", _DDL)  # #4098 R2-04 N3
+    assert floor and _SCHEMAS["AccountProfile"]["properties"]["version"]["minimum"] == int(floor[1])
 
 
 def test_symbol_entries_are_listed_symbols_or_anchored_usdt_suffixes() -> None:
@@ -376,6 +454,7 @@ def test_d11_all_symbols_is_explicit_and_an_empty_list_allows_nothing() -> None:
     texts = [n["description"] for n in _nodes(_SCHEMAS["AccountProfile"]) if "description" in n]
     assert allowed in texts  # the walk reached the members
     assert not [t for t in texts if isinstance(t, str) and "Empty means" in t]
+    assert "Empty list means all" not in _DOC_11  # US-PROF-003 says so too (#4098 R1S-03)
 
 
 def test_warnings_are_advice_in_a_set_open_to_readers() -> None:
@@ -386,7 +465,13 @@ def test_warnings_are_advice_in_a_set_open_to_readers() -> None:
     assert warning["required"] == ["code", "message"]
     text = " ".join(code["description"].split())
     assert "Open-ended for readers" in text
-    assert "or by the pattern `*USDT`;" in text and "also flags any other pattern" in text
+    assert "or by the pattern `*USDT`;" in text
+    # #4098 R2-02, R2-03: the write's clause whole, as `profile_warnings` judges the listing
+    write = "a write, which reads the instrument list, also flags an allow-list whose entries"
+    assert f"{write} together match every listed symbol." in text
+    # R2-01: what a read, which has no listing, can tell (D11)
+    read = "an empty `allowed_symbols` without `all_symbols`, or the pattern `*USDT` in"
+    assert f"{read} `blocked_symbols`; a write also flags a profile that allows none" in text
     profile = _SCHEMAS["AccountProfile"]
     assert "warnings" in profile["required"]
     assert profile["properties"]["warnings"]["items"] == {"$ref": f"{_REF}ProfileWarning"}
@@ -401,5 +486,73 @@ def test_a_profile_schema_requires_exactly_its_documented_members(name: str) -> 
 def test_the_documented_list_bounds_are_the_contract_bounds() -> None:
     heading = "**Two bounds no column states (E28-T02, #906).**"
     paragraph = _DOC_24.split(heading, 1)[1].split("\n\n", 1)[0]
-    for name, (_, bound) in _BOUNDED.items():
-        assert f"`{name}`" in paragraph and f"at most {bound} " in paragraph, name
+    rungs, entries = _BOUNDED["take_profit_ladder"][1], _BOUNDED["allowed_symbols"][1]
+    assert _BOUNDED["blocked_symbols"][1] == entries  # #4098 R2-04 N1: the sentence, built whole
+    said = f"`take_profit_ladder` holds at most {rungs} rungs, and `allowed_symbols` and"
+    assert f" {said} `blocked_symbols` at most {entries} entries each." in paragraph
+
+
+_AS_BUILT = "**As built: the body's checks before the store (E28-T02, #906 B1).**"
+
+
+def test_the_first_pass_is_documented_as_built() -> None:
+    """B1b's R1C-08 (#906): 24 section 9.2 has P14 right after P1, and the order is pinned to its
+    end, the last three rules as the pass emits them (R1C-04)."""
+    paragraph = _DOC_24.split(_AS_BUILT, 1)[1].split("\n\n", 1)[0]
+    order = "in this order: `is_default` (`default_has_own_operation`); `name` (`not_allowed`:"
+    rest = "`range` and `precision`, member by member and then each rung; the sizing amounts; the"
+    rest += " stop; `all_symbols` with a list; `ladder_sum`; `above_leverage_cap`; `cap_unbounded`."
+    assert order in paragraph and f"the domain's own guard); {rest}" in paragraph
+    last = ["ladder_sum", "above_leverage_cap", "cap_unbounded"]
+    rungs = [{"qty_pct": "60", "r": "1"}, {"qty_pct": "60", "r": "2"}]  # 120 % of the leg
+    body: dict[str, object] = {"name": "A", "leverage": "50"}
+    body |= {"sizing": {"mode": "fixed_qty", "qty": "1"}, "take_profit_ladder": rungs}
+    body |= {"risk_caps": {"max_leverage_cap": "10"}}
+    emitted = check_profile_input({**body, "trading_enabled": True}, stored_is_default=None)
+    assert list(dict.fromkeys(e.rule for e in emitted)) == last
+    assert re.findall(r"`(ladder_sum|above_leverage_cap|cap_unbounded)`", rest) == last
+
+
+def test_the_documented_bounds_are_the_ones_the_first_pass_refuses_by() -> None:
+    """R1C-04: each bound clause of 24's as-built paragraph is built from `_DECIMALS` and `_RUNG`,
+    as the N1 sentence is from `_BOUNDED`: a figure, a place count or a member that drifts fails."""
+    paragraph = _DOC_24.split(_AS_BUILT, 1)[1].split("\n\n", 1)[0]
+    p, rung = profile_input, dict(profile_input._RUNG)
+    used = {bound for _, bound in (*p._DECIMALS, *p._RUNG)}
+    stated = {p._MONEY, p._MIN_LEG, p._PERCENT, rung["qty_pct"], p._FALLBACK, p._DAILY_LOSS_PCT}
+    assert used == stated | {p._LEVERAGE, p._ATR_MULTIPLE}  # a bound no clause below states fails
+    assert rung["r"] == p._MONEY and rung["qty_pct"] == dataclasses.replace(p._PERCENT, places=18)
+    assert p._MIN_LEG == dataclasses.replace(p._MONEY, above=False)  # only its low end differs
+    amounts = "sizing.qty sizing.notional_usd sizing.risk_per_trade_usd stop_loss.value"
+    amounts += " take_profit.value risk_caps.max_position_notional_usd risk_caps.max_daily_loss_usd"
+    assert _held_by(p._MONEY) == amounts.split()  # "every USDT amount, quantity and offset"
+    ticks = {"unit": "ticks", "value": "1.5"}  # "whole ticks for a stop in `ticks`"
+    body = {"name": "A", "sizing": {"mode": "fixed_qty", "qty": "1"}, "stop_loss": ticks}
+    whole = check_profile_input(body, stored_is_default=None)
+    assert [(e.field, e.rule, e.limit) for e in whole] == [
+        ("stop_loss.value", "precision", Decimal(0))
+    ]
+    clauses = [
+        f"{_words(p._MONEY)}, for every USDT amount, quantity and offset and a rung's `r`"
+        f" ({_low(p._MIN_LEG)} for {_listed(_held_by(p._MIN_LEG))}, and whole ticks for a stop in"
+        " `ticks`)",
+        f"{_words(p._PERCENT)}, for {_listed(_held_by(p._PERCENT))}, and at"
+        f" {rung['qty_pct'].places} places for a rung's `qty_pct`",
+        *(
+            f"{_words(bound)}, for {_listed(_held_by(bound))}"
+            for bound in (p._FALLBACK, p._DAILY_LOSS_PCT, p._LEVERAGE, p._ATR_MULTIPLE)
+        ),
+    ]
+    lead = "The bounds are the columns', counted without trailing zeros, and a value that breaks"
+    lead += " its bound and its places is named twice:"
+    assert f"{lead} {'; '.join(clauses)}. `map_profile_input`" in paragraph
+
+
+def test_the_environment_row_names_the_accounts_column_not_a_profile_one() -> None:
+    """R1C-04: `environment` has no `account_profiles` column (C-2.11); its note names the column
+    of `exchange_accounts` that holds the Postgres type the contract's `Environment` mirrors."""
+    kind = _SCHEMAS["Environment"]["x-db-enum"]
+    (accounts,) = re.findall(r"CREATE TABLE exchange_accounts \((.*?)\n\);", _DOC_21, re.DOTALL)
+    (column,) = re.findall(rf"^\s+(\w+)\s+{kind} NOT NULL", accounts, re.MULTILINE)
+    assert not re.search(rf"^\s+\w+\s+{kind}\b", _DDL, re.MULTILINE)  # a profile has no such column
+    assert _note("environment") == f"the account's `exchange_accounts.{column}` (C-2.11)"

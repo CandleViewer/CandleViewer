@@ -55,7 +55,7 @@
         }
       },
       "IdempotencyKey": {
-        "description": "Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`).",
+        "description": "Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`).",
         "in": "header",
         "name": "Idempotency-Key",
         "required": false,

@@ -364,6 +364,10 @@ info:
     key is answered as one never seen, and the same key with another body is
     `409 idempotency_key_reuse`. `exportAuditLog` stores only its `202`: a `503`, `429` or `409`
     is evaluated afresh.
+    Exception (E28-T02): the profile writes and `setAccountDefaultProfile` store only a `2xx`
+    under the key: every refusal is evaluated afresh on a retry. A stored `2xx` is answered only
+    after the account and its environment are resolved, so a replay on a deleted account, or on
+    one of another environment, is `404`.
 
     **Binding point (#2304).** On every operation that requires the key (parameter
     `IdempotencyKeyRequired`, which every `x-idempotency: required` operation takes) the key is
@@ -3114,6 +3118,8 @@ paths:
         created as an alternate at `version` 1, so `is_default: true` is refused
         (`default_has_own_operation`): the default binding moves only through its own operation
         (`setAccountDefaultProfile`).
+        An account of another environment than this server's is `404`, as a missing one is, on
+        every profile write (C-2.11), and a body over 64 KiB is `413 payload_too_large`.
         The body is checked first, as `ProfileRejected` describes, and a `name` the account already
         uses, in any letter case, is `409 conflict`. Audited write-ahead as `profile.created`: when
         that record cannot be written nothing is stored (`503 audit_unavailable`). `Idempotency-Key`
@@ -3162,6 +3168,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/ProfileRejected" }
         "503": { $ref: "#/components/responses/ProfileSaveUnavailable" }
 
@@ -3203,7 +3210,7 @@ paths:
         next `version`; the previous version stays readable as a revision, and a position sized
         from it keeps it. `require_native_stop` cannot be set to `false`: the attempt is
         `422 validation_failed` / `native_stop_mandatory`, audited as `profile.save_refused`
-        (SR-E28-08).
+        (SR-E28-08). A body over 64 KiB is `413 payload_too_large`, as on a create.
 
         A replace never moves the account's default: the default binding moves only through its
         own operation (`setAccountDefaultProfile`). A body whose `is_default` differs from the
@@ -3215,9 +3222,13 @@ paths:
         on risk caps by contract. Without it the answer is `428 precondition_required`; a stale
         one is `412 version_conflict`. Either way nothing changes: reload, then edit again.
         Audited write-ahead as `profile.updated` with the profile before and after: when that
-        record cannot be written nothing changes (`503 audit_unavailable`). A change that raises
-        or removes a cap, or widens the symbols, is labelled relaxing in that record and notifies
-        the Owner (SR-E28-01).
+        record cannot be written nothing changes (`503 audit_unavailable`). The server judges a
+        replace as it judges a move (`setAccountDefaultProfile`), cap by cap: `null` is no bound,
+        and every cap of a profile that cannot trade counts as zero. A replace that loosens a cap,
+        or widens what a profile that can trade allows (an allow entry added or changed,
+        `all_symbols` set, a block entry removed), is labelled `relaxing` in that record and
+        notifies the Owner (SR-E28-01). So turning trading off, or clearing the caps of a profile
+        that cannot trade, is never relaxing, and turning trading on always is.
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
@@ -3243,6 +3254,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/ProfileRejected" }
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/ProfileSaveUnavailable" }
@@ -3304,6 +3316,7 @@ paths:
                 bound:
                   value:
                     exchange_account_id: "a1000000-0000-4000-8000-000000000001"
+                    environment: live
                     profile_id: "b1000000-0000-4000-8000-0000000000a1"
                     version: 3
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -3318,8 +3331,9 @@ paths:
         Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. The one
         operation that moves the account's default (decision D7): the body names the profile to
         bind and nothing else. A `profile_id` that is missing, deleted or another account's is
-        `404`, as an account outside the caller's grants is, and a body that fails its schema is
-        `422 validation_failed`; neither is audited.
+        `404`, as an account outside the caller's grants is, and so is an account of another
+        environment than this server's (C-2.11), and a body that fails its schema is
+        `422 validation_failed`, and one over 1 KiB `413 payload_too_large`; none is audited.
 
         `If-Match` is required and takes this binding's `ETag`, never a profile's, and it is
         checked before the profile the body names. Without it the answer is
@@ -3370,6 +3384,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422":
           description: >
             The body fails its schema (`validation_failed`): `profile_id` missing or not a UUID, or
@@ -14070,7 +14085,10 @@ components:
       name: Idempotency-Key
       in: header
       required: false
-      description: "Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`)."
+      description: "Client-generated UUIDv4. Replays return the original response with
+        `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store
+        a refusal to start under the key, and the profile writes and `setAccountDefaultProfile`
+        store only a `2xx` (the exceptions under Idempotency in `info.description`)."
       schema: { type: string, format: uuid }
     IdempotencyKeyRequired:
       name: Idempotency-Key
@@ -15028,13 +15046,20 @@ components:
         account's default (`is_default: true` on a create, or on a replace an `is_default` other
         than the stored one); its `message` is "The default binding has its own operation."
 
-        The second checks the exchange's current limits for the account's environment, from an
-        instrument cache at most 15 minutes old (refreshed first when older): `max_leverage`
+        The second checks the exchange's current limits for the account's environment, judged for
+        the entries the write introduces, from an instrument cache at most 15 minutes old
+        (refreshed first when older): `max_leverage`
         (`leverage` above the maximum of a symbol the profile allows, which with `all_symbols` is
         every listed one and for a pattern every one it matches, so a universal pattern such as
         `*USDT` counts as `all_symbols`), `min_order_qty` and `qty_step` (`sizing.qty`),
         `min_notional` (`risk_caps.max_position_notional_usd` below a symbol's minimum notional)
         and `symbol_not_listed` (an entry that names no listed, trading linear USDT perpetual).
+        It reads that cache only when the write allows something new (an allow entry added or
+        changed, `all_symbols` set, a block entry removed) or moves a judged figure toward a limit
+        (`leverage` raised, `sizing.qty` changed, `risk_caps.max_position_notional_usd` lowered or
+        newly set), and then judges the entries the write introduces against every limit, and
+        every allowed symbol against a limit whose figure moved: a write that only narrows, or
+        saves the profile unchanged, reads no cache and is never refused for want of one.
         `native_stop_mandatory`, `above_leverage_cap`, `cap_unbounded` and every refusal of the
         second pass are audited as `profile.save_refused`.
 
@@ -15077,12 +15102,13 @@ components:
     ProfileSaveUnavailable:
       description: >
         A profile write that could not be checked or recorded, so nothing changed:
-        `instrument_cache_unavailable` when the instrument cache was more than 15 minutes old and
-        its refresh, shared by concurrent saves, did not finish in time (`createAccountProfile`
-        and `updateAccountProfile` only); `audit_unavailable` when the write-ahead audit record
-        could not be written (C-2.9); `store_unavailable` as on every route. Each is retryable
-        after `Retry-After`, and the same request with the same `Idempotency-Key` is then a first
-        submission.
+        `instrument_cache_unavailable` when the second pass needed the instrument cache
+        (`ProfileRejected`) and it was more than 15 minutes old and its refresh, shared by
+        concurrent saves, did not finish in time (`createAccountProfile` and
+        `updateAccountProfile` only); `audit_unavailable` when the write-ahead audit record, or
+        the record of a refused save or of an RBAC refusal, could not be written (C-2.9);
+        `store_unavailable` as on every route. Each is retryable after `Retry-After`, and the same
+        request with the same `Idempotency-Key` is then a first submission.
       headers:
         Retry-After: { $ref: "#/components/headers/RetryAfter" }
       content:
@@ -17013,9 +17039,11 @@ components:
           enum: [all_symbols, no_symbols, sizing_below_min_order, stop_beyond_liquidation]
           description: >
             `all_symbols`: every listed symbol is allowed, by the flag or by the pattern `*USDT`; a
-            write, which reads the instrument list, also flags any other pattern that matches every
-            listed symbol. Consider restricting. `no_symbols`: no symbol is allowed, so the profile
-            sizes nothing (decision D11). `sizing_below_min_order`: at the
+            write, which reads the instrument list, also flags an allow-list whose entries together
+            match every listed symbol. Consider restricting. `no_symbols`: no symbol is allowed, so
+            the profile sizes nothing (decision D11): an empty `allowed_symbols` without
+            `all_symbols`, or the pattern `*USDT` in `blocked_symbols`; a write also flags a
+            profile that allows none of the listed symbols. `sizing_below_min_order`: at the
             account's current equity the sizing gives less than `symbol`'s minimum order, and
             `message` works the example. `stop_beyond_liquidation`: the stop lies beyond the
             estimated liquidation distance at `leverage` (SR-E28-26). Open-ended for readers: a
@@ -17033,9 +17061,12 @@ components:
         its domain field and column. Values are in stored units: a percent is the percent shown
         (`"0.5"` is 0.5 %), and a decimal holds at most the places of its column (18 for USDT
         amounts, quantities and offsets, 6 for percents of equity and `stop_loss.fallback_pct`, 4
-        for `stop_loss.atr_multiple`, 2 for `leverage` and `risk_caps.max_leverage_cap`), refused
-        rather than rounded (`precision`). A create and a replace alike give a member they leave
-        out its default, `null` where nullable (no cap), never the stored value.
+        for `stop_loss.atr_multiple`, 2 for `leverage` and `risk_caps.max_leverage_cap`; 18 for a
+        rung's `qty_pct` and `r`), trailing zeros not counted, refused rather than rounded
+        (`precision`). Every USDT amount, quantity and offset, and a rung's `r`, is below 10^20 and
+        `stop_loss.atr_multiple` below 10^6, the bounds of their columns (`range`). A create and a
+        replace alike give a member they leave out its default, `null` where nullable (no cap),
+        never the stored value.
 
         Beyond its schema the body must hold (`ProfileRejected` names each rule): the sizing
         amount of `sizing.mode` and no other (`required`, `not_allowed`); a `stop_loss` when
@@ -17048,7 +17079,10 @@ components:
           type: string
           minLength: 1
           maxLength: 80
-          description: Unique per account, in any letter case.
+          pattern: '^[^\x00-\x1F]+$'
+          description: >
+            Unique per account, in any letter case. It holds no control character (U+0000 to
+            U+001F) and no unpaired surrogate.
         is_default:
           type: boolean
           default: false
@@ -17118,7 +17152,8 @@ components:
           then: { properties: { allowed_symbols: { maxItems: 0 } } }
     AccountProfile:
       type: object
-      required: [id, exchange_account_id, version, created_at, updated_at, warnings, profile]
+      required:
+        [id, exchange_account_id, environment, version, created_at, updated_at, warnings, profile]
       description: >
         A stored profile. `profile` holds every member, its default included, and is the body
         `updateAccountProfile` takes back. `version` is 1 at creation and grows by one with each
@@ -17126,6 +17161,11 @@ components:
       properties:
         id: { type: string, format: uuid }
         exchange_account_id: { type: string, format: uuid }
+        environment:
+          $ref: "#/components/schemas/Environment"
+          description: >
+            It is the account's environment, so a client can badge it wherever profiles are
+            listed (C-2.11), and it is never writable.
         version: { type: integer, minimum: 1 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -17142,13 +17182,18 @@ components:
         profile_id: { type: string, format: uuid, description: "A live profile of this account." }
     AccountDefaultBinding:
       type: object
-      required: [exchange_account_id, profile_id, version]
+      required: [exchange_account_id, environment, profile_id, version]
       description: >
         An account's default binding: which of its profiles is the default, its ceiling (decision
         D7). `version` is 1 for the account's first default and grows by one with each move, so it
         never repeats; `DefaultBindingETag` names it. `getAccountProfile` reads the profile itself.
       properties:
         exchange_account_id: { type: string, format: uuid }
+        environment:
+          $ref: "#/components/schemas/Environment"
+          description: >
+            It is the account's environment, so a client can badge it wherever profiles are
+            listed (C-2.11), and it is never writable.
         profile_id: { type: string, format: uuid }
         version: { type: integer, minimum: 1 }
 

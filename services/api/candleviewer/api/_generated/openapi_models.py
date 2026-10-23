@@ -1067,7 +1067,7 @@ class ProfileWarning(BaseModel):
     code: Annotated[
         Literal["all_symbols", "no_symbols", "sizing_below_min_order", "stop_beyond_liquidation"],
         Field(
-            description="`all_symbols`: every listed symbol is allowed, by the flag or by the pattern `*USDT`; a write, which reads the instrument list, also flags any other pattern that matches every listed symbol. Consider restricting. `no_symbols`: no symbol is allowed, so the profile sizes nothing (decision D11). `sizing_below_min_order`: at the account's current equity the sizing gives less than `symbol`'s minimum order, and `message` works the example. `stop_beyond_liquidation`: the stop lies beyond the estimated liquidation distance at `leverage` (SR-E28-26). Open-ended for readers: a client shows a code it does not know by its `message` (C-6.3).\n"
+            description="`all_symbols`: every listed symbol is allowed, by the flag or by the pattern `*USDT`; a write, which reads the instrument list, also flags an allow-list whose entries together match every listed symbol. Consider restricting. `no_symbols`: no symbol is allowed, so the profile sizes nothing (decision D11): an empty `allowed_symbols` without `all_symbols`, or the pattern `*USDT` in `blocked_symbols`; a write also flags a profile that allows none of the listed symbols. `sizing_below_min_order`: at the account's current equity the sizing gives less than `symbol`'s minimum order, and `message` works the example. `stop_beyond_liquidation`: the stop lies beyond the estimated liquidation distance at `leverage` (SR-E28-26). Open-ended for readers: a client shows a code it does not know by its `message` (C-6.3).\n"
         ),
     ]
     message: str
@@ -1091,7 +1091,12 @@ class AccountProfileInput(BaseModel):
     )
     name: Annotated[
         str,
-        Field(description="Unique per account, in any letter case.", max_length=80, min_length=1),
+        Field(
+            description="Unique per account, in any letter case. It holds no control character (U+0000 to U+001F) and no unpaired surrogate.\n",
+            max_length=80,
+            min_length=1,
+            pattern="^[^\\x00-\\x1F]+$",
+        ),
     ]
     is_default: Annotated[
         bool,
@@ -1168,6 +1173,12 @@ class AccountProfileInput(BaseModel):
 class AccountProfile(BaseModel):
     id: UUID
     exchange_account_id: UUID
+    environment: Annotated[
+        Literal["live", "demo", "testnet"],
+        Field(
+            description="It is the account's environment, so a client can badge it wherever profiles are listed (C-2.11), and it is never writable.\n"
+        ),
+    ]
     version: Annotated[int, Field(ge=1)]
     created_at: AwareDatetime
     updated_at: AwareDatetime
@@ -1184,6 +1195,12 @@ class AccountDefaultBindingInput(BaseModel):
 
 class AccountDefaultBinding(BaseModel):
     exchange_account_id: UUID
+    environment: Annotated[
+        Literal["live", "demo", "testnet"],
+        Field(
+            description="It is the account's environment, so a client can badge it wherever profiles are listed (C-2.11), and it is never writable.\n"
+        ),
+    ]
     profile_id: UUID
     version: Annotated[int, Field(ge=1)]
 
