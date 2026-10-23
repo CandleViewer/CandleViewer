@@ -1521,8 +1521,8 @@ tests:
         component: auth
         env: live
       exp_annotations:
-        summary: A WebSocket close failed during a revocation or a user disable; the
-          socket may have stayed open
+        summary: A WebSocket close failed during a revocation, a user disable or a
+          view-as end; the socket may have stayed open
         runbook_url: docs/plan/07-release-and-prr.md#alert-wsrevocationclosefailed
 - interval: 1m
   input_series:
@@ -1537,8 +1537,8 @@ tests:
         component: auth
         env: live
       exp_annotations:
-        summary: A WebSocket close failed during a revocation or a user disable; the
-          socket may have stayed open
+        summary: A WebSocket close failed during a revocation, a user disable or a
+          view-as end; the socket may have stayed open
         runbook_url: docs/plan/07-release-and-prr.md#alert-wsrevocationclosefailed
 - interval: 1m
   input_series:

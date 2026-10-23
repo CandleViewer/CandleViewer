@@ -20,6 +20,8 @@ import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
+
 import candleviewer
 
 _ROOT = Path(candleviewer.__file__).parent
@@ -122,3 +124,26 @@ def test_the_guard_passes_a_read_and_an_insert_that_leaves_the_column_out() -> N
         "recipient_user_id: Mapped[str] = mapped_column()\n"
     )
     assert _writes(planted) == []
+
+
+def test_a_quoted_table_is_read_whole_so_its_column_list_is_seen() -> None:
+    """The table's closing quote is possessive (the #4170 re-check's Nit-2). Given back, the quote
+    would leave the name followed by a quote and not by `(`, so a quoted insert that names its
+    columns would read as a positional one. A quoted positional insert is still found."""
+    planted = (
+        "A = 'INSERT INTO \"system_events\" (component, kind) VALUES (:c, :k)'\n"
+        "B = 'INSERT INTO \"system_events\" VALUES (:a, :b)'\n"
+    )
+    assert _writes(planted) == [2]
+
+
+def test_a_module_naming_the_column_in_compatibility_letters_is_still_parsed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Python reads an identifier NFKC-normalised (PEP 3131), so a keyword spelled with a fullwidth
+    letter is `recipient_user_id`: the filter reads a module the same way, or never parses it
+    (the #4170 re-check's Info-A)."""
+    spelled = "stmt = table.insert().values(\uff52ecipient_user_id=uid)\n"  # U+FF52, fullwidth r
+    (tmp_path / "other.py").write_text(spelled, encoding="utf-8")
+    monkeypatch.setitem(globals(), "_ROOT", tmp_path)
+    assert {path: _writes(text) for path, text in _sources()} == {"other.py": [1]}

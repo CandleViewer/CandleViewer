@@ -119,6 +119,11 @@ def test_the_calls_that_do_not_name_the_request_are_exactly_those_exempt_files_p
         ("# request_id\nemit('a', **who)", True),  # a comment is not code
         ('"""Carries request_id."""\nemit(\'a\', **who)', True),  # nor is a docstring
         ("audit = writer.emit\naudit('a')", False),  # not seen at all, as the docstring says
+        # the socket's bounded writers wrap an `emit`, so a call of theirs is read as one (#4103 m2)
+        ("_emit_bounded(audit, 'a', actor_user_id=u)", True),
+        ("recorder.refuse_frame(viewer_user_id=u, frame_type='x')", True),
+        ("_emit_bounded(audit, 'a', request_id=authz.request_id)", False),
+        ("recorder.refuse_frame(frame_type='x', request_id=authz.request_id)", False),
     ],
 )
 def test_the_predicate_rejects_each_way_of_dropping_the_id(source: str, bare: bool) -> None:

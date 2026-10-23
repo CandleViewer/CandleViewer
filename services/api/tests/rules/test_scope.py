@@ -366,14 +366,16 @@ def test_http_403_for_crafted_foreign_or_absent_account_identical_bodies() -> No
 
 
 def test_http_a_scope_refusal_that_cannot_be_recorded_is_503() -> None:
-    """C-2.9 (#4177 security L-1): an unwritable scope record refuses the request, never a 500."""
+    """C-2.9 (#4177 security L-1): an unwritable scope record refuses the request, never a 500. The
+    problem carries the code the CRUD routes give it (`audit_unavailable`, 22 `x-error-codes`)."""
     from candleviewer.audit.writer import AuditUnavailable
 
     async def unwritable(_event: str, _data: dict[str, str]) -> None:
         raise AuditUnavailable("audit WAL unwritable")
 
     c = _http(FakeState(), unwritable)
-    assert c.post("/rules/validate", json={"ir": _ir(account_ids=[str(C)])}).status_code == 503
+    response = c.post("/rules/validate", json={"ir": _ir(account_ids=[str(C)])})
+    assert (response.status_code, response.json()["code"]) == (503, "audit_unavailable")
 
 
 def test_http_live_forbidden_without_arm_live() -> None:

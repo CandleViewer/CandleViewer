@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any, NamedTuple
 from uuid import UUID, uuid4
 
@@ -488,6 +489,27 @@ async def test_the_challenge_is_recorded_pending_for_the_session_and_its_class()
 async def test_a_challenged_start_starts_nothing_and_records_no_refusal() -> None:
     w, _, _ = await _challenged()
     assert w.held() is None and w.refused() == [] and w.ports.calls == []
+
+
+async def test_a_starts_window_opens_when_the_gate_has_passed_not_when_the_row_was_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#4245's re-check Nit-1: the start's `now` is read after the step-up gate, so a gate that
+    took 40 s does not backdate the context: its window, in the 201 and in the session's row, opens
+    at the instant the start ran."""
+    w = World()
+    await w.sign_in()
+    opened = w.clock.now + timedelta(seconds=40)
+
+    async def slow_gate(session_id: str, action_class: str) -> None:
+        w.clock.now = opened  # the gate took its time
+
+    monkeypatch.setattr(w.auth.step_up, "require_elevation", slow_gate)
+    response = await w.start()
+    held = w.held()
+    assert response.status_code == 201 and held is not None
+    assert held.started_at == opened
+    assert response.json()["started_at"] == opened.isoformat().replace("+00:00", "Z")
 
 
 # -- failures --------------------------------------------------------------------------------------

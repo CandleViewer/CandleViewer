@@ -172,7 +172,9 @@ class RoleChangeNotifier:
     re-evaluates. A hook that fails or outlasts its bound still lets the registry run; its error
     is raised after as the cause of `RolesHookFailed`, for the route to count and to log apart
     (`users.update.step`, `part` `view_as_hook`), and the sweeper evaluates what it left within a
-    tick. A cancelled request still runs the registry, and a registry failure
+    tick. A registry failure after the hook's is logged (`admin.view_as.registry_push_failed`),
+    never raised in the hook's place: `RolesHookFailed` still names the hook, so the step line
+    keeps its `part`. A cancelled request still runs the registry, and a registry failure
     then is logged, never raised: it would replace the cancellation."""
 
     def __init__(
@@ -195,7 +197,12 @@ class RoleChangeNotifier:
                 _log().error("admin.view_as.registry_push_failed", error=type(exc).__name__)
             raise
         except Exception as exc:
-            await self._registry.roles_changed(user_id)
+            try:
+                await self._registry.roles_changed(user_id)
+            except Exception as registry_exc:  # logged, never in the hook's place: see the class
+                _log().error(
+                    "admin.view_as.registry_push_failed", error=type(registry_exc).__name__
+                )
             raise RolesHookFailed from exc
         await self._registry.roles_changed(user_id)
 

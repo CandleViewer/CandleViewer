@@ -320,24 +320,53 @@ class _Indicators:
 
 _EMA = {"instances": [{"indicator": "ema", "params": {"n": 5}}]}
 _EMA_8 = {"instances": [{"indicator": "ema", "params": {"n": 8}}]}
+_INDICATORS_CH = "indicators.BTCUSDT.time.1"
 
 
-async def _charged_for_a_ctl(viewer: uuid.UUID) -> _Indicators:
-    """What the engine is charged when a viewing socket's `ctl` retunes the instances its `sub`
-    held, apart from the `sub`'s own charges."""
+async def _subscribed_with_instances(viewer: uuid.UUID) -> tuple[ConnectionAuthz, _Indicators]:
+    """A viewing socket (the target's principal, `viewer` acting) whose `sub` of instances has
+    gone upstream; the engine holds what that `sub` charged and nothing else."""
     engine = _Indicators()
     services = SubscriptionServices(bars=_Leases(), indicators=engine)
     principal = PrincipalSnapshot(
         _TARGET, frozenset({"manager"}), frozenset({Permission.MARKETDATA_READ})
     )
     authz = ConnectionAuthz(principal, services, viewer_user_id=viewer)
-    ch = "indicators.BTCUSDT.time.1"
-    sub = authz.admit({"ch": ch, "opts": _EMA})[1]
+    sub = authz.admit({"ch": _INDICATORS_CH, "opts": _EMA})[1]
     assert sub is not None and await authz.subscribe_upstream(sub) is None
+    return authz, engine
+
+
+async def _charged_for_a_sub(viewer: uuid.UUID) -> _Indicators:
+    """What the engine is charged for a viewing socket's `sub` of instances: `_upstream`'s own
+    `check` and `admit`, with nothing cleared and no `ctl` after it."""
+    _authz, engine = await _subscribed_with_instances(viewer)
+    return engine
+
+
+async def _charged_for_a_ctl(viewer: uuid.UUID) -> _Indicators:
+    """What the engine is charged when a viewing socket's `ctl` retunes the instances its `sub`
+    held, apart from the `sub`'s own charges."""
+    authz, engine = await _subscribed_with_instances(viewer)
     engine.checked.clear()
     engine.admitted.clear()
-    authz.ctl(ch, _EMA_8)
+    authz.ctl(_INDICATORS_CH, _EMA_8)
     return engine
+
+
+async def test_a_viewing_sockets_sub_is_checked_against_the_viewers_instance_quota() -> None:
+    """The `sub`'s own per-user cap check, `_upstream`'s `engine.check`, asks about the viewer and
+    never the target, so the check and the hold that follows it agree whose quota it is (#4269's
+    security look)."""
+    viewer = uuid.uuid4()
+    assert (await _charged_for_a_sub(viewer)).checked == [str(viewer)]
+
+
+async def test_a_viewing_sockets_sub_holds_its_instances_for_the_viewer() -> None:
+    """`_upstream`'s `engine.admit` records the holder as the viewer, so a viewer cannot fill the
+    target's `INSTANCE_CAP_PER_USER` and refuse the target's own sockets (#4269's security look)."""
+    viewer = uuid.uuid4()
+    assert (await _charged_for_a_sub(viewer)).admitted == [str(viewer)]
 
 
 async def test_a_viewing_sockets_ctl_is_checked_against_the_viewers_instance_quota() -> None:

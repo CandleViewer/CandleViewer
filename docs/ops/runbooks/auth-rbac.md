@@ -648,8 +648,11 @@ One transaction sets the status, revokes the sessions and grants and writes `use
 then each step (sockets, sweep, B16, rule scope, rule disarm, invite) runs alone, so a `204` can hide
 a failed one: it logs the error line `users.disable.step`, and a repeat of the call re-runs the
 sockets, the sweep, the scope refresh and the disarm. The socket step ends every socket of the user
-with `bye` `user_disabled` and `4403`, one still on a session that a refresh rotated included. The
-disarm lists the user's armed rules again after its disarms, so a rule armed meanwhile is disarmed
+with `bye` `user_disabled` and `4403`, one still on a session that a refresh rotated and one on
+which the user views as another user included (the registry holds that one under its target and
+finds it by its viewer). A socket on which another user views as the disabled one ends its view
+instead, with `bye` `view_as_expired` and `4403`. The disarm lists the user's armed rules again
+after its disarms, so a rule armed meanwhile is disarmed
 too. A rule its chart refuses (evaluating, acting, pending confirmation or spent) stays armed with
 no grant and no permission to act on (O4, O5); a repeat disarms it once it is back in `armed`, which
 a rule pending confirmation or spent reaches only through its confirmation or `RESET_ONCE` (#3226).
@@ -703,10 +706,15 @@ What the cascade builds on, and what to read afterwards:
   access token ends, 12 minutes at most, and if its closer raised the connection may also not be
   sealed, so it can keep receiving its read-only streams. REST has refused the session (or the
   disabled user) since the revocation, and orders are REST only, so nothing can be placed through
-  that socket. After a view-as context's end the session stays live and REST answers as the viewer
-  again; a socket whose per-context close failed keeps the target's read-only streams until its
-  next `auth` or the context's own expiry, whichever comes first. With the deployed gateway the closer seals the connection without waiting, so a
-  failure is not expected: treat it as a regression and file a bug with the lines below. Check:
+  that socket. After a view-as context's end the session stays live and holds the ended context.
+  The view-as guard's table (`api/view_as_guard.py`) then passes only the viewer's own operations
+  (`OWN_OPERATIONS`: leave, the session's own read, refresh and logout among them; a protective
+  write too, once its handler is mounted), and every other read or write answers `view_as_expired`
+  until the client clears the context with `DELETE /auth/session/view-as`. A socket whose
+  per-context close failed keeps the target's read-only streams until its next `auth` or the
+  context's own expiry, whichever comes first. With the deployed gateway the closer seals the
+  connection without waiting, so a failure is not expected: treat it as a regression and file a
+  bug with the lines below. Check:
 
   ```bash
   curl -s http://127.0.0.1:9108/metrics | grep '^ws_session_revocation_close_failures_total'

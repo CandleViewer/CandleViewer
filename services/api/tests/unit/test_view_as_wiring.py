@@ -17,6 +17,7 @@ from pydantic import SecretStr, ValidationError
 
 from candleviewer.admin.view_as import ViewAsService
 from candleviewer.admin.view_as_sweeper import ViewAsSweeper
+from candleviewer.api import notifications
 from candleviewer.api.rules_actor import SessionRulesActorResolver
 from candleviewer.api.view_as import make_view_as_start_router
 from candleviewer.app import _LazyAuditEmitter, create_app
@@ -201,7 +202,7 @@ def test_create_app_gives_the_notifications_read_the_subject_resolving_rules_act
     import candleviewer.app as appmod
 
     seen: list[tuple[Any, ...]] = []
-    real = appmod.make_notifications_router
+    real = notifications.make_notifications_router  # from its defining module, as `gateway` is
 
     def spy(*args: Any, **kwargs: Any) -> Any:
         seen.append(args)

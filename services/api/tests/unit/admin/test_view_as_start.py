@@ -270,17 +270,31 @@ def _uses_of_the_stores_start(source: str) -> set[tuple[str, str]]:
     return uses
 
 
-def test_only_the_start_calls_the_stores_start() -> None:
-    """S2b F4: a context starts only through `ViewAsService.start`'s unit of work, never
-    through the store's bare write or from anywhere else."""
-    root = Path(candleviewer.__file__).parent
-    callers = {
+def _callers_of_the_stores_start(root: Path) -> set[tuple[str, ...]]:
+    """Every use of the store's start under `root`: (file, innermost function, name). A module is
+    parsed only if it names the start, read NFKC-normalised as Python reads its identifiers."""
+    return {
         (path.relative_to(root).as_posix(), *use)
         for path in sorted(root.rglob("*.py"))
         if "start_view_as" in unicodedata.normalize("NFKC", text := path.read_text("utf-8"))
         for use in _uses_of_the_stores_start(text)
     }
+
+
+def test_only_the_start_calls_the_stores_start() -> None:
+    """S2b F4: a context starts only through `ViewAsService.start`'s unit of work, never
+    through the store's bare write or from anywhere else."""
+    callers = _callers_of_the_stores_start(Path(candleviewer.__file__).parent)
     assert callers == {("admin/view_as.py", "start", "start_view_as_unit")}
+
+
+def test_the_start_guard_reads_a_name_spelled_in_compatibility_letters(tmp_path: Path) -> None:
+    """A name spelled with a fullwidth `s` is the store's `start_view_as_unit` to Python (NFKC,
+    PEP 3131): the guard's filter reads a module the same way, or a call so spelled is never
+    parsed (the #4170 re-check's Info-A)."""
+    spelled = "async def go(store):\n    await store.\uff53tart_view_as_unit()\n"
+    (tmp_path / "other.py").write_text(spelled, encoding="utf-8")
+    assert _callers_of_the_stores_start(tmp_path) == {("other.py", "go", "start_view_as_unit")}
 
 
 def test_the_start_guard_finds_an_alias_a_getattr_and_a_lambda() -> None:

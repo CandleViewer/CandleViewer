@@ -1040,6 +1040,19 @@ async def test_a_disabled_viewers_viewing_socket_drops_its_closer() -> None:
     assert registry._closers == {}
 
 
+async def test_a_disabled_viewers_viewing_socket_is_released(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its subscriptions' upstream refs, leases and holds are dropped before the close, as the
+    user's own socket's are (`release_all`): the loop is shared, and a viewing socket is no
+    exception to it (#4269's code look)."""
+    registry = _user_registry(_Clock())
+    viewing = _connect(registry, _Socket().close, _USER, viewer=_VIEWER)
+    released = _record_releases(monkeypatch, viewing)
+    await registry.user_disabled(_VIEWER)
+    assert released == [viewing]
+
+
 async def test_a_disabled_viewers_close_leaves_the_targets_own_socket_open() -> None:
     """The target is not disabled: its own socket, registered under the same id, stays open and
     registered."""
