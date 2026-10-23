@@ -96,7 +96,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 | U6 | Session fixation — id not rotated across login → MFA → privilege-change transitions | L | M | Medium | SR-013 rotate on every authentication state transition (`sessions_rotation` links old→new, old marked `revoked_reason='rotated'`) | `test_session_rotates_on_login_and_on_mfa_step_up`, `test_session_rotates_on_role_change` | Low |
 | U11 | TOTP code replay within the ±1 step skew window (same 30 s code accepted twice) | L | H | Medium | SR-021 extended: `mfa_challenges` records the last-accepted counter per method; a second presentation of the same or an earlier counter is rejected even inside the skew window | `test_totp_same_counter_rejected_within_skew_window` | Low |
 | U12 | Invite token guessed or replayed | L | H | Medium | Invite token is a 128-bit CSPRNG value, single-use, short TTL, hashed at rest like recovery codes (SR-022 pattern applied to invites); redemption revokes the token row atomically | `test_invite_token_single_use`, `test_invite_token_high_entropy_property` (hypothesis) | Low |
-| U13 | WS `auth` frame replayed onto a second socket to piggyback a session | L | H | Medium | The WS handshake binds the session cookie + CSRF-equivalent to the specific socket via SR-012/SR-013's session validation plus `Origin` check (ADR-0010 §3 CSRF/Origin validation); a replayed `auth` frame without a live, un-revoked session id is rejected and audited | `test_ws_auth_frame_rejected_without_live_session`, `test_ws_origin_validated` | Low |
+| U13 | WS `auth` frame replayed onto a second socket to piggyback a session | L | H | Medium | The WS handshake binds the session cookie + CSRF-equivalent to the specific socket via SR-012/SR-013's session validation plus `Origin` check (ADR-0010 §3 CSRF/Origin validation); a replayed `auth` frame without a live, un-revoked session id is rejected and audited | `test_ws_auth_frame_rejected_without_live_session`, `test_ws_origin_validated` | Low. **Accepted risk for a replay while the session is live, dated 2026-10-22** (F-4 in `docs/security/abuse-cases/e09-auth.md`, under the #2701 delegation, comment 6284192190): the frame carries the bearer access token, which nothing binds to a connection, so a replay is refused only without a live, un-revoked session. F-2's envelope bounds it (the token's real expiry, #2265; a logout or a revocation, the `RevocationHub`; E17 WS-S01 and WS-S02). Binding the frame to the connection is #4202. Carried under RSK-021; owner Architect + Owner; review date 2027-01-22 (C-12.1) |
 
 ### 3.2 Tampering
 
@@ -129,7 +129,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 | U23 | Recovery codes persisted in the DOM or browser history after display | L | H | Medium | Recovery codes render once, in a non-persisted view (no route param, no browser-storage write, `autocomplete="off"`), with an explicit "save these now" modal that cannot be reopened | `test_recovery_codes_not_in_url_or_localstorage` (Playwright), a11y note routed to `E09-Q04` for the modal's screen-reader behaviour | Low |
 | U24 | `users.email`, `sessions.ip`, `audit_log.actor_ip` (PII) exposed in an export or admin download without redaction/consent controls | M | M | Medium | Exports go through a role-scoped projection (SR-067 pattern from Area 7 D3, applied here to auth/audit PII); raw IP/email fields owner-only, redacted for Manager/Viewer exports | `test_export_projection_redacts_pii_for_non_owner_roles` | Low |
 | U25 | A 403 response body/shape reveals the existence of a resource the caller has no grant to know about | L | L | Low | `authorize()` returns a uniform 403 body regardless of whether the resource exists or the caller merely lacks scope — no distinguishing "not found" vs "forbidden" leak | `test_403_body_identical_for_missing_vs_unauthorized_resource` | Low |
-| U26 | Viewer-visible `build`/`git_sha` metadata aids a targeted exploit against a known-vulnerable build | L | L | Low | Build metadata surfaced only to Owner in admin screens; Viewer/Manager responses omit it | `test_build_metadata_hidden_from_viewer_and_manager_roles` | Low |
+| U26 | Viewer-visible `build`/`git_sha` metadata aids a targeted exploit against a known-vulnerable build | L | L | Low | The build label (the version) only before authentication, as the WS `welcome` does now (the health probes: #4222; `/metrics`: #4206); the sha only after it, to authenticated principals, in `auth_ok` (`23-ws-protocol.md` §4.3), as `getBuildInfo` already does by contract (`22-api-openapi.yaml`, `x-rbac: permissions: []`; E17 WS-I04, accepted under #1778). **Relaxed from Owner-only (F-8):** a Viewer or Manager gets the sha once authenticated | AC-INFO-01 (`services/api/tests/security/auth/test_build_info_abuse.py`) | Low. **Accepted risk for the sha reaching every authenticated role, dated 2026-10-22** (F-8 in `docs/security/abuse-cases/e09-auth.md`, under the #2701 delegation, comment 6284192190; the relaxation confirmed LANE-30, 2026-10-23 01:24Z). Owner Architect + Owner; review date 2027-01-22 (C-12.1). `post-ga` hardening: build info `ADMIN_READ`-only across `getBuildInfo` and `auth_ok`, riding #4222 |
 
 ### 3.5 Denial of service
 
@@ -295,8 +295,8 @@ and 6 holds for every record the writer takes today:
 
 Every threat above maps to an existing SR id (`04-security-program.md` §6) or a newly proposed
 requirement. No threat is left with only an accepted risk with no control — the two U10/break-glass
-edge cases (§3.6.1) and the socket-only window (U45) are the accepted-residual-risk items, and they
-are dated below.
+edge cases (§3.6.1), the live-session replay (U13), the build metadata after authentication (U26)
+and the socket-only window (U45) are the accepted-residual-risk items, and they are dated below.
 
 <!-- prettier-ignore -->
 | Threat ids | SR id(s) | New requirement proposed? |
@@ -306,7 +306,7 @@ are dated below.
 | U5, U22 | SR-012, SR-112, SR-122 | no |
 | U6, U32 | SR-013 | **SR-013 clarification**: "on every authentication state transition" includes role change, and authorization reads are never session-cached beyond an explicitly invalidated short-lived cache (ADR-0010 Consequences) |
 | U12 | (pattern of SR-022 applied to invites) | **new: SR-024** invite-token issuance/redemption (128-bit CSPRNG, single-use, hashed, short TTL) |
-| U13 | SR-012, SR-013, CSRF/Origin validation (ADR-0010 §3) | no |
+| U13 | SR-012, SR-013, CSRF/Origin validation (ADR-0010 §3) | no — **Accepted risk for a replay while the session is live, dated 2026-10-22** (F-4 in `docs/security/abuse-cases/e09-auth.md`, under the #2701 delegation, comment 6284192190); review date 2027-01-22 (§3.1) |
 | U14, U19, U20, U21 | C-2.9 (audit write-ahead), schema `REVOKE UPDATE, DELETE` | no |
 | U15, U31 | SR-050, SR-051 | no — U31 clarifies SR-050 is a **distinct second layer**, not a duplicate of the capability check |
 | U16 | (none existing) | **new: SR-052** single-source RBAC vocabulary (enum → OpenAPI `x-rbac` → DB seed) with a CI drift check |
@@ -320,7 +320,7 @@ are dated below.
 | U10, U29 | SR-023 | no |
 | U23 | (pattern of SR-022) | **new: SR-054** recovery-code/step-up display surfaces never persist to DOM/browser storage |
 | U24 | SR-067 (Area 7 pattern, applied to auth/audit exports) | no |
-| U25, U26 | (none existing) | **new: SR-056** uniform error responses (403 vs 404 indistinguishable; build metadata Owner-only) |
+| U25, U26 | (none existing) | no registered requirement yet (the provisional SR-056 is taken: it is the native-stop-loss invariant). U25: uniform error responses (403 vs 404 indistinguishable). U26: the sha only to authenticated principals — **Accepted risk, dated 2026-10-22** (F-8 in `docs/security/abuse-cases/e09-auth.md`); review date 2027-01-22 (§3.4) |
 | U30 | (none existing) | **new: SR-057** `authorize()`/`ScopeResolver` API has no permissive default; enforced by type system + lint + test |
 | U33 | E16-FR-11 (E16 R-E3), E49 T-E1/T-E2, C-2.11 | no — the test-clock gate and its boot audit record (#2086, #2728) |
 | U35 | SR-025 (which actions need a step-up); the binding itself comes from the PR #2290 ruling (rule 4) and #189's security notes and is recorded in the REST contract (#2304) | no |

@@ -21,7 +21,7 @@
 
 ## Mutation check (DoD)
 
-Each control was disabled on the scratch worktree and the named case failed, then reverted:
+Each control was disabled on a scratch worktree or in place, the named case failed, then reverted:
 
 | Control disabled                                                       | Failing case                                                                           |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -51,8 +51,11 @@ Each control was disabled on the scratch worktree and the named case failed, the
 | `auth_refresh_reuse_total` not in `AUTH_EXPORTED_NAMES` (#2319)        | `test_obs_refresh_*`                                                                   |
 | `users_invites_rejected_total` not in `AUTH_EXPORTED_NAMES` (#2319)    | `test_obs_invite_*`                                                                    |
 | `welcome_payload` puts `git_sha` back in the `welcome` (F-8)           | AC-INFO-01 `welcome`; `test_lifecycle*.py`, `test_app_wiring.py`                       |
-| the sha back under another key, in the `welcome` (F-8)                 | AC-INFO-01's value checks: the sha is in no pre-auth frame                             |
+| the sha back under another key, in the `welcome` (F-8)                 | AC-INFO-01's value checks: the sha is not in the `welcome`                             |
+| the `welcome` carries only the sha's 7-character prefix (F-8)          | AC-INFO-01 `welcome` (the prefix check); the failed pre-auth sequence                  |
+| the sha in a pre-auth `err`, `bye` or close reason (F-8)               | AC-INFO-01's failed pre-auth sequence                                                  |
 | the gateway builds `auth_ok` without `git_sha` (F-8)                   | AC-INFO-01's `auth_ok` control; `test_app_wiring.py`, `test_lifecycle_socket.py`       |
+| the gateway builds a re-auth's `auth_ok` without `git_sha` (F-8)       | AC-INFO-01's re-auth case; the first-auth control still passes                         |
 
 AC-AUD-01/02 attack the real `cv_app`, so their controls are the shipped files that give it its
 rights. Each was changed on a scratch copy of `0003_audit_log` or `pg_bootstrap.sql`, except the last
@@ -147,7 +150,7 @@ race. The 3 unit cases, in `tests/unit/auth/test_mfa_service_edges.py`, are
 | AC-WS-04      | §5.2 §6 registry  | Authenticated socket                                | `sub` per name: `../admin`, `orders.*`, `/../`, control chars, case, 300 chars; mixed; unknown names  | Refused, nothing attached, socket stays open: a name that is not a topic name refuses its whole `sub` (§5.2, #2567); an unknown but well-formed name is refused per topic    | Malformed: `err invalid_options`, `topics[i]`; granted topic beside one not attached. Unknown: per topic       | DEFENDED                                                                  |
 | AC-AUD-01     | U14 SR-066        | `cv_app`: SELECT, INSERT only, on both audit tables | `UPDATE`, `DELETE`, `TRUNCATE` on `audit_log` and on `audit_checkpoints` as `cv_app`                  | `insufficient_privilege` for the missing table privilege; every row unchanged afterwards                                                                                     | Local PG 16.2: refused x6, rows unchanged (`test_cv_app_cannot_rewrite_audit_history`)                         | DEFENDED (integration lane: `pytest tests/integration -m integration`)    |
 | AC-AUD-02     | U14 SR-063 SR-066 | Same role, own login per attempt; owns nothing      | Drop, disable or replace each guard trigger and function; take ownership; replica mode; add a trigger | Each attempt `insufficient_privilege`; guard unchanged (triggers, enabled, function bodies, owners), still firing: owner UPDATE, DELETE, TRUNCATE refused, new row chained   | Local PG 16.2: refused x44 (4 with CREATE on the schema), guard intact: see the evidence note                  | DEFENDED (integration lane: `pytest tests/integration -m integration`)    |
-| AC-INFO-01    | U26 §4.3          | No credential: a socket before `auth`               | WS `hello`, read `welcome`; then `auth`, read `auth_ok` (the probes: #4222)                           | No git sha before authentication, only the build label (the version); the sha in `auth_ok`                                                                                   | Probes and `welcome`: the version, no sha; `auth_ok`: the configured sha                                       | DEFENDED (F-8, fixed)                                                     |
+| AC-INFO-01    | U26 §4.3          | No credential: a socket before `auth`               | WS `hello`, read `welcome`; `sub`, then 3 bad `auth` to the close; `auth` twice, read `auth_ok`       | No git sha, whole or cut to 7 characters, in the pre-auth `welcome`, `err`, `bye` or close reason: only the build label (the version); the sha in each `auth_ok`             | `welcome` and the failed sequence: the version, no sha; a Manager's `auth_ok`, first and re-auth: the sha      | DEFENDED (F-8: the WS read; the probes #4222, `/metrics` #4206)           |
 
 Evidence for AC-AUD-01/02, all in the CI integration lane (`pytest tests/integration -m integration`):
 
@@ -198,13 +201,14 @@ refused before any password check when its CSRF token belongs to another session
 
 ## The nightly chain verifier (NOT RUN until its job existed: F-6, #2111)
 
-| Area          | Cases                                                             | Evidence                                                                         |
-| ------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Audit attacks | the nightly chain verifier detects an out-of-band edit (U14, U20) | `services/api/tests/integration/audit/test_audit_verify_runner_pg.py:127`, #3872 |
+| Area          | Cases                                                             | Evidence                                                                                                                        |
+| ------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Audit attacks | the nightly chain verifier detects an out-of-band edit (U14, U20) | `test_audit_verify_runner_pg.py::test_scheduled_run_finds_a_row_altered_behind_the_chain_and_the_next_run_still_happens`, #3872 |
 
 The verifier runs on schedule since #3872, which wires the job of #3017 to the real runner from
-`create_app`; #3059 pages when no run has passed for 26 hours. The case at
-`test_audit_verify_runner_pg.py:127` is AC5 shown on real Postgres 16 (the #298 QA record; CI's
+`create_app`; #3059 pages when no run has passed for 26 hours. The case
+`test_audit_verify_runner_pg.py::test_scheduled_run_finds_a_row_altered_behind_the_chain_and_the_next_run_still_happens`
+is AC5 shown on real Postgres 16 (the #298 QA record; CI's
 integration lane, as it does not run locally): a row altered behind the chain, as a superuser
 can alter one, is found by a scheduled run, whose critical `admin.audit_verify` record names the
 first bad entry, and the next run still happens. The on-demand verifier locates such an edit
@@ -287,10 +291,11 @@ not through `create_app()`.
 Every authenticated WS connection also writes one `ws.connection.closed` row when it ends (#2528;
 `reason` is the `bye` reason, else `internal_error`, `shutdown` or `client_closed`); an
 unauthenticated close writes none. No runtime signal by nature: AC-CRED-01/02 (offline hash),
-AC-ENUM-03 (timing), AC-CSRF-03 (cookie flags), AC-INFO-01 (a public read: nothing is refused)
-and AC-SES-01b, 02 and 04 (a normal sign-in or refresh: nothing is attacked, so nothing is
-signalled). AC-MFA-05 shares the `auth.mfa_failed` path. "None" in the alert column is the
-recorded state, not a target: alerting on these signals is a detection-rule decision.
+AC-ENUM-03 (timing), AC-CSRF-03 (cookie flags), AC-INFO-01 (a public read: nothing is refused;
+the failed `auth` of its error-path case leaves AC-WS-02's signals) and AC-SES-01b, 02 and 04
+(a normal sign-in or refresh: nothing is attacked, so nothing is signalled). AC-MFA-05 shares
+the `auth.mfa_failed` path. "None" in the alert column is the recorded state, not a target:
+alerting on these signals is a detection-rule decision.
 
 ## Findings
 
@@ -322,11 +327,13 @@ recorded state, not a target: alerting on these signals is a detection-rule deci
   carries the bearer access token, which is not bound to a connection, address or user agent.
   U13's mitigation text only promises rejection for a frame _without_ a live session, so the
   behaviour matches its letter but not the threat it names.
-  - Decision (a), accepted now: F-2's envelope bounds it, the access-token TTL (#2265) and
-    revocation (#2318), on a private, Tailscale-only, TLS-only deployment. No code change;
-    AC-WS-02 keeps its expectation.
+  - Decision (a), accepted now: F-2's envelope bounds it on a private, Tailscale-only, TLS-only
+    deployment: a socket closes at its token's real expiry (#2265), a logout or revocation
+    closes every socket of the session (the `RevocationHub`), and E17 rates the replay Medium
+    with a Low residual (WS-S01, WS-S02). No code change; AC-WS-02 keeps its expectation.
   - Residual risk, accepted with it: while a session is live, a socket's identity rests on its
     bearer token, not on the connection, until the token's TTL, a logout or a revocation ends it.
+    Owner: Architect + Owner; review date 2027-01-22 (C-12.1).
   - Decision (b), R2 hardening: bind the frame to the connection, #4202. Owner: Architect +
     Owner.
   - Reproduction steps are withheld from this public repository (`SECURITY.md` §1; #298 Security
@@ -346,8 +353,8 @@ recorded state, not a target: alerting on these signals is a detection-rule deci
   the fix.
   - Remedy: #3017 added the start-up and nightly verify job, #3059 pages when no run has passed
     for 26 hours, and #3872 runs the real verifier on that schedule from `create_app`. AC5 on
-    Postgres 16: `services/api/tests/integration/audit/test_audit_verify_runner_pg.py:127` (see
-    "The nightly chain verifier" above).
+    Postgres 16, `test_audit_verify_runner_pg.py::test_scheduled_run_finds_a_row_altered_behind_the_chain_and_the_next_run_still_happens`
+    (see "The nightly chain verifier" above).
   - Repro (before #3872): in `candleviewer/` only `POST /admin/audit/verify` (`api/audit.py`)
     called the verifier; `audit/checkpoint.py` recorded the head hash without verifying the chain.
 - **F-7 (gap, STRIDE: Elevation of privilege, severity Low; E09-X04 R-3; tracked as #2109) — FIXED
@@ -357,21 +364,29 @@ recorded state, not a target: alerting on these signals is a detection-rule deci
   (AC-INV-06), both audited. #2109 was closed after QA passed (2026-10-16). Owner: Architect + Owner.
   - Repro (before #2124): an Owner invited with `"roles": ["manager"]`; redeeming it activated a
     Manager.
-- **F-8 (design gap, STRIDE: Information disclosure, severity Low) — WS half FIXED by the #298
-  close-out, REST half PENDING (#4221, then #4222)** (#2701 delegation (6284192190), LANE-28
-  2026-10-22 21:47Z and 22:15Z; the split, LANE-29 2026-10-23 00:17Z). U26: the public health
-  probes (`/healthz`, `/readyz`) and the pre-auth WS `welcome` carried the git sha and the version
-  to any client, while U26's mitigation says only the Owner sees build metadata.
+- **F-8 (design gap, STRIDE: Information disclosure, severity Low) — FIXED for the WS `welcome`
+  by the #298 close-out; the health probes PENDING (#4221, then #4222); the metrics endpoint
+  PENDING (#4206)** (#2701 delegation (6284192190), LANE-28 2026-10-22 21:47Z and 22:15Z; the
+  split, LANE-29 2026-10-23 00:17Z; U26 relaxed, LANE-30 2026-10-23 01:24Z). U26: the public
+  health probes (`/healthz`, `/readyz`) and the pre-auth WS `welcome` carried the git sha and the
+  version to any client, while U26's mitigation said only the Owner sees build metadata.
   - Decision: redact. Before authentication only the build label (the version) is exposed; the
-    sha only after it, in `auth_ok` (`23-ws-protocol.md` §4.3), to every authenticated role.
+    sha only after it, in `auth_ok` (`23-ws-protocol.md` §4.3), to every authenticated role,
+    Viewer and Manager included. U26 is relaxed from Owner-only to authenticated-only, as
+    `getBuildInfo` already gives it by contract (`22-api-openapi.yaml`), and its residual is
+    accepted: review date 2027-01-22 (C-12.1).
   - Fix, the WS half: the `welcome` drops the sha, and `auth_ok` gains it as an optional, additive
     cv.v1 member. Regression: AC-INFO-01 (`test_build_info_abuse.py`) and the unit cases of
     `test_app_wiring.py`, `test_lifecycle.py` and `test_lifecycle_socket.py`.
   - Pending, the REST half: the probes keep the sha until the deploy smoke test reads the deployed
-    sha from the container (#4221); their redaction and AC-INFO-01's probe cases are #4222. The
-    probes sit inside the C-12.9 loopback and mesh boundary; the `welcome` reached any client.
+    sha from the container (#4221); their redaction and AC-INFO-01's probe cases are #4222. Until
+    #4222 and #4206 land, the probes and the metrics endpoint leave the build pre-auth to every
+    mesh peer, as `welcome` did. One middleware guards every route, `/ws` included
+    (`net/middleware.py`).
   - Residual, outside this fix: the metrics endpoint's access policy inside the mesh, an Owner
     decision (#4206).
+  - Residual, `post-ga` hardening: build info `ADMIN_READ`-only across `getBuildInfo` and
+    `auth_ok`; it rides #4222.
   - Reproduction steps are withheld from this public repository, as for F-4.
 - **O-1..O-4 (observability gaps, STRIDE: Repudiation, severity Low).** Each attack was defended,
   but the defence was partly invisible (see "Observability per case"):
