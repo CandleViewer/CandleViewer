@@ -422,6 +422,27 @@ def test_every_figure_below_its_bound_is_listed() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({"take_profit": Decimal(10**30)}, FieldError("take_profit", "max_price", _MAX_PRICE)),
+        (
+            {**_SELL, "stop_loss": Decimal("63300.0"), "take_profit": Decimal("0.05")},
+            FieldError("take_profit", "min_price", _MIN_PRICE),
+        ),
+    ],
+    ids=["above", "below"],
+)
+def test_a_take_profit_is_held_to_the_instruments_price_bounds(
+    changes: dict[str, Any], expected: FieldError
+) -> None:
+    """S2-Q6 and Q-L: a take-profit is a price as the others are, within `min_price` and
+    `max_price`, named before any figure meets a step."""
+    with pytest.raises(OrderInvalid) as refused:
+        _check(_order(**changes))
+    assert type(refused.value) is OrderInvalid and refused.value.errors == (expected,)
+
+
 @pytest.mark.parametrize("qty", [Decimal("0"), Decimal("-0.0055")], ids=["zero", "negative"])
 def test_a_quantity_not_above_zero_is_refused_at_its_bound_before_any_step(qty: Decimal) -> None:
     """Only a quantity not above zero can be 10**28 steps below its minimum, so only it answers

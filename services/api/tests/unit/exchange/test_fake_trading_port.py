@@ -114,6 +114,13 @@ def test_fake_capabilities_take_overrides_and_describe_the_environment() -> None
     assert fake_capabilities("demo").order_retention_days == 7
 
 
+def test_the_fakes_record_sets_no_tpsl_on_a_reduce_only_create_unless_a_test_says_so() -> None:
+    """As the exchange adapter's records do (24 Sec.14.1), so the OMS's refusal is exercised by
+    default; an override stands for a venue that sets them."""
+    assert fake_capabilities("demo").supports_reduce_only_tpsl is False
+    assert fake_capabilities("demo", supports_reduce_only_tpsl=True).supports_reduce_only_tpsl
+
+
 async def test_a_create_lands_with_a_deterministic_id_and_is_recorded_with_its_lane() -> None:
     port = _port()
     first = await port.place_order(_place(0))

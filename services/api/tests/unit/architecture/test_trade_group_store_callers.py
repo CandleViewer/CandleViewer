@@ -8,6 +8,11 @@ scope is in the SQL (SR-051, SR-E28-21). A reference to the system surface anywh
 `candleviewer` (an `api/` router, a WS topic, a job) fails here; each consumer PR (E29-T04,
 E34-S02, E34-T01, E32-T01, E32-T02, E41-T02) adds its file to `ALLOWED` and is reviewed as an
 RBAC bypass first (C-12.4; the #2314 precedent in test_accounts_row_counts_callers.py).
+
+E29-T04 (#913, slice 2b): `oms/submit.py`, the order submission pipeline, moves the one leg and
+the group its own first persist wrote, by compare-and-set from the status it wrote (S2-Q4:
+`update_leg` and `update_group` with `expected_status`), after the request's admission and the
+OMS's own checks; it reads nothing back and reaches no other group.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ ALLOWED = frozenset(
         "storage/repositories/trade_groups.py",
         "storage/repositories/trade_groups_sqlalchemy.py",
         "accounts/trade_group_repository.py",
+        "oms/submit.py",
     }
 )
 

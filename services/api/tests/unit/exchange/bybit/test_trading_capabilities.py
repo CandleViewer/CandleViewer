@@ -60,6 +60,7 @@ SECTION_14_1: dict[str, Any] = {
     "supports_attached_sl_tp": True,
     "supports_batch_orders": True,
     "supports_reduce_only": True,
+    "supports_reduce_only_tpsl": False,
     "supports_post_only": True,
     "supports_hedge_mode": True,
     "supports_dead_mans_switch": False,
@@ -103,6 +104,17 @@ VENUES: dict[str, dict[str, Any]] = {
 @pytest.mark.parametrize("environment", sorted(VENUES))
 def test_each_record_is_section_14_1_field_for_field(environment: str) -> None:
     assert capabilities_for(environment).model_dump() == SECTION_14_1 | VENUES[environment]
+
+
+@pytest.mark.parametrize("environment", sorted(VENUES))
+def test_neither_record_sets_a_take_profit_or_a_stop_loss_on_a_reduce_only_create(
+    environment: str,
+) -> None:
+    """The venue's create-order rule, `reduceOnly` row: "When reduceOnly is true, take profit/stop
+    loss cannot be set" (`bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921`,
+    `docs/v5/order/create-order.mdx`). The OMS asks this field, never a constant of its own."""
+    record = capabilities_for(environment)
+    assert (record.supports_reduce_only, record.supports_reduce_only_tpsl) == (True, False)
 
 
 def test_the_records_are_frozen() -> None:

@@ -3711,14 +3711,15 @@ export interface paths {
      *       otherwise `risk_limit_breached` (24-internal-schemas.md section 9.3 step 1; the profile
      *       an account is created with is not trading-enabled, `21-database-schema.md` section
      *       3.2.4).
-     *     * Price, trigger price and stop are held to the instrument's `min_price` to `max_price`,
-     *       and the quantity above zero and within its ceiling (`max_order_qty`, or
+     *     * Price, trigger price, stop and take-profit are held to the instrument's `min_price` to
+     *       `max_price`, and the quantity above zero and within its ceiling (`max_order_qty`, or
      *       `max_mkt_order_qty` for a market order): each figure outside is listed in `errors[]`
-     *       with its `field` (`price`, `trigger.price`, `stop_loss`, `qty`) and the bound it breaks
-     *       as its `rule` (`min_price`, `max_price`, `min_order_qty`, `max_order_qty`,
-     *       `max_mkt_order_qty`), answered `lot_size_violation` when the quantity is listed and
-     *       `validation_failed` otherwise. Price is also snapped/validated against `tick_size`;
-     *       qty against `qty_step`/min/max (`tick_size_violation` / `lot_size_violation`).
+     *       with its `field` (`price`, `trigger.price`, `stop_loss`, `take_profit`, `qty`) and the
+     *       bound it breaks as its `rule` (`min_price`, `max_price`, `min_order_qty`,
+     *       `max_order_qty`, `max_mkt_order_qty`), answered `lot_size_violation` when the quantity
+     *       is listed and `validation_failed` otherwise. Price is also snapped/validated against
+     *       `tick_size`; qty against `qty_step`/min/max (`tick_size_violation` /
+     *       `lot_size_violation`).
      *     * A native exchange-side stop-loss is mandatory for every entry (C-2.6, arch P4). The
      *       server classifies an order by its effect on the exchange-truth position, never by
      *       its label: an order that is not reduce-only, or whose quantity exceeds the position
@@ -3737,7 +3738,15 @@ export interface paths {
      *       only: another `sizing.mode` is refused with `validation_failed` /
      *       `sizing_mode_unsupported`, and a stop in `atr` or `r_multiple` units, whether
      *       `stop_loss` or the profile's offset, with `validation_failed` / `stop_unit_unsupported`
-     *       (#913 ruling R4); the `marketWithBracket` and `conditional` examples need #907.
+     *       (#913 ruling R4); the `marketWithBracket` and `conditional` examples need #907. A
+     *       `take_profit` in `price`, `ticks` or `percent` lands on a tick rounded toward the entry;
+     *       one in `atr` or `r_multiple` is `stop_unit_unsupported` on `take_profit`, and one that is
+     *       no finite price above zero on the profit side is `take_profit_side`.
+     *     * A reduce-only order carries no take-profit and no stop-loss: the exchange sets neither on
+     *       one (`ExchangeCapabilities.supports_reduce_only_tpsl`, 24-internal-schemas.md section
+     *       14.1). One that names either, or that would carry the profile's stop because it is not
+     *       shown to reduce (an entry, above), is refused with `validation_failed` /
+     *       `reduce_only_tpsl`, one `errors[]` item per side, before anything is recorded or sent.
      *     * These refusals answer with their `x-error-codes` status: `400` for `validation_failed`
      *       (each failing rule in `errors[]`), `tick_size_violation` and `lot_size_violation`, and
      *       `403` for `risk_limit_breached`.
@@ -3761,7 +3770,9 @@ export interface paths {
      *       answer (a crash, or a store failure after the send) leaves its anchor undecided: a
      *       repeat is `409 idempotency_in_flight` only within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of
      *       the anchor's creation, longer than the submission's own bounds, and later decides it,
-     *       `202` with the rows in their current state (an order still `validated` was never sent).
+     *       `202` with the rows in their reconciled state, never an assumed success: while
+     *       reconciliation has not resolved the order (still `validated`, never sent, `submitting`,
+     *       `unknown` or `quarantined`) the answer says `reconciling`.
      *     * Live trading not enabled, the B18 kill switch (engaged for the account or globally) and
      *       the order-entry gate refuse with `403 trading_disabled` before anything reaches the
      *       exchange. They come after the idempotency lookup (the order of the checks under
@@ -3774,8 +3785,13 @@ export interface paths {
      *       answers `502 exchange_error` with that `ret_code`, and the halt starts with it.
      *     * An order is recorded before it is sent (24-internal-schemas.md section 8.4), so while
      *       Postgres is unavailable the request is refused with `503 store_unavailable` before any
-     *       exchange call. A store failure after the send is never a `503`: the request answers
-     *       its outcome, `202` with the order's last known state or the `502`.
+     *       exchange call. A request whose send step's outcome is not known, its order still
+     *       `validated`, answers that `503` too: this request sends nothing and leaves its anchor
+     *       undecided, and a `submitting` row whose commit was lost is resumed by a restart's
+     *       hydration, under its persisted `orderLinkId`: looked up first, and sent again only
+     *       within its re-send bound (24-internal-schemas.md section 8.3 rule 6). A store failure
+     *       after the send is never a `503`: the request answers its outcome, `202` with the order's
+     *       last known state or the `502`.
      *     * An entry's stop request is recorded with its order, one stop request in flight per
      *       position (`21-database-schema.md` section 3.3.11, the recorded stop, which lands with
      *       E29-T04's slice 2a). An entry whose stop request collides with one still in flight on

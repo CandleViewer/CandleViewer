@@ -24,6 +24,11 @@ never from the request: `find` is keyed by that principal, so another's key read
 through `RecordedStopRepository`: only B1's `sl_pending` invoke calls it, for the order whose
 machine runs it, and it reads that order's row by the account the command names (OM-I02); no route
 reaches it, and slice 3's routes reach B1 only through the OMS facade, after their admission.
+`oms/submit.py`, the submission pipeline, builds an order's first persist (`create_first`, through
+B1's step writer) and decides its anchor through `oms/idempotency.py`: its principal is the one
+slice 3's route took from the authenticated session after its admission, never a request field,
+every row it writes is the request's own account's (`TradingAccounts` resolved it by id alone,
+SR-E27-21), and no route reaches it but that one, after scope, the arm token and the replay lookup.
 """
 
 from __future__ import annotations
@@ -50,6 +55,7 @@ ALLOWED = frozenset(
         "oms/idempotency.py",
         "oms/order_steps.py",
         "oms/repository.py",
+        "oms/submit.py",
         "storage/repositories/idempotency_anchors.py",
         "storage/repositories/idempotency_anchors_sqlalchemy.py",
         "storage/repositories/recorded_stops.py",

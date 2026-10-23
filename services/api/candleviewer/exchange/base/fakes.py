@@ -265,6 +265,7 @@ def fake_capabilities(
         "supports_attached_sl_tp": True,
         "supports_batch_orders": True,
         "supports_reduce_only": True,
+        "supports_reduce_only_tpsl": False,
         "supports_post_only": True,
         "supports_hedge_mode": True,
         "supports_dead_mans_switch": False,

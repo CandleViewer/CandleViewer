@@ -9,6 +9,12 @@ venue's history read shows an unfilled order 7 days at most, and a cancelled, re
 deactivated one 24 hours (§14.1). Consumers read the record, never the environment (§14.2
 rule 3). Each caller gets its own deep copy: the model is frozen, but its rate and cadence tables
 are dicts, so a write to a shared record would reach every other consumer.
+
+A reduce-only create carries no take-profit and no stop-loss (`supports_reduce_only_tpsl`
+False): the venue's create-order documentation, `reduceOnly` row, says "When reduceOnly is true,
+take profit/stop loss cannot be set" (`bybit-exchange/docs` at
+`19518b90fb36e1527eaf99ff692076487a977921`, `docs/v5/order/create-order.mdx`, the revision the
+recorded fixtures cite), so the OMS refuses such an order before it records or sends it.
 """
 
 from __future__ import annotations
@@ -50,6 +56,7 @@ def _record(environment: Environment, *, demo: bool) -> ExchangeCapabilities:
         supports_attached_sl_tp=True,
         supports_batch_orders=True,
         supports_reduce_only=True,
+        supports_reduce_only_tpsl=False,
         supports_post_only=True,
         supports_hedge_mode=True,
         supports_dead_mans_switch=False,

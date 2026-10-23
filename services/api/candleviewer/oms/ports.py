@@ -12,7 +12,10 @@ live:
   the profile's offset; `atr` and `r_multiple` are `validation_failed` / `stop_unit_unsupported`.
   A request's `percent` is the percent a client writes (`"0.4"` is 0.4 %), the profile's a
   fraction (24 Sec.9.2). The stop lands on a tick, rounded away from the entry, never closer
-  (24 Sec.9.3.1).
+  (24 Sec.9.3.1). Its take-profit (S2-Q6) serves the request's `price`, `ticks` and `percent` on
+  the profit side, on a tick rounded toward the entry (Q-L), and none when the request names none;
+  `atr` and `r_multiple` are `stop_unit_unsupported` on `take_profit`. An offset that is no finite
+  figure is passed through unresolved, for the guard to refuse (#2877 ruling 2).
 - `InterimRiskGate` admits a demo order without evaluating it and refuses every other one.
 - `NoArmRecords`: no arm record exists yet, so every live order is refused; demo needs none
   (SR-043).
@@ -42,11 +45,18 @@ The command port (`commands.OmsCommandPort`) consumes five more, which slice 3 b
 its fail-closed interim `RefuseWhileWaiting` (21 Sec.3.3.11). `ForeignOrderLockout` (SR-E27-19) is
 declared here for E29-T05 and E29-T06, its callers.
 
+The pipeline itself (`submit.OrderSubmission`) consumes three more, which slice 3 binds too:
+`Instruments` (the instrument-info cache), `ReferencePrices` (a market order's reference price)
+and `Profiles` (`accounts.profile_cache.EffectiveProfiles`, in its own shape). A request's records
+name its principal (`SubmitActor`, C-2.9): `RequestRecord`, written through `SubmitAudit` beside the
+keyed records, which an entry's stop requests carry with their actor.
+
 The vocabulary the ports speak lives here too: `OrderEffect` (SR-E29-01), `StopOffset` (22
 `Offset`), `SizingRequest` (22 `Sizing`), `ArmToken`, the session's arm token held masked (C-12.6)
 and compared in constant time (SR-043), and `SizedOrder`, the order the validator, the risk gate
 and B1 see once it is sized and rounded (SR-E29-04), which cannot be built as an entry without a
-stop, nor with a stop off the protective side (C-2.6). Every decision by effect here and in
+stop, nor with a stop off the protective side (C-2.6), nor with a take-profit off the profit
+side. Every decision by effect here and in
 `classify` and `validator` fails closed: any effect but `OrderEffect.REDUCE` is an entry's.
 Verdicts are B1's gate values (`statechart/bindings/b01_order.py`).
 """
@@ -55,7 +65,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from enum import StrEnum
@@ -158,13 +168,16 @@ class SizedOrder:
     intent: OrderPurpose
     effect: OrderEffect
     stop_loss: Px | None
+    take_profit: Px | None = None
 
     def __post_init__(self) -> None:
         """The invariants every later check relies on, whatever the call order, as strict as
-        `classify.stop_errors` (C-2.6, SR-E29-01): `effect` is an `OrderEffect`, a string that
-        names none refused, and any effect but `REDUCE` is an entry's; an entry carries a stop;
-        any stop is finite, above zero and on the protective side of a reference price above
-        zero, below it for a buy and above it for a sell; and an order that only reduces is
+        `classify.stop_errors` and `classify.take_profit_errors` (C-2.6, SR-E29-01, S2-Q6):
+        `effect` is an `OrderEffect`, a string that names none refused, and any effect but
+        `REDUCE` is an entry's; an entry carries a stop; any stop is finite, above zero and on the
+        protective side of a reference price above zero, below it for a buy and above it for a
+        sell; any take-profit is finite, above zero and on the profit side, above a buy's
+        reference price and below a sell's (#2877 ruling 2); and an order that only reduces is
         reduce-only."""
         object.__setattr__(self, "effect", OrderEffect(self.effect))
         entry = self.effect is not OrderEffect.REDUCE
@@ -178,6 +191,14 @@ class SizedOrder:
             raise ValueError("a stop_loss is judged against a reference_price above zero")
         elif not (stop < reference if self.side == "buy" else stop > reference):
             raise ValueError("a stop_loss is below a buy's reference_price, above a sell's (C-2.6)")
+        take_profit = self.take_profit
+        if take_profit is not None:
+            if not take_profit.is_finite() or take_profit <= 0:
+                raise ValueError("a take_profit is finite and above zero (#2877 ruling 2)")
+            if not reference.is_finite() or reference <= 0:
+                raise ValueError("a take_profit is judged against a reference_price above zero")
+            if not (take_profit > reference if self.side == "buy" else take_profit < reference):
+                raise ValueError("a take_profit is above a buy's reference_price, below a sell's")
         if not entry and not self.reduce_only:
             raise ValueError("an order that only reduces is reduce_only (SR-E29-01)")
 
@@ -218,7 +239,8 @@ class Sizer(Protocol):
 class StopResolver(Protocol):
     """E28-T03 (#907): the stop-loss price: the request's `stop`, else for an entry the profile's
     offset, else `None`; `StopUnitUnsupported` for a unit it cannot resolve. It decides nothing:
-    `classify.NativeStopGuard` judges its answer."""
+    `classify.NativeStopGuard` judges its answer. And the take-profit price (S2-Q6): the request's
+    `take_profit`, or `None`, judged by `classify.take_profit_errors`."""
 
     def resolve(
         self,
@@ -227,6 +249,16 @@ class StopResolver(Protocol):
         side: Side,
         reference_price: Px,
         effect: OrderEffect,
+        instrument: Instrument,
+        profile: AccountProfile | None,
+    ) -> Px | None: ...
+
+    def resolve_take_profit(
+        self,
+        take_profit: StopOffset | None,
+        *,
+        side: Side,
+        reference_price: Px,
         instrument: Instrument,
         profile: AccountProfile | None,
     ) -> Px | None: ...
@@ -285,6 +317,31 @@ class TradingAccounts(Protocol):
         ...
 
 
+class Instruments(Protocol):
+    """The instrument-info cache (24 Sec.1.3, `ingestion.instruments`, which slice 3 binds): the
+    symbol's instrument, or None when none is listed under it."""
+
+    async def instrument(self, symbol: Symbol) -> Instrument | None: ...
+
+
+class ReferencePrices(Protocol):
+    """The market's reference price a market order is measured from (24 Sec.9.3 step 2: the mid,
+    else the last price), or None when the market shows none; slice 3 binds the ticker."""
+
+    async def reference_price(self, symbol: Symbol) -> Px | None: ...
+
+
+class Profiles(Protocol):
+    """The effective profile (24 Sec.9.3): `accounts.profile_cache.EffectiveProfiles`'s own member,
+    so slice 3 wires the cache as it stands. The given profile, or the account's default; raises
+    `AccountNotFoundError` when the account has no such profile (another account's included) and
+    `ProfileUnavailableError` when the store cannot answer (SR-E28-24: never a default)."""
+
+    async def get_effective_profile(
+        self, account_id: UUID, profile_id: UUID | None = None
+    ) -> AccountProfile: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RateReading:
     """The rate step's verdict (24 Sec.8.7, `routing.TradingRouter.headroom`): whether the order's
@@ -313,6 +370,41 @@ AuditSeverity = Literal["info", "warning", "error", "critical"]
 #: What a keyed record is about: a stop request's record has its row as its object (21
 #: Sec.3.3.11 "Audit").
 AuditObject = Literal["order", "recorded_stop"]
+#: What a request's own record is about: its order, an entry's group, or, for a refusal before
+#: any row exists, the account it named.
+RequestObject = Literal["order", "trade_group", "exchange_account"]
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitActor:
+    """Who sends an order request, as its records name them (C-2.9: the actor and the role): the
+    principal the route authenticated, or a rule's owner (M15), never a client value, with the
+    session and the address the route read."""
+
+    user_id: UUID
+    role: str
+    session_id: UUID | None = None
+    ip: str | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RequestRecord:
+    """One record an order request writes about itself (`submit.OrderSubmission`, C-2.9): its
+    intent with its rows (`orders.submit`, `trade_group.submit`), a refusal (`denied`, its problem
+    code as `reason`) or its outcome, naming the requesting principal. `detail` holds ids, state
+    names and codes, never a price, a size, the key or a secret (C-12.6); `request_id` is the
+    request's correlation id (`X-Correlation-Id`, #3990), None for a job."""
+
+    action: str
+    account_id: UUID
+    object_kind: RequestObject
+    object_id: UUID
+    outcome: AuditOutcome
+    severity: AuditSeverity
+    reason: str
+    actor: SubmitActor
+    detail: Mapping[str, str | None]
+    request_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,7 +415,8 @@ class KeyedRecord:
     and reasons, never a price, a size or a secret (C-12.6); `actor_user_id` is None for the
     system (`system:oms`). `request_id` is the correlation id of the HTTP request the record is
     written for (`X-Correlation-Id`, #3990), None for a job, a restart's resume or a fill-driven
-    attach (21 Sec.3.10.1)."""
+    attach (21 Sec.3.10.1). `actor` is the requesting principal of a record a request writes (an
+    entry's stop requests), whose `actor_user_id` it is; None for the system."""
 
     action: str
     name: str
@@ -336,17 +429,23 @@ class KeyedRecord:
     actor_user_id: UUID | None
     detail: Mapping[str, str | None]
     request_id: UUID | None = None
+    actor: SubmitActor | None = None
+
+    def __post_init__(self) -> None:
+        if self.actor is not None and self.actor.user_id != self.actor_user_id:
+            raise ValueError("a keyed record's actor_user_id is its actor's")
 
 
 class SubmitAudit(Protocol):
-    """The audit writer's keyed records (`AuditWriter.emit_keyed`, which slice 3 wires; `oms` never
-    imports `audit`, C-3.3). `record_id` is the id `write` stores a record under, the writer's
-    `keyed_record_id(action, name)`, fixed for good; `write` makes the record durable or raises
-    (C-2.9)."""
+    """The audit writer's records of the order path, which slice 3 wires (`oms` never imports
+    `audit`, C-3.3): a `KeyedRecord` through `AuditWriter.emit_keyed`, a request's
+    `RequestRecord` through `emit`. `record_id` is the id `write` stores a keyed record under,
+    the writer's `keyed_record_id(action, name)`, fixed for good; `write` makes the record
+    durable or raises (C-2.9)."""
 
     def record_id(self, action: str, name: str) -> UUID: ...
 
-    async def write(self, record: KeyedRecord) -> None: ...
+    async def write(self, record: KeyedRecord | RequestRecord) -> None: ...
 
 
 class OrderHandovers(Protocol):
@@ -546,10 +645,30 @@ class InterimStopResolver(Interim):
             level = _profile_level(profile, side, reference_price, tick)
         else:
             return None
-        return _away_from_entry(level, side, tick)
+        return _on_tick(level, side, tick)  # away from the entry (24 Sec.9.3.1)
+
+    def resolve_take_profit(
+        self,
+        take_profit: StopOffset | None,
+        *,
+        side: Side,
+        reference_price: Px,
+        instrument: Instrument,
+        profile: AccountProfile | None,
+    ) -> Px | None:
+        """S2-Q6: the request's take-profit in `price`, `ticks` or `percent`, on the profit side,
+        on a tick rounded toward the entry (Q-L); None when it names none, as the profile's
+        offset is not applied to an order unasked. `atr` and `r_multiple` are refused."""
+        if take_profit is None:
+            return None
+        tick = instrument.tick_size
+        level = _take_profit_level(take_profit, side, reference_price, tick)
+        return _on_tick(level, side, tick)  # toward the entry (Q-L)
 
 
 def _requested_level(stop: StopOffset, side: Side, reference: Px, tick: Px) -> Px:
+    if not stop.value.is_finite():  # unresolved: the guard refuses it (#2877 ruling 2)
+        return stop.value
     if stop.unit == "price":
         return stop.value
     if stop.unit == "ticks":
@@ -568,13 +687,35 @@ def _profile_level(profile: AccountProfile, side: Side, reference: Px, tick: Px)
     raise StopUnitUnsupported  # atr (R4)
 
 
+def _take_profit_level(take_profit: StopOffset, side: Side, reference: Px, tick: Px) -> Px:
+    if not take_profit.value.is_finite():  # unresolved: the guard refuses it (#2877 ruling 2)
+        return take_profit.value
+    if take_profit.unit == "price":
+        return take_profit.value
+    if take_profit.unit == "ticks":
+        return _profitable(reference, take_profit.value * tick, side)
+    if take_profit.unit == "percent":
+        return _profitable(reference, reference * take_profit.value / 100, side)
+    raise StopUnitUnsupported(field="take_profit")  # atr, r_multiple (S2-Q6)
+
+
 def _protective(reference: Px, distance: Decimal, side: Side) -> Px:
     """`distance` from `reference` on the protective side: below a buy, above a sell."""
     return reference - distance if side == "buy" else reference + distance
 
 
-def _away_from_entry(level: Px, side: Side, tick: Px) -> Px:
-    """`level` on a tick, rounded away from the entry, never closer (24 Sec.9.3.1)."""
+def _profitable(reference: Px, distance: Decimal, side: Side) -> Px:
+    """`distance` from `reference` on the profit side: above a buy, below a sell."""
+    return reference + distance if side == "buy" else reference - distance
+
+
+def _on_tick(level: Px, side: Side, tick: Px) -> Px:
+    """`level` on a tick, down for a buy and up for a sell. A stop sits on the far side of the
+    entry from its take-profit, so this rounds a stop away from the entry, never closer (24
+    Sec.9.3.1), and a take-profit toward it (Q-L). A figure that is not finite is left for the
+    guard to refuse."""
+    if not level.is_finite():
+        return level
     rounding = ROUND_FLOOR if side == "buy" else ROUND_CEILING
     return (level / tick).to_integral_value(rounding=rounding) * tick
 

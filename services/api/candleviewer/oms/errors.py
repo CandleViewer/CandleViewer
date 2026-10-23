@@ -224,6 +224,13 @@ RULE_INTENT_MISMATCH: Final = "intent_mismatch"
 RULE_STOP_UNIT_UNSUPPORTED: Final = "stop_unit_unsupported"
 #: Ruling R4: a `sizing.mode` other than `fixed_qty` until E28-T03's sizer (#907) lands.
 RULE_SIZING_MODE_UNSUPPORTED: Final = "sizing_mode_unsupported"
+#: S2-Q6 and #2877 ruling 2: a take-profit that is no finite price above zero on the profit side
+#: of the order's reference price.
+RULE_TAKE_PROFIT_SIDE: Final = "take_profit_side"
+#: The orchestrator's ruling of 2026-10-22: a reduce-only order carries no take-profit and no
+#: stop-loss where the venue sets neither on one (`ExchangeCapabilities.supports_reduce_only_tpsl`,
+#: 24 Sec.14.1), refused before anything is recorded or sent, one error per side.
+RULE_REDUCE_ONLY_TPSL: Final = "reduce_only_tpsl"
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,11 +263,13 @@ class OrderInvalid(OrderRefused):
 
 
 class StopUnitUnsupported(OrderInvalid):
-    """R4: the stop, the request's or the profile's, is in `atr` or `r_multiple` units."""
+    """R4: the stop, the request's or the profile's, is in `atr` or `r_multiple` units; S2-Q6: the
+    request's take-profit too. `field` names which: `stop_loss` or `take_profit`."""
 
-    def __init__(self) -> None:
-        message = "Stops in atr or r_multiple units are not available yet."
-        super().__init__(errors=(FieldError("stop_loss", RULE_STOP_UNIT_UNSUPPORTED, message),))
+    def __init__(self, field: str = "stop_loss") -> None:
+        noun = "Take-profits" if field == "take_profit" else "Stops"
+        message = f"{noun} in atr or r_multiple units are not available yet."
+        super().__init__(errors=(FieldError(field, RULE_STOP_UNIT_UNSUPPORTED, message),))
 
 
 class TickSizeViolation(OrderRefused):

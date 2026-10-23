@@ -17,14 +17,14 @@ type-alias pattern `admin.wiring` already uses to avoid a direct import edge.
 2. a price, trigger price, reference price or quantity that is not finite, each listed, before
    any figure is compared (`validation_failed`); then each figure outside the instrument's
    bounds, listed before any figure meets a step, which cannot judge one of 10**28 steps or more,
-   so a figure however large or negative is named: a price, trigger price or stop above
-   `max_price` or below `min_price`, a quantity not above zero, named by `min_order_qty`, and a
-   quantity above both quantity ceilings, named by the order's own (`lot_size_violation` if a
-   quantity is listed, else `validation_failed`); then the instrument's trading status and a
-   limit order without its price (`validation_failed`). Every step on a figure runs under one
-   handler, so a figure no step can judge all the same, such as a market order's reference price
-   or a trigger price of 10**28 ticks within `max_price`, is `validation_failed` too, never an
-   unhandled error;
+   so a figure however large or negative is named: a price, trigger price, stop or take-profit
+   above `max_price` or below `min_price`, a quantity not above zero, named by
+   `min_order_qty`, and a quantity above both quantity ceilings, named by the order's own
+   (`lot_size_violation` if a quantity is listed, else `validation_failed`); then the
+   instrument's trading status and a limit order without its price (`validation_failed`). Every
+   step on a figure runs under one handler, so a figure no step can judge all the same, such as a
+   market order's reference price or a trigger price of 10**28 ticks within `max_price`, is
+   `validation_failed` too, never an unhandled error;
 3. for an entry, any order whose effect is not `REDUCE` (fail closed), the effective profile
    (`403 risk_limit_breached`), as 24-internal-schemas.md Sec.9.3 step 1 reads it: no profile
    allows nothing (D11); a profile not `enabled` or not `trading_enabled` allows nothing
@@ -231,9 +231,9 @@ def _non_finite_errors(order: SizedOrder) -> list[FieldError]:
 def _bound_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]:
     """Each figure outside the instrument's bounds, judged before any figure meets a step, which
     cannot judge one of 10**28 steps or more (`decimal.DivisionImpossible`), so a figure however
-    large or negative is named: a price, trigger price or stop above `max_price` or below
-    `min_price`, a quantity not above zero, the only one below `min_order_qty` that can be that
-    far from its step, and a quantity above both quantity ceilings, named by the order's own. A
+    large or negative is named: a price, trigger price, stop or take-profit above `max_price` or
+    below `min_price`, a quantity not above zero, the only one below `min_order_qty` that can be
+    that far from its step, and a quantity above both quantity ceilings, named by the order's own. A
     quantity above zero and within either ceiling goes on to the filters, which judge it against
     its own and list it with every other violation (24-internal-schemas.md Sec.1.3)."""
     above = f"Price must not exceed {instrument.max_price}."
@@ -243,6 +243,7 @@ def _bound_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]
         ("price", order.price),
         ("trigger.price", order.trigger_price),
         ("stop_loss", order.stop_loss),
+        ("take_profit", order.take_profit),
     ):
         if price is None:
             continue

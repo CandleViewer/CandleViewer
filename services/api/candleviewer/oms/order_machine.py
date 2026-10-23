@@ -511,7 +511,8 @@ class _Order:
     replaying: deque[Replayed] | None = None
     #: A replayed step that left the record, for `_replayed` to raise.
     replay_fault: OrderHistoryRefused | None = None
-    #: Set by every committed step, for `_replayed` to wait on.
+    #: Set by every committed step and by the machine's close, for `_replayed` and `settled` to
+    #: wait on.
     moved: asyncio.Event = field(default_factory=asyncio.Event)
     #: A step rolled back with its row perhaps ahead of the machine (`_BEHIND_ROW`): the next
     #: settle rebuilds the machine from the order's events (`_resync`).
@@ -788,6 +789,34 @@ class OrderMachines:
             o = o.successor  # a resync rebuilt the order while this push waited
         await self._unloaded(account_id, order_id, event, payload)
 
+    async def settled(
+        self, account_id: UUID, order_id: UUID, *, leaving: str, timeout_s: float
+    ) -> str:
+        """E29-T04's pipeline after `SEND`: the order's lifecycle state once it has left *leaving*
+        (`submitting`), which each committed step wakes (`moved`). A wait follows the order
+        through a resync to the machine it rebuilt (`successor`), as `command` does; an order
+        whose machine is gone (evicted once final, or left with none) is answered from its row.
+        `TimeoutError` when it has not left within *timeout_s*; `OrderNotLoaded` when the account
+        holds no such order. It reads the plain view only, never the interpreter (C-2.20)."""
+        async with asyncio.timeout(timeout_s):
+            o = self._live(account_id, order_id)
+            for _ in range(FOLLOWS + 1):
+                if o is None:
+                    break
+                while o.interp is not None and o.lifecycle == leaving:
+                    o.moved.clear()
+                    await o.moved.wait()
+                if o.interp is not None or not o.resynced:
+                    if o.lifecycle != leaving:
+                        return o.lifecycle
+                    break  # closed while still in *leaving*: the row decides
+                async with self._holding(o):  # the resync that closed it ends first
+                    o = o.successor
+            state = await self._stored(account_id, order_id)
+        if state is None:
+            raise OrderNotLoaded("no order of the account has this id")
+        return state
+
     async def abandon(self, account_id: UUID, order_id: UUID, reason: str) -> str:
         """E29-T04 (S2-Q5): an order whose `SEND` step was refused is never sent, and nothing
         would send it again, so the pipeline ends it with a KILL from `validated` only. B1 takes
@@ -981,6 +1010,7 @@ class OrderMachines:
         """Stop and evict the order's machine; with *publish*, its last payload is the entity's
         final one (23 Sec.6.4)."""
         interp, o.interp = o.interp, None
+        o.moved.set()  # a caller waiting on the order (`settled`) follows it, or reads its row
         self._gateway.unregister(o.key)
         if self._orders.pop(o.order_id, None) is o:
             self._unknown.discard(o.order_id)

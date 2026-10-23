@@ -32,6 +32,7 @@ from candleviewer.oms.ports import (
     KeyedRecord,
     OrderHandovers,
     RefuseWhileWaiting,
+    RequestRecord,
     StopRequestGate,
 )
 from candleviewer.oms.repository import OrderRepository, RecordedStopRepository
@@ -62,6 +63,7 @@ T0_US = (T0 - EPOCH) // timedelta(microseconds=1)
 HOUR_US = 3_600_000_000
 DAY_US = 24 * HOUR_US
 LANE_WAITS: dict[RateLane, float] = {"critical": 5.0, "entry": 0.75, "poll": 5.0}
+type AnyRecord = OrderAuditRecord | KeyedRecord | RequestRecord
 
 
 def outage(ret_code: int = 10019) -> ServiceUnavailableError:
@@ -231,16 +233,17 @@ class Monotonic:
 @dataclass
 class Audits:
     """`OrderAudit` and `SubmitAudit` in one: each record lands in `written` with the count of
-    exchange calls made before it (`sent_before`); `refuse` raises instead."""
+    exchange calls made before it (`sent_before`); `refuse` raises instead. The pipeline's
+    request records (`RequestRecord`) land here too (`submit_rig`)."""
 
     sent: Callable[[], int] = lambda: 0
-    written: list[tuple[OrderAuditRecord | KeyedRecord, int]] = field(default_factory=list)
+    written: list[tuple[AnyRecord, int]] = field(default_factory=list)
     refuse: BaseException | None = None
 
     def record_id(self, action: str, name: str) -> UUID:
         return uuid5(NAMESPACE_URL, f"{action}:{name}")
 
-    async def write(self, record: OrderAuditRecord | KeyedRecord) -> None:
+    async def write(self, record: AnyRecord) -> None:
         if self.refuse is not None:
             raise self.refuse
         self.written.append((record, self.sent()))

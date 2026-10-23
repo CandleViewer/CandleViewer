@@ -1,7 +1,9 @@
 """The OMS facade's E29-T04 edits (#913, slice 2a), on the real B1 binding over the in-memory
 stores: `start(first=...)` reaches the step writer's first persist, a refused step's `__cause__`
 is a typed OMS error and never a foreign one, the native-stop backstop is logged and counted, the
-`oms_unknown_orders` gauge follows the live machines, and `abandon` ends a never-sent order."""
+`oms_unknown_orders` gauge follows the live machines, and `abandon` ends a never-sent order.
+Slice 2b: `settled`, the pipeline's wait on the create's outcome, which follows a resync and reads
+the row of an order whose machine is gone."""
 
 from __future__ import annotations
 
@@ -38,6 +40,7 @@ from tests.unit.oms.order_rig import (
     T0,
     Rig,
     build_rig,
+    gated,
     order_of,
     placed,
 )
@@ -276,3 +279,95 @@ async def test_the_attempt_is_committed_before_the_create_leaves(rig: Rig) -> No
     unsent = ("pending_submit", 0, "unsent")
     assert (row.state, row.submit_attempts, row.idempotency_state) == unsent
     assert await rig.facade.abandon(ACCOUNT, refused.id, "submitting row refused") == "killed"
+
+
+# --- settled: the pipeline's wait on the create's outcome (E29-T04 slice 2b) ----------------------
+
+
+async def _sending(rig: Rig) -> tuple[NewOrder, asyncio.Event]:
+    """An order sent, its create held unanswered: the machine rests in `submitting`."""
+    gate, held = gated({"ok": True, "exchange_order_id": "x1"})
+    rig.commands.on_place = held
+    order = order_of()
+    await rig.start(order)
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    assert rig.facade.state(order.id) == ("submitting", "not_required")
+    return order, gate
+
+
+async def test_settled_answers_once_the_order_leaves_the_state(rig: Rig) -> None:
+    """Each committed step wakes the wait (`moved`); it answers the state the order left for."""
+    order, gate = await _sending(rig)
+    waiting = asyncio.create_task(
+        rig.facade.settled(ACCOUNT, order.id, leaving="submitting", timeout_s=5.0)
+    )
+    for _ in range(64):
+        await asyncio.sleep(0)
+    assert not waiting.done()
+    gate.set()
+    assert await waiting == "submitted"
+
+
+async def test_settled_answers_at_once_for_an_order_already_past_the_state(rig: Rig) -> None:
+    order = await rig.submitted()
+    settled = await rig.facade.settled(ACCOUNT, order.id, leaving="submitting", timeout_s=1.0)
+    assert settled == "submitted"
+
+
+async def test_settled_times_out_while_the_order_stays(rig: Rig) -> None:
+    order, gate = await _sending(rig)
+    with pytest.raises(TimeoutError):
+        await rig.facade.settled(ACCOUNT, order.id, leaving="submitting", timeout_s=0.01)
+    gate.set()
+    await rig.quiet()
+
+
+async def test_settled_reads_the_row_of_an_order_whose_machine_is_gone(rig: Rig) -> None:
+    """An order final and evicted (MUST-11) is answered from its row; another account's order,
+    or none, is not found (C-12.4)."""
+
+    async def refused(_command: b01.Command) -> Mapping[str, Any]:
+        return {"ok": False, "error_code": "INSUFFICIENT_MARGIN", "exchange_ret_code": 110007}
+
+    rig.commands.on_place = refused
+    order = order_of()
+    await rig.start(order)
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    await rig.quiet()
+    assert rig.facade.state(order.id) is None
+    settled = await rig.facade.settled(ACCOUNT, order.id, leaving="submitting", timeout_s=1.0)
+    assert settled == "rejected"
+    with pytest.raises(OrderNotLoaded):
+        await rig.facade.settled(OTHER, order.id, leaving="submitting", timeout_s=1.0)
+
+
+async def test_settled_follows_a_resync_to_the_machine_it_rebuilt(rig: Rig) -> None:
+    """A wait that met the machine a resync closed waits on its lock, then follows the order to
+    the rebuilt one (`successor`), whose resumed create answers it."""
+    order, gate = await _sending(rig)
+    o = rig.facade._orders[order.id]
+    async with o.lock:
+        waiting = asyncio.create_task(
+            rig.facade.settled(ACCOUNT, order.id, leaving="submitting", timeout_s=5.0)
+        )
+        for _ in range(64):
+            await asyncio.sleep(0)
+        await rig.facade._resync(o)  # under the order's lock, as `_settle_one` runs it
+        assert o.successor is not None and not waiting.done()
+    gate.set()
+    assert await waiting == "submitted"
+
+
+async def test_settled_reads_the_row_of_a_machine_closed_while_in_the_state(rig: Rig) -> None:
+    """A machine closed by no resync, its order still in the state (a shutdown): the row decides."""
+    order, gate = await _sending(rig)
+    o = rig.facade._orders[order.id]
+    waiting = asyncio.create_task(
+        rig.facade.settled(ACCOUNT, order.id, leaving="submitting", timeout_s=5.0)
+    )
+    for _ in range(64):
+        await asyncio.sleep(0)
+    async with o.lock:
+        await rig.facade._close(o, publish=False)
+    assert await waiting == "submitting"
+    gate.set()
