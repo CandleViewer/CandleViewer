@@ -7,7 +7,7 @@ import os
 import sys
 
 MAP = [
-    ("services/api/", "cd services/api && ruff check . && black --check . && mypy --strict . && lint-imports"),
+    ("services/api/", "cd services/api && ruff check . && ruff format --check . && mypy --strict . && lint-imports"),
     ("packages/chart-engine/", "pnpm --filter @candleviewer/chart-engine lint && pnpm --filter @candleviewer/chart-engine typecheck (bench if render code changed)"),
     ("packages/ui/", "pnpm --filter @candleviewer/ui lint && pnpm --filter @candleviewer/ui typecheck"),
     ("packages/protocol/", "pnpm generate (generated package: do not hand-edit)"),

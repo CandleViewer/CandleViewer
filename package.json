@@ -40,7 +40,7 @@
     ],
     "services/api/**/*.py": [
       "uv run --project services/api ruff check --fix --force-exclude",
-      "uv run --project services/api black --force-exclude '(candleviewer/(api|ws)/_generated/.*)'"
+      "uv run --project services/api ruff format --force-exclude"
     ]
   },
   "devDependencies": {

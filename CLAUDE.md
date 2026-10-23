@@ -166,7 +166,7 @@ Full flow: `AGENTS.md` §3 (flowchart) and `docs/plan/01-sdlc-and-branching.md` 
   (dependency-cruiser). UI state in Zustand, high-frequency data in Jotai. Chart engine: no React/DOM
   framework/`fetch`/singletons, explicit `dispose()`, pooled GPU resources, every API change benchmarked.
 - **Python:** 3.12+, **asyncio only** (no blocking calls on the loop, every task tracked, every queue
-  bounded — C-2.18), Ruff + Black (100 cols) + `mypy --strict`, **Pydantic v2** at every boundary,
+  bounded — C-2.18), Ruff (lint and `ruff format`, 100 cols) + `mypy --strict`, **Pydantic v2** at every boundary,
   msgspec/orjson for hot serialization, `Decimal` for money/prices, tz-aware UTC, typed domain errors,
   order retries reuse `orderLinkId` (C-2.10), structured logs with `traceId` and no secrets.
 - **Module boundaries** enforced by `import-linter` (CONSTITUTION §3); `packages/protocol/src/generated` is
