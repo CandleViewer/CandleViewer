@@ -155,21 +155,33 @@ async def test_a_full_frame_reaches_only_a_principal_that_is_the_owner_now() -> 
 
 
 async def test_a_publish_that_raises_resnapshots_with_upstream_desync() -> None:
-    hub = SequencingHub()
-    calls: list[str] = []
+    hub, failing = SequencingHub(), [False]
 
-    def broken(ch: str, body: Any, **kw: Any) -> int:
-        calls.append(ch)
-        raise RuntimeError("fan-out failed")
+    def publish(ch: str, body: Any, **kw: Any) -> int:
+        if failing[0]:
+            raise RuntimeError("fan-out failed")
+        return hub.publish(ch, body, **kw)
 
-    topic = RecorderTopic(hub.subscriptions, broken, hub.resnapshot, SnapshotBody)
+    topic = RecorderTopic(hub.subscriptions, publish, hub.resnapshot, SnapshotBody)
     w = _World(hub, topic, RecordingStatusCache(lambda: w.runtime, None), _runtime())
     topic.attach(w.cache)
     conn = _conn(w, owner=True)
     await w.cache.refresh_once()
-    frames = conn.take()
-    assert calls == ["recorder"] and [f["t"] for f in frames] == ["snap"]
-    assert "upstream_desync" in json.dumps(frames)
+    assert [f["meta"]["reason"] for f in conn.take() if f["t"] == "snap"] == ["initial"]
+    failing[0] = True
+    await w.cache.refresh_once()
+    assert [(f["t"], f["meta"]["reason"]) for f in conn.take()] == [("snap", "upstream_desync")]
+
+
+async def test_a_resync_that_fails_too_is_contained() -> None:
+    def broken(*args: Any, **kw: Any) -> Any:
+        raise RuntimeError("hub down")
+
+    topic = RecorderTopic(broken, broken, broken, SnapshotBody)
+    cache = RecordingStatusCache(_runtime, None)
+    topic.attach(cache)
+    await cache.refresh_once()  # neither failure reaches the cache
+    assert cache.snapshot() is not None
 
 
 def test_attach_once_generation_zero_and_no_continuity() -> None:

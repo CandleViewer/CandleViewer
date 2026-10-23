@@ -77,6 +77,7 @@ from candleviewer.ws.limits import (
 )
 from candleviewer.ws.metrics import (
     count_audit_failure,
+    cv_ws_recorder_subscriptions_in_use,
     cv_ws_subscribe_denied_unaudited_total,
     cv_ws_subscribe_granted_unaudited_total,
     cv_ws_subscribe_narrowed_total,
@@ -152,6 +153,7 @@ cv_ws_alerts_subscriptions_in_use = Gauge(
 )
 #: The family the gauge above counts.
 _ALERTS: Final = "alerts"
+_RECORDER: Final = "recorder"  # `cv_ws_recorder_subscriptions_in_use` (ws/metrics.py) counts it
 cv_ws_permission_snapshots_refused_total = Counter(
     "cv_ws_permission_snapshots_refused_total",
     "Older WS permission snapshots refused because a newer one was applied (SR-189).",
@@ -367,6 +369,9 @@ class Subscription:
     #: user (`sequencing.in_scope`). A connection's principal never changes user
     #: (`apply_snapshot`), so it holds for the subscription's life.
     owner: uuid.UUID | None = None
+    #: #492 (ruling Q6): the principal was not the Owner at admit, never a client value; the
+    #: `recorder` topic serves such a subscription its role-restricted view (R-I2).
+    role_restricted: bool = False
 
     @property
     def ch(self) -> str:
@@ -689,6 +694,7 @@ class ConnectionAuthz:
             # #2521: SELF families are owned by the principal (by value: a test may reload the
             # generated `Scope`, a StrEnum, which leaves two classes behind).
             owner=self.principal.user_id if fam.scope == Scope.SELF else None,
+            role_restricted=not self.principal.is_owner,
         )
         if not snapshot and not self._continuity(sub):
             sub.snapshot_pending = forced = True  # §7.6: continuity unproven -> snap anyway
@@ -769,6 +775,8 @@ class ConnectionAuthz:
         self._by_topic.setdefault(sub.ch, set()).add(sub.sub_id)
         if sub.topic.family.family == _ALERTS:
             cv_ws_alerts_subscriptions_in_use.inc()
+        elif sub.topic.family.family == _RECORDER:
+            cv_ws_recorder_subscriptions_in_use.inc()
         for symbol in sub.symbols:  # fixed for its life: `symbols` is a scope option (no `ctl`)
             self.held_symbols[symbol] = self.held_symbols.get(symbol, 0) + 1
 
@@ -957,6 +965,8 @@ class ConnectionAuthz:
         if (held := self.by_id.pop(sub.sub_id, None)) is not None:  # once, if dropped twice
             if held.topic.family.family == _ALERTS:  # with `by_id`: exact, whatever raises below
                 cv_ws_alerts_subscriptions_in_use.dec()
+            elif held.topic.family.family == _RECORDER:
+                cv_ws_recorder_subscriptions_in_use.dec()
             for symbol in held.symbols:  # with `by_id`, before a release below can raise
                 if (count := self.held_symbols.pop(symbol, 1) - 1) > 0:  # never a KeyError
                     self.held_symbols[symbol] = count
