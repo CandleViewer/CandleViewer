@@ -14,8 +14,8 @@ Usage: python3 -I docs/design/_tools/e22_d03_bubble_hifi_audit.py [--json] [--ch
 Exit 1 on a gated contrast FAIL, a law that no longer reproduces E22-D02 / the memo, a derived
 constant that no longer reproduces the anchors, a changed MISSING set, a lost `pairs.mjs`
 registration or a failed string gate; `--check` also gates the printed numbers against the spec's
-own sentences (section I) and exits 1 on drift. Reported rows (aged bands, scrim, validity look,
-rejected pairs) never gate. Stdout is UTF-8.
+own sentences (section I) and exits 1 on drift. Reported rows (aged bands, scrim) and rejected
+pairs (the validity-look label among them) never gate. Stdout is UTF-8.
 """
 
 from __future__ import annotations
@@ -198,7 +198,7 @@ T2: reason text.secondary on raised|t2|raised|text|E09-D09 2.2
 T2: menu item label text.tertiary on overlay|t3|overlay|text|CMP-056 / More menu
 T2: menu notice text.secondary on overlay|t2|overlay|text|S23 menu notice line
 T2: hairline border.default on raised|b.default|raised|decorative|hairline + text carry the fill
-validity look: label at opacity.disabled over raised|t1@0.45|raised|reported-text|E30-D02 D3
+validity alt: an editable field's label at opacity.disabled|t1@0.45|raised|rej-t|D02 D28 (3)
 S10 scrim: row text under opacity.scrim of app|t1|raised|scrim|D02-C15; BQ-13
 S10 scrim: readout under the scrim|t2|raised|scrim|D02-C15; BQ-13
 S10 scrim: HH:MM: prefix under the scrim|t3|raised|scrim|D02-C15; BQ-13
