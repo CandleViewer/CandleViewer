@@ -191,6 +191,15 @@ jobs:
           cache: pip
           cache-dependency-path: scripts/requirements-ci.txt
 
+      # scripts/tests/test_pnpm_effective_policy.py (#3277) runs the pinned pnpm offline and fails
+      # without it; node-version "20" resolves a corepack that unpacks pnpm 12 (test_workflow_corepack).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - name: Enable the pinned pnpm for the install-policy tests
+        run: corepack enable && corepack prepare pnpm@12.5.1 --activate
+
       - name: Install check dependencies (PyYAML for GOV-004, pytest(-cov) for unit tests)
         run: python -m pip install --quiet -r scripts/requirements-ci.txt
 
