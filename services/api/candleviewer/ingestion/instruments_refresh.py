@@ -24,7 +24,9 @@ Design notes tying back to the ticket's Gherkin:
   `ttl_seconds`; `ensure_symbol()` serves the "unknown symbol" on-demand path
   (the router calls it). #2702: one shared refresh task that callers join and
   wait on for at most `on_demand_timeout_s` (the route then answers 503);
-  `stop()` cancels it.
+  `stop()` cancels it. #906: `ensure_fresh()` serves the profile save: the same shared task behind
+  a freshness check (fetched within `max_age_s`, and never a snapshot marked stale), awaited for
+  at most the caller's `deadline_s`.
 - "Refresh fails": a failed fetch marks the existing snapshot stale via
   `InstrumentCatalogueCache.mark_stale` rather than clearing it, increments
   `instruments_refresh_total{result="error"}`, and logs a warning — the
@@ -41,6 +43,7 @@ Design notes tying back to the ticket's Gherkin:
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
@@ -127,13 +130,15 @@ class BusPublisherLike(Protocol):
 
 class InstrumentRefreshError(IngestionError):
     """A refresh attempt failed after every retry (fetch, parse, or
-    persistence). The previous snapshot is left serving; see this module's
+    persistence), or (#906) an on-demand refresh (`ensure_fresh`) ended with no catalogue
+    fitting the caller's bound. The previous snapshot is left serving; see this module's
     docstring, "Refresh fails" scenario."""
 
 
 class InstrumentRefreshPendingError(IngestionError):
-    """#2702: the on-demand refresh missed the caller's deadline (it runs on, shared), or the
-    scheduler is stopped: there is no answer yet. The HTTP edge maps it to 503."""
+    """#2702, #906: an on-demand refresh (`ensure_symbol`, `ensure_fresh`) missed the caller's
+    deadline (it runs on, shared), or the scheduler is stopped: there is no answer yet. The HTTP
+    edge maps it to 503."""
 
 
 class InstrumentsRefreshScheduler:
@@ -298,22 +303,46 @@ class InstrumentsRefreshScheduler:
             refresh = self._on_demand = spawn(
                 self._refresh_on_demand(seen=current), name="instruments-refresh-on-demand"
             )
-        try:
-            async with asyncio.timeout(self._on_demand_timeout_s):
-                await asyncio.shield(refresh)
-        except TimeoutError as exc:
-            raise InstrumentRefreshPendingError(
-                f"catalogue refresh still running after {self._on_demand_timeout_s} s"
-            ) from exc
-        except asyncio.CancelledError:
-            # The shield passes on `stop()` cancelling the refresh: no answer, as at the
-            # deadline. A cancellation of this caller itself always propagates.
-            caller = asyncio.current_task()
-            if not refresh.cancelled() or (caller is not None and caller.cancelling()):
-                raise
-            raise InstrumentRefreshPendingError("instrument catalogue scheduler stopped") from None
+        await self._join(refresh, self._on_demand_timeout_s)
         refreshed = self.cache.current()
         return refreshed.get(symbol) if refreshed is not None else None
+
+    async def ensure_fresh(self, max_age_s: float, deadline_s: float) -> CatalogueSnapshot | None:
+        """#906 (B8): the catalogue, fetched at most `max_age_s` ago and not marked stale, so the
+        exchange limits a profile save is judged against were confirmed lately. A snapshot that
+        fits returns at once, with no fetch. Otherwise the refresh is `ensure_symbol`'s shared task
+        (#2702), started if none runs and joined if one does: concurrent callers cost one upstream
+        fetch. A caller waits on it through `asyncio.shield` for at most `deadline_s`, so neither
+        its deadline nor its cancellation cancels the refresh, then raises
+        `InstrumentRefreshPendingError` (the HTTP edge maps it to 503); the refresh runs on for
+        the next caller until it ends or `stop()` cancels it. A refresh that ends with no fitting
+        catalogue (it failed, or nothing is loaded) raises `InstrumentRefreshError`. `ValueError`
+        for a bound that is not positive and finite.
+        No cooldown, unlike `ensure_symbol`, by design: callers must be authenticated and
+        rate-bounded (today the Owner's profile save), and a failing call costs up to
+        `max_retries` fetches.
+
+        `None` is part of the type but never the answer: no fresh catalogue is an error."""
+        if not (0 < max_age_s < math.inf and 0 < deadline_s < math.inf):
+            raise ValueError(
+                f"max_age_s and deadline_s must be positive and finite, got {max_age_s!r} "
+                f"and {deadline_s!r}"
+            )
+        current = self.cache.current()
+        if self._is_fresh(current, max_age_s):
+            return current
+        refresh = self._on_demand
+        if refresh is None or refresh.done():
+            if self._stopping:
+                raise InstrumentRefreshPendingError("instrument catalogue scheduler stopped")
+            refresh = self._on_demand = spawn(
+                self._refresh_on_demand(seen=current), name="instruments-refresh-on-demand"
+            )
+        await self._join(refresh, deadline_s)
+        refreshed = self.cache.current()
+        if not self._is_fresh(refreshed, max_age_s):
+            raise InstrumentRefreshError("instrument catalogue refresh failed")
+        return refreshed
 
     async def refresh_now(self) -> None:
         """One refresh attempt, retried with full jitter up to
@@ -325,11 +354,42 @@ class InstrumentsRefreshScheduler:
 
     # -- internals -----------------------------------------------------------
 
+    async def _join(self, refresh: asyncio.Task[None], deadline_s: float) -> None:
+        """Wait on the shared refresh (#2702) for at most `deadline_s` through `asyncio.shield`,
+        so neither the deadline nor this caller's cancellation cancels it; at the deadline raise
+        `InstrumentRefreshPendingError`, as when `stop()` cancels the refresh under this caller."""
+        try:
+            async with asyncio.timeout(deadline_s):
+                await asyncio.shield(refresh)
+        except TimeoutError as exc:
+            raise InstrumentRefreshPendingError(
+                f"catalogue refresh still running after {deadline_s} s"
+            ) from exc
+        except asyncio.CancelledError:
+            # The shield passes on `stop()` cancelling the refresh: no answer, as at the
+            # deadline. A cancellation of this caller itself always propagates.
+            caller = asyncio.current_task()
+            if not refresh.cancelled() or (caller is not None and caller.cancelling()):
+                raise
+            raise InstrumentRefreshPendingError("instrument catalogue scheduler stopped") from None
+
+    def _is_fresh(self, snapshot: CatalogueSnapshot | None, max_age_s: float) -> bool:
+        """#906: loaded, fetched at most `max_age_s` ago, and not marked stale. The mark counts on
+        its own, as in `InstrumentCatalogueCache.is_stale`: `start()` stamps a persisted copy with
+        the boot time, so after a failed startup fetch an old copy is young by its age alone."""
+        return (
+            snapshot is not None
+            and snapshot.stale_since_us is None
+            and snapshot.age_seconds(now_us=self._now_us()) <= max_age_s
+        )
+
     async def _refresh_on_demand(self, *, seen: CatalogueSnapshot | None) -> None:
         """The shared on-demand refresh task (#2702); `seen` is the snapshot its first caller
-        missed the symbol in. Re-checked after the lock: a refresh it queued behind (the
-        schedule's) that loaded a catalogue makes this fetch moot. A failure is logged (and
-        counted) like any refresh's; the callers answer from whatever is loaded."""
+        could not use (it lacked the symbol, or `ensure_fresh` found it too old or stale).
+        Re-checked after the lock: a refresh it queued behind (the schedule's) that loaded a
+        catalogue makes this fetch moot. A failure is logged (and counted) like any refresh's; each
+        caller judges what is loaded (`ensure_symbol` answers from it, `ensure_fresh` raises
+        unless it is fresh)."""
         try:
             async with self._refresh_lock:
                 current = self.cache.current()
