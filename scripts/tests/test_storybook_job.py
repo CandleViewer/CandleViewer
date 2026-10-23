@@ -60,10 +60,12 @@ def test_storybook_job_runs_beside_a11y_hardened_and_uploads_only_the_a11y_repor
     assert (job["permissions"], job["timeout-minutes"]) == ({"contents": "read"}, 15)
     steps = job["steps"]
     # Nor at step level: only the report upload has a condition (always()), none fails softly.
-    assert [s.get("if") for s in steps if "if" in s] == ["always()"] == [steps[-1].get("if")]
+    # (plus the browser cache save, which runs only after a green install: test_playwright_browsers).
+    conditions = [s.get("if") for s in steps if "if" in s and "cache/save@" not in s.get("uses", "")]
+    assert conditions == ["always()"] == [steps[-1].get("if")]
     assert not any("continue-on-error" in step for step in steps)
     uses = [step["uses"] for step in steps if "uses" in step]
-    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", use) for use in uses), uses
+    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+(?:/[\w.-]+)?@[0-9a-f]{40}", use) for use in uses), uses
     checkouts = [s["with"] for s in steps if "checkout@" in s.get("uses", "")]
     assert checkouts == [{"persist-credentials": False}]
     assert all("${{" not in step.get("run", "") for step in steps)
