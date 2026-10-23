@@ -24,7 +24,8 @@ export function inputsOf(graph: GraphModel): Map<string, string[]> {
 
 /**
  * The first cycle the server's search meets, from the ids in code point order: its node ids in
- * order, closing on the first (`["g1", "c1", "g1"]`); `[]` for none. Only the edges are read.
+ * order, each fed by the next (`["g1", "c1", "g1"]`: c1 feeds g1), closing on the first; `[]` for
+ * none. Only the edges are read.
  */
 export function findCycles(graph: GraphModel): string[] {
   const inputs = inputsOf(graph);

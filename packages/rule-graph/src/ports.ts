@@ -17,7 +17,8 @@ export type PortType = (typeof PORT_TYPES)[number];
  * a side, and a number or a price to either (rules/validator.py:134, :157 checks their units).
  * DRAFT wording for E37-D04/D05 sign-off (OQ9): the reason a screen reader announces (E37-S05),
  * by E09-D09 §3.1's rule (docs/design/E09/E09-D09.md:85): one sentence with a full stop, at most
- * 80 characters, no user data, naming the capability. Rewording is an edit to this table alone.
+ * 80 characters (the OQ9 ruling; §3.1 says 60), no user data, naming the capability. Rewording is
+ * an edit to this table alone.
  */
 export const PORT_COMPAT = frozen({
   boolean: {
@@ -80,7 +81,8 @@ export function canConnect(from: PortType, to: PortType): Connect {
 }
 const OPERANDS = { left: "number", right: "number", right2: "number" } as const;
 /** Per node kind (a condition's `data.kind`, else its type): its type, output and inputs. Every
- * input needs an edge or an inline operand (rules/compiler/graph.py:118-139). */
+ * input needs an edge or an inline operand (rules/compiler/graph.py:118-139). An operand port
+ * types what an edge brings (a sum); an inline operand's unit is the server's operator table's. */
 export const NODE_PORTS = frozen({
   trigger: { type: "trigger", output: "trigger", inputs: {} },
   comment: { type: "comment", output: null, inputs: {} },
@@ -115,8 +117,9 @@ const OWN = { price: "price", enum: "side", bool: "boolean" } as const;
 export type MetricUnit = (typeof NUMBERS)[number] | keyof typeof OWN;
 export type MetricValueType = "number" | "bool" | "enum" | "series";
 
-/** A metric's port type by its unit, as the server types a vocabulary signal (vocabulary/build.py:
- * 32-38): an enum is a side. A series is not one value: it has none, as has a unit not listed. */
+/** A metric's port type, by its unit (an enum is a side, a placeholder), not by the types
+ * vocabulary/build.py:32-38 shows. A series is not one value: it has none, as has a unit not
+ * listed. A boolean or side is the metric's value type, never an output an edge carries. */
 export function portTypeOfMetric(unit: MetricUnit, valueType: MetricValueType) {
   if (valueType === "series") return undefined;
   if (Object.hasOwn(OWN, unit)) return OWN[unit as keyof typeof OWN];

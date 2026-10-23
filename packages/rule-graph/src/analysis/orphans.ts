@@ -5,7 +5,8 @@ import type { GraphModel } from "../model.js";
 import { portsOf } from "../ports.js";
 import { inputsOf } from "./cycles.js";
 
-/** The ids of the gates and conditions of `graph` that reach no action, in node order. */
+/** The ids of the gates and conditions of `graph` that reach no action, in node order; the
+ * server lists them in code point order (graph.py:197). */
 export function findOrphans(graph: GraphModel): string[] {
   const inputs = inputsOf(graph); // the lists and edges checked
   const kinds = graph.nodes.map((node) => portsOf(node).kind); // each node checked
