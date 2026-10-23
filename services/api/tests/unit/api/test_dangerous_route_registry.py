@@ -661,7 +661,8 @@ _RECORDING_WRITES: dict[str, tuple[str, str | None]] = {
     "setRetentionPolicies": ("path", "recorder"),  # 04 §7.2.2 row 9
     "pinRecordedSymbol": ("path", "recorder"),  # row 9
     "updateRecordedSymbol": ("handler", "recorder"),  # row 9 for pin / retention, else row 8
-    # A stop keeps the pin and refuses purge_data=true (#492 rulings Q3, Q4): row 8 only.
+    # A stop keeps the pin and refuses purge_data=true (#492 rulings Q3, Q4): row 8 only. 22
+    # agrees: removeRecordedSymbol names no step-up (add, PATCH and pin each name `recorder`).
     "removeRecordedSymbol": ("allow-listed", None),
     "purgeRecordedData": ("handler", "recorder"),  # row 9a, owner-only before step-up
     "addRecordedSymbol": ("handler", "recorder"),  # row 9 for pin / retention, else row 8
