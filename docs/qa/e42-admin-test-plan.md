@@ -49,7 +49,8 @@ in section 1.
   `users.disable`) starts an interval before it, which the server's 5 s revocation deadline does not count;
   the report names the record it started from.
 - **Security abuse cases** are E42-X03's (`services/api/tests/security/admin/`,
-  `docs/security/abuse-cases/e42-admin.md`). This plan points at them by id (`AC-ADM-nn`) rather than
+  `docs/security/abuse-cases/e42-admin.md`). This plan points at them by id (`AC-ADM-nn`, and `UL-ACnn` from
+  the user-lifecycle annex, `docs/security/threat-models/e42-user-lifecycle.md` §4) rather than
   repeating them: a case whose oracle X03 holds cites the id and adds only the black-box steps.
 
 ## 1. Seeded actors and data
@@ -260,6 +261,25 @@ destructive action")
   `users.enable`; the grants, sessions and disarmed rules stay gone, and a scheduled purge is cancelled.
 - **AD-S02-N05 The status chips** (`e2e`; D02 D8): LOCKED-L shows "Locked out (sign-in)", and a manager under
   a risk lockout "Trading locked (risk)", each with its until-time.
+- **AD-S02-N06 An invite without a live `users` grace is challenged** (`contract`, `integration`; SR-025;
+  D02 §13.2; Q-17): OWNER, holding no `users` grace, sends `POST /users` with a valid viewer body. It
+  answers `403 step_up_required` (`action_class: users`) and creates no user and no invite. The gate runs
+  before the handler, so none of its records appears. Audit: `auth.step_up_required`, and neither
+  `users.invited` nor `users.invite_refused`.
+- **AD-S02-N07 An invite carries no account grant** (`contract`; SR-027; D02 D9; Q-17): OWNER, elevated,
+  sends an invite with a non-empty `account_access`, as `22`'s `createUser` example does. It answers `422`
+  and creates no user; the same body with `account_access` empty or absent is accepted. Audit:
+  `users.invite_refused` (outcome `denied`) for the refusal.
+- **AD-S02-N08 An unwritable audit record leaves a status change unchanged** (`integration`; 22
+  `updateUser`; UL-AC05): OWNER, elevated; MGR-M, active; the `users.disable` record made unwritable.
+  `PATCH /users/{userId}` to `disabled` answers `503 audit_unavailable` and changes nothing: MGR-M stays
+  `active`, its sessions stay valid, its grants stay live and its rule stays armed. Audit: no
+  `users.disable`, `auth.session_revoked` or `rules.disarm`.
+- **AD-S02-N09 An unwritable audit record leaves a delete unchanged** (`integration`; 22 `deleteUser`;
+  UL-AC05): the same Pre. `DELETE /users/{userId}` answers `503 audit_unavailable` and changes nothing, as
+  AD-S02-N08 does. With `?purge=true` and only the `users.delete` record unwritable, the disable commits:
+  the answer is `503 audit_unavailable`, MGR-M stays disabled with no purge scheduled, and once the writer
+  is back a retry converges (the disable is a no-op, the purge is scheduled and `users.delete` is written).
 
 ### S03: user detail, bindings, limits and view-as (US-ADMIN-001, 002, 003, 008; SCR-122, SCR-124)
 
@@ -356,6 +376,58 @@ read-only"; 22 "View-as session")
   and every record names the owner.
 - **AD-S03-N04 The key restriction on SCR-122** (`e2e`; D02 D8): SUB-K's row shows the 48-hour restriction
   with its absolute unlock time.
+- **AD-S03-N05 A stale grant set re-grants a revoked account** (`integration`, `e2e`; 22
+  `setUserAccountAccess`; E42-S03 technical notes; Q-16): OWNER loads MGR-MANY's grants (SUB-S, SUB-T,
+  SUB-U); OWNER-2 then removes SUB-S and saves; OWNER, whose page still lists SUB-S, changes SUB-U's level
+  and saves, the payload being the complete set (replace semantics). The route takes no `If-Match`, so the
+  save answers `200` with the stored set, SUB-S included, and SUB-S is a live grant again (its soft-revoked
+  row is revived, its freeze state and caps as they were). Nothing refuses it. Audit: `users.access_change`
+  for each save: OWNER-2's has SUB-S in its `before_state` only, OWNER's in its `after_state` only. Until
+  Q-16 is answered the case records this end state, and a tester files it against Q-16, not as a defect.
+- **AD-S03-N06 The view-as start's gates** (`contract`, `security`; 22 `startViewAs`; AC-ADM-22; SR-025):
+  - a valid start (an eligible target and a good reason) with no live `users` grace answers
+    `403 step_up_required` (`action_class: users`, `action_summary` "View as user '<username>', read-only").
+    No context starts (`GET /auth/session/view-as` answers `204`), MGR-M is not notified, and the only
+    view-as-related record is `auth.step_up_required`, once: no `admin.view_as_started`, no
+    `admin.view_as_refused`;
+  - a reason that is empty, over 500 characters, or only whitespace or invisible characters answers
+    `422 validation_failed` (AD-S03-N01's `422`) and writes no `admin.view_as_refused`; a reason of exactly
+    500 characters passes;
+  - a start by MGR-M, valid in every other way and with a live `users` grace, answers `403 forbidden` from
+    the admin-area guard: `admin.area_entered` (outcome `denied`), no `admin.view_as_refused`, no challenge.
+- **AD-S03-N07 The reason stays confidential** (`security`, `integration`; 22 `StartViewAsRequest`,
+  `startViewAs`; D02 D10; AC-ADM-22): OWNER sends a start whose reason is a unique marker, first with no
+  grace (the challenge), then after the step-up. The marker appears in the `admin.view_as_started` record's
+  `after_state` and nowhere else: not in the challenge's `action_summary`, not in `GET /auth/session/view-as`,
+  not in MGR-M's `GET /notifications` (its one `system` notification names OWNER and the window), not in
+  a later `admin.view_as_refused` or `admin.view_as_ended` record, and not in any line of the run's
+  captured server logs.
+- **AD-S03-N08 The viewer's sockets follow the context** (`integration`, `security`; 23 §9.6, §4.3 and
+  §16.4; AC-ADM-22): OWNER has two sessions, S1 and S2, each with a socket subscribed to a private topic.
+  - S1 starts view-as for MGR-M: S1's sockets close with `bye view_as_changed` (`reconnect: true`) and
+    `4401`, and S2's are unaffected. S1 reconnects, and its `auth_ok` carries MGR-M's `roles`,
+    `permissions` and `account_scope`;
+  - on S1 a `sub` to an account outside MGR-M's grants is refused as for MGR-M itself, with one
+    `ws.subscribe.denied` naming OWNER's S1 session, and no owner-only `system` kind or other user's
+    entity is delivered;
+  - ending the live context (`DELETE /auth/session/view-as`) closes S1's sockets with `view_as_changed` and
+    `4401` again, and S2's stay unaffected;
+  - once the server has ended the context (AD-S03-N02), an `auth` or re-`auth` on S1 is refused with
+    `bye view_as_expired` and `4403`, and does not count as a failed `auth`.
+- **AD-S03-N09 An unwritable audit record leaves a role change unchanged** (`integration`; 22
+  `setUserRoles`; UL-AC05): OWNER, elevated; VIEWER-V; the role records unwritable. The request
+  `PUT /users/{userId}/roles` with `[manager]` answers `503 audit_unavailable`, and VIEWER-V's roles are
+  as before. Audit: no `roles.grant` or `roles.revoke`.
+- **AD-S03-N10 An unwritable audit record leaves a grant change unchanged** (`integration`; 22
+  `setUserAccountAccess`; UL-AC05): OWNER, elevated; MGR-MANY subscribed to SUB-S; the
+  `users.access_change` record unwritable. Removing the SUB-S grant answers `503 audit_unavailable`: the
+  grant set is as before and MGR-MANY's subscription carries on, with no `revoked` frame. Audit: no
+  `users.access_change` and no `ws.subscription.revoked`.
+- **AD-S03-N11 An unwritable audit record stops a view-as start** (`integration`; 22 `startViewAs`;
+  AC-ADM-22): OWNER with a live `users` grace; MGR-M; the `admin.view_as_started` record unwritable (the
+  guard's `admin.area_entered` stays writable, so the refusal is the start's). The start answers
+  `503 audit_unavailable`: no context starts (`GET /auth/session/view-as` answers `204`), OWNER's sockets
+  see no `view_as_changed`, and MGR-M is not notified. Audit: no `admin.view_as_started`.
 
 ### S04: the audit log browser and event detail (US-ADMIN-001, 008, 009; SCR-135, SCR-136; D02 D11)
 
@@ -664,7 +736,12 @@ catalogue's, and it is measured between server timestamps.
     `auth.session_revoked` record;
   - B's socket gets `bye user_disabled` and closes with 4403 (23 §9.5), and B's next request answers
     `401 unauthenticated`;
-  - B's armed rule is disarmed.
+  - B's armed rule is disarmed;
+  - no order is placed after the disable (UL-AC02, UL-AC15): no `orders.submit` for MGR-M is accepted later
+    than the first `auth.session_revoked` record, which the server writes after the commit; the rule's
+    first evaluation after the commit emits no order intent, even if it was `evaluating` at the commit; and
+    MGR-M's open orders and positions are neither cancelled nor amended (`positions_decision: leave`). The
+    ticket half needs `POST /orders` (E29-T07, as AC-ADM-12); the rule half does not.
 - Audit: `users.disable`, `auth.session_revoked` per session, `rules.disarm`.
 
 **AD-X-02 The owner revokes a grant while the manager is subscribed [R]** (`e2e`; 22
@@ -722,18 +799,20 @@ changed there would permanently break an append-only, hash-chained log.
 | E42-S01 | Overview tiles resolve independently                  | AD-S01-03, CH-AD-5                                                 |
 | E42-S01 | (failure) Re-auth expires mid-edit                    | AD-S01-04, AD-S01-N02, AD-S01-N03, CH-AD-4                         |
 | E42-S01 | (edge) Backend degraded                               | AD-S01-05                                                          |
-| E42-S02 | Create and assign role                                | AD-S02-01, AD-S02-N01, AD-S02-N02                                  |
+| E42-S02 | Create and assign role                                | AD-S02-01, AD-S02-N01, AD-S02-N02, AD-S02-N06, AD-S02-N07          |
 | E42-S02 | Disable revokes access quickly                        | AD-S02-02, AD-X-01, AD-S02-N04, AD-S02-N05                         |
 | E42-S02 | Delete with history                                   | AD-S02-03                                                          |
 | E42-S02 | (failure) Last owner protection                       | AD-S02-04                                                          |
 | E42-S02 | (edge) Capacity reached                               | AD-S02-05, AD-S02-N05                                              |
 | E42-S02 | (failure) Step-up expired during a destructive action | AD-S02-06                                                          |
+| E42-S02 | (ticket rule) No audit record, no action              | AD-S02-N08, AD-S02-N09                                             |
 | E42-S03 | Bind a manager to a sub-account                       | AD-S03-01                                                          |
 | E42-S03 | Multiple bindings                                     | AD-S03-02                                                          |
 | E42-S03 | Unbind with open positions                            | AD-S03-03, AD-S03-03b                                              |
 | E42-S03 | Tighten a limit during an open position               | AD-S03-04                                                          |
-| E42-S03 | View-as is unmistakably read-only                     | AD-S03-05, AD-S03-N01, AD-S03-N02, AD-S03-N03, AD-S03-N04          |
-| E42-S03 | (failure) Concurrent edit                             | AD-S03-06, AD-S02-N03                                              |
+| E42-S03 | View-as is unmistakably read-only                     | AD-S03-05, AD-S03-N01 to AD-S03-N04, AD-S03-N06 to AD-S03-N08      |
+| E42-S03 | (failure) Concurrent edit                             | AD-S03-06, AD-S02-N03, AD-S03-N05                                  |
+| E42-S03 | (ticket rule) No audit record, no action              | AD-S03-N09 to AD-S03-N11                                           |
 | E42-S04 | Search the log                                        | AD-S04-01, AD-S04-N06                                              |
 | E42-S04 | No mutation affordance exists                         | AD-S04-02, CH-AD-2                                                 |
 | E42-S04 | Integrity verification                                | AD-S04-03                                                          |
@@ -755,6 +834,7 @@ changed there would permanently break an append-only, hash-chained log.
 | E42-S06 | Restore is gated                                      | AD-S06-05, AD-S06-N02                                              |
 | E42-S06 | (failure) Backup verification fails                   | AD-S06-06                                                          |
 | E42-S06 | (edge) No backups yet                                 | AD-S06-07                                                          |
+| E42-S06 | (no scenario) An acknowledged incident stays open     | AD-S06-N01                                                         |
 | E42-S07 | Guided steps                                          | AD-S07-01                                                          |
 | E42-S07 | Blocked step does not halt the flow                   | AD-S07-02                                                          |
 | E42-S07 | Resume                                                | AD-S07-03                                                          |
@@ -771,22 +851,15 @@ changed there would permanently break an append-only, hash-chained log.
 | E42-S08 | State diagram matches the running chart               | AD-S08-04                                                          |
 
 The scope's implied cases map as follows. "Expired token mid-action" is AD-S01-04 and AD-S02-06.
-"Concurrent owner edits" is AD-S03-06 and AD-S02-N03, with the grant-edit case deferred below. "A manager
-session open while their grant is revoked" is AD-X-02. "An export over the range limit" is AD-S04-N01, and
-"a flag changed twice in one second" is AD-S05-N01.
+"Concurrent owner edits" is AD-S03-06 and AD-S02-N03 for a user's fields and roles, and AD-S03-N05 for
+the grant set. "A manager session open while their grant is revoked" is AD-X-02. "An export over the
+range limit" is AD-S04-N01, and "a flag changed twice in one second" is AD-S05-N01.
 
-**Deferred to part 2** (omissions the review of part 1 found; part 2 adds them to S01 to S03):
-
-- the concurrent grant-edit case and its question (`setUserAccountAccess` takes no `If-Match` and replaces the
-  whole set, so a stale page re-grants an account another owner just revoked);
-- the invite's step-up case (no live `users` grace: `403 step_up_required`, no user), its `account_access`
-  refusal (SR-027 and the server refuse it, but `22`'s `createUser` example carries one) and the SR-025 gap
-  question (D02 §13.2); the view-as start's gates (no grace, a `422` reason, a Manager's start), the reason's
-  confidentiality and `23` §9.6's socket cases;
-- one `integration` case per write class that an unwritable audit record leaves unchanged
-  (`503 audit_unavailable`), and AD-X-01's invariant that no order is placed after the disable;
-- the entry criterion that the view-as routes are not mounted on `main` (AC-ADM-22 waits on #3085), which
-  blocks AD-S03-05 and AD-S03-N01 to N03.
+The omissions that the review of the first draft found landed as follows: the grant-edit race in
+AD-S03-N05 (Q-16); the invite's step-up and `account_access` cases in AD-S02-N06 and AD-S02-N07 (Q-17);
+the view-as start's gates, the reason's confidentiality and the sockets in AD-S03-N06 to AD-S03-N08; an
+unwritable audit record in AD-S02-N08, AD-S02-N09 and AD-S03-N09 to AD-S03-N11; the invariant that no
+order is placed after a disable in AD-X-01; and the view-as entry criterion in section 6.
 
 ## 6. Entry and exit criteria, per story group
 
@@ -796,7 +869,11 @@ session open while their grant is revoked" is AD-X-02. "An export over the range
 - the group's fixtures are loaded, and each seed's own post-conditions passed (section 1);
 - the group's `contract` cases are green in CI;
 - the D02 frames the group's cases cite are signed off, and any §9 question a case depends on is answered or
-  the case is marked blocked on it.
+  the case is marked blocked on it;
+- for S03's view-as cases (AD-S03-05, AD-S03-N01 to AD-S03-N03, AD-S03-N06 to AD-S03-N08 and
+  AD-S03-N11), `POST /admin/view-as` is mounted: on `main` today it is not (its `rbac/matrix.yaml` row is
+  `not_mounted`, and AC-ADM-22 waits on #3085's server slice), so no context can start and those cases
+  are blocked.
 
 **Exit.** A story group is done when all of these hold:
 
@@ -915,3 +992,17 @@ Each is a question for the implementing story, not a guess.
   `401 unauthenticated`. The server answers a disabled user's correct password `403` "Account disabled"
   (`login_service.py`, a documented trade-off). AD-S02-N04 asserts the refusal, no session and
   `auth.login_failed`, not the status.
+- **Q-16:** `setUserAccountAccess` takes no `If-Match` and replaces the whole grant set (`22`; E42-S03's
+  technical notes), so a page loaded before another owner's revoke sends the account back and re-grants
+  it, with its freeze state and caps, and nothing refuses or flags it. `getUser`'s `ETag` covers the
+  `User` representation, which holds no grants, and the user-lifecycle model's account-access threats
+  (UL2) name no such race. AD-S03-N05 records the end state and asks the story whether the save takes a
+  precondition, as the `PATCH` does.
+- **Q-17:** E42-S02's scope has the invite carry initial `account_access` grants, and `22`'s `createUser`
+  example carries a `trade` grant. SR-027 (a new user has no grants), D02 D9 (AM-4) and the server
+  (`InviteCreateRequest`: `account_access` must be empty, else `422` and `users.invite_refused`) refuse it.
+  AD-S02-N07 follows SR-027 and the server. Separately, SR-025 lists creating a user among the step-up
+  actions and the server gates `POST /users` on class `users`, but `22`'s `createUser` names no class (D02
+  §13.2: a contract gap, routed to #889 and #2701). AD-S02-N06 asserts that gate. The server also gates
+  re-issue and revoke (`POST` and `DELETE /users/{userId}/invite`) on `users`, which D02 §5 draws with no
+  step-up, so no case asserts either until this is settled.
