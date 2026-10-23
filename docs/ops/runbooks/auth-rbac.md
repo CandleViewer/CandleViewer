@@ -834,8 +834,10 @@ Proven end to end in process on the deployed app
 (`services/api/tests/security/auth/test_disable_user_e2e.py`, and
 `test_disable_commit_readback.py` for a lost commit) and on Postgres
 (`services/api/tests/integration/admin/test_user_disable_route_pg.py`), sockets on `rotated`
-sessions included. The staging drill (E09-X04, #2494) has not run;
-`services/api/tests/security/auth/test_disable_user_drill.py` drives the primitives only.
+sessions included. `services/api/tests/security/auth/test_disable_user_drill.py` drives the same
+route from the manager's side: a private subscription's `bye` and close, and the measured time from
+the `DELETE` to the `bye`. The dev-stack drill (E09-X04, #2494) is recorded in
+`docs/security/reviews/e09-auth-review.md` section 4.
 
 ## 5. Audit-chain verification failure
 
