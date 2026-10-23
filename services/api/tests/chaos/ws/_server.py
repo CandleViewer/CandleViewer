@@ -83,7 +83,8 @@ SEND_BUFFER = 32 * 1024
 #: reason. It has a floor: set after connect, as `Proxy` sets it, a receiver of 28 KiB or less
 #: that stopped reading resumes only on the sender's next zero-window probe, 0.5 s to seconds
 #: after `HEAL` (about 32 KiB on Linux 6.6; set before connect there is none), and kernels that
-#: advertise about half the buffer as window need twice that. 128 KiB clears it.
+#: advertise about half the buffer as window need twice that. 128 KiB clears it (on Linux 6.6;
+#: one hosted night still stalled at it, #4264: see SCENARIOS.md).
 LANE_RCVBUF = 128 * 1024
 #: The two sizes as set (the kernel doubles them), for a failure message to name.
 BUFFERS = f"lane SO_RCVBUF {LANE_RCVBUF} B, server SO_SNDBUF {SEND_BUFFER} B, as set"

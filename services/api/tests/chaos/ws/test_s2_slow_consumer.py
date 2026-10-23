@@ -44,7 +44,7 @@ from candleviewer.ws.metrics import cv_ws_closes_total, cv_ws_overflow_total
 from candleviewer.ws.outbound import DRAIN_PCT, Backpressure, LadderEvent, OutboundQueue, Queued
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.pipeline import ConnectionPipeline
-from tests.chaos.ws._client import BACKOFF, Client, each
+from tests.chaos.ws._client import BACKOFF, TIMEOUT_S, Client, each
 from tests.chaos.ws._proxy import Fault, Proxy
 from tests.chaos.ws._server import BOOK, BUFFERS, ORDERS, SEED, TRADES, Stack, flag_on
 from tests.unit.ws._seq_support import ACC_A
@@ -334,7 +334,9 @@ async def test_s2_sleeping_client_stays_in_its_budget_and_costs_the_others_nothi
     spy.keep(ladder)
     overflow, closes = series(cv_ws_overflow_total), series(cv_ws_closes_total)
 
+    loop = asyncio.get_running_loop()
     lane.inject(Fault.PAUSE)
+    paused_at = loop.time()
     with traced() as peak:  # this run only: D8's evidence, and lane time
         await run.feed(QUIET_TICKS, tape=False)
         await run.feed(PAUSE_TICKS - QUIET_TICKS)
@@ -350,11 +352,48 @@ async def test_s2_sleeping_client_stays_in_its_budget_and_costs_the_others_nothi
     assert [(e.reason, e.topics) for e in drop.events] == [("drop", CHANNELS)]
     assert (drop.droppable, drop.exit[1], drop.marked, drop.cls) == (0, 0, CHANNELS, "saturated")
     assert grew(cv_ws_overflow_total, overflow) == {"drop": 2}  # once per topic, nothing else
+
     lane.inject(Fault.HEAL)
+    healed_at = loop.time()
+
+    def state() -> str:
+        """Where the sleeper stopped, for a failure: each channel's stream, the topics still
+        marked, its queue, the drains that queued a snapshot, the frames since HEAL, and the ticks
+        fed (#4264)."""
+        streams = {ch: snaps(slow, ch) for ch in CHANNELS}
+        marked = sorted(s.ch for s in ladder.pacer.resnapshot_required.values())
+        queue = f"{len(ladder.queue)} frames, {ladder.queue.bytes} B"
+        drains = [(round(d, 1), [e.reason for e in ev]) for d, ev in spy.drains[ladder] if ev]
+        since = sum(at > healed_at for at in slow.rx_at)  # none: the lane never resumed
+        return (
+            f"streams {streams}; marked {marked}; queue {queue}; drains {drains}; frames since "
+            f"HEAL {since}; ticks {run.books}"
+        )
+
+    # §8.4 step 2 needs no publish: the writer's first turns after its parked send returns queue
+    # both snapshots. They are awaited before the awake feed, so the `d` after each is published
+    # after it however long the lane takes to recover in wall time: a fixed feed paced by the
+    # healthy clients alone can end first, and nothing publishes after it (#4264). The lane's
+    # stall that night was most likely a zero-window probe (not confirmed); a backed-off probe or
+    # retransmit comes no later than about as long after `HEAL` as the window was shut, plus a
+    # retransmit timeout. The virtual clock is frozen here, so a snapshot parked as not ready
+    # would wait for the coarse timer in vain: S2's source never parks one.
+    resnapped = ["initial", "d", "backpressure"]
+    await slow.until(
+        lambda: all(snaps(slow, ch) == resnapped for ch in CHANNELS),
+        f"resnapshotted ({BUFFERS})",  # a stall here can be a buffer under its floor
+        within_s=max(TIMEOUT_S, healed_at - paused_at + 1.0),  # at least as long as it was shut
+        detail=state,
+    )
+    lane_s = loop.time() - healed_at
+    assert run.books == PAUSE_TICKS  # the feed has not run since HEAL: no publish was needed
     await run.feed(AFTER_TICKS)
-    stream = ["initial", "d", "backpressure", "d"]
-    recovered = f"recovered ({BUFFERS})"  # a stall here can be a buffer under its floor
-    await slow.until(lambda: all(snaps(slow, ch) == stream for ch in CHANNELS), recovered)
+    stream = [*resnapped, "d"]
+    await slow.until(
+        lambda: all(snaps(slow, ch) == stream for ch in CHANNELS),
+        f"recovered ({BUFFERS})",
+        detail=state,
+    )
     assert_d8(spy.checks[ladder])
     # Step 2, awake: one `backpressure` snapshot per drain, each begun below 50 % of the budget.
     sent = [(depth, e.topics) for depth, events in spy.drains[ladder] for e in events]
@@ -383,9 +422,9 @@ async def test_s2_sleeping_client_stays_in_its_budget_and_costs_the_others_nothi
     print(
         f"D8 #410 s2: tracemalloc peak {peak[0]} B over the 60 s pause; accounted peak {acct} B "
         f"(queued {queued} + pending {pending}, {frames} frames); ratio {peak[0] / acct:.3f}; "
-        f"step 1 at {drop.at:.3f} s, class {drop.cls}; the stream {rate:.0f} KiB/s; healthy "
-        f"loop ms with the sleeper (pause traced) {loop_ms(run)}, without (untraced) "
-        f"{loop_ms(control)}"
+        f"step 1 at {drop.at:.3f} s, class {drop.cls}; the stream {rate:.0f} KiB/s; the lane "
+        f"resnapshotted {lane_s:.2f} s (wall) after HEAL; healthy loop ms with the sleeper (pause "
+        f"traced) {loop_ms(run)}, without (untraced) {loop_ms(control)}"
     )
 
 
