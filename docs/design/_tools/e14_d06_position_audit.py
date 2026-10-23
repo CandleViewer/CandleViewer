@@ -278,7 +278,7 @@ read-out units, sources, reasons under a control|text.secondary|surface.overlay|
 (provisional) / (estimated) tags, captions|text.tertiary|surface.overlay|text
 chip and tag text on the raised fill|text.primary|surface.raised|text
 T2 Send label + lock glyph (E09-D09 2.2)|text.tertiary|surface.raised|text
-T2 reason / validity reason under Send|text.secondary|surface.raised|text
+T2 reason / validity reason under Send|text.secondary|surface.overlay|text
 loss-zone label (word + signed number)|text.primary|sell.subtle|text
 reward-zone label (word + signed number)|text.primary|buy.subtle|text
 loss-zone caption (ticks)|text.secondary|sell.subtle|text
