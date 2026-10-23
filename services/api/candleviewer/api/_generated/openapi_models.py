@@ -7039,7 +7039,7 @@ class Job(BaseModel):
     error: Annotated[
         str | None,
         Field(
-            description="Why a `failed` job failed, as a stable code, never a message. Open-ended for readers. A failed `audit_export` job has produced no downloadable file; it fails with `export_too_large` (its span is over `audit_export_max_rows`, or its file over `audit_export_max_bytes`; nothing is left on disk), `signing_key_rotated` (its header names a key that was no longer the active one when it came to sign), `signing_unavailable` (a key that cannot be opened, or a signer failure), `audit_unavailable` (the signer refused because its write-ahead record could not be written: an audit outage is answered as one) or `internal_error` (ADR-0039)."
+            description="Why a `failed` job failed, as a stable code, never a message. Open-ended for readers. A failed `audit_export` job has produced no downloadable file; it fails with `export_too_large` (its span is over `audit_export_max_rows`, or its file over `audit_export_max_bytes`; nothing is left on disk), `signing_key_rotated` (its header names a key that was no longer the active one when it came to sign), `signing_unavailable` (no KEK held, no usable key or a key that cannot be opened, or a signer failure), `audit_unavailable` (the signer refused because its write-ahead record could not be written, or the export's completion record could not be written, and its file is removed: an audit outage is answered as one) or `internal_error` (ADR-0039)."
         ),
     ] = None
 

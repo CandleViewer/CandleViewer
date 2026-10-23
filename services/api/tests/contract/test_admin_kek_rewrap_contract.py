@@ -340,8 +340,24 @@ def test_rotation_answers_the_shared_statuses_and_a_409_that_names_its_way_out()
     for status, name in shared.items():
         assert _ROT["responses"][status] == {"$ref": f"{_REF}responses/{name}"}, status
     conflict = text(_ROT["responses"]["409"]["description"])
-    assert "no key to retire, which a restart recovers from, because boot generates" in conflict
+    # #889 S10 (S7's ruling): a restart recovers no key at all, never keys all retired (Q4).
+    assert "A restart recovers only an environment with no key at all, since boot" in conflict
+    assert "keys that are all retired (`export_key_inactive`) are never generated over" in conflict
+    assert "is open (ADR-0039 Q4)" in conflict and "which a restart recovers from" not in conflict
     assert "`idempotency_in_flight`: a call with the same key is still running." in conflict
+    assert "all retired have no recovery here: ADR-0039 Q4" in _ROT_DESC
+
+
+def test_a_rotation_and_an_export_declare_the_headers_their_answers_carry() -> None:
+    """#889 S10: the `200` a repeated rotation replays, and the `202` of a repeated export, carry
+    `Idempotency-Replayed`, which only the Idempotency section named before; and both are
+    `no-store`, as `listAuditSigningKeys`' `200` is (S7's re-check, C3; the code lens's C1-3)."""
+    replayed = {"Idempotency-Replayed": {"$ref": f"{_REF}headers/IdempotencyReplayed"}}
+    no_store = {"Cache-Control": {"schema": {"type": "string", "const": "no-store"}}}
+    listed = SPEC["paths"]["/admin/audit/signing-keys"]["get"]["responses"]["200"]["headers"]
+    export = SPEC["paths"]["/admin/audit/export"]["post"]["responses"]["202"]
+    assert _ROT["responses"]["200"]["headers"] == no_store | replayed and listed == no_store
+    assert export["headers"] == no_store | replayed  # the route sends it on every answer
 
 
 def test_rotation_names_step_up_class_keys_only_and_its_path_is_swept() -> None:
