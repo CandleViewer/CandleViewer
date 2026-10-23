@@ -64,6 +64,12 @@ jobs:
         working-directory: services/api
         run: uv sync --frozen --all-groups
 
+      # #4301: testcontainers pulls postgres:16-alpine mid-test when the daemon lacks it, and the
+      # compose steps below pull QuestDB and Grafana. Pull all three here, with retries; Postgres
+      # also has a pinned mirror (tools/ci/prepull_images.sh, infra/images/prepull.txt).
+      - name: Pre-pull postgres, questdb and grafana images (CI-INFRA-001)
+        run: tools/ci/prepull_images.sh postgres questdb grafana
+
       - name: Verify fixture manifest (CI-INT-001 fixture unavailable, CI-INT-002 checksum mismatch)
         run: python tools/ci/verify_fixture_manifest.py --manifest tests/fixtures/MANIFEST.sha256 --repo-root .
 

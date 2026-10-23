@@ -120,6 +120,8 @@ class HttpRegistry:
             url = (
                 f"https://quay.io/v2/auth?service=quay.io&scope=repository:{path}:pull"
             )
+        elif host == "public.ecr.aws":
+            url = "https://public.ecr.aws/token/"
         else:
             self._tokens[key] = None
             return None

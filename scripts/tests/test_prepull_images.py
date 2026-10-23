@@ -172,3 +172,29 @@ def test_ref_without_a_digest_is_refused(tmp_path: Path, env: dict[str, str]) ->
     r = _run(tmp_path, env, "postgres postgres:16-alpine -\n", "postgres")
     assert r.returncode == 1 and "CI-INFRA-001" in r.stderr
     assert _count(env, "hub_pulls") == 0
+
+
+def test_every_lane_that_collects_a_postgres_module_pre_pulls() -> None:
+    import sys
+
+    sys.path.insert(0, str(REPO))
+    from tools.ci import py_test_lanes as lanes
+
+    manifest = lanes.load_manifest()
+    tests = REPO / "services" / "api"
+    pg = [
+        f
+        for f in lanes.suite_files()
+        if "postgres:16" in (tests / f).read_text(encoding="utf-8", errors="ignore")
+    ]
+    assert pg
+    workflow = (REPO / ".github" / "workflows" / "_job-py.yml").read_text(encoding="utf-8")
+    cond = "startsWith(matrix.lane, 'db-chaos') || matrix.lane == 'contract-security-3'"
+    assert cond in workflow
+    need = {
+        lane
+        for lane in [*manifest.lanes, manifest.rest_lane]
+        if any(lanes.collects(lanes.pytest_args(manifest, lane), f) for f in pg)
+    }
+    covered = {lane for lane in need if lane.startswith("db-chaos") or lane == "contract-security-3"}
+    assert need == covered

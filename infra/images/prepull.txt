@@ -1,0 +1,7 @@
+# Images a CI job pulls before its tests (tools/ci/prepull_images.sh, #4301, CI-INFRA-001).
+# name  source (pinned ref, or compose:<repo> for the pin in infra/compose/docker-compose.yml)  mirror
+# The mirror is the same image on a second registry, pinned to the same digest; - means none (the
+# image has no official mirror, so it is retried on its own registry only). Ledger: PINS.md.
+postgres postgres:16-alpine@sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36 public.ecr.aws/docker/library/postgres:16-alpine@sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36
+questdb compose:questdb/questdb -
+grafana compose:grafana/grafana -
