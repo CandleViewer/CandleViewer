@@ -14,8 +14,8 @@ Gherkin row), CMP-054 SearchBox, CMP-065 FormSection and CMP-079 RbacGate, the d
 gateable form control uses. Slice 4 covers feedback and overlays, slice 5 the rest.
 **Companion:** `E05-D02-form-controls-a11y-audit.md` (accessibility pre-review of this slice).
 **Builds on:** slice 1's conventions 1–14 (§3), token mirror (§4), exceptions (§5) and decisions A1–A12, B1–B7, C1–C15
-and D1–D17 (D13 is superseded by E09-D09 §2.2 T2), and slice 2's conventions 15–20 and decisions E1–E26 (#4290,
-read at its head `8976b6113` and cited as it stands, if #4290 merges as is). They apply here unchanged and are cited
+and D1–D17 (D13 is superseded by E09-D09 §2.2 T2), and slice 2's conventions 15–20 and decisions E1–E27 (#4290,
+read at its head `bab507423` and cited as it stands, if #4290 merges as is). They apply here unchanged and are cited
 as "slice 1 §n", "slice 1 A3" and "slice 2 (#4290) E18".
 **Key.** `05`, `14`, `15`, `16` are the `docs/plan/` documents by number; D09 is `docs/design/E09/E09-D09.md`.
 `path:line` references are at `origin/main` `5a382efec`.
@@ -164,9 +164,12 @@ are CMP-040's, drawn in its T2 cell.
 29. **Forced colours** (`05` §8.1; slice 1 conventions 12). The well's boundary is a real border, so forced colours
     keep it in a system colour, and the value takes `FieldText` on `Field`; the invalid 2 px width survives as a shape
     cue and the glyph and the message carry the state; focus is a Highlight outline; plain disabled is GrayText;
-    read-only keeps its border; T2's label, value and lock are GrayText and its reason CanvasText (E42-D03 §15); an
-    active option is Highlight with HighlightText; a selected table row or day sets a Highlight fill with
-    HighlightText explicitly (`forced-color-adjust: none` on that part, system colours only).
+    read-only keeps its border; T2's well keeps a GrayText border, while its label and lock stay CanvasText
+    (ButtonText inside a button), its value keeps `FieldText` and its reason is CanvasText — the label is never
+    dimmed, and forced colours grey only `:disabled`, never `aria-disabled`, so the border is set by hand (§5.2
+    records E42-D03 §15's opposite rule); an active option is Highlight with HighlightText; a selected table row or
+    day sets a Highlight fill with HighlightText explicitly (`forced-color-adjust: none` on that part, system colours
+    only).
 
 ## 4. Token mirror and themes
 
@@ -175,11 +178,12 @@ the last change to `packages/ui/tokens`); every figure here and in the audit is 
 binds only published semantic tokens, in all three themes: `color.surface.app|canvas|raised|overlay|hover|selected`,
 `color.border.default|subtle|selected`, `color.text.primary|secondary|tertiary`, `color.action.primary.default`,
 `color.action.selected`, `color.status.danger.default|strong`, `color.focus.ring`; `size.control.height`,
-`size.row.height`, `size.icon`; `space.inset.xs|sm|md`, `space.stack.xs|md|lg`; `radius.control|card`;
-`elevation.popover`; `type.ui.body|body-strong|label|caption|heading-sm`, `type.num.base`; and the named primitives of
-§5.2. Each section's token table maps the catalogue names that do not exist (`color.border.*`, `color.text.error`,
-`radius.sm`, `radius.md`, `elevation.2`, `font.mono`, `space.field.*`, `space.formsection.*`) to shipped tokens, and
-the catalogue's Tokens lines are rewritten to match. A token gap is an owner decision (§6 (a)); none is invented.
+`size.row.height`, `size.icon`; `space.inset.xs|sm|md`, `space.stack.xs|md|lg`, `space.field.gap`;
+`radius.control|card`; `elevation.popover`; `type.ui.body|body-strong|label|caption|heading-sm`, `type.num.base`; and
+the named primitives of §5.2. Each section's token table maps the catalogue names that do not exist (`color.border.*`,
+`color.text.error`, `radius.sm`, `radius.md`, `elevation.2`, `font.mono`, `space.field.*`, `space.formsection.*`) to
+shipped tokens, and the catalogue's Tokens lines are rewritten to match. A token gap is an owner decision (§6 (a)); none
+is invented.
 
 ## 5. Recorded exceptions
 
@@ -201,8 +205,15 @@ and 2 keep their resolution.
 ### 5.2 Other recorded exceptions
 
 - **Named primitives** (slice 1 §5.2): `border.focus` for the ring width; `border.thick` for the 2 px invalid boundary
-  and the 2 px outline of a selected calendar day (#3925's selected role, as slice 1's pressed IconButton); and
-  `opacity.disabled` for plain disabled and for days outside the allowed range, both inactive.
+  and the 2 px outline of a selected calendar day (#3925's selected role, as slice 1's pressed IconButton);
+  `opacity.disabled` for plain disabled and for days outside the allowed range, both inactive; `size.icon.sm` for the
+  2b lock badge on an icon-only row action (as slice 1's badge); and `motion.duration.fast` with
+  `motion.easing.decelerate` for the popup fade (slice 1 A8: only motion primitives exist).
+- **A cross-spec clash, recorded (forced colours):** E42-D03 §15 renders T2 labels and glyphs in `GrayText` and their
+  reasons in `CanvasText` (`docs/design/E42/E42-D03.md:642`), the opposite of slice 1 conventions 12 on `main`
+  (`E05-D02.md:157`–`:158`: a gated control's shape border is GrayText, while its label, value indicators and lock
+  stay CanvasText or ButtonText). E09-D09 sets no forced-colours rule, so this slice keeps slice 1's (conventions 29),
+  and E42-D03 follows at its boards PR.
 - **Absolute internals:** only slice 1 B3's (a) focus ring and (b) overlay anchors (the popups and the calendar
   dialog). CMP-049's sticky header is `position: sticky` in code and a flex row in Penpot, not an absolute internal.
 - **Penpot variant-set chrome:** as slice 1 B7.
@@ -214,8 +225,9 @@ recommendation. These earlier decisions also cover this slice and are not asked 
 token: a hovered selected row or day does not change), A3 (the field boundary binds a text token, G1), A6 (light
 `color.status.danger.strong` equals the warning amber: the error glyph's shape and words carry it), A8 (motion
 primitives), A10 (icon sizes), B1 and B2 (geometry), B3 (b) (popups are overlay anchors), C13 (strict matrix
-reading) and C15 (the Storybook stories are E05-S01..S04's); slice 2 (#4290) E14 (number formatting) and E24 (a
-labelled divider is not a heading, which G14 answers for forms).
+reading) and C15 (the Storybook stories are E05-S01..S04's); slice 2 (#4290) E14 (number formatting), E24 (a
+labelled divider is not a heading, which G14 answers for forms) and E27 (gated links: the host owns the gating through
+CMP-079, never the atom, as conventions 24 has the host gate every slice-3 control).
 
 ### (a) Token gaps (E05-D01's token files, outside this PR's write set)
 
@@ -322,16 +334,18 @@ labelled divider is not a heading, which G14 answers for forms).
   **Recommended:** approve S1–S7 and flag them to the security engineer for E05-X02, with two questions for that
   review: a cap on `autoHideMs` (proposed 30 s), and whether the Electron shell writes a copied secret with the
   clipboard formats that keep it out of Windows clipboard history and cloud sync. The cap is held until then (§6 (f)).
-  **Affects:** CMP-034 (SCR-126, SCR-127).
+  S1–S7 cover client-held API keys and secrets only: recovery codes are CMP-206's one-time list (§7 CMP-034), whose
+  own display rules go to the same review. **Affects:** CMP-034 (SCR-126, SCR-127).
 - **G20 — CMP-034 and WCAG 2.2.1.** The catalogue's 2 s warning cannot meet 2.2.1's "extend" option (20 s); re-revealing
   is one press with focus kept on the toggle, so nothing is lost. **Recommended:** add a Settings → Accessibility option
   that lengthens the auto-hide up to 10× (2.2.1's "adjust" option), capped by G19; held until G19 is answered.
   **Affects:** CMP-034, SCR-117.
 - **G21 — Table selection and row actions.** **Recommended:** selection is a leading CMP-005 column with a select-all
-  header box (mixed when some rows are selected) in both modes; in grid mode `Space` also toggles the focused row and
-  rows carry `aria-selected`; row actions are a trailing CMP-002 `more-horizontal` IconButton opening a CMP-041 row
-  menu (`Shift+F10` from the row), whose gated items are T2 with the reason as their second line; an inline gated
-  IconButton takes 2b. **Affects:** CMP-049 (CMP-114, SCR-121, SCR-063).
+  header box (mixed when some rows are selected); row actions are a trailing CMP-002 `more-horizontal` IconButton
+  opening a CMP-041 row menu (`Shift+F10` from the row), whose gated items are T2 with the reason as their second line;
+  an inline gated IconButton takes 2b. Either column makes the table a grid (§7 CMP-049's mode rule: one Tab stop,
+  `05` §3.4 item 2), where `Space` also toggles the focused row and rows carry `aria-selected`; table mode keeps no
+  control in a row. **Affects:** CMP-049 (CMP-114, SCR-121, SCR-063).
 
 ### (e) Catalogue clauses applied, awaiting your approval
 
@@ -342,8 +356,9 @@ A "no" reverts the named clause; the catalogue lines carry no approval marker (s
 - CMP-008: Props `invalid?`, `readOnly?`, `disabledReason?`, `suffix?`, `largeStep?` (G8); States line; A11y step keys
   (G8) and blur parsing (G18); Tokens (G1, G4).
 - CMP-009: Props `placeholder?`, `invalid?`, `disabledReason?`, per-option `disabledReason?`, `searchable` → CMP-048
-  (G9); States line; A11y pattern sentence (G9); Tokens.
-- CMP-034: Props `label`, `copyable?`, the source and mount rules (G19); States line; A11y rules S1–S7 (G19); Tokens.
+  (G9); States line; A11y pattern sentence and primitive clause (G9); Tokens.
+- CMP-034: Props `label`, `copyable?`, the source and mount rules (G19); States line; A11y the toggle names from
+  `label`, rules S1–S7 and the recovery-code routing (G19); Tokens.
 - CMP-040: Props `labelId?`, `optional?` (G10), `disabledReason?`, `layout?` (G6); Variants line (G6); States line;
   A11y (G10, conventions 23–24); Tokens.
 - CMP-047: Props `withTime?`, `formatHint?`, `rangeCaption?` (G11), `invalid?`, `disabled?`, `readOnly?`,
@@ -351,8 +366,8 @@ A "no" reverts the named clause; the catalogue lines carry no approval marker (s
   dialog keys; Tokens with the selected role (G3).
 - CMP-048: Props `noResultsText` (§7 CMP-048), `invalid?`, `disabled?`, `disabledReason?`; States line; A11y
   announcement rule (G17); Tokens.
-- CMP-049: E42-D03's three rows verbatim and `caption`, `loading?`, `error?` (G12); Variants line (G12); States line;
-  A11y additions (G12, G21); Tokens with the selected role (G3); Storybook.
+- CMP-049: E42-D03's three rows verbatim and `caption`, `loading?`, `error?` (G12); Variants line and its mode rule
+  (G12, G21); States line; A11y additions (G12, G21); Tokens with the selected role (G3); Storybook.
 - CMP-054: Props `label`, `disabled?` (G13); States line; A11y `Esc`; Tokens.
 - CMP-065: Props `headingLevel?`, `disabledReason?`, `disabled?` (G14); States line; A11y; Tokens.
 - CMP-079: Props `form?`, `noticeId?`, the Variants line and the A11y T2 sentence (G15); Tokens; Storybook.
@@ -371,7 +386,7 @@ PR builds on page `10 Components — Atoms` and the export it adds, `docs/design
 
 ### CMP-007 · TextInput
 
-**Catalogue (verbatim, `15:112-114`):**
+**Catalogue (verbatim, `15:112`, `15:114`):**
 
 - **Props**: `value` · `onChange` · `placeholder?` · `prefix?/suffix?: ReactNode` · `size` · `invalid?: boolean` · `errorMessage?` · `disabled?` · `readOnly?` · `inputMode?` · `maxLength?`.
 - **A11y**: `<input>` with `aria-invalid`, `aria-describedby` → error message id, `aria-errormessage` where supported.
@@ -504,7 +519,7 @@ bound (availability), an out-of-range value (validity).
 **Validation:** conventions 23 and G18; the bound is in the message (E30-D02 §13: "Minimum 0.001").
 **Hit target:** the well; each step button 24 × 24 (32 × 32), meeting WCAG 2.5.8 by size.
 **Motion:** none. **Resize & overflow:** as CMP-007; the step buttons never grow. **Forced colors:** conventions 29;
-the step buttons follow CMP-002.
+the step buttons follow CMP-002 (in T2 a GrayText border and a ButtonText glyph, slice 1 conventions 12).
 
 **Catalogue alignment** (`15:119-126`): Props gains `invalid?`, `readOnly?`, `disabledReason?`, `suffix?` (the unit)
 and `largeStep?` (default 10 × `step`); a new States line (default, hover, focus-visible, invalid, disabled,
@@ -573,14 +588,16 @@ visual.
 fades in over `motion.duration.fast` with `motion.easing.decelerate`, no movement; motion-reduce: instant (slice 1 A8).
 **Resize & overflow:** the trigger's value truncates with an ellipsis only when its host is narrower than the value
 (the full value stays its accessible value); options wrap to two lines, then truncate with the full text in the name.
-**Forced colors:** conventions 29; the chevron and the check are `currentColor`.
+**Forced colors:** conventions 29; the chevron and the check are `currentColor`; a T2 option keeps its lock, label and
+reason in CanvasText (HighlightText while active).
 
 **Catalogue alignment** (`15:128-135`): Props gains `placeholder?`, `invalid?`, `disabledReason?` and, on each option,
 `disabled?/disabledReason?` (conventions 26), and `searchable` renders CMP-048's editable combobox (G9); a new States
-line with the open state and the five option looks; A11y appends "the trigger keeps focus and `aria-activedescendant`
-names the active option (the APG select-only combobox)", the `Esc` rule and the T2 option's `aria-describedby`;
-Tokens: `elevation.2` → `elevation.popover`, `radius.md` → `radius.card`, plus the field tokens; Storybook adds Open
-and DisabledWithReason. Held: dropping `size` (G7).
+line with the open state and the five option looks; A11y replaces "(uses Radix Select primitive)" with "(any primitive
+that meets the select-only combobox)", since Radix Select's listbox takes DOM focus (G9), and appends "the trigger keeps
+focus and `aria-activedescendant` names the active option (the APG select-only combobox)", the `Esc` rule and the T2
+option's `aria-describedby`; Tokens: `elevation.2` → `elevation.popover`, `radius.md` → `radius.card`, plus the field
+tokens; Storybook adds Open and DisabledWithReason. Held: dropping `size` (G7).
 
 ### CMP-034 · MaskedValue
 
@@ -625,6 +642,12 @@ empty do not apply (the component renders only when it holds a value, and it is 
 - **S7 Short-lived.** The value leaves component state on unmount and after a successful submit; it never enters
   browser storage (C-12.2), a URL, an autofill store or the undo history.
 
+**Recovery codes are not CMP-034's.** The ticket's Security note names them beside API keys, but `14` never puts
+CMP-034 on a recovery-code screen: the server generates the codes and shows them once, in full, through CMP-206
+RecoveryCodeList (SCR-003, SCR-016, SCR-110: `14:191`, `14:432`, `14:2241`; drawn in `docs/design/E09/E09-D04.md`
+§6), a display that S1 and S6 would forbid. Their display rules are CMP-206's own, routed to E05-X02 beside S1–S7
+(§6 G19); S1–S7 cover the API keys and secrets a user enters on SCR-126 and SCR-127 only.
+
 **Anatomy:**
 
 | Part      | Tokens                                                                                                                                                              |
@@ -664,9 +687,11 @@ buttons never grow. **Forced colors:** the box border and the text CanvasText; t
 
 **Catalogue alignment** (`15:359-366`): Props: `value` gains "a value the client holds in the current flow, never a
 stored secret (C-2.7)", plus `label: string` (names the group and the buttons) and `copyable?: boolean` (default
-`false`, CMP-033), and `revealed?` "never `true` at mount"; a new States line (masked, revealed, expiring, copied);
-A11y appends S1–S7 in one sentence; Tokens: `font.mono` → `type.num.base`, plus the box, mask and countdown tokens;
-Storybook adds Copyable. Held: the `autoHideMs` cap and the adjust setting (G19, G20).
+`false`, CMP-033), and `revealed?` "never `true` at mount"; a new States line (masked, revealed, expiring, copied); A11y
+names the toggle "Show {label}"/"Hide {label}" in place of "Show secret"/"Hide secret" (their reading when `label` is
+"secret") and appends S1–S7 in one sentence, routing recovery codes to CMP-206; Tokens: `font.mono` → `type.num.base`,
+plus the box, mask and countdown tokens; Storybook adds Copyable. Held: the `autoHideMs` cap and the adjust setting
+(G19, G20).
 
 ### CMP-040 · FormField
 
@@ -695,14 +720,14 @@ loading (a field has none; the form's busy state is its host's); empty (the chil
 
 **Anatomy** (lines in the order shown; each in the DOM at mount when its prop can be set):
 
-| Part          | Tokens                                                                                                                                          | Spacing                                                                                                 |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| label         | `type.ui.label`, `color.text.secondary`; "(optional)" in `color.text.tertiary`; T2: `color.text.tertiary` led by the `lock` glyph (`size.icon`) | glyph to text `space.inset.xs`; label to control `space.stack.xs`                                       |
-| control       | the child                                                                                                                                       | —                                                                                                       |
-| reason (T2)   | `type.ui.caption`, `color.text.secondary`                                                                                                       | control to first line `space.stack.xs`; between lines `space.stack.xs`                                  |
-| error         | `danger` glyph `size.icon`, `color.status.danger.strong`; sentence `type.ui.caption`, `color.text.primary`                                      | glyph to text `space.inset.xs`                                                                          |
-| help          | `type.ui.caption`, `color.text.secondary`                                                                                                       | —                                                                                                       |
-| inline layout | the label column (the host's width), then the control                                                                                           | column gap `space.inset.sm`; the label centred on the control's first line; the lines under the control |
+| Part          | Tokens                                                                                                                                          | Spacing                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| label         | `type.ui.label`, `color.text.secondary`; "(optional)" in `color.text.tertiary`; T2: `color.text.tertiary` led by the `lock` glyph (`size.icon`) | glyph to text `space.inset.xs`; label to control `space.stack.xs`                                        |
+| control       | the child                                                                                                                                       | —                                                                                                        |
+| reason (T2)   | `type.ui.caption`, `color.text.secondary`                                                                                                       | control to first line `space.stack.xs`; between lines `space.stack.xs`                                   |
+| error         | `danger` glyph `size.icon`, `color.status.danger.strong`; sentence `type.ui.caption`, `color.text.primary`                                      | glyph to text `space.inset.xs`                                                                           |
+| help          | `type.ui.caption`, `color.text.secondary`                                                                                                       | —                                                                                                        |
+| inline layout | the label column (the host's width), then the control                                                                                           | column gap `space.field.gap`; the label centred on the control's first line; the lines under the control |
 
 **Keyboard:** none of its own (no APG pattern: a labelled-field wrapper). A click on the label focuses the control:
 natively through `<label for>`, and through a click handler for an `aria-labelledby` child. The Tab order is the
@@ -728,14 +753,14 @@ the optional fields carry "(optional)" (§6 G10).
 **Hit target:** none of its own; the label adds to the control's pointer target. **Motion:** none: lines appear and
 go at once, with no height animation. **Resize & overflow:** the label and the lines wrap; the inline layout stacks
 when its column and the control's minimum width no longer fit (conventions 28). **Forced colors:** label and lines
-CanvasText; the error glyph `currentColor`; T2 per conventions 29.
+CanvasText, a T2 label and its lock included (conventions 29); the error glyph `currentColor`.
 
 **Catalogue alignment** (`15:419-426`): Props: `labelId?`, `optional?` (G10), `disabledReason?` (T2), `layout?:
 "stacked" | "inline"` (default `stacked`, G6), and `required?` gains "(sets `aria-required`; no asterisk)"; a Variants
 line (stacked, inline) and a new States line (default, invalid, disabled, disabled-with-reason (T2), read-only); A11y
 adds the `labelId` route, the chain order and the reason-alone rule, and the polite once error node; Tokens:
-`space.field.*` → `space.stack.xs` and `space.inset.sm`, plus the label, help, error and reason tokens; Storybook adds
-Optional, Inline, ReadOnly and DisabledWithReason.
+`space.field.*` → `space.stack.xs` and the shipped `space.field.gap` (the inline column gap), plus the label, help,
+error and reason tokens; Storybook adds Optional, Inline, ReadOnly and DisabledWithReason.
 
 ### CMP-047 · DatePicker / DateRangePicker
 
@@ -815,7 +840,8 @@ cell `size.control.height` square. **Motion:** the dialog fades as conventions 2
 **Resize & overflow:** the dialog keeps 7 columns and scrolls inside the viewport at 200 % zoom (conventions 28); a
 range stacks End under Start when its host is narrower than both fields. **Forced colors:** conventions 29; today's
 ring a CanvasText border; selected days Highlight with HighlightText; in-range days a 1 px Highlight border
-(`forced-color-adjust: none` on the cell, system colours only); out-of-range numbers GrayText.
+(`forced-color-adjust: none` on the cell, system colours only); out-of-range numbers GrayText; in T2 the calendar
+button follows CMP-002 (a GrayText border, a ButtonText glyph).
 
 **Catalogue alignment** (`15:482-489`): Props gains `withTime?`, `formatHint?` and `rangeCaption?` (G11),
 `invalid?`, `disabled?`, `readOnly?` and `disabledReason?`; a Variants line (single, range, with or without time) and
@@ -901,21 +927,27 @@ are not options and `Esc` (G17); Tokens: `elevation.2` → `elevation.popover`, 
 | State     | populated, loading, empty, filtered-empty, error, sorting, reflow | populated |
 | Selection | none, multiple                                                    | none      |
 
+**Mode rule:** `grid` is implied whenever a body column is interactive — `onRowSelect`'s select column, an actions
+column, an inline control; the `grid` prop only forces it for a static table. Table mode's interactive content is the
+sortable header buttons and the focusable scroll region, and its rows carry no controls: a roving tabindex keeps a
+long table to one Tab stop (`05` §3.4 item 2, "200+ Tab presses"; E42-D03 §13 puts SCR-121's table, which has row
+actions, in grid mode).
+
 _Boards PENDING: `CMP-049 · Table`, export `img/CMP-049-table.png`._
 
 **Variants × States (10 cells; the ticket's Gherkin "loading, empty and error are explicitly drawn"):**
 
 | Cell                    | Axes                       | What it shows                                                                                                                                                                                      |
 | ----------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| populated               | Mode=table, Selection=none | the sticky header with one sorted column (`arrow-down`, `aria-sort="descending"`) and one sortable unsorted; a numeric column end-aligned in mono; zebra rows; one hovered row; the actions column |
+| populated               | Mode=table, Selection=none | the sticky header with one sorted column (`arrow-down`, `aria-sort="descending"`) and one sortable unsorted; a numeric column end-aligned in mono; zebra rows; one hovered row; no in-row controls |
 | loading                 | as populated               | the header row kept; CMP-015 skeleton rows filling the body; the caption's loading words (E11-D04 §10: "Loading 5,000 bars…")                                                                      |
 | empty                   | as populated               | the header row kept; CMP-026 `no-data` across every column (E42-D03 `users.empty`: "You're the only user. Invite a manager or viewer to delegate.")                                                |
 | filtered-empty          | as populated               | CMP-026 `filtered-empty` with Clear filters (E11-D04 §10: "No rows match: Bid-stacked, Delta negative")                                                                                            |
 | error                   | as populated               | the header row kept; CMP-027 with Retry (E42-D03 U-6: "Couldn't load users — store unavailable."), announced politely (§6 G17)                                                                     |
 | sorting                 | as populated               | the `sortPending` header: its label and `aria-sort` kept, CMP-014 sm in place of its glyph, `aria-busy` (E42-D03 §7)                                                                               |
 | reflow                  | as populated               | the stacked layout at 200 % zoom (conventions 28): one block per row                                                                                                                               |
-| Mode=grid               | State=populated            | the CMP-039 ring on a focused cell, the header row in the arrows' path                                                                                                                             |
-| Selection=multiple      | State=populated            | two rows on `color.action.selected` with checked boxes; the select-all box mixed                                                                                                                   |
+| Mode=grid               | State=populated            | the actions column (an interactive body column, so a grid); the CMP-039 ring on a focused cell, the header row in the arrows' path                                                                 |
+| Selection=multiple      | State=populated, Mode=grid | two rows on `color.action.selected` with checked boxes; the select-all box mixed (the select column makes it a grid)                                                                               |
 | row menu with a T2 item | Mode=grid                  | the row menu open; "Edit risk caps" T2 with `rbac.owner_only` "Only the owner can change account settings." as its second line (D09 §2.4, SCR-063)                                                 |
 
 **Not drawn:** invalid (a table holds no input of its own), disabled and disabled-with-reason for the whole table (it
@@ -930,22 +962,25 @@ read-only by nature), active (opening a row is the host's action).
 | header row     | sticky; fill `color.surface.hover`; a 1 px `color.border.subtle` rule under it (decorative); min-height `size.row.height` 24 / 32; labels `type.ui.label`, `color.text.primary`; numeric headers end-aligned          |
 | sort glyph     | `size.icon`, `color.text.tertiary`, after the label at `space.inset.xs`: `arrow-up` ascending, `arrow-down` descending, a neutral sort glyph when sortable and unsorted (registry names with #271)                    |
 | body row       | min-height `size.row.height`; odd `color.surface.canvas`, even `color.surface.raised` (E11-D04 §2); hover `color.surface.hover`; selected `color.action.selected` (§6 G3)                                             |
-| cell           | padding-inline `space.inset.sm`; text `type.ui.body`, `color.text.primary`; secondary text `color.text.secondary`, never `color.text.tertiary` (3.98:1 on a selected row, dark); numbers `type.num.base`, end-aligned |
-| select column  | a CMP-005 per row and a select-all CMP-005 in the header, the cell `size.control.height` wide                                                                                                                         |
-| actions column | trailing: a CMP-002 ghost `more-horizontal` IconButton opening the CMP-041 row menu (§6 G21)                                                                                                                          |
-| reflow         | one block per row: the first cell as its heading line with the actions, the other cells as header–value pairs in a 2-column grid; still one row element per record (E11-D04 §5.2)                                     |
+| cell           | padding-inline `space.inset.sm`; text `type.ui.body`, `color.text.primary`; secondary text `color.text.secondary`, never `color.text.tertiary` (4.79–4.83:1 in dark; see below); numbers `type.num.base`, end-aligned |
+| select column  | grid mode only (the mode rule): a CMP-005 per row and a select-all CMP-005 in the header, the cell `size.control.height` wide                                                                                         |
+| actions column | grid mode only (the mode rule): trailing, a CMP-002 ghost `more-horizontal` IconButton opening the CMP-041 row menu (§6 G21)                                                                                          |
+| reflow         | one block per row: the first cell as its heading line (with the row's actions in grid mode), the other cells as header–value pairs in a 2-column grid; still one row element per record (E11-D04 §5.2)                |
 
-**Keyboard** — table mode (WAI-ARIA APG Table pattern: static cells):
+Two measured choices behind the anatomy (audit §4): `color.text.tertiary` measures 4.79:1 on a hovered row and 4.83:1
+on a selected row in dark, too thin a margin for body text, so cells never use it; and the header's
+`color.border.subtle` rule equals its `color.surface.hover` fill in every theme (1.00:1), so it reads only against the
+first body row (1.24:1 in dark) and carries nothing; it stays as the real border that forced colours paint CanvasText.
+
+**Keyboard** — table mode (WAI-ARIA APG Table pattern: static cells, no control in a row):
 
 | Keys                                             | Action                                                                                                                                       |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab                                  | The scroll region when it scrolls (`tabindex="0"`, named by the caption), then the header buttons, select boxes and action buttons in order. |
+| Tab / Shift+Tab                                  | The scroll region when it scrolls (`tabindex="0"`, named by the caption), then the sortable header buttons in order; rows hold no Tab stops. |
 | Arrows, Page Up / Down, Home / End on the region | Scroll it (native).                                                                                                                          |
 | Enter / Space on a header button                 | Sorts ascending, then descending; while that column is `sortPending` the press changes nothing.                                              |
-| Space on a select box                            | Toggles that row.                                                                                                                            |
-| Enter / Space on an action button                | Opens the row menu; `Esc` closes it and returns focus to the button.                                                                         |
 
-**Keyboard** — grid mode (`grid`; WAI-ARIA APG Grid pattern):
+**Keyboard** — grid mode (`grid`, or implied by an interactive body column; WAI-ARIA APG Grid pattern):
 
 | Keys                    | Action                                                                                                   |
 | ----------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -955,19 +990,19 @@ read-only by nature), active (opening a row is the host's action).
 | Home / End              | First / last cell of the row.                                                                            |
 | Ctrl+Home / Ctrl+End    | First / last row.                                                                                        |
 | Page Up / Page Down     | One visible page of rows.                                                                                |
-| Enter                   | The focused cell's control: sorts on a header; opens the row (the host's action) on a data cell.         |
+| Enter                   | Sorts on a header; opens the row menu on the actions cell, the row (the host's action) elsewhere.        |
 | Space                   | Toggles the focused row's selection (Selection=multiple).                                                |
 | Shift+F10, the Menu key | Opens the row menu; T2 items stay arrow-reachable, and Enter on one re-shows its reason once (D09 §9.3). |
-| Esc                     | Closes the row menu; focus returns to the row.                                                           |
+| Esc                     | Closes the row menu; focus returns to the cell it was opened from.                                       |
 
-In both modes a focused row scrolls below the sticky header (`scroll-margin-top`), so focus is never hidden (WCAG
-2.4.11).
+In grid mode a focused cell scrolls below the sticky header (`scroll-margin-top`), so focus is never hidden (WCAG
+2.4.11); table mode puts no Tab stop in the body.
 
 **Accessible name and role:**
 
 | Element      | Role                                       | Name                                            | ARIA                                                                             |
 | ------------ | ------------------------------------------ | ----------------------------------------------- | -------------------------------------------------------------------------------- |
-| table        | table (native `<table>`); grid with `grid` | the caption                                     | `aria-rowcount` (every row; -1 while unknown); `aria-busy="true"` while loading  |
+| table        | table (native `<table>`); grid when a grid | the caption                                     | `aria-rowcount` (every row; -1 while unknown); `aria-busy="true"` while loading  |
 | header cell  | columnheader (`th scope="col"`)            | its label                                       | `aria-sort` on the sorted column, `none` on the other sortable ones              |
 | sort button  | button                                     | the header label                                | `aria-busy="true"` while `sortPending`                                           |
 | row          | row                                        | —                                               | `aria-rowindex` (absolute); `aria-selected` in grid mode with selection          |
@@ -988,12 +1023,14 @@ HighlightText; the sort glyph `currentColor`; the focus ring Highlight.
 
 **Catalogue alignment** (`15:500-507`): Props applies E42-D03 Appendix A's row verbatim (`grid?`, `sortPending?`) and
 adds `caption: string`, `loading?: boolean` and `error?: {message, onRetry}` (G12); `onRowSelect?` renders the select
-column (G21); a Variants line (table, grid) and a new States line (the seven states, the selected row on
-`color.action.selected`); A11y applies E42-D03's row verbatim, then adds the sticky header and `scroll-margin-top`,
-the focusable scroll region in table mode, the select boxes, the `Shift+F10` row menu with T2 items, the one live
-region and the stacked reflow; Tokens: `color.surface.raised`, `color.border.subtle` and `font.mono` become the
-anatomy's tokens (G3); Storybook applies E42-D03's row verbatim and adds Loading, Error, FilteredEmpty and Reflow.
-Held: E11-D04's treegrid rows, `stickyFirstColumn` and `fitChars` (G12).
+column and makes the table a grid (G21); a Variants line (table, grid, with the mode rule) and a new States line (the
+seven states, the selected row on `color.action.selected`); A11y applies E42-D03's row verbatim, then adds the sticky
+header and `scroll-margin-top`, table mode's two kinds of Tab stop (the focusable scroll region and the header
+buttons) with no control in a row, the grid that an interactive body column implies, the select boxes, the `Shift+F10`
+row menu with T2 items, the one live region and the stacked reflow; Tokens: `color.surface.raised`,
+`color.border.subtle` and `font.mono` become the anatomy's tokens (G3); Storybook applies E42-D03's row verbatim and
+adds Loading, Error, FilteredEmpty and Reflow. Held: E11-D04's treegrid rows, `stickyFirstColumn` and `fitChars`
+(G12).
 
 ### CMP-054 · SearchBox
 
@@ -1089,7 +1126,8 @@ heading's button; Enter or Space toggles it and focus stays; a collapsed section
 **Validation:** on submit, a collapsed section that holds an invalid field opens, so focus can reach the field (G14).
 **Hit target:** the disclosure button spans the heading line, at least 24 px tall. **Motion:** expand and collapse
 are instant in both modes. **Resize & overflow:** the heading, description and notice wrap. **Forced colors:** the
-heading CanvasText; the chevron and the glyphs `currentColor`; T2 per conventions 29.
+heading and the T2 notice CanvasText; the chevron and the glyphs `currentColor`; the gated fields' labels and locks
+CanvasText (conventions 29).
 
 **Catalogue alignment** (`15:644-651`): Props gains `headingLevel?: 2 | 3 | 4` (default 3), `disabled?` and
 `disabledReason?` (the one notice); a new States line; A11y appends the heading inside the legend, the disclosure
