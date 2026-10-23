@@ -51,7 +51,8 @@ Sections (each row names its source so a reviewer can re-grep it):
    every F row with exactly one owner, one target and a consumer, listed by the clause row it
    cites, every A row with a file and a section, no local path, no Penpot host (a generic
    pattern), every table row with its header's cell count, no closing keyword beside an issue
-   number in the draft.
+   number in the draft; a section 0 board row counts while PENDING or once drawn with its board
+   id and an existing PNG (``board_row_ok``).
 
 Usage:
   python3 -I docs/design/_tools/e13_d05_a11y_review_audit.py            Markdown report
@@ -180,6 +181,30 @@ def items_05() -> dict[str, int]:
 
 def cells(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+BOARD_ID = r"`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`"
+BOARD_PNG = r"`(docs/design/E13/img/E13-D05-0\d-[a-z0-9-]+\.png)`"
+
+
+def board_row_ok(r: list[str]) -> bool:
+    """A section 0 board row counts while PENDING, or once drawn with its board id and its PNG.
+
+    The drawn form needs ``drawn`` and a board id in the State cell and an Export cell naming a
+    ``docs/design/E13/img/E13-D05-0n-*.png`` that exists in the working tree.
+    """
+    if len(r) < 5:
+        return False
+    state, export = r[3], r[4]
+    if state.strip() == "PENDING":
+        return True
+    m = re.search(BOARD_PNG, export)
+    return (
+        state.strip().startswith("drawn")
+        and re.search(BOARD_ID, state) is not None
+        and m is not None
+        and Path(m.group(1)).is_file()
+    )
 
 
 def rows_with(text: str, rx: str) -> list[list[str]]:
@@ -1064,7 +1089,7 @@ def review_section(spec: str) -> dict[str, Any]:
     out["handoffs"] = len(rows_with(spec, r"HO-\d+"))
     out["rt_tasks"] = len(rows_with(spec, r"R-T\d+"))
     out["km_rows"] = len(rows_with(spec, r"KM-\d+"))
-    out["boards"] = len([r for r in rows_with(spec, r"0\d") if "PENDING" in " ".join(r)])
+    out["boards"] = len([r for r in rows_with(spec, r"0\d") if board_row_ok(r)])
     # findings (R11): id, class, severity, clause, change, owner, target, consumer, evidence. One
     # owner and one target per row (the consumer column may name two stories); every F row whose
     # clause cell names a 05 clause id must be listed in that clause's finding cell (section 10.1).
