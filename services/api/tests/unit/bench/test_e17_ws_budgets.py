@@ -852,8 +852,8 @@ RTT = "cv_ws_rtt_seconds"
 #: steady windows). Per mixed phase: the pong delay (ms); the `connection_quality` frames k6
 #: counted by class over each socket's whole life; the steady window's probe round trips at or
 #: under 0.15 s, at or under 0.5 s and in all (`cv_ws_rtt_seconds` bucket deltas); the book's p95
-#: hold (ms). A backend loop pause answered a few probes late, and each one made the server
-#: announce `saturated`.
+#: hold (ms). Likely a backend loop pause answered a few probes late, and each one made the
+#: server announce `saturated`.
 RUN_39912100280 = {
     "mixed-healthy": (0, {"healthy": 57, "lagging": 52, "saturated": 5}, (2937, 2990, 2995), 72.0),
     "mixed-lagging": (300, {"lagging": 8, "saturated": 3}, (0, 2997, 3000), 115.0),
@@ -968,12 +968,38 @@ def test_w5_holds_a_class_at_exactly_90_percent_and_not_one_round_trip_short(
 
 @pytest.mark.parametrize(("delay", "cls", "rtt"), ALL_IN_CLASS)
 @pytest.mark.parametrize(("sent", "told"), [(4, False), (5, True)])
-def test_w5_wants_its_class_announced_to_every_connection(
+def test_w5_wants_at_least_as_many_announcements_of_its_class_as_connections(
     delay: int, cls: str, rtt: tuple[int, int, int], sent: int, told: bool
 ) -> None:
     out = judged(probed(f"mixed-{cls}", delay, {cls: sent}, rtt))  # a cohort of 5 connections
     assert (f"mixed-{cls}" not in out["skipped"]) is told
-    assert any(f"announced {cls} 4 times to 5 connections" in n for n in out["notes"]) is not told
+    said = f"announced {cls} 4 times to a cohort of 5, fewer announcements than connections"
+    assert any(said in n for n in out["notes"]) is not told
+
+
+def test_w5_admits_a_healthy_cohort_that_has_probe_samples_and_no_announcement() -> None:
+    """`healthy` is the start class and is never announced: the clean case has no `cv_class_*`."""
+    assert judged(probed("mixed-healthy", 0, {}, (1000, 1000, 1000)))["skipped"] == []
+
+
+@pytest.mark.parametrize(
+    ("rtt", "announced", "left_out"),
+    [
+        ((-500, -500, -500), {"lagging": 5, "saturated": 1}, True),  # counters that were reset
+        ((100, 80, 120), {"lagging": 5}, False),  # buckets that are not cumulative
+    ],
+)
+def test_w5_judges_by_the_announcements_when_the_round_trip_counts_cannot_be_a_window(
+    rtt: tuple[int, int, int], announced: dict[str, int], left_out: bool
+) -> None:
+    out = judged(probed("mixed-lagging", 300, announced, rtt))
+    assert ("mixed-lagging" in out["skipped"]) is left_out
+    assert any("the server applied" in n for n in out["notes"]) is left_out
+
+
+def test_w5_reads_no_window_from_a_count_below_its_own_bucket() -> None:
+    text = f'{RTT}_bucket{{le="0.15"}} 10\n{RTT}_bucket{{le="0.5"}} 130\n{RTT}_count 120\n'
+    assert w5.rtt_bands(budgets.parse_scrape(text)) == {}
 
 
 def test_w5_cuts_the_probe_round_trips_at_the_lines_the_product_classifies_them_by() -> None:

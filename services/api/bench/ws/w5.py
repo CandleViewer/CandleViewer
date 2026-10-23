@@ -7,13 +7,20 @@ fed-but-unsubscribed baseline taken off, gives the CPU a family costs. A cohort 
 by delaying `pong` to the server's `s-rtt-*` probes (`pacing.classify` reads the RTT), so the class
 is deterministic, and the probe round trips of the steady window say which class a phase held.
 
-The rule is pre-registered here, before any run, so the data gives the answer:
+A mixed phase is read only when its cohort held the class it was set up for: at least 90 % of the
+steady window's probe samples in that class's band (150 ms and 500 ms are the lines); for
+`lagging` and `saturated`, at least as many announcements of the class as connections; and no
+`overflowing`. A share of samples is looser than a share of time: there is one sample per answered
+probe (a probe unanswered for 10 s counts once), and the server's two-sample hysteresis holds a
+worse class for up to two ticks after an excursion. The announcements are a frame count
+(`cv_class_*` has no connection id). Only the round trip and `overflowing` are read, so a class
+the server gave by queue depth (25 %, 60 %) is not seen: a known limitation (in run 39912100280
+every queue sample was at or under 64 KiB and 100 frames). The first rule took the worst class
+announced over a socket's life, which left out two cohorts of that run for a few late probes and
+recorded `no_data`; `runner w5-judge` re-reads the run under this rule, added after it.
 
-- A mixed phase is read only when its cohort held the class it was set up for: at least 90 % of the
-  steady window's probe round trips in that class's band (150 ms and 500 ms are the lines),
-  `lagging` and `saturated` announced to every connection, and `overflowing` (a deep queue, which
-  no probe shows) never announced. The worst class announced is not the test: one late probe
-  announces `saturated` and the next takes it back.
+The rest of the rule is pre-registered here, before any run, so the data gives the answer:
+
 - relief(f, c) = 1 - bytes(f, c) / bytes(f, healthy); cost(f, c) = p95(f, c) - p95(f, healthy)
   (floored at 1 ms, the k6 clock's resolution); efficiency = relief / cost.
 - p95(f, c) is how long an update waits in the window the multiplier widens, never
@@ -68,8 +75,8 @@ MIXED: Final = ("mixed-healthy", "mixed-lagging", "mixed-saturated")
 LAGGING_RTT_MS: Final = 150
 SATURATED_RTT_MS: Final = 500
 RTT_SERIES: Final = "cv_ws_rtt_seconds"
-#: The share of a steady window's probe round trips one class must hold to be the class the cohort
-#: ran in.
+#: The share of a steady window's probe samples (not of its time) one class must hold to be the
+#: class the cohort ran in.
 HELD_FLOOR: Final = 0.90
 
 
@@ -144,12 +151,15 @@ def cpu_by_family(
 def rtt_bands(delta: Scrape) -> dict[str, int]:
     """The probe round trips of a steady window by the class they sit in: the `cv_ws_rtt_seconds`
     bucket deltas cut at the class lines, `healthy` up to 150 ms, `lagging` above that up to
-    500 ms, `saturated` above. Empty when the window took no sample."""
+    500 ms, `saturated` above. Empty when the window took no sample, or when the counts cannot be
+    one window (negative after a counter reset, buckets that are not cumulative)."""
     under_lagging, n = fraction_le(delta, RTT_SERIES, LAGGING_RTT_MS / 1000)
     under_saturated, _ = fraction_le(delta, RTT_SERIES, SATURATED_RTT_MS / 1000)
     if not n:
         return {}
     healthy, not_saturated = round(under_lagging * n), round(under_saturated * n)
+    if not 0 <= healthy <= not_saturated <= round(n):
+        return {}
     return {
         "healthy": healthy,
         "lagging": not_saturated - healthy,
@@ -160,12 +170,12 @@ def rtt_bands(delta: Scrape) -> dict[str, int]:
 def applied_class(counters: Mapping[str, float], delta: Scrape | None = None) -> str:
     """The class a cohort ran in: the one most of the steady window's probe round trips sat in
     (`rtt_bands` of `delta`; a tie goes to the worse class). A single excursion must not void a
-    phase: a loop pause that answers one probe late makes the server announce `saturated` and the
-    next probe takes it back, so the worst class announced says little about the class held (run
-    39912100280: 98 % and 99.9 % of the round trips in the class the cohort was set up for, 5 and 3
-    over 500 ms). A window with no sample falls back to the announcements: the worst class the
-    server announced over the socket's life (`cv_class_<name>` counts the `connection_quality`
-    frames by class), `healthy` (the start class) when none."""
+    phase: a probe answered late (in run 39912100280, likely a backend loop pause) makes the server
+    announce `saturated` and the next probe takes it back, so the worst class announced says
+    little about the class held (that run: 98 % and 99.9 % of the round trips in the class the
+    cohort was set up for, 5 and 3 over 500 ms). With no usable window it falls back to the
+    announcements: the worst class the server announced over the socket's life (`cv_class_<name>`
+    counts the `connection_quality` frames by class), `healthy` (the start class) when none."""
     if bands := rtt_bands(delta or {}):
         return max(reversed(CLASSES), key=bands.__getitem__)
     for name in reversed((*CLASSES, "overflowing")):
@@ -222,11 +232,13 @@ def intended_class(rtt_delay_ms: int) -> str:
 
 def judge_class(ph: Phase, want: str) -> tuple[str, str | None]:
     """`(the class the cohort ran in, why the phase is left out)`; no reason when it ran as
-    intended. With probe round trips in the steady window, `want` must hold at least `HELD_FLOOR`
-    of them. The announcement counts are the guard that the server told every connection:
-    `lagging` and `saturated` at least once per connection (`healthy` is the start class, never
-    announced), and `overflowing` never, because only a deep queue gives it and no probe round
-    trip shows one. With no probe round trip, the announcements alone decide, as they always did."""
+    intended. With a probe window, `want` must hold at least `HELD_FLOOR` of its samples. The
+    announcement counts are the guard that the server told the cohort: `lagging` and `saturated`
+    at least as many times as there are connections (a frame count, not one per connection;
+    `healthy` is the start class, never announced), and `overflowing` never, because only a deep
+    queue gives it and no probe shows one. Only the round trip and `overflowing` are read, so a
+    class given by queue depth is not seen (the module docstring). With no usable window, the
+    announcements alone decide, as they always did."""
     counters = ph.summary.get("counters", {})
     got, bands = applied_class(counters, ph.delta), rtt_bands(ph.delta)
     if not bands:
@@ -246,8 +258,8 @@ def judge_class(ph: Phase, want: str) -> tuple[str, str | None]:
     connections = max(1, int(ph.summary.get("connections") or 1))
     if want != "healthy" and sent < connections:
         return got, (
-            f"the server announced {want} {sent:g} times to {connections} connections, "
-            "fewer than one each"
+            f"the server announced {want} {sent:g} times to a cohort of {connections}, "
+            "fewer announcements than connections"
         )
     return got, None
 

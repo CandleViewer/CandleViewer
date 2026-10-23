@@ -835,12 +835,17 @@ def cmd_w5(a: argparse.Namespace) -> int:
 
 def cmd_w5_judge(a: argparse.Namespace) -> int:
     """Re-judge a saved W5 directory (`w5 --out-dir DIR`) offline: the phases `cmd_w5` builds, from
-    the saved files alone, through `w5.analyze`. It prints the answer as JSON and writes nothing
-    (the notes a live run adds about scrapes that timed out are not repeated)."""
+    the saved files alone, through `w5.analyze`. It prints the answer as JSON, writes nothing and
+    exits as `cmd_w5` does (the note on a scrape that timed out and was kept is not repeated). A
+    symlink, or a file over 64 MiB, anywhere under DIR is refused before anything is read."""
+    root = Path(a.dir)
+    for p in (root, *root.rglob("*")):
+        if p.is_symlink() or (p.is_file() and p.stat().st_size > 64 << 20):
+            raise SystemExit(f"{p}: a symlink or over 64 MiB: not read")
     phases: list[w5.Phase] = []
     left_out: list[str] = []
     for ph in profiles.load()["w5"]["phases"]:
-        out = Path(a.dir) / ph["name"]
+        out = root / ph["name"]
         if not out.is_dir():  # `analyze` names a mixed phase the directory does not hold
             continue
         res, facts = judge(out)
@@ -856,8 +861,9 @@ def cmd_w5_judge(a: argparse.Namespace) -> int:
             )
         )  # fmt: skip
     answer = w5.analyze(phases, left_out)
+    answer["notes"] += [f"phase {n}: a boundary scrape timed out, left out" for n in left_out]
     print(json.dumps(answer, indent=2, default=str))
-    return w5.exit_code(answer)
+    return 1 if left_out else w5.exit_code(answer)
 
 
 def cmd_record(a: argparse.Namespace) -> int:
