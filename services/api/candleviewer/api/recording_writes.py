@@ -348,21 +348,24 @@ def make_recording_writes_router(
     ) -> Response:
         """`pinned` or `retention_days` under the `recorder` step-up (04 row 9); `streams` and
         `depth` alone without (row 8). The policy records `recorder.update` (update_manual) and
-        a pin's `retention.change` (set_pin); `retention_days` alone, which no policy member
-        records, the route records ahead of the store. The answer reports the stored values;
-        it promises no change to a running session."""
+        a pin's `retention.change` (set_pin); `retention_days` with no pin, which no policy
+        member records, the route records ahead of the store, with its denied twin when the
+        policy refuses the change. The answer reports the stored values; it promises no change
+        to a running session."""
         body, call = await begin(request, "updateRecordedSymbol", _update,
                                  lambda b: bool(b.model_fields_set & _RETAINS))  # fmt: skip
         if call.replayed is not None:
             return call.replayed
         entry, spec = await visible(call, entry_id), _spec(body)
-        if spec.retention_days is not None and spec.pinned is None:
+        if intent := "retention_days" in body.model_fields_set and not spec.pinned:
             await _record(call, "retention.change", entry.symbol, entry.id,
                           before_state={"retention_days": entry.retention_days},
                           after_state={"retention_days": spec.retention_days})  # fmt: skip
         try:
             updated = await _stored(call.control.update(entry.id, spec, call.actor))
         except rc.ChangeRefused as refused:
+            if intent:  # the route's retention record gets its denied twin
+                await _record(call, "retention.change", entry.symbol, entry.id, refused.rule)
             if refused.rule != "not_manual":  # the policy's own check of the change
                 rule = {"field": refused.field, "rule": refused.rule,
                         "message": "Refused by the recorder."}  # fmt: skip
