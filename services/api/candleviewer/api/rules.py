@@ -18,6 +18,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from candleviewer.api.rule_body import read_object
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import escape_unpaired
 from candleviewer.rules.compiler import compile_form, compile_graph
 from candleviewer.rules.compiler.common import build_rule, check_bounds, value_issues
@@ -127,6 +128,8 @@ def make_rules_router(
             await scope_resolver.authorize_environments(caller, rule.scope, audit_armed=False)
         except ScopeForbiddenError:
             return _problem(403, "Forbidden", ScopeForbiddenError.message)
+        except AuditUnavailable:  # the scope's record was not written (C-2.9): nothing proceeds
+            return _problem(503, "Service unavailable", "the scope check could not be recorded")
         return None
 
     @router.get("/rules/accounts")

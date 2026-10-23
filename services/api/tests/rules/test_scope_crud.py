@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from candleviewer.api.rules_crud import make_rules_crud_router
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RulesManager
 from candleviewer.rules.scope_state import ARM_LIVE
@@ -31,10 +32,12 @@ class _Src:
         return self.perms
 
 
-def _setup() -> tuple[TestClient, list[str], _Src, RulesManager]:
+def _setup(*, unwritable: bool = False) -> tuple[TestClient, list[str], _Src, RulesManager]:
     audits: list[str] = []
 
     async def sink(event: str, data: dict[str, str]) -> None:
+        if unwritable:
+            raise AuditUnavailable("audit WAL unwritable")
         audits.append(event)
 
     src = _Src()
@@ -55,6 +58,14 @@ def _setup() -> tuple[TestClient, list[str], _Src, RulesManager]:
 
 def _scoped(acct: uuid.UUID, **sc: Any) -> dict[str, Any]:
     return _ir(scope={"level": "account", "account_ids": [str(acct)], **sc})
+
+
+def test_a_create_whose_scope_refusal_cannot_be_recorded_is_503_and_saves_nothing() -> None:
+    """C-2.9 (#4177 security L-1): an unwritable scope record refuses the save, never a 500."""
+    c, _audits, _s, _m = _setup(unwritable=True)
+    response = c.post("/rules", json={"ir": _scoped(C)})
+    assert (response.status_code, response.json()["code"]) == (503, "audit_unavailable")
+    assert c.get("/rules").json()["items"] == []
 
 
 def test_create_and_update_reject_ungranted_account() -> None:
