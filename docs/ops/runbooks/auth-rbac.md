@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2). Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04); the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2). Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -337,7 +337,12 @@ Runnable since #2119 (E09-S11): `python -m candleviewer.breakglass`, the offline
 of the break-glass trust boundary (`docs/security/threat-models/e09-auth-rbac.md` §3.6.1). It
 resets the named Owner's MFA and nothing else: it mints no login, session, token or recovery code
 (decision O2). It has been rehearsed on a local throwaway database (dry-run transcript below in
-this section), not on staging: that drill is #2494 (E09-X04, #300).
+this section), and on 2026-10-23 a non-author ran it cold on a dev compose stack on the real backend
+(#2494, E09-X04: steps 1 to 5, from the handoff to cv-api restarted, took 7 min 41 s, or about
+5 min 47 s without a terminal detour; step 6, the Owner's re-enrolment, was not drilled); not on
+staging (#1778 item A). U10 is the lockout case of `docs/security/threat-models/e09-auth-rbac.md`;
+O1 to O3 and R8 are #2119's decisions (the possession proof, the reset's scope, live gating and the
+alert routing); FU-1 is `docs/plan/spikes/e27-kek.md`'s follow-up, #2151.
 
 **When.** The sole Owner cannot sign in: the TOTP device is lost and no unused recovery code is at
 hand (U10). An Owner who still holds an unused recovery code signs in with it instead (§1), which
@@ -390,33 +395,55 @@ logged.
   this environment by a cv-api boot. In `live` a `file` KEK is refused, as for cv-api, and so is a
   run whose SR-009 process hardening did not take effect. The launcher and systemd steps are not
   drilled yet (FU-1, #2151). Where cv-api has no KEK, the CLI refuses `kek_unproven` and changes
-  nothing.
+  nothing. The settings default to `CV_KEK_SOURCE=handle`, `CV_KEK_HANDLE=/run/secrets/cv_kek` and
+  `CV_KEK_VERSION=1`, so outside `live` a stack that mounts its KEK there passes the proof with the
+  three unset: only an unreachable KEK is "no KEK" (Drilling the refusals, below).
 - cv-api's recovery-code key, `CV_AUTH_RECOVERY_HMAC_KEY_HEX`, in every environment: without 32
   bytes of hex in it the CLI exits 2 before it runs anything (the `live` rule checks the code with
   it). Never put its value, or any other secret, on a command line or in this file.
-- A terminal: `docker compose run` allocates one (with `-T` it does not, and the CLI refuses).
+- A terminal, on your side too: `docker compose run` allocates the container's only when the shell
+  it runs from has one, and never with `-T` or with its output piped (`| tee` included). Over ssh
+  use `ssh -t`; from automation, run it under a pty. Without one the run ends `no_tty` (11), and
+  still writes its attempt and refusal records.
 - In `live`: `--live`, and one unused Owner recovery code from the SR-023 sealed envelope.
 
 **Procedure (compose).** Use the compose files (`-f`) and project (`-p`) of the running stack, as
-`docker compose ls` lists them, so that the run gets cv-api's settings, KEK handle and audit volume.
-The repository's compose files (`infra/compose/`) set neither `CV_AUTH_RECOVERY_HMAC_KEY_HEX` nor a
-KEK for `api`: with them alone the run exits 2, so the stack must add both (its own override file or
-environment).
+`docker compose ls` lists them, so that the run gets cv-api's settings, KEK handle and audit volume:
+without them a command fails, or runs in another project with a new, empty audit volume. Below,
+`$COMPOSE` stands for that prefix, set once:
 
-1. Record the incident: who, when, why, and who has the host.
+```bash
+COMPOSE="docker compose -p <project> -f infra/compose/docker-compose.yml -f <override> --profile core"
+```
+
+The repository's compose files (`infra/compose/`) run the fake backend and set neither
+`CV_AUTH_RECOVERY_HMAC_KEY_HEX` nor a KEK for `api`: with them alone the run exits 2, and no boot
+ever enrolled a KEK check value, so the stack must add both and run the real backend (its own
+override file or environment). The #2494 drill's stack also needed `CV_STORAGE_BACKEND=real`, the
+auth keys and pepper, a volume at `/data` holding a `parquet` directory owned and writable by uid
+10001 (the cold tier's root, `/data/parquet`: the real backend's storage creates nothing and refuses
+to start without it), `CV_MESH_CIDRS_CSV` naming the compose
+network (without it the healthcheck itself gets `403`), and `CV_ALLOWED_ORIGINS` for a client's
+WebSocket. Every compose command then warns that the secrets' `uid`, `gid` and `mode` are not
+supported outside Swarm mode: expected, since the host files carry them (the audit lane key, below).
+
+1. Record the incident in its ticket before you start: who, when, why, and who has the host. Every
+   run pages (R8), refused ones included, and the pages need that context.
 2. Stop cv-api and check that it is down:
 
    ```bash
-   docker compose -f infra/compose/docker-compose.yml --profile core stop api
-   docker compose -f infra/compose/docker-compose.yml --profile core ps api
+   $COMPOSE stop api
+   $COMPOSE ps -a api
    ```
+
+   Expected: `api` is `Exited`, and `$COMPOSE ps api` lists no running `api`.
 
 3. Run the CLI as a one-off container of `api`, naming the Owner by username or email, and add
    `--live` in `live`. The line replaces the image entrypoint (`candleviewer.server`, which takes no
    arguments) and has no `-v` and no `--user` of its own (see the audit volume below):
 
    ```bash
-   docker compose -f infra/compose/docker-compose.yml --profile core run --rm --no-deps --entrypoint python api -m candleviewer.breakglass --owner <owner username or email>
+   $COMPOSE run --rm --no-deps --entrypoint python api -m candleviewer.breakglass --owner <owner username or email>
    ```
 
    Retype the phrase it shows, `reset <owner> on <environment> <6 hex digits>`. In `live` type one
@@ -425,14 +452,40 @@ environment).
 4. Read the last lines. `Break-glass reset done ...` and `Audit: every record reached audit_log.`
    is the expected end (exit 0). `Audit: records waiting in the host journal: N` means Postgres did
    not take them: they reach `audit_log` at the next cv-api boot. A refusal names its reason (table
-   above): fix it and run again; each run is a new attempt with records of its own.
-5. Start cv-api again (`docker compose ... start api`). It refuses to boot while a CLI run holds the
-   lock.
+   above): fix it and run again; each run is a new attempt with records of its own. The run's id is
+   the `run_id` of its `breakglass.run_ended` JSON line (`breakglass.refused_unjournaled` when the
+   journal could not be opened: a 4, or a 5 for a held run lock), and the `request_id` of its
+   records. A `host_fs_unavailable` (4) shows its cause as
+   `[redacted:key-shape]`: check `CV_AUDIT_WAL_PATH` and the volume (The audit volume, below). Its
+   attempt and refusal still reach `audit_log`, written straight to Postgres. With no usable
+   journal and Postgres unreachable too, a 4 or 5 ends
+   `Audit: no record could be written (pre-audit refusal)`: nothing was checked or changed, and no
+   record of the run exists (C-2.9's bounded exception); the JSON line names the reason. To read a
+   run's records and the event (read-only):
+
+   ```bash
+   $COMPOSE exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+   SELECT id, action, outcome, event_ts FROM audit_log WHERE request_id = '<run id>' ORDER BY id;
+   SELECT id, severity, correlation_id, resolved_at, event_ts FROM system_events
+    WHERE component = 'auth' AND kind = 'break_glass_used' ORDER BY id;
+   SQL
+   ```
+
+   Read between runs, never during one: in a stack whose cv-api logs in as `POSTGRES_USER`, as the
+   dev stack's does, an open session of it makes a run refuse `api_running` (5).
+
+5. Start cv-api again (`$COMPOSE start api`). Expected: `$COMPOSE ps api` shows `healthy` within
+   about 30 s, and the boot appends `audit.lane_resumed` and `security.kek_loaded`. It refuses to
+   boot while a CLI run holds the lock.
 6. The Owner signs in with the password, gets an enrolment-only session and enrols TOTP again (§2
    step 4), then seals the 10 new recovery codes in the envelope (SR-023).
 7. The `break_glass_used` event stays unresolved, and every client's first WS authentication gets
    the notice, until the Owner resolve route exists (E09-S12, not built; filing it is #2710 item 2).
-   Do not edit `system_events` by hand.
+   Do not edit `system_events` by hand. Another user's full session gets the notice at once (its
+   `auth_ok` is followed by a `system` frame with reason `auth.break_glass_used`); the Owner's own
+   comes after re-enrolment, since an enrolment-only session's socket closes `4403` (§2 step 4).
+   Each reset raises its own event, so a second, mistaken reset leaves a second one, and the CLI's
+   `system event N raised` names the event's id, not a count.
 
 **Alerts (R8).** `AuthBreakGlassAttempted` pages for every run, refused ones included;
 `AuthBreakGlassUsed` pages while a reset's event is unresolved; `AuthBreakGlassStateReadFailing` is
@@ -440,6 +493,18 @@ a ticket when cv-api cannot read that state (their sections in `docs/plan/07-rel
 main-orchestrator ruled this routing (page, page, ticket) on 2026-10-17 under the owner's
 delegation; it awaits the owner's confirmation on #2119. A severity is one label in
 `infra/prometheus/alerts`.
+
+**Drilling the refusals (#2494).** Outside `live` only, since every run pages (R8). Run each
+injection with `-T`, so that a run which passes the
+check under test stops at `no_tty` (11) and never reaches the prompt. Leaving the KEK variables
+unset is not "no KEK": they default to the compose secret's path, so a mounted KEK still loads and
+the proof passes. Point the handle at an absent path instead; a relative audit path drills 4. Each
+still writes an attempt and a refusal record:
+
+```bash
+$COMPOSE run -T --rm --no-deps -e CV_KEK_HANDLE=/run/secrets/absent_kek --entrypoint python api -m candleviewer.breakglass --owner <owner>   # 9 kek_unproven
+$COMPOSE run -T --rm --no-deps -e CV_AUDIT_WAL_PATH=audit.wal --entrypoint python api -m candleviewer.breakglass --owner <owner>             # 4 host_fs_unavailable
+```
 
 **Live gating (O3).** In `live` the CLI requires `--live`, the phrase naming `live`, and one unused
 Owner recovery code, verified offline against its hash and consumed in the reset's transaction:
@@ -515,9 +580,9 @@ that owner into an empty volume: run everything that touches it as the image's u
 
   ```bash
   # cv-api running
-  docker compose -f infra/compose/docker-compose.yml --profile core exec api ls -ldn /var/lib/candleviewer/audit
+  $COMPOSE exec api ls -ldn /var/lib/candleviewer/audit
   # cv-api stopped
-  docker compose -f infra/compose/docker-compose.yml --profile core run --rm --no-deps --entrypoint ls api -ldn /var/lib/candleviewer/audit
+  $COMPOSE run --rm --no-deps --entrypoint ls api -ldn /var/lib/candleviewer/audit
   ```
 
 **The audit lane key (ADR-0037 decision 6, #3009).** The key is a compose file secret, never on
@@ -834,8 +899,10 @@ Proven end to end in process on the deployed app
 (`services/api/tests/security/auth/test_disable_user_e2e.py`, and
 `test_disable_commit_readback.py` for a lost commit) and on Postgres
 (`services/api/tests/integration/admin/test_user_disable_route_pg.py`), sockets on `rotated`
-sessions included. The staging drill (E09-X04, #2494) has not run;
-`services/api/tests/security/auth/test_disable_user_drill.py` drives the primitives only.
+sessions included. `services/api/tests/security/auth/test_disable_user_drill.py` drives the same
+route from the manager's side: a private subscription's `bye` and close, and the measured time from
+the `DELETE` to the `bye`. The dev-stack drill (E09-X04, #2494) is recorded in
+`docs/security/reviews/e09-auth-review.md` section 4 with #300's second PR.
 
 ## 5. Audit-chain verification failure
 
@@ -1453,8 +1520,9 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 
 ## Execution record
 
-Not executed on staging by a non-author: no staging host exists (#1778 item A); the run is tracked
-in #2298. Security review of §3/§5 exists as an agent review on #2115; Ops review is recorded on #2343.
+§3 was run cold by a non-author on 2026-10-23, on a dev compose stack on the real backend (#2494;
+the record goes into `docs/security/reviews/e09-auth-review.md` section 4 with #300's second PR).
+Not executed on staging: no staging host exists (#1778 item A); the staging run is tracked in #2298. Security review of §3/§5 exists as an agent review on #2115; Ops review is recorded on #2343.
 
 The audit lane's drill (§12, §13; ADR-0037 S4b-2a, #3009) is an in-process test, not a non-author's walk of those
 sections on a staging host: `services/api/tests/unit/audit/test_lane_drill.py` runs the real `AuditService` over an

@@ -1,22 +1,24 @@
 """E09-X04 SR-029 automated counterpart of the disable-user drill (in-process, no network).
 
-It drives the primitives that the disable cascade of `DELETE /users/{userId}` (E42-T04, #965)
-calls, through the real `create_app()` wiring: `SessionService.revoke_all` and the app's own
-`RevocationHub`. It is a regression guard for the propagation path, not the staging drill (which a
-human still runs). The route itself is proven end to end in `test_disable_user_e2e.py`, and on
-Postgres in `tests/integration/admin/test_user_disable_route_pg.py` (E42-T04 S7).
-The socket must end as 23-ws-protocol.md §9.5 says for a disabled user: `bye user_disabled`
-(`4403`, `reconnect: false`), then the close frame `4403`; never the `4401` re-auth close (#2493).
-
-Measured on the injected clock only: revocation is stamped at the action instant (zero
-injected-time delay, i.e. no timer/deferred path), and every effect is observed before the call
-returns. Every WS read has a hard deadline so a missing `bye` fails fast instead of hanging.
+The Owner disables a manager through the real route, `DELETE /users/{userId}` (E42-T04, #965),
+on the deployed `create_app()` that `test_disable_user_e2e.py` builds: its world is imported here,
+never copied. That module pins the cascade's records (`users.disable` with `positions_decision`,
+the rule disarmed, the grants revoked); this one pins what the drill watches from the manager's
+side: a private subscription ends with `bye user_disabled` (`4403`, `reconnect: false`) and then
+the close, with no frame after the `bye` (23-ws-protocol.md §9.5, never the `4401` re-auth close,
+#2493); a pending step-up challenge is gone; the revoked token opens no socket; a second disable
+changes nothing; and the wall time from the `DELETE` to the `bye`, measured, under the 5 s bound.
+The dev-stack drill that a person-or-agent runs (#2494) is recorded in
+`docs/security/reviews/e09-auth-review.md` section 4 with #300's second PR. The #2911 cases (a
+stray session no disable swept) keep their own harness: they drive the session service's refusal,
+not the route.
 """
 
 from __future__ import annotations
 
 import functools
 import os
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -30,7 +32,6 @@ from starlette.websockets import WebSocketDisconnect
 from candleviewer import app as app_module
 from candleviewer.app import create_app
 from candleviewer.auth.envelope import TotpEncryptor
-from candleviewer.auth.errors import SessionNotFound, SessionRevoked
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import UserStatus
@@ -110,15 +111,6 @@ class _Env:
         assert self.client.portal is not None
         return self.client.portal.call(lambda: fn(*args, **kwargs))
 
-    async def disable(self, user_id: str) -> int:
-        """What SR-029 requires of the cascade: revoke every session, then close every socket
-        with the reason `user_disabled`, which ends it as §9.5 says (`bye` + `4403`)."""
-        revoked = await self.sessions.revoke_all(user_id, reason="user_disabled")
-        closed = 0
-        for record in revoked:
-            closed += await self.hub.revoke(str(record.id), "user_disabled")
-        return closed
-
 
 @pytest.fixture
 def env(monkeypatch: pytest.MonkeyPatch) -> Any:
@@ -152,64 +144,102 @@ def _auth_ws(ws: Any, token: str, attempts: int = 1) -> dict[str, Any]:
     return frame
 
 
-def test_disable_user_drill_terminates_sessions_sockets_and_pending_actions(env: Any) -> None:
-    user = str(uuid.uuid4())
-    other = str(uuid.uuid4())
-    a = env.run(env.sessions.mint, user)
-    b = env.run(env.sessions.mint, user)
-    bystander = env.run(env.sessions.mint, other)
-    # Pending activity: a step-up challenge recorded against the live session.
-    env.run(env.step_up.record_pending, str(a.session_id), "users")
-    assert env.run(env.step_up.pending_action_class, str(a.session_id)) == "users"
+def _e2e() -> Any:
+    """`test_disable_user_e2e`, whose deployed world the route's cases run in. Imported on use:
+    that module imports this one's socket helpers, so a module-level import would be circular."""
+    from tests.security.auth import test_disable_user_e2e
 
-    with env.client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
-        ok = _auth_ws(ws, a.access_token)
-        assert ok["t"] == "auth_ok"
-        ws.send_json({"t": "sub", "id": "s", "p": {"topics": [{"ch": "book.BTCUSDT.50"}]}})
-        assert _recv(ws)["p"]["results"][0]["ok"] is True
-
-        action_at = env.clock.now
-        closed = env.run(env.disable, user)
-
-        bye = _recv(ws)
-        assert bye["t"] == "bye"
-        assert bye["p"]["code"] == CLOSE_USER_DISABLED == 4403
-        assert bye["p"]["reason"] == "user_disabled"
-        assert bye["p"]["reconnect"] is False
-        with pytest.raises(WebSocketDisconnect) as close:  # §9.5: the close frame follows the bye
-            _recv(ws)
-        assert close.value.code == CLOSE_USER_DISABLED
-    assert closed == 1
-
-    # Sessions terminated, stamped at the action instant on the injected clock.
-    for minted in (a, b):
-        rec = env.repo.sessions[str(minted.session_id)]
-        assert rec.revoked_at is not None
-        assert rec.revoked_at - action_at == timedelta(0)
-        assert rec.revoked_at - action_at <= _SR029_BOUND
-        assert rec.revoked_reason == "user_disabled"
-        with pytest.raises((SessionRevoked, SessionNotFound)):
-            env.run(env.sessions.authenticate_access_token, minted.access_token)
-    # Pending activity cancelled: the challenge is gone and cannot be completed.
-    assert env.run(env.step_up.pending_action_class, str(a.session_id)) is None
-    # Blast radius: another user's session is untouched.
-    assert env.repo.sessions[str(bystander.session_id)].revoked_at is None
+    return test_disable_user_e2e
 
 
-def test_disable_user_drill_revoked_token_cannot_reopen_a_socket(env: Any) -> None:
-    user = str(uuid.uuid4())
-    minted = env.run(env.sessions.mint, user)
-    env.run(env.disable, user)
-    with env.client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
-        bye = _auth_ws(ws, minted.access_token, attempts=3)
-        assert (bye["t"], bye["p"]["reason"]) == ("bye", "auth_failed")
+def _until_bye(ws: Any) -> list[dict[str, Any]]:
+    """The frames up to and including the `bye`: a `snap` the subscription queued before the
+    disable may come first, never after it."""
+    frames = [_recv(ws)]
+    while frames[-1].get("t") != "bye":
+        frames.append(_recv(ws))
+    return frames
 
 
-def test_disable_user_drill_is_idempotent(env: Any) -> None:
-    user = str(uuid.uuid4())
-    env.run(env.sessions.mint, user)
-    env.run(env.disable, user)
-    assert env.run(env.disable, user) == 0
+def _disable_a_subscribed_manager() -> tuple[int, list[dict[str, Any]], int, float]:
+    """M with one live session and a socket subscribed to `positions` on its live grant;
+    the Owner, stepped up, disables M through the route. The route's status, the frames up to the
+    `bye`, the close code that follows, and the wall time from the `DELETE` to the `bye`."""
+    e2e = _e2e()
+    with e2e._world() as (w, app, client):
+        assert client.portal is not None  # inside the client's `with`
+        run = client.portal.call
+        w.repo.grants[(e2e._M, e2e._ACCOUNT)]["frozen"] = False  # in scope: a frozen grant is not
+        headers = e2e._owner_headers(app, run, w, str(e2e._OWNER))
+        minted = run(app.state.app_context.auth.sessions.mint, str(e2e._M))
+        positions = {"ch": "positions", "opts": {"exchange_account_ids": [str(e2e._ACCOUNT)]}}
+        with client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+            assert _auth_ws(ws, minted.access_token)["t"] == "auth_ok"
+            ws.send_json({"t": "sub", "id": "s", "p": {"topics": [positions]}})
+            answer = _recv(ws)
+            assert (answer["t"], answer["p"]["results"][0]["ok"]) == ("sub_ok", True)
+            started = time.monotonic()
+            status = e2e.delete_disable(client, str(e2e._M), headers, ack=True).status_code
+            assert status == 204, f"the disable answered {status}"  # fail here, not at a read's 5 s
+            frames = _until_bye(ws)
+            elapsed = time.monotonic() - started
+            with pytest.raises(WebSocketDisconnect) as close:  # §9.5: no frame after the `bye`
+                _recv(ws)
+    return status, frames, close.value.code, elapsed
+
+
+def test_a_disable_through_the_route_ends_a_private_subscription_with_bye_and_4403() -> None:
+    status, frames, code, _ = _disable_a_subscribed_manager()
+    p = frames[-1]["p"]
+    assert status == 204
+    # 23-ws-protocol.md section 9.5's number, not the module's constant: the interface it pins
+    assert (p["reason"], p["reconnect"], p["code"], code) == ("user_disabled", False, 4403, 4403)
+
+
+def test_a_disable_through_the_route_reaches_the_socket_within_the_sr029_bound() -> None:
+    """The drill's measured figure: the wall time from the Owner's `DELETE` to the manager's
+    `bye`, in-process, under the 5 s bound E42-T04 states for SR-029's "immediately"."""
+    _, _, _, elapsed = _disable_a_subscribed_manager()
+    assert elapsed < _SR029_BOUND.total_seconds(), f"the DELETE to the bye took {elapsed:.3f} s"
+
+
+def test_a_disable_through_the_route_cancels_a_pending_step_up_challenge() -> None:
+    e2e = _e2e()
+    with e2e._world() as (w, app, client):
+        assert client.portal is not None
+        run, auth = client.portal.call, app.state.app_context.auth
+        headers = e2e._owner_headers(app, run, w, str(e2e._OWNER))
+        minted = run(auth.sessions.mint, str(e2e._M))
+        run(auth.step_up.record_pending, str(minted.session_id), "users")
+        assert run(auth.step_up.pending_action_class, str(minted.session_id)) == "users"
+        assert e2e.delete_disable(client, str(e2e._M), headers, ack=True).status_code == 204
+        assert run(auth.step_up.pending_action_class, str(minted.session_id)) is None
+
+
+def test_a_disabled_managers_token_opens_no_socket() -> None:
+    e2e = _e2e()
+    with e2e._world() as (w, app, client):
+        assert client.portal is not None
+        run = client.portal.call
+        headers = e2e._owner_headers(app, run, w, str(e2e._OWNER))
+        minted = run(app.state.app_context.auth.sessions.mint, str(e2e._M))
+        assert e2e.delete_disable(client, str(e2e._M), headers, ack=True).status_code == 204
+        with client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+            bye = _auth_ws(ws, minted.access_token, attempts=3)
+    assert (bye["t"], bye["p"]["reason"]) == ("bye", "auth_failed")
+
+
+def test_a_second_disable_answers_204_and_writes_no_record() -> None:
+    """A repeat needs no acknowledgement and writes no `users.disable` (E42-T04 AC5)."""
+    e2e = _e2e()
+    with e2e._world() as (w, app, client):
+        assert client.portal is not None
+        records = app.state.app_context.audit.writer.records
+        headers = e2e._owner_headers(app, client.portal.call, w, str(e2e._OWNER))
+        assert e2e.delete_disable(client, str(e2e._M), headers, ack=True).status_code == 204
+        written = sum(1 for r in records if r["action"] == "users.disable")
+        assert e2e.delete_disable(client, str(e2e._M), headers, ack=False).status_code == 204
+        assert sum(1 for r in records if r["action"] == "users.disable") == written == 1
 
 
 def _with_the_hubs_sink(env: Any) -> Any:
