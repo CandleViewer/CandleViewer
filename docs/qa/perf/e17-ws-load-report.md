@@ -152,14 +152,14 @@ scrapes), and validity guards tripped as well (run 1: no re-snapshot sample and 
 behind its schedule and 2 `cv_errors`; run 3: the feeder behind its schedule and 1 unplanned close), so in runs 2 and 3
 the load was below its schedule (run 1's feeder ratio was not judged: its first scrape timed out). The B cells are the
 measured values, the median of the three runs unless a run is named: trades tick-to-decode p95 8,237 ms (runs 8,237,
-8,527 and 7,609) and p99 9,756 ms, equal to tick-to-pixel p95 by construction; bandwidth 2.8 KiB/s; full re-snapshot
+8,527 and 7,609), equal to tick-to-pixel p95 by construction, and p99 9,756 ms; bandwidth 2.8 KiB/s; full re-snapshot
 15.8 KiB in 48,798 ms (runs 2 and 3: 50,660 and 46,936 ms; run 1 had no sample); backpressure resyncs 22,605, 129,331 and
 121,879, with 0 sequence gaps. The k6-side readings are as measured. The cells marked † are derived from the scrapes that
 answered: fan-out p95 at the top bucket (250 ms) in runs 2 and 3 (run 1 did not judge it, its first scrape timed out),
 `upstream_desync` 0, and the backend's event-loop lag, which read 1,000 ms (the top bucket) at p95 and p99 in runs 2 and 3.
 The backend event loop was therefore not keeping its own timers. **Attribution:** host load does not discriminate
-(`variance.other_cores` read about 6.0, 6.05 and 5.95, also on round 2's passing A runs, and 5.5 to 5.9 on round 3's A
-runs that missed); the load shape on the gateway's event loop is the remaining candidate, and the fixture feeder shares
+(`variance.other_cores` read 6.05 and 5.95 in B's runs 2 and 3, run 1 having none; about 6.0 also on round 2's passing A
+runs, and 5.5 to 5.9 on round 3's A runs that missed); the load shape on the gateway's event loop is the remaining candidate, and the fixture feeder shares
 the gateway's process and event loop in staging (it is one task beside the uvicorn server and the lag sampler in
 `fixture_app.py`, see "What is under load" and approximation 5), so the fix owner can separate the harness's cost from the
 product's. Flag off was not run (the control is the lead's call). A is the one run made
