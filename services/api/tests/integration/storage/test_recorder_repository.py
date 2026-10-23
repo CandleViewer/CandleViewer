@@ -7,17 +7,22 @@ exercised by the integration CI job.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import sys
-from collections.abc import Iterator
+import uuid
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import psycopg
 import pytest
+from psycopg.rows import dict_row
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import STREAM_BY_DB_KIND, RecordedGap
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
@@ -258,3 +263,220 @@ async def test_replay_gap_read_answers_like_the_fake_over_the_same_rows(
     ]
     assert got_by_limit[2] == got_by_limit[4][:2]
     assert len(got_by_limit[10]) == 6
+
+
+# --- E16-F01 manual rows: upsert_manual, clear_manual, set_pinned --------------------------------
+Repo = SqlAlchemyRecorderRepository
+Conn = psycopg.Connection
+_CHART = {"kind": "chart", "id": "c1"}
+_STATE = (
+    "SELECT reason::text AS reason, reason_refs, auto_added_at, pinned, removed_at, "
+    "added_by::text AS added_by, streams::text[] AS streams, orderbook_depth, updated_at "
+    "FROM recorded_symbols WHERE id = %s::uuid"
+)
+#: The reaper's pin predicate (21 Sec.6, line 4471): the active pinned rows of a symbol.
+_PINNED = "SELECT 1 FROM recorded_symbols WHERE symbol = %s AND pinned AND removed_at IS NULL"
+
+
+@pytest.fixture
+async def repo(dsns: tuple[str, str], conn: Conn) -> AsyncIterator[Repo]:
+    relational = SqlAlchemyRelationalRepository(dsns[1])
+    yield Repo(relational)
+    await relational.dispose()
+
+
+def _state(conn: Conn, rid: str) -> dict[str, Any]:
+    """The row as it stands, removed or not."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        row = cur.execute(_STATE, (rid,)).fetchone()
+    assert row is not None
+    return row
+
+
+def _user(conn: Conn) -> str:
+    uid = str(uuid.uuid4())
+    conn.execute(
+        "INSERT INTO users (id, email, username, password_hash, status) "
+        "VALUES (%s, %s, %s, '$argon2id$fixture', 'active')",
+        (uid, f"{uid[:8]}@example.invalid", f"rec{uid[:8]}"),
+    )
+    return uid
+
+
+async def _manual(repo: Repo, env: str = "live") -> str:
+    return str((await repo.upsert_manual("BTCUSDT", None, (), None, env))["id"])
+
+
+async def test_upsert_manual_absent_inserts_a_manual_row(repo: Repo, conn: Conn) -> None:
+    user = _user(conn)
+    row = await repo.upsert_manual("BTCUSDT", user, ["trades", "tickers"], 50, "demo")
+    assert (row["env"], row["reason"], row["added_by"]) == ("demo", "manual", user)
+    assert (row["streams"], row["orderbook_depth"]) == (["trades", "tickers"], 50)
+    assert (row["pinned"], row["reason_refs"], row["auto_added_at"]) == (False, [], None)
+    assert await repo.get_by_symbol("BTCUSDT", "demo") == row
+    assert await repo.get_by_symbol("BTCUSDT") is None  # the live row is another one
+
+
+async def test_upsert_manual_naming_no_streams_or_depth_takes_the_column_defaults(
+    repo: Repo, conn: Conn
+) -> None:
+    defaults = _state(conn, _add(conn, "ETHUSDT"))  # a row that names neither
+    row = await repo.upsert_manual("BTCUSDT", None, (), None, "live")
+    assert (row["streams"], row["orderbook_depth"]) == (
+        defaults["streams"],
+        defaults["orderbook_depth"],
+    )
+
+
+async def test_upsert_manual_auto_promotes_keeping_refs_stamp_and_pin(
+    repo: Repo, conn: Conn
+) -> None:
+    user, rid = _user(conn), await repo.upsert_auto("BTCUSDT", "chart_open", _CHART)
+    assert await repo.set_pinned(rid, True)
+    stamped = _state(conn, rid)["auto_added_at"]
+    assert stamped is not None  # a control: there is a stamp to keep
+    row = await repo.upsert_manual("BTCUSDT", user, ["trades"], 500, "live")
+    after = _state(conn, rid)
+    assert (row["id"], after["reason"], after["added_by"]) == (rid, "manual", user)
+    assert (after["reason_refs"], after["auto_added_at"]) == ([_CHART], stamped)
+    assert (after["pinned"], after["streams"], after["orderbook_depth"]) == (True, ["trades"], 500)
+
+
+async def test_upsert_manual_removed_inserts_a_new_row_and_leaves_the_old(
+    repo: Repo, conn: Conn
+) -> None:
+    old = await _manual(repo)
+    assert await repo.soft_remove(old)
+    removed = _state(conn, old)
+    new = await repo.upsert_manual("BTCUSDT", None, (), None, "live")
+    assert new["id"] != old and new["removed_at"] is None
+    assert _state(conn, old) == removed  # still removed, `updated_at` included
+
+
+async def test_upsert_manual_again_changes_only_what_it_names(repo: Repo, conn: Conn) -> None:
+    first, second = _user(conn), _user(conn)
+    rid = (await repo.upsert_manual("BTCUSDT", first, ["trades"], 50, "live"))["id"]
+    row = await repo.upsert_manual("BTCUSDT", second, (), None, "live")
+    assert (row["id"], row["streams"], row["orderbook_depth"]) == (rid, ["trades"], 50)
+    assert row["added_by"] == second
+    assert (await repo.upsert_manual("BTCUSDT", None, (), None, "live"))["added_by"] == second
+
+
+async def test_upsert_manual_unknown_symbol_raises_the_foreign_key_refusal(repo: Repo) -> None:
+    with pytest.raises(StorageConstraintViolated) as refused:
+        await repo.upsert_manual("NOPEUSDT", None, (), None, "live")
+    assert refused.value.sqlstate == "23503"
+    assert refused.value.constraint == "recorded_symbols_symbol_fkey"
+
+
+@pytest.mark.parametrize(
+    ("refs", "reason"),
+    [
+        ([_CHART], "chart_open"),
+        ([_CHART, {"kind": "position", "id": "p1"}], "position_open"),
+        ([{"kind": "recorder", "id": "session"}], "chart_open"),  # the legacy session ref
+    ],
+)
+async def test_clear_manual_with_refs_demotes_to_the_reason_they_imply(
+    repo: Repo, conn: Conn, refs: list[dict[str, str]], reason: str
+) -> None:
+    rid = await _manual(repo)
+    for ref in refs:
+        assert await repo.add_reason_ref(rid, ref)
+    assert await repo.clear_manual("BTCUSDT", "live") == "demoted"
+    row = _state(conn, rid)
+    assert (row["reason"], row["reason_refs"], row["removed_at"]) == (reason, refs, None)
+    assert row["auto_added_at"] is not None  # `rs_autoshape` refuses the UPDATE without it
+
+
+async def test_clear_manual_keeps_the_auto_added_at_a_promoted_row_has(
+    repo: Repo, conn: Conn
+) -> None:
+    rid = await repo.upsert_auto("BTCUSDT", "chart_open", _CHART)
+    stamped = _state(conn, rid)["auto_added_at"]
+    await repo.upsert_manual("BTCUSDT", None, (), None, "live")
+    assert await repo.clear_manual("BTCUSDT", "live") == "demoted"
+    assert _state(conn, rid)["auto_added_at"] == stamped
+
+
+async def test_clear_manual_without_refs_soft_removes_the_row(repo: Repo, conn: Conn) -> None:
+    rid = await _manual(repo)
+    assert await repo.clear_manual("BTCUSDT", "live") == "removed"
+    assert _state(conn, rid)["removed_at"] is not None  # soft: the row is still there
+    assert await repo.get_by_symbol("BTCUSDT") is None
+
+
+@pytest.mark.parametrize("held", ["nothing", "auto-row", "removed-manual", "other-env"])
+async def test_clear_manual_without_an_active_manual_row_is_absent_and_changes_nothing(
+    repo: Repo, conn: Conn, held: str
+) -> None:
+    rid = None
+    if held == "auto-row":
+        rid = await repo.upsert_auto("BTCUSDT", "chart_open", _CHART)
+    elif held == "removed-manual":
+        rid = await _manual(repo)
+        assert await repo.soft_remove(rid)
+    elif held == "other-env":
+        rid = await _manual(repo, "demo")
+    before = None if rid is None else _state(conn, rid)
+    assert await repo.clear_manual("BTCUSDT", "live") == "absent"
+    assert rid is None or _state(conn, rid) == before
+
+
+async def test_clear_manual_leaves_the_other_envs_row_alone(repo: Repo, conn: Conn) -> None:
+    live = await _manual(repo, "live")
+    demo = await _manual(repo, "demo")
+    before = _state(conn, live)
+    assert await repo.clear_manual("BTCUSDT", "demo") == "removed"
+    assert _state(conn, demo)["removed_at"] is not None
+    assert _state(conn, live) == before
+
+
+@pytest.mark.parametrize("ref", [None, _CHART], ids=["no-refs", "chart-ref"])
+async def test_clear_manual_on_a_pinned_row_demotes_it_and_keeps_it_active(
+    repo: Repo, conn: Conn, ref: dict[str, str] | None
+) -> None:
+    rid = await _manual(repo)
+    assert await repo.set_pinned(rid, True)
+    if ref is not None:
+        assert await repo.add_reason_ref(rid, ref)
+    assert await repo.clear_manual("BTCUSDT", "live") == "demoted"
+    row = _state(conn, rid)
+    assert (row["reason"], row["pinned"], row["removed_at"]) == ("chart_open", True, None)
+    assert row["auto_added_at"] is not None  # `rs_autoshape` holds
+    assert conn.execute(_PINNED, ("BTCUSDT",)).fetchone() is not None  # the reaper still sees it
+    assert await repo.resolve_policy("BTCUSDT", "trades") is None  # so retention stays infinite
+
+
+async def test_clear_manual_racing_upsert_auto_never_loses_the_ref(repo: Repo, conn: Conn) -> None:
+    for _ in range(12):  # each round: a fresh manual row with no refs, the two statements racing
+        conn.execute("TRUNCATE recorded_symbols CASCADE")
+        await _manual(repo)
+        await asyncio.gather(
+            repo.clear_manual("BTCUSDT", "live"), repo.upsert_auto("BTCUSDT", "chart_open", _CHART)
+        )
+        assert [r["reason_refs"] for r in await repo.list_recorded()] == [[_CHART]]
+
+
+async def test_set_pinned_toggles_by_id_and_bumps_updated_at(repo: Repo, conn: Conn) -> None:
+    rid = await _manual(repo)
+    inserted = _state(conn, rid)["updated_at"]
+    assert await repo.set_pinned(rid, True)
+    pinned = _state(conn, rid)
+    assert pinned["pinned"] is True and pinned["updated_at"] > inserted
+    assert await repo.set_pinned(rid, False)
+    assert _state(conn, rid)["pinned"] is False
+
+
+async def test_set_pinned_with_a_missing_id_returns_false(repo: Repo) -> None:
+    assert await repo.set_pinned(str(uuid.uuid4()), True) is False
+
+
+async def test_set_pinned_on_a_removed_row_returns_false_and_leaves_it(
+    repo: Repo, conn: Conn
+) -> None:
+    rid = await _manual(repo)
+    assert await repo.soft_remove(rid)
+    removed = _state(conn, rid)
+    assert await repo.set_pinned(rid, True) is False
+    assert _state(conn, rid) == removed
