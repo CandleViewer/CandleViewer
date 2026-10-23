@@ -4,7 +4,8 @@ Offline, stdlib only; every number the spec and its boards show is computed here
 (1) token existence for every token name the spec binds (an absent name must be a CR row in
 section 3.2 or a cited C-row in section 29); (2) the WCAG matrix with `contrast_check`'s
 `contrast_ratio()` over the token JSON resolved as `packages/ui/tokens/tests/verify_tokens.py`
-resolves it, plus the disabled-look composites (reported, not gated) and the highlight composite;
+resolves it, plus the disabled-look and rejected-M1 composites (reported, not gated) and the
+highlight composite;
 (3) CVD dE76 rows; (4) the flash audit; (5) the motion-table, one-treatment, disabled-look,
 view-as and structure gates; (6) hygiene. E30-D02 section 15.1's pairs are reproduced exactly.
 
@@ -116,8 +117,8 @@ unprotected glyph and hatch lines (D02 :514)|status.danger.strong|status.danger.
 unprotected banner fill vs the panel (not a boundary)|status.danger.subtle|surface.canvas|decorative
 estimated badge outline + glyph (E25-D05)|status.info.default|status.info.subtle|non-text
 T2 hairline on the panel|border.default|surface.canvas|decorative
-input rest boundary today, fails 1.4.11; CR-1 pending|border.strong|surface.canvas|reported
-CR-1 candidate border.input = {text.tertiary} vs the panel|text.tertiary|surface.canvas|non-text
+input rest boundary, REJECTED pair (D02 :497), bound nowhere|border.strong|surface.canvas|reported
+input rest boundary, bound: text.tertiary (CR-1 border.input)|text.tertiary|surface.canvas|non-text
 invalid field boundary|status.danger.default|surface.canvas|non-text
 field error glyph|status.danger.strong|surface.canvas|non-text
 focus ring on the panel (double ring vs canvas)|focus.ring|surface.canvas|non-text
@@ -126,6 +127,11 @@ LIVE border + dot on the neutral pill|env.live|surface.raised|non-text
 DEMO border + dot on the neutral pill|env.demo|surface.raised|non-text
 buy fill vs the panel|buy.default|surface.canvas|non-text
 sell fill vs the panel|sell.default|surface.canvas|non-text
+M1 progress strip on the BUY fill (non-text)|text.inverse|buy.default|non-text
+M1 progress strip on the SELL fill (non-text)|text.inverse|sell.default|non-text
+M5 reduce tick on the panel|status.info.default|surface.canvas|non-text
+M5 reduce tick on raised|status.info.default|surface.raised|non-text
+M5 reduce tick on the popover|status.info.default|surface.overlay|non-text
 """.splitlines()
 D02_REPRO = (
     {  # E30-D02 section 15.1 rows reproduced to the hundredth (:474 :475 :481 D3 :511 :512 :514)
@@ -144,6 +150,10 @@ VALIDITY = (  # the whole control at opacity.disabled over the panel: label | fi
     "SELL submit|text.inverse|sell.default|surface.canvas",
     "primary action|text.on-action|action.primary.default|surface.canvas",
     "raised control (preset, segment, option)|text.primary|surface.raised|surface.canvas",
+)
+REJECTED_M1 = (  # the full-height tint at 0.6: the label over the side fill at 0.6 over the panel
+    "BUY submit|text.inverse|buy.default|surface.canvas",
+    "SELL submit|text.inverse|sell.default|surface.canvas",
 )
 CVD_PAIRS = (
     "BUY fill vs SELL fill (D02 15.3)|buy.default|sell.default",
@@ -186,11 +196,12 @@ FLASH = (  # id | max luminance changes per second | loops | longest run ms | no
     "M2|1|no|200|one fill cross per arm",
     "M3|1|no|0|one cut per disarm; the countdown is a 1 Hz text swap, one colour",
     "M4|1|no|800|one sweep per hold; the percentage text <= 2 / s (E39-D03)",
-    "M5|2|no|100|>= 500 ms between starts per cell => <= 2 / s; peak opacity 0.25",
+    "M5|2|no|100|>= 500 ms between starts per cell => <= 2 / s; peak 0.25; reduce: tick cut at 1 s",
     "M6|1|no|200|one fade per open / close",
     "M7|1|no|0|1 Hz text swap, one colour",
     "M8|1|no|200|one clip + translate per toggle",
     "M9|1|no|200|one slide per open",
+    "M10|0|no|0|non-visual (audio): no luminance change",
     "hatch|0|no|0|static texture",
 )
 VIEW_AS = ("100", "101", "102", "103", "105", "107", "119", "122", "229", "231")
@@ -200,6 +211,7 @@ ROWS = (
     "Purpose delta|Props|Variants|States|Tokens|ARIA contract|Keyboard|Density|Motion pair|"
     "Do / Don't|Storybook|Tests"
 )
+GATE_WORDS = ("disabled", "read-only", "unavailable", "blocked", "gated")
 TOKEN_RE = re.compile(
     r"`((?:color|space|size|radius|font|type|elevation|opacity|motion|border|pattern)"
     r"\.[A-Za-z0-9.{},*-]+)`"
@@ -328,17 +340,21 @@ def structure(spec: str) -> dict[str, object]:
         names = [r[0] for r in rows(body)]
         FAILS.extend(f"CMP-{cmp_id}: row {w!r} missing" for w in ROWS.split("|") if w not in names)
         for r in rows(body):
-            for item in re.split(r"[;·]", r[1]) if r[0] == "States" else []:
-                if "disabled" in item and "validity" not in item and "T2" not in item:
-                    FAILS.append(f"CMP-{cmp_id}: disabled state without a look: {item[:50]!r}")
+            for item in r[1].split("·") if r[0] == "States" else []:
+                gated = any(w in item for w in GATE_WORDS)
+                if gated and not any(k in item for k in ("validity", "T2", "loading")):
+                    FAILS.append(f"CMP-{cmp_id}: gated state without a look: {item[:50]!r}")
         if cmp_id in VIEW_AS and "rbac.view_as" not in body:
             FAILS.append(f"CMP-{cmp_id}: no rbac.view_as leg")
     motion = [r for r in rows(section(spec, "## 19.", "## 20.")) if re.fullmatch(r"M\d+", r[0])]
+    rate = {x.split("|")[0]: x.split("|")[1] for x in FLASH}
     twins = 0
     for r in motion:
-        if len(r) < 8:
+        if len(r) < 9:
             FAILS.append(f"{r[0]}: short row")
             continue
+        if re.sub(r"\s*/\s*s", "", r[8]) != rate.get(r[0]):
+            FAILS.append(f"{r[0]}: section 19 flash {r[8]!r} != the audit table's {rate.get(r[0])}")
         if not any(w in r[3].lower() for w in ("opacity", "transform", "clip", "text", "none")):
             FAILS.append(f"{r[0]}: property {r[3]!r} not in the allowed set")
         twins += r[5] not in ("", "—")
@@ -438,6 +454,14 @@ def main() -> int:
             f"- validity look, {el}: label and fill at 0.45 over the panel = "
             + " / ".join(comp["validity " + el])
         )
+    for line in REJECTED_M1:
+        el, lab, fill, surf = line.split("|")
+        v = [ratio(col(t, lab), over(col(t, fill), col(t, surf), 0.6)) for t in THEMES]
+        comp["rejected M1 " + el] = [f"{x:.2f}" for x in v]
+        p(
+            f"- rejected M1 model, {el}: the label over the side fill at 0.6 over the panel = "
+            + " / ".join(comp["rejected M1 " + el])
+        )
     for surf in ("surface.canvas", "surface.raised", "surface.overlay"):
         v = [
             ratio(col(t, "text.primary"), over(col(t, "status.info.subtle"), col(t, surf), 0.25))
@@ -468,6 +492,10 @@ def main() -> int:
             md(*cvd_rows[-1])
     greys = {k: (col("dark", k), grey(col("dark", k))) for k in GREY}
     p("\ngreys (dark): " + ", ".join(f"`color.{k}` {h} -> {g}" for k, (h, g) in greys.items()))
+    lvl = {k: int(g[1:3], 16) for k, (_, g) in greys.items()}
+    deltas = {"env.live vs env.demo": abs(lvl["env.live"] - lvl["env.demo"])}
+    deltas["buy.default vs sell.default"] = abs(lvl["buy.default"] - lvl["sell.default"])
+    p("grey levels apart: " + ", ".join(f"{k} {v}" for k, v in deltas.items()))
     resolved = {k: [T[t]["color." + k] for t in THEMES] for k in RESOLVED}
     p(
         "\nresolved (dark / light / hc): "
@@ -507,7 +535,8 @@ def main() -> int:
         "pairs": [len(PAIRS), reg_n, len(PAIRS) - reg_n, fail_n],
         "composites": comp,
     }
-    summary.update(cvd=cvd_rows, greys=greys, resolved=resolved, flash=flash, tokens=tok)
+    summary.update(cvd=cvd_rows, greys=greys, grey_deltas=deltas, resolved=resolved, flash=flash)
+    summary["tokens"] = tok
     summary.update(treatments=treat, structure=st)
     summary["fails"] = FAILS
     print(json.dumps(summary, ensure_ascii=False) if "--json" in args else "\n".join(out))
