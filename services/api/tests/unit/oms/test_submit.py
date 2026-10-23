@@ -19,7 +19,7 @@ import re
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID, uuid4
@@ -28,6 +28,8 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.errors import ProfileUnavailableError
+from candleviewer.accounts.profile_cache import EffectiveProfiles
+from candleviewer.accounts.profiles import AccountProfile, profile_values
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.errors import (
@@ -89,6 +91,7 @@ from candleviewer.oms.submit import (
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.repositories.account_profiles import AccountProfileRow
 from candleviewer.storage.repositories.idempotency_anchors import AnchorOutcome
 from candleviewer.storage.repositories.orders import OrderRow
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop
@@ -430,6 +433,67 @@ async def test_a_deleted_profile_is_404_as_a_missing_one_is(rig: SubmitRig) -> N
     refused = await _refused(rig, entry(profile_id=_NAMED), context(client_ref=uuid4()))
     _profile_not_found(rig, refused)
     assert (rig.written(), rig.calls()) == (written, calls)
+
+
+class _AnyAccountsRow:
+    """`EffectiveProfileReads` over a store that ignores the account: it answers every read with
+    the one `row`, and records what it was asked."""
+
+    def __init__(self, row: AccountProfileRow) -> None:
+        self.row = row
+        self.asked: list[tuple[UUID, UUID | None]] = []
+
+    async def effective_profile(
+        self, account_id: UUID, profile_id: UUID | None
+    ) -> AccountProfileRow | None:
+        self.asked.append((account_id, profile_id))
+        return self.row
+
+
+def _stored(held: AccountProfile) -> AccountProfileRow:
+    """`held` as the profiles table returns it."""
+    at = datetime(2026, 10, 20, 9, tzinfo=UTC)
+    return AccountProfileRow(
+        id=held.profile_id, exchange_account_id=held.account_id, version=held.version,
+        values=profile_values(held), created_by=None, updated_by=None, created_at=at,
+        updated_at=at, deleted_at=None,
+    )  # fmt: skip
+
+
+async def test_a_profile_row_of_another_account_is_404_over_the_real_effective_profiles(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `rig`'s double keys on `(account, profile)`, so another account's row is never asked
+    for there. The guard is `EffectiveProfiles`' own (C-12.4): a store that answers the named
+    profile with another account's row gets `404 not_found` for the order, the one answer for
+    every case, with nothing recorded or sent."""
+    foreign = profile(cr.LIVE_ACCOUNT, profile_id=str(_NAMED), is_default=False)
+    reads = _AnyAccountsRow(_stored(foreign))
+    cache = EffectiveProfiles(reads)
+    monkeypatch.setattr(rig.pipeline, "_deps", replace(rig.pipeline._deps, profiles=cache))
+    try:
+        refused = await _refused(rig, entry(profile_id=_NAMED))
+    finally:
+        await cache.aclose()
+    _profile_not_found(rig, refused)
+    _nothing_done(rig)
+    assert reads.asked == [(cr.ACCOUNT, _NAMED)]  # it reached the store, and refused its answer
+
+
+async def test_an_unnamed_reduce_only_order_with_no_default_profile_goes_through(
+    rig: SubmitRig,
+) -> None:
+    """With none named and the account holding no default, an order that only reduces is never
+    refused for want of a profile (SR-E28-24, SR-E28-27), nor is it a 404: it is recorded and
+    sent as the exits' lane takes it, where an entry in this state is 403 (D11)."""
+    rig.profiles.held.clear()
+    rig.port.demo.seed_position(_position())
+    outcome = await rig.submit(flatten())
+    assert (outcome.status, outcome.lifecycle, outcome.trade_group_id) == (202, "submitted", None)
+    assert rig.calls() == ["positions", "place_order"]
+    sent = rig.port.demo.calls[1]
+    assert (sent.lane, _create(sent).reduce_only) == ("critical", True)
+    assert _denied(rig) == []
 
 
 @pytest.mark.parametrize(
@@ -927,12 +991,12 @@ async def test_a_held_key_still_in_flight_or_with_another_body_is_refused_409(
 async def test_the_routes_own_lookup_replays_what_a_held_keys_repeat_answers(
     rig: SubmitRig,
 ) -> None:
-    """Slice 3's route answers its own lookup's `Replay` with `replayed`, which reads the same
+    """Slice 3's route answers its own lookup's `Replay` with `answer_replay`, which reads the same
     reconciled state as the pipeline's repeat of a held key: nothing sent, no rows of its own."""
     first = await rig.submit()
     lookup = await rig.pipeline._anchors.lookup(ACTOR.user_id, KEY, SHA)
     assert isinstance(lookup, Replay)
-    answered = await rig.pipeline.replayed(cr.ACCOUNT, lookup)
+    answered = await rig.pipeline.answer_replay(cr.ACCOUNT, lookup)
     assert answered == await rig.submit()
     assert (answered.status, answered.lifecycle, answered.written) == (202, "submitted", None)
     assert (answered.trade_group_id, answered.replayed) == (first.trade_group_id, True)
@@ -1563,13 +1627,17 @@ async def test_bounds_under_a_lowered_in_flight_threshold_are_taken(rig: SubmitR
     assert rig.make(anchors=_anchors(rig, 17.25))._anchors.stuck_after_s == 17.25
 
 
-async def test_a_raised_in_flight_threshold_still_caps_the_bounds_at_the_modules(
-    rig: SubmitRig,
-) -> None:
-    """The module's `STUCK_AFTER_S` (24 Sec.8.4's 30 s) stays the ceiling, whatever longer
-    threshold the anchor service is built with."""
-    with pytest.raises(ValueError, match=r"CV_OMS_INFLIGHT_STUCK_S \(30\.0 s\)"):
-        rig.make(anchors=_anchors(rig, 60.0), place_wait_s=19.0)
+async def test_bounds_under_a_raised_in_flight_threshold_are_taken(rig: SubmitRig) -> None:
+    """The threshold a repeat meets is the anchor service's own, which `CV_OMS_INFLIGHT_STUCK_S`
+    may raise past the key's default of 30 s: bounds that total 30 s are taken under a 60 s one,
+    with no ceiling of the pipeline's."""
+    pipeline = rig.make(anchors=_anchors(rig, 60.0), place_wait_s=19.0)  # 30 s in all
+    assert (pipeline._anchors.stuck_after_s, pipeline._place_wait_s) == (60.0, 19.0)
+
+
+async def test_bounds_that_reach_a_raised_in_flight_threshold_are_refused(rig: SubmitRig) -> None:
+    with pytest.raises(ValueError, match=r"CV_OMS_INFLIGHT_STUCK_S \(60\.0 s\)"):
+        rig.make(anchors=_anchors(rig, 60.0), place_wait_s=49.0)  # 60 s in all
 
 
 async def test_a_place_wait_that_does_not_outlast_the_submit_timeout_is_refused(
@@ -1675,10 +1743,14 @@ async def test_an_outcome_carries_only_the_rows_it_names_and_a_replay_none(
 
 
 async def test_an_outcome_never_shows_its_rows_in_its_repr(rig: SubmitRig) -> None:
-    """C-12.6: the rows hold the stop and the size, which no log line shows."""
+    """C-12.6: the rows hold the stop, the prices and the size, which no log line shows: not in
+    the outcome's repr, nor in the rows' own (the order, the group and its leg)."""
     outcome = await rig.submit()
-    assert outcome.written is not None
+    rows = outcome.written
+    assert rows is not None and rows.group is not None and len(rows.legs) == 1
     assert "written" not in repr(outcome) and str(STOP) not in repr(outcome)
+    hidden = [*map(str, (STOP, TAKE_PROFIT, REFERENCE, QTY, KEY)), SHA]
+    assert [value for value in hidden if value in repr(rows)] == []
 
 
 def test_a_context_never_shows_its_key_or_fingerprint() -> None:
@@ -2001,7 +2073,7 @@ async def test_a_repeat_whose_order_cannot_be_read_answers_reconciling(
         repeat = await rig.submit()
     assert (repeat.status, repeat.replayed, repeat.lifecycle) == (202, True, RECONCILING)
     assert any(line["event"] == "oms_replay_state_unread" for line in logs)
-    assert await rig.pipeline.reconciled(cr.ACCOUNT, None) == RECONCILING
+    assert await rig.pipeline.reconciled_state(cr.ACCOUNT, None) == RECONCILING
 
 
 @pytest.mark.parametrize("venue", ["empty", "duplicate"])

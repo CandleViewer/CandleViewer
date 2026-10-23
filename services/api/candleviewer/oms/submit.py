@@ -73,9 +73,10 @@ record names the requesting principal and carries the request's correlation id (
 #3990). Once the anchor exists, the bounds (`SEND`'s write, `place_wait_s`, `result_wait_s`, then
 the anchor's, the leg's and the group's compare-and-sets and the outcome's record, each
 `store_timeout_s`) total 17 s by default; the pipeline refuses to be built with bounds that total
-`CV_OMS_INFLIGHT_STUCK_S` (30 s, or the anchor service's own when lower) or more, so a repeat
-meets the outcome this request records, or with a `place_wait_s` that does not outlast the
-command port's `submit_timeout_s`, so the first answer is the create's own (D-2B2-01).
+the anchor service's `stuck_after_s` (`CV_OMS_INFLIGHT_STUCK_S`, 30 s by default) or more, the
+threshold a repeat meets, so a repeat meets the outcome this request records, or with a
+`place_wait_s` that does not outlast the command port's deadline (`submit_timeout_s`; the default
+adds B1's turn to it), so the first answer can be the create's own (D-2B2-01).
 Logs carry ids, codes and state names, never a price, a size, the key or the fingerprint (21
 Sec.12, C-12.6).
 """
@@ -178,7 +179,7 @@ from .errors import (
     TradingDisabled,
     problem_for,
 )
-from .idempotency import STUCK_AFTER_S, AnchorService, InFlight, KeyReuse, Replay
+from .idempotency import AnchorService, InFlight, KeyReuse, Replay
 from .order_link import OrderLinkIdParts, OrderPurpose
 from .order_link_allocator import MAX_SEQ_INCREMENTS, OrderLinkIdAllocator
 from .order_machine import OrderMachines
@@ -394,11 +395,11 @@ class WrittenRows:
     order, and for an entry its one-leg group and that leg, each in the status the persist gave it
     (`validated`, `submitting`, `pending`). Slice 3's route renders the first `202` from them and
     the answer's `lifecycle`, with no read after the send, where a store failure is never a 503 (24
-    Sec.8.4). The group never shows the request's key or fingerprint in its repr (C-12.6)."""
+    Sec.8.4). Its repr shows none of the rows: they hold prices, sizes and stops (C-12.6)."""
 
-    order: NewOrder
-    group: NewTradeGroup | None = None
-    legs: tuple[NewTradeGroupLeg, ...] = ()
+    order: NewOrder = field(repr=False)
+    group: NewTradeGroup | None = field(default=None, repr=False)
+    legs: tuple[NewTradeGroupLeg, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -407,11 +408,11 @@ class SubmitOutcome:
     its create (`lifecycle`), 429 `exchange_rate_limited` with `Retry-After` on the first answer
     only, or 502 `exchange_error` with the exchange's return code and never its text (SR-E29-09).
     A first answer carries the rows its persist wrote (`written`). `replayed` marks the repeat of
-    a decided anchor (`OrderSubmission.replayed`), which carries none, as the route reads its rows
-    in their current state: a `202` repeat carries its order's reconciled state in `lifecycle`, or
-    `RECONCILING` while B1 has not resolved the order (C-2.10, never an assumed success). The ids
-    name the rows the request created: the order and, for an entry, its group (a replay names what
-    its anchor names)."""
+    a decided anchor (`OrderSubmission.answer_replay`), which carries none, as the route reads its
+    rows in their current state: a `202` repeat carries its order's reconciled state in
+    `lifecycle`, or `RECONCILING` while B1 has not resolved the order (C-2.10, never an assumed
+    success). The ids name the rows the request created: the order and, for an entry, its group (a
+    replay names what its anchor names)."""
 
     status: AnchorStatus
     anchor_id: UUID
@@ -563,9 +564,9 @@ def _reject_code(answer: Mapping[str, Any] | None) -> str:
 class OrderSubmission:
     """The `placeOrder` pipeline (module docstring): one per process, with the OMS facade and the
     command port it drives. Its bounds after the anchor must total under the anchor service's
-    `stuck_after_s` and the module's `STUCK_AFTER_S` (`CV_OMS_INFLIGHT_STUCK_S`), and its wait for
-    a create's answer (`place_wait_s`) must outlast the command port's `submit_timeout_s`
-    (D-2B2-01): bounds that do not are refused with `ValueError`."""
+    `stuck_after_s` (`CV_OMS_INFLIGHT_STUCK_S`), and its wait for a create's answer
+    (`place_wait_s`) must outlast the command port's deadline (`submit_timeout_s`; the default adds
+    B1's turn to it): bounds that do not are refused with `ValueError` (D-2B2-01)."""
 
     def __init__(
         self,
@@ -612,17 +613,19 @@ class OrderSubmission:
             place_wait_s=self._place_wait_s,
             result_wait_s=self._result_wait_s,
         )
-        # D-2B2-01: under the threshold the anchor service applies, or a repeat may decide the
-        # anchor while this request runs, and never past the module's own (24 Sec.8.4's 30 s).
-        stuck_after_s = min(STUCK_AFTER_S, anchors.stuck_after_s)
+        # D-2B2-01: under the threshold the anchor service applies, the one a repeat meets: past
+        # it a repeat decides the anchor while this request still runs. The service's own value
+        # is the whole rule (`CV_OMS_INFLIGHT_STUCK_S`), with no ceiling of this module's.
+        stuck_after_s = anchors.stuck_after_s
         if after_anchor >= stuck_after_s:
             raise ValueError(
                 f"the bounds after the anchor total {after_anchor} s, not under "
                 f"CV_OMS_INFLIGHT_STUCK_S ({stuck_after_s} s)"
             )
-        # D-2B2-01: the wait for the create's answer outlasts the command port's one deadline on
-        # all of `place`, so the first answer is the create's own, its 429 or 502 included, never
-        # a 202 given up early (a NaN deadline is refused too).
+        # D-2B2-01: the wait for the create's answer must outlast the command port's one deadline
+        # on all of `place` (the default adds B1's turn, which the wait spans before the deadline
+        # starts), or a 429 or 502 answered in time could be given up into a 202. A NaN deadline
+        # is refused too.
         if not self._place_wait_s > commands.submit_timeout_s:
             raise ValueError(
                 f"place_wait_s ({self._place_wait_s} s) does not outlast the command port's "
@@ -1118,7 +1121,7 @@ class OrderSubmission:
 
     async def _repeat(self, trace: _Trace, taken: AnchorTaken) -> SubmitOutcome:
         """The key is held by an earlier request (21 Sec.3.3.10): its decided outcome is the
-        answer, nothing sent (`replayed`); a request still in flight, or another body, is
+        answer, nothing sent (`answer_replay`); a request still in flight, or another body, is
         refused."""
         context = trace.context
         lookup = await self._anchors.after_taken(
@@ -1128,14 +1131,14 @@ class OrderSubmission:
             raise lookup.refusal()
         if not isinstance(lookup, Replay):  # a held key is never fresh
             raise StoreUnavailable
-        return await self.replayed(trace.request.account_id, lookup)
+        return await self.answer_replay(trace.request.account_id, lookup)
 
-    async def replayed(self, account_id: AccountId, replay: Replay) -> SubmitOutcome:
+    async def answer_replay(self, account_id: AccountId, replay: Replay) -> SubmitOutcome:
         """A decided anchor's answer to a repeat (21 Sec.3.3.10 "Repeats"), nothing sent: the
-        outcome it recorded, a `202` carrying its order's reconciled state (`reconciled`), never
-        an assumed success. The pipeline answers a held key with it, and slice 3's route its own
-        lookup's `Replay` (`AnchorService.lookup`), so both read the same state. An anchor whose
-        outcome no answer can hold is 503 `store_unavailable`."""
+        outcome it recorded, a `202` carrying its order's reconciled state (`reconciled_state`),
+        never an assumed success. The pipeline answers a held key with it, and slice 3's route its
+        own lookup's `Replay` (`AnchorService.lookup`), so both read the same state. An anchor
+        whose outcome no answer can hold is 503 `store_unavailable`."""
         anchor = replay.anchor
         status = _STATUSES.get(anchor.outcome_status or 0)
         lifecycle = None
@@ -1143,7 +1146,7 @@ class OrderSubmission:
             order_id = anchor.order_id
             if order_id is None and anchor.trade_group_id is not None:
                 order_id = entry_order_id(anchor.trade_group_id)
-            lifecycle = await self.reconciled(account_id, order_id)
+            lifecycle = await self.reconciled_state(account_id, order_id)
         try:
             if status is None:
                 raise ValueError("a decided anchor holds 202, 429 or 502")
@@ -1161,7 +1164,7 @@ class OrderSubmission:
             _log().error("oms_anchor_outcome_unreadable", anchor_id=str(anchor.id))
             raise StoreUnavailable from None
 
-    async def reconciled(self, account_id: AccountId, order_id: UUID | None) -> str:
+    async def reconciled_state(self, account_id: AccountId, order_id: UUID | None) -> str:
         """A `202` repeat's state (the orchestrator's ruling of 2026-10-22, C-2.10): the state B1
         resolved the order to, else `RECONCILING`, while it is `_UNRESOLVED`, or its state cannot
         be read within `store_timeout_s` (an in-flight create is waited for that long); never
