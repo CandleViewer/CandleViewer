@@ -150,17 +150,31 @@ def test_the_generated_import_contract_forbids_the_adapter_package_to_the_oms() 
     assert contract["forbidden_modules"].split() == [ADAPTER]
 
 
+def _defining(member: str) -> set[tuple[str, str]]:
+    """Every class in `candleviewer` that defines `member`, as (module path, class name)."""
+    found = set()
+    for path in sorted(PACKAGE.rglob("*.py")):
+        for node in ast.walk(_parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ClassDef) and any(
+                isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef) and item.name == member
+                for item in node.body
+            ):
+                found.add((path.relative_to(PACKAGE).as_posix(), node.name))
+    return found
+
+
 def test_no_handover_store_is_the_only_production_order_handovers() -> None:
     """S2-Q3's deviation, until E29-T06 lands `oms_handovers`: the one class in `candleviewer` that
     hands an order over is `NoHandoverStore`, which hands none, so a squatted id goes `unknown`.
     E29-T06 replaces it, and this pin, with its table's writer."""
-    handing = set()
-    for path in sorted(PACKAGE.rglob("*.py")):
-        for node in ast.walk(_parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.ClassDef) and any(
-                isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef)
-                and item.name == "hand_over_order"
-                for item in node.body
-            ):
-                handing.add((path.relative_to(PACKAGE).as_posix(), node.name))
+    handing = _defining("hand_over_order")
     assert handing == {("oms/ports.py", "OrderHandovers"), ("oms/ports.py", "NoHandoverStore")}
+
+
+def test_no_handover_store_is_the_only_production_execution_handovers() -> None:
+    """The same for E29-T05's sibling port (24 Sec.8.3 rule 7: `oms_handovers` is a table, never
+    process memory): the one class in `candleviewer` that hands an execution over is
+    `NoHandoverStore`, which hands none, so no stand-in keeps a fill a restart would lose. E29-T06
+    replaces it, and this pin, with its table's writer."""
+    handing = _defining("hand_over_execution")
+    assert handing == {("oms/ports.py", "ExecutionHandovers"), ("oms/ports.py", "NoHandoverStore")}

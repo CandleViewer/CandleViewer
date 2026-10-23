@@ -45,6 +45,13 @@ The command port (`commands.OmsCommandPort`) consumes five more, which slice 3 b
 its fail-closed interim `RefuseWhileWaiting` (21 Sec.3.3.11). `ForeignOrderLockout` (SR-E27-19) is
 declared here for E29-T05 and E29-T06, its callers.
 
+The private-stream consumer (E29-T05, #848; 24 Sec.8.12) consumes four more, which its last
+slice binds and nothing binds yet: `StreamedAccounts` (the accounts it subscribes),
+`ReconciliationRequests` (a REST pass for an account whose stream resyncs), `AccountNotices` (23
+Sec.15.9's `account_notice`) and `ExecutionHandovers` (a fill no row takes, kept for the next
+pass, a sibling of `OrderHandovers`), beside `TradingAccounts`, `CredentialRejections` and
+`ForeignOrderLockout`. `NoHandoverStore` refuses both hand-overs until E29-T06.
+
 The pipeline itself (`submit.OrderSubmission`) consumes three more, which slice 3 binds too:
 `Instruments` (the instrument-info cache), `ReferencePrices` (a market order's reference price)
 and `Profiles` (`accounts.profile_cache.EffectiveProfiles`, in its own shape). A request's records
@@ -77,7 +84,7 @@ import structlog
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Px, Qty, Side, Symbol
-from candleviewer.exchange.base.models import AccountRef, Order
+from candleviewer.exchange.base.models import AccountRef, Execution, Order
 from candleviewer.exchange.policy import InstrumentPolicy
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
@@ -460,11 +467,15 @@ class OrderHandovers(Protocol):
 
 
 class NoHandoverStore:
-    """`OrderHandovers` until E29-T06's `oms_handovers` (S2-Q3's deviation): no hand-over can be
-    recorded, so each is `HandoverUnavailable`, and an order whose id another order holds waits in
-    `unknown`, where reconciliation meets the other order, instead of `held`."""
+    """`OrderHandovers` and `ExecutionHandovers` until E29-T06's `oms_handovers` (S2-Q3's
+    deviation): no hand-over can be recorded, so each is `HandoverUnavailable`, and an order whose
+    id another order holds waits in `unknown`, where reconciliation meets the other order, instead
+    of `held`."""
 
     async def hand_over_order(self, account_id: AccountId, order: Order) -> None:
+        raise HandoverUnavailable("no hand-over store exists until E29-T06 (S2-Q3)")
+
+    async def hand_over_execution(self, account_id: AccountId, execution: Execution) -> None:
         raise HandoverUnavailable("no hand-over store exists until E29-T06 (S2-Q3)")
 
 
@@ -590,6 +601,59 @@ class ForeignOrderLockout(Protocol):
     Owner's release sticks. T04 declares it and calls it nowhere."""
 
     async def open(self, account_id: AccountId, *, finding: Finding, key: str) -> None: ...
+
+
+# --- The private-stream consumer's collaborators (E29-T05, 24 Sec.8.12) -------------------------
+
+#: Why a stream asks for a REST pass: its `resyncing` reasons (24 Sec.14.2 rule 13), as
+#: `exchange.base.models.PRIVATE_STREAM_REASONS` names them (a test pins the two alike).
+ResyncReason = Literal["connected", "reconnected", "rejected_frame"]
+#: The `reason` of an account notice (23-ws-protocol.md Sec.15.9, SR-E29-10): its current values,
+#: the stream lost (E29-T05) and reconciliation's three (E29-T06).
+AccountNoticeReason = Literal[
+    "oms.account_resyncing", "oms.account_desync", "oms.account_stale", "oms.account_synced"
+]
+
+
+class StreamedAccounts(Protocol):
+    """The accounts the private-stream consumer subscribes (24 Sec.8.12): each enabled and not
+    deleted, holding an active key, of an environment the router has a port for. Ids alone: an
+    account's key comes from `TradingAccounts.trading_account` (SR-E27-21), so nothing this answers
+    selects one. A read that cannot answer raises; an empty set is a read that found none."""
+
+    async def streamed_accounts(self) -> frozenset[AccountId]: ...
+
+
+class ReconciliationRequests(Protocol):
+    """Asks for a REST reconciliation of one account (24 Sec.8.5, which runs on every private-WS
+    reconnect: B19's `RECONNECTED`), the consumer's answer to a `resyncing` status, as private
+    topics send no snapshot (C-2.5). It returns once the request is taken, never once the pass has
+    run, and the caller bounds the call (C-2.18)."""
+
+    async def request_reconciliation(
+        self, account_id: AccountId, *, reason: ResyncReason
+    ) -> None: ...
+
+
+class AccountNotices(Protocol):
+    """Publishes one `account_notice` about one account (23-ws-protocol.md Sec.15.9, SR-E29-10).
+    The composition root binds it to the gateway's `system` topic, so `oms` imports no `ws`
+    (C-3.4), and gives each `reason` its fixed severity and message, which name no account.
+    Synchronous and non-blocking, as the gateway's own offer is: it queues and never awaits."""
+
+    def publish(self, account_id: AccountId, *, reason: AccountNoticeReason) -> None: ...
+
+
+class ExecutionHandovers(Protocol):
+    """Where the private-stream consumer keeps a trade execution that no row takes for the next
+    reconciliation pass (24 Sec.8.3 rule 7, Sec.8.5 step 3d): `oms_handovers`, idempotent on the
+    account and the execution's `exec_id`. A sibling of `OrderHandovers`, never a widening of it.
+    E29-T06 lands the table and its writer; until then `NoHandoverStore` is the one production
+    binding."""
+
+    async def hand_over_execution(self, account_id: AccountId, execution: Execution) -> None:
+        """Append `execution` for the next pass, or raise `HandoverUnavailable`."""
+        ...
 
 
 class Interim:

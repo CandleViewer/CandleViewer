@@ -1,4 +1,4 @@
-"""In-memory stand-ins for M14 ports, for unit tests (#846 ruling B1; E29-T03 #847; #913)."""
+"""In-memory stand-ins for M14 ports, for unit tests (#846 ruling B1; E29-T03 #847; #913; #848)."""
 
 from __future__ import annotations
 
@@ -75,12 +75,13 @@ from candleviewer.storage.repositories.trade_groups import (
 )
 
 from .errors import AccountScopeDenied
-from .ports import Finding
+from .ports import AccountNoticeReason, Finding, ResyncReason
 
 __all__ = [
-    "FakeClockHealth", "InMemoryExecutionStore", "InMemoryForeignOrderLockout",
-    "InMemoryIdempotencyAnchorStore", "InMemoryOrderLinkLookup", "InMemoryOrderStore",
-    "InMemoryRecordedStopStore", "InMemorySubmissionStore", "InMemoryTradingAccounts",
+    "FakeClockHealth", "InMemoryAccountNotices", "InMemoryExecutionStore",
+    "InMemoryForeignOrderLockout", "InMemoryIdempotencyAnchorStore", "InMemoryOrderLinkLookup",
+    "InMemoryOrderStore", "InMemoryReconciliationRequests", "InMemoryRecordedStopStore",
+    "InMemoryStreamedAccounts", "InMemorySubmissionStore", "InMemoryTradingAccounts",
 ]  # fmt: skip
 
 #: Wide enough that a sum or difference of numeric(38,18) values is exact, as in Postgres.
@@ -1041,3 +1042,44 @@ class InMemoryForeignOrderLockout:
         self.opens += 1
         await asyncio.sleep(0)
         self.findings.setdefault(account_id, set()).add((finding, key))
+
+
+class InMemoryStreamedAccounts:
+    """A `StreamedAccounts` (`ports.py`, 24 Sec.8.12) over the accounts a test seeds: each read
+    counts in `reads` and answers them, or raises `error` when one is set (a store that cannot
+    answer), leaving the seeded set as it was."""
+
+    def __init__(self, *accounts: AccountId) -> None:
+        self.accounts: set[AccountId] = set(accounts)
+        self.error: Exception | None = None
+        self.reads = 0
+
+    async def streamed_accounts(self) -> frozenset[AccountId]:
+        self.reads += 1
+        await asyncio.sleep(0)
+        if self.error is not None:
+            raise self.error
+        return frozenset(self.accounts)
+
+
+class InMemoryReconciliationRequests:
+    """A `ReconciliationRequests` (`ports.py`): `requests` holds each request, in order, with its
+    reason; nothing runs a pass."""
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[AccountId, ResyncReason]] = []
+
+    async def request_reconciliation(self, account_id: AccountId, *, reason: ResyncReason) -> None:
+        await asyncio.sleep(0)
+        self.requests.append((account_id, reason))
+
+
+class InMemoryAccountNotices:
+    """An `AccountNotices` (`ports.py`, 23-ws-protocol.md Sec.15.9): `published` holds each notice,
+    in order. Synchronous, as the port is: it never awaits."""
+
+    def __init__(self) -> None:
+        self.published: list[tuple[AccountId, AccountNoticeReason]] = []
+
+    def publish(self, account_id: AccountId, *, reason: AccountNoticeReason) -> None:
+        self.published.append((account_id, reason))
