@@ -9,6 +9,7 @@ import base64
 import json
 import re
 from collections.abc import Callable, Coroutine
+from datetime import datetime
 from typing import Any, Final
 from uuid import UUID
 
@@ -44,6 +45,11 @@ class Problem(Exception):
         body: dict[str, Any] = {"type": f"https://candleviewer.local/errors/{code}", "code": code}
         body |= {"title": ERROR_META[self.code].title, "status": self.status, "detail": self.detail}
         return JSONResponse(body | self.extra, self.status, media_type="application/problem+json")
+
+
+def iso_z(value: Any) -> Any:
+    """A datetime as the contract's UTC `Z` string; anything else unchanged."""
+    return value.isoformat().replace("+00:00", "Z") if isinstance(value, datetime) else value
 
 
 def unavailable() -> Problem:

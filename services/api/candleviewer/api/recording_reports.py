@@ -19,14 +19,14 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationErro
 
 from candleviewer.api import recording_common as common
 from candleviewer.api.drawings_models import format_errors
-from candleviewer.api.recording_symbols import _z
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.recorder import control as rc
 from candleviewer.recorder.models import StorageUsage
 from candleviewer.ws._generated.error_codes import ErrorCode
 
-#: The recorded set a non-Owner storage view is filtered by is read in one page; a longer set
-#: than this fails closed (503) rather than guessing.
+#: The recorded set a non-Owner storage view is filtered by is read in one page: the contract's
+#: page maximum (22 `Limit`). `CV_RECORDER_MAX_SYMBOLS` (default 20) keeps the set far below it,
+#: so the fail-closed 503 for a longer set fires only if the cap is raised past a page.
 _SET_PAGE = 500
 
 
@@ -52,8 +52,9 @@ class _SessionQuery(BaseModel):  # unknown parameters are ignored, as FastAPI's 
 
 def _session(row: dict[str, Any]) -> dict[str, Any]:
     return {"id": row["id"], "recorded_symbol_id": row["recorded_symbol_id"],
-            "symbol": row["symbol"], "state": row["state"], "started_at": _z(row["started_at"]),
-            "ended_at": _z(row["ended_at"]), "streams": list(row["streams"]),
+            "symbol": row["symbol"], "state": row["state"],
+            "started_at": common.iso_z(row["started_at"]),
+            "ended_at": common.iso_z(row["ended_at"]), "streams": list(row["streams"]),
             "depth": row["depth"], "rows": row["messages_received"],
             "bytes": row["bytes_written"], "gap_count": row["gap_count"]}  # fmt: skip
 
