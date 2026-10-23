@@ -149,3 +149,69 @@ def test_settings_ws_connect_rate_rejects_values_outside_1_to_20(  # #415: lower
     with pytest.raises(ValidationError) as exc_info:
         get_settings()
     assert "ws_max_auths_per_user_per_min" in str(exc_info.value)
+
+
+def test_settings_oms_runtime_defaults_are_the_20_7_2_rows() -> None:
+    """#913 slice 3: `CV_OMS_SUBMIT_TIMEOUT_MS`, `_INFLIGHT_STUCK_S`, `_STARTUP_WAIT_S`, `_DRAIN_S`
+    and `CV_TRADING_LIVE_ENABLED`, live trading off by default."""
+    s = get_settings()
+    assert (s.oms_submit_timeout_ms, s.oms_inflight_stuck_s, s.oms_startup_wait_s) == (
+        5000,
+        30.0,
+        30.0,
+    )
+    assert (s.oms_drain_s, s.trading_live_enabled) == (10.0, False)
+
+
+_OMS_ACCEPTED = [
+    ({"CV_OMS_SUBMIT_TIMEOUT_MS": "1000"}, "oms_submit_timeout_ms", 1000),
+    (
+        {"CV_OMS_SUBMIT_TIMEOUT_MS": "8000", "CV_OMS_INFLIGHT_STUCK_S": "20.5"},
+        "oms_submit_timeout_ms",
+        8000,
+    ),
+    ({"CV_OMS_INFLIGHT_STUCK_S": "17.5"}, "oms_inflight_stuck_s", 17.5),  # 5 s + 12 s, and above
+    ({"CV_OMS_INFLIGHT_STUCK_S": "120"}, "oms_inflight_stuck_s", 120.0),
+    ({"CV_OMS_STARTUP_WAIT_S": "5"}, "oms_startup_wait_s", 5.0),
+    ({"CV_OMS_STARTUP_WAIT_S": "45"}, "oms_startup_wait_s", 45.0),
+    ({"CV_OMS_DRAIN_S": "1"}, "oms_drain_s", 1.0),
+    ({"CV_OMS_DRAIN_S": "10"}, "oms_drain_s", 10.0),
+    ({"CV_TRADING_LIVE_ENABLED": "true"}, "trading_live_enabled", True),
+]
+
+
+@pytest.mark.parametrize(("env", "field", "value"), _OMS_ACCEPTED)
+def test_settings_oms_runtime_bounds_take_each_value_in_range(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], field: str, value: object
+) -> None:
+    for name, text in env.items():
+        monkeypatch.setenv(name, text)
+    assert getattr(get_settings(), field) == value
+
+
+@pytest.mark.parametrize(
+    ("env", "field"),
+    [
+        ({"CV_OMS_SUBMIT_TIMEOUT_MS": "999"}, "oms_submit_timeout_ms"),
+        ({"CV_OMS_SUBMIT_TIMEOUT_MS": "8001"}, "oms_submit_timeout_ms"),  # past the stop's bound
+        ({"CV_OMS_INFLIGHT_STUCK_S": "17"}, "oms_inflight_stuck_s"),  # = 5 s + 12 s, not above
+        (
+            {"CV_OMS_SUBMIT_TIMEOUT_MS": "8000", "CV_OMS_INFLIGHT_STUCK_S": "20"},
+            "oms_inflight_stuck_s",
+        ),
+        ({"CV_OMS_INFLIGHT_STUCK_S": "120.5"}, "oms_inflight_stuck_s"),  # SEC-S3D-02's ceiling
+        ({"CV_OMS_INFLIGHT_STUCK_S": "nan"}, "oms_inflight_stuck_s"),
+        ({"CV_OMS_STARTUP_WAIT_S": "4.9"}, "oms_startup_wait_s"),
+        ({"CV_OMS_STARTUP_WAIT_S": "45.5"}, "oms_startup_wait_s"),  # past the 60 s smoke window
+        ({"CV_OMS_DRAIN_S": "0.5"}, "oms_drain_s"),
+        ({"CV_OMS_DRAIN_S": "10.5"}, "oms_drain_s"),  # leaves under 5 s of the module's grace
+    ],
+)
+def test_settings_oms_runtime_bounds_refuse_each_value_out_of_range(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], field: str
+) -> None:
+    for name, text in env.items():
+        monkeypatch.setenv(name, text)
+    with pytest.raises(ValidationError) as exc_info:
+        get_settings()
+    assert field in str(exc_info.value)

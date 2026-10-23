@@ -37,6 +37,7 @@ from candleviewer.oms.ports import (
 )
 from candleviewer.oms.repository import OrderRepository, RecordedStopRepository
 from candleviewer.oms.routing import TradingRouter
+from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.repositories.orders import (
     ORDER_STATE_OF,
@@ -344,7 +345,9 @@ def build_rig(
     halt = ClockHalt(health, monotonic=monotonic, metrics=metrics)
     notices = Notices()
     if gate is None:
-        gate = RefuseWhileWaiting(stops, now=lambda: EPOCH + timedelta(microseconds=now.us))
+        gate = RefuseWhileWaiting(
+            stops, now=lambda: EPOCH + timedelta(microseconds=now.us), bound_s=STOP_REQUEST_BOUND_S
+        )
     port = OmsCommandPort(
         router=TradingRouter({"demo": demo, "live": live}, lane_waits=LANE_WAITS),
         accounts=accounts,

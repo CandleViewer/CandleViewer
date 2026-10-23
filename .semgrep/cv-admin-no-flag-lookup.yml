@@ -52,7 +52,7 @@ rules:
               metavariable: $OBJ
               regex: (?i)^([\w.]*\.)?\w*flag\w*$
       # a catalogue key, exactly (candleviewer/admin/flags/catalogue.py)
-      - pattern: '"=~/^(algo\.chase|algo\.iceberg|algo\.oco|algo\.scaled|algo\.twap|desktop\.backend_connection|engine\.webgl_v2|killswitch\.ingestion|killswitch\.order_entry|maintenance\.keep_recorder|maintenance\.mode|recorder\.auto_record|rules\.form_editor|rules\.graph_editor|storage\.cold_tier|trading\.live_enabled|trading\.one_click)$/"'
+      - pattern: '"=~/^(algo\.chase|algo\.iceberg|algo\.oco|algo\.scaled|algo\.twap|desktop\.backend_connection|engine\.webgl_v2|killswitch\.ingestion|killswitch\.order_entry|maintenance\.keep_recorder|maintenance\.mode|recorder\.auto_record|rules\.form_editor|rules\.graph_editor|storage\.cold_tier|trading\.live_enabled|trading\.oms_enabled|trading\.one_click)$/"'
     paths:
       include:
         - "services/api/candleviewer/auth/**"

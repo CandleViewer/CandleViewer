@@ -93,6 +93,7 @@ from candleviewer.oms.submit import (
     SubmitOutcome,
 )
 from candleviewer.oms.validator import Validator
+from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
@@ -557,11 +558,11 @@ def _build(
     health.measure()
     halt = ClockHalt(health, monotonic=monotonic, metrics=metrics)
     router = TradingRouter({"demo": venue, "live": live}, lane_waits=cr.LANE_WAITS)
+    gate = RefuseWhileWaiting(stops, now=clock, bound_s=STOP_REQUEST_BOUND_S)
     commands = OmsCommandPort(
         router=router, accounts=accounts, orders=orders, stops=stops, handovers=cr.Handovers(),
         credentials=cr.Credentials(), clock_halt=halt, switches=switches, audit=audits,
-        submit_audit=audits, gate=RefuseWhileWaiting(stops, now=clock), notices=notices,
-        now_us=clock.us,
+        submit_audit=audits, gate=gate, notices=notices, now_us=clock.us,
     )  # fmt: skip
     writer = OrderStepWriter(
         orders,
@@ -584,7 +585,7 @@ def _build(
         prices=Prices(),
         profiles=EffectiveProfiles(SqlAlchemyAccountProfileStore(rel)),
         switches=switches,
-        gate=RefuseWhileWaiting(stops, now=clock),
+        gate=gate,
         audit=audits,
         groups=TradeGroupRepository(SqlAlchemyTradeGroupStore(rel)),
     )

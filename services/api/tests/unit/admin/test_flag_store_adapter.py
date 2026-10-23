@@ -60,9 +60,9 @@ class _Repo:
         return replace(_ROW, value=change.value, user_overrides=change.user_overrides)
 
 
-def _store(repo: _Repo, bound_s: float = 3.5) -> StorageFlagStore:
+def _store(repo: _Repo, bound_s: float = 3.5, environment: str = "live") -> StorageFlagStore:
     fake: Any = repo  # a structural fake repository
-    return StorageFlagStore(fake, bound_s=bound_s)
+    return StorageFlagStore(fake, bound_s=bound_s, environment=environment)
 
 
 async def _set(store: StorageFlagStore, seen: list[StoredFlag]) -> StoredFlag:
@@ -73,12 +73,45 @@ async def _set(store: StorageFlagStore, seen: list[StoredFlag]) -> StoredFlag:
     return await store.write("trading.one_click", prepare)
 
 
-async def test_ensure_seeds_every_registered_flag_with_its_kind_and_class() -> None:
+@pytest.mark.parametrize(
+    ("environment", "oms"), [("live", False), ("demo", True), ("testnet", False)]
+)
+async def test_ensure_seeds_each_flag_at_its_default_or_its_environments_seed(
+    environment: str, oms: bool
+) -> None:
+    """#913 slice 3 Q3: `trading.oms_enabled` is seeded on in a demo process alone."""
     repo = _Repo()
-    await _store(repo).ensure(FLAGS)
+    await _store(repo, environment=environment).ensure(FLAGS)
+    seeded = {f.key: f.default for f in FLAGS} | {"trading.oms_enabled": oms}
     assert repo.seeds == [
-        FlagSeed(f.key, f.kind.value, f.description, f.default, f.is_killswitch, f.variants)
+        FlagSeed(f.key, f.kind.value, f.description, seeded[f.key], f.is_killswitch, f.variants)
         for f in FLAGS
+    ]
+
+
+@pytest.mark.parametrize(
+    ("key", "seed"),
+    [
+        ("killswitch.order_entry", True),
+        ("maintenance.mode", True),
+        ("trading.live_enabled", True),  # the live gate
+        ("trading.one_click", "yes"),  # a boolean flag takes no string
+    ],
+)
+async def test_ensure_ignores_a_seed_on_a_kill_switch_the_live_gate_or_of_the_wrong_kind(
+    monkeypatch: pytest.MonkeyPatch, key: str, seed: object
+) -> None:
+    """CR-S3B1-02, C-4.14: the catalogue's table is not the only guard. Such a seed is logged and
+    its flag keeps the default, while a valid seed beside it still lands."""
+    table = {key: {"demo": seed}, "trading.oms_enabled": {"demo": True}}
+    monkeypatch.setattr("candleviewer.flags_wiring.ENVIRONMENT_SEEDS", table)
+    repo = _Repo()
+    with capture_logs() as logs:
+        await _store(repo, environment="demo").ensure(FLAGS)
+    expected = {f.key: f.default for f in FLAGS} | {"trading.oms_enabled": True}
+    assert {s.key: s.default for s in repo.seeds} == expected
+    assert [(log["event"], log["key"], log["environment"]) for log in logs] == [
+        ("feature_flag_seed_ignored", key, "demo")
     ]
 
 

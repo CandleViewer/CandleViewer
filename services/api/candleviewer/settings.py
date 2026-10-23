@@ -81,6 +81,18 @@ MIN_DRAIN_TIMEOUT_S: Final = math.ceil(CLOSE_FLUSH_TIMEOUT_S + CLOSE_AUDIT_TIMEO
 MIN_STOP_BUDGET_S: Final = math.ceil(
     CLOSE_FLUSH_TIMEOUT_S + MIN_DRAIN_TIMEOUT_S + TEARDOWN_STOP_CAP_S + SHUTDOWN_TICKS_S
 )
+# #913 slice 3 (20 Sec.6.2, Sec.7.2): the OMS runtime's figures that its settings are checked
+# against. M1 may not import `oms`, so they are spelled out; `oms_wiring.OmsBounds` derives the
+# same from the pipeline's own bounds, and a test pins the two alike.
+#: What a submission's bounds after its anchor add to the submit timeout, in seconds: `SEND`'s write
+#: (1 s), B1's turn after the create (1 s), the result step (2 s) and four store bounds (2 s each).
+OMS_AFTER_ANCHOR_S: Final = 12.0
+#: The in-flight window's ceiling (SEC-S3D-02): the longest a crashed request's key stays
+#: `409 idempotency_in_flight`.
+OMS_INFLIGHT_STUCK_MAX_S: Final = 120.0
+#: What the OMS runtime's stop keeps after its drain for the machines, its sink and its pool, of the
+#: supervised OMS module's grace (`TEARDOWN_BUDGET_S`).
+OMS_STOP_RESERVE_S: Final = 5.0
 
 
 class Environment(StrEnum):
@@ -689,6 +701,30 @@ class Settings(BaseSettings):
     order_rate_per_uid: int = 8
     native_sl_deadline_ms: int = 3000
     killswitch_on_disconnect_s: int = 30
+    # #913 slice 3 (20 Sec.6.2, Sec.7.2): the OMS runtime's bounds, read once at its start
+    # (`oms_wiring.OmsBounds` checks them together). The submit timeout bounds one create's whole
+    # `place`; at most 8 s, so an entry's stop request is answered within the 10 s stop-request
+    # bound (2 x `CV_PERSIST_TIMEOUT` + it) and B1's 10 s command timeout cuts no `place`.
+    oms_submit_timeout_ms: int = Field(default=5000, ge=1000, le=8000)
+    # A repeat is `409 idempotency_in_flight` this long (21 Sec.3.3.10): longer than the
+    # submission's bounds after its anchor, so no repeat decides an anchor whose request may still
+    # send (`_refuse_a_stuck_window_inside_the_bounds`), and at most `OMS_INFLIGHT_STUCK_MAX_S`.
+    oms_inflight_stuck_s: float = Field(
+        default=30.0, le=OMS_INFLIGHT_STUCK_MAX_S, allow_inf_nan=False
+    )
+    # The startup sweep's wait for the clock guard's first measurement and the key standing's
+    # first read; the sweep must fit a deploy's 60 s `/readyz` smoke window.
+    oms_startup_wait_s: float = Field(default=30.0, ge=5.0, le=45.0, allow_inf_nan=False)
+    # On stop, submits in flight get this long, then are cancelled. The runtime's stop (slice 3E)
+    # will be the lifespan's, outside `_refuse_unfittable_stop_budget`'s sum as the account health
+    # runtime's is; with `OMS_STOP_RESERVE_S` it keeps within the supervised OMS module's grace
+    # (20 Sec.6.2).
+    oms_drain_s: float = Field(
+        default=10.0, ge=1.0, le=TEARDOWN_BUDGET_S - OMS_STOP_RESERVE_S, allow_inf_nan=False
+    )
+    # Live trading's process-level precondition, with the `trading.live_enabled` flag (rulings Q4,
+    # Q6): a live account's order is admitted only while both are on; B17 stays the user's truth.
+    trading_live_enabled: bool = False
     # E27-T04: account health windows, configurable as the ticket's Technical notes name them
     # (`CV_ACCOUNT_DOWN_S`, `CV_ACCOUNT_HEARTBEAT_S`). A heartbeat is the private WS's successful
     # auth reply, then any pong or topic message on that socket; the client pings every
@@ -1029,10 +1065,13 @@ class Settings(BaseSettings):
         it: most are short, but `BarsRuntime.stop` (up to 30 s with bars on) and the metrics
         listener's unbounded drain can use the whole budget alone (#2878); the account health
         runtime's stop is bounded, at 25 s in three steps: `STOP_TIMEOUT_S` (11 s) for the loops
-        and for the drain, `RELEASE_TIMEOUT_S` (3 s) for its pool. A sum exactly at the
-        budget passes and leaves the other modules' normal stop time nothing, so the largest
-        grace is a limit, not a recommendation. Integer milliseconds, so a boundary is not a
-        float error.
+        and for the drain, `RELEASE_TIMEOUT_S` (3 s) for its pool. The OMS runtime's stop (#913;
+        slice 3E builds it) will be listed beside `account_health.stop`, before `stop_all`, at
+        the OMS module's grace: `CV_OMS_DRAIN_S` and `OMS_STOP_RESERVE_S`. This sum cannot see it:
+        at the defaults, 5 + 2 + 5 s and an OMS stop of up to 15 s make 27 of the 30 s budget. A
+        sum exactly at the budget passes and leaves the other modules' normal stop time nothing,
+        so the largest grace is a limit, not a recommendation. Integer milliseconds, so a
+        boundary is not a float error.
 
         That cut is cooperative (#3361): `asyncio.timeout` cancels the stop once. A stop that
         swallows that cancellation and keeps waiting, or that blocks the event loop, holds
@@ -1061,6 +1100,23 @@ class Settings(BaseSettings):
                 "with the api service's stop_grace_period (infra/compose)"
             )
         return drain_s
+
+    @field_validator("oms_inflight_stuck_s")
+    @classmethod
+    def _refuse_a_stuck_window_inside_the_bounds(
+        cls, stuck_s: float, info: ValidationInfo
+    ) -> float:
+        """#913 slice 3: a repeat decides an undecided anchor only once its request can no longer
+        send, so the window outlasts the submission's bounds after its anchor (24 Sec.8.4). A field
+        validator on the second term (#2728): a refusal carries this input alone (C-12.6); a
+        submit timeout whose own check failed is absent, and its error is the one to report."""
+        submit_ms = info.data.get("oms_submit_timeout_ms")
+        if submit_ms is not None and not stuck_s > submit_ms / 1000 + OMS_AFTER_ANCHOR_S:
+            raise ValueError(
+                "CV_OMS_INFLIGHT_STUCK_S must be above the submission's bounds after its anchor: "
+                f"CV_OMS_SUBMIT_TIMEOUT_MS / 1000 + {OMS_AFTER_ANCHOR_S:g} s"
+            )
+        return stuck_s
 
     @field_validator("account_down_s")
     @classmethod

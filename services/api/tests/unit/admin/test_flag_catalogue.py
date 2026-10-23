@@ -4,9 +4,12 @@ visible to a role as its 10.7 visibility says (the predicate the WS `system` fil
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
 import pytest
 
 from candleviewer.admin.flags import default_registry
+from candleviewer.admin.flags.catalogue import ENVIRONMENT_SEEDS, TRADING_OMS_ENABLED
 from candleviewer.admin.flags.registry import Category
 
 _B, _ALL, _OWN = "boolean", "all_roles", "owner_only"
@@ -15,6 +18,7 @@ _B, _ALL, _OWN = "boolean", "all_roles", "owner_only"
 _SECTION_10_7 = {
     ("trading.live_enabled", _B, False, False, _ALL),
     ("trading.one_click", _B, False, False, _ALL),
+    ("trading.oms_enabled", _B, False, False, _ALL),
     ("engine.webgl_v2", _B, False, False, _ALL),
     ("rules.graph_editor", _B, True, False, _ALL),
     ("rules.form_editor", _B, True, False, _ALL),
@@ -62,6 +66,26 @@ def test_backend_connection_flag_is_an_owner_only_rollout_off_with_its_removal_t
     )
     assert spec.visibility.value == "owner_only"
     assert "owner @basiltt" in spec.description and spec.description.endswith("removal #3931")
+
+
+def test_oms_flag_is_an_all_roles_rollout_off_but_seeded_on_in_a_demo_process() -> None:
+    """#913 slice 3 Q3, C-4.13: off by default and while the store cannot be read, owned, with its
+    removal ticket; the insert-only `ensure` seeds it on in a demo process alone, and no seed ever
+    lands on a kill switch or the live gate (C-4.14)."""
+    registry = default_registry()
+    spec = registry[TRADING_OMS_ENABLED]
+    assert (spec.gates, spec.default, spec.restrictive, spec.visibility.value) == (
+        Category.FEATURE_ROLLOUT,
+        False,
+        False,
+        "all_roles",
+    )
+    assert "owner @basiltt" in spec.description and spec.description.endswith("removal #4227")
+    assert ENVIRONMENT_SEEDS == {TRADING_OMS_ENABLED: {"demo": True}}
+    assert isinstance(ENVIRONMENT_SEEDS, MappingProxyType)  # read-only, and each entry with it
+    assert all(isinstance(seeds, MappingProxyType) for seeds in ENVIRONMENT_SEEDS.values())
+    seeded = [registry[key] for key in ENVIRONMENT_SEEDS]
+    assert not any(s.is_killswitch or s.requires_evidence for s in seeded)
 
 
 _ROLES = ("owner", "manager", "viewer")

@@ -65,7 +65,6 @@ from candleviewer.oms.ports import (
     INTERIM_PORTS_METRIC,
     PASSED,
     PORT_NAMES,
-    STOP_REQUEST_BOUND_S,
     STOP_REQUEST_RETRY_AFTER_S,
     AccountNoticeReason,
     AccountNotices,
@@ -676,15 +675,18 @@ _KEY = PositionKey(AccountId(UUID(int=7)), "BTCUSDT", 0)
 _NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
 
 
+_BOUND_S = 10.0  # the stop request's bound the runtime passes (`OmsBounds.stop_request_s`)
+
+
 async def test_the_interim_gate_clears_a_key_no_row_waits_on() -> None:
     rows = _Rows()
-    await RefuseWhileWaiting(rows, now=lambda: _NOW).clear(_KEY)
-    assert rows.asked == [(UUID(int=7), "BTCUSDT", 0, _NOW, STOP_REQUEST_BOUND_S)]
+    await RefuseWhileWaiting(rows, now=lambda: _NOW, bound_s=_BOUND_S).clear(_KEY)
+    assert rows.asked == [(UUID(int=7), "BTCUSDT", 0, _NOW, _BOUND_S)]
 
 
 async def test_the_interim_gate_refuses_while_a_row_of_the_key_waits() -> None:
     """Q-A and Q-D: 409 `stop_request_in_flight` at once, with `Retry-After: 5`."""
-    gate = RefuseWhileWaiting(_Rows(("a waiting row",)), now=lambda: _NOW)
+    gate = RefuseWhileWaiting(_Rows(("a waiting row",)), now=lambda: _NOW, bound_s=_BOUND_S)
     with capture_logs() as logs, pytest.raises(StopRequestPending) as refused:
         await gate.clear(_KEY)
     assert refused.value.retry_after_s == STOP_REQUEST_RETRY_AFTER_S == 5
@@ -698,7 +700,7 @@ async def test_the_interim_gate_refuses_when_it_cannot_read(error: BaseException
     """Fail closed: no stop request leaves unchecked (`StoreUnavailable`, 503)."""
     rows = _Rows(error=error)
     rows.hang = error is None
-    gate = RefuseWhileWaiting(rows, now=lambda: _NOW, timeout_s=0.01)
+    gate = RefuseWhileWaiting(rows, now=lambda: _NOW, bound_s=_BOUND_S, timeout_s=0.01)
     with pytest.raises(StoreUnavailable):
         await gate.clear(_KEY)
 

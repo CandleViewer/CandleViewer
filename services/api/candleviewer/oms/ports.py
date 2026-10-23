@@ -543,15 +543,6 @@ class WaitingRows(Protocol):
     ) -> Sequence[RecordedStopRow]: ...
 
 
-#: How long an unanswered stop request holds its key before it waits for the complete read, in
-#: seconds (the orchestrator's Q2 ruling, [LANE-25]). It is at least an entry's answer path, the
-#: slowest a request is answered: the `submitting` step's write (`CV_PERSIST_TIMEOUT`, 1 s), all of
-#: `place`, its reads, calls and answer by one deadline (`commands.SUBMIT_TIMEOUT_S`, 5 s,
-#: CR-2B1-04), and the result step's write (1 s), 7 s in all; a trading stop's call has the same
-#: deadline. It is no safety knob: either side of it refuses a second request for the key, inside
-#: it at the insert (`ux_rs_in_flight`, the bounded retry) and past it here, so a settle that lands
-#: late only moves where the second request is refused. Slice 3's setting replaces it.
-STOP_REQUEST_BOUND_S: Final = 10.0
 #: The `Retry-After` of a request refused because a row of its key waits for the complete read, in
 #: seconds: only that read clears it (the orchestrator's Q-D ruling).
 STOP_REQUEST_RETRY_AFTER_S: Final = 5
@@ -563,14 +554,15 @@ class RefuseWhileWaiting:
     """The interim `StopRequestGate` until slice 3's complete read (the orchestrator's Q-A ruling):
     it resolves no waiting row, it refuses while the key has one (fail closed). A read that fails,
     or does not answer within `timeout_s`, refuses too (`StoreUnavailable`): no stop request leaves
-    unchecked."""
+    unchecked. `bound_s` is how long an unanswered request holds its key before it waits for the
+    complete read, the stop request's bound (`oms_wiring.OmsBounds.stop_request_s`)."""
 
     def __init__(
         self,
         rows: WaitingRows,
         *,
         now: Callable[[], datetime],
-        bound_s: float = STOP_REQUEST_BOUND_S,
+        bound_s: float,
         timeout_s: float = STOP_GATE_READ_TIMEOUT_S,
     ) -> None:
         self._rows = rows
