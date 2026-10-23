@@ -1213,7 +1213,7 @@ Drag preview                Drop zones
 - **Settings:** OI absolute vs delta-per-bar, OI/price quadrant colouring, funding stepped line vs bars + annualised toggle, liquidation bars vs heatmap, notional threshold.
 - **States:** loading · partial (liquidation history limited to recorder uptime, with an explicit chip) · funding countdown running · next-funding imminent warning (<5 min, "Funding settles in 04:12 — you pay ≈ 12.40 USDT", or "… you receive ≈ 12.40 USDT" on the receiving side, shown only when a position exists; E24-D02 §5.2 holds the PROPOSED form and account scope, Q5 / Q11).
 - **A11y:** each sub-pane has a table alternative; the funding countdown is announced at 5 min and 1 min only.
-- **Components:** CMP-036 KeyValueRow, CMP-126 FundingCountdown, CMP-127 LiquidationMarker, CMP-186 OiFundingLiqPane, CMP-188 PriceAxis, CMP-199 ChartLegend, CMP-227 EstimatedBadge.
+- **Components:** CMP-019 Icon (`lock`), CMP-036 KeyValueRow, CMP-079 RbacGate, CMP-126 FundingCountdown, CMP-127 LiquidationMarker, CMP-186 OiFundingLiqPane, CMP-188 PriceAxis, CMP-199 ChartLegend, CMP-227 EstimatedBadge.
 - **Stories:** US-DERIV-001, US-DERIV-002, US-DERIV-003, US-DERIV-004, US-DERIV-005, US-DERIV-006, US-DERIV-007, US-DERIV-008.
 - **Performance:** OI and funding arrive at low frequency (<=1 Hz) and render on change only; liquidation prints can burst - they are coalesced into 250 ms buckets with a burst counter rather than one DOM node per print, and the panel must not exceed 2 ms scripting per frame during a liquidation cascade (target: 500 prints/s sustained for 10 s with no dropped frames).
 - **Analytics/audit:** `oi_panel.metric_toggled`, `oi_panel.interval_changed`, `liquidation.print_clicked`, `funding.countdown_alert_set` (analytics).
