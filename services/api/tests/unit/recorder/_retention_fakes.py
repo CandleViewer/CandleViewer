@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from candleviewer.recorder.retention import (
     US_PER_DAY,
     ColdPartition,
+    Facts,
     HotDay,
     MemoryCheckpoint,
     PolicyRow,
@@ -42,6 +43,7 @@ class World:
     cold: dict[tuple[str, StreamKind], dict[str, tuple[int, int]]] = field(default_factory=dict)
     pinned: set[str] = field(default_factory=set)
     policies: dict[tuple[str | None, str], PolicyRow] = field(default_factory=dict)
+    facts: Facts | None = None  # replaces `FakeFacts`, e.g. the real `PgRetentionFacts`
     archived: dict[tuple[str, StreamKind], int] = field(default_factory=dict)
     leases: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
     audit: list[tuple[str, dict[str, str | int]]] = field(default_factory=list)
@@ -202,7 +204,7 @@ def manager(
     return RetentionManager(
         hot=FakeHot(w),
         cold=FakeCold(w),
-        facts=FakeFacts(w),
+        facts=w.facts or FakeFacts(w),
         verifier=FakeVerifier(w),
         watermarks=FakeMarks(w),
         audit=FakeAudit(w),

@@ -20,6 +20,7 @@ from candleviewer.storage.repositories.recorder_sqlalchemy import (
     HARD_DEFAULT_RETAIN_DAYS,
     SqlAlchemyRecorderRepository,
 )
+from candleviewer.storage.retention.policy import RowReading
 
 
 class _Result:
@@ -213,13 +214,28 @@ async def test_record_gap_returns_id() -> None:
     assert rel.calls[0][1]["cause"] == "ws_disconnect"
 
 
+_ARCHIVE = {"retain_days": 3, "action": "archive_parquet"}
+_DROP = {**_ARCHIVE, "action": "drop"}
+_PINNED = {"retain_days": None, "action": None}  # `_RESOLVE`'s pinned sentinel row
+
+
 @pytest.mark.parametrize(
-    ("rows", "expected"),
-    [([], HARD_DEFAULT_RETAIN_DAYS), ([{"retain_days": 3}], 3), ([{"retain_days": None}], None)],
+    ("rows", "hot", "reading"),
+    [
+        ([], HARD_DEFAULT_RETAIN_DAYS, None),
+        ([_ARCHIVE], 3, RowReading(3, None)),
+        ([_DROP], 3, RowReading(3, 3)),
+        ([_PINNED], None, None),
+    ],
 )
-async def test_resolve_policy_maps_rows(rows: list[dict[str, Any]], expected: int | None) -> None:
+async def test_the_policy_readers_map_the_winning_row_by_its_action(
+    rows: list[dict[str, Any]], hot: int | None, reading: RowReading | None
+) -> None:
     repo, _ = _repo(rows)
-    assert await repo.resolve_policy("ETHUSDT", "trades") == expected
+    assert await repo.resolve_policy("ETHUSDT", "trades") == hot
+    assert await repo.policy_reading("ETHUSDT", "trades") == reading
+    explicit = None if reading is None else reading.hot_days  # no rule: none, not the 30 d default
+    assert await repo.explicit_policy_days("ETHUSDT", "trades") == explicit
 
 
 async def test_resolve_policy_sql_orders_pinned_then_symbol_then_default() -> None:

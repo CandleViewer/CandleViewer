@@ -71,7 +71,7 @@ class _Uow:
 
 class _Rel:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
-        self.rows = rows
+        self.rows = [{"action": "archive_parquet", **r} for r in rows]  # the column default
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[_Uow]:

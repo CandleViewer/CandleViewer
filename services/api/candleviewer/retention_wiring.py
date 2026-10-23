@@ -5,11 +5,11 @@ may not import `recorder` (import-linter M10), so this top-level module bridges 
 like `rolloff_wiring.py`. Only on the `real` storage backend; the nightly loop is scheduled
 behind `retention_enabled` (C-4.13, default off).
 
-Policy facts come from Postgres (`recorded_symbols`, `retention_policies`): `retain_days` is the
-hot window (as E16-T05's roll-off reads it); the total horizon is the §7 matrix seed's
-total horizon per stream, shipped in-package (`recorder/retention_defaults.py`; no column for
-it yet — the policy-write API is E16-T08). A build failure or invalid settings return `None`
-(purge -> 503); the API never fails to boot because of recorder config.
+Policy facts come from Postgres (`recorded_symbols`, `retention_policies`): by a row's `action`
+(`read_policy_row`, the roll-off's reading too, #2188) `retain_days` is the hot window, under the
+§7 matrix seed's total horizon per stream (shipped in-package, `recorder/retention_defaults.py`; no
+column for it yet — the policy-write API is E16-T08), or for `drop` the total horizon itself. A
+build failure or invalid settings return `None` (purge -> 503), never failing the API's boot.
 `applies_to_pinned` has no column either, so policy runs never touch pinned data; the only path
 that can is the step-up purge with `include_pinned`.
 
@@ -48,6 +48,7 @@ from candleviewer.storage.models import StreamKind
 from candleviewer.storage.questdb.wiring import LazyPgWire
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.retention.locks import PgAdvisoryRunLock
+from candleviewer.storage.retention.policy import read_policy_row
 
 #: Audit actor for every reaper record (C-2.9): a system principal, never a user.
 RETENTION_ACTOR = "system:retention"
@@ -61,8 +62,8 @@ _SYMBOLS = sa.text(
     "SELECT symbol::text AS symbol, pinned FROM recorded_symbols WHERE removed_at IS NULL"
 )
 _POLICIES = sa.text(
-    "SELECT scope, symbol::text AS symbol, stream::text AS stream, retain_days "
-    "FROM retention_policies WHERE enabled"
+    "SELECT scope, symbol::text AS symbol, stream::text AS stream, retain_days, "
+    "action::text AS action FROM retention_policies WHERE enabled"
 )
 
 
@@ -94,6 +95,7 @@ class PgRetentionFacts:
 
     def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
         self._rel = relational
+        self._warned: set[tuple[str | None, str, int]] = set()
 
     async def _all(self, stmt: sa.TextClause) -> list[dict[str, Any]]:
         async with self._rel.unit_of_work() as uow:
@@ -115,11 +117,19 @@ class PgRetentionFacts:
             seeded = STREAM_DEFAULTS.get(stream)
             if seeded is None:
                 continue  # unknown stream: no row -> resolution keeps it forever
-            # `retain_days` is the hot window; the total horizon is the §7 default for the
-            # stream (no column yet, E16-T08), never shorter than the hot window.
-            hot = int(r["retain_days"])
-            total = seeded[1] if seeded[1] is None else max(seeded[1], hot)
-            out[(symbol, stream)] = PolicyRow(symbol, stream, hot, total)
+            # By the row's `action` (`read_policy_row`, as the roll-off reads it) `retain_days` is
+            # the total horizon (`drop`), or the hot window under the §7 total (never shorter).
+            reading = read_policy_row(str(r["action"]), int(r["retain_days"]))
+            total = reading.total_days
+            if total is None:
+                total = seeded[1] if seeded[1] is None else max(seeded[1], reading.hot_days)
+            elif seeded[1] is None and (symbol, stream, total) not in self._warned:
+                # §7 keeps this stream forever: the row is its first delete, by intent. Said once.
+                self._warned.add((symbol, stream, total))
+                logger().warning(
+                    "retention_drop_finite_total", symbol=symbol, stream=stream, retain_days=total
+                )
+            out[(symbol, stream)] = PolicyRow(symbol, stream, reading.hot_days, total)
         return out
 
 
