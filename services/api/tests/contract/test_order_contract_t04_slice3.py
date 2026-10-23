@@ -1,7 +1,8 @@
 """Contract (#913, E29-T04 slice 3): the texts that sub-slices B to G code against, read from 22,
-21 (10.7, 13.1), 20 (6.2, 7.2, 12.1), 24 (8.4) and the regenerated models, never from a copy:
-the orchestrator's slice-3 rulings of 2026-10-23 (Q2 to Q12, Q16, Q18, Q20), with the code lens's
-findings on them folded (CR-S3A-01 to CR-S3A-15)."""
+21 (3.10.1, 10.7, 12, 13.1), 20 (6.2, 7.2, 12.1), 23 (6.4), 24 (8.4, 9.3, 15.5) and the
+regenerated models, never from a copy: the orchestrator's slice-3 rulings of 2026-10-23 (Q2 to
+Q12, Q16, Q18, Q20), with the code lens's findings on them folded (CR-S3A-01 to CR-S3A-15, and
+CR-S3N-01 to CR-S3N-09 on the notes of 20, 21, 23 and 24)."""
 
 from __future__ import annotations
 
@@ -19,7 +20,19 @@ from candleviewer.exchange.bybit.key_info import refusal
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.oms import submit
 from candleviewer.oms.errors import OmsNotReady
-from candleviewer.oms_wiring import OmsBounds
+from candleviewer.oms_wiring import (
+    REFERENCE_DEMAND_MAX,
+    REFERENCE_DEMAND_NEW,
+    REFERENCE_DEMAND_TTL_S,
+    REFERENCE_DEMAND_WINDOW_S,
+    SWEEP_STATEMENT_TIMEOUT_MS,
+    SYSTEM_ACTOR,
+    OmsAudit,
+    OmsBounds,
+    OmsRuntime,
+    OrderStateFeed,
+    ReferenceDemand,
+)
 from candleviewer.settings import (
     OMS_AFTER_ANCHOR_S,
     OMS_STOP_RESERVE_S,
@@ -28,15 +41,21 @@ from candleviewer.settings import (
 )
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
+from candleviewer.ws.topics import MACHINE_KINDS
 from tests.openapi_helpers import deref
 
 _SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
 _RESPONSES: dict[str, Any] = _SPEC["components"]["responses"]
 _PLACE: Any = _SPEC["paths"]["/orders"]["post"]
-_ARCH, _SCHEMA_DOC, _INTERNAL_DOC = (
+_ARCH, _SCHEMA_DOC, _WS_DOC, _INTERNAL_DOC = (
     (OPENAPI_SPEC_PATH.parent / name).read_text(encoding="utf-8")
-    for name in ("20-architecture.md", "21-database-schema.md", "24-internal-schemas.md")
+    for name in (
+        "20-architecture.md",
+        "21-database-schema.md",
+        "23-ws-protocol.md",
+        "24-internal-schemas.md",
+    )
 )
 
 
@@ -248,8 +267,8 @@ def test_20_starts_the_oms_after_account_health_and_sweeps_before_ready() -> Non
         "`/readyz` is anonymous, so the check names no posture",
         "That stop is the lifespan's, run before `Supervisor.stop_all`, not the supervised OMS "
         "module's, but it keeps within that module's 15 s grace",
-        "in a demo or testnet process whatever `CV_TRADING_LIVE_ENABLED` says, and in a live "
-        "process only while that setting is off",
+        "in a demo process (a testnet one fails closed first, above) whatever "
+        "`CV_TRADING_LIVE_ENABLED` says, and in a live process only while that setting is off",
         "A live process with the setting on and no bundle fails closed",
         "It never uses an in-memory sink",
     )
@@ -417,4 +436,116 @@ def test_the_flag_is_narrower_than_the_gate_and_the_security_lens_nits_are_writt
         sizing,
         "a symbol the stream holds stale has neither",
         "a stale price never sizes, caps or checks a market order",
+    )
+
+
+def test_20_says_what_a_second_oms_process_and_a_testnet_one_do() -> None:
+    """CR-S3N-01, -03, -06, -08, -09a: the one-process presumption and what breaks it as the code
+    does (the sweep voids an unsent entry's attach rows, and its KILL and the first process's
+    `SEND` race on the order row), a testnet process's `/readyz`, and the loop of the facade."""
+    assert not _missing(
+        _RUNTIME,
+        "builds it in its `start()`, on the serving loop until 29 CV-C13's dedicated order lane "
+        "is built (23 §6.4), and unwires it in its `stop()`.",
+        "`ready` is never set early. Until it is set, `placeOrder` answers `503 oms_not_ready` "
+        "with `Retry-After`. The sweep, its wait included, must fit a deploy's 60 s `/readyz` "
+        "smoke window (`tools/ci/deploy_dev.py`), so `CV_OMS_STARTUP_WAIT_S` is at most 45 s. "
+        "The sweep and the facade presume one OMS process per environment and database.",
+        "A second one, such as a deploy overlapping on another host, would sweep an entry the "
+        "first has recorded and not yet sent: its step 2 voids the entry's attach rows, so 21 "
+        "§3.3.11's "
+        '"no request can send any more" stops holding, and its step 4 KILL and the first '
+        "process's `SEND` race on the order row's compare-and-set.",
+        "If the KILL commits first, the `SEND` meets a row that has moved on and nothing is sent "
+        "(24 §8.4).",
+        "If the `SEND` commits first, the entry is sent with its native stop on the create "
+        "(C-2.6) while its record stays `void`, a state `trg_rs_guard` never lets a row leave, "
+        "so 24 §8.5 step 5 has no record to restore the position's stop against.",
+        "Its step 3 also resumes the first's in-flight `submitting` creates under their own "
+        '`orderLinkId`s (24 §8.2 "Recovery", C-2.10).',
+        "A per-environment advisory lock held for the facade's life would enforce the "
+        "presumption; that follow-up is not scheduled. On the real backend, while the runtime "
+        "runs, `/readyz` carries an `oms` check",
+        "A testnet process's runtime is `degraded` from its start, before any sink is built: "
+        "testnet serves connectivity smoke tests only (CONSTITUTION §1.2), and the exchange "
+        "adapter builds no testnet trading port, so the runtime fails closed and its `/readyz` "
+        "check stays `degraded`.",
+    )
+    assert "no request can send any more" in _words(_SCHEMA_DOC)  # the sentence 20 quotes
+    guard = _SCHEMA_DOC.split("CREATE FUNCTION rs_guard()", 1)[1].split("END $BODY$;", 1)[0]
+    assert "('pending','void')" in guard and "('void'," not in guard  # a `void` row never leaves
+
+
+def test_21_and_23_note_the_label_the_sweeps_cap_and_the_order_feed() -> None:
+    """CR-S3N-02, -04, -08, -09c: 21 owns `actor_label` and the sweep's cap, whose figures are the
+    code's (15 s at 200 k rows/s is 3 M rows); 23 says where the facade runs until CV-C13's lane
+    (recorded, not a waiver), that the runtime holds `OmsRuntime.run` to it for each route submit,
+    and that an `order` machine's feed removes no entry."""
+    row = next(line for line in _SCHEMA_DOC.splitlines() if line.startswith("| `actor_label`"))
+    assert _words(row).endswith("survives user deletion; OMS, key import: `user:<role>` |")
+    assert (
+        "so a row keeps the name it was written with (`auth.login` the typed identifier, an "
+        "invite the username, `user:<role>` for OMS and key-import records, whose user is "
+        "identified by `actor_user_id`)." in _words(_SCHEMA_DOC)
+    )
+    rows, rate = 3_000_000, 200_000  # the code's own sizing, beside the cap in `oms_wiring`
+    assert rows / rate * 1000 == SWEEP_STATEMENT_TIMEOUT_MS
+    section = _SCHEMA_DOC.split("**Deliberately absent indexes:**", 1)[1].split("\n\n", 1)[0]
+    assert (
+        f"The startup sweep reads it under its own {SWEEP_STATEMENT_TIMEOUT_MS // 1000} s "
+        "statement cap (`SWEEP_STATEMENT_TIMEOUT_MS`), sized for about "
+        f"{rows // 1_000_000} M orders of the environment's accounts at about {rate // 1000} k "
+        "rows/s, figures assumed and unmeasured; past that every attempt times out and is "
+        "retried for good, with a WARNING each time and no page, so `/readyz`'s `oms` check "
+        "stays `starting` and the OMS never gets ready (fail closed), which is when the read "
+        "needs an index." in _words(section)
+    )
+    attached = ("session", "replay", "alert", "book", "order")  # the five 23 says are fed
+    others = [kind for kind in MACHINE_KINDS if kind not in attached]
+    assert len(others) == 8
+    listing = ", ".join(f"`{kind}`" for kind in others[:-1]) + f" and `{others[-1]}`"
+    assert not _missing(
+        _words(_WS_DOC),
+        "the order facade (E29-T04) runs on the serving loop, which `OmsRuntime.run` enforces "
+        "for each route submit, until 29 CV-C13's dedicated order lane is built; that lane hops "
+        "with `call_soon_threadsafe`, as a machine on any other event loop must first.",
+        "Sharing the serving loop is slice 3's recorded interim, not a waiver of CV-C13: the "
+        "lane is a named slice of #913 that merges before the ticket closes.",
+        "and the OMS runtime attaches the `order` kind (B1, E29-T04 slice 3, `OrderStateFeed`, "
+        "bound per order with its account, on the real backend).",
+        "A stopped machine removes its entry, except an `order` machine's: `OrderStateFeed` "
+        "removes none, so one stopped before its last step leaves its entry as last published; "
+        "a terminal one stays 60 s.",
+        f"The other eight kinds ({listing}) have no runtime machine yet:",
+    )
+    assert callable(OmsRuntime.run) and not hasattr(OrderStateFeed, "remove")  # none to call
+
+
+def test_24_gives_the_demand_and_the_audit_labels_the_code_holds() -> None:
+    """CR-S3N-04, -05, -07: 9.3's demand as `ReferenceDemand` takes it, its figures the code's
+    constants, and 15.5's label rule as `OmsAudit` writes it, `system:oms` the code's own."""
+    sizing = _between(_INTERNAL_DOC, "### 9.3 Sizing algorithm", "**9.3.1 Stop resolution.**")
+    ttl, window = int(REFERENCE_DEMAND_TTL_S), int(REFERENCE_DEMAND_WINDOW_S)
+    assert (ttl, window) == (REFERENCE_DEMAND_TTL_S, REFERENCE_DEMAND_WINDOW_S)  # whole seconds
+    assert not _missing(
+        sizing,
+        "The stream holds a symbol only while something asks for it, so the binding takes a "
+        "demand for a market order's symbol on an ask that had no price: across the runtime, "
+        f"at most {REFERENCE_DEMAND_MAX} symbols, at most {REFERENCE_DEMAND_NEW} new ones in "
+        f"each {window} s window, each released at the next ask {ttl} s after its last, and all "
+        f"at the runtime's stop (`{ReferenceDemand.__name__}`).",
+        "A first ask on a symbol nobody watched is therefore a `503`, and a retry after "
+        "`Retry-After` finds the price once the stream has the first ticker, unless the "
+        "window's budget is spent.",
+    )
+    assert not _missing(
+        _words(_INTERNAL_DOC),
+        f"Every record `{OmsAudit.__name__}` writes (E29-T04), whatever its action: "
+        f"`actor_label` is `{SYSTEM_ACTOR}`, or `user:<role>` for a request's, as "
+        "`accounts/key_import.py` labels its records, and the acting user is `actor_user_id` "
+        "with `session_id` and `actor_ip`; a record that names a user but no role is refused, "
+        "never written.",
+        "The account an order action concerns goes in `after_state` as `account_id`, because "
+        "`audit_log` has no account column (21 §3.10.1), so one account's order actions are "
+        "read by scanning `after_state`.",
     )
