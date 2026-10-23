@@ -1759,6 +1759,7 @@ Drag preview                Drop zones
 - **Stories:** US-RULE-001, US-RULE-002, US-RULE-003, US-RULE-004, US-RULE-006, US-RULE-007.
 - **Design sign-off acceptance checklist:** [ ] condition rows, logic grouping, action rows and scope selector drawn [ ] full metric and action vocabulary reachable via a searchable picker with descriptions [ ] validation error presentation (summary + row highlight) drawn [ ] estimated-detector warning banner drawn [ ] the graph-authored read-only summary state drawn [ ] round-trip indicator drawn (see Round-trip verification) [ ] keyboard-only authoring verified [ ] arming path with its confirmation
 - **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) (E36-D01; heuristic, pending owner approval; the sentence grammar G1–G13 with the §5.6 field → phrase map, the seven PROPOSED picker categories with "(estimated)" as a tag, the two-level grouping model DECIDED by the shipped form subset with its graph-only list, the twelve badge surfaces; design change requests DCR-1..DCR-12 against E36-D02).
+- **Design (wireframe → hi-fi):** [E36-D02.md](../design/E36/E36-D02.md) · [E36-D02-handoff.md](../design/E36/E36-D02-handoff.md) (E36-D02; owner approval pending; the six states and the four round-trip states as frames, the CMP-140 / 141 / 142 / 145 / 157 / 233 / 234 / 235 contracts with their `15` amendments PROPOSED for E36-D03, the copy deck; Penpot page by name + id in the spec).
 
 ### SCR-082 — Rule editor — node-graph mode
 
@@ -1810,6 +1811,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `rule.template_previewed`, `rule.template_instantiated` with `{templateId}` (analytics); the resulting draft emits the audited `rule.created`.
 - **Design sign-off acceptance checklist:** [ ] all listed templates drawn as cards with plain-language behaviour text [ ] the metrics each needs and its recorded-history requirement stated [ ] estimated-detector dependency badged [ ] which editor it opens in is stated [ ] search/filter [ ] preview-before-instantiate
 - **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) §2 (E36-D01; heuristic, pending owner approval; the twelve templates read back in the PROPOSED grammar; the liquidity-cluster template's direction is its C11, an owner decision under C-2.6 — tightening is the only direction a manager can express, and as worded the template needs a stop-relative metric the vocabulary lacks, its G13 gap).
+- **Design (wireframe → hi-fi):** [E36-D02.md](../design/E36/E36-D02.md) §10 (E36-D02; owner approval pending; the twelve cards with the E36-D01 §2 sentences, T9 tightening-only per the #872 decision, the badge as a card state, preview-before-instantiate, empty / no-results).
 
 ### SCR-084 — Rule simulation / backtest panel
 
