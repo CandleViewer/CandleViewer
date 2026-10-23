@@ -4218,6 +4218,8 @@ export interface paths {
      *     starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
      *     `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
      *     request stores nothing.
+     *     Audited as `retention.change` (the set before and after), written before the new set is
+     *     stored; if it cannot be written the answer is `503 audit_unavailable` and nothing changes.
      */
     put: operations["setRetentionPolicies"];
     post?: never;
@@ -4331,6 +4333,7 @@ export interface paths {
      *     (`RecordingStatus.policy.max_symbols`) an add is `422 recorder_symbol_limit`. `pinned: true`,
      *     a non-default `retention_days` or a re-add that would change kept data's retention needs the
      *     `recorder` step-up (`403 step_up_required`); a plain add needs none.
+     *     Audited as `recorder.start`.
      */
     post: operations["addRecordedSymbol"];
     delete?: never;
@@ -4362,6 +4365,8 @@ export interface paths {
      *     `conflict` while an auto-record trigger is still active (open chart or open position) unless
      *     `force=true`. `purge_data=true` is deprecated and refused with `422 validation_failed` (rule
      *     `use_purge_route`): `purgeRecordedData` is the one path that deletes recorded data.
+     *     `force=true` ends the manual reason despite the `conflict` refusal; the symbol keeps
+     *     recording for the remaining reason, and its pin is untouched. Audited as `recorder.stop`.
      */
     delete: operations["removeRecordedSymbol"];
     options?: never;
@@ -4373,6 +4378,7 @@ export interface paths {
      *     those subscriptions but does **not** delete already-recorded data — use
      *     `purgeRecordedData` for that. `pinned` or `retention_days` in the body needs the `recorder`
      *     step-up (`403 step_up_required`); `streams` and `depth` alone need none.
+     *     `{pinned: false}` on a stopped row removes it, as `pinRecordedSymbol` says.
      */
     patch: operations["updateRecordedSymbol"];
     trace?: never;
@@ -12590,7 +12596,7 @@ export interface operations {
       };
       400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
-      403: components["responses"]["CsrfTokenInvalid"];
+      403: components["responses"]["Forbidden"];
       /** @description An import job is already running. */
       409: {
         headers: {
@@ -12600,7 +12606,7 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
-      /** @description Idempotency-Key reused with a different body, or invalid range (`import_range_invalid`). */
+      /** @description Idempotency-Key reused with a different body (`422 idempotency_key_reused`), or invalid range (`import_range_invalid`). */
       422: {
         headers: {
           [name: string]: unknown;
@@ -18105,7 +18111,15 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
-      404: components["responses"]["NotFound"];
+      /** @description `not_found`: no row with this id, or a row the caller's role-restricted view does not hold (R-I2). */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       503: components["responses"]["ServiceUnavailable"];
     };
   };
