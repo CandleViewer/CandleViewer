@@ -191,18 +191,27 @@ def _all_streams(topic: str) -> tuple[str | None, tuple[str, ...]]:
 
 
 class SessionManager:
-    """Opens/closes `recording_sessions` rows and writes gap rows (module docstring)."""
+    """Opens/closes `recording_sessions` rows and writes gap rows (module docstring).
+
+    The audit writer is required (C-2.9, #2188): crash recovery closes every session a dead
+    process left open and writes the `recorder.stop` audit record first, so a manager without
+    an audit writer cannot exist - there is no unaudited path to skip."""
 
     def __init__(
         self,
         store: SessionStore,
         *,
         now_us: Callable[[], int],
+        audit: SessionAudit,
         config: SessionConfig | None = None,
         invalidate: Invalidate | None = None,
         topics: TopicResolver | None = None,
-        audit: SessionAudit | None = None,
     ) -> None:
+        if audit is None:  # the typed signature refuses it; this catches an untyped caller
+            raise ValueError(
+                "SessionManager needs an audit writer: the crash-recovery and stop audit "
+                "(`recorder.stop`, C-2.9) must never be skipped"
+            )
         self._audit = audit
         self._store = store
         self._topics = topics or _all_streams
@@ -385,8 +394,6 @@ class SessionManager:
         timeout cancels an emit still queued for the WAL (nothing is appended), while one
         already appending finishes inside the sink. So a timeout leaves at most one in-flight
         record - over-audit, never under-audit - and no orphan task here."""
-        if self._audit is None:
-            return
         async with asyncio.timeout(self._cfg.store_timeout_s):
             await self._audit.emit(
                 "recorder.stop",
