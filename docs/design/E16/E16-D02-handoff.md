@@ -27,7 +27,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
       table 4
 - [x] **Density notes** — comfortable (admin default): row `size.row.comfortable`, controls `size.control.comfortable`;
       compact: `size.row.compact`, `size.control.compact`; smallest hit target 32 × 32 px comfortable (the Why?
-      button and the switch at table size), 24 × 24 px compact; density table below
+      button and the switch at table size; CMP-002 asks 44: E16-D02 D-17), 24 × 24 px compact; density table below
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — Tier-2/Tier-3 only, as listed in `E16-D02.md` §11.1; none invented; Penpot token sets =
       `packages/ui/tokens` at the PR base, which includes #3925's retune of the light danger tone (E16-D02 §10.4
