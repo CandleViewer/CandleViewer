@@ -414,11 +414,13 @@ def test_any_refusal_to_start_is_not_stored_under_the_idempotency_key() -> None:
 def test_the_idempotency_key_points_to_the_refusal_exception() -> None:
     """Security F6 (1) of the contract-C review: the parameter says "Replays return the original
     response", which `createBackup` and `restoreBackup` do not do for a refusal to start, so it
-    names the exception that `info.description` states (pinned above) and points to it."""
+    names the exception that `info.description` states (pinned above) and points to it. #906 D2-c
+    (R1S-02) lists the profile writes' exception beside it."""
     key = text(SPEC["components"]["parameters"]["IdempotencyKey"]["description"])
     replays = "Client-generated UUIDv4. Replays return the original response with "
     replays += "`Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do "
-    replays += "not store a refusal to start under the key (the exception under Idempotency in "
+    replays += "not store a refusal to start under the key, and the profile writes and "
+    replays += "`setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in "
     replays += "`info.description`)."
     assert key == replays
 

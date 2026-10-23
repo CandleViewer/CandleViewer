@@ -2242,7 +2242,8 @@ export interface paths {
      * @description Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. The one
      *     operation that moves the account's default (decision D7): the body names the profile to
      *     bind and nothing else. A `profile_id` that is missing, deleted or another account's is
-     *     `404`, as an account outside the caller's grants is, and a body that fails its schema is
+     *     `404`, as an account outside the caller's grants is, and so is an account of another
+     *     environment than this server's (C-2.11), and a body that fails its schema is
      *     `422 validation_failed`, and one over 1 KiB `413 payload_too_large`; none is audited.
      *
      *     `If-Match` is required and takes this binding's `ETag`, never a profile's, and it is
@@ -2585,7 +2586,7 @@ export interface paths {
      *     next `version`; the previous version stays readable as a revision, and a position sized
      *     from it keeps it. `require_native_stop` cannot be set to `false`: the attempt is
      *     `422 validation_failed` / `native_stop_mandatory`, audited as `profile.save_refused`
-     *     (SR-E28-08).
+     *     (SR-E28-08). A body over 64 KiB is `413 payload_too_large`, as on a create.
      *
      *     A replace never moves the account's default: the default binding moves only through its
      *     own operation (`setAccountDefaultProfile`). A body whose `is_default` differs from the
@@ -2600,10 +2601,10 @@ export interface paths {
      *     record cannot be written nothing changes (`503 audit_unavailable`). The server judges a
      *     replace as it judges a move (`setAccountDefaultProfile`), cap by cap: `null` is no bound,
      *     and every cap of a profile that cannot trade counts as zero. A replace that loosens a cap,
-     *     or widens what a profile that can trade allows (an allow entry added, `all_symbols` set,
-     *     a block entry removed), is labelled `relaxing` in that record and notifies the Owner
-     *     (SR-E28-01). So turning trading off, or clearing the caps of a profile that cannot trade,
-     *     is never relaxing, and turning trading on always is.
+     *     or widens what a profile that can trade allows (an allow entry added or changed,
+     *     `all_symbols` set, a block entry removed), is labelled `relaxing` in that record and
+     *     notifies the Owner (SR-E28-01). So turning trading off, or clearing the caps of a profile
+     *     that cannot trade, is never relaxing, and turning trading on always is.
      */
     put: operations["updateAccountProfile"];
     post?: never;
@@ -6012,10 +6013,11 @@ export interface components {
      *     (`"0.5"` is 0.5 %), and a decimal holds at most the places of its column (18 for USDT
      *     amounts, quantities and offsets, 6 for percents of equity and `stop_loss.fallback_pct`, 4
      *     for `stop_loss.atr_multiple`, 2 for `leverage` and `risk_caps.max_leverage_cap`; 18 for a
-     *     rung's `qty_pct` and `r`), refused rather than rounded (`precision`). Every USDT amount,
-     *     quantity and offset, and a rung's `r`, is below 10^20 and `stop_loss.atr_multiple` below
-     *     10^6, the bounds of their columns (`range`). A create and a replace alike give a member
-     *     they leave out its default, `null` where nullable (no cap), never the stored value.
+     *     rung's `qty_pct` and `r`), trailing zeros not counted, refused rather than rounded
+     *     (`precision`). Every USDT amount, quantity and offset, and a rung's `r`, is below 10^20 and
+     *     `stop_loss.atr_multiple` below 10^6, the bounds of their columns (`range`). A create and a
+     *     replace alike give a member they leave out its default, `null` where nullable (no cap),
+     *     never the stored value.
      *
      *     Beyond its schema the body must hold (`ProfileRejected` names each rule): the sizing
      *     amount of `sizing.mode` and no other (`required`, `not_allowed`); a `stop_loss` when
@@ -11208,7 +11210,7 @@ export interface components {
     /** @description Inclusive start of the time window (RFC 3339 UTC). */
     From: string;
     HotkeyProfileId: string;
-    /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+    /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
     IdempotencyKey: string;
     /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
     IdempotencyKeyRequired: string;
@@ -11446,7 +11448,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -11721,7 +11723,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12913,7 +12915,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14196,7 +14198,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14318,7 +14320,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14401,7 +14403,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14676,7 +14678,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
         "If-Match": components["parameters"]["IfMatchRequired"];
@@ -15120,7 +15122,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -15194,7 +15196,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
         "If-Match": components["parameters"]["IfMatchRequired"];
@@ -15245,7 +15247,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
         "If-Match": components["parameters"]["IfMatchRequired"];
@@ -17993,7 +17995,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -18214,7 +18216,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -18475,7 +18477,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -19563,7 +19565,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -19631,7 +19633,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
@@ -19679,7 +19681,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -20100,7 +20102,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -20788,7 +20790,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -20904,7 +20906,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -21018,7 +21020,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -21148,7 +21150,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify

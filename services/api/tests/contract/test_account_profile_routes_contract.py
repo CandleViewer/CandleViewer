@@ -465,7 +465,7 @@ def test_the_move_is_the_owners_alone_in_both_matrices() -> None:
 
 def test_every_profile_write_bounds_its_body_and_its_environment() -> None:
     """D2 spec Sec.7 (a), (c): a body past its cap is `413`, and an account of another environment
-    is answered as a missing one (C-2.11)."""
+    is answered as a missing one (C-2.11), on the move as on the writes (R1S-01)."""
     post = _text(_OPS["createAccountProfile"]["description"])
     move = _text(_OPS["setAccountDefaultProfile"]["description"])
     elsewhere = "An account of another environment than this server's is `404`, as a missing one"
@@ -473,6 +473,15 @@ def test_every_profile_write_bounds_its_body_and_its_environment() -> None:
     assert f"{elsewhere} is, {capped}" in post
     assert "`422 validation_failed`, and one over 1 KiB `413 payload_too_large`; none is" in move
     assert _CODES["payload_too_large"]["status"] == 413  # the pair the texts cite is registered
+    # R1S-01: (i) keeps the move apart from "the profile writes", so its own text names the 404
+    others = "as an account outside the caller's grants is, and so is an account of another"
+    assert f"{others} environment than this server's (C-2.11), and a body that fails" in move
+
+
+def test_a_replace_over_64_kib_is_payload_too_large_as_a_create_is() -> None:
+    """R1C-06: `updateAccountProfile` declares the `413` and says what the create says of it."""
+    put = _text(_OPS["updateAccountProfile"]["description"])
+    assert "A body over 64 KiB is `413 payload_too_large`, as on a create." in put
 
 
 def test_the_second_pass_reads_the_cache_only_for_what_the_write_introduces() -> None:
@@ -512,16 +521,18 @@ def test_a_replace_is_judged_as_a_move_and_also_by_its_symbols() -> None:
     """The 17:25Z ruling 1: a replace relaxes when it loosens a cap under the move's zero rule, or
     widens what a profile that can trade allows (SR-E28-01, ruling B10)."""
     put = _text(_OPS["updateAccountProfile"]["description"])
+    widens = "(an allow entry added or changed, `all_symbols` set, a block entry removed)"
     said = (
         "The server judges a replace as it judges a move (`setAccountDefaultProfile`), cap by cap:"
         " `null` is no bound, and every cap of a profile that cannot trade counts as zero.",
-        "A replace that loosens a cap, or widens what a profile that can trade allows (an allow"
-        " entry added, `all_symbols` set, a block entry removed), is labelled `relaxing` in that"
-        " record and notifies the Owner (SR-E28-01).",
+        f"A replace that loosens a cap, or widens what a profile that can trade allows {widens},"
+        " is labelled `relaxing` in that record and notifies the Owner (SR-E28-01).",
         "So turning trading off, or clearing the caps of a profile that cannot trade, is never"
         " relaxing, and turning trading on always is.",
     )
     assert [words for words in said if words not in put] == []
+    # R1S-04: what widens a write is one list, so (e)'s trigger list says "or changed" as (b) does
+    assert widens in _text(_REJECTED["description"].split("\n\n")[2])
 
 
 def test_the_body_states_its_bounds_and_the_name_holds_no_control_character() -> None:
@@ -530,7 +541,8 @@ def test_the_body_states_its_bounds_and_the_name_holds_no_control_character() ->
     said = _text(body["description"])
     places = "2 for `leverage` and `risk_caps.max_leverage_cap`; 18 for a rung's `qty_pct` and `r`)"
     bounds = "Every USDT amount, quantity and offset, and a rung's `r`, is below 10^20 and"
-    assert f"{places}, refused rather than rounded (`precision`)." in said
+    uncounted = "trailing zeros not counted, refused rather than rounded (`precision`)."  # R1S-07
+    assert f"{places}, {uncounted}" in said
     assert f"{bounds} `stop_loss.atr_multiple` below 10^6, the bounds of their columns" in said
     name = body["properties"]["name"]
     assert name["pattern"] == r"^[^\x00-\x1F]+$"  # JSON Schema, Python `re` and the model alike
@@ -548,10 +560,22 @@ def test_the_body_states_its_bounds_and_the_name_holds_no_control_character() ->
 
 
 def test_the_profile_writes_replay_only_a_success() -> None:
-    """D2 spec Sec.7 (i): a refusal is never kept under the key, so its retry runs afresh."""
+    """D2 spec Sec.7 (i): a refusal is never kept under the key, so its retry runs afresh; and the
+    17:25Z ruling 2 (R1S-02): a stored `2xx` is answered after the account is resolved."""
     said = _text(SPEC["info"]["description"])
     rule = "the profile writes and `setAccountDefaultProfile` store only a `2xx` under the key:"
-    assert f"Exception (E28-T02): {rule} every refusal is evaluated afresh on a retry." in said
+    afresh = "every refusal is evaluated afresh on a retry."
+    after = "A stored `2xx` is answered only after the account and its environment are resolved,"
+    order = f"{after} so a replay on a deleted account, or on one of another environment, is `404`."
+    assert f"Exception (E28-T02): {rule} {afresh} {order}" in said
+
+
+def test_the_idempotency_key_parameter_lists_the_profile_writes_beside_the_backups() -> None:
+    """R1S-02: the parameter names the exceptions to the replay rule, so E28's stands by E42's."""
+    said = _text(_COMPONENTS["parameters"]["IdempotencyKey"]["description"])
+    backups = "except that `createBackup` and `restoreBackup` do not store a refusal to start"
+    writes = "and the profile writes and `setAccountDefaultProfile` store only a `2xx`"
+    assert f"{backups} under the key, {writes} (the exceptions under Idempotency in" in said
 
 
 def test_a_profile_and_the_binding_name_the_accounts_environment() -> None:
@@ -574,3 +598,11 @@ def test_a_profile_and_the_binding_name_the_accounts_environment() -> None:
     written = schemas["AccountProfileInput"]
     assert "environment" not in written["properties"] and written["additionalProperties"] is False
     assert "environment" not in api.AccountProfileInput.model_fields
+    # R1C-04 (O4): the binding example's account is the `listExchangeAccounts` example's, so its
+    # badge is that account's environment, not another
+    shown = _OPS["getAccountDefaultProfile"]["responses"]["200"]["content"]["application/json"]
+    binding = shown["examples"]["bound"]["value"]
+    listing = _PATHS["/exchange-accounts"]["get"]["responses"]["200"]["content"]["application/json"]
+    items = listing["examples"]["twoAccounts"]["value"]["items"]
+    (listed,) = [item for item in items if item["id"] == binding["exchange_account_id"]]
+    assert binding["environment"] == listed["environment"]
