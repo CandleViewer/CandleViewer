@@ -189,6 +189,11 @@ class AccountsRowCounts(Protocol):
         no soft delete, and keys of soft-deleted accounts still exist)."""
         ...
 
+    async def count_profiles_by_trading_state(self, env: str) -> dict[str, int]:
+        """Live `account_profiles` of `env`'s live accounts per trading state (`trading_enabled`,
+        `trading_disabled`; #906 D1a); an absent state is omitted."""
+        ...
+
 
 class AccountsStore(AccountsRowCounts, Protocol):
     async def create_account(

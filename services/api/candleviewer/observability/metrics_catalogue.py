@@ -651,9 +651,10 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E27",
         max_series=6,
     ),
-    # --- Account profiles (E28-T01, #905) (planned) -----------------------------------------
-    # Named ahead: `ProfilesRepository` and `EffectiveProfiles` take these from the composition
-    # root, which wires them with their first consumer (E28-T02's routes, E28-T04's guard).
+    # --- Account profiles (E28-T01, #905; live since #906 D1a) -----------------------------
+    # `cv_profile_rows` is refreshed with the M13 row gauges (`AccountsService`, real backend only).
+    # `profiles_wiring` hands the counters to their owners: `ProfilesRepository` counts from the
+    # first profile write (#906 D2), `EffectiveProfiles` from its first reader (E28-T03, E28-T04).
     _s(
         "cv_profile_rows",
         "gauge",
@@ -662,7 +663,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "Live account profiles of the process environment's accounts, by trading state "
         "(trading_enabled, trading_disabled).",
         "dashboard only",
-        _P,
+        _L,
         "E28",
         max_series=2,
     ),
@@ -673,7 +674,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         (),
         "Profile rows given a new version by a write; each bump also wrote a revision (SR-E28-07).",
         "dashboard only",
-        _P,
+        _L,
         "E28",
         max_series=1,
     ),
@@ -684,7 +685,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("result",),
         "Effective-profile reads on the order path, by cache result (hit, miss).",
         "dashboard only",
-        _P,
+        _L,
         "E28",
         max_series=2,
     ),

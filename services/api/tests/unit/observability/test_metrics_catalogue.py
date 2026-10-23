@@ -214,6 +214,8 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["support_bundle_generations_total"].labels("ok").inc()
     r["cv_accounts_rows"].labels("main").set(1)
     r["cv_api_keys_rows"].labels("active").set(1)
+    r["cv_profile_rows"].labels("trading_enabled").set(1)
+    r["cv_profile_cache_lookups_total"].labels("hit").inc()
     r["cv_audit_verify_runs_total"].labels("ok").inc()
     r["cv_http_request_duration_seconds"].labels("/v1/x", "GET", "2xx").observe(0.01)
     r["cv_key_verification_total"].labels("failed", "key_expired").inc()
@@ -244,6 +246,23 @@ def test_account_row_gauges_are_live_and_bounded_by_their_enums() -> None:
     assert (rows.kind, rows.labels, rows.max_series) == ("gauge", ("kind",), len(AccountKind))
     assert (keys.kind, keys.labels, keys.max_series) == ("gauge", ("state",), len(KeyStatus))
     assert rows.owner_epic == keys.owner_epic == "E27"
+
+
+def test_profile_series_are_live_and_bounded_by_their_closed_sets() -> None:
+    """#906 D1a: E28-T01's three entries are live. Per trading state and per cache result, never
+    per account or profile (SR-125, PF-I07); the version bumps carry no label at all."""
+    from candleviewer.accounts.service import _PROFILE_STATES
+
+    specs = {
+        s.name: (s.kind, s.labels, s.max_series, s.status, s.owner_epic)
+        for s in CATALOGUE
+        if s.name.startswith("cv_profile_")
+    }
+    assert specs == {
+        "cv_profile_rows": ("gauge", ("state",), len(_PROFILE_STATES), "live", "E28"),
+        "cv_profile_version_bumps_total": ("counter", (), 1, "live", "E28"),
+        "cv_profile_cache_lookups_total": ("counter", ("result",), 2, "live", "E28"),
+    }
 
 
 def test_key_selfcheck_series_are_bounded_by_their_closed_sets() -> None:

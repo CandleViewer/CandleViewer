@@ -176,7 +176,14 @@ _COLUMN_COPIES = {
     "_ROT_COLS": ("_GET_ROT", "_LIST_ROTS", "_STEP_VALIDATED", "_STEP_CUTOVER",
                   "_STEP_COMPLETED", "_STEP_FAILED"),
 }  # fmt: skip
-_NO_COLUMN_COPY = {"_OWNER_GATE", "_SOFT_DELETE", "_START_ROT", "_COUNT_ACCOUNTS", "_COUNT_KEYS"}
+_NO_COLUMN_COPY = {
+    "_OWNER_GATE",
+    "_SOFT_DELETE",
+    "_START_ROT",
+    "_COUNT_ACCOUNTS",
+    "_COUNT_KEYS",
+    "_COUNT_PROFILES",
+}
 
 
 def test_every_statement_has_at_most_one_pinned_column_list() -> None:
@@ -252,18 +259,29 @@ def test_telemetry_statements_are_env_bound_aggregates_without_row_identity() ->
         assert ".id::text" not in text and " AS id" not in text
     assert "ea.deleted_at IS NULL" in _sql(mod._COUNT_ACCOUNTS)
     assert "deleted_at" not in _sql(mod._COUNT_KEYS)  # 21 §3.2: every api_keys row counts
+    profiles = _sql(mod._COUNT_PROFILES)  # #906 D1a: live profiles of live accounts, per state
+    case = "CASE WHEN p.trading_enabled THEN 'trading_enabled' ELSE 'trading_disabled' END"
+    assert case in profiles
+    assert "p.deleted_at IS NULL" in profiles and "ea.deleted_at IS NULL" in profiles
+    assert "ea.id = p.exchange_account_id" in profiles
 
 
 async def test_row_counts_map_rows_and_run_no_gate_and_no_commit() -> None:
     rel = _Rel(
         _Result([{"kind": "main", "n": 2}, {"kind": "sub", "n": 1}]),
         _Result([{"status": "active", "n": 3}]),
+        _Result([{"state": "trading_enabled", "n": 4}, {"state": "trading_disabled", "n": 1}]),
     )
     store = _store(rel)
     assert await store.count_accounts_by_kind("live") == {"main": 2, "sub": 1}
     assert await store.count_api_keys_by_status("live") == {"active": 3}
-    assert [c[0] for c in rel.calls] == [mod._COUNT_ACCOUNTS, mod._COUNT_KEYS]
-    assert [c[1] for c in rel.calls] == [{"env": "live"}, {"env": "live"}] and rel.commits == 0
+    assert await store.count_profiles_by_trading_state("live") == {
+        "trading_enabled": 4,
+        "trading_disabled": 1,
+    }
+    counts = [mod._COUNT_ACCOUNTS, mod._COUNT_KEYS, mod._COUNT_PROFILES]
+    assert [c[0] for c in rel.calls] == counts
+    assert [c[1] for c in rel.calls] == [{"env": "live"}] * 3 and rel.commits == 0
 
 
 @pytest.mark.parametrize("env", ["", "prod", "LIVE"])
@@ -273,6 +291,8 @@ async def test_row_counts_refuse_an_unknown_env_before_any_sql(env: str) -> None
         await _store(rel).count_accounts_by_kind(env)
     with pytest.raises(ValueError):
         await _store(rel).count_api_keys_by_status(env)
+    with pytest.raises(ValueError):
+        await _store(rel).count_profiles_by_trading_state(env)
     assert rel.calls == []
 
 

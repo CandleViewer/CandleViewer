@@ -311,6 +311,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("view_as_refusal_flush", view_as_flush.stop)
             if account_health is not None:  # its hook calls drain before `stop_all` stops modules
                 await teardown.run("account_health", account_health.stop)
+            profiles = getattr(app.state, "profiles", None)
+            if profiles is not None:  # #906 D1a: the cache's loads, then its pool
+                await teardown.run("profiles", profiles.dispose)
         finally:
             await teardown.run("supervisor.stop_all", supervisor.stop_all)
             if persistence is not None:  # E50-T63: drained after `stop_all`, bounded by itself

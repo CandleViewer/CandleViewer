@@ -297,6 +297,7 @@ from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHist
 from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
+from candleviewer.profiles_wiring import wire_profiles
 from candleviewer.recorder.coverage import CoverageService
 from candleviewer.recorder.metrics import current_write_backlog_rows, export_recorder_metrics
 from candleviewer.recorder.service import RecorderService
@@ -2126,6 +2127,7 @@ def create_app(
             accounts_counts,
             metrics_facade.get("cv_accounts_rows"),
             metrics_facade.get("cv_api_keys_rows"),
+            profile_rows=metrics_facade.get("cv_profile_rows"),
             env=resolved.environment.value,
         )
     # E27-T03 (#836): the stored-key boot assertion and hourly re-check, run by the supervisor-
@@ -2147,6 +2149,10 @@ def create_app(
             auth=ctx.auth,  # a refusal names the caller's session (#4174)
         )
     )
+    # #906 D1a (E28-T02): the profile store, the order path's effective-profile cache over it and
+    # the facade over both, with the T01 counters (real backend only). The lifespan disposes of it.
+    profiles = wire_profiles(resolved, metrics_facade)
+    app.state.profiles = profiles
     # E27-T04 (#837): per-account health and the wallet cache, on both backends; the lifespan starts
     # and stops it, and `ctx.accounts.account_health` is its `feed`, the private-WS consumer's. It
     # serves the `wallet` topic built above, and its key standing reads the self-check's results

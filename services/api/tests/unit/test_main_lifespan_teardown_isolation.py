@@ -64,6 +64,7 @@ _STEPS = (
     "audit_budget_flush",
     "view_as_refusal_flush",
     "account_health",
+    "profiles",
 )
 #: The steps whose `start()` the lifespan awaits.
 _ASYNC_START = ("feature_flags", "bars_runtime")

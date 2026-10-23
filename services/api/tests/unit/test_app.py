@@ -240,11 +240,20 @@ async def test_create_app_wires_the_accounts_row_gauges_to_the_scraped_registry(
             envs.append(env)
             return {"invalid": 1}
 
+        async def count_profiles_by_trading_state(self, env: str) -> dict[str, int]:
+            envs.append(env)
+            return {"trading_disabled": 3}
+
     monkeypatch.setattr(appmod, "_build_accounts_counts", lambda _settings: _Counts())
-    ctx = create_app(_fake_settings()).state.app_context
+    app = create_app(_fake_settings())
+    ctx = app.state.app_context
     assert await ctx.accounts.refresh_once() is True
     sample = ctx.metrics.get_sample_value
     assert sample("cv_accounts_rows", {"env": "demo", "kind": "sub"}) == 2
     assert sample("cv_accounts_rows", {"env": "demo", "kind": "main"}) == 0
     assert sample("cv_api_keys_rows", {"env": "demo", "state": "invalid"}) == 1
-    assert envs == ["demo", "demo"]
+    # #906 D1a: the profile gauge rides the same loop; the fake backend wires no profile store
+    assert sample("cv_profile_rows", {"env": "demo", "state": "trading_disabled"}) == 3
+    assert sample("cv_profile_rows", {"env": "demo", "state": "trading_enabled"}) == 0
+    assert app.state.profiles is None
+    assert envs == ["demo"] * 3

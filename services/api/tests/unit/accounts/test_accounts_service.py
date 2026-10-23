@@ -24,16 +24,21 @@ from candleviewer.observability.metrics_catalogue import register_r0
 _CTX = cast(AppContext, object())
 _KINDS = ("main", "sub")
 _STATES = ("pending", "active", "rotating", "revoked", "expired", "invalid")
+_PROFILE_STATES = ("trading_enabled", "trading_disabled")
 _TASK = "accounts-row-gauges"
 
 
 class _Counts:
-    """Fake `AccountsRowCounts`: the configured counts, or `fail`, or a read that never ends."""
+    """Fake `AccountsRowCounts`: the configured counts, or `fail`, or a read that never ends.
+    `fail_profiles` and `hang_profiles` act on the profile count alone, the third read."""
 
-    def __init__(self, accounts: dict[str, int], keys: dict[str, int]) -> None:
-        self.accounts, self.keys = accounts, keys
+    def __init__(
+        self, accounts: dict[str, int], keys: dict[str, int], profiles: dict[str, int] | None = None
+    ) -> None:
+        self.accounts, self.keys, self.profiles = accounts, keys, profiles or {}
         self.fail: Exception | None = None
-        self.hang = False
+        self.fail_profiles: Exception | None = None
+        self.hang = self.hang_profiles = False
         self.envs: list[str] = []
         self.calls = 0
 
@@ -49,6 +54,14 @@ class _Counts:
     async def count_api_keys_by_status(self, env: str) -> dict[str, int]:
         self.envs.append(env)
         return dict(self.keys)
+
+    async def count_profiles_by_trading_state(self, env: str) -> dict[str, int]:
+        self.envs.append(env)
+        if self.hang_profiles:
+            await asyncio.Event().wait()
+        if self.fail_profiles is not None:
+            raise self.fail_profiles
+        return dict(self.profiles)
 
 
 class _Sleep:
@@ -76,7 +89,11 @@ def _wired(counts: _Counts, **kw: Any) -> tuple[AccountsService, Metrics]:
     gauges = register_r0(metrics)
     svc = AccountsService(**kw)
     svc.attach_row_gauges(
-        counts, gauges["cv_accounts_rows"], gauges["cv_api_keys_rows"], env="demo"
+        counts,
+        gauges["cv_accounts_rows"],
+        gauges["cv_api_keys_rows"],
+        profile_rows=gauges["cv_profile_rows"],
+        env="demo",
     )
     return svc, metrics
 
@@ -89,6 +106,11 @@ def _rows(m: Metrics) -> dict[str, float | None]:
 def _keys(m: Metrics) -> dict[str, float | None]:
     get = m.registry.get_sample_value
     return {s: get("cv_api_keys_rows", {"env": "demo", "state": s}) for s in _STATES}
+
+
+def _profiles(m: Metrics) -> dict[str, float | None]:
+    get = m.registry.get_sample_value
+    return {s: get("cv_profile_rows", {"env": "demo", "state": s}) for s in _PROFILE_STATES}
 
 
 def _loops() -> list[asyncio.Task[Any]]:
@@ -138,7 +160,53 @@ async def test_refresh_sets_every_label_value_and_zero_for_absent_ones() -> None
         "pending": 0.0, "active": 2.0, "rotating": 0.0,
         "revoked": 1.0, "expired": 0.0, "invalid": 0.0,
     }  # fmt: skip
-    assert counts.envs == ["demo", "demo"]  # both reads scoped to the process environment
+    assert counts.envs == ["demo"] * 3  # every read scoped to the process environment
+
+
+async def test_refresh_sets_both_profile_states_and_zero_for_an_absent_one() -> None:
+    """#906 D1a: `cv_profile_rows` is set for each trading state on every pass, 0 when the store
+    omits it, so a state whose last profile moved to the other reads 0, never its stale count."""
+    counts = _Counts({}, {}, {"trading_enabled": 3})
+    svc, m = _wired(counts)
+    assert await svc.refresh_once() is True
+    assert _profiles(m) == {"trading_enabled": 3.0, "trading_disabled": 0.0}
+    counts.profiles = {"trading_disabled": 2}
+    assert await svc.refresh_once() is True
+    assert _profiles(m) == {"trading_enabled": 0.0, "trading_disabled": 2.0}
+
+
+async def test_a_failed_profile_count_keeps_every_gauge_and_counts_the_failure() -> None:
+    """The profile count is the third read of one pass: its failure publishes nothing of the
+    pass, so no gauge is half-new, and it is counted and logged like the first two."""
+    counts = _Counts({"main": 1}, {"active": 1}, {"trading_enabled": 2})
+    svc, m = _wired(counts)
+    assert await svc.refresh_once() is True
+    counts.accounts, counts.keys = {"main": 5}, {"active": 5}
+    counts.profiles = {"trading_enabled": 9}
+    counts.fail_profiles = OSError("connection refused to 10.1.2.3")
+    with capture_logs() as logs:
+        assert await svc.refresh_once() is False  # never raised
+    assert (_rows(m)["main"], _keys(m)["active"], _profiles(m)["trading_enabled"]) == (1, 1, 2)
+    assert [(e["error"], e["consecutive_failures"]) for e in logs] == [("OSError", 1)]
+    assert "10.1.2.3" not in repr(logs)
+    counts.fail_profiles = None
+    assert await svc.refresh_once() is True
+    assert (_rows(m)["main"], _keys(m)["active"], _profiles(m)["trading_enabled"]) == (5, 5, 9)
+
+
+async def test_a_hung_profile_count_times_out_and_counts_as_a_failure() -> None:
+    """The third read has a timeout of its own: the first two end at once, the third never."""
+    counts = _Counts({"main": 1}, {}, {"trading_enabled": 1})
+    counts.hang_profiles = True
+    svc, m = _wired(counts, timeout_s=0.0)
+    refresh = asyncio.ensure_future(svc.refresh_once())
+    try:
+        done, _ = await asyncio.wait({refresh}, timeout=5)  # bounds the test; times nothing
+        assert refresh in done, "the profile count was awaited without a timeout"
+        assert refresh.result() is False
+    finally:
+        refresh.cancel()
+    assert _rows(m) == {"main": None, "sub": None} and _profiles(m)["trading_enabled"] is None
 
 
 async def test_a_vanished_category_reads_zero_not_its_stale_value() -> None:
