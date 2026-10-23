@@ -7,8 +7,8 @@ Per `docs/plan/16-design-system-brief.md` §11.4 and §13.3 item 8 (`02` §4.2):
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: PENDING — text-first (2026-10-23); the nine boards land in the second PR. Page `E14-D03 Drawing tool rail and palette` (id pinned once created; never a URL, host, team or file id); planned PNGs `docs/design/E14/img/E14-D03-01-rail-anatomy-1280.png` … `-09-zoom-a11y-storybook.png` (spec §0)
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §4: 20 state rows; 17 `SCR-037/rail-<state>` frames per theme board plus the comfortable pair — 19 nested frames)
+- [x] **Final Penpot link** — page `E14-D03 Drawing tool rail and palette` · id `6efde4c3-f589-80b9-8008-d59065a16c7f` (never a URL, host, team or file id), boards 01–09 drawn from board script r4 by hcl-worker-2 under the [DESIGN-FLOW] grant and exported at 1:1; PNGs `docs/design/E14/img/E14-D03-01-rail-anatomy-1280.png` … `-09-zoom-a11y-storybook.png` (spec §0)
+- [x] **Variants × States matrix** — Table 1, drawn on boards 03 (dark) / 04 (light) (spec §4: 20 state rows; 17 `SCR-037/rail-<state>` frames per theme board plus the comfortable pair — 19 nested frames)
 - [x] **Keyboard table** — Table 2: E14-D02 §3.4 Table 2 cited row by row (the rail one roving stop after the status chips; `↑` / `↓`, `Home` / `End`; `Enter` / `Space` arms and moves focus to the plot stop; the T2 row; `Alt+L` `Alt+H` `Alt+O` `Alt+R` `Alt+D` and `Ctrl+M` interim (OQ-1a), registered by E14-S10; `Esc` the ladder; `Shift+F10` the context menu) plus D03's two additions (the tooltip on focus; the overflow badge's description); no view-local override of a global binding, `Esc` / `Ctrl+K` untouched; scheme (a) lints at 0 (spec §6.2)
 - [x] **Accessible name / role table** — Table 3: E14-D02 Table 3 cited (`toolbar` "Drawing tools" vertical; a tool `button` named by the tool; magnet `aria-haspopup="menu"` "Magnet: weak"; the toggles; "Delete all drawings…"; "More tools"; the chip `status`) plus the badge and tooltip wiring; T2 controls `aria-disabled` + `aria-describedby`, never `disabled` (E09-D09 §2.2)
 - [x] **Live data** — Table 5: the hide-all count ("200 drawings hidden") is the one live value — `aria-live="off"` on the button, the toggle announces once; the armed chip `role="status"` `aria-live="off"` (E14-D02 §3.2); nothing streams on the rail
@@ -17,7 +17,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none` for the rail (24×24 is exactly `size.target.min`; CMP-002's "44 px comfortable" line is a C-row, not an exception; the brush path exception is E14-D02 §17.5's, cited)
 - [x] **Tokens used** — spec §9.3: `color.surface.{raised,hover,selected,overlay,sunken,canvas}`, `color.text.{primary,secondary,tertiary}`, `color.border.{default,strong,selected}`, `color.focus.ring`, `color.status.danger.default`, `size.control.{compact,comfortable}`, `size.icon.{sm,md}`, `size.target.min`, `space.1`, `radius.{xs,sm}`, `border.{hairline,thick,focus}`, `elevation.3`, `type.ui.caption`, `font.family.mono`; none invented (`color.icon.*` does not exist — spec G2; `color.drawing.*` belongs to CMP-191); Penpot token sets = `packages/ui/tokens` at `c99ad48d78c8e8232d0c852a1a1e222dae5a1788`
 - [x] **Data contract confirmed** — the rail arms tools and writes nothing itself (spec §1.2): lock-all → `updateDrawing` / `batchUpsertDrawings` (`DrawingInput.locked`), delete-all → the batch with one undo, hide-all a per-pane view state (`visible` only if a persisted form is ever chosen); magnet mode and keep tool active → `PATCH /settings` under E14-D02 G6's PROPOSED keys, and the `[Draw]` menu's "Show tool rail" under the PROPOSED `drawing.rail_visible` (spec G4; shared: XG-SETTINGS) — the three settings controls T2 per spec §8.1 when gated; the tool button's context menu: Keep tool active mirrors the rail toggle (`settings:write`), "Set as default" has no `22` operation today (spec G11 — the leg PROPOSED `workspaces:write` until E14-D04 names it), Remap… calls none (T1); every write refused for a Viewer (DR38) and under view-as (`view_as_read_only`)
-- [ ] N/A — **Contrast and CVD**: the rendered CVD proofs are PENDING on the exports; the tool's numbers (30 pairs × 3 themes, 24 gated, FAIL 0; 9 CVD rows) and the 24 PROPOSED `pairs.mjs` rows are spec §9
+- [x] **Contrast and CVD** — the measured ratios, matrix cards and CVD card are on boards 07 / 08; the tool's numbers (30 pairs × 3 themes, 24 gated, FAIL 0; 9 CVD rows) and the 24 PROPOSED `pairs.mjs` rows are spec §9
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#317)
 
@@ -26,8 +26,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3). No CMP id is invented here: these are registry rows for CMP-019 (`15` lines 215–223; `16` §5 line 151), uncatalogued today (spec G1); `15`'s owner / E14-D08 registers them.
 
-- [ ] N/A — **Final Penpot link**: PENDING — the glyph sheet is board 02 of the page `E14-D03 Drawing tool rail and palette` (`E14-D03-02-icon-set.png`); the boards PR
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1's icon row lists the 35 glyphs at 1×, 2× and 4× on board 02; CMP-019's `FullSet` story shows them
+- [x] **Final Penpot link** — page `E14-D03 Drawing tool rail and palette` · id `6efde4c3-f589-80b9-8008-d59065a16c7f`, board 02 (board id `6efde4c3-f589-80b9-8008-d59079c1eac4`), the glyph sheet; PNG `docs/design/E14/img/E14-D03-02-icon-set.png`
+- [x] **Variants × States matrix** — Table 1's icon row: the 35 glyphs at 1×, 2× and 4×, drawn on board 02; CMP-019's `FullSet` story shows them
 - [x] **Keyboard table** — a glyph has no keys of its own; the Kbd hint of each tool is Table 2's (the rail's)
 - [x] **Accessible name / role table** — Table 3's icon rows: `decorative=true` (`aria-hidden`) on every rail button and on a menu item's tool glyph because the button's name or the item's label carries the text; `decorative=false` with `role="img"` and the name "Not available" only for the T2 `lock` — the 8 px badge on an icon-only rail button (2b) and the glyph that leads a T2 menu item's label (2a) — never `aria-hidden` (E09-D09 §2.2)
 - [x] **Live data** — none (static glyphs)
@@ -36,13 +36,13 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — the glyph takes the text ink of its state: `color.text.primary` (enabled), `color.text.tertiary` (T2, the badge), `color.status.danger.default` (delete-all); `size.icon.{sm,md}`; none invented
 - [x] **Data contract confirmed** — N/A for pure chrome (no data binds to a glyph)
-- [ ] N/A — **Contrast and CVD**: the glyph inks are the rail's pairs (spec §9.1 rows 1–3, 13, 17–21); the rendered proofs are PENDING on the exports
+- [x] **Contrast and CVD** — the glyph inks are the rail's pairs (spec §9.1 rows 1–3, 13, 17–21); the rendered proofs are on boards 07 / 08
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#317)
 
 **Placement lines (contract unchanged):** CMP-002 IconButton — every rail button (`label` mandatory = the tool name; `pressed?` on the toggles; `disabledReason?` for T2), 24×24 / 32×32. CMP-016 Tooltip — hover and focus, 300 ms, `Esc`, `role="tooltip"` + `aria-describedby`; carries the label + CMP-022 Kbd (or "rail / palette" for a keyless tool, E14-D02 §3.1; lock-all pressed reads "All drawings locked", E14-D02 §3.3) and, on a T2 button, the reason as the echo. CMP-022 Kbd — the interim chord in every tooltip and menu shortcut slot (`Alt+L` …, `Ctrl+M`), with its visually hidden expansion. CMP-041 Menu — the magnet mode menu (three `menuitemradio`), the overflow (sections, the deferred items `aria-disabled` with their tag as the second line, T2 items in rendering 2a), the `[Draw]` menu content (its Cursor section first, T1; every write item T2 in rendering 2a when gated, spec §5.4) and the tool button's context menu (Keep tool active and Set as default T2 when gated, Remap… T1, spec §5.5); the second-line prop is spec G10. CMP-043 / CMP-044 — the delete-all confirm with E14-D02 §8.4's copy, Cancel focused on open, `variant: "standard"`. CMP-079 RbacGate + CMP-019 `lock` — every role leg (spec §8.1).
 
-### Table 1 — Variants × States (planned frames; PENDING until drawn)
+### Table 1 — Variants × States (frames as drawn on boards 01–09)
 
 | Component    | Variant             | State                                                                                                                                                                                                                                                                                                | Penpot variant / frame                                                                                                                         | Story name (spec §11)                                                                                                                                                                             |
 | ------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -104,10 +104,10 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 ## §A — Design QA checklist (`16` §12), filled
 
 - [x] Only published Tier-2 / Tier-3 tokens (spec §9.3); zero hard-coded hex or px in the spec beyond the measured redlines and the token value table.
-- [ ] N/A — three themes × two densities verified visually: PENDING on the boards; the tool measures all three themes (spec §9.1); boards 03 / 04 hold dark and light, board 07 the hc strip, board 01 the comfortable column.
+- [x] three themes × two densities verified visually on the boards; the tool measures all three themes (spec §9.1); boards 03 / 04 hold dark and light, board 07 the hc strip, board 01 the comfortable column.
 - [x] Contrast matrix for every pair introduced (30 × 3, FAIL 0; 24 PROPOSED `pairs.mjs` rows routed to E14-D08).
 - [x] CVD simulation reviewed for every colour-carrying state (9 rows; every state carried by shape and text).
-- [ ] N/A — every State has a Penpot variant and a Storybook story: the frames are planned (Table 1), the stories are E14-S10's / E14-D08's (spec §11).
+- [ ] N/A — every State has a Penpot variant and a Storybook story: the frames are drawn (Table 1), the stories are E14-S10's / E14-D08's (spec §11).
 - [x] Disabled states use disabled-with-reason (CMP-079 / CMP-019 `lock` / E09-D09 §2.2 T2: the raised fill with the hairline, the lock badge, the tertiary glyph, the secondary reason, no opacity), never a bare disabled control; the deferred overflow items are availability markers (E09-D09 §9.1), not T2; the rail has no form-validity control.
 - [x] Loading / empty / error states designed — loading leaves the rail armable (E14-D02 §11); empty: at 0 drawings on the symbol, or with every drawing locked, delete-all, lock-all and hide-all stay T1 and delete-all's press opens no confirm and announces once (spec §4 row 20 — an outcome of the data, not a gate); error: N/A, the rail holds no data of its own.
 - [x] Keyboard table completed (Table 2; spec §8).
@@ -121,7 +121,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] Demo / Live context unambiguous wherever a trading action can fire — the rail fires none; the status row's env badge sits beside it (spec §1.2).
 - [x] Reuses existing CMP ids; no near-duplicate requested (the icon set is registry rows, not a component).
 - [ ] N/A — Storybook stories match the matrix: the implementing tickets'.
-- [ ] N/A — composes only published-library components in Penpot: the boards are pending; the script draws literal token values, no component instance.
+- [ ] N/A — composes only published-library components in Penpot: the boards are drawn with literal token values, no component instance.
 
 ## §B — Accessibility acceptance criteria (`05` §10), filled
 
