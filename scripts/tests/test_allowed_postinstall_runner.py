@@ -120,7 +120,7 @@ def test_runner_rebuilds_esbuild_and_runs_electrons_pinned_bin_in_its_package(
     proc, calls = _run(root, tmp_path)
     assert proc.returncode == 0, proc.stderr
     # esbuild's handling is unchanged; electron is no longer handed to `pnpm rebuild`.
-    assert calls == ["rebuild esbuild"]
+    assert calls == ["rebuild --no-ignore-scripts esbuild"]
     package = root / "apps" / "desktop" / "node_modules" / "electron"
     assert _marker(root).read_text(encoding="utf-8") == str(package.resolve())
     assert "running electron@45.0.0's install-electron bin" in proc.stdout
@@ -155,7 +155,7 @@ def test_runner_runs_nothing_that_is_not_on_the_allowlist(tmp_path: Path) -> Non
     root = _repo(tmp_path, [ESBUILD])
     proc, calls = _run(root, tmp_path)
     assert proc.returncode == 0, proc.stderr
-    assert calls == ["rebuild esbuild"]
+    assert calls == ["rebuild --no-ignore-scripts esbuild"]
     assert not _marker(root).exists()
 
 

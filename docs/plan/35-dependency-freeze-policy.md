@@ -94,7 +94,9 @@ Unfixable High: §16.2 exception in `04-security-program.md` AND `security/accep
 
 ## 5. postinstall review (SR-138)
 
-CI installs with `--ignore-scripts`. Exceptions are the two in
+No pnpm install runs a lifecycle script: `ignoreScripts: true` in `pnpm-workspace.yaml` (pnpm 12 does not
+read it from `.npmrc`), and the js, engine-bench, security and fuzz installs pass `--ignore-scripts` too.
+Exceptions are the two in
 `tools/ci/allowed-postinstall.json`, which `tools/ci/run-allowed-postinstall.mjs` runs: `esbuild`
 (its postinstall, a pinned platform binary) and `electron` (the package's own `install-electron`
 bin, a pinned binary download; Electron 42 and later have no postinstall). Any addition needs

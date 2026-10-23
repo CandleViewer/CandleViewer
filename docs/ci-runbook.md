@@ -1081,7 +1081,8 @@ section in the same sprint — do not just work around it and move on.
    `.nvmrc`, `pnpm` via `corepack enable`, Python 3.12/3.13 via `uv`
    (`curl -LsSf https://astral.sh/uv/install.sh | sh` or the platform
    equivalent), Docker (for Postgres/QuestDB/testcontainers-backed suites).
-2. `pnpm install --frozen-lockfile` at the repo root.
+2. `pnpm install --frozen-lockfile` at the repo root, then `pnpm prepare` for the git hooks (the
+   install runs no lifecycle script, C-12.3).
 3. `uv sync --project services/api` (installs the pinned Python deps from
    `services/api/uv.lock`).
 4. Copy `.env.example` to `.env`; never fill in real exchange credentials —

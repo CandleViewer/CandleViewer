@@ -3,7 +3,9 @@
 // explicitly (re)run the install step of each package on the small, reviewed
 // allowlist in tools/ci/allowed-postinstall.json — instead of flipping
 // `ignore-scripts` off repo-wide. Mirrors the exception already documented
-// in `pnpm-workspace.yaml`'s `allowBuilds` block.
+// in `pnpm-workspace.yaml`'s `allowBuilds` block. That file's `ignoreScripts: true` (C-12.3) also
+// applies to `pnpm rebuild`, which would then build nothing, so the rebuild passes
+// --no-ignore-scripts: the allowlist names what may build and `allowBuilds` has the last word.
 //
 // An entry without `run` gets `pnpm rebuild <name>`: its own lifecycle scripts (esbuild's
 // postinstall). An entry with `run` pins one `bin` of the package's own package.json, read from
@@ -166,7 +168,7 @@ function main() {
 
   if (rebuild.length > 0) {
     process.stdout.write(`running pnpm rebuild for allowlisted packages: ${rebuild.join(", ")}\n`);
-    execFileSync("pnpm", ["rebuild", ...rebuild], {
+    execFileSync("pnpm", ["rebuild", "--no-ignore-scripts", ...rebuild], {
       cwd: repoRoot,
       stdio: "inherit",
       shell: process.platform === "win32",

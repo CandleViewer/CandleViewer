@@ -109,8 +109,9 @@ See `AGENTS.md` §4 for the root install/verify command and the backend lint/for
 
 After `pnpm install --frozen-lockfile`, run `pnpm prepare` once to install the local git hooks
 (`.husky/`: `commit-msg` commitlint, `pre-commit` lint-staged, `pre-push` branch-name + affected-project
-typecheck). This is a deliberate, code-owned exception to the repo's `ignore-scripts=true` posture — see
-the comment in `.npmrc` — so it is not run implicitly by `pnpm install`. Hooks are a convenience; the same
+typecheck). `pnpm install` runs no lifecycle script (`ignoreScripts: true` in `pnpm-workspace.yaml`, the
+install policy of C-12.3; pnpm 12 does not read it from `.npmrc`), so `prepare` is never implicit: run it
+again in each new clone or worktree. Hooks are a convenience; the same
 rules are enforced server-side by CI and cannot be weakened by `--no-verify`.
 
 ### Generated-code freshness (`packages/protocol`)
