@@ -68,7 +68,7 @@ import yaml
 
 from candleviewer.api.step_up import HANDLER_GATED_ROUTES, dangerous_action_class
 from candleviewer.auth.step_up import NO_GRACE_ACTION_CLASSES, SINGLE_USE_WINDOW
-from tests.contract.rbac.rbac_harness import MATRIX_PATH, fill_path
+from tests.contract.rbac.rbac_harness import MATRIX_PATH, fill_path, user_id_of
 from tests.security.admin._world import SIGNED_IN, UNAUTHENTICATED, AdminWorld, denials
 
 STATES = ("none", "stale", "fresh")
@@ -141,6 +141,7 @@ OWN_GUARD: dict[str, OwnGuard] = {
     ),
 }
 
+_START = "POST /admin/view-as"
 #: Requests that reach a handler-gated route's step-up gate. The matrix's empty bodies reach the
 #: purge and download-link gates, which both gate before reading a body; a flag write is gated
 #: under its row lock after validation, so its cell writes an ordinary all-roles flag.
@@ -148,6 +149,14 @@ GATE_REQUESTS: dict[str, dict[str, Any]] = {
     "PUT /admin/feature-flags/{flagKey}": {
         "path": {"flagKey": "rules.graph_editor"},
         "json": {"value": False, "reason": "E42-X03 RBAC cell"},
+    },
+    # #3085 S13b: a start passes its five refusals only for an active user who is neither the
+    # caller nor an Owner, so the none and stale cells reach its gate (see `NO_FRESH_CELL`).
+    _START: {
+        "json": {
+            "target_user_id": str(user_id_of("manager_with_grant")),
+            "reason": "E42-X03 RBAC cell",
+        },
     },
 }
 #: The class a handler-gated cell demands, where its route has several (`setFeatureFlag`).
@@ -259,10 +268,29 @@ GRACE_CLASSES: tuple[str, ...] = tuple(
 )
 
 
+#: The fresh cells (route, caller) whose allowed call would change the shared world for the rest of
+#: its module, and why. Only that cell goes: the route's none and stale cells and its other
+#: callers' fresh cells run (`callers_for`), and the call is pinned elsewhere.
+NO_FRESH_CELL: dict[tuple[str, str], str] = {
+    (_START, "owner"): (
+        "#3085: an elevated Owner's start puts its session in a view-as context, read-only, which "
+        "then refuses every later write of the module's Owner and answers its reads in the "
+        "target's scope; the 201, its records and its notice are pinned in "
+        "`tests/unit/api/test_view_as_start_route.py`, and the app's mount of the start in "
+        "`tests/unit/test_view_as_wiring.py`"
+    ),
+}
+
+
 def ops_for(state: str) -> tuple[Op, ...]:
     """The cells' routes in `state`: every executed row, and the path-gated-only rows unless
     a live window lets the request past their guard."""
     return OPS if state == "fresh" else ALL_OPS
+
+
+def callers_for(op: Op, state: str) -> tuple[str, ...]:
+    """The signed-in callers whose cell of `op` runs in `state`: all but `NO_FRESH_CELL`'s."""
+    return tuple(a for a in SIGNED_IN if state != "fresh" or (op.key, a) not in NO_FRESH_CELL)
 
 
 Kind = Literal["allow", "forbidden", "challenge"]
@@ -475,13 +503,17 @@ def _xfail(reason: str) -> pytest.MarkDecorator:
 
 
 def status_params(state: str) -> list[Any]:
-    return [pytest.param(op, a, id=f"{op.key}|{a}") for op in ops_for(state) for a in SIGNED_IN]
+    return [
+        pytest.param(op, a, id=f"{op.key}|{a}")
+        for op in ops_for(state)
+        for a in callers_for(op, state)
+    ]
 
 
 def record_params(state: str) -> list[Any]:
     out: list[Any] = []
     for op in ops_for(state):
-        for a in SIGNED_IN:
+        for a in callers_for(op, state):
             marks = []
             silent = op.own is not None and op.own.record is None
             if silent and expect(op, a, state).kind == "forbidden":
@@ -493,7 +525,7 @@ def record_params(state: str) -> list[Any]:
 def counted_params(state: str) -> list[Any]:
     out: list[Any] = []
     for op in ops_for(state):
-        for a in SIGNED_IN:
+        for a in callers_for(op, state):
             if expect(op, a, state).kind != "forbidden":
                 continue
             marks = []
@@ -540,7 +572,7 @@ def _code_gap(op: Op, actor: str) -> str | None:
 def code_params(state: str) -> list[Any]:
     out: list[Any] = []
     for op in ops_for(state):
-        for a in SIGNED_IN:
+        for a in callers_for(op, state):
             if expect(op, a, state).kind != "forbidden":
                 continue
             gap = _code_gap(op, a)

@@ -1,12 +1,13 @@
-"""`GET` and `DELETE /auth/session/view-as` (#3085; 22-api-openapi.yaml `getViewAs`, `endViewAs`
-and "View-as session"): the viewer reads and ends its own session's view-as context.
+"""The view-as routes (#3085; 22-api-openapi.yaml `getViewAs`, `endViewAs`, `startViewAs` and
+"View-as session"): `GET` and `DELETE /auth/session/view-as`, with which the viewer reads and ends
+its own session's view-as context, and `POST /admin/view-as`, with which an Owner starts one.
 
-Both act on the caller's own session, as the viewer (`x-rbac` scope `self`, SR-026): no
-permission, no step-up, and the view-as guard passes them live or held (`OWN_OPERATIONS`). Both
-stay behind the idle lock (Q6): `api.idle_lock` exempts neither, and each authenticates with the
-routes' own acceptance rule, which refuses a locked session too. Neither is activity (contract
-"Idle lock"). Neither reads the query string: neither operation declares a `422` (as
-`authExtendSession`), and the target is only ever the one the session's row names.
+The read and the end act on the caller's own session, as the viewer (`x-rbac` scope `self`,
+SR-026): no permission, no step-up, and the view-as guard passes them live or held
+(`OWN_OPERATIONS`). Both stay behind the idle lock (Q6): `api.idle_lock` exempts neither, and each
+authenticates with the routes' own acceptance rule, which refuses a locked session too. Neither is
+activity (contract "Idle lock"). Neither reads the query string: neither operation declares a
+`422` (as `authExtendSession`), and the target is only ever the one the session's row names.
 
 GET evaluates the context at the auth clock (`ViewAsService.evaluate`), which ends one whose
 viewer or target is no longer eligible and answers it held: `204` with none or a cleared one,
@@ -22,29 +23,48 @@ the route re-reads the session: one revoked since (a refresh rotated it away, or
 answers `401`, never `204`, for a rotated session's successor still carries the context (the
 client re-authenticates onto it and retries); any other answers `204`, nothing to leave.
 
-Every failure is a problem: `401 unauthenticated` for no live session (one answer, no session
-oracle), `401 session_idle_locked`, and `503 store_unavailable` for a session, view-as or users
-read that fails (never a fallback) and on the fake backend, which has no view-as service: after
-authenticating, as `GET /me` answers an unwired backend (before, when no session backend is
-wired at all). A `503` on DELETE changed nothing.
+Every failure of the read and the end is a problem: `401 unauthenticated` for no live session
+(one answer, no session oracle), `401 session_idle_locked`, and `503 store_unavailable` for a
+session, view-as or users read that fails (never a fallback) and on the fake backend, which has no
+view-as service: after authenticating, as `GET /me` answers an unwired backend (before, when no
+session backend is wired at all). A `503` on DELETE changed nothing.
+
+`POST /admin/view-as` is `make_view_as_start_router`'s, a route of the admin area and not the
+viewer's own: it needs `users:write` and the step-up gate (class `users`), refuses in the
+contract's order ahead of that gate, and starts through `ViewAsService.start`. Its order, answers
+and records are that function's docstring's.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any, Final, Protocol
+from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import ValidationError
 
+from candleviewer.admin.errors import ViewAsStartUnavailable
+from candleviewer.admin.http import AuditEmitter, PrincipalResolver, admin_router
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.idle_lock import idle_locked_problem, problem
-from candleviewer.api.step_up import _bearer  # the guard's parse: one rule for both
+from candleviewer.api.step_up import (
+    StepUpAuth,
+    _bearer,  # the guard's parse: one rule for both
+    require_elevation_for,
+)
+from candleviewer.api.step_up_challenge import ChallengeText, quote_label
+from candleviewer.api.view_as_refusals import StartReason, ViewAsRefusalUnrecorded, Viewer
+from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import AuthError, SessionIdleLocked
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord
-from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
+from candleviewer.auth.scopes import UnviewableTarget, unviewable_target
+from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase, ViewAsStartResult, ViewAsState
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 PATH: Final = "/auth/session/view-as"
@@ -100,6 +120,8 @@ def _unauthenticated() -> JSONResponse:
 
 #: A `DELETE`'s 503: the leave did not apply, or its outcome could not be read back.
 _NOT_LEFT: Final = "The view-as context could not be left; nothing changed."
+#: A start's 503 for a read that failed: nothing started.
+_NOT_STARTED: Final = "The view-as context could not be started."
 
 
 def _unwired() -> JSONResponse:
@@ -196,5 +218,198 @@ def make_view_as_router(
             except Exception as exc:
                 return _unavailable("session", exc, _NOT_LEFT)
         return Response(status_code=204)
+
+    return router
+
+
+# -- `POST /admin/view-as` (`startViewAs`) ---------------------------------------------------------
+
+START_PATH: Final = "/view-as"  # under the admin router's `/admin`
+#: A start's body: a 500-character reason, every character escaped, fits with room to spare.
+MAX_START_BODY_BYTES: Final = 8192
+#: The refusals before the step-up gate, in the contract's order, and their statuses.
+START_REFUSALS: Final[Mapping[StartReason, int]] = MappingProxyType(
+    {
+        "view_as_active": 409,
+        "view_as_self_target": 403,
+        "not_found": 404,
+        "conflict": 409,
+        "view_as_owner_target": 403,
+    }
+)
+
+
+class ViewAsStarter(Protocol):
+    """`ViewAsService.start` (`admin/view_as.py`)."""
+
+    async def start(
+        self, record: SessionRecord, target_user_id: UUID, *, reason: str, now: datetime
+    ) -> ViewAsStartResult: ...
+
+
+class StartRefusals(Protocol):
+    """`ViewAsRefusalRecorder.refuse_start` (`api/view_as_refusals.py`)."""
+
+    async def refuse_start(
+        self,
+        viewer: Viewer,
+        reason: StartReason,
+        *,
+        target_user_id: UUID,
+        held: ViewAsState | None = None,
+        ip: str | None = None,
+        request_id: str | UUID | None = None,
+    ) -> bool: ...
+
+
+class TargetUsers(Protocol):
+    """`SqlAlchemyIdentityProvider.user`: an undeleted user's `User`; `LookupError` for none."""
+
+    async def user(self, user_id: str) -> dict[str, Any]: ...
+
+
+def _invalid(field: str, rule: str) -> JSONResponse:
+    detail = "The body does not match StartViewAsRequest."
+    errors = [{"field": field, "rule": rule}]
+    code = ErrorCode.VALIDATION_FAILED
+    return problem(422, code.value, ERROR_META[code].title, detail, errors=errors)
+
+
+async def _start_body(request: Request) -> api.StartViewAsRequest | JSONResponse:
+    """The body, or its `422`, which writes no record (22). Never echoed: no value, and no name of
+    a member the contract lacks (`field` empty), so a reason reaches no answer and no log."""
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > MAX_START_BODY_BYTES:
+            return _invalid("", "body_too_large")
+    try:
+        return api.StartViewAsRequest.model_validate_json(bytes(raw))
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        field = "" if first["type"] == "extra_forbidden" else ".".join(map(str, first["loc"]))
+        return _invalid(field, first["type"])
+
+
+async def _refuse(
+    recorder: StartRefusals,
+    viewer: Viewer,
+    reason: StartReason,
+    target: UUID,
+    who: AuditPrincipal,
+    held: ViewAsState | None = None,
+) -> JSONResponse:
+    """Record a refused start ahead of its answer, then answer it as `START_REFUSALS` gives; a
+    record that cannot be written answers `503 audit_unavailable` instead."""
+    try:
+        await recorder.refuse_start(
+            viewer,
+            reason,
+            target_user_id=target,
+            held=held,
+            ip=who.ip,
+            request_id=who.request_id,
+        )
+    except ViewAsRefusalUnrecorded:
+        detail = "The refusal could not be recorded."
+        return _problem(ErrorCode.AUDIT_UNAVAILABLE, 503, detail)
+    code = ErrorCode(reason)
+    return _problem(code, START_REFUSALS[reason], ERROR_META[code].title)
+
+
+def make_view_as_start_router(
+    auth: StepUpAuth,
+    *,
+    resolver: PrincipalResolver | None,
+    audit: AuditEmitter | None,
+    views: Callable[[], ViewAsStarter | None],
+    refusals: Callable[[], StartRefusals | None],
+    users: TargetUsers | None,
+    clock: Callable[[], datetime],
+) -> APIRouter:
+    """`POST /admin/view-as` (22 `startViewAs`) behind the admin-area guard (`users:write`), which
+    records a caller without it as a denied `admin.area_entered` and answers `403 forbidden`.
+    Then, in the contract's order and before the step-up gate (class `users`), so a refused start
+    is never a challenge: `422` (no record), and each of `START_REFUSALS`, recorded as one
+    `admin.view_as_refused` ahead of its answer within the viewer's own cap (`refusals`; one that
+    cannot be written answers `503 audit_unavailable`). The start itself is `ViewAsService.start`'s
+    one unit of work: `201` with the context, `409 view_as_active` (recorded) when a concurrent
+    start won, `401` when the session went meanwhile, `503` when its records cannot be written.
+    *views* and *refusals* are read per request (`None` on the fake backend: `503`)."""
+    router = admin_router(Permission.USERS_WRITE, resolver=resolver, audit=audit)
+
+    @router.post(START_PATH, status_code=201)  # nosem: audit-write-required reason=write-ahead-inside-start_view_as_unit-under-the-row-lock-admin.view_as_started owner=@CandleViewer/security review=2027-03-25  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
+    async def start_view_as(request: Request) -> Response:
+        who: AuditPrincipal = request.state.admin_principal  # left there by the guard
+        body = await _start_body(request)
+        if isinstance(body, JSONResponse):
+            return body
+        recorder = refusals()
+        if recorder is None or users is None:
+            return _unwired()
+        try:  # the row itself: the guard authenticated it, and it may have gone since
+            record: SessionRecord = await auth.sessions.authenticate_access_token(
+                _bearer(request) or ""
+            )
+        except AuthError:
+            return _unauthenticated()
+        except Exception as exc:
+            return _unavailable("session", exc, _NOT_STARTED)
+        viewer, target = Viewer(record.user_id, record.id, who.actor_name), body.target_user_id
+        held = record.view_as
+        if held is not None and held.cleared_at is None:  # live or held, never replaced here
+            return await _refuse(recorder, viewer, "view_as_active", target, who, held)
+        if target == record.user_id:
+            return await _refuse(recorder, viewer, "view_as_self_target", target, who)
+        try:
+            user = await users.user(str(target))
+        except LookupError:
+            return await _refuse(recorder, viewer, "not_found", target, who)
+        except Exception as exc:
+            return _unavailable("users", exc, _NOT_STARTED)
+        unviewable = unviewable_target(user["status"], user["roles"])
+        if unviewable is UnviewableTarget.STATUS:
+            return await _refuse(recorder, viewer, "conflict", target, who)
+        if unviewable is UnviewableTarget.OWNER:
+            return await _refuse(recorder, viewer, "view_as_owner_target", target, who)
+        if not auth.step_up_is_active:
+            return _unwired()
+        username, now = str(user["username"]), clock()
+        try:  # the 201's target, checked before anything starts: nothing after the commit raises
+            answer = api.ViewAsContext(
+                target_user_id=target,
+                target_username=username,
+                target_display_name=user.get("display_name"),
+                started_at=now,
+                expires_at=now,
+                read_only=True,
+                state="active",
+            )
+        except ValidationError as exc:
+            return _unavailable("users", exc, "The target's row could not be read.")
+        summary = ChallengeText(f"View as user {quote_label(username)}, read-only")
+        gate = await require_elevation_for(auth, str(record.id), "users", text=summary)
+        if gate is not None:
+            return gate
+        service = views()
+        if service is None:  # the fake backend: no context can start
+            return _unwired()
+        try:
+            result = await service.start(record, target, reason=body.reason, now=now)
+        except ViewAsStartUnavailable as exc:  # no id and no reason in the line
+            cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else None
+            _log().error("admin.view_as.start_unavailable", code=exc.code, error=cause)
+            return _problem(ErrorCode(exc.code), 503, "Nothing started; try again shortly.")
+        started = result.started.view_as if result.started is not None else None
+        if started is None:
+            if result.held is not None and result.held.view_as is not None:  # a concurrent start
+                return await _refuse(
+                    recorder, viewer, "view_as_active", target, who, result.held.view_as
+                )
+            return _unauthenticated()  # the session was revoked or expired meanwhile
+        window = {"started_at": started.started_at, "expires_at": started.expires_at}
+        return JSONResponse(
+            answer.model_copy(update=window).model_dump(mode="json"), status_code=201
+        )
 
     return router

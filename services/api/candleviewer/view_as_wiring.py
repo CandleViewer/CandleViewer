@@ -4,9 +4,10 @@ role-change notifier, and `build_view_as`, which composes the service and its sw
 The eligibility port reads what the request resolvers read (`SessionSnapshotResolver`): the
 viewer's permissions (none unless active), the target's status and roles. What it cannot place,
 a role outside the system set or a status other than active or locked (a locked target may still
-be viewed), ends the context: it fails closed. The socket closer (`HubSocketCloser`) closes the
-sockets bound to the ended context across the session's rotation family, and `SessionViewAs`
-is the binding a WebSocket `auth` reads (23-ws-protocol.md section 9.6).
+be viewed), ends the context: it fails closed. The start refuses a target by the same rule
+(`auth.scopes.unviewable_target`). The socket closer (`HubSocketCloser`) closes the sockets bound
+to the ended context across the session's rotation family, and `SessionViewAs` is the binding a
+WebSocket `auth` reads (23-ws-protocol.md section 9.6).
 """
 
 from __future__ import annotations
@@ -30,8 +31,8 @@ from candleviewer.admin.view_as_sweeper import ViewAsSweeper
 from candleviewer.api.users import PermissionChangeNotifier
 from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder, Viewer
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.models import SessionRecord, UserStatus
-from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.scopes import PrincipalSnapshot, unviewable_target
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsEndReason
 from candleviewer.settings import Settings
 from candleviewer.ws.revocation import RevocationHub
@@ -39,7 +40,6 @@ from candleviewer.ws.revocation import RevocationHub
 if TYPE_CHECKING:
     from candleviewer.auth.service import AuthService, AuthSessionStore
 
-_VIEWABLE: Final = frozenset({UserStatus.ACTIVE.value, UserStatus.LOCKED.value})
 HOOK_TIMEOUT_S: Final = 5.0  # bounds the role-change hook, so it never holds the registry
 
 
@@ -67,7 +67,7 @@ class IdentityEligibility:
             )
         except ValueError:  # a role outside the system set
             return ViewAsEndReason.TARGET_INELIGIBLE
-        if snapshot.is_owner or target.get("status") not in _VIEWABLE:
+        if unviewable_target(target.get("status"), snapshot.roles) is not None:
             return ViewAsEndReason.TARGET_INELIGIBLE
         return None
 

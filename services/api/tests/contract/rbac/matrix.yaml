@@ -242,8 +242,7 @@ operations:
     permissions: ['users:write']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml (#3085 contract slice); its server slice mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /alerts:
     permissions: ['alerts:read']

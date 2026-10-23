@@ -31,8 +31,7 @@ request that passes is stamped with its
 `ViewAsRequestContext` (`request.scope["state"]["cv.view_as"]` and `bound_view_as`, reset when it
 ends): the target is its subject only for a live read. With no context, a cleared one, no bearer,
 a bearer that does not authenticate (the route answers 401), or no view-as service (the fake
-backend), the request passes untouched. Inert until the start (#3085 S13b): no context can exist
-before it.
+backend), the request passes untouched.
 """
 
 from __future__ import annotations

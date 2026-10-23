@@ -28,7 +28,7 @@ from candleviewer.admin.http import admin_area
 from candleviewer.api.step_up import HANDLER_GATED_ROUTES
 from candleviewer.auth.generated_permissions import Permission
 from tests.security.admin import _cells as cells
-from tests.security.admin._world import AdminWorld
+from tests.security.admin._world import SIGNED_IN, AdminWorld
 
 STATE = "none"
 _ENTER = f"{admin_area.__qualname__}.<locals>.enter"
@@ -129,6 +129,18 @@ def test_the_cells_cover_every_served_admin_route(world: AdminWorld) -> None:
     assert not set(cells.PATH_GATED_ONLY) & set(cells.NO_CELL)
     for op in cells.GATE_ONLY_OPS:  # their none and stale cells rest on the path guard alone
         assert op.gate is not None and op.gate.where == "path", op.key
+
+
+def test_a_fresh_cell_kept_out_of_the_cells_is_that_one_cell_of_an_executed_row() -> None:
+    """`NO_FRESH_CELL` excuses one caller's fresh cell, never a route or another state: its route
+    is an executed row, every caller's none and stale cells still run, and in the fresh state only
+    the excused caller's cell goes, so an excuse cannot outlive its route or widen."""
+    assert {key for key, _ in cells.NO_FRESH_CELL} <= {op.key for op in cells.OPS}
+    ran = {state: {p.id for p in cells.status_params(state)} for state in cells.STATES}
+    for key, caller in cells.NO_FRESH_CELL:
+        everyone = {f"{key}|{a}" for a in SIGNED_IN}
+        assert everyone <= ran["none"] and everyone <= ran["stale"]
+        assert everyone - ran["fresh"] == {f"{key}|{caller}"}
 
 
 def test_every_handler_gated_cell_has_its_class_and_its_request() -> None:

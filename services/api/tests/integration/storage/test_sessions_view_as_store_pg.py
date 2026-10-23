@@ -29,7 +29,7 @@ from testcontainers.postgres import PostgresContainer
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_service import SessionService
-from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
+from candleviewer.auth.view_as import ViewAsEndReason, ViewAsNotice, ViewAsState
 from candleviewer.storage.repositories import sessions_sqlalchemy as mod
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -170,6 +170,36 @@ async def test_two_starts_on_one_row_one_applies(pg_dsn: str) -> None:
         first, second = await _queued(dsn, sid, starts)
         assert first.view_as == sc.FRESH and second is None
         assert (await store.find_by_id(sid)).view_as == sc.FRESH
+
+
+async def test_two_start_units_on_one_row_one_starts_with_one_notice_and_record(
+    pg_dsn: str,
+) -> None:
+    """#3085 S13b (the #4170 security look's Low-3): of two starts queued on one row's lock, the
+    first starts its context, with one notice and its record written ahead, and the second reads
+    that context held and writes nothing: 22 `startViewAs`'s `201` and `409 view_as_active`."""
+    dsn, other = _fresh(pg_dsn), ViewAsState.start(uuid.uuid4(), sc.OTHER, now=sc.T0)
+    written: list[str] = []
+
+    async def ahead(record: SessionRecord) -> None:
+        written.append(str(record.id))
+
+    async with _store(dsn) as store:
+        sid = await _seeded(store, None)
+
+        def unit(state: ViewAsState) -> Callable[[], Awaitable[Any]]:
+            notice = ViewAsNotice(state.target_user_id, "m", None)
+            return lambda: store.start_view_as_unit(
+                sid, state, now=sc.T0, notice=notice, flush_pending_end=ahead,
+                write_ahead=ahead, audit_timeout_s=_WAIT_S,
+            )  # fmt: skip
+
+        (started, none), (lost, held) = await _queued(dsn, sid, [unit(sc.FRESH), unit(other)])
+        assert (started.view_as, none, lost, held.view_as) == (sc.FRESH, None, None, sc.FRESH)
+        assert written == [sid]
+    with _conn(dsn.replace("postgresql+asyncpg", "postgresql+psycopg")) as c:
+        query = "SELECT recipient_user_id FROM system_events WHERE kind = 'view_as_started'"
+        assert c.execute(query).fetchall() == [(sc.TARGET,)]
 
 
 async def test_two_ends_of_one_context_one_applies(pg_dsn: str) -> None:

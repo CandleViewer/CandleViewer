@@ -15,15 +15,18 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.models import UserStatus
 from candleviewer.auth.scopes import (
     AccountGrant,
     Allow,
     Deny,
     DenyReason,
     PrincipalSnapshot,
+    UnviewableTarget,
     account_scope,
     decide,
     scoped_account_ids,
+    unviewable_target,
 )
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 
@@ -344,3 +347,40 @@ def test_account_scope_membership_matches_decide(
         Allow,
     )
     assert in_scope == allowed
+
+
+# -- the target an Owner may view as (#3085) -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("status", "roles", "expected"),
+    [
+        ("active", ["manager"], None),
+        ("locked", ["viewer"], None),  # a locked user is only locked out of signing in
+        ("invited", ["manager"], UnviewableTarget.STATUS),
+        ("disabled", ["viewer"], UnviewableTarget.STATUS),
+        ("active", ["owner", "manager"], UnviewableTarget.OWNER),
+        ("locked", ["owner"], UnviewableTarget.OWNER),
+        ("disabled", ["owner"], UnviewableTarget.STATUS),  # the status first, as the start refuses
+        ("suspended", ["manager"], UnviewableTarget.STATUS),  # a status no one placed
+        (None, ["manager"], UnviewableTarget.STATUS),  # no status is never read as active
+    ],
+)
+def test_a_target_is_unviewable_by_its_status_first_then_by_the_owner_role(
+    status: object, roles: list[str], expected: UnviewableTarget | None
+) -> None:
+    assert unviewable_target(status, roles) is expected
+
+
+def test_only_the_active_and_locked_statuses_are_viewable() -> None:
+    """An allow-list over `UserStatus`: a status added there is unviewable until it is placed."""
+    viewable = {status for status in UserStatus if unviewable_target(status, []) is None}
+    assert viewable == {UserStatus.ACTIVE, UserStatus.LOCKED}
+
+
+@pytest.mark.parametrize("roles", [[], ["viewer"], ["manager"], ["owner"], ["owner", "manager"]])
+def test_the_owner_test_of_the_target_rule_is_is_owner(roles: list[str]) -> None:
+    snapshot = PrincipalSnapshot(
+        user_id=uuid.uuid4(), roles=frozenset(roles), permissions=frozenset()
+    )
+    assert (unviewable_target("active", roles) is UnviewableTarget.OWNER) == snapshot.is_owner
