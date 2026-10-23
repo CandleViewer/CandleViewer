@@ -5,7 +5,7 @@
 or a grant, a flag's key), so a second run changes nothing. `check_admin_world` then asserts what
 the plan's cases rely on. `seed_backups` and `check_backups` do the same for BACKUP-VERIFY-FAILED's
 two rows. All four refuse a database whose name does not mark it as a test database, so no fixture
-lands in a real one.
+lands in a real one; `connect_test_database` is the same refusal for fixtures that use psycopg.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any, Final
 
+import psycopg
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import RowMapping
@@ -73,6 +74,21 @@ async def refuse_unless_test_database(conn: AsyncConnection) -> None:
     name = str((await conn.execute(sa.text("SELECT current_database()"))).scalar_one())
     if not is_test_database(name):
         raise FixtureRefused(f"refusing database {name!r}: not a test database")
+
+
+def connect_test_database(dsn: str) -> psycopg.Connection[Any]:
+    """An autocommit psycopg connection to a database named for tests, or `FixtureRefused` before
+    any read but its name. The connection is closed on any failure of that read."""
+    conn = psycopg.connect(dsn, autocommit=True)
+    try:
+        row = conn.execute("SELECT current_database()").fetchone()
+        name = "" if row is None else str(row[0])
+        if not is_test_database(name):
+            raise FixtureRefused(f"refusing database {name!r}: not a test database")
+    except BaseException:
+        conn.close()
+        raise
+    return conn
 
 
 async def seed_admin_world(

@@ -1,38 +1,38 @@
-"""Integration (E42-Q01, #962): the latched-machine fixture (SC-CHAIN-TRIPS) on Postgres 16.
+"""Integration (E42-Q01, #962): the degraded-snapshot fixture (SC-CHAIN-TRIPS) on Postgres 16.
 
 The seed upserts its row through the composition root's `SnapshotAdapter` over the real snapshot
 store; the inspector, reading the rows back with the same test key, lists it degraded; a second
-seed changes nothing; a database not named for tests is refused before any read. Needs Docker
-(testcontainers); not run locally while the bench runner holds the VPS. CI `integration` runs it.
+seed leaves the stored row as the first wrote it (its `updated_at`, its sealed envelope and its leaf
+ids included); a database not named for tests is refused before any read. Needs Docker
+(testcontainers); CI `integration` runs it.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from pathlib import Path
 
 import psycopg
 import pytest
-from testcontainers.postgres import PostgresContainer
 
-from candleviewer.statechart_wiring import SnapshotAdapter
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
-from candleviewer.storage.repositories.statechart_sqlalchemy import SqlAlchemySnapshotStore
+from candleviewer.storage.repositories.statechart_sqlalchemy import (
+    SnapshotRecord,
+    SqlAlchemySnapshotStore,
+)
 from tests.fixtures.admin.latched_machine import (
     ENTITY_ID,
+    ENV,
     KIND,
     check_latched_machine,
     seed_latched_machine,
 )
 from tests.fixtures.admin.seed import FixtureRefused
+from tests.integration import _refused
 
 pytestmark = pytest.mark.integration
 
-_ROOT = Path(__file__).resolve().parents[3]
+pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16, migrated; its database is named `test`
 _NOW = datetime(2026, 10, 23, 7, 0, tzinfo=UTC)
 
 
@@ -46,22 +46,6 @@ class _Keys:
         return {"k1": b"\x01" * 32}[key_id]
 
 
-@pytest.fixture(scope="module")
-def pg_dsn() -> Iterator[str]:
-    with PostgresContainer("postgres:16-alpine") as container:  # its database is named `test`
-        dsn = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+asyncpg")
-        subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "head"],
-            cwd=_ROOT,
-            env={
-                **os.environ,
-                "CV_PG_DSN": dsn.replace("postgresql+asyncpg", "postgresql+psycopg"),
-            },
-            check=True,
-        )
-        yield dsn
-
-
 @pytest.fixture
 async def rel(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepository]:
     repo = SqlAlchemyRelationalRepository(pg_dsn, "fixture")
@@ -71,9 +55,9 @@ async def rel(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepository]:
         await repo.dispose()
 
 
-async def _ours(rel: SqlAlchemyRelationalRepository) -> list[object]:
-    rows = await SnapshotAdapter(SqlAlchemySnapshotStore(rel)).snapshots()
-    return [r for r in rows if (r.machine_kind, r.entity_id) == (KIND, ENTITY_ID)]
+async def _stored(rel: SqlAlchemyRelationalRepository) -> SnapshotRecord | None:
+    """The `machine_snapshots` row as the store holds it, every column."""
+    return await SqlAlchemySnapshotStore(rel).get(KIND, ENTITY_ID, ENV)
 
 
 async def test_the_seeded_row_is_listed_degraded(rel: SqlAlchemyRelationalRepository) -> None:
@@ -81,11 +65,16 @@ async def test_the_seeded_row_is_listed_degraded(rel: SqlAlchemyRelationalReposi
     await check_latched_machine(rel, _Keys(), now=_NOW)
 
 
-async def test_a_second_seed_keeps_one_row(rel: SqlAlchemyRelationalRepository) -> None:
-    first = await seed_latched_machine(rel, _Keys(), now=_NOW)
-    second = await seed_latched_machine(rel, _Keys(), now=_NOW)
-    assert second == first
-    assert len(await _ours(rel)) == 1
+async def test_a_second_seed_leaves_the_stored_row_as_the_first_wrote_it(
+    rel: SqlAlchemyRelationalRepository,
+) -> None:
+    await seed_latched_machine(rel, _Keys(), now=_NOW)
+    first = await _stored(rel)
+    assert first is not None
+    leaves = ("order.lifecycle.triggered", "order.protection.sl_present")  # what cv-api writes
+    assert (first.state_ids, first.chain_trips, first.updated_at) == (leaves, 2, _NOW)
+    await seed_latched_machine(rel, _Keys(), now=_NOW)
+    assert await _stored(rel) == first
 
 
 async def test_a_database_not_named_for_tests_is_refused(pg_dsn: str) -> None:

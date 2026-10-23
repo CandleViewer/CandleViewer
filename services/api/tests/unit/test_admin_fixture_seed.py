@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
+import psycopg
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.engine import IteratorResult
@@ -34,6 +35,7 @@ from tests.fixtures.admin.seed import (
     FixtureRefused,
     check_admin_world,
     check_backups,
+    connect_test_database,
     seed_admin_world,
     seed_backups,
 )
@@ -249,3 +251,44 @@ async def test_the_backups_check_names_a_newer_stray_row_as_the_latest(backed_up
 async def test_no_value_the_backups_seed_writes_is_secret_shaped(backed_up: FakeDb) -> None:
     written = [v for r in backed_up.tables["backups"] for v in r.values()]
     assert [v for v in written if isinstance(v, str) and redact_text(v) != v] == []
+
+
+class _Probe:
+    """A psycopg connection whose name read answers `name`, or raises it when it is an exception."""
+
+    def __init__(self, name: object) -> None:
+        self.name, self.closed = name, False
+
+    def execute(self, sql: str) -> _Probe:
+        if isinstance(self.name, BaseException):
+            raise self.name
+        return self
+
+    def fetchone(self) -> tuple[object]:
+        return (self.name,)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize(
+    ("name", "error"),
+    [
+        ("candleviewer", FixtureRefused),
+        (psycopg.OperationalError("lost"), psycopg.OperationalError),
+        ("fixture_test", None),
+    ],
+    ids=["refused", "name-read-fails", "test-database"],
+)
+def test_the_connection_is_closed_unless_it_is_returned(
+    monkeypatch: pytest.MonkeyPatch, name: object, error: type[Exception] | None
+) -> None:
+    probe = _Probe(name)
+    monkeypatch.setattr(psycopg, "connect", lambda dsn, autocommit: probe)
+    if error is None:
+        returned: object = connect_test_database("postgresql://unit.invalid/test")
+        assert returned is probe
+    else:
+        with pytest.raises(error):
+            connect_test_database("postgresql://unit.invalid/test")
+    assert probe.closed is (error is not None)

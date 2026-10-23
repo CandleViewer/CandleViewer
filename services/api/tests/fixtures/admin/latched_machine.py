@@ -1,4 +1,4 @@
-"""The latched statechart machine (E42-Q01, #962): the plan's SC-CHAIN-TRIPS handle.
+"""The degraded order snapshot (E42-Q01, #962): the plan's SC-CHAIN-TRIPS handle.
 
 `latched_row` builds a `machine_snapshots` row of a registered kind with a public entity id (an
 order, so `GET /admin/statecharts` lists it as `order:<id>`) whose snapshot records two chain trips
@@ -7,10 +7,12 @@ key provider the caller passes (`HmacKeys`), so the fixture holds no key. A depl
 seals with its own provider, which does not exist yet (#2701), so its inspector lists nothing;
 the row is for a test that opens it with the same test provider.
 
-The row is the shape the inspector reads, not a library snapshot: it carries no drain seal
-(`cv_epoch`), so a `Restorer` refuses it. `seed_latched_machine` writes it through the composition
-root's `SnapshotAdapter`, as cv-api persists a snapshot, into a database named for tests only
-(`seed.is_test_database`); anywhere else it raises `FixtureRefused` before reading a row.
+The row is a degraded snapshot: the latch is process memory, set only by a `Restorer` restoring a
+drain-sealed snapshot of the library's shape, and this row is the shape the inspector reads. It
+carries no drain seal (`cv_epoch`), so a `Restorer` refuses it and no latch is set.
+`seed_latched_machine` writes it through the composition root's `SnapshotAdapter`, as cv-api
+persists a snapshot, into a database named for tests only (`seed.is_test_database`); anywhere else
+it raises `FixtureRefused` before reading a row.
 """
 
 from __future__ import annotations
@@ -41,6 +43,8 @@ CONFIGURATION: Final = (
     "order.protection",
     "order.protection.sl_present",
 )
+#: Its leaves, as the library lists them in a snapshot's `state_ids`: `machine_snapshots.state_ids`.
+STATE_IDS: Final = ("order.lifecycle.triggered", "order.protection.sl_present")
 CHAIN_TRIPS: Final = 2
 #: Deferred events; the inspector counts them and never reads their content.
 DEFERRED: Final = 2
@@ -57,6 +61,7 @@ def latched_row(keys: HmacKeys, *, now: datetime, registry: Registry | None = No
     chart = (registry or Registry()).get(KIND)
     blob = {
         "configuration": list(CONFIGURATION),
+        "state_ids": list(STATE_IDS),
         "chain_trips": CHAIN_TRIPS,
         "deferred": [{} for _ in range(DEFERRED)],
     }
