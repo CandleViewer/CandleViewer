@@ -871,6 +871,7 @@ Drag preview                Drop zones
 - **Stories:** US-IND-001, US-DRAW-008.
 - **UX research:** [e13-indicator-mental-models.md](../design/research/e13-indicator-mental-models.md) (E13-D01; key-map proposals and count-only referrer disclosure, R5).
 - **Wireframes:** [E13-D02.md](../design/E13/E13-D02.md) (E13-D02; greyscale wireframes with all states, keyboard contract and component-usage map; sixteen Penpot boards on page `E13-D02`, exports in `docs/design/E13/img/`).
+- **Wireframes (drawings):** [E14-D02.md](../design/E14/E14-D02.md) (E14-D02; greyscale wireframes of the rail, the creation state machine, selection / edit states, the properties popover, the drawings branch and the keyboard path; fourteen Penpot boards (pending) on page `E14-D02 Drawing interaction wireframes`, exports to `docs/design/E14/img/`).
 - **Design sign-off acceptance checklist:** [ ] tree drawn with panes, indicators and drawings grouped [ ] per-item visibility/lock/delete controls [ ] multi-select and bulk actions [ ] this tree is confirmed as the accessible equivalent for canvas objects (keyboard-reachable, named) [ ] empty state
 
 ### SCR-037 — Drawing toolbar & drawing properties
@@ -897,6 +898,7 @@ Drag preview                Drop zones
 - **Stories:** US-DRAW-001, US-DRAW-002, US-DRAW-003, US-DRAW-004, US-DRAW-005, US-DRAW-006, US-DRAW-007, US-DRAW-008, US-DRAW-009.
 - **Performance:** Drawings render on a separate canvas layer above the price layer; dragging a drawing must not re-render the price/footprint layers (target: drag at >=58 fps with 200 drawings on the chart).
 - **Analytics/audit:** `drawing.created`, `drawing.edited`, `drawing.deleted`, `drawing.cloned_to_synced_charts` (analytics).
+- **Wireframes (drawings):** [E14-D02.md](../design/E14/E14-D02.md) (E14-D02; greyscale wireframes of the rail, the creation state machine, selection / edit states, the properties popover, the drawings branch and the keyboard path; fourteen Penpot boards (pending) on page `E14-D02 Drawing interaction wireframes`, exports to `docs/design/E14/img/`).
 - **Design sign-off acceptance checklist:** [ ] full tool set drawn (trend line, ray, horizontal/vertical, rectangle, fib retracement/extension, measure, text, arrow, brush) [ ] selected/hover/locked states [ ] properties popover [ ] magnet/snap-to-price behaviour [ ] keyboard creation and nudging path drawn (no mouse requirement) [ ] drawings sync across a sync group when that axis is enabled
 
 ### SCR-038 — Profile panel (volume / delta profile + TPO)
