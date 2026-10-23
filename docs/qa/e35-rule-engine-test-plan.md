@@ -23,6 +23,7 @@ Ticket: E35-Q01 (#941). Status: v1.0 (draft for QA/SDET + rule-engine backend le
 
 ## 1. Seeded actors and data (summary; full plan in section 6)
 
+<!-- prettier-ignore -->
 | Handle | Meaning |
 |---|---|
 | OWNER | Owner role, TOTP enrolled, `rules:arm_live` |
@@ -37,23 +38,27 @@ Ticket: E35-Q01 (#941). Status: v1.0 (draft for QA/SDET + rule-engine backend le
 ### US-RULE-001 Rule IR and single engine
 
 **BB-001-01 Round trip [R]** (US-RULE-001 "Round trip", ADR-0007 rule 1)
+
 - Pre: RULE-FORM-1 created in form editor and saved (v1).
 - Steps: open in node editor, change nothing, save.
 - Expected: no new version is created (or stored IR is byte-identical); `GET /rules/{id}/versions` hash for
   v1 unchanged (S24 §11.4 guarantee 1).
 
 **BB-001-02 Node-only construct** (US-RULE-001 "Node-only construct")
+
 - Pre: RULE-GRAPH-NESTED (nested arithmetic + `n_of`) saved from node editor.
 - Steps: open in form editor.
 - Expected: read-only view with banner "this rule uses graph-only features ..." (S24 §11.4 guarantee 2);
   nothing dropped; Save disabled for the node-only part.
 
 **BB-001-03 Version migration** (US-RULE-001 "Version migration")
+
 - Pre: RULE-OLDIR (stored under the previous IR version, seeded).
 - Steps: open the rule.
 - Expected: migrated on load; migration logged once; mode is disarmed; arm control requires review.
 
 **BB-001-04 Canonical hash [R]** (US-RULE-001 "Canonical serialisation")
+
 - Pre: RULE-FORM-1 and RULE-GRAPH-EQUIV (same semantics, authored in the node editor, different node ids,
   `1.50` vs `1.5`).
 - Steps: `POST /rules/validate` for both; compare reported canonical hash; move a node and add a comment
@@ -88,8 +93,8 @@ action table. Expected: all actions of US-RULE-003 present; each declares accoun
 the rule summary.
 **BB-003-02 Forbidden action** - Pre: sign in as MGR-A. Steps: add `place_order`. Expected: available only
 in simulate mode; restriction explained; setting mode to armed via `PUT /rules/{id}/mode` returns 403 (E12).
-**BB-003-03 Loosen stop** - Steps: `modify_stop_loss` with `only_tighten=false` as MGR-A. Expected: refused
-(needs `rules.loosen_stop`, S24 §11.6); OWNER allowed.
+**BB-003-03 Loosen stop** - Steps: `modify_stop_loss` with `only_tighten=false` as MGR-A, then as OWNER.
+Expected: refused for every role (`422 stop_loosening`, S24 §8.8 rule 5); `widen_stop` likewise.
 **BB-003-04 Self-targeting** - Steps: `enable_rule` / `pause_rule` pointing at the rule itself. Expected:
 `enable_rule` self-target rejected with a validation issue; `pause_rule` self-target allowed (S24 §11.6).
 
@@ -174,6 +179,7 @@ of configured priority.
 
 ## 3. Boundary and adversarial cases
 
+<!-- prettier-ignore -->
 | ID | Case | Expected (source) |
 |---|---|---|
 | BD-01 | 32 boolean children / 33 | 32 accepted; 33 rejected with issue naming path (S24 §11.3) |
@@ -191,6 +197,7 @@ of configured priority.
 
 ## 4. Negative requirements (frequently under-covered)
 
+<!-- prettier-ignore -->
 | ID | Requirement | Check |
 |---|---|---|
 | NG-01 | `None` never coerces to 0 (E3) | `metric < 5` with unavailable metric does not fire; log shows skipped, not 0 |
@@ -211,6 +218,7 @@ next). Staging (demo) only. CH-1 and CH-6 are abuse-case charters coordinated wi
 STRIDE-driven attack list; these charters probe by exploration, and findings from either feed the same
 STRIDE model. Reviewed by the security engineer before execution.
 
+<!-- prettier-ignore -->
 | | Mission | Area | Evidence to capture |
 |---|---|---|---|
 | CH-1 | Try to make an armed rule act on an account you were never granted | scope, RBAC, REST `/rules`, `/mode`, WS `rules`, trade-group expansion, import | request/response pairs, rule JSON, audit rows, exchange-mock log of any order for the ungranted account |
@@ -245,6 +253,7 @@ simulate, version restore, import of armed export, missing `rules:arm_live`, exp
 All seeds are demo-only, created by the staging seed script (to be provided by the implementing tickets;
 gaps in section 9). No real API keys anywhere.
 
+<!-- prettier-ignore -->
 | Seed | Content | Reaches |
 |---|---|---|
 | Accounts | ACC-1, ACC-2, ACC-3, ACC-4 (demo, fake keys) | scoping, IDOR |
@@ -274,6 +283,7 @@ Members tagged **[R]** above: BB-001-01, 001-04, 002-01, 003-01, 004-01, 006-01,
 
 ## 9. Questions raised against implementing tickets (specification ambiguities)
 
+<!-- prettier-ignore -->
 | # | Question | Raised against |
 |---|---|---|
 | Q1 | Exact numeric bounds for BD-01..BD-05 are quoted from the ticket; confirm they match the JSON Schema in S24 §11.3 | E35-T04 |
@@ -285,6 +295,7 @@ Members tagged **[R]** above: BB-001-01, 001-04, 002-01, 003-01, 004-01, 006-01,
 
 ## 10. Traceability
 
+<!-- prettier-ignore -->
 | Story | Plan scenarios | Automated coverage |
 |---|---|---|
 | US-RULE-001 | BB-001-01..07 | E35-Q02 (property/round-trip); `services/api/tests/rules/test_compiler_validator.py` partial |

@@ -9380,9 +9380,10 @@ export interface components {
        * @description Order-sending actions (`place_order`, `flatten_*`, `reverse_position`,
        *     `scale_in`, `scale_out`, `modify_*`, `cancel_*`, `reduce_leverage`,
        *     `arm_chase_limit`, `start_*`) require the rule to be `armed` and the author to
-       *     hold `orders:write` on every bound account. `widen_stop` additionally requires
-       *     an owner with an elevated session - it is the only action that can increase
-       *     risk, so it is gated separately from the rest.
+       *     hold `orders:write` on every bound account. An action that could loosen a stop
+       *     is refused for every role (`stop_loosening`, 24-internal-schemas.md section 8.8
+       *     rule 5): `widen_stop` is retired and stays in this enum only so stored documents
+       *     keep their hashes.
        * @enum {string}
        */
       type:
@@ -9750,7 +9751,7 @@ export interface components {
         id: string;
         idempotent?: boolean;
         /**
-         * @description Actions that can widen or remove a stop are flagged so the editors can warn and the engine can gate them behind the owner-only permission.
+         * @description Always false: no rule may loosen a stop, and an action that could is refused for every role (`stop_loosening`, 24-internal-schemas.md section 8.8 rule 5). The field stays until the 24-internal-schemas.md section 19.26 follow-up retires it.
          * @default false
          */
         loosens_risk: boolean;
