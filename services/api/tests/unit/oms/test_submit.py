@@ -84,7 +84,7 @@ from candleviewer.oms.submit import (
     OrderTrigger,
     SubmitOutcome,
     _after_anchor_s,
-    _entry_order_id,
+    entry_order_id,
 )
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
@@ -903,10 +903,12 @@ async def test_a_held_key_is_answered_as_a_repeat_of_its_decided_request(rig: Su
     (the ruling of 2026-10-22), read by the id its group's names."""
     first = await rig.submit()
     assert first.trade_group_id is not None
-    assert first.order_id == _entry_order_id(first.trade_group_id)
+    assert first.order_id == entry_order_id(first.trade_group_id)
     rig.port.demo.calls.clear()
     replayed = await rig.submit()
-    assert replayed == replace(first, order_id=None, lifecycle="submitted", replayed=True)
+    assert replayed == replace(
+        first, order_id=None, lifecycle="submitted", replayed=True, written=None
+    )
     assert rig.calls() == [] and len(rig.store._orders) == 1
 
 
@@ -919,6 +921,21 @@ async def test_a_held_key_still_in_flight_or_with_another_body_is_refused_409(
     assert isinstance(in_flight, IdempotencyInFlight) and in_flight.retry_after_s == 1
     reused = await _refused(rig, ctx=context(request_sha256="0" * 64))
     assert isinstance(reused, IdempotencyKeyReuse)
+    assert rig.calls() == ["place_order"]
+
+
+async def test_the_routes_own_lookup_replays_what_a_held_keys_repeat_answers(
+    rig: SubmitRig,
+) -> None:
+    """Slice 3's route answers its own lookup's `Replay` with `replayed`, which reads the same
+    reconciled state as the pipeline's repeat of a held key: nothing sent, no rows of its own."""
+    first = await rig.submit()
+    lookup = await rig.pipeline._anchors.lookup(ACTOR.user_id, KEY, SHA)
+    assert isinstance(lookup, Replay)
+    answered = await rig.pipeline.replayed(cr.ACCOUNT, lookup)
+    assert answered == await rig.submit()
+    assert (answered.status, answered.lifecycle, answered.written) == (202, "submitted", None)
+    assert (answered.trade_group_id, answered.replayed) == (first.trade_group_id, True)
     assert rig.calls() == ["place_order"]
 
 
@@ -1182,6 +1199,55 @@ async def test_a_take_profit_offset_is_sent_on_a_tick_rounded_toward_the_entry(
     [create] = rig.port.demo.calls
     assert outcome.status == 202 and _create(create).take_profit == Decimal(sent)
     assert _row(rig, outcome).take_profit == Decimal(sent)
+
+
+#: An order's own terms, as its first persist wrote them and its row holds them since.
+_TERMS = (
+    "id", "exchange_account_id", "order_link_id", "symbol", "side", "intent", "order_type", "qty",
+    "price", "trigger_price", "trigger_by", "trigger_direction", "take_profit", "stop_loss",
+    "tpsl_mode", "time_in_force", "reduce_only", "close_on_trigger", "position_idx",
+    "trade_group_leg_id", "provenance",
+)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("script", "status"),
+    [
+        (None, 202),
+        (RateBudgetExceededError("no token", retry_after_s=1.5), 429),
+        (FakeReject(OmsErrorCode.INSUFFICIENT_MARGIN, 110007, "ab not enough"), 502),
+    ],
+    ids=["accepted", "rate_limited", "rejected"],
+)
+async def test_a_first_answer_carries_the_rows_its_persist_wrote(
+    rig: SubmitRig, script: Any, status: int
+) -> None:
+    """Slice 3's finding 7: the route renders a first answer with no read after the send, from the
+    rows as the persist wrote them: the order `validated`, its group `submitting` and its leg
+    `pending`, whatever the rows hold since."""
+    if script is not None:
+        rig.port.demo.script("place_order", script)
+    outcome = await rig.submit()
+    written, row, record = outcome.written, _row(rig, outcome), _group(rig, outcome)
+    assert outcome.status == status and written is not None
+    assert {n: getattr(written.order, n) for n in _TERMS} == {n: getattr(row, n) for n in _TERMS}
+    assert written.order.lifecycle_state == "validated" != row.lifecycle_state
+    assert written.group is not None and written.group.id == record.group.id
+    assert (written.group.status, written.group.symbol, written.group.side) == (
+        "submitting", record.group.symbol, record.group.side,
+    )  # fmt: skip
+    [leg], [stored] = written.legs, record.legs
+    assert (leg.id, leg.status, leg.target_qty, leg.resolved_sl_price) == (
+        stored.id, "pending", QTY, STOP,
+    )  # fmt: skip
+
+
+async def test_a_reduce_only_first_answer_carries_its_order_and_no_group(rig: SubmitRig) -> None:
+    rig.port.demo.seed_position(_position())
+    outcome = await rig.submit(flatten())
+    assert outcome.written is not None
+    assert (outcome.written.order.id, outcome.written.order.reduce_only) == (outcome.order_id, True)
+    assert (outcome.written.group, outcome.written.legs) == (None, ())
 
 
 # --- the reduce-only path -------------------------------------------------------------------------
@@ -1595,6 +1661,26 @@ def test_an_outcome_decides_its_anchor_with_its_own_answer() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [{"order_id": uuid4()}, {"trade_group_id": uuid4()}, {"replayed": True}],
+    ids=["another_order", "another_group", "replay"],
+)
+async def test_an_outcome_carries_only_the_rows_it_names_and_a_replay_none(
+    rig: SubmitRig, changes: dict[str, Any]
+) -> None:
+    outcome = await rig.submit()
+    with pytest.raises(ValueError, match="carries the rows it names"):
+        replace(outcome, **changes)
+
+
+async def test_an_outcome_never_shows_its_rows_in_its_repr(rig: SubmitRig) -> None:
+    """C-12.6: the rows hold the stop and the size, which no log line shows."""
+    outcome = await rig.submit()
+    assert outcome.written is not None
+    assert "written" not in repr(outcome) and str(STOP) not in repr(outcome)
+
+
 def test_a_context_never_shows_its_key_or_fingerprint() -> None:
     shown = repr(context())
     assert str(KEY) not in shown and SHA not in shown
@@ -1915,7 +2001,7 @@ async def test_a_repeat_whose_order_cannot_be_read_answers_reconciling(
         repeat = await rig.submit()
     assert (repeat.status, repeat.replayed, repeat.lifecycle) == (202, True, RECONCILING)
     assert any(line["event"] == "oms_replay_state_unread" for line in logs)
-    assert await rig.pipeline._reconciled(cr.ACCOUNT, None) == RECONCILING
+    assert await rig.pipeline.reconciled(cr.ACCOUNT, None) == RECONCILING
 
 
 @pytest.mark.parametrize("venue", ["empty", "duplicate"])
