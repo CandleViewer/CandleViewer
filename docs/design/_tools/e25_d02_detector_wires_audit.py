@@ -294,6 +294,8 @@ MUST = (
     "Your role can't change settings.",
     "Your role can't change alerts.",
     "Only the owner can start recording.",
+    "Only the owner can change recording.",
+    "Recompute history",
     "Read-only — your role can't change settings.",
     "(estimated)",
 )
@@ -305,6 +307,10 @@ FORBIDDEN = {
     "local path": re.compile(r"/(?:home|Users)/[^/\s]+/"),
     "Penpot host": re.compile(r"penpot\.[a-z0-9-]+\.[a-z]{2,}", re.IGNORECASE),
     "Penpot team / file / workspace ref": re.compile(r"team[-_]id=|file[-_]id=|#/work[s]pace"),
+    # the T2 rule is cited from its owners (C-16.5): no copied gate block, thread tag or agent name
+    "lane provenance": re.compile(
+        r"\[[A-Z0-9]+-GATE\]|^# Standing gates|\b[a-z]{2,5}-worker-\d+\b", re.MULTILINE
+    ),
 }
 CLOSING_RX = re.compile(
     r"\b(?:clos(?:e|es|ed|ing)|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing))\b[:\s]*#?\d{2,}",
@@ -561,7 +567,9 @@ def gates(text: str, label: str, constitution: str, problems: list[str]) -> dict
             verbs = sorted(words & set(VERB_LINT))
             if verbs:
                 problems.append(f"{label}: regime copy row carries an imperative verb {verbs}")
-    hits = {name: sorted(set(rx.findall(text))) for name, rx in FORBIDDEN.items()}
+    # lane provenance is a spec-only gate: the PR body keeps its publisher's signature
+    rules = {n: rx for n, rx in FORBIDDEN.items() if label == "spec" or n != "lane provenance"}
+    hits = {name: sorted(set(rx.findall(text))) for name, rx in rules.items()}
     problems += [f"{label}: {name} {h!r}" for name, hs in hits.items() for h in hs]
     ids = sorted(set(re.findall(r"\bC-\d+\.\d+\b", text)))
     absent = [i for i in ids if not re.search(rf"\b{re.escape(i)}\b", constitution)]
