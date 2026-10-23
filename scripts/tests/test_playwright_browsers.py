@@ -205,15 +205,17 @@ def test_job_restores_the_browser_cache_before_the_install(job: str) -> None:
     steps = _steps(job)
     install_deps = _index(steps, "Install dependencies")
     version = _index(steps, "Resolve the Playwright version")
-    cache = _index(steps, "actions/cache@")
+    cache = _index(steps, "actions/cache/restore@")
     install = _index(steps, "Install Playwright browsers")
-    assert install_deps < version < cache < install
+    save = _index(steps, "actions/cache/save@")
+    assert install_deps < version < cache < install < save
     # The version comes from the installed lockfile's Playwright, after `pnpm install`.
     assert steps[version]["working-directory"] == "apps/web"
     assert steps[version]["run"].strip() == (
         '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" version'
     )
-    assert PINNED.fullmatch(steps[cache]["uses"].split(" ")[0]), steps[cache]["uses"]
+    for at in (cache, save):
+        assert PINNED.fullmatch(steps[at]["uses"].split(" ")[0]), steps[at]["uses"]
     cache_with = steps[cache]["with"]
     assert cache_with["path"] == "~/.cache/ms-playwright"
     vid, cid = steps[version]["id"], steps[cache]["id"]
@@ -223,6 +225,11 @@ def test_job_restores_the_browser_cache_before_the_install(job: str) -> None:
         == f"pw-browsers-${{{{ runner.os }}}}-${{{{ steps.{vid}.outputs.version }}}}"
     )
     assert set(cache_with) == {"path", "key"}
+    # The save is its own step right after a successful install (the post step of a combined
+    # cache action would not run when a later step failed, so a cold run that breaches the
+    # budget would never seed the cache), only on a miss, with the same path and key.
+    assert steps[save]["with"] == cache_with
+    assert steps[save]["if"] == f"steps.{cid}.outputs.cache-hit != 'true'"
     step = steps[install]
     assert step["working-directory"] == "apps/web"
     assert (
