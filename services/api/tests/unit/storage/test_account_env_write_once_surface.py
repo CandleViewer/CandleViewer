@@ -1,16 +1,19 @@
-"""`exchange_accounts.env` is write-once in the application as well (#2333, C-2.11).
+"""`exchange_accounts.env` is write-once in the application as well (#2333, C-2.11), and so are
+`id`, `exchange_uid` and `kind` (#3968, SR-E27-13): an account's identity.
 
 `trg_ea_env_write_once` (revision `0041_account_env_write_once`) refuses any change of `env` in the
-database. These tests hold the same premise in code, as `tests/unit/credentials_m2/
+database, and `trg_ea_identity_write_once` (`0050_ea_identity_write_once`) any change of `id`,
+`exchange_uid` or `kind`. These tests hold the same premise in code, as `tests/unit/credentials_m2/
 test_write_once_surface.py` does for `api_keys`: after the INSERT that creates an account, no SQL
-string under `candleviewer/` assigns `env` in an UPDATE or upsert of `exchange_accounts`, and none
-MERGEs into it; the `exchange_accounts` Table is named in code only where it is defined, to read
-it by the modules in `_READERS` (the profiles and trade-group stores), and, in the pinned table of
-guarded privileges (#3998), as a `str` key of the dict display it assigns to `GUARDED_PRIVILEGES`
-(any other reference there, a second dict's key included, is flagged); and the PATCH body of
-`/exchange-accounts/{accountId}` carries no environment. The store's own patch and its typed error
-for a refusal are pinned in `test_accounts_store_sqlalchemy.py`. They stop an honest regression,
-not a deliberate bypass: the trigger is the enforcement.
+string under `candleviewer/` assigns an identity column in an UPDATE or upsert of
+`exchange_accounts`, and none MERGEs into it; the `exchange_accounts` Table is named in code only
+where it is defined, to read it by the modules in `_READERS` (the profiles and trade-group stores),
+and, in the pinned table of guarded privileges (#3998), as a `str` key of the dict display it
+assigns to `GUARDED_PRIVILEGES` (any other reference there, a second dict's key included, is
+flagged); and the PATCH body of `/exchange-accounts/{accountId}` carries no identity column. The
+store's own patch and its typed error for a refusal are pinned in
+`test_accounts_store_sqlalchemy.py`. They stop an honest regression, not a deliberate bypass: the
+triggers are the enforcement.
 
 The migrations are not scanned: they run as the schema owner, the trigger refuses them like any
 other writer, and they hold the trigger's own SQL. Neither scan reads SQL assembled from parts
@@ -58,6 +61,10 @@ _READS = frozenset({"import", "columns", "select_from"})
 #: it, a second dict's key or a Name or attribute key included, is still flagged.
 _PRIVILEGE_TABLE = Path("storage/guarded_privileges.py")
 _ENVIRONMENT = ("env", "environment")
+#: The columns an account's identity is made of, each write-once in the database (0041, 0050).
+_IDENTITY = ("env", "id", "exchange_uid", "kind")
+#: The names a client could send for `id`, `exchange_uid` or `kind` (#3968).
+_IDENTITY_FIELDS = ("id", "exchange_uid", "uid", "kind")
 
 
 def _modules(root: Path) -> Iterator[tuple[Path, ast.Module]]:
@@ -104,8 +111,9 @@ def _writes(sql: str) -> list[SqlWrite]:
 
 
 def _risks(sql: str) -> list[str]:
-    """Why `sql` could change an account's `env`; empty when it cannot. A SET list that yields no
-    column (`?`), a MERGE (its SET lists are not read) and unreadable SQL are risks too."""
+    """Why `sql` could change an account's identity (`env`, `id`, `exchange_uid`, `kind`); empty
+    when it cannot. A SET list that yields no column (`?`), a MERGE (its SET lists are not read) and
+    unreadable SQL are risks too."""
     try:
         writes = writes_to(sql, _TABLE)
     except ValueError as exc:
@@ -115,7 +123,8 @@ def _risks(sql: str) -> list[str]:
         if write.kind == "merge":
             risks.append("merge")
         elif write.kind in ("update", "upsert"):
-            risks += ["env"] if "env" in write.targets else ([] if write.targets else ["?"])
+            assigned = [column for column in _IDENTITY if column in write.targets]
+            risks += assigned or ([] if write.targets else ["?"])
     return risks
 
 
@@ -126,7 +135,7 @@ def _scan(root: Path = _PKG) -> tuple[int, dict[str, list[str]]]:
     return updates, {where: risks for where, sql in found if (risks := _risks(sql))}
 
 
-def test_no_candleviewer_sql_changes_an_accounts_environment() -> None:
+def test_no_candleviewer_sql_changes_an_accounts_identity() -> None:
     updates, risks = _scan()
     assert updates >= 4  # the store's patch and soft delete, the self-check's disarm and its mark
     assert risks == {}
@@ -145,6 +154,29 @@ _ENV_ASSIGNMENTS = [
 def test_the_scan_flags_env_added_to_the_stores_patch(assignment: str) -> None:
     mutated = store._UPDATE.text.replace(" SET ", " SET " + assignment, 1)
     assert _risks(mutated) == ["env"]
+
+
+#: Ways the store's `_UPDATE` could assign `id`, `exchange_uid` or `kind` (#3968), and the risk
+#: flagged.
+_UID_AND_KIND_ASSIGNMENTS = {
+    "id": ("id = :new_id, ", ["id"]),
+    "uid": ("exchange_uid = :exchange_uid, ", ["exchange_uid"]),
+    "quoted uid": ('"exchange_uid" = :u, ', ["exchange_uid"]),
+    "kind": ("kind = CAST('sub' AS account_kind), ", ["kind"]),
+    "row of both": ("(exchange_uid, kind) = (:u, :k), ", ["exchange_uid", "kind"]),
+}
+
+
+@pytest.mark.parametrize(
+    ("assignment", "risk"),
+    list(_UID_AND_KIND_ASSIGNMENTS.values()),
+    ids=list(_UID_AND_KIND_ASSIGNMENTS),
+)
+def test_the_scan_flags_an_identity_column_added_to_the_stores_patch(
+    assignment: str, risk: list[str]
+) -> None:
+    mutated = store._UPDATE.text.replace(" SET ", " SET " + assignment, 1)
+    assert _risks(mutated) == risk
 
 
 def _tree(root: Path, files: dict[str, str]) -> Path:
@@ -167,6 +199,12 @@ _RISKY_SQL = {
     "merge": (
         'S = "MERGE INTO exchange_accounts a USING t ON a.id = t.id WHEN MATCHED THEN DO NOTHING"',
         "merge",
+    ),
+    "uid": ('S = "UPDATE exchange_accounts SET exchange_uid = :u WHERE id = :id"', "exchange_uid"),
+    "kind upsert": (
+        'S = "INSERT INTO exchange_accounts AS ea (id) VALUES (:id) '
+        'ON CONFLICT (id) DO UPDATE SET kind = EXCLUDED.kind"',
+        "kind",
     ),
     "concat": ('S = "UPDATE exchange_accounts SET " + columns', "?"),
     "dollar body": (
@@ -193,7 +231,7 @@ _SAFE_SQL = {
 
 
 @pytest.mark.parametrize(("source", "risk"), list(_RISKY_SQL.values()), ids=list(_RISKY_SQL))
-def test_the_scan_flags_a_string_that_could_change_env_or_cannot_be_read(
+def test_the_scan_flags_a_string_that_could_change_identity_or_cannot_be_read(
     tmp_path: Path, source: str, risk: str
 ) -> None:
     _, risks = _scan(_tree(tmp_path, {"repo.py": source}))
@@ -203,7 +241,7 @@ def test_the_scan_flags_a_string_that_could_change_env_or_cannot_be_read(
 @pytest.mark.parametrize(
     ("rel", "source", "updates"), list(_SAFE_SQL.values()), ids=list(_SAFE_SQL)
 )
-def test_the_scan_passes_a_string_that_cannot_change_env(
+def test_the_scan_passes_a_string_that_cannot_change_identity(
     tmp_path: Path, rel: str, source: str, updates: int
 ) -> None:
     assert _scan(_tree(tmp_path, {rel: source})) == (updates, {})
@@ -414,3 +452,12 @@ def test_the_patch_body_has_no_environment_and_refuses_one() -> None:
     for name in _ENVIRONMENT:
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             UpdateExchangeAccountRequest.model_validate({"label": "renamed", name: "live"})
+
+
+def test_the_patch_body_has_no_identity_column_and_refuses_one() -> None:
+    """#3968 (SR-E27-13, AC-23): the same body carries no `id`, `exchange_uid` or `kind`, and one
+    sent anyway is refused before the store."""
+    assert not set(_IDENTITY_FIELDS) & set(UpdateExchangeAccountRequest.model_fields)
+    for name in _IDENTITY_FIELDS:
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            UpdateExchangeAccountRequest.model_validate({"label": "renamed", name: "sub"})

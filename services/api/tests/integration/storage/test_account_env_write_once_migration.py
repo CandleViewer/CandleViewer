@@ -150,9 +150,10 @@ def test_an_insert_takes_any_environment_and_other_columns_still_change(
         assert row == (env, "renamed", False)
 
 
-def test_the_guard_is_the_last_before_update_row_trigger(pg_dsn: str) -> None:
+def test_only_the_identity_guard_sorts_after_the_env_guard(pg_dsn: str) -> None:
     """Same-event BEFORE triggers fire in name order, so one sorting after the guard could rewrite
-    NEW after the check (0024's precedent). The guard is whole-row, `ENABLE ALWAYS`, and last.
+    NEW after the check (0024's precedent). The guard is whole-row and `ENABLE ALWAYS`, and only
+    0050's `trg_ea_identity_write_once` (#3968), which rewrites nothing either, sorts after it.
     tgtype 19 = ROW | BEFORE | UPDATE."""
     with _conn(_fresh(pg_dsn)) as c:
         order = c.execute(
@@ -162,8 +163,9 @@ def test_the_guard_is_the_last_before_update_row_trigger(pg_dsn: str) -> None:
         ).fetchall()
     assert [row[0] for row in order] == [
         "trg_ea_env_in_use", "trg_ea_env_parent", "trg_ea_env_write_once",
+        "trg_ea_identity_write_once",
     ]  # fmt: skip
-    assert order[-1][1:] == (
+    assert order[-2][1:] == (
         "A",
         "CREATE TRIGGER trg_ea_env_write_once BEFORE UPDATE ON public.exchange_accounts "
         "FOR EACH ROW EXECUTE FUNCTION ea_env_write_once()",

@@ -241,6 +241,11 @@
       "path": "services/api/candleviewer/migrations/versions/0049_ea_env_parent_always.py",
       "sha256": "9f38bb5baf4aca095823d7a3a10e2db91e271954d9041baa7c13652497714025",
       "down_revision": "0048_account_default_binding"
+    },
+    "0050_ea_identity_write_once": {
+      "path": "services/api/candleviewer/migrations/versions/0050_ea_identity_write_once.py",
+      "sha256": "29106e6ccc7ae81bfc5ad39cb69b432ffe7ae87615c7f0083f98efb9752712cf",
+      "down_revision": "0049_ea_env_parent_always"
     }
   }
 }

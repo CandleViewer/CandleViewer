@@ -135,7 +135,9 @@ def test_the_plan_doc_registers_the_revision_and_states_the_revoke() -> None:
     prose = " ".join(accounts.split())
     for fact in (
         "`cv_app` can no longer delete one",
-        "`UPDATE exchange_accounts SET id = ...` is refused with SQLSTATE 23503",
+        "`UPDATE exchange_accounts SET id = ...` is refused with SQLSTATE 23514 by"
+        " `trg_ea_identity_write_once`",
+        "the same UPDATE is refused with SQLSTATE 23503 through them",
         "every foreign key into the table is `ON UPDATE NO ACTION`",
         "The owner role (`cv_owner`: migrations, and the alert purge when `CV_PG_OWNER_DSN` is set)"
         " and superusers can still delete accounts",

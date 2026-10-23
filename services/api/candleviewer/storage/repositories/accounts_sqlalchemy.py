@@ -411,15 +411,16 @@ _CONFLICT_CONSTRAINTS = frozenset(
     {"exchange_accounts_pkey", "ux_ea_uid", "ux_ea_label", "ux_api_keys_active",
      "api_key_rotations_pkey"}
 )  # fmt: skip
-#: The CHECKs, and the three `exchange_accounts.env` guards (0039 `trg_ea_env_in_use`, 0041
+#: The CHECKs, the three `exchange_accounts.env` guards (0039 `trg_ea_env_in_use`, 0041
 #: `trg_ea_env_write_once`, #2333, and 0017's `trg_ea_env_parent`, which names itself since 0049,
-#: #3962), which refuse naming themselves as the constraint. Only the INSERT (`_CREATE`) sets
-#: `env`; a sub-account outside its parent's environment, or an UPDATE that changed `env`, meets
-#: them as a typed rule error, not a raw IntegrityError.
+#: #3962) and the identity guard (0050 `trg_ea_identity_write_once`, #3968: `id`, `exchange_uid`,
+#: `kind`), which refuse naming themselves as the constraint. Only the INSERT (`_CREATE`) sets `id`,
+#: `env`, `exchange_uid` and `kind`; a sub-account outside its parent's environment, or an UPDATE
+#: that changed one of them, meets them as a typed rule error, not a raw IntegrityError.
 _RULE_CONSTRAINTS = frozenset(
     {"ea_parent_shape", "ea_no_self_parent", "ea_uid_fmt", "ea_posmode", "ea_marginmode",
      "akr_distinct", "akr_grace", "trg_ea_env_in_use", "trg_ea_env_write_once",
-     "trg_ea_env_parent"}
+     "trg_ea_env_parent", "trg_ea_identity_write_once"}
 )  # fmt: skip
 
 
