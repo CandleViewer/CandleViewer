@@ -1,5 +1,5 @@
-"""`ViewAsService`: a view-as context's start, its evaluation, its one end, the viewer's leave and
-its clear (#3085).
+"""`ViewAsService`: a view-as context's start, its evaluation, its one end and the viewer's leave
+(#3085).
 
 `22-api-openapi.yaml` "View-as session", `startViewAs` and `endViewAs`; the state, its phase and
 the store contract are `auth/view_as.py`'s. The sweeper (`admin/view_as_sweeper.py`) runs it from
