@@ -206,7 +206,7 @@
          {
           "t": "text",
           "name": "body",
-          "chars": "Maintenance mode — new orders are blocked. Running algos were cancelled. Exchange-side stop-losses stay active. Since 14:02 UTC.",
+          "chars": "Maintenance mode — new orders are blocked. Running algos were cancelled. Native stops on the exchange are unaffected. Since 14:02 UTC.",
           "typo": "type.ui.body",
           "color": "color.text.primary",
           "w": 1224
@@ -2000,7 +2000,7 @@
          {
           "t": "text",
           "name": "body",
-          "chars": "Maintenance mode — new orders are blocked. Running algos were cancelled. Exchange-side stop-losses stay active. Since 14:02 UTC.",
+          "chars": "Maintenance mode — new orders are blocked. Running algos were cancelled. Native stops on the exchange are unaffected. Since 14:02 UTC.",
           "typo": "type.ui.body",
           "color": "color.text.primary",
           "w": 2504
@@ -3874,7 +3874,7 @@
        {
         "t": "text",
         "name": "value-1",
-        "chars": "Assertive, once, as the banner appears (L280; CMP-028 warning is role=\"alert\", 15:301), its own text: 'Maintenance mode — new orders are blocked. Running algos were cancelled. Exchange-side stop-losses stay active. Since 14:02 UTC.' (no announce.* key). The line and every 'as of' are never live (§13 L583).",
+        "chars": "Assertive, once, as the banner appears (L280; CMP-028 warning is role=\"alert\", 15:301), its own text: 'Maintenance mode — new orders are blocked. Running algos were cancelled. Native stops on the exchange are unaffected. Since 14:02 UTC.' (no announce.* key). The line and every 'as of' are never live (§13 L583).",
         "typo": "type.ui.body",
         "color": "color.text.primary",
         "w": 368
@@ -4084,7 +4084,7 @@
    "spec §1 L94 (D02 D16-D18), L97 (chrome sizes), L99-104 (worked example; L101 and L103-104 in gen_22's grey-bar notes: carol's invite, users.total 8, .active 4, .without_mfa 0); L17-18 (D02 inherited); §2 D1 L114, D2 L115, D8-D11 L121-124, D24 L137, D27 L140; §3 Q1 L146, Q4 L149, Q8 L153",
    "spec §7 L296, L311, L316-317 (the capacity line: meter, text and action; recorded; the meter rule; cap 5 regular)",
    "spec §13 L583 (SCR-120 keys and live regions), L590-591 (focus-visible; reduced motion: banners appear without a slide); §14 L597-605 (band, strip, meta, footer, announce, tile, banner.maintenance and cap keys; three marked proposed); §15 L620, L634-642, L646, L655-656 (bars and pairs; the check glyph 9.40; F3, F4); §17 L687 (SCR-120 item 1, boards 22 and 26); §20 CG-6..CG-10 L800-804, CG-25 L819; Appendix A L872-879 (CMP-173 compact rows; CMP-178: one glyph shape per tone)",
-   "D02:130 (D4: a line fed by another source keeps its value), :180 (the fresh treatment: the ok glyph success.strong with the word 'ok'), :244 (SCR-148 maintenance on: rung 2, flags; maintenance.enabled + flags.change), :278 ('Admin area · Overview'), :311 (maintenance on: the Trading-safety tile's fourth line and the shell banner), :584-585 (the on-state banner: every role, every route, CMP-028 warning, its string), :588-589 (system frames within 2 s; the managers' and viewers' banner without the turn-off control), :591 (audit), :707 (the audit_read marker string), :719 (the copy), :833-834 (the banner's pairs), :1003 (DS-2's edge), :1026 ('→ Maintenance' links to SCR-148), :1169 (DS-1..DS-5 handed to D03), :1170 (E42-D04 owns maintenance)",
+   "D02:130 (D4: a line fed by another source keeps its value), :180 (the fresh treatment: the ok glyph success.strong with the word 'ok'), :244 (SCR-148 maintenance on: rung 2, flags; maintenance.enabled + flags.change), :278 ('Admin area · Overview'), :311 (maintenance on: the Trading-safety tile's fourth line and the shell banner), :584-585 (the on-state banner: every role, every route, CMP-028 warning, its string), :588-589 (system frames within 2 s; the managers' and viewers' banner without the turn-off control), :591 (audit), :707 (the audit_read marker string), :719 (the copy; §14 L603 puts the #960 Q11 reassurance in its stop-loss sentence's place), :833-834 (the banner's pairs), :1003 (DS-2's edge), :1026 ('→ Maintenance' links to SCR-148), :1169 (DS-1..DS-5 handed to D03), :1170 (E42-D04 owns maintenance)",
    "D01:592 (the Trading-safety tile → SCR-071, SCR-137, SCR-148)",
    "`15` at e69a9200c: :296 and :301 (CMP-028; warning → role=\"alert\"), :690 (CMP-070 color.surface.app), :696 (CMP-071's items, Admin), :699, :708, :2421 (color.surface.raised), :893 (CMP-093), :2411 (color.surface.sunken), :2416 (CMP-209)",
    "E10-D02:20-21 (greyscale, no bespoke colour), :60 (the ENV badge, never hideable); M:117 (GET /admin/feature-flags)",
@@ -4138,7 +4138,7 @@
   ],
   "live_checks": [
    "inst nodes: none. Every part is a composition from tokens (the kit's 'compose' deviation), so no library set, variant or text layer needs checking before rendering.",
-   "banner: after touchTexts + relayout the maintenance banner spans each frame directly under the TopBar (1280 / 2560 px wide, about 34 px high), its string on one line (estimated 802 px of 1224 / 2504 px), the triangle at its start; the NavRail, <main> and RightRail start below it.",
+   "banner: after touchTexts + relayout the maintenance banner spans each frame directly under the TopBar (1280 / 2560 px wide, about 34 px high), its string on one line (estimated 841 px of 1224 / 2504 px), the triangle at its start; the NavRail, <main> and RightRail start below it.",
    "Maintenance line: at 1280 '→ Maintenance' wraps to a second row under 'Maintenance: ON since 14:02 UTC' (estimated 298 px for the tile's 275 px); at 2560 the line stays on one row (643 px).",
    "underlines: after touchTexts + relayout each 1 px color.text.link 'underline' rect sits directly under its link and is as wide as it: '→ Maintenance' 91 px, 'Change' 46 px (the kit's text_w estimates; set a rect to its link's measured width if they differ), as on board 22.",
    "tiles: each band's three tiles share one height (§6 L256): the kit sets the estimated tallest; if a tile's text wraps further (RIGHT NOW grows with the Maintenance line's second row at 1280), raise the band's h to the measured tallest.",

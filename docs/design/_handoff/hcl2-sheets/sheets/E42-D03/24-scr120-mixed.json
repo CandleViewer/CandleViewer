@@ -845,15 +845,6 @@
            },
            {
             "t": "text",
-            "name": "stop-losses",
-            "chars": "Exchange-side stop-losses stay active.",
-            "typo": "type.ui.body",
-            "color": "color.text.primary",
-            "w": 274,
-            "note": "the C-2.6 line (§14 L603): bybit_private_ws is trading-affecting (D02:182; D4 built on, L17, L91)"
-           },
-           {
-            "t": "text",
             "name": "as of",
             "chars": "as of 14:02:11",
             "typo": "type.ui.caption",
@@ -2406,7 +2397,7 @@
           ],
           "w": 675,
           "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; the trading slice fresh (OV-4 'the rest fresh', L277; OV-2's lines, L275): GET /admin/overview, never cached (L260), dated by the tile's 'as of'; the Maintenance line is the flags read's, old (L262; D02:181); heading → SCR-071/137/148 (L253); a target (today's main reads OV-6)",
-          "h": 210
+          "h": 201
          },
          {
           "t": "board",
@@ -2480,15 +2471,6 @@
             "color": "color.text.primary",
             "w": 642,
             "note": "CMP-178 stopsWorking (L877); OV-4's sentence (L277), not a §14 key"
-           },
-           {
-            "t": "text",
-            "name": "stop-losses",
-            "chars": "Exchange-side stop-losses stay active.",
-            "typo": "type.ui.body",
-            "color": "color.text.primary",
-            "w": 642,
-            "note": "the C-2.6 line (§14 L603): bybit_private_ws is trading-affecting (D02:182; D4 built on, L17, L91)"
            },
            {
             "t": "board",
@@ -2577,7 +2559,7 @@
           ],
           "w": 674,
           "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; degraded: bybit_private_ws's ComponentState, not a slice status (§17 L688; §20 L784), from GET /admin/health and WS system health (L267); the read is fresh, so its own 'as of' (CG-9 L803); heading → SCR-143/144 (L253)",
-          "h": 210
+          "h": 201
          },
          {
           "t": "board",
@@ -2622,7 +2604,7 @@
           ],
           "w": 675,
           "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received; loading: its reads (the recorder and storage slices, L266) not yet answered; aria-busy, the CMP-015 skeleton aria-hidden (`15`:181), static under reduced motion (L591); heading → SCR-140/142 (L253)",
-          "h": 210
+          "h": 201
          }
         ]
        }
@@ -3505,7 +3487,7 @@
        {
         "t": "text",
         "name": "value-1",
-        "chars": "OV-4 (L277): tile.degraded, tile.last_good, tile.error, tile.unavailable (= tile.not_built), tile.stale, cap.used_unavailable (proposed), the C-2.6 line (L603) · fresh: tile.asof, tile.maintenance_off, tile.withdrawal_ok (proposed) · shell: band.label, strip.none, meta.asof (proposed), footer.area_entered, announce.route. Not §14: OV-2's lines (L275), 'may lag' (L277), headings (L250-252).",
+        "chars": "OV-4 (L277): tile.degraded, tile.last_good, tile.error, tile.unavailable (= tile.not_built), tile.stale, cap.used_unavailable (proposed) · fresh: tile.asof, tile.maintenance_off, tile.withdrawal_ok (proposed) · shell: band.label, strip.none, meta.asof (proposed), footer.area_entered, announce.route. Not §14: OV-2's lines (L275), 'may lag' (L277), headings (L250-252).",
         "typo": "type.ui.body",
         "color": "color.text.primary",
         "w": 368
@@ -3680,8 +3662,8 @@
    "spec §6 L277 (the OV-4 row), L244-256 (purpose, budget, anatomy), L260-270 (data: slices, reads, mount state), L275 (OV-2's fresh lines), L281 (OV-8: Record tier from the Accounts tile), L285-290 (keys, RBAC, events)",
    "spec L17-18, L28-40 (built on; deviation (7)); §0 L62 (boards 21-29), L72-73 (board 24 has renders); §1 L91, L94, L99-103; §2 D1 L114, D2 L115, D8 L121, D9 L122, D10-D11 L123-124, D27 L140; §3 Q1 L146",
    "spec §4 L164-177 (CMP-087 anatomy), L186 (SH-6), L198-204 (focus, RBAC, audit); §7 L313-317 (the capacity line's used-unread state, the meter rule, Regular's cap)",
-   "spec §13 L583, L590-591; §14 L597-605 (L599, L603, L605: the proposed meta.asof, tile.withdrawal_ok and cap.used_unavailable; L603: the C-2.6 line), L609; §15 L620, L628, L635, L641-642, L655-656, L662, L665; §17 L688; §18 H1 L749; §20 L784, CG-6..CG-9 L800-803; Appendix A L675, L876-880, L903",
-   "D02:130 (D4: old and down), :180 (fresh: the ok glyph with the word 'ok'), :181 (old: the value stays, the CMP-239 stale chip replaces the 'as of'), :182 (down: the C-2.6 sentence, the strip's down item), :278 ('Admin area · Overview'), :690 (the degraded announcement), :707 (the admin.audit_read marker), :715 (bybit_private_ws degraded), :773 (the stale word's contrast), :1003 (DS-2: the rule and the current nav entry's edge) (docs/design/E42/E42-D02.md)",
+   "spec §13 L583, L590-591; §14 L597-605 (L599, L603, L605: the proposed meta.asof, tile.withdrawal_ok and cap.used_unavailable; L603: the reassurance, never on a trading fault), L609; §15 L620, L628, L635, L641-642, L655-656, L662, L665; §17 L688; §18 H1 L749; §20 L784, CG-6..CG-9 L800-803; Appendix A L675, L876-880, L903",
+   "D02:130 (D4: old and down), :180 (fresh: the ok glyph with the word 'ok'), :181 (old: the value stays, the CMP-239 stale chip replaces the 'as of'), :182 (down: the trading-affecting set, the strip's down item), :278 ('Admin area · Overview'), :690 (the degraded announcement), :707 (the admin.audit_read marker), :715 (bybit_private_ws degraded), :773 (the stale word's contrast), :1003 (DS-2: the rule and the current nav entry's edge) (docs/design/E42/E42-D02.md)",
    "E10-D02:64 (the Admin entry, owner only) (docs/design/E10/E10-D02.md); 15:181 (CMP-015 A11y), :690 (CMP-070), :696, :699, :708 (CMP-071, CMP-072), :893 (CMP-093), :2043 (CMP-178), :2411 (CMP-208), :2416, :2421 (CMP-209), :2693 (CMP-239) (docs/plan/15-component-catalogue.md)",
    "spec §14 L593-613 (copy deck)",
    "spec §6 L244-290 (SCR-120 tiles)",
@@ -3695,7 +3677,6 @@
    "tile.stale",
    "tile.asof",
    "tile.last_good",
-   "tile.c26",
    "tile.degraded",
    "tile.error",
    "cap.used_unavailable",
@@ -3710,7 +3691,6 @@
   "copy_gaps": [
    "OV-2's fresh lines (L275), not §14 keys: 'Live trading: on', 'Kill switch: off', 'Open positions: 2' (label/value pairs) and 'Last backup 04:00 UTC · ok'; OV-2's 'Maintenance: off' is drawn as §14's tile.maintenance_off 'Maintenance: off (flags read)' (L603), as board 09 does.",
    "'order and position updates may lag' (L277): Health's what-stops-working sentence (CMP-178 stopsWorking, L877), not a §14 key; 'REST reconcile runs.' (D02:715) has no D03 source.",
-   "The C-2.6 line 'Exchange-side stop-losses stay active.' (§14 L603) has no key name in §14; the kit calls it tile.c26. Health draws it because bybit_private_ws is trading-affecting (D02:182; D4 built on, L17, L91).",
    "Fills: tile.degraded {detail} 'bybit_private_ws reconnected 3× in the last hour', tile.last_good 14:01:40 and tile.stale 14:00:02 (L277); tile.unavailable {detail} 'not built yet' (L265; equal to tile.not_built, L603); cap.used_unavailable {Tier} Regular (§1 L103) and {cap} 5 (§7 L317; L609); tile.withdrawal_ok 14:00 (OV-2 L275); tile.asof and meta.asof 14:02:11 (§1 L103).",
    "The band's {route} for /admin is 'Overview', SCR-120's PageHeader (§6 L250; D02:278 'Admin area · Overview'); §4 L166 fills it only for Users.",
    "The Audit tile's audited-read marker (D9 L122): §14 keys no string for it; D02:707 gives 'Viewing this log is recorded — Audit log viewed (admin.audit_read)' (inherited, L17-18): a placeholder marks its place until §14 keys it (a §14 gap).",
@@ -3737,13 +3717,13 @@
   ],
   "live_checks": [
    "inst 'CMP-015 Skeleton · text ×3' (Recorder and storage, both frames): the only inst node; after relayout it fills the tile's inner width (275 / 643 px) under the heading, inside the band's shared height; static two-tone under reduced motion (§13 L591).",
-   "band heights (L256): after touchTexts + relayout each band's three tiles share one height; set them to the tallest tile's measured height if the text metrics moved it (estimates: frame-1280: RIGHT NOW 201 px, PEOPLE AND ACCESS 159 px, EVIDENCE AND CONTROLS 234 px; frame-2560: RIGHT NOW 210 px, PEOPLE AND ACCESS 137 px, EVIDENCE AND CONTROLS 234 px).",
-   "fit frame-1280 (kit estimates; <main> clips at its 704 px box, content est. 916 px): in view — CMP-087 band (composition), CMP-087 rule (4 px), CMP-087 strip (composition), CMP-088 PageHeader (composition), band · RIGHT NOW, band · PEOPLE AND ACCESS; cut — band · EVIDENCE AND CONTROLS; below — CMP-093 AuditActionTrigger (composition) · footer marker (a page scroll). Every tile's heading and every OV-4 state part (the status lines, the skeleton, the Maintenance line's stale marker, the C-2.6 line, the capacity line, the backup line's check) is in view; past the fold only Audit: tamper line; Audit: CMP-173 compact rows (placeholders); Audit: placeholder · audited-read marker (admin.audit_read; §14 has no label); Audit: as of; Security and backups: as of. In the export every OV-4 state must read at 1280 too (Audit, fresh, shows its heading in view; its lines are the page scroll).",
-   "fit frame-2560: main column est. 903 of 1344 px: after relayout the band, rule, strip, PageHeader, all three bands (nine tiles) and the footer marker must be in view",
+   "band heights (L256): after touchTexts + relayout each band's three tiles share one height; set them to the tallest tile's measured height if the text metrics moved it (estimates: frame-1280: RIGHT NOW 201 px, PEOPLE AND ACCESS 159 px, EVIDENCE AND CONTROLS 234 px; frame-2560: RIGHT NOW 201 px, PEOPLE AND ACCESS 137 px, EVIDENCE AND CONTROLS 234 px).",
+   "fit frame-1280 (kit estimates; <main> clips at its 704 px box, content est. 916 px): in view — CMP-087 band (composition), CMP-087 rule (4 px), CMP-087 strip (composition), CMP-088 PageHeader (composition), band · RIGHT NOW, band · PEOPLE AND ACCESS; cut — band · EVIDENCE AND CONTROLS; below — CMP-093 AuditActionTrigger (composition) · footer marker (a page scroll). Every tile's heading and every OV-4 state part (the status lines, the skeleton, the Maintenance line's stale marker, the capacity line, the backup line's check) is in view; past the fold only Audit: tamper line; Audit: CMP-173 compact rows (placeholders); Audit: placeholder · audited-read marker (admin.audit_read; §14 has no label); Audit: as of; Security and backups: as of. In the export every OV-4 state must read at 1280 too (Audit, fresh, shows its heading in view; its lines are the page scroll).",
+   "fit frame-2560: main column est. 894 of 1344 px: after relayout the band, rule, strip, PageHeader, all three bands (nine tiles) and the footer marker must be in view",
    "Health's status wraps to about 2 lines at 1280 and 1 at 2560; 'bybit_private_ws' stays one word (no break inside it).",
    "renders (§0 L72-73): docs/design/_tools/cvd_sim.py on the export gives -greyscale.png and -deuteranopia.png; in both, each tile state must read by its glyph shape and words: the clock 'stale since' (Flags; Trading safety's Maintenance line) against the triangle 'Degraded' (Health), one hex (§15 L665); the octagons (Users, Profiles) against the triangle (L662); the check 'ok' (Security and backups) by its shape; the skeleton as loading; LIVE by its word.",
    "glyphs: the registry 'warning', 'danger' and 'pending' stand in for DS-5's icon/triangle, icon/octagon and icon/clock (fallback lines), beside the registry 'check': at 16 px the four must read as four different shapes (one shape per tone, Appendix A L878).",
-   "Health: under 'order and position updates may lag' the C-2.6 line 'Exchange-side stop-losses stay active.' (§14 L603; D02:182) whole inside the tile at both sizes; at 2560 the two component columns (four grey bars) under it, above the 'as of'.",
+   "Health: 'order and position updates may lag' whole inside the tile at both sizes, with no reassurance under it (L277); at 2560 the two component columns (four grey bars) under it, above the 'as of'.",
    "Trading safety: the Maintenance line's stale marker (clock + 'stale since 14:00:02') directly under 'Maintenance: off (flags read)', above the tile's 'as of 14:02:11' (the trading slice's).",
    "Retry: a 32 px CMP-001 secondary under 'last good 14:01:40' in the Users tile, whole inside the tile.",
    "annotations: estimated 1689 px, the tallest child; the root is 1760 px (clip on), 39 px of headroom: after touchTexts + relayout the footer 'page E42-D03 · board 24 · r1' must end inside the root (it is at the 1760 px pitch cap: if the footer does not fit, shorten the Board notes block, never the root past 1760).",
@@ -3756,7 +3736,7 @@
    "The CMP-087 shell is (b) per action with no grace and nothing needing action (SH-6, L186): the band label '◆ Admin area · Overview' only, no badge or grace line, the strip strip.none. OV-4 (L277) names no shell state; (b) is what the server does (Q1 L146) and board 09 draws SCR-120 the same way; boards 01-07 own the badge and grace states.",
    "The strip reads strip.none: §1's worked example raises no strip item (OV-2 L275 draws strip.none on the same data) and OV-4 names none. D02 D4's 'the \"Needs your action\" strip repeats a down item' (D02:182) has no strip.* key in §14 (L598), so no item is drawn for the error, unavailable or degraded tiles (a copy gap).",
    "'The rest fresh' (L277) is drawn with OV-2's lines (L275), the only fresh content the spec gives: Trading safety [LIVE] 'Live trading: on · Kill switch: off · Open positions: 2' and tile.maintenance_off (L603) for its 'Maintenance: off' (the line is always the flags read's, L262; it carries that read's stale marker, 'stale since 14:00:02' (D02:181; D8), so the tile's 'as of 14:02:11' dates the trading slice's three lines); the Accounts withdrawal line tile.withdrawal_ok '… checked 14:00 UTC'; Audit 'Run tamper check' + three rows; Security and backups 'Last backup 04:00 UTC · ok' with the check (D02:180). Each fresh tile carries its own 'as of 14:02:11' (H1 L749; §1 L103), as board 09 draws OV-2 (board 22 adds field bars; the SCR-120 family's one base is the coordinator's pick, review 24 item 5). These are targets where OV-6 (board 26) is today's main.",
-   "Health draws OV-4's string in its order (L277): the status line 'Degraded — bybit_private_ws reconnected 3× in the last hour' (triangle, D02:130), then 'last good 14:01:40' (type.ui.caption, tertiary, as the kit sets ages), then what stops working 'order and position updates may lag' (type.ui.body, primary; CMP-178 stopsWorking, L877), then the C-2.6 line 'Exchange-side stop-losses stay active.' (§14 L603: bybit_private_ws is trading-affecting, D02:182; D4 built on, L17, L91), then at 2560 its components in two columns (L255-256; four grey bars, the count board 22's: the spec names only bybit_private_ws; at 1280 none, as board 09's OV-2 draws no field bars), then its own 'as of 14:02:11': the health read itself is fresh, and Health shows 'as of' only (CG-9 L803; L267).",
+   "Health draws OV-4's string in its order (L277): the status line 'Degraded — bybit_private_ws reconnected 3× in the last hour' (triangle, D02:130), then 'last good 14:01:40' (type.ui.caption, tertiary, as the kit sets ages), then what stops working 'order and position updates may lag' (type.ui.body, primary; CMP-178 stopsWorking, L877), and no reassurance: bybit_private_ws is trading-affecting (D02:182), so OV-4 withholds it (L277; §14 L603, ruling #960 Q11), then at 2560 its components in two columns (L255-256; four grey bars, the count board 22's: the spec names only bybit_private_ws; at 1280 none, as board 09's OV-2 draws no field bars), then its own 'as of 14:02:11': the health read itself is fresh, and Health shows 'as of' only (CG-9 L803; L267).",
    "Users in error shows no number (D02 D4, L91; Appendix A L878): the octagon status 'Error — timed out after 300 ms' (tile.error's words), 'last good 14:01:40' (tile.last_good) as the tile's age line in place of 'as of', and tile.error's [Retry] as a CMP-001 secondary button (e42kit action(); CMP-027 + Retry, L254), in OV-4's order (L277).",
    "Profiles and limits draws tile.unavailable (OV-4's key, L277) with {detail} 'not built yet': the tile has no slice (L265, 'no slice: \"Unavailable — not built yet\" (D8, CG-6)'), so the filled string equals tile.not_built (L603) verbatim; the octagon (down, D02:130); no 'as of' (no read).",
    "Accounts and keys' capacity line is cap.used_unavailable (L277; §7 L313) at the tile's inner width: no CMP-023 meter (no meter bar unless used and cap were both read, §7 L315-316), no action (the key names none: a spec question in Copy gaps, G-T2), no glyph (as e42kit capacity_line() draws the state on SCR-121; its own words carry 'unavailable'). {Tier} = Regular (§1 L103), {cap} = 5 (§7 L317; L609).",

@@ -2,7 +2,7 @@
  "board": {
   "name": "E42-D03 / 26 SCR-120 / trading-unknown · 1280×800+2560×1440 · dark",
   "w": 4304,
-  "h": 1720,
+  "h": 1736,
   "x": 0,
   "y": 9000,
   "o": {
@@ -756,19 +756,11 @@
               "color": "color.text.primary"
              }
             ]
-           },
-           {
-            "t": "text",
-            "name": "line-5",
-            "chars": "Exchange-side stop-losses stay active.",
-            "typo": "type.ui.body",
-            "color": "color.text.primary",
-            "w": 275
            }
           ],
           "w": 307,
           "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received",
-          "h": 225
+          "h": 198
          },
          {
           "t": "board",
@@ -872,7 +864,7 @@
           ],
           "w": 306,
           "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received",
-          "h": 225
+          "h": 198
          },
          {
           "t": "board",
@@ -985,7 +977,7 @@
           ],
           "w": 307,
           "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received",
-          "h": 225
+          "h": 198
          }
         ]
        }
@@ -2622,19 +2614,11 @@
               "color": "color.text.primary"
              }
             ]
-           },
-           {
-            "t": "text",
-            "name": "line-5",
-            "chars": "Exchange-side stop-losses stay active.",
-            "typo": "type.ui.body",
-            "color": "color.text.primary",
-            "w": 643
            }
           ],
           "w": 675,
           "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received",
-          "h": 206
+          "h": 180
          },
          {
           "t": "board",
@@ -2751,7 +2735,7 @@
           ],
           "w": 674,
           "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received",
-          "h": 206
+          "h": 180
          },
          {
           "t": "board",
@@ -2864,7 +2848,7 @@
           ],
           "w": 675,
           "note": "role=\"region\" aria-labelledby its heading (the link); no number for a field not received",
-          "h": 206
+          "h": 180
          }
         ]
        }
@@ -3797,7 +3781,7 @@
        {
         "t": "text",
         "name": "value-1",
-        "chars": "D8 (L121) · D02 D4 old/down, the octagon, never a zero or a green (L91) · deviation (7): 'unknown' only while absent (L34-35) · D9, Q8 · D10, D11 · D1 · D2 (DS-2 also edges the Admin entry, D02:1003) · D27 · Q1 (b) · H1 (L749).",
+        "chars": "D8 (L121) · D02 D4 old/down, the octagon, never a zero or a green (L91) · no reassurance on a trading fault (§14 L603; #960 Q11) · deviation (7): 'unknown' only while absent (L34-35) · D9, Q8 · D10, D11 · D1 · D2 (DS-2 also edges the Admin entry, D02:1003) · D27 · Q1 (b) · H1 (L749).",
         "typo": "type.ui.body",
         "color": "color.text.primary",
         "w": 368
@@ -3905,7 +3889,7 @@
        {
         "t": "text",
         "name": "value-1",
-        "chars": "band.label · strip.none · meta.asof (proposed) · tile.unavailable · tile.trading_unknown · tile.maintenance_off · the C-2.6 line (tile.*) · tile.not_deployed (proposed; {n} a placeholder) · tile.asof · cap.recorded · cap.valuetext (aria-valuetext) · tile.withdrawal_ok (proposed; label) · tile.not_built · footer.area_entered · announce.route",
+        "chars": "band.label · strip.none · meta.asof (proposed) · tile.unavailable · tile.trading_unknown · tile.maintenance_off · tile.not_deployed (proposed; {n} a placeholder) · tile.asof · cap.recorded · cap.valuetext (aria-valuetext) · tile.withdrawal_ok (proposed; label) · tile.not_built · footer.area_entered · announce.route",
         "typo": "type.ui.body",
         "color": "color.text.primary",
         "w": 368
@@ -4114,7 +4098,6 @@
   "copy_keys": [
    "tile.trading_unknown",
    "tile.maintenance_off",
-   "tile.c26",
    "tile.unavailable",
    "tile.not_deployed",
    "tile.asof",
@@ -4165,16 +4148,16 @@
    "underline: after touchTexts + relayout the 'Change' link's 1 px underline is directly under the text and as wide as it (the width is the kit's text_w estimate: set it to the measured width if they differ), before the renders",
    "tile heights: each band's tiles are fixed at the band's tallest estimate (L256: one height per band); after relayout every tile must hold its content inside its raised fill: raise the band's tile height to the tallest measured tile if not",
    "renders (§0 L72-73): in the greyscale and deuteranopia renders every down line keeps its octagon and its word 'Unavailable', each LIVE badge its word and the current Admin entry its DS-2 edge; the grey placeholders must not read as values or as a loading skeleton",
-   "fold 1280 (kit estimates; <main> clips at its 704 px box): in view — CMP-087 band (composition) (to 72 px); CMP-087 rule (4 px) (to 76 px); CMP-087 strip (composition) (to 107 px); CMP-088 PageHeader (composition) (to 179 px); band · RIGHT NOW (to 429 px); band · PEOPLE AND ACCESS (to 680 px). Cut — band · EVIDENCE AND CONTROLS (691-951 px): only its h2 and its tiles' top edge in view (the tiles' content from 732 px). Below the fold, a page scroll — CMP-093 AuditActionTrigger (composition) · footer marker (from 950 px). The export must show the band, the rule, the strip, the h1 and the RIGHT NOW and PEOPLE AND ACCESS bands whole (Trading safety, the recorder line, Health, the withdrawal line and Profiles); Security and its backups line are a page scroll at 1280 and in view at 2560.",
+   "fold 1280 (kit estimates; <main> clips at its 704 px box): in view — CMP-087 band (composition) (to 72 px); CMP-087 rule (4 px) (to 76 px); CMP-087 strip (composition) (to 107 px); CMP-088 PageHeader (composition) (to 179 px); band · RIGHT NOW (to 402 px); band · PEOPLE AND ACCESS (to 653 px). Cut — band · EVIDENCE AND CONTROLS (664-924 px): only its h2 and its tiles' top edge in view (the tiles' content from 705 px). Below the fold, a page scroll — CMP-093 AuditActionTrigger (composition) · footer marker (from 923 px). The export must show the band, the rule, the strip, the h1 and the RIGHT NOW and PEOPLE AND ACCESS bands whole (Trading safety, the recorder line, Health, the withdrawal line and Profiles); Security and its backups line are a page scroll at 1280 and in view at 2560.",
    "fit 2560: <main> est. fits its 1344 px box: after relayout the whole page, the footer marker included, must be in view",
-   "height: the root is 1720 px: root_size()'s 1648 px (frames 1440, annotation column est. 1610 px) plus 72 px slack for text-width error (cap 1760 px, the pitch guard); after touchTexts + relayout the annotation column, its footer 'page E42-D03 · board 26 · r1' included, must end inside it",
-   "fit: frame-1280 main column content is about 995 px for 704 px: it is clipped at the bottom (a page scroll), check the export",
+   "height: the root is 1736 px: root_size()'s 1664 px (frames 1440, annotation column est. 1629 px) plus 72 px slack for text-width error (cap 1760 px, the pitch guard); after touchTexts + relayout the annotation column, its footer 'page E42-D03 · board 26 · r1' included, must end inside it",
+   "fit: frame-1280 main column content is about 968 px for 704 px: it is clipped at the bottom (a page scroll), check the export",
    "glyph ◆ (U+25C6): confirm Inter draws it; else Penpot substitutes a fallback font",
    "root name: after the first section call the root must read back exactly as the sheet's board.name, or later calls create a duplicate root"
   ],
   "deviations": [
    "The (b) shell, per action and no grace (SH-6 L186): the band label only, no badge (Q1 L146: '(b) is what the server does'; the (a) window is in no contract, CG-1). Today's main is drawn as it is, as board 09 draws SCR-120.",
-   "Trading safety draws OV-6's lines in OV-6's order (L279) as label/value pairs (label color.text.secondary, value color.text.primary, as board 09): 'Live trading: —', 'Kill switch: unknown' (tile.trading_unknown: deviation (7), L34-35, 'unknown' only while the field is absent; all three fields are omitted today, L261), 'Open positions: —', 'Maintenance: off (flags read)' (the flags read keeps its value, L262), then the C-2.6 line. The env badge LIVE stays on the heading (anatomy 'Trading safety [env]', L250; §1 LIVE): the environment is the serving one, not a slice field. No Retry: unavailable is not a failed read (D02:182 'Retry where a read failed').",
+   "Trading safety draws OV-6's lines in OV-6's order (L279) as label/value pairs (label color.text.secondary, value color.text.primary, as board 09): 'Live trading: —', 'Kill switch: unknown' (tile.trading_unknown: deviation (7), L34-35, 'unknown' only while the field is absent; all three fields are omitted today, L261), 'Open positions: —', 'Maintenance: off (flags read)' (the flags read keeps its value, L262), and no reassurance: the tile's fault is trading, so §14's 'Native stops on the exchange are unaffected' stays off it (L279, L603; ruling #960 Q11). The env badge LIVE stays on the heading (anatomy 'Trading safety [env]', L250; §1 LIVE): the environment is the serving one, not a slice field. No Retry: unavailable is not a failed read (D02:182 'Retry where a read failed').",
    "'as of' (tile.asof, §1's 14:02:11) sits under each fresh read it dates (D02 D4: under every tile value): Health, the storage lines, the Accounts tile's accounts bar and capacity line (one 'as of', the capacity line's, dates both reads, the overview's accounts slice and GET /admin/capacity, both 14:02:11 in §1's example), Users (its counts and invites bars), the Audit rows, Flags. The down parts carry none: D02 D4's down treatment is the word, the fixed detail and 'last good' when known (D02:130, :182), and OV-6 gives 'as of' to the storage lines, not to the recorder line (L279). No 'last good' is drawn: the trading and recorder slices have never been ok on main (no provider wired), Profiles and the security summary have no read, and GET /admin/backups answers 501 until catalogued (L269, CG-10). Y:20711 still stamps generated_at on every slice; §18 H1 (L749) reads '\"as of\" on every tile' for the tiles that show a value.",
    "Health shows tile.not_deployed in color.text.primary with no tone glyph and no state word: OV-6 forbids 'healthy' (L279; a not_deployed component ranks healthy for overall, Y:15450) and no source names the tone of a not_deployed count (CMP-178's four glyphs are check, triangle, octagon, clock, Appendix A L878). Its {n} is a placeholder (see the placeholders line).",
    "Values the spec does not give are neutral placeholders (color.surface.hover bars, radius.control; the count a radius.badge pill), named by the field they stand for: tile.not_deployed's {n} (OV-6 gives no count: GET /admin/health's not_deployed components depend on what is wired), the three storage lines OV-6 calls fresh (storage.used_bytes, .free_bytes, .days_until_full; L266, L279: no §14 label and no §1 value), Health's component list (one column at 1280, two at 2560; L255-256: no component name or state for today's main), the served reads §14 keys no string for, one bar per line as board 22 draws them (Users: users.total · .active · .without_mfa and the pending invites, L263; Accounts and keys: accounts.total · .enabled · .keys_expiring_30d · .keys_invalid, L264; Flags: FeatureFlag[], L270), the Audit tile's three CMP-173 compact rows (D9 L122: no entry data) and its audited-read marker (§14 keys no label for admin.audit_read). They are not a loading state (OV-1 is board 21). Like the kit's chrome placeholders they sit at 1.17 / 1.09 / 1.17 on the tile's color.surface.raised: marks of place, not carriers.",

@@ -190,3 +190,5 @@ in place, so continue rather than delete. Two root boards with the same name sto
 `MANIFEST.sha256` lists the sha256 and relative path of every file in this folder except itself, in `sha256sum`
 format. It was generated after every other file. Verify the folder with `sha256sum -c MANIFEST.sha256`. The manifest's
 own sha256 is in the transport message.
+
+**Update (00:3xZ, 2026-10-23):** #4138's boards 24, 26 and 27 were regenerated for the orchestrator's Q11 ruling (#960 comment 6353767685): the reassurance sentence is now the catalogue's "Native stops on the exchange are unaffected", withheld on a trading or stop-loss-protection fault (OV-4 and OV-6 withhold it; OV-7's maintenance banner keeps it). Draw these three from this commit or later.
