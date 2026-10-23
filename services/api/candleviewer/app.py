@@ -174,9 +174,8 @@ from candleviewer.api.view_as import make_view_as_router
 from candleviewer.api.view_as_guard import make_view_as_guard, view_as_unstamped_handler
 from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
-from candleviewer.api.view_as_subject import ViewAsUnstamped
+from candleviewer.api.view_as_subject import TargetNamedAsActor, ViewAsUnstamped
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
-from candleviewer.audit.writer import TargetNamedAsActor
 from candleviewer.audit_lane_wiring import lane_key_loader
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.metrics import export_auth_metrics
@@ -519,12 +518,21 @@ class AppContext:
     mesh_system_topic_publisher: SystemTopicPublisher
 
 
+def _same_user(value: object, user: uuid.UUID) -> bool:
+    """`value` names `user` in any form the writer stores as that id (`UUID`, or any spelling of
+    it: case, braces, `urn:uuid:`); a value that is no id names no user."""
+    try:
+        return uuid.UUID(str(value)) == user
+    except ValueError:
+        return False
+
+
 def _refuse_target_as_actor(action: str, fields: dict[str, Any]) -> None:
     """The tripwire behind every audit write (#3085 S8): while a view-as context is bound, no
     record may name its target as the actor."""
     ctx = current_view_as()
     actor = fields.get("actor_user_id")
-    if ctx is not None and actor is not None and str(actor) == str(ctx.target_user_id):
+    if ctx is not None and actor is not None and _same_user(actor, ctx.target_user_id):
         structlog.get_logger(__name__).error("audit.view_as_target_named_actor", action=action)
         raise TargetNamedAsActor(action)
 

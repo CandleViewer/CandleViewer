@@ -452,8 +452,8 @@ class _NotificationRepo:
 
 class _AuditQuery:
     """`AuditQueryService` stand-in (no DB): one event per matrix user, scoped as the repository
-    scopes every page, so a read answered in the wrong user's scope shows in its body (the #4177
-    security look's H-1: the view-as matrix compares these bodies)."""
+    scopes every page, so a read answered in the wrong user's scope shows in its body (the view-as
+    matrix compares these bodies)."""
 
     def __init__(self) -> None:
         self.verify_slot = VerifySlot()

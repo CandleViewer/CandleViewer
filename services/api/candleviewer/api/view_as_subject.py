@@ -13,11 +13,19 @@ from uuid import UUID
 
 from fastapi import Request
 
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import ViewAsRequestContext, current_view_as
 
 #: Where a passing request carries its context (plan 1.3), beside the `bound_view_as` contextvar.
 STATE_KEY: Final = "cv.view_as"
+
+
+class TargetNamedAsActor(AuditUnavailable):
+    """A record written while a request views as another user names that user as its actor
+    (#3085, Q2): the viewer acts, so the site that wrote it is a defect. The app's emitter refuses
+    it before the write, as a record that cannot be written, so the caller's fail-closed path
+    answers it."""
 
 
 class ViewAsUnstamped(Exception):

@@ -28,13 +28,14 @@ from candleviewer.api.step_up import make_step_up_router
 from candleviewer.api.view_as_guard import view_as_unstamped_handler
 from candleviewer.api.view_as_subject import (
     STATE_KEY,
+    TargetNamedAsActor,
     ViewAsUnstamped,
     acting_user,
     view_as_subject,
 )
 from candleviewer.app import _LazyAuditEmitter, _refuse_target_as_actor, create_app
 from candleviewer.audit.access import AuditPrincipal
-from candleviewer.audit.writer import AuditUnavailable, TargetNamedAsActor
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.view_as import (
@@ -324,8 +325,13 @@ def test_the_app_answers_an_unstamped_view_with_the_guards_handler() -> None:
 _VIEWING = partial(bound_view_as, _stamp())
 
 
-@pytest.mark.parametrize("actor", [_TARGET, str(_TARGET)], ids=["uuid", "str"])
+@pytest.mark.parametrize(
+    "actor",
+    [_TARGET, str(_TARGET), str(_TARGET).upper(), f"{{{_TARGET}}}", f"urn:uuid:{_TARGET}"],
+    ids=["uuid", "str", "upper-case", "braces", "urn"],
+)
 def test_the_tripwire_refuses_a_record_naming_the_viewed_target(actor: Any) -> None:
+    """Every spelling the writer would store as the target's id (I-7)."""
     with _VIEWING(), pytest.raises(TargetNamedAsActor):
         _refuse_target_as_actor("admin.area_entered", {"actor_user_id": actor})
 
@@ -335,9 +341,10 @@ def test_the_tripwire_refuses_a_record_naming_the_viewed_target(actor: Any) -> N
     [
         (_VIEWING, {"actor_user_id": _VIEWER}),
         (_VIEWING, {}),
+        (_VIEWING, {"actor_user_id": "system"}),
         (nullcontext, {"actor_user_id": _TARGET}),
     ],
-    ids=["names-the-viewer", "names-no-actor", "no-view-bound"],
+    ids=["names-the-viewer", "names-no-actor", "names-no-user-id", "no-view-bound"],
 )
 def test_the_tripwire_passes_a_record_naming_no_viewed_target(
     binding: Callable[[], AbstractContextManager[Any]], fields: dict[str, Any]

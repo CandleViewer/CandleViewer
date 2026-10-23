@@ -722,13 +722,6 @@ class AuditUnavailable(AuditError):
     or unwritable). The audited action must be refused (C-2.9 fail-closed)."""
 
 
-class TargetNamedAsActor(AuditUnavailable):
-    """A record written while a request views as another user names that user as its actor
-    (#3085, Q2): the viewer acts, so the site that wrote it is a defect. The app's emitter refuses
-    it before the write, as a record that cannot be written, so the caller's fail-closed path
-    answers it."""
-
-
 #: The actor of the audit lane's own records (§15.6 Ingest step 1).
 LANE_ACTOR = "system:audit-lane"
 

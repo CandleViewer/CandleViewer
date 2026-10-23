@@ -327,14 +327,14 @@ class BackupDownloads:
         link, the address alone (the per-source refusal), and a bearer's user if one came."""
         ask, link, who = record.ask, record.link, record.ask.bearer
         state: dict[str, Any] = {"stage": "served"}
-        user, session = (None, None) if who is None else (who.user_id, who.session_id)
+        user, session = (None, None) if who is None else (who.actor_id, who.session_id)
         kind = target = None
         if link is not None:
             bearer = "absent" if who is None else "matched"
             state |= {"link_id": str(link.link_id), "bearer": bearer}
             user, kind, target = link.user_id, "backup", str(link.backup_id)
             session = link.session_id if who is None else session
-        label = str(user or "anonymous") if who is None else who.username
+        label = str(user or "anonymous") if who is None else who.actor_name  # the viewer acts
         await self._audit.emit(
             "backup.downloaded", actor_label=label, actor_user_id=user, actor_ip=ask.source,
             session_id=session, object_kind=kind, object_id=target, outcome=record.outcome,
