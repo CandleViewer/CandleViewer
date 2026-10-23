@@ -74,6 +74,7 @@ from candleviewer.oms.ports import (
     AuditSeverity,
     ClockHealth,
     ExecutionHandovers,
+    Finding,
     FixedQtySizer,
     ForeignOrderLockout,
     Interim,
@@ -987,6 +988,13 @@ def test_a_live_process_starts_with_any_other_reconciliation_binding() -> None:
     refuse_live_without_reconciliation(ProcessEnvironment.LIVE, InMemoryReconciliationRequests())
 
 
+def test_live_as_plain_text_refuses_no_reconciliation_too() -> None:
+    """The environment compares by value, so an untyped caller's `"live"` cannot slip past."""
+    as_text = cast(ProcessEnvironment, "live")  # a str where mypy wants the enum, on purpose
+    with pytest.raises(ReconciliationUnavailable):
+        refuse_live_without_reconciliation(as_text, NoReconciliation())
+
+
 async def test_no_position_protection_refuses_a_lost_stop() -> None:
     """24 Sec.8.12: until E32-T02 binds B8, a lost stop no live order protects pages (C-2.6)."""
     lost = ProtectionReading("SL_LOST", 1, None, Decimal(1))
@@ -997,6 +1005,18 @@ async def test_no_position_protection_refuses_a_lost_stop() -> None:
 async def test_no_position_protection_takes_an_observed_stop_quietly() -> None:
     seen = ProtectionReading("SL_OBSERVED", 1, Decimal(59000), Decimal(1))
     await NoPositionProtection().take_reading(_KEY, seen)
+
+
+def test_a_protection_reading_carries_b1s_reading_keys() -> None:
+    """24 Sec.8.12: a position row becomes B1's `_READING`, which its guards read whole."""
+    keys = {field.name for field in dataclasses.fields(ProtectionReading)} - {"event"}
+    assert keys == set(b01_order._READING["properties"])
+
+
+def test_an_undecided_fill_is_a_finding_of_its_own() -> None:
+    """24 Sec.8.12 step 4: until E29-T06 it opens the lockout, fail closed, never as `execution`,
+    so its record never claims the fill has no OMS intent (Sec.15.5)."""
+    assert get_args(Finding) == ("order", "execution", "undecided")
 
 
 def test_the_lockout_stand_ins_record_is_a_registered_action() -> None:

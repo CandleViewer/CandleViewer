@@ -596,8 +596,9 @@ class RefuseWhileWaiting:
             raise StopRequestPending(retry_after_s=STOP_REQUEST_RETRY_AFTER_S)
 
 
-#: What a lockout opens on: an order, or a trade execution, with no OMS intent (24 Sec.8.10).
-Finding = Literal["order", "execution"]
+#: What a lockout opens on: an order, or a trade execution, with no OMS intent (24 Sec.8.10); and,
+#: until E29-T06 can keep one, a fill whose intent is undecided, fail closed (Sec.8.12 step 4).
+Finding = Literal["order", "execution", "undecided"]
 
 
 class ForeignOrderLockout(Protocol):
@@ -657,11 +658,13 @@ class NoReconciliation:
 def refuse_live_without_reconciliation(
     environment: ProcessEnvironment, port: ReconciliationRequests
 ) -> None:
-    """The live start-up self-check (24 Sec.8.12, C-2.21), which E29-T05's wiring slice calls:
+    """The live start-up self-check (24 Sec.8.12, C-2.21), which E29-T05's wiring slice calls on
+    the binding as bound, before any wrapper (a wrapped stand-in would pass it):
     `ReconciliationUnavailable` when a live process would run with `NoReconciliation`, as the
-    exchange is truth after a reconnect (C-2.5). Demo and testnet run with its page; E29-T06
-    removes the stand-in and this refusal together."""
-    if environment is ProcessEnvironment.LIVE and isinstance(port, NoReconciliation):
+    exchange is truth after a reconnect (C-2.5). The environment compares by value, so a plain
+    `"live"` refuses too. Demo and testnet run with its page; E29-T06 removes the stand-in and
+    this refusal together."""
+    if environment == ProcessEnvironment.LIVE and isinstance(port, NoReconciliation):
         raise ReconciliationUnavailable("a live process needs E29-T06's reconciliation pass")
 
 
@@ -692,7 +695,9 @@ class ExecutionHandovers(Protocol):
 @dataclass(frozen=True, slots=True)
 class ProtectionReading:
     """A position row's protection reading (24 Sec.8.12), B1's `SL_OBSERVED` or `SL_LOST`: the
-    row's exchange time in ms, its stop (None when it has none) and its size."""
+    row's exchange time in ms, its stop (None when it has none) and its size, B1's `_READING`
+    keys. `SL_LOST` is an open position (size above zero) with no stop; any other row, a flat one
+    included, is `SL_OBSERVED`, so a close never pages."""
 
     event: Literal["SL_OBSERVED", "SL_LOST"]
     updated_time: int
@@ -702,17 +707,19 @@ class ProtectionReading:
 
 class ProtectionReadings(Protocol):
     """Where the consumer sends the protection reading of a position no live order protects (24
-    Sec.8.12; a live order's B1 `protection` region takes it through `OrderMachines.push`).
-    E32-T02 binds it to B8 (`position_protection`) in its own contract change; until then
-    `NoPositionProtection` is the one binding. `key` names the position's account too."""
+    Sec.8.12): a live order protects it while its B1 `protection` region holds it, in any leaf
+    but `not_required`, and takes the reading through `OrderMachines.push`. A reading no such
+    order took, as each closed before its push, comes here too. E32-T02 binds it to B8
+    (`position_protection`) in its own contract change; until then `NoPositionProtection` is the
+    one binding. `key` names the position's account too."""
 
     async def take_reading(self, key: PositionKey, reading: ProtectionReading) -> None: ...
 
 
 class NoPositionProtection:
     """`ProtectionReadings` until E32-T02: no machine holds the position, so an `SL_LOST` is
-    `ProtectionReadingsUnavailable`, which the consumer logs, counts and pages P1 on (C-2.6); an
-    `SL_OBSERVED` asks for nothing."""
+    `ProtectionReadingsUnavailable`, which the consumer logs, counts and pages P1 on once per
+    episode (C-2.6); an `SL_OBSERVED`, a flat position's included, asks for nothing."""
 
     async def take_reading(self, key: PositionKey, reading: ProtectionReading) -> None:
         if reading.event == "SL_LOST":

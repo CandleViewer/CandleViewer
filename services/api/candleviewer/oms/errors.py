@@ -207,9 +207,9 @@ class ReconciliationUnavailable(OmsError):
 
 
 class ProtectionReadingsUnavailable(OmsError):
-    """A position no live order protects lost its stop, and no machine holds the position until
-    E32-T02 binds B8 (`NoPositionProtection`, 24 Sec.8.12): the consumer logs, counts and pages P1
-    (C-2.6)."""
+    """A position no live order protects (none whose B1 `protection` region holds it) lost its
+    stop, and no machine holds the position until E32-T02 binds B8 (`NoPositionProtection`, 24
+    Sec.8.12): the consumer logs, counts and pages P1 once per episode (C-2.6)."""
 
 
 class AckWithoutOrderId(OmsError):
