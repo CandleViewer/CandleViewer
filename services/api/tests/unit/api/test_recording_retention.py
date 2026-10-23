@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, get_args
 
 import httpx
 import pytest
@@ -94,13 +94,22 @@ class _Env:
         self.log.append(action)
         self.audit.append((action, kwargs))
 
-    async def put(self, items: Any, key: str | None = None, **params: Any) -> httpx.Response:
+    async def put(self, items: Any, key: str | None = None, *, whole: bool = True,
+                  **params: Any) -> httpx.Response:  # fmt: skip
+        """`whole`: add a default row for each stream the set leaves out."""
         headers = {} if key is None else {"Idempotency-Key": key}
-        return await self.http.put(_PATH, json={"items": items}, params=params, headers=headers)
+        sent = _whole(items) if whole else items
+        return await self.http.put(_PATH, json={"items": sent}, params=params, headers=headers)
 
 
 def _item(stream: str = "trades", days: int = 30, **extra: Any) -> dict[str, Any]:
     return {"stream": stream, "retain_days": days, "action": "archive_parquet"} | extra
+
+
+def _whole(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`items` plus a default archive row for every stream that has no default row in it."""
+    have = {i["stream"] for i in items if i.get("symbol") is None}
+    return items + [_item(s, 30) for s in get_args(retention.Stream) if s not in have]
 
 
 def _set(body: Any) -> list[tuple[Any, ...]]:
@@ -126,13 +135,13 @@ async def test_put_replaces_the_set_after_writing_the_change_with_before_and_aft
     new = [_item(days=60), _item("orderbook_delta", 3, action="drop", symbol="ETHUSDT")]
     resp = await env.put(new)
     assert resp.status_code == 200
-    assert _set(resp.json()) == [("trades", 60, "archive_parquet", None),
-                                 ("orderbook_delta", 3, "drop", "ETHUSDT")]  # fmt: skip
+    assert _set(resp.json())[:2] == [("trades", 60, "archive_parquet", None),
+                                     ("orderbook_delta", 3, "drop", "ETHUSDT")]  # fmt: skip
     assert env.log == ["retention.change", "replace"]
     change = env.audit[0][1]
     was = {"stream": "trades", "retain_days": 30, "action": "archive_parquet", "symbol": None}
     assert change["before_state"]["items"] == [was]
-    assert [i["retain_days"] for i in change["after_state"]["items"]] == [60, 3]
+    assert [i["retain_days"] for i in change["after_state"]["items"]][:2] == [60, 3]
     assert change["actor_user_id"] == env.caller.user_id
     assert env.store.actors == [str(env.caller.user_id)]  # the stored rows' created_by
 
@@ -249,7 +258,7 @@ async def test_a_manager_with_the_write_permission_replaces_the_set() -> None:
 async def test_no_store_is_503(method: str) -> None:
     env = _Env("recording:read", "recording:write")
     env.store = None
-    resp = await env.http.request(method, _PATH, json={"items": []})
+    resp = await env.http.request(method, _PATH, json={"items": _whole([])})
     assert (resp.status_code, resp.json()["code"]) == (503, "store_unavailable")
 
 
@@ -275,8 +284,8 @@ async def test_two_overlapping_puts_are_audited_in_the_order_they_are_stored() -
     assert [r.status_code for r in await asyncio.gather(first, second)] == [200, 200]
     one, two = (kw for _, kw in env.audit)
     assert two["before_state"]["items"] == one["after_state"]["items"]
-    assert [i["retain_days"] for i in two["after_state"]["items"]] == [90]
-    assert [i["retain_days"] for i in env.store.rows] == [90]  # the last record is the store
+    assert two["after_state"]["items"][0]["retain_days"] == 90
+    assert env.store.rows[0]["retain_days"] == 90  # the last record is the store
 
 
 async def test_a_replace_that_fails_after_the_record_writes_a_failure_record_and_raises() -> None:
@@ -339,3 +348,61 @@ async def test_the_sweep_result_says_when_the_volume_lock_was_held(locked: bool)
     assert (await env.put([_item()], apply_now="true")).status_code == 200
     (job,) = await _settle(env.jobs)
     assert job.result is not None and job.result["skipped_locked"] is locked
+
+
+async def test_a_set_that_omits_a_streams_default_row_is_refused_and_stores_nothing() -> None:
+    streams = get_args(retention.Stream)
+    for left_out in (streams[0], streams[-1], "klines"):
+        env = _Env("recording:write")
+        items = [_item(s, 30) for s in streams if s != left_out]
+        resp = await env.put(items, whole=False)
+        assert (resp.status_code, resp.json()["code"]) == (422, "retention_invalid_policy")
+        assert env.log == [] and env.store is not None and env.store.replaced == 0
+    # a symbol row does not stand in for the default row
+    env = _Env("recording:write")
+    items = [_item(s, 30) for s in streams if s != "klines"] + [
+        _item("klines", 30, symbol="ETHUSDT")
+    ]
+    assert (await env.put(items, whole=False)).status_code == 422
+    assert (await env.put([], whole=False)).status_code == 422  # an empty set omits them all
+    assert (await env.put(_whole([]), whole=False)).status_code == 200
+
+
+async def test_two_overlapping_puts_with_one_key_store_once_and_record_once() -> None:
+    env = _Env("recording:write")
+    assert env.store is not None
+    env.store.hold = asyncio.Event()
+    key = str(uuid.uuid4())
+    first = await _park(env, key, 60)
+    await env.store.entered.wait()  # the first is inside the replace
+    second = await _park(env, key, 60)
+    await _spin()
+    env.store.hold.set()
+    one, two = await asyncio.gather(first, second)
+    assert (one.status_code, two.status_code) == (200, 200) and one.content == two.content
+    assert two.headers["idempotency-replayed"] == "true"
+    assert env.store.replaced == 1 and env.log == ["retention.change", "replace"]
+
+
+async def test_a_chunked_body_with_no_length_over_the_cap_is_refused() -> None:
+    env = _Env("recording:write")
+
+    async def body() -> Any:
+        yield b'{"items": [], "note": "'
+        for _ in range(40):  # 40 KiB chunks: the cap is 256 KiB
+            yield b"x" * 1024 * 40
+        yield b'"}'
+
+    request = env.http.build_request("PUT", _PATH, content=body())
+    assert "content-length" not in request.headers
+    resp = await env.http.send(request)
+    assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
+    assert env.log == []
+
+
+async def test_a_body_of_more_than_1000_items_is_refused() -> None:
+    env = _Env("recording:write")
+    many = [_item(symbol=f"A{n:04d}USDT") for n in range(1001)]
+    resp = await env.http.put(_PATH, json={"items": many})
+    assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
+    assert env.log == []

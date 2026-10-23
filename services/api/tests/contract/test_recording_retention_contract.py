@@ -14,7 +14,7 @@ import pytest
 from candleviewer.api.contract_conformance import load_openapi_spec
 from tests.contract._admin_support import example_cases, validate_example
 from tests.contract.rbac.rbac_harness import World, bearer, build_world
-from tests.unit.api.test_recording_retention import _item, _Store
+from tests.unit.api.test_recording_retention import _item, _Store, _whole
 
 _SPEC: Any = load_openapi_spec()
 _PATH = "/recording/retention-policies"
@@ -49,7 +49,9 @@ def store(world: World) -> _Store:
 
 
 def _put(world: World, actor: str, items: Any, **params: Any) -> Any:
-    return world.client.put(_PATH, json={"items": items}, params=params, headers=bearer(actor))
+    return world.client.put(
+        _PATH, json={"items": _whole(items)}, params=params, headers=bearer(actor)
+    )
 
 
 @pytest.mark.parametrize(("case", "pointer", "value"), _EXAMPLES, ids=[c[0] for c in _EXAMPLES])
