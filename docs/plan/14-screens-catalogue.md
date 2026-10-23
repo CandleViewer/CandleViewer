@@ -836,6 +836,7 @@ Drag preview                Drop zones
 - **Stories:** US-IND-001, US-IND-002, US-IND-003, US-IND-004, US-IND-005, US-IND-006, US-IND-007.
 - **UX research:** [e13-indicator-mental-models.md](../design/research/e13-indicator-mental-models.md) (E13-D01; proposes amendment AM-1: Favourites + Recents landing).
 - **Wireframes:** [E13-D02.md](../design/E13/E13-D02.md) (E13-D02; greyscale wireframes with all states, keyboard contract and component-usage map; sixteen Penpot boards on page `E13-D02`, exports in `docs/design/E13/img/`).
+- **Hi-fi:** [E13-D03.md](../design/E13/E13-D03.md) · [E13-D03-handoff.md](../design/E13/E13-D03-handoff.md) (E13-D03; owner approval pending; the dark / light × compact / comfortable frames of the library, the slot-hued thumbnail tiles and tags; the eight-slot indicator palette with its assignment function and identity ladder PROPOSED for E13-D04; Penpot page by name + id in the spec).
 - **Design sign-off acceptance checklist:** [ ] categorised, searchable list with descriptions [ ] preview thumbnail per indicator [ ] indicators requiring recorded history are marked with what they need [ ] favourites/recents [ ] no-results state
 
 ### SCR-035 — Indicator settings dialog
@@ -849,6 +850,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `indicator.settings_changed` with `{type, key}` (analytics).
 - **UX research:** [e13-indicator-mental-models.md](../design/research/e13-indicator-mental-models.md) (E13-D01; legend quick-edit of the primary parameter and its rule-referenced-indicator guard, R2/R2-A).
 - **Wireframes:** [E13-D02.md](../design/E13/E13-D02.md) (E13-D02; greyscale wireframes with all states, keyboard contract and component-usage map; sixteen Penpot boards on page `E13-D02`, exports in `docs/design/E13/img/`).
+- **Hi-fi:** [E13-D03.md](../design/E13/E13-D03.md) · [E13-D03-handoff.md](../design/E13/E13-D03-handoff.md) (E13-D03; owner approval pending; the dark / light × compact / comfortable frames of the settings dialog, the Style tab over the closed token vocabulary — eight palette slots, dash, width, fill — PROPOSED for E13-D04, the live preview in the series language; Penpot page by name + id in the spec).
 - **Design sign-off acceptance checklist:** [ ] inputs / style / visibility / scale tabs drawn [ ] live preview [ ] parameter validation messages [ ] 'save as default for this indicator' control [ ] reset
 
 ### SCR-036 — Indicator manager (object tree)
@@ -876,6 +878,7 @@ Drag preview                Drop zones
 - **UX research:** [e13-indicator-mental-models.md](../design/research/e13-indicator-mental-models.md) (E13-D01; key-map proposals and count-only referrer disclosure, R5).
 - **Wireframes:** [E13-D02.md](../design/E13/E13-D02.md) (E13-D02; greyscale wireframes with all states, keyboard contract and component-usage map; sixteen Penpot boards on page `E13-D02`, exports in `docs/design/E13/img/`).
 - **Wireframes (drawings):** [E14-D02.md](../design/E14/E14-D02.md) (E14-D02; greyscale wireframes of the rail, the creation state machine, selection / edit states, the properties popover, the drawings branch and the keyboard path; fourteen Penpot boards (pending) on page `E14-D02 Drawing interaction wireframes`, exports to `docs/design/E14/img/`).
+- **Hi-fi:** [E13-D03.md](../design/E13/E13-D03.md) · [E13-D03-handoff.md](../design/E13/E13-D03-handoff.md) (E13-D03; owner approval pending; the dark / light × compact / comfortable frames of the manager, the slot-hued shape swatches, the count chip and the legend row states in colour; Penpot page by name + id in the spec).
 - **Design sign-off acceptance checklist:** [ ] tree drawn with panes, indicators and drawings grouped [ ] per-item visibility/lock/delete controls [ ] multi-select and bulk actions [ ] this tree is confirmed as the accessible equivalent for canvas objects (keyboard-reachable, named) [ ] empty state
 
 ### SCR-037 — Drawing toolbar & drawing properties
