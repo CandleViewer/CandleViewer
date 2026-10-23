@@ -961,15 +961,15 @@ Drag preview                Drop zones
 
 ### SCR-041 — Symbol/interval quick-switcher (in-chart)
 
-- **Type:** Popover. Type-ahead symbol search with favourites, recents and instrument metadata preview (tick size, lot size, max leverage, funding, 24 h volume).
-- **Data:** `GET /api/v1/instruments?q=`, `GET /api/v1/instruments/{symbol}`.
-- **States:** no match ("No USDT perpetual matches 'xyz' — v1 supports linear perpetuals only.") · not recorded chip with "Record this symbol" action (owner).
-- **Components:** CMP-048 Combobox / AutoComplete, CMP-213 FuzzyList, CMP-219 SymbolPicker, CMP-220 IntervalPicker.
+- **Type:** Popover, opened from the chart toolbar's symbol button or `/` with the chart focused (E08-D05 D-1). Type-ahead symbol search with favourites, recents and instrument metadata preview (tick size, lot size, max leverage, funding, 24 h turnover), and the chart's interval favourites (`1..9`) in the same overlay; bar modes are E12-D04's. `Enter` commits; `Shift+Enter` opens the symbol in a new chart.
+- **Data:** the local instrument index loaded from `GET /api/v1/instruments` (no request per keystroke), `GET /api/v1/instruments/{symbol}`, `GET /api/v1/recording/symbols`, `GET /api/v1/recording/status`, `GET /api/v1/recording/storage`.
+- **States:** no match ("No USDT perpetual matches 'xyz'." "v1 supports Bybit USDT linear perpetuals only.") · not trading ("LUNAUSDT is not trading on Bybit.") · not recorded chip with "Record this symbol" action (owner; others read the `rbac.owner_only` sentence, E09-D09; E11-D04 D12 to converge) · catalogue loading / load failed · delisted current symbol (E08-D05 §7).
+- **Components:** CMP-019 Icon (`lock`), CMP-048 Combobox / AutoComplete, CMP-079 RbacGate, CMP-213 FuzzyList, CMP-219 SymbolPicker, CMP-220 IntervalPicker.
 - **Stories:** US-MKT-002, US-CHART-005, US-REC-002.
 - **A11y:** Combobox with `aria-autocomplete="list"`; results are announced as a count; the current symbol is the initial value and Esc restores it.
 - **Performance:** Opens in <=80 ms from a locally cached instrument list; switching symbol swaps subscriptions with a single WS frame and shows the previous frame until first data (no white flash).
 - **Analytics/audit:** `chart.symbol_changed` with `{from, to, source: 'quick-switcher'}` (analytics).
-- **Design sign-off acceptance checklist:** [ ] typeahead with fuzzy match [ ] recent symbols [ ] interval shortcuts in the same overlay [ ] not-recorded warning on symbols with no history [ ] no-results state
+- **Design sign-off acceptance checklist:** [x] typeahead with fuzzy match (B16) [x] recent symbols (B15) [x] interval shortcuts in the same overlay (B15) [x] not-recorded warning on symbols with no history (B02, B16, B18) [x] no-results state (B17)
 
 ### SCR-042 — Interval / bar-mode menu
 
@@ -2153,14 +2153,16 @@ Drag preview                Drop zones
 
 ### SCR-102 — Symbol search (global)
 
-- **Type:** Modal (`Ctrl+P`). Fuzzy search across USDT perpetuals with metadata preview, recording status, and actions (open chart, add to watchlist, record, view info).
-- **States:** no results with an explicit scope reminder ("v1 supports Bybit USDT linear perpetuals only.").
-- **Components:** CMP-011 Tag / Chip, CMP-026 EmptyState, CMP-048 Combobox / AutoComplete, CMP-160 SymbolSearchInput, CMP-213 FuzzyList.
+- **Type:** Modal (`/` when no chart has focus, the top-bar trigger, or "Search symbols" in SCR-012; `Ctrl+P` retired, E08-D05 D-1). Fuzzy search across USDT perpetuals with metadata preview, recording status, and actions (open in the target panel, open in a new chart, open DOM ladder, add to watchlist, view info, record (owner)).
+- **Data:** the local instrument index from `GET /api/v1/instruments` (Trading only, paged) at shell start and hourly; `GET /api/v1/instruments/{symbol}` for a settled query with no match; `POST /api/v1/instruments/refresh` (owner), then `GET /api/v1/admin/jobs/{jobId}`; `GET /api/v1/recording/symbols`, `GET /api/v1/recording/status`, `GET /api/v1/recording/storage`; 24 h values only from tickers the client already holds (else "—").
+- **Interactions:** `Enter` opens in the target panel named in the header; `Shift+Enter` opens a new chart; `Shift+F10`, a right-click or the detail bar's `⋯` opens the action menu; `↑/↓` and `PageUp/PageDown` move; `Esc` closes and restores focus.
+- **States:** idle (recent, then favourites) · results · catalogue loading · catalogue load failed (Retry; owner refresh) · stale catalogue · refresh failed (list kept) · symbol check · no results with an explicit scope reminder ("No USDT perpetual matches 'xyz'." "v1 supports Bybit USDT linear perpetuals only.") · not trading · delisted recent or favourite (marked, not openable) · disconnected · armed target (E08-D05 §6.2).
+- **Components:** CMP-002 IconButton, CMP-011 Tag / Chip, CMP-019 Icon (`lock`), CMP-026 EmptyState, CMP-041 Menu, CMP-043 Dialog, CMP-048 Combobox / AutoComplete, CMP-079 RbacGate, CMP-160 SymbolSearchInput, CMP-213 FuzzyList.
 - **Stories:** US-MKT-002, US-MKT-001.
 - **A11y:** Combobox pattern with `aria-activedescendant`; results announce their count; each result reads symbol, base/quote and a recording indicator; Esc closes and restores focus.
 - **Performance:** Search runs against a locally cached instrument list (refreshed hourly from `GET /api/v1/instruments`); results appear within 50 ms of a keystroke with no network round-trip in the common case.
-- **Analytics/audit:** `symbol.searched`, `symbol.search_result_opened` (analytics).
-- **Design sign-off acceptance checklist:** [ ] fuzzy matching with the matched substring highlighted (and not relying on colour alone) [ ] recent and favourite sections [ ] per-result actions (open chart, add to watchlist, open ladder) [ ] not-recorded indicator [ ] no-results state with a suggestion [ ] keyboard-only operation
+- **Analytics/audit:** `symbol.searched`, `symbol.search_result_opened`, `empty_state_shown {surface, reason}` (analytics; payloads in E08-D05 §12.1).
+- **Design sign-off acceptance checklist:** [x] fuzzy matching with the matched substring highlighted (and not relying on colour alone) (B01, B05) [x] recent and favourite sections (B04) [x] per-result actions (open chart, add to watchlist, open ladder) (B06) [x] not-recorded indicator (B01, B05) [x] no-results state with a suggestion (B07) [x] keyboard-only operation (B14)
 
 ### SCR-103 — Symbol info / instrument detail
 
