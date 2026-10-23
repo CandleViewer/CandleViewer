@@ -34,7 +34,8 @@ its source so a reviewer can re-grep it:
    cited from every T2 row, the view-as leg first, no "same as dark", no SET-ME / TODO / TBD, no
    trading word on the rail, no local path,
    no Penpot host (a generic pattern; no host named), no pageLink, no closing keyword with an
-   issue number, every planned board PENDING, the interim stamp, two handoff blocks).
+   issue number, every board row drawn (its board id and PNG match the as-built list), the
+   interim stamp, two handoff blocks).
 8. The counts the boards and the PR draft quote (``--json`` feeds the local check-nums).
 
 Usage: python3 -I docs/design/_tools/e14_d03_rail_audit.py [--json] [--check] [--sr-fixture PATH]
@@ -758,8 +759,32 @@ def string_report(fails: list[str], spec: str, handoff: str) -> dict[str, Any]:
     board_rows = [
         r for r in section(spec, "## 0.", "## 1.").splitlines() if re.match(r"^\| 0\d", r)
     ]
-    gates["boards_pending"] = bool(board_rows) and all(
-        re.search(r"PENDING\s*\|\s*$", r) for r in board_rows
+    as_built = dict(
+        re.findall(
+            r"(?m)^- `(0\d) [^`]+` — board id `([0-9a-f-]{36})`", section(spec, "## 0.", "## 1.")
+        )
+    )
+    drawn_rows = [
+        m
+        for r in board_rows
+        if (
+            m := re.search(
+                r"^\| (0\d) .*\| `(E14-D03-0\d-[a-z0-9-]+\.png)`\s*"
+                r"\| Drawn \(board id `([0-9a-f-]{36})`; `img/([^`]+)`\)\s*\|$",
+                r,
+            )
+        )
+    ]
+    gates["boards_drawn"] = (
+        bool(board_rows)
+        and len(drawn_rows) == len(board_rows)
+        and all(
+            m[2] == m[4]
+            and m[2].startswith(f"E14-D03-{m[1]}-")
+            and as_built.get(m[1]) == m[3]
+            and (SPEC.parent / "img" / m[4]).is_file()
+            for m in drawn_rows
+        )
     )
     gates["stamp_present"] = STAMP in spec
     gates["handoff_two_blocks"] = handoff.count("## Handoff checklist — ") == 2
