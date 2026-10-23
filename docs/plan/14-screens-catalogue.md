@@ -1217,14 +1217,15 @@ Drag preview                Drop zones
 
 - **Data:** WS `ticker.{symbol}` (openInterest, fundingRate, nextFundingTime, mark/index), `liquidations.{symbol}`; REST backfill `GET /api/v1/market/open-interest?symbol&interval`, `GET /api/v1/market/funding?symbol`. Liquidation history is **local-recorder only** — no exchange history endpoint exists.
 - **Settings:** OI absolute vs delta-per-bar, OI/price quadrant colouring, funding stepped line vs bars + annualised toggle, liquidation bars vs heatmap, notional threshold.
-- **States:** loading · partial (liquidation history limited to recorder uptime, with an explicit chip) · funding countdown running · next-funding imminent warning (<5 min, "Funding settles in 04:12 — position will be charged ≈ 12.40 USDT").
+- **States:** loading · partial (liquidation history limited to recorder uptime, with an explicit chip) · funding countdown running · next-funding imminent warning (<5 min, "Funding settles in 04:12 — you pay ≈ 12.40 USDT", or "… you receive ≈ 12.40 USDT" on the receiving side, shown only when a position exists; E24-D02 §5.2 holds the PROPOSED form and account scope, Q5 / Q11).
 - **A11y:** each sub-pane has a table alternative; the funding countdown is announced at 5 min and 1 min only.
-- **Components:** CMP-036 KeyValueRow, CMP-126 FundingCountdown, CMP-127 LiquidationMarker, CMP-186 OiFundingLiqPane, CMP-188 PriceAxis, CMP-199 ChartLegend, CMP-227 EstimatedBadge.
+- **Components:** CMP-019 Icon (`lock`), CMP-036 KeyValueRow, CMP-079 RbacGate, CMP-126 FundingCountdown, CMP-127 LiquidationMarker, CMP-186 OiFundingLiqPane, CMP-188 PriceAxis, CMP-199 ChartLegend, CMP-227 EstimatedBadge.
 - **Stories:** US-DERIV-001, US-DERIV-002, US-DERIV-003, US-DERIV-004, US-DERIV-005, US-DERIV-006, US-DERIV-007, US-DERIV-008.
 - **Performance:** OI and funding arrive at low frequency (<=1 Hz) and render on change only; liquidation prints can burst - they are coalesced into 250 ms buckets with a burst counter rather than one DOM node per print, and the panel must not exceed 2 ms scripting per frame during a liquidation cascade (target: 500 prints/s sustained for 10 s with no dropped frames).
 - **Analytics/audit:** `oi_panel.metric_toggled`, `oi_panel.interval_changed`, `liquidation.print_clicked`, `funding.countdown_alert_set` (analytics).
 - **Design sign-off acceptance checklist:** [ ] OI series, funding rate + countdown to settlement, and the liquidation strip drawn together [ ] predicted vs actual funding distinguished with text [ ] liquidation cascade state drawn (aggregated bucket + counter) [ ] units and side of every figure explicit [ ] empty state where the exchange gives no value [ ] stale-data shading
 - **UX research:** [e24-deriv-reading.md](../design/research/e24-deriv-reading.md) (E24-D01; heuristic walkthrough, no participants: PROPOSED pane order with a persistent header row, `deriv.*` defaults, the countdown ladder with pay / receive copy, bars over the feed, basis as a header readout, zero vs unknown; contradictions C1–C15 and gaps G1–G11 for their owners).
+- **Wireframes:** [E24-D02.md](../design/E24/E24-D02.md) (E24-D02; greyscale wireframes of every state with its source, the deviations with their rulings, the contract gaps for their owners and the needs for E24-D03; boards PENDING (BLOCKED-PENPOT) on Penpot page `E24-D02`, landing with their exports in a later PR).
 
 ### SCR-055 — Speed-of-tape panel
 
