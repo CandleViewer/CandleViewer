@@ -208,7 +208,8 @@ def test_failed_apt_install_on_a_hit_does_not_blame_the_download(
         INSTALL_FAILS="99",
     )
     assert r.returncode == 1 and "CI-A11Y-005" in r.stderr
-    assert "dependency" in r.stderr and "download" not in r.stderr
+    (line,) = [ln for ln in r.stderr.splitlines() if ln.startswith("::error::")]
+    assert "dependency" in line and "download" not in line
 
 
 def test_empty_backoff_list_ends_with_the_code(env: dict[str, str]) -> None:

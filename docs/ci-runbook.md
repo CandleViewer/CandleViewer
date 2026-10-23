@@ -518,7 +518,7 @@ index alone, removing nothing.
   budget needs sharding (`vitest --shard`), not a higher number.
 - **CI-A11Y-005** (Playwright browser download failed, `tools/ci/playwright_browsers.sh`): the
   chromium download (or the apt dependency install on a cache hit) failed 5 times, waits 10, 20,
-  40, 60 s, each try bound to 300 s (`PW_INSTALL_TIMEOUT`); the CDN is slow or down, so re-run the
+  40, 60 s, each try bound to 120 s (`PW_INSTALL_TIMEOUT`; 5 tries and the waits stay inside the job's 15 min); the CDN is slow or down, so re-run the
   job and never change a budget. Both a11y jobs cache `~/.cache/ms-playwright` under the key
   `pw-browsers-<runner OS>-<Playwright version from the lockfile>`, with no `restore-keys`, so a
   Playwright bump starts a cold cache. The step summary names the key and says hit or miss: a hit
@@ -527,7 +527,7 @@ index alone, removing nothing.
   The step sits after `pnpm install` because the version is read from the installed lockfile, so
   it is also after "Start the budget clock": the Storybook budget counts the whole job and stays
   600 s, which the cached install is what keeps it inside. The same code is raised when the version
-  cannot be read or a hit does not match it.
+  cannot be read or the key's version is not the installed one.
 
 ### CI-BUILD-* — workspace build prerequisites (`tools/ci/check_built_exports.mjs`)
 
