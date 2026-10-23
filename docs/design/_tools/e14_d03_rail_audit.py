@@ -26,8 +26,9 @@ its source so a reviewer can re-grep it:
 6. Token bindings: every token the spec binds in sections 3, 4 and 9 exists in the merged dark set
    (or is marked PROPOSED on its row); ``color.text.disabled`` / ``opacity.disabled`` never in a T2
    row; ``color.icon.`` only in a G-row.
-7. String gates on the committed files (the T2 rule once, "T2" in every gated row, the view-as leg
-   first, no "same as dark", no SET-ME / TODO / TBD, no trading word on the rail, no local path,
+7. String gates on the committed files (the T2 rule once, "T2" in every gated row and section 8.1
+   cited from every T2 row, the view-as leg first, no "same as dark", no SET-ME / TODO / TBD, no
+   trading word on the rail, no local path,
    no Penpot host (a generic pattern; no host named), no pageLink, no closing keyword with an
    issue number, every planned board PENDING, the interim stamp, two handoff blocks).
 8. The counts the boards and the PR draft quote (``--json`` feeds the local check-nums).
@@ -192,6 +193,7 @@ color.focus.ring|color.surface.selected|ui|focus ring on the pressed button
 color.focus.ring|color.surface.canvas|ui|focus ring overflowing onto the pane (chart background)
 color.focus.ring|color.surface.sunken|ui|focus ring on the toolbar fill (collapsed Draw button)
 color.text.tertiary|color.surface.raised|ui|T2 glyph and lock badge on the rail (E09-D09 section 11)
+color.text.tertiary|color.surface.selected|ui|T2 glyph and badge on a pressed toggle (rows 11-12)
 color.text.tertiary|color.surface.overlay|text|T2 menu item label (overflow and Draw menus)
 color.text.secondary|color.surface.overlay|text|T2 reason: echo, menu second line, deferred tag
 color.text.primary|color.surface.overlay|text|menu item label; tooltip label
@@ -693,6 +695,8 @@ def string_report(fails: list[str], spec: str, handoff: str) -> dict[str, Any]:
         r for r in s4.splitlines() if r.startswith("| ") and re.search(r"Viewer|view-as", r)
     ]
     gates["t2_in_gated_rows"] = bool(gated_rows) and all("T2" in r for r in gated_rows)
+    t2_rows = [r for r in s4.splitlines() if r.startswith("| ") and "T2" in r]
+    gates["t2_rows_cite_rule"] = bool(t2_rows) and all("§8.1" in r for r in t2_rows)
     gates["view_as_first"] = (
         0 <= spec.find(VIEW_AS) < spec.find(PERMISSION_WS) and PERMISSION_SET in spec
     )
