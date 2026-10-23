@@ -176,7 +176,7 @@ def make_view_as_router(
         )
         return JSONResponse(context.model_dump(mode="json"))
 
-    @router.delete(PATH)
+    @router.delete(PATH)  # nosem: audit-write-required reason=audited-below-the-handler-in-ViewAsService-admin.view_as_ended owner=@CandleViewer/security review=2027-03-25  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def end_view_as(request: Request) -> Response:
         record = await _caller(request)
         if isinstance(record, Response):
