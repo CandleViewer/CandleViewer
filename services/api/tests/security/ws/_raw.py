@@ -192,7 +192,8 @@ class RawWorld(World):
 
     def named_by(self, login: Login) -> dict[str, Any]:
         """What a `ws.subscribe.denied` row names of the socket it came from (#415, E17-R-16): the
-        session in `session_id` and the connection in `after_state`. Read off the socket's own
+        session in `session_id` and the connection in `after_state` (its upgrade's `request_id`,
+        #3990, is pinned by the request-id suites). Read off the socket's own
         close row, so call it after the socket has closed: that row's `object_id` is the connection,
         and its `session_id` must be the login's."""
         (closed,) = self.audit.of("ws.connection.closed")

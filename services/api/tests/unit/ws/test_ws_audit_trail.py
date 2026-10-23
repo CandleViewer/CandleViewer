@@ -169,8 +169,8 @@ async def test_a_viewing_sockets_granted_row_names_the_viewer() -> None:
 
 
 async def test_a_granted_row_names_the_sockets_request() -> None:
-    """#3990: the upgrade's id, which the socket's authz carries; a frame runs outside the
-    request the middleware bound."""
+    """#3990: the upgrade's id, which the socket's authz carries, so a row written outside the
+    socket's own task names it too."""
     authz, sent, sink = _connection()
     authz.request_id = upgrade = uuid.uuid4()
     await _sub(authz, sent, _acc("orders", A))

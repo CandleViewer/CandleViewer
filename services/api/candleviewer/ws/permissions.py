@@ -2002,7 +2002,8 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
     raises or is cancelled part way still records those before the fault. Its `object_id` and
     `reason` are the first one's, so a frame with one writes the row that refusal writes alone.
     It names the socket: its session in the `session_id` column, as the close row's; its
-    `connection_id` in `after_state` (#415, E17-R-16), since the row's `object_id` is the topic.
+    `connection_id` in `after_state` (#415, E17-R-16), since the row's `object_id` is the topic;
+    its upgrade's `request_id` (#3990).
     With more than one refusal, `after_state` also
     holds the `count` of them all, every code among them (`codes`, sorted) and the
     `[object_id, reason]` of the first `MAX_DENIALS_LISTED` in request order (`refusals`). An
@@ -2064,7 +2065,8 @@ async def audit_rebuild_refusal(authz: ConnectionAuthz) -> None:
     marked here, as the write starts (`first_user_refusal`), so a request that ended first leaves
     it to the user's next refusal. Its object is named as `ws.subscribe.denied`'s (`_denial`),
     never with the client's text, and it names the socket as that row does: its session in the
-    `session_id` column, its `connection_id` in `after_state` (#415, E17-R-16). Best effort,
+    `session_id` column, its `connection_id` in `after_state` (#415, E17-R-16), its upgrade's
+    `request_id` (#3990). Best effort,
     bounded at `FANOUT_AUDIT_TIMEOUT_S`: a record not confirmed is counted and logged, and a
     cancellation is counted and propagates; neither changes the refusal, which already went out."""
     key, authz.rebuilds.audit_due = authz.rebuilds.audit_due, None
@@ -2115,7 +2117,8 @@ _MACHINE_REVOKED: Final = {
 def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> list[_AuditRow]:
     """`ws.subscription.revoked`: one row per `revoked` frame, in frame order (WS-R02), naming the
     socket: its session in the `session_id` column, as the close row's; its `connection_id` in
-    `after_state` (#415, E17-R-16), since the row's `object_id` is the topic. A `machines` row
+    `after_state` (#415, E17-R-16), since the row's `object_id` is the topic; its upgrade's
+    `request_id` (#3990). A `machines` row
     names the full `ch` and its internal §6.4 reason, in `reason` only (SR-067), as a refusal's
     row does."""
     audit = authz.services.audit
