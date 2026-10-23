@@ -363,7 +363,19 @@ def make_view_as_start_router(
             return await refused(recorder, viewer, "view_as_owner_target", target, who)
         if not auth.step_up_is_active:
             return _unwired()
-        username = str(user["username"])
+        username, now = str(user["username"]), clock()
+        try:  # the 201's target, checked before anything starts: nothing after the commit raises
+            answer = api.ViewAsContext(
+                target_user_id=target,
+                target_username=username,
+                target_display_name=user.get("display_name"),
+                started_at=now,
+                expires_at=now,
+                read_only=True,
+                state="active",
+            )
+        except ValidationError as exc:
+            return _unavailable("users", exc, "The target's row could not be read.")
         summary = ChallengeText(f"View as user {quote_label(username)}, read-only")
         gate = await require_elevation_for(auth, str(record.id), "users", text=summary)
         if gate is not None:
@@ -372,8 +384,10 @@ def make_view_as_start_router(
         if service is None:  # the fake backend: no context can start
             return _unwired()
         try:
-            result = await service.start(record, target, reason=body.reason, now=clock())
-        except ViewAsStartUnavailable as exc:
+            result = await service.start(record, target, reason=body.reason, now=now)
+        except ViewAsStartUnavailable as exc:  # no id and no reason in the line
+            cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else None
+            _log().error("admin.view_as.start_unavailable", code=exc.code, error=cause)
             return _problem(ErrorCode(exc.code), 503, "Nothing started; try again shortly.")
         started = result.started.view_as if result.started is not None else None
         if started is None:
@@ -382,15 +396,9 @@ def make_view_as_start_router(
                     recorder, viewer, "view_as_active", target, who, result.held.view_as
                 )
             return _unauthenticated()  # the session was revoked or expired meanwhile
-        context = api.ViewAsContext(
-            target_user_id=target,
-            target_username=username,
-            target_display_name=user["display_name"],
-            started_at=started.started_at,
-            expires_at=started.expires_at,
-            read_only=True,
-            state="active",
+        window = {"started_at": started.started_at, "expires_at": started.expires_at}
+        return JSONResponse(
+            answer.model_copy(update=window).model_dump(mode="json"), status_code=201
         )
-        return JSONResponse(context.model_dump(mode="json"), status_code=201)
 
     return router

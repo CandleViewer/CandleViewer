@@ -26,7 +26,7 @@ from candleviewer.auth.errors import StepUpRequired
 from candleviewer.auth.models import MintedSession
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
-from candleviewer.auth.view_as import ViewAsState
+from candleviewer.auth.view_as import ViewAsStartResult, ViewAsState
 from tests.unit.admin.test_view_as_service import _TARGET, _VIEWER, _at, _Rig
 from tests.unit.api._fakes import BASE, HASHER, RecordingWriter
 from tests.unit.api.test_view_as_routes import Store
@@ -371,6 +371,62 @@ async def test_a_backend_without_the_service_answers_503_after_the_guard() -> No
     w.service = None
     assert _code(await w.start()) == (503, "store_unavailable")
     assert [e["action"] for e in w.audit.events] == ["admin.area_entered"]
+
+
+async def test_a_target_row_outside_the_contract_answers_503_and_starts_nothing() -> None:
+    """The 201's target is checked before anything starts, so no started context can end up behind
+    a 500 (#4245 security Low-1): a display name past `ViewAsContext`'s bound is a 503."""
+    w = World()
+    await w.sign_in()
+    w.users.rows[str(_TARGET)] = {**_user("bo"), "display_name": "B" * 81}
+    assert _code(await w.start()) == (503, "store_unavailable")
+    assert w.held() is None and w.repo.notices == [] and w.ports.calls == []
+
+
+async def test_a_target_with_no_display_name_starts_with_a_null_one() -> None:
+    w = World()
+    await w.sign_in()
+    w.users.rows[str(_TARGET)] = {k: v for k, v in _user("bo").items() if k != "display_name"}
+    response = await w.start()
+    assert response.status_code == 201 and response.json()["target_display_name"] is None
+
+
+async def test_a_start_whose_session_went_meanwhile_answers_401() -> None:
+    """The start's unit of work found no session row: it was revoked or expired after the route
+    read it, so nothing started (22)."""
+
+    class Gone:
+        async def start(self, *_args: Any, **_kw: Any) -> ViewAsStartResult:
+            return ViewAsStartResult(started=None, held=None)
+
+    w = World()
+    await w.sign_in()
+    w.service = Gone()
+    assert _code(await w.start()) == (401, "unauthenticated")
+    assert w.refused() == []
+
+
+async def test_a_backend_without_step_up_answers_503_and_starts_nothing() -> None:
+    w = World()
+    await w.sign_in()
+    w.auth.step_up_is_active = False
+    assert _code(await w.start()) == (503, "store_unavailable")
+    assert w.held() is None and w.ports.calls == []
+
+
+async def test_a_start_that_could_not_be_written_logs_its_code_and_nothing_that_names_anyone() -> (
+    None
+):
+    """#4245 security Low-3: an operator sees a failed start by its code and its cause's class."""
+    w = World()
+    minted = await w.sign_in()
+    w.ports.fails["emit"] = ConnectionError("down")
+    with capture_logs() as logs:
+        assert _code(await w.start()) == (503, "audit_unavailable")
+    (line,) = [e for e in logs if e["event"] == "admin.view_as.start_unavailable"]
+    assert line["code"] == "audit_unavailable" and line["error"] is not None
+    written = json.dumps(logs, default=str)
+    assert all(v not in written for v in (_REASON, str(minted.session_id), str(_TARGET)))
 
 
 async def test_the_reason_reaches_only_the_started_record() -> None:
