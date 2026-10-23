@@ -1,9 +1,11 @@
 // E37-T01's budget: toGraph, toIr and canonicalise each take <= 20 ms on a 200-node graph (the
-// ticket's performance notes: they run on save and on a mode switch, inside SCR-082's 500 ms). The
-// median of 9 runs of 5 calls after a warm-up holds it, with a wide margin. The scaling is the best
-// run's ratio from 200 nodes to toIr's cap of 1 000, a 5x size: linear is x5 and quadratic x25, and
-// the bound keeps protocol's 2.5x slack on linear (packages/protocol/test/cvwb-decode.perf.test.ts,
-// its bestMs). The perf project: no coverage.
+// ticket's performance notes: they run on save and on a mode switch, inside SCR-082's 500 ms).
+// Measured in CPU time (process.cpuUsage), not wall time: the engine bench lane is shared with
+// chart-engine and protocol, and a wall clock also counts what the neighbours run. Of 9 samples of
+// 5 calls after a warm-up, the median holds the budget; the least, a collection or a compile left
+// out, gives the scaling from 200 nodes to toIr's cap of 1 000, a 5x size: linear is x5, quadratic
+// x25, and the bound keeps protocol's 2.5x slack on linear (its cvwb-decode.perf.test.ts bestMs).
+// The perf project: no coverage.
 import type { RuleIr } from "@candleviewer/protocol/rule-ir";
 import { describe, expect, it } from "vitest";
 import { toGraph } from "../src/adapter/toGraph.js";
@@ -27,13 +29,14 @@ function rule(gates: number, leaves: number): RuleIr {
   return { ...envelope, ...settings, trigger, conditions, actions } as unknown as RuleIr;
 }
 
-/** A call's times, fastest first: 9 timed runs of 5 calls each, after 20 untimed calls. */
-function timesMs(run: () => unknown): number[] {
+/** A call's CPU time in ms, least first: 9 samples of 5 calls each, after 20 untimed calls. */
+function cpuMs(run: () => unknown): number[] {
   for (let i = 0; i < 20; i++) run();
   const times = Array.from({ length: 9 }, () => {
-    const start = performance.now();
+    const before = process.cpuUsage();
     for (let i = 0; i < 5; i++) run();
-    return (performance.now() - start) / 5;
+    const used = process.cpuUsage(before); // user and system, in microseconds
+    return (used.user + used.system) / 5_000;
   });
   return times.sort((a, b) => a - b);
 }
@@ -55,17 +58,17 @@ describe("the adapter's budget: 20 ms per step on a 200-node graph (E37-T01)", (
     expect([toGraph(SMALL).nodes.length, toGraph(LARGE).nodes.length]).toEqual([200, 1_000]);
   });
 
-  it.each(STEPS)("%s on 200 nodes: the median of 9 runs is at most 20 ms", (step) => {
-    const ms = timesMs(steps(SMALL)[step])[4] as number; // the median
-    console.info(`${step}, 200 nodes: ${ms.toFixed(3)} ms (median of 9)`);
+  it.each(STEPS)("%s on 200 nodes: the median of 9 samples is at most 20 ms", (step) => {
+    const ms = cpuMs(steps(SMALL)[step])[4] as number; // the median
+    console.info(`${step}, 200 nodes: ${ms.toFixed(3)} ms CPU (median of 9)`);
     expect(ms).toBeGreaterThan(0);
     expect(ms).toBeLessThanOrEqual(20);
   });
 
-  it.each(STEPS)("%s scales linearly: 1 000 nodes take under 12.5 times as long as 200", (step) => {
-    const best = (doc: RuleIr) => timesMs(steps(doc)[step])[0] as number; // protocol's bestMs
-    const ratio = best(LARGE) / best(SMALL);
-    console.info(`${step}, 1 000:200 nodes: x${ratio.toFixed(2)} time (best of 9)`);
+  it.each(STEPS)("%s scales linearly: 1 000 nodes cost under 12.5 times what 200 do", (step) => {
+    const least = (doc: RuleIr) => cpuMs(steps(doc)[step])[0] as number; // protocol's bestMs
+    const ratio = least(LARGE) / least(SMALL);
+    console.info(`${step}, 1 000:200 nodes: x${ratio.toFixed(2)} CPU (least of 9)`);
     expect(ratio).toBeLessThan(12.5); // linear x5, quadratic x25
   });
 });

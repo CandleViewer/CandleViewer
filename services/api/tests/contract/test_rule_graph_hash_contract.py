@@ -91,7 +91,7 @@ def test_the_vectors_sent_cover_the_whole_corpus() -> None:
 
 @pytest.mark.parametrize("vector", SENT, ids=[v["name"] for v in SENT])
 def test_compile_answers_the_vector_ir_hash_for_the_graph_editor(vector: dict[str, Any]) -> None:
-    doc = json.loads(vector["ir"])  # as the route reads a body: a fraction is a float
+    doc = json.loads(vector["ir"])  # the body; js() writes its numbers back as JS does
     model = js(to_graph_model(Rule.model_validate(doc)))
     sent = CLIENT.post(f"/rules/{doc['rule_id']}/compile", json={"editor": "graph", "model": model})
     assert sent.status_code == 200, sent.text
