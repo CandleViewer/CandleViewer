@@ -1,10 +1,12 @@
 // The graph back to rule IR (E37-T01), as the server's `compile_graph` builds it
 // (rules/compiler/graph.py:205-248): a shared node expands at each use, and a graph with no IR
 // that keeps all of it is refused. Pure and synchronous.
+import { findCycles } from "../analysis/cycles.js";
 import { MAX_VALUES, checkBounds } from "../canonical/schema.js";
-import { check } from "../errors.js";
+import { RuleGraphError, check } from "../errors.js";
 import type { CommentNode, GraphEdge, GraphLayout, GraphModel, GraphNode } from "../model.js";
 import type { RuleIrDraft } from "../model.js";
+import { NODE_PORTS, type NodeKind, type PortType, canConnect } from "../ports.js";
 import { SLOTS, type Tree, isTree } from "./toGraph.js";
 
 const SV = "SCHEMA_VIOLATION";
@@ -49,6 +51,9 @@ export function toIr(graph: GraphModel, layout = BLANK): { ir: RuleIrDraft; layo
     check(joins, SV, `Edge ${id} does not join a condition to an input.`, named(source, target));
     fed.set(slot(target, port), [...(fed.get(slot(target, port)) ?? []), source]);
   }
+  const cycle = findCycles({ ...graph, nodes, edges }); // graph.py:148-153: before the other faults
+  const loop = `The graph has a cycle: ${cycle.join(" -> ")}.`;
+  check(cycle.length === 0, "CYCLE_DETECTED", loop, cycle.slice(0, -1));
   const triggers = nodes.filter((node) => node.type === "trigger");
   const triggerIds = triggers.map((node) => node.id);
   check(triggerIds.length === 1, SV, "A graph has one trigger node.", triggerIds);
@@ -69,10 +74,7 @@ export function toIr(graph: GraphModel, layout = BLANK): { ir: RuleIrDraft; layo
   let budget = MAX_VALUES; // the values the copies add, each charged before it is made
   const over = `The graph expands past ${MAX_VALUES} values.`;
   const spend = (n: number) => check((budget -= n) >= 0, SV, over);
-  const build = (id: string, path: readonly string[]): Tree => {
-    const cycle = path.slice(path.indexOf(id)); // from `id` back to it, if it repeats
-    const loop = `The graph has a cycle: ${[...cycle, id].join(" -> ")}.`;
-    check(!path.includes(id), "CYCLE_DETECTED", loop, cycle);
+  const build = (id: string): Tree => {
     const { data } = byId.get(id) as GraphNode;
     // A copy adds at least as many values (a node_id in data is replaced): never past checkBounds.
     spend(1 + Object.keys(data).filter((key) => key !== "node_id").length);
@@ -81,11 +83,13 @@ export function toIr(graph: GraphModel, layout = BLANK): { ir: RuleIrDraft; layo
     delete out["kind"];
     for (const [key, port] of Object.entries(SLOTS[kinds.get(id) as keyof typeof SLOTS])) {
       const sources = [...(fed.get(slot(id, port)) ?? [])];
-      const next = () => build(sources.shift() as string, [...path, id]);
+      const next = () => build(sources.shift() as string);
       if (port === "in") {
         const list = out[key] ?? sources.map(() => null); // none: a slot per edge, as the server
         const holes = Array.isArray(list) ? list.filter((item) => item === null).length : -1;
-        check(holes === sources.length, SV, `Node ${id} needs an edge per empty slot.`, [id]);
+        check(holes >= sources.length, SV, `Node ${id} needs an edge per empty slot.`, [id]);
+        const empty = `Node ${id} is missing its 'in' input.`; // as findDanglingPorts words it
+        check(holes === sources.length, "DANGLING_PORT", empty, [id]);
         spend((list as unknown[]).length - holes);
         out[key] = (list as unknown[]).map((item) => (item === null ? next() : item));
       } else if (sources.length > 0) {
@@ -97,11 +101,17 @@ export function toIr(graph: GraphModel, layout = BLANK): { ir: RuleIrDraft; layo
     }
     return { ...out, node_id: id };
   };
-  const conditions = sinks.length === 0 ? {} : { conditions: build(sinks[0] as string, []) };
+  const conditions = sinks.length === 0 ? {} : { conditions: build(sinks[0] as string) };
   const lost = nodes.filter((node) => /^(condition|logicGate)$/.test(node.type));
   const orphans = lost.filter((node) => !built.has(node.id)).map((node) => node.id);
   check(orphans.length === 0, "ORPHAN_NODE", `No action follows ${orphans.join(", ")}.`, orphans);
-  check(actions.length > 0, "ORPHAN_NODE", "The graph has no action node."); // graph.py:156-157
+  check(actions.length > 0, SV, "A graph needs a list of nodes and edges."); // graph.py:85-87
+  for (const { id, source, target, targetPort } of edges) {
+    const [from, to] = [kinds.get(source), kinds.get(target)] as [NodeKind, NodeKind];
+    const input = (NODE_PORTS[to].inputs as Record<string, PortType>)[targetPort] as PortType;
+    const fits = canConnect(NODE_PORTS[from].output as PortType, input); // NODE_PORTS' types
+    if (!fits.ok) throw new RuleGraphError(SV, `Edge ${id}: ${fits.reason}`, [source, target]);
+  }
   const notes = nodes.filter((node) => node.type === "comment");
   const comments = notes.map(({ id, data }) => ({ ...data, id }) as CommentNode);
   const { extra, positions, collapsed } = layout;

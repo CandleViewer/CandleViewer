@@ -113,8 +113,9 @@ describe("canonicalise and hash", () => {
     const cases = { "00.5": "0.5", "007": "7", "0007.50": "7.5", "-0": "0", "-0.00": "0" };
     for (const [text, out] of Object.entries(cases))
       expect(tolerance(text)).toContain(`"tolerance":"${out}"`);
-    for (const text of ["9".repeat(28), `0.${"9".repeat(28)}`, `1${"0".repeat(999_999)}`]) {
-      expect(tolerance(text)).toContain(`"tolerance":"${text}"`); // the last at exponent 999 999
+    const wide = [`1${"0".repeat(63)}`, `-0.${"0".repeat(60)}1`]; // plain_decimal.py's widest, 64
+    for (const text of ["9".repeat(28), `0.${"9".repeat(28)}`, ...wide]) {
+      expect(tolerance(text)).toContain(`"tolerance":"${text}"`);
     }
   });
 
@@ -165,12 +166,16 @@ describe("canonicalise and hash", () => {
     ["true in an integer field", ["version"], true],
     ["decimal text with an exponent", ["conditions", "tolerance"], "1e5"],
     ["decimal text in a spelling no vector pins", ["conditions", "tolerance"], ".5"],
+    ["decimal text with a plus sign", ["conditions", "tolerance"], "+1.5"],
+    ["decimal text that ends in a point", ["conditions", "tolerance"], "5."],
     ["decimal text past 28 digits", ["conditions", "tolerance"], "1234567890.1234567890123456789"],
     ["decimal text past the exponent range", ["conditions", "tolerance"], `1${"0".repeat(1e6)}`],
     ["a decimal under the exponent range", ["conditions", "tolerance"], `0.${"0".repeat(1e6)}1`],
+    ["a 65-character form, its sign counted", ["conditions", "tolerance"], `-1${"0".repeat(63)}`],
     ["an operand of no kind", ["conditions", "right"], { params: {} }],
     ["an op that is not text", ["conditions"], { node_id: "c", op: 5, left: { const: 1 } }],
     ["a missing required field", ["trigger"], undefined],
+    ["an unknown key", ["limits", "zzz"], 1],
     ["a missing action params", ["actions", 0, "params"], undefined],
     ["a list where an object belongs", ["scope"], []],
     ["an object where text belongs", ["name"], {}],

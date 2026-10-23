@@ -3,7 +3,10 @@
 export type { RuleIr } from "@candleviewer/protocol/rule-ir";
 export { nodesNeedingLayout, readLayout, toGraph } from "./adapter/toGraph.js";
 export { toIr } from "./adapter/toIr.js";
+export { findCycles } from "./analysis/cycles.js";
 export { findDanglingPorts, type DanglingPort } from "./analysis/dangling.js";
+export { isFormRepresentable, type FormReason } from "./analysis/formSubset.js";
+export { findOrphans } from "./analysis/orphans.js";
 export { canonicalise, compareWithServer, hash } from "./canonical/canonicalise.js";
 export { RULE_GRAPH_ERROR_CODES, RuleGraphError, isRuleGraphError } from "./errors.js";
 export type { RuleGraphErrorCode } from "./errors.js";

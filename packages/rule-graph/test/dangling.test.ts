@@ -45,6 +45,8 @@ describe("findDanglingPorts", () => {
   const fedRight = edit({ c1: { ...C1, right: null } }, [x1(2)], wired(edge("x1", "c1", "right")));
   const fedSlot = edit({}, [x1(null), { ...x1(2), id: "y" }], wired(edge("y", "x1", "in")));
   const oneSlot = only(G.edges.filter((e) => e.source !== "c2"));
+  const from = (source: string) =>
+    edit({ c1: { ...C1, right: null } }, [], wired(edge(source, "c1", "right")));
   it.each([
     ["an action no edge feeds", only(G.edges.slice(0, 3)), ["a2.when"]],
     ["a gate whose slots no edge fills", only(gates), ["g1.in"]],
@@ -53,6 +55,8 @@ describe("findDanglingPorts", () => {
     ["a comparison with no right operand", at({ kind: "comparison", left }), ["c1.right"]],
     ["a comparison whose right operand is null", at({ ...C1, right: null }), ["c1.right"]],
     ["a null operand an edge fills", fedRight, []],
+    ["a null operand an edge from the trigger leaves empty", from("trigger"), ["c1.right"]],
+    ["a null operand an edge from no node leaves empty", from("zz"), ["c1.right"]],
     ["is_true, which takes one operand", at({ kind: "comparison", op: "is_true", left }), []],
     ["between, which takes three", at({ ...C1, op: "between" }), ["c1.right2"]],
     ["a temporal node with no child", edit({}, [t1]), ["t1.child"]],

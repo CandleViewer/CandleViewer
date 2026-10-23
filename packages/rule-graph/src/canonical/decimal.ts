@@ -9,16 +9,17 @@ function plain(negative: boolean, digits: string, exponent: number): string | un
   if (start === end) return "0";
   const coefficient = digits.slice(start, end);
   const exp = exponent + digits.length - end;
-  // Python's default context: normalize() rounds past 28 significant digits, and past the
-  // exponent range (+-999 999) it raises or rounds. Neither has a form to mirror.
-  if (coefficient.length > 28 || Math.abs(exp + coefficient.length - 1) > 999_999) return undefined;
+  // Python's default context: normalize() rounds past 28 significant digits, which has no form to
+  // mirror; and the server refuses a plain form over 64 characters (domain/plain_decimal.py).
+  if (coefficient.length > 28) return undefined;
   const body =
     exp >= 0
       ? coefficient + "0".repeat(exp)
       : -exp < coefficient.length
         ? `${coefficient.slice(0, exp)}.${coefficient.slice(exp)}`
         : `0.${"0".repeat(-exp - coefficient.length)}${coefficient}`;
-  return negative ? `-${body}` : body;
+  const out = negative ? `-${body}` : body;
+  return out.length > 64 ? undefined : out; // its sign, digits and point: MAX_PLAIN_WIDTH
 }
 
 /**
