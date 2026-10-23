@@ -79,7 +79,7 @@ COMMANDS = {
     ],
     "api": [
         "cd services/api && pytest -m \"not integration\" --cov=. --cov-fail-under=85",
-        "cd services/api && ruff check . && black --check . && mypy --strict .",
+        "cd services/api && ruff check . && ruff format --check . && mypy --strict .",
         "cd services/api && lint-imports",
     ],
     "infra": [

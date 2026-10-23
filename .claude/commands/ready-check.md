@@ -1,6 +1,6 @@
 ---
 description: Run the Definition-of-Done checklist (C-11.2) against the current branch and report pass/fail per item.
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(gh issue view:*), Bash(python docs/plan/backlog/_tools/done_gate.py:*), Bash(pnpm:*), Bash(uv run:*), Bash(pytest:*), Bash(ruff:*), Bash(black:*), Bash(mypy:*), Bash(lint-imports:*), Bash(alembic:*), Bash(gitleaks:*), Read, Grep, Glob
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(gh issue view:*), Bash(python docs/plan/backlog/_tools/done_gate.py:*), Bash(pnpm:*), Bash(uv run:*), Bash(pytest:*), Bash(ruff:*), Bash(mypy:*), Bash(lint-imports:*), Bash(alembic:*), Bash(gitleaks:*), Read, Grep, Glob
 ---
 
 # /ready-check
